@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "../test/rtl";
+import { act, cleanup, render, screen, waitFor } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MyNamespaceEntry, TokenEntry, WhoAmI } from "../api";
@@ -55,7 +55,12 @@ vi.mock("../api", async (importOriginal) => {
     })),
   };
 });
+vi.mock("../api/webhooks", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api/webhooks")>()),
+  listWebhooks: vi.fn(async () => ({ webhooks: [] })),
+}));
 import { countMemories, listBlacklist, listMine, registerNamespace } from "../api";
+import { listWebhooks } from "../api/webhooks";
 import { sharedMine } from "../lib/sharedReads";
 
 const ORG = "dev";
@@ -165,6 +170,9 @@ describe("Setup's 'Never save' panel", () => {
     expect(screen.queryByRole("button", { name: /Remove pattern/ })).not.toBeInTheDocument();
     expect(screen.queryByText(PRIVACY_FILTERS_MANAGED_BY_ADMIN)).not.toBeInTheDocument();
     expect(countMemories).toHaveBeenCalledTimes(1);
+    // Webhooks are ADMIN: a viewer neither sees the section nor reads them.
+    expect(screen.queryByRole("heading", { name: "Webhooks" })).not.toBeInTheDocument();
+    expect(listWebhooks).not.toHaveBeenCalled();
   });
 
   it("an admin claim lists once and gets the add form and the remove button", async () => {
@@ -178,6 +186,49 @@ describe("Setup's 'Never save' panel", () => {
     expect(await screen.findByRole("button", { name: "Remove pattern sk-[A-Za-z0-9]{20,}" }, WAIT)).toBeInTheDocument();
     expect(screen.queryByText(PRIVACY_FILTERS_MANAGED_BY_ADMIN)).not.toBeInTheDocument();
     expect(screen.queryByText(PRIVACY_FILTERS_READ_ONLY)).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Webhooks" }, WAIT)).toBeInTheDocument();
+  });
+
+  it("drops the previous namespace's patterns on a switch: the list is keyed by its namespace", async () => {
+    const admin: WhoAmI = { authenticated: true, subject: "a@x", org: ORG, roles: ["ADMIN"] };
+    seed(admin, [], MEMORY_NS);
+    render(<Setup />);
+    await openMemoryTab();
+    const remove = { name: "Remove pattern sk-[A-Za-z0-9]{20,}" };
+    expect(await screen.findByRole("button", remove, WAIT)).toBeInTheDocument();
+    vi.mocked(listBlacklist).mockImplementationOnce(() => new Promise(() => {}));
+    act(() => useStore.setState({ identity: { org: ORG, namespace: "other-ns", agent: "loom-ui" } }));
+    await waitFor(() => expect(screen.queryByRole("button", remove)).toBeNull(), WAIT);
+    expect(listBlacklist).toHaveBeenLastCalledWith(
+      expect.objectContaining({ namespace: "other-ns" }),
+      expect.anything(),
+    );
+  });
+
+  it("drops the previous namespace's webhooks on a switch: the section is keyed by its namespace", async () => {
+    const admin: WhoAmI = { authenticated: true, subject: "a@x", org: ORG, roles: ["ADMIN"] };
+    const hook = {
+      webhook_id: "w1",
+      url: "https://hooks.example.com/loom",
+      secret_ref: "LOOM_WEBHOOK_SECRET_DEV__CI",
+      events: ["memory.written" as const],
+      created_at: "2000-01-01 00:00:00",
+      secret_present: true,
+    };
+    vi.mocked(listWebhooks).mockResolvedValueOnce({ webhooks: [hook] });
+    seed(admin, [], MEMORY_NS);
+    render(<Setup />);
+    await openMemoryTab();
+    expect(await screen.findByText(hook.url, undefined, WAIT)).toBeInTheDocument();
+    vi.mocked(listWebhooks).mockImplementationOnce(() => new Promise(() => {}));
+    act(() => useStore.setState({ identity: { org: ORG, namespace: "other-ns", agent: "loom-ui" } }));
+    await waitFor(() => expect(screen.queryByText(hook.url)).toBeNull(), WAIT);
+    // A fresh section for the new namespace, with no Remove from the old one.
+    expect(listWebhooks).toHaveBeenLastCalledWith(
+      expect.objectContaining({ namespace: "other-ns" }),
+      expect.anything(),
+    );
+    expect(screen.queryByRole("button", { name: `Actions for ${hook.url}` })).toBeNull();
   });
 });
 

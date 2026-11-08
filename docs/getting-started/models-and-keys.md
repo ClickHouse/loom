@@ -404,7 +404,7 @@ LOOM_INFERENCE_TENANT_CLAIM=tenant_id   # the workload trust claim {tenant} name
 #### Switching an org's model calls off
 
 An org admin can stop every model call for the org's data, with or without a
-gateway:
+gateway, from the dashboard's Guardrails page or over the API:
 
 ```bash
 curl -s -X POST "$LOOM_BASE_URL/v1/org.set_model_calls" -H "Authorization: Bearer $ORG_ADMIN_TOKEN" \

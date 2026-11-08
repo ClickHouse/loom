@@ -62,14 +62,15 @@ export const OP_MIN_ROLE = {
   "admin/workers.status": ADMIN_CLAIM,
   // Setup's "Don't save these" panel (`views/admin/Blacklist.tsx::PrivacyFilters`) must
   // not list the blacklist for every visitor — that is one AUTH_INSUFFICIENT per page
-  // load from a viewer token with no memory namespace. The three blacklist ops are
-  // namespace-scoped (`server/memory/api/ops_blacklist.py`: list VIEWER, add WRITER, remove
-  // ADMIN); the panel reads only when the role is known, and shows the add form / remove
-  // buttons only to a role that reaches them. Setup's `memory.list` total for the
-  // checklist is gated the same way.
+  // load from a viewer token with no memory namespace. The blacklist ops are
+  // namespace-scoped (`server/memory/api/ops_blacklist.py`: list VIEWER, add and sweep
+  // WRITER, remove ADMIN); the panel reads only when the role is known, and shows the add
+  // form and remove buttons only to a role that reaches them. Setup's `memory.list` total
+  // for the checklist is gated the same way.
   "blacklist.list": VIEWER,
   "blacklist.add": WRITER,
   "blacklist.remove": ADMIN,
+  "blacklist.sweep": WRITER,
   "memory.auto_retirements": VIEWER,
   "memory.list": VIEWER,
   // The Memories view's "Usage audit" panel offers the button only to a role that reaches
@@ -98,6 +99,8 @@ export const OP_MIN_ROLE = {
   "memory.outcome": WRITER,
   // Conversations' recording toggle: a namespace setting, ADMIN on the namespace.
   "conversation.set_logging": ADMIN,
+  // Settings → Memory's Webhooks section, ADMIN on the namespace.
+  "webhook.list": ADMIN,
   // A repository card's Docs and Sources facets (`canCallOn`): Add a document and Remove,
   // and every verb on a document source.
   "knowledge.add": WRITER,

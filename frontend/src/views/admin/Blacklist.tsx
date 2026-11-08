@@ -3,6 +3,11 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { listBlacklist, addBlacklist, removeBlacklist, type BlacklistRow, type BlacklistScope } from "../../api";
+import { sweepBlacklistPattern } from "../../api/guardrails";
+import { hasOrgAdminClaim } from "../../lib/role";
+import { confirmAction } from "../../components/ConfirmDialog";
+import { OrgGuardrails } from "./OrgGuardrails";
+import { RowMenu } from "../../components/ui/RowMenu";
 import { useStore, useIdentity } from "../../lib/state";
 import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
@@ -24,33 +29,31 @@ import { ListState } from "../../components/ui/ListState";
 export const PRIVACY_FILTERS_MANAGED_BY_ADMIN = "Refusal patterns are managed by an admin of this space.";
 /** A viewer who may list but not add. */
 export const PRIVACY_FILTERS_READ_ONLY =
-  "You can see the patterns here but not change them — a writer adds, an admin removes.";
+  "You can see the patterns here but not change them: a writer adds patterns and deletes a namespace pattern's stored matches; an admin removes patterns.";
 
 const SCOPES: readonly BlacklistScope[] = ["namespace", "org", "global"];
 const SCOPE_LABELS: Record<BlacklistScope, string> = { namespace: "Namespace", org: "Org", global: "Global" };
 
 /**
- * Page wrapper for /admin/guardrails. Renders
- * the inline form below with full page chrome.
+ * Page wrapper for /admin/guardrails: the pattern list below with full page chrome, and
+ * the org's extraction rules and model-call switch for an org admin claim.
  */
 export function Blacklist() {
+  const org = useStore((s) => s.identity?.org ?? "");
   const namespace = useStore((s) => s.identity?.namespace ?? "");
+  const orgAdmin = useStore((s) => hasOrgAdminClaim(s.whoami));
   return (
     <PageContainer>
       <PageHeader title="Guardrails">
         <ScopeBadge kind="namespace" value={namespace} />
       </PageHeader>
-      <PrivacyFilters />
+      {/* Keyed by namespace: a switch starts with no rows and no sweep from the old one. */}
+      <PrivacyFilters key={`${org}/${namespace}`} />
+      {orgAdmin && <OrgGuardrails />}
     </PageContainer>
   );
 }
 
-/**
- * Inline form — manages "patterns Loom should never store." Lives in
- * two places now: this admin page (for operator-level org/global
- * patterns) and Setup.tsx's "Privacy filters" section (for end users
- * who want to keep specific values out of their memories).
- */
 /** A pattern offered as a one-click prefill of the add form. */
 export interface PrivacyFilterStarter {
   pattern: string;
@@ -59,7 +62,8 @@ export interface PrivacyFilterStarter {
 
 /** `compact` (the Settings → Memory tab): one add row, a divided list, one muted line
  *  when empty — no framed form, no icon block. The default shape is the Guardrails admin
- *  page's. */
+ *  page's. Its list does not reread on a namespace switch, while add and sweep use the
+ *  current namespace, so a caller keys it by org and namespace. */
 export function PrivacyFilters({
   compact = false,
   starters = [],
@@ -83,6 +87,10 @@ export function PrivacyFilters({
   const canList = canCall("blacklist.list", role, whoami);
   const canAdd = canCall("blacklist.add", role, whoami);
   const canRemove = canCall("blacklist.remove", role, whoami);
+  // Who may sweep which pattern: `handle_blacklist_sweep`.
+  const canSweepNamespace = canCall("blacklist.sweep", role, whoami);
+  const orgAdmin = hasOrgAdminClaim(whoami);
+  const canSweep = (r: BlacklistRow) => (r.scope === "namespace" ? canSweepNamespace : orgAdmin);
 
   // A reload after an add or a remove keeps the patterns on screen, marked busy. It runs
   // through the read effect, so an answer for a namespace the page has left is dropped.
@@ -91,15 +99,6 @@ export function PrivacyFilters({
   const [loadError, setLoadError] = useState<unknown>(null);
   const [reads, setReads] = useState(0);
   const reload = () => setReads((n) => n + 1);
-  // Another namespace's patterns are not this one's: start from the skeleton, during
-  // render, so the old namespace's rows (and their Remove buttons) never paint under it.
-  const scopeKey = `${identity.org}/${identity.namespace}`;
-  const [rowsFor, setRowsFor] = useState(scopeKey);
-  if (rowsFor !== scopeKey) {
-    setRowsFor(scopeKey);
-    setRows(null);
-    setLoadError(null);
-  }
   useAbortableEffect(
     (signal, live) => {
       if (!canList) return;
@@ -119,7 +118,7 @@ export function PrivacyFilters({
           if (live()) setRefreshing(false);
         });
     },
-    [scopeKey, canList, reads],
+    [canList, reads],
   );
 
   const add = async () => {
@@ -145,6 +144,39 @@ export function PrivacyFilters({
       reload();
     } catch (e) {
       toast(`Failed: ${humanizeError(e)}`, "error");
+    }
+  };
+
+  // A pattern stops new writes; a sweep tombstones what it already matches.
+  const [sweeping, setSweeping] = useState<string | null>(null);
+  const sweep = async (r: BlacklistRow) => {
+    const inNamespace = r.scope === "namespace";
+    const ok = await confirmAction({
+      title: `Delete the stored memories "${r.pattern}" matches ${inNamespace ? "in this namespace" : `across ${identity.org}`}?`,
+      message: inNamespace
+        ? "They can be restored for 14 days from Memories → Recently deleted."
+        : "They can be restored for 14 days from Memories → Recently deleted in each namespace they were in.",
+      confirmLabel: "Delete matches",
+      danger: true,
+    });
+    if (!ok) return;
+    setSweeping(r.pattern_id);
+    try {
+      const s = await sweepBlacklistPattern(identity, r.pattern_id);
+      if (s.error) throw new Error(s.error);
+      // Name the scope the sweep ran in: the page may have moved on before it answers.
+      const where = inNamespace ? identity.namespace : identity.org;
+      if (s.matched === 0) {
+        toast(`No stored memory in ${where} matches this pattern`, "info");
+        return;
+      }
+      const more = s.truncated ? "; more remain, sweep again" : "";
+      const noun = s.matched === 1 ? "memory" : "memories";
+      toast(`Deleted ${s.tombstoned} of ${s.matched} matching ${noun} in ${where}${more}`, "ok");
+    } catch (e) {
+      toast(`Sweep failed: ${humanizeError(e)}`, "error");
+    } finally {
+      setSweeping(null);
     }
   };
 
@@ -262,6 +294,7 @@ export function PrivacyFilters({
             {rows.map((r) => (
               <div
                 key={r.pattern_id}
+                aria-busy={sweeping === r.pattern_id || undefined}
                 className={
                   compact
                     ? "flex items-center gap-3 px-3 py-2"
@@ -288,6 +321,19 @@ export function PrivacyFilters({
                     )}
                   </div>
                 </div>
+                {canSweep(r) && (
+                  <RowMenu
+                    name={r.pattern}
+                    items={[
+                      {
+                        label: sweeping === r.pattern_id ? "Deleting matches…" : "Delete matches",
+                        danger: true,
+                        disabled: sweeping !== null,
+                        onSelect: () => void sweep(r),
+                      },
+                    ]}
+                  />
+                )}
                 {canRemove && (
                   <IconButton
                     icon="cross"

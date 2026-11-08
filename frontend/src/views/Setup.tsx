@@ -28,6 +28,7 @@ import { isMemoryNamespace } from "../lib/namespace";
 import { hasPlatformAdminClaim } from "../lib/role";
 import { TokensSection } from "./Tokens";
 import { ModelsSettings } from "./ModelsSettings";
+import { WebhooksSection } from "./WebhooksSection";
 
 /** The URL carries the open settings tab
  *  (`?tab=memory`). */
@@ -255,10 +256,15 @@ const PRIVACY_STARTERS: PrivacyFilterStarter[] = [
   { pattern: "\\b\\d{3}-\\d{2}-\\d{4}\\b", label: "US SSNs" },
 ];
 
-/** The Memory tab — two settings, each one row: what is never saved, and seeding from a
- *  document. */
+/** The Memory tab: what is never saved, seeding from a document, and, for a namespace
+ *  admin, the namespace's webhooks. */
 function MemoryTab() {
   const [importing, setImporting] = useState(false);
+  // Hidden below namespace ADMIN: the section reads webhook.list on mount.
+  const identity = useIdentity();
+  const whoami = useStore((s) => s.whoami);
+  const role = useNamespaceRole(identity.namespace);
+  const showWebhooks = canCall("webhook.list", role, whoami);
   return (
     <div className="max-w-3xl space-y-8">
       <section aria-labelledby="settings-never-save">
@@ -268,7 +274,7 @@ function MemoryTab() {
         <p className="text-xs text-text-muted mt-0.5 mb-3 max-w-2xl">
           A write whose value matches a pattern is refused — extracted ones too.
         </p>
-        <PrivacyFilters compact starters={PRIVACY_STARTERS} />
+        <PrivacyFilters key={`${identity.org}/${identity.namespace}`} compact starters={PRIVACY_STARTERS} />
       </section>
 
       <section aria-labelledby="settings-seed" className="flex flex-wrap items-start justify-between gap-3">
@@ -294,6 +300,8 @@ function MemoryTab() {
           <ImportCuratedPanel />
         </Modal>
       </section>
+
+      {showWebhooks && <WebhooksSection key={`${identity.org}/${identity.namespace}`} />}
     </div>
   );
 }

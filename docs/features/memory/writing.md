@@ -389,9 +389,10 @@ They answer predicate questions without parsing text.
 
 A product built on Loom (a chat service that shows a user what the assistant remembers,
 say) can be told when memory in a namespace changes instead of polling for it. A
-namespace admin registers a URL with `webhook.register`; Loom then POSTs one signed event
-per change. The event carries ids, the memory key and the identity tuple, never a value,
-tags or evidence: the receiver reads the memory back with its own token
+namespace admin registers a URL with `webhook.register` (or in the dashboard's Settings →
+Memory → Webhooks); Loom then POSTs one signed event per change. The event carries ids,
+the memory key and the identity tuple, never a value, tags or evidence: the receiver
+reads the memory back with its own token
 (`memory.get_by_id`), so what it may read is decided when it reads, as for any other read.
 A key reaches every registered receiver, including one whose token may not read the row,
 so a secret or a fact never goes in a key. Copies into the namespace (`memory.copy_to`,

@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "../../test/rtl
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BlacklistRow } from "../../api";
 import { useStore } from "../../lib/state";
-import { PrivacyFilterHits, PrivacyFilters } from "./Blacklist";
+import { Blacklist, PrivacyFilterHits, PrivacyFilters } from "./Blacklist";
 
 const listBlacklist = vi.fn();
 vi.mock("../../api", async (importOriginal) => {
@@ -73,7 +73,7 @@ describe("privacy filters, a failed read", () => {
   });
 });
 
-describe("privacy filters across a namespace switch", () => {
+describe("privacy filters under the store's identity", () => {
   afterEach(() => {
     cleanup();
     useStore.setState({ identity: null, whoami: null });
@@ -96,9 +96,16 @@ describe("privacy filters across a namespace switch", () => {
       whoami: { authenticated: true, subject: "a@x", org: "dev", roles: ["ADMIN"], namespaces: ["ns", "other"] },
     });
     listBlacklist.mockResolvedValueOnce({ rows: [row({})] }).mockReturnValueOnce(new Promise(() => {}));
-    render(<PrivacyFilters />);
+    // The page keys the list by namespace, so a switch mounts a fresh one.
+    render(<Blacklist />);
     expect(await screen.findByText("sk-")).toBeInTheDocument();
     act(() => useStore.setState({ identity: { org: "dev", namespace: "other", agent: "loom-ui" } }));
     expect(screen.queryByText("sk-")).toBeNull();
+    await waitFor(() =>
+      expect(listBlacklist).toHaveBeenLastCalledWith(
+        expect.objectContaining({ namespace: "other" }),
+        expect.anything(),
+      ),
+    );
   });
 });

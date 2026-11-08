@@ -255,7 +255,8 @@ whether another principal's batch exists:
 ## Operator extraction policy
 
 An org admin can say once what extraction never stores, for the whole org or for one
-namespace, and no request can drop or override it:
+namespace, and no request can drop or override it, on the dashboard's Guardrails page or
+over the API:
 
 ```bash
 curl -sX POST http://localhost:7777/v1/extraction_policy.set \
