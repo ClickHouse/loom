@@ -277,11 +277,7 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
         try:
             await apply_mirror(items)
         except Exception as e:  # noqa: BLE001 — the memory rows are authoritative
-            # The memory rows already landed and the read filter hides an expired row,
-            # but the next pass never selects these keys again: their mirror is
-            # recorded as a projection failure that `projection_repair` replays. A pass
-            # cut off between the insert and this record (cancelled, or the process
-            # gone) records nothing, as any fail-open projection does.
+            # The next pass never selects these keys: the repair replays the record.
             log.warning(
                 "memory_expiry_sweep: embeddings mirror failed for %d keys: %s", len(items), e
             )
@@ -382,8 +378,9 @@ async def apply_mirror(items: list[MirrorItem]) -> int:
     tombstone and anonymize retire the keys' vectors (memory_embeddings and
     entity_vectors, at the memory row's version, so an anonymized key keeps no entity
     names in search either); demote copies them at that version with the expiry
-    cleared and confidence lowered. Both touch only rows below the version, so a
-    replay leaves a later write's vectors alone. Batched as one keyed read and one
+    cleared and confidence lowered. Both touch only memory_embeddings rows below the
+    version (entity_vectors, which has none, to its second), so a replay leaves a
+    later write's vectors alone. Batched as one keyed read and one
     insert per 500 keys, never one per key, in the sweep and in its replay."""
     import server.memory.store as memory_repo
 

@@ -560,7 +560,7 @@ async def test_a_failed_scan_records_the_error_class_for_the_registry(
     assert got["last_error_kind"] == "NotFoundError"
 
 
-async def test_a_failed_mirror_is_recorded_per_key_and_the_repair_applies_it(
+async def test_a_failed_mirror_is_recorded_per_writer_and_the_repair_applies_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The next pass never selects a key the sweep wrote, so the mirror it missed is
@@ -572,6 +572,7 @@ async def test_a_failed_mirror_is_recorded_per_key_and_the_repair_applies_it(
         _row(memory_key="a"),
         _row(memory_key="b", on_expire="demote", confidence=0.9),
         _row(memory_key="c", on_expire="demote", sensitivity="high"),  # keeps no vector
+        _row(memory_key="d", user_id="u2"),  # another writer: its own failure
     ]
     ch, _ = _stub(monkeypatch, rows)
 
@@ -587,11 +588,12 @@ async def test_a_failed_mirror_is_recorded_per_key_and_the_repair_applies_it(
     monkeypatch.setattr(pf, "insert_projection_failures", _record)
     res = await X.run_pass(X.ExpiryConfig())
 
-    assert res.failures == ["mirror:2 keys: ConnectionError"]
+    assert res.failures == ["mirror:3 keys: ConnectionError"]
     written = {r["memory_key"]: r["version"] for r in ch.inserts[0][1]}
     # One failure per writer, its keys' items in the payload.
-    (failure,) = recorded
+    failure, other = recorded
     assert (failure["projection"], failure["memory_keys"]) == (pf.EXPIRY_MIRROR, ["a", "b"])
+    assert (other["memory_keys"], json.loads(other["payload"])["user_id"]) == (["d"], "u2")
     assert json.loads(failure["payload"]) == {
         "items": [
             [["test", "personal", "cursor", "-", "-", "a"], written["a"], None],
@@ -612,8 +614,8 @@ async def test_a_failed_mirror_is_recorded_per_key_and_the_repair_applies_it(
     no_erasure(monkeypatch)
     results = await pf.retry_failures([pf._row_from_ch(r) for r in recorded], ch=ch)
 
-    assert [r.resolved for r in results] == [True]
-    assert retired == [("a", written["a"])]
+    assert [r.resolved for r in results] == [True, True]
+    assert retired == [("a", written["a"]), ("d", written["d"])]
     assert _DEMOTE_REEMITS == [
         ("b", {"expires_at": None, "confidence": 0.45, "version": written["b"]})
     ]
@@ -662,10 +664,16 @@ async def test_a_late_mirror_leaves_a_later_writes_vectors_alone(
     async def _none(*_a: Any, **_k: Any) -> int:
         return 0
 
+    cutoffs: list[dict[Any, datetime]] = []
+
+    async def _entity_retire(keys, *, ts, ch=None, created_by=None) -> int:
+        cutoffs.append(created_by)
+        return 0
+
     monkeypatch.setattr(embeddings, "_live_rows_for_keys", _live)
     monkeypatch.setattr(embeddings, "insert_embedding_rows", _insert)
     monkeypatch.setattr(embeddings, "retire_copies_under_unembedded_heads", _none)
-    monkeypatch.setattr(embeddings, "tombstone_entity_vectors_for_keys", _none)
+    monkeypatch.setattr(embeddings, "tombstone_entity_vectors_for_keys", _entity_retire)
     monkeypatch.setattr(embeddings, "_default_client", lambda: object())
 
     def key(k: str) -> tuple[str, str, str, str, str, str]:
@@ -686,3 +694,34 @@ async def test_a_late_mirror_leaves_a_later_writes_vectors_alone(
     assert got["old"]["version"] == 200 and got["old"]["confidence"] == 0.4
     assert got["old"]["expires_at"] is None and got["old"]["tombstoned_at"] is None
     assert got["gone"]["version"] == 200 and got["gone"]["tombstoned_at"] is not None
+    # entity_vectors has no version: a retired key keeps the rows created after the
+    # second of the memory row's version, a later write's.
+    assert cutoffs == [
+        {key("gone"): embeddings.version_second(200), key("kept"): embeddings.version_second(200)}
+    ]
+
+
+async def test_a_malformed_expiry_mirror_failure_is_abandoned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app import projection_failures as pf
+    from tests.unit.claims_fake import no_erasure
+
+    no_erasure(monkeypatch)
+    result = await pf._retry(
+        pf.ProjectionFailureRow(
+            failure_id="f1",
+            org="o",
+            namespace="n",
+            agent="a",
+            projection=pf.EXPIRY_MIRROR,
+            source_operation="memory.sweep_expired",
+            source_resource_id="",
+            memory_keys=["k"],
+            error_type="ConnectionError",
+            error_message="insert refused",
+            payload={"items": [[["o", "n", "k"], 200, None]]},
+        ),
+        ch=object(),
+    )
+    assert (result.abandoned, result.reason) == (True, "malformed_payload")

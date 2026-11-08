@@ -512,7 +512,7 @@ async def _retry(failure: ProjectionFailureRow, *, ch: Any) -> ProjectionFailure
         elif failure.projection == EDGES_RESTORE:
             reason = await _retry_edges_restore(failure, ch=ch)
         elif failure.projection == EXPIRY_MIRROR:
-            await _retry_expiry_mirror(failure)
+            reason = await _retry_expiry_mirror(failure)
         elif failure.projection == SENSITIVITY_FACTS:
             outcome = await _retry_sensitivity_facts(failure, ch=ch)
             if outcome is None:
@@ -877,16 +877,21 @@ async def _retry_edges_restore(failure: ProjectionFailureRow, *, ch: Any) -> str
     return ""
 
 
-async def _retry_expiry_mirror(failure: ProjectionFailureRow) -> None:
+async def _retry_expiry_mirror(failure: ProjectionFailureRow) -> str:
     """Apply the sweep's mirror again: it touches only rows below the recorded version."""
     from server.memory.app.expiry import apply_mirror
 
-    await apply_mirror(
-        [
+    try:
+        items = [
             (cast(IdentityKey, tuple(str(c) for c in key)), int(version), demote)
             for key, version, demote in failure.payload["items"]
         ]
-    )
+        if not items or any(len(key) != 6 for key, _v, _d in items):
+            raise ValueError("no items, or a key that is not an identity key")
+    except (KeyError, TypeError, ValueError):
+        return "malformed_payload"
+    await apply_mirror(items)
+    return ""
 
 
 async def _retry_sensitivity_facts(failure: ProjectionFailureRow, *, ch: Any) -> str | None:
