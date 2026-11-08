@@ -122,3 +122,16 @@ async def test_the_mirrors_health_block_names_an_unread_registry(monkeypatch) ->
     monkeypatch.setattr(repos, "_registry_loaded", False)
     monkeypatch.setattr("server.code.app.index.mirrors.history_enabled", lambda: True)
     assert await health._mirrors_block() == {"registry": "unread"}
+
+
+def test_the_doctor_reads_the_registry_before_its_mirror_checks(monkeypatch) -> None:
+    # The mirror checks list the configured entries, which refuse until that read.
+    from server.cli import doctor
+
+    order: list[str] = []
+    monkeypatch.setattr(doctor, "_run_live_checks", lambda: [])
+    monkeypatch.setattr(doctor, "_doctor_problems", lambda: order.append("registry") or [])
+    monkeypatch.setattr(doctor, "_code_mirror_checks", lambda: order.append("mirrors") or [])
+    monkeypatch.setattr(doctor, "_problem_checks", lambda problems: [])
+    doctor._run_doctor_checks()
+    assert order == ["registry", "mirrors"]

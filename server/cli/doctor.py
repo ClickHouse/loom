@@ -542,7 +542,8 @@ def _problem_checks(problems: list[Any]) -> list[tuple[str, str, str]]:
 def _run_doctor_checks() -> list[tuple[str, str, str]]:
     """The live checks (Python, settings, JWT, ClickHouse, LLM) followed
     by the shared problem list, as (name, grade, detail)."""
-    return _run_live_checks() + _code_mirror_checks() + _problem_checks(_doctor_problems())
+    problems = _doctor_problems()  # reads the registry the mirror checks list entries from
+    return _run_live_checks() + _code_mirror_checks() + _problem_checks(problems)
 
 
 def _code_mirror_checks() -> list[tuple[str, str, str]]:

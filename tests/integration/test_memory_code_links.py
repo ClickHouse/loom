@@ -1318,7 +1318,7 @@ async def test_a_host_that_does_not_know_the_repository_keeps_its_links(env) -> 
     await _relink_once(env, "src/f.py", "def fetch_rows():\n    return 2\n")
     assert [x["state"] for x in await _links(mid)] == ["changed"]
     entries = [c for c in configured_repos() if c.source == "registry"]
-    set_registry_repos([], frozenset())  # a registry not loaded yet, or one that failed to refresh
+    set_registry_repos([], frozenset())  # a registry read that lists none
     try:
         await _remember(MEM, "rows", "`fetch_rows` returns one", pinned=True)
         await _pass()

@@ -58,8 +58,8 @@ def _repo_cfg(args: argparse.Namespace) -> Any:
         return cfg
     if (org, ns) in page_namespaces():
         raise SystemExit(
-            f"code repo {org}/{ns} is skipped: a member added that namespace from the "
-            "Repositories page; list the entry under another namespace"
+            f"{org}/{ns} was added from the Repositories page and removed; its name stays "
+            "reserved: list an entry for it under another namespace"
         )
     repos = configured_repos()
     if not repos:

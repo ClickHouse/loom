@@ -842,6 +842,30 @@ async def test_a_revoke_off_a_code_namespace_reads_no_registry(
     assert reads == [True]
 
 
+async def test_a_revoke_on_a_process_that_never_read_the_registry_reads_it_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Unread, the snapshot refuses: the revoke reads the registry rather than fail, on
+    # a memory namespace too, and answers busy while that read fails.
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    monkeypatch.setattr(repo_registry, "registry_read", lambda: repos._registry_loaded)
+
+    async def _failed(_ch: Any = None) -> bool:
+        return False
+
+    monkeypatch.setattr(repo_registry, "read_registry", _failed)
+    _code_rows(monkeypatch, set())
+    with pytest.raises(GrantBusyError):
+        await maintainers.read_repo("clickhouse", "team-kb", ch=object())
+
+    async def _read(_ch: Any = None) -> bool:
+        repos._registry_loaded = True
+        return True
+
+    monkeypatch.setattr(repo_registry, "read_registry", _read)
+    assert await maintainers.read_repo("clickhouse", "team-kb", ch=object()) is None
+
+
 async def test_a_branch_added_after_read_repo_is_reached_by_the_revoke(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -210,5 +210,5 @@ def test_a_skipped_namespace_names_why_the_entry_is_not_configured(
 
     monkeypatch.setattr(repos, "configured_repos", lambda: [])
     monkeypatch.setattr(repos, "_page_namespaces", frozenset({("acme", "code-x")}))
-    with pytest.raises(SystemExit, match="added that namespace from the"):
+    with pytest.raises(SystemExit, match="name stays reserved"):
         code_run._repo_cfg(argparse.Namespace(org="acme", namespace="code-x"))
