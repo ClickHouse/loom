@@ -124,9 +124,17 @@ async def test_a_failed_install_is_recorded_with_the_installer_and_its_last_outp
     assert "(npm, exit 1)" in record.error and "Failed to parse" in record.error
 
 
-def test_an_install_timeout_is_a_timeout() -> None:
-    error = deps.ToolOutputError("TypeScript dependency installation timed out after 900s in /c")
-    assert tier_health.classify(recorder.error_text(error)) == "timeout"
+@pytest.mark.asyncio
+async def test_an_install_timeout_is_recorded_as_a_timeout(
+    checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def hangs(*a: object, **k: object) -> None:
+        raise TimeoutError
+
+    monkeypatch.setattr(deps, "run_job", hangs)
+    with pytest.raises(RuntimeError) as failed:
+        await deps.prepare_dependencies(checkout, (), _installer(tmp_path))
+    assert tier_health.classify(recorder.error_text(failed.value)) == "timeout"
 
 
 def test_named_project_cannot_escape_checkout(checkout: Path) -> None:

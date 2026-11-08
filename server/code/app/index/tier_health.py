@@ -33,7 +33,8 @@ logger = logging.getLogger("loom.code_index.tier_health")
 
 class ToolOutputError(RuntimeError):
     """A tier failure whose message is the tier's own tool output about the entry (a
-    harness exit and its tail): kept in the record for its fix."""
+    harness exit and its tail), or the tier's own words about that tool (it is missing,
+    it timed out): kept in the record for its fix."""
 
 
 def error_text(error: BaseException | str) -> str:
