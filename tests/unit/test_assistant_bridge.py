@@ -198,6 +198,21 @@ def test_a_refused_answer_names_no_librechat_text(world: _World) -> None:
     assert "librechat:3080" not in str(e.value) and "500" in str(e.value)
 
 
+def test_a_refusal_whose_body_never_ends_is_read_only_to_its_bound(world: _World) -> None:
+    served = [0]
+
+    class _Endless(httpx.AsyncByteStream):
+        async def __aiter__(self) -> Any:
+            while True:
+                served[0] += 1024
+                yield b"<html>" + b"x" * 1018
+
+    world.override = lambda _request: httpx.Response(502, stream=_Endless())
+    with pytest.raises(AssistantUpstreamError, match="502"):
+        _answer(_caller(), QUESTION)
+    assert served[0] <= bridge._REFUSAL_READ_BYTES + 1024
+
+
 @pytest.mark.parametrize(
     ("change", "refusal"),
     [

@@ -104,8 +104,8 @@ log = logging.getLogger(__name__)
 def answer_run_of(request: Any, toolset: str | None, auth: Any) -> str:
     """The answer an assistant connection's call serves (its `X-Loom-Run-Id`, which the
     agent's MCP server sends): its tool calls are ledgered under it. '' elsewhere, and
-    for a token the bridge did not mint for an answer, so no other caller files its own
-    calls under an answer's id."""
+    for a token whose consumer is not `loom-assistant` (as every answer token's is), so a
+    caller's own token files nothing under an answer's id."""
     if not assistant_connection(toolset):
         return ""
     if getattr(auth, "consumer", "") != ASSISTANT_CONSUMER:

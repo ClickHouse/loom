@@ -173,7 +173,7 @@ async def _afford(org: str, namespace: str) -> tuple[str, str]:
     share = float(settings.assistant_budget_share)
     try:
         over = await operation_over_share(org, namespace, operation=ASSISTANT_OP, share=share)
-    except Exception as e:
+    except Exception as e:  # any failed read refuses: an unreadable spend is never under the cap
         log.warning("reading the assistant's spend in %s/%s failed: %s", org, namespace, e)
         raise BackendUnavailableError(
             f"the assistant's spend in {namespace!r} could not be read: ask again shortly",
@@ -272,7 +272,10 @@ async def stream(
                 )
             try:
                 if r.status_code != 200:
-                    _refused(ticket, r.status_code, _redacted(ticket, await _head(r)))
+                    # The answer's deadline bounds reading the refusal too.
+                    async with asyncio.timeout_at(deadline):
+                        head = await _head(r)
+                    _refused(ticket, r.status_code, _redacted(ticket, head))
                 answer.started = True
                 lines = r.aiter_lines()
                 while True:

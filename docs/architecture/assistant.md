@@ -838,10 +838,11 @@ spend to the same budget as its own model calls:
 
 - Before calling LibreChat, the bridge checks the namespace's daily model cost cap
   (`server/observability/budget.py`, `daily_cost_cap_usd`, default
-  `LOOM_DEFAULT_DAILY_COST_CAP_USD`) with `fail_open=False`, so a failed budget read
-  refuses, and with the assistant held to its own share of the cap
-  (`LOOM_ASSISTANT_BUDGET_SHARE`, default half), so questions cannot spend what
-  extraction and the conflict resolver need. Both surfaces record their spend under one
+  `LOOM_DEFAULT_DAILY_COST_CAP_USD`) through `operation_over_share`, which raises on a
+  failed read: an unreadable spend refuses as `BACKEND_UNAVAILABLE` with a one-second
+  retry, apart from a spent share (`RATE_LIMITED`). The assistant is held to its own
+  share of the cap (`LOOM_ASSISTANT_BUDGET_SHARE`, default half), so questions cannot
+  spend what extraction and the conflict resolver need. Both surfaces record their spend under one
   operation, `assistant.ask`, which the share check sums.
 - The check reads spend already recorded, so answers running at once could each pass it;
   each replica runs at most a set number of answers per namespace at once
