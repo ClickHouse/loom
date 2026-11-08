@@ -133,12 +133,13 @@ async def test_a_failed_project_install_names_the_project_not_the_host_path(
     checkout: Path, tmp_path: Path
 ) -> None:
     env = _installer(tmp_path, fail=True)
-    (checkout / "web").mkdir()
-    (checkout / "web" / "package.json").write_text('{"name":"web","version":"1.0.0"}')
-    (checkout / "web" / "package-lock.json").write_text("{}")
+    web = checkout / "apps" / "web"
+    web.mkdir(parents=True)
+    (web / "package.json").write_text('{"name":"web","version":"1.0.0"}')
+    (web / "package-lock.json").write_text("{}")
     with pytest.raises(RuntimeError) as failed:
-        await deps.prepare_dependencies(checkout, ("web",), env)
-    assert "(npm, exit 1) in project web" in str(failed.value)
+        await deps.prepare_dependencies(checkout, ("apps/web",), env)
+    assert "(npm, exit 1) in project apps/web" in str(failed.value)
     assert str(tmp_path) not in str(failed.value)
 
 

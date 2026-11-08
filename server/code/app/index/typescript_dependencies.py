@@ -130,7 +130,7 @@ def _install_command(checkout: Path, root: Path) -> tuple[list[str], dict[str, s
 
 def _project(checkout: Path, root: Path) -> str:
     """The install root as an error names it: no host path."""
-    return "the checkout root" if root == checkout else f"project {root.name}"
+    return "the checkout root" if root == checkout else f"project {os.path.relpath(root, checkout)}"
 
 
 async def prepare_dependencies(
@@ -193,6 +193,11 @@ async def prepare_dependencies(
             )
             # The installer first, for readers of the first line; then as much of the
             # output's end as the tier-health record keeps beside it.
-            room = max(0, ERROR_CHARS - len(error_text(ToolOutputError(head))) - 1)
-            raise ToolOutputError(f"{head}\n{output[-room:] if room else ''}")
+            # Whole lines: a cut mid-line could split a URL credential from its scheme,
+            # which the record's redaction needs.
+            room = ERROR_CHARS - len(error_text(ToolOutputError(head))) - 1
+            tail = output[-room:]
+            if len(output) > room:
+                tail = tail.partition("\n")[2]
+            raise ToolOutputError(f"{head}\n{tail}")
     await asyncio.to_thread(marker.write_text, fingerprint)
