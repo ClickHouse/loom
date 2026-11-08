@@ -58,6 +58,7 @@ _MISSING = ("", "-", "*")
 # searched before its first write still owns the name.
 READ_TRACES: Final = frozenset(
     {
+        "loom.context_blobs",  # a paged search's own tail
         "loom.events",
         "loom.memory_exposures",
         "loom.search_trace_log",

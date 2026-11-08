@@ -1,6 +1,5 @@
-"""The first write into an unregistered namespace inserts the
-registry row `namespace.register` would have written — owner = subject (none on a
-name in use),
+"""The first write into an unregistered namespace inserts the registry row
+`namespace.register` would have written — owner = subject (none on a name in use),
 kind by prefix, retention_days 0 — and nothing else: no ALTER, no TTL."""
 
 from __future__ import annotations

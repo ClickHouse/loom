@@ -174,6 +174,8 @@ def test_a_task_inbox_row_naming_a_subject_reserves_its_name() -> None:
         " created_by, version) VALUES ('dev', 'ops', 'a', 'team', ['Ivy'], 'human:Jo', 1)",
         "INSERT INTO loom.task_inboxes (org, inbox, owner_agent, owner_namespace, posters,"
         " version, is_deleted) VALUES ('dev', 'old', 'a', 'team', ['kim'], 1, 1)",
+        "INSERT INTO loom.task_inboxes (org, inbox, owner_agent, owner_namespace, created_by,"
+        " version) VALUES ('dev', 'bots', 'a', 'team', 'process:Pat', 1)",
         ddl("task_poster_policies"),
         "INSERT INTO loom.task_poster_policies (org, inbox, poster, kind, mode, version)"
         " VALUES ('dev', 'ops', 'Lee', '*', 'auto', 1)",
@@ -187,7 +189,7 @@ def test_a_task_inbox_row_naming_a_subject_reserves_its_name() -> None:
             rows = run(setup, sql, params)
             return rows[0] if rows else None
 
-    for name in ("ivy", "jo", "lee", "max"):
+    for name in ("ivy", "jo", "pat", "lee", "max"):
         with pytest.raises(HTTPException):
             asyncio.run(ss._refuse_empowered(_Local(), "dev", name))
     asyncio.run(ss._refuse_empowered(_Local(), "dev", "kim"))
