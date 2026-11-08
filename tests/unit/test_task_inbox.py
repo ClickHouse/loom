@@ -1498,11 +1498,34 @@ async def test_a_stranger_posting_to_an_inbox_is_told_it_does_not_exist(
 
 
 @pytest.mark.asyncio
-async def test_the_poster_listing_matches_the_token_subject_never_an_agent_label() -> None:
+async def test_the_poster_listing_matches_the_token_subject_never_an_agent_label(
+    fake: FakeRepo,
+) -> None:
     """`posted_by_me` reads across the org, so a subject that spells another poster's
-    agent label must not get that poster's tasks."""
-    ch = StubCH()
-    await repo.list_tasks("o", poster="deploy-bot", ch=ch)
-    [(sql, params)] = ch.query_all_calls
-    where = sql.split(" WHERE ", 1)[1]
-    assert "from_agent" not in where and params["poster"] == "deploy-bot"
+    agent label does not get that poster's tasks."""
+    from server.auth import context
+    from server.auth.jwt import AuthInfo
+    from server.operations.base import Role
+
+    await _register(fake)
+    await _post(fake)  # from_subject sa:public-bot, agent label public-bot
+
+    async def mine(subject: str) -> list[str]:
+        auth = AuthInfo(
+            subject=subject,
+            org=ORG,
+            namespaces=("public",),
+            roles=(Role.WRITER,),
+            is_service_account=False,
+        )
+        context.set_current_auth(auth)
+        try:
+            out = await reads.handle_task_list(
+                wire.TaskListInput(**_caller("public"), posted_by_me=True)
+            )
+        finally:
+            context.set_current_auth(None)
+        return [t["from_subject"] for t in out.tasks]
+
+    assert await mine("public-bot") == []
+    assert await mine("sa:public-bot") == ["sa:public-bot"]

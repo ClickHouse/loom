@@ -132,9 +132,7 @@ async def knowledge_upload(
         auth, op="knowledge.upload", org=org, namespace=namespace, transport="http"
     )
     _admit(auth, org, namespace)
-    # The upload writes under the name before the ingest it feeds: register the name first,
-    # as that op's transport would (the row names `knowledge.ingest`), so the uploader's
-    # own rows never read as in use.
+    # Register before the upload's own rows can make a fresh name read as in use.
     from server.knowledge.api.ops_knowledge import knowledge_ingest
 
     await maybe_autoregister(knowledge_ingest, org=org, namespace=namespace, auth=auth)
