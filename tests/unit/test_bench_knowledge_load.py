@@ -367,7 +367,12 @@ def test_a_rejected_dataset_read_is_tried_again_until_it_answers(
 def test_a_rejected_status_poll_waits_longer_before_the_next(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Only lower bounds: a sleep can run long under load, never short. Rejected three
+    times, each wait is at least twice the last (at a 0.05 s base)."""
+    answers, least_gaps = ["429", "429", "429", "ready"], [0.1, 0.2, 0.4]
     import asyncio
+    import itertools
+    import time
 
     import httpx
 
@@ -379,10 +384,11 @@ def test_a_rejected_status_poll_waits_longer_before_the_next(
             return httpx.Response(201, json={"upload_id": "u"})
         if path.endswith("knowledge.ingest"):
             return httpx.Response(200, json={"ingestion_id": "j"})
-        polls.append(asyncio.get_event_loop().time())
-        if len(polls) < 4:
+        polls.append(time.monotonic())
+        given = answers[len(polls) - 1]
+        if given == "429":
             return httpx.Response(429, json={"error": "rate limited"})
-        return httpx.Response(200, json={"state": "ready"})
+        return httpx.Response(200, json={"state": given})
 
     async def go() -> str:
         async with httpx.AsyncClient(
@@ -394,5 +400,14 @@ def test_a_rejected_status_poll_waits_longer_before_the_next(
 
     monkeypatch.setattr(load, "POLL_S", 0.05)
     assert asyncio.run(go()) == "ready"
-    gaps = [b - a for a, b in zip(polls, polls[1:], strict=False)]
-    assert gaps[1] > gaps[0] * 1.5 and gaps[2] > gaps[1] * 1.5  # 0.1 s, 0.2 s, 0.4 s
+    gaps = [b - a for a, b in itertools.pairwise(polls)]
+    assert len(gaps) == len(least_gaps)
+    assert all(gap >= least - 0.005 for gap, least in zip(gaps, least_gaps, strict=True))
+
+
+def test_a_rejected_poll_doubles_the_wait_to_its_cap_and_any_other_resets_it() -> None:
+    assert load.next_pause(1.0, 429) == 2.0
+    assert load.next_pause(2.0, 503) == 4.0
+    assert load.next_pause(load.POLL_MAX_S, 429) == load.POLL_MAX_S
+    for status in (200, 500, 0):  # answered, failed or no answer: back to the base
+        assert load.next_pause(4.0, status) == load.POLL_S
