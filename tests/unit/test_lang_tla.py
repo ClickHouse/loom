@@ -184,3 +184,9 @@ def test_many_definitions_under_one_long_doc_block_cost_what_a_short_one_does() 
     # the block is read once, so its 2,000 lines add little; read per definition they
     # cost about 4 times the rest of the parse
     assert_linear(cost, 1, 1_999, ratio=2.5)
+
+
+def test_two_definitions_on_one_line_are_read_by_the_column_0_reader() -> None:
+    pytest.importorskip("tree_sitter_tlaplus")
+    src = b"---- MODULE M ----\nA == 1 B == 2\nC == 3\n====\n"
+    assert [s.name for s in parse_tla("M.tla", src).symbols] == ["M", "A", "C"]

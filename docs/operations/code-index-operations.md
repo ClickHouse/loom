@@ -421,12 +421,12 @@ memory the workers process has. The full index of such a tree takes about an hou
   for a file's size first: a file over `LOOM_CODE_INGEST_MAX_FILE_BYTES` is not read, and
   its `code_files` row records the reason (`code.index_errors`); 0 lifts the cap. Every
   manifest the import resolver reads (the TypeScript, Python and Go project and workspace
-  files) is read from the mirror up to 1 MiB; a larger one is skipped once per commit
-  with a warning naming the org and namespace, and the imports it would have resolved
-  stay unresolved. Outside a worker pass the resolver reads a file from its indexed
-  chunks instead, which hold only files within `LOOM_CODE_INGEST_MAX_FILE_BYTES` (any
-  size at 0). A barrel's re-exports are read under the same file cap, and a `go.mod`
-  up to 64 KiB, at most 200 of them. A file over the cap is still excluded by its path
+  files) is read from the mirror up to 1 MiB, a `go.mod` up to 64 KiB and at most 200 of
+  them; a larger one is skipped once per commit with a warning naming the org and
+  namespace, and the imports it would have resolved stay unresolved. Outside a worker
+  pass the resolver reads a file from its indexed chunks instead, which hold only files
+  within `LOOM_CODE_INGEST_MAX_FILE_BYTES` (any size at 0). A barrel's re-exports are read
+  under the same file cap. A file over the cap is still excluded by its path
   and by its first 8 KiB (binary, a generated marker), as a file under it is.
 - **The repository's own exclusions are bounded and fail open.** `.loomignore` and
   `.gitattributes` are read up to 1 MiB and give at most 1,000 patterns between them. A
