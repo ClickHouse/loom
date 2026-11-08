@@ -351,6 +351,70 @@ export async function knowledgeIngestStatus(
   );
 }
 
+export const DATASET_TYPES = ["string", "number", "bool", "date", "datetime", "time", "duration"] as const;
+export type DatasetType = (typeof DATASET_TYPES)[number];
+
+/** Mirrors `server/knowledge/api/models_knowledge.py::DatasetOut` (the fields shown). */
+export interface Dataset {
+  dataset_id: string;
+  name: string;
+  sheet: string;
+  snapshot_id: string;
+  /** `inferred`, `needs_clarification` or `approved`. */
+  schema_state: string;
+  columns: { name: string; type: DatasetType; inferred: string }[];
+  /** What the typing could not settle and asks a person. */
+  clarifications: { code: string; column: string; detail: string }[];
+  row_count: number;
+  rejected_rows: number;
+  approved_by: string;
+}
+
+/** POST /v1/knowledge.dataset_get: the typed tables an ingested file became. */
+export async function getDatasets(
+  id: Pick<Identity, "org" | "namespace">,
+  sourceUri: string,
+  opts: RequestOpts = {},
+): Promise<{ found: boolean; datasets: Dataset[] }> {
+  return post(
+    "/v1/knowledge.dataset_get",
+    { org: id.org, namespace: id.namespace, source_uri: sourceUri },
+    opts.signal,
+  );
+}
+
+/** POST /v1/knowledge.dataset_approve: approve the schema, retyping the columns named. */
+export async function approveDataset(
+  id: Pick<Identity, "org" | "namespace">,
+  sourceUri: string,
+  dataset: Pick<Dataset, "dataset_id" | "snapshot_id">,
+  columns: Record<string, DatasetType>,
+): Promise<{ found: boolean; retyped: boolean }> {
+  return post("/v1/knowledge.dataset_approve", {
+    org: id.org,
+    namespace: id.namespace,
+    source_uri: sourceUri,
+    dataset_id: dataset.dataset_id,
+    snapshot_id: dataset.snapshot_id,
+    columns,
+  });
+}
+
+export interface IngestCancelResult {
+  found: boolean;
+  state: string;
+  cancelled: boolean;
+}
+
+/** POST /v1/knowledge.ingest_cancel: a pending job stops at once, a running one before
+ *  it publishes; one that already ended answers `cancelled: false` with its state. */
+export async function cancelIngestion(
+  id: Pick<Identity, "org" | "namespace">,
+  ingestionId: string,
+): Promise<IngestCancelResult> {
+  return post("/v1/knowledge.ingest_cancel", { org: id.org, namespace: id.namespace, ingestion_id: ingestionId });
+}
+
 /** How the Library shows an original file. An uploaded file is
  *  attacker-chosen bytes under an attacker-chosen type, and a `blob:` URL
  *  ignores the server's Content-Disposition, so only passive types are

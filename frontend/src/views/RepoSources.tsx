@@ -11,6 +11,7 @@
 import { lazy, Suspense, useState } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
+import { Link } from "@clickhouse/click-ui/Link";
 import { listKnowledgeSources } from "../api/knowledgeSources";
 import { ApiError } from "../lib/errors";
 import { humanizeError } from "../lib/format";
@@ -40,6 +41,9 @@ const SyncNowDialog = lazy(() => import("../flows/KnowledgeSourceDialog").then((
 const RotateSourceDialog = lazy(() =>
   import("../flows/KnowledgeSourceDialog").then((m) => ({ default: m.RotateSourceDialog })),
 );
+const SourceDetailsDialog = lazy(() =>
+  import("../flows/SourceDetailsDialog").then((m) => ({ default: m.SourceDetailsDialog })),
+);
 const RetireSourceDialog = lazy(() =>
   import("../flows/KnowledgeSourceDialog").then((m) => ({ default: m.RetireSourceDialog })),
 );
@@ -55,7 +59,7 @@ type State =
 
 type Verb = "check" | "sync" | "rotate" | "retire";
 
-function SourceRow({ s, items }: { s: KnowledgeSource; items: RowMenuItem[] }) {
+function SourceRow({ s, items, onOpen }: { s: KnowledgeSource; items: RowMenuItem[]; onOpen: () => void }) {
   const badge = syncBadge(s.sync);
   const counts = syncCounts(s.sync);
   const reasons = unconvertedDetail(s.sync.unconverted_reasons);
@@ -63,7 +67,10 @@ function SourceRow({ s, items }: { s: KnowledgeSource; items: RowMenuItem[] }) {
     <li className="flex items-start gap-2 text-sm min-w-0">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-          <span className="font-mono">{s.name}</span>
+          {/* The name opens the source's details: its settings and the documents it wrote. */}
+          <Link component="button" size="sm" className="font-mono" onClick={onOpen}>
+            {s.name}
+          </Link>
           <span className="text-xs text-text-muted">{kindLabel(s.kind)}</span>
           <TipTarget tip={badge.tip}>
             <Badge text={badge.text} state={TONE_STATE[badge.tone]} size="sm" />
@@ -117,6 +124,8 @@ export function RepoSourcesList({
   const [nonce, setNonce] = useState(0);
   const [adding, setAdding] = useState(false);
   const [acting, setActing] = useState<{ verb: Verb; source: KnowledgeSource } | null>(null);
+  // Details is a read: any reader of the repository may open it.
+  const [details, setDetails] = useState<string | null>(null);
   const id = { org, namespace: docsNamespace };
   const reload = () => setNonce((n) => n + 1);
 
@@ -180,7 +189,7 @@ export function RepoSourcesList({
       {state.kind === "ready" && state.sources.length > 0 && (
         <ul className="space-y-1.5" aria-label="Document sources">
           {state.sources.map((s) => (
-            <SourceRow key={s.name} s={s} items={menu(s)} />
+            <SourceRow key={s.name} s={s} items={menu(s)} onOpen={() => setDetails(s.name)} />
           ))}
         </ul>
       )}
@@ -188,6 +197,11 @@ export function RepoSourcesList({
         <Button type="empty" htmlType="button" iconLeft="plus" disabled={busy} onClick={() => setAdding(true)}>
           Add a source
         </Button>
+      )}
+      {details && (
+        <Suspense fallback={null}>
+          <SourceDetailsDialog org={org} namespace={docsNamespace} name={details} onClose={() => setDetails(null)} />
+        </Suspense>
       )}
       {adding && (
         <Suspense fallback={null}>

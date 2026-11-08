@@ -33,6 +33,7 @@ import { ListState } from "../components/ui/ListState";
 import { ListTime } from "../components/ui/ListTime";
 import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { RowMenu, type RowMenuItem } from "../components/ui/RowMenu";
+import { DatasetsDialog } from "../flows/DatasetsDialog";
 import { Modal } from "../components/ui/Modal";
 import { formatBytesShort } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
@@ -199,6 +200,8 @@ export function Documents() {
   const [previewDoc, setPreviewDoc] = useState<KnowledgeDocument | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewFile, setPreviewFile] = useState<InlinePreview | null>(null);
+  // The preview's Tables dialog: the typed datasets its file became.
+  const [tablesFor, setTablesFor] = useState<string | null>(null);
   const [showText, setShowText] = useState(false);
   const [replaceEntry, setReplaceEntry] = useState<KnowledgeEntry | null>(null);
   const [editEntry, setEditEntry] = useState<KnowledgeEntry | null>(null);
@@ -543,6 +546,7 @@ export function Documents() {
     setAddOpen(false);
     setReplaceEntry(null);
     setEditEntry(null);
+    setTablesFor(null);
   }, [place]);
 
   // The first screen mounts with the page, the rest of the rows in a transition after the
@@ -1028,7 +1032,7 @@ export function Documents() {
         className="max-w-[900px] w-full"
         initialFocus="dialog"
       >
-        <div className="flex items-start justify-between gap-4 mb-4">
+        <div className="flex flex-wrap sm:flex-nowrap items-start justify-between gap-4 mb-4">
           <div className="min-w-0 text-xs text-text-muted flex items-center gap-2 flex-wrap">
             {previewEntry?.ingested_at && (
               <span>
@@ -1050,7 +1054,18 @@ export function Documents() {
             <TagList tags={previewEntry?.tags || []} max={4} />
           </div>
           {previewEntry && (
-            <div className="flex items-center gap-2 shrink-0">
+            // On a phone the buttons wrap under the details; wider, they stay at the right.
+            <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
+              {previewEntry.has_blob && (
+                <Button
+                  type="secondary"
+                  htmlType="button"
+                  iconLeft="table"
+                  onClick={() => setTablesFor(previewEntry.source_uri)}
+                >
+                  Tables
+                </Button>
+              )}
               {!readOnly && (
                 <Tip content="Upload a new file version of this document">
                   <Button
@@ -1184,6 +1199,14 @@ export function Documents() {
           )}
         </div>
       </Modal>
+      {tablesFor && (
+        <DatasetsDialog
+          identity={identity}
+          sourceUri={tablesFor}
+          canApprove={!readOnly}
+          onClose={() => setTablesFor(null)}
+        />
+      )}
     </PageContainer>
   );
 }

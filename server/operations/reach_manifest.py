@@ -127,6 +127,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "plugin_hook",
         "dashboard",
     ),
+    "collection.move": ("dashboard",),
     "conflicts.allowlist_list": (
         "sdk_method",
         "dashboard",
@@ -254,6 +255,8 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
+    "knowledge.dataset_approve": ("dashboard",),
+    "knowledge.dataset_get": ("dashboard",),
     "knowledge.dedup_list": (
         "sdk_method",
         "dashboard",
@@ -278,7 +281,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_example",
         "dashboard",
     ),
-    "knowledge.ingest_cancel": ("sdk_method",),
+    "knowledge.ingest_cancel": (
+        "sdk_method",
+        "dashboard",
+    ),
     "knowledge.ingest_status": (
         "sdk_method",
         "dashboard",
@@ -301,6 +307,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     ),
     "knowledge.source.add": ("dashboard",),
     "knowledge.source.check": ("dashboard",),
+    "knowledge.source.inspect": ("dashboard",),
     "knowledge.source.list": ("dashboard",),
     "knowledge.source.remove": ("dashboard",),
     "knowledge.source.rotate": ("dashboard",),

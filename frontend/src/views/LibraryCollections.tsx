@@ -9,6 +9,7 @@ import { PopoverTrigger } from "../components/ui/Menu";
 import { confirmAction } from "../components/ConfirmDialog";
 import { toast, toastError } from "../components/Toast";
 import { CreateCollectionDialog, parentChoices } from "../flows/CreateCollectionDialog";
+import { MoveCollectionDialog } from "../flows/MoveCollectionDialog";
 import { MembersDialog } from "../flows/MembersDialog";
 import { humanizeError } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
@@ -159,6 +160,7 @@ export function LibraryCollections({
   onLeave?: (collection: string | null) => void;
 }) {
   const [creating, setCreating] = useState(false);
+  const [moving, setMoving] = useState<CollectionEntry | null>(null);
   // The collection Members was opened for: the dialog shows only while that one is shown, so
   // Back to another never lands a grant on it.
   const [members, setMembers] = useState<string | null>(null);
@@ -169,6 +171,7 @@ export function LibraryCollections({
   useEffect(() => {
     setCreating(false);
     setMembers(null);
+    setMoving(null);
   }, [place]);
   const ordered = useMemo(() => treeOrder(rows ?? []), [rows]);
   const parents = useMemo(() => parentChoices(rows ?? []), [rows]);
@@ -216,6 +219,7 @@ export function LibraryCollections({
   if (current && !current.personal) {
     items.push({ label: "Members", icon: "users", onSelect: () => setMembers(current.namespace) });
     if (current.role === "admin") {
+      items.push({ label: "Move…", icon: "arrow-right", onSelect: () => setMoving(current) });
       items.push({ label: "Delete collection", icon: "trash", danger: true, onSelect: () => void onDelete(current) });
     }
   }
@@ -288,6 +292,16 @@ export function LibraryCollections({
             Load collections again
           </Button>
         </p>
+      )}
+      {moving && (
+        <MoveCollectionDialog
+          org={org}
+          collection={moving}
+          parents={parents}
+          all={rows ?? []}
+          onMoved={() => reload()}
+          onClose={() => setMoving(null)}
+        />
       )}
       {/* Mounted per open, so it starts on the collection shown. */}
       {creating && (

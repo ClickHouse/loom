@@ -63,3 +63,13 @@ export interface CollectionDeleteResult {
 export async function deleteCollection(org: string, namespace: string): Promise<CollectionDeleteResult> {
   return post("/v1/collection.delete", { org, namespace });
 }
+
+/** POST /v1/collection.move (ADMIN): put a collection under `parent`, or "" to make it
+ *  top-level. Its grants then follow the new parent's. */
+export async function moveCollection(
+  org: string,
+  namespace: string,
+  parent: string,
+): Promise<{ namespace: string; parent: string; moved: boolean }> {
+  return post("/v1/collection.move", { org, namespace, parent });
+}

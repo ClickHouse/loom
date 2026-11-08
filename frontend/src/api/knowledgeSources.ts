@@ -6,6 +6,7 @@ import type { Identity, RequestOpts } from "../api";
 import type {
   KnowledgeSourceAddResult,
   KnowledgeSourceCheckResult,
+  KnowledgeSourceDetail,
   KnowledgeSourceList,
   KnowledgeSourceRemoveResult,
   KnowledgeSourceRotateResult,
@@ -21,6 +22,14 @@ type Ns = Pick<Identity, "org" | "namespace">;
 
 export async function listKnowledgeSources(id: Ns, opts: RequestOpts = {}): Promise<KnowledgeSourceList> {
   return post<KnowledgeSourceList>("/v1/knowledge.source.list", { org: id.org, namespace: id.namespace }, opts.signal);
+}
+
+export async function inspectKnowledgeSource(
+  id: Ns,
+  name: string,
+  opts: RequestOpts = {},
+): Promise<KnowledgeSourceDetail> {
+  return post("/v1/knowledge.source.inspect", { org: id.org, namespace: id.namespace, name }, opts.signal);
 }
 
 /** `dryRun` probes the credential and stores nothing. */

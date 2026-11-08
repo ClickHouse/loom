@@ -4,7 +4,7 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
-import { addKnowledge, type Identity } from "../api";
+import { addKnowledge, cancelIngestion, type Identity, type IngestCancelResult } from "../api";
 import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { TabTrigger } from "../components/ui/TabTrigger";
@@ -65,6 +65,9 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const following = useRef<AbortController | null>(null);
+  // The job being followed, for Stop.
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [stopping, setStopping] = useState(false);
   const formats = useKnowledgeFormats(identity, open);
   const verdict = file ? fileVerdict(file, formats) : null;
   // Leaving the page stops the following, as closing does; the job goes on on the server.
@@ -96,6 +99,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
     setError(null);
     setBusy(null);
     setStep("");
+    setJobId(null);
   };
 
   const onPickFile = (f: File | null) => {
@@ -142,7 +146,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
           setStep(line);
           setBusy(phase);
         },
-        { signal: ctrl.signal },
+        { signal: ctrl.signal, onQueued: setJobId },
       );
       if (status.state === "ready" || status.state === "partial") {
         const what = `${replaceMode ? "Replaced" : "Added"} ${sourceUri.trim()}: revision ${status.revision}`;
@@ -197,16 +201,34 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
     await (mode === "file" ? submitFile() : submitText());
   };
 
-  // Closing during the upload cancels it (nothing is queued yet); the ingest call and a
-  // text save hold the dialog; once the job is followed it goes on without the dialog.
+  // Closing during the upload cancels it (nothing is queued yet); the ingest call, a text
+  // save and a Stop hold the dialog; once the job is followed it goes on without the dialog.
+  const held = busy === "queue" || busy === "save" || stopping;
   const close = (v: boolean) => {
-    if ((busy === "queue" || busy === "save") && !v) return;
+    if (held && !v) return;
     if (!v && busy === "follow") toast(goesOn(sourceUri.trim(), !!replaceMode), "info");
     if (!v) reset();
     onOpenChange(v);
   };
-  const holdWhileBusy = (e: Event) => {
-    if (busy === "queue" || busy === "save") e.preventDefault();
+  // Stop the job being followed: knowledge.ingest_cancel. One that ended meanwhile says how,
+  // and one that published is added like any other.
+  const stop = async () => {
+    if (!jobId) return;
+    // The Stop's answer decides: the follow no longer finishes the dialog on its own.
+    following.current?.abort();
+    setStopping(true);
+    try {
+      const r = await cancelIngestion(identity, jobId);
+      if (published(r)) onAdded();
+      toast(stopped(sourceUri.trim(), r), "info");
+    } catch (e) {
+      // The follow is stopped and the cancel may or may not have landed.
+      toast(`Stop failed (${humanizeError(e)}); ${sourceUri.trim()} may still be extracting`, "error");
+    } finally {
+      setStopping(false);
+      reset();
+      onOpenChange(false);
+    }
   };
   const readable = readableFormats(formats);
 
@@ -217,8 +239,6 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
       title={replaceMode ? "Replace content" : "Add document"}
       description={replaceMode?.sourceUri}
       className="w-full max-w-[640px]"
-      onEscapeKeyDown={holdWhileBusy}
-      onPointerDownOutside={holdWhileBusy}
     >
       <form
         onSubmit={(e) => {
@@ -312,14 +332,14 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
           {error && <Alert role="alert" state="danger" text={error} />}
         </div>
         <ModalFooter>
-          <Button
-            type="secondary"
-            htmlType="button"
-            disabled={busy === "queue" || busy === "save"}
-            onClick={() => close(false)}
-          >
+          <Button type="secondary" htmlType="button" disabled={held} onClick={() => close(false)}>
             {busy === "follow" ? "Close" : "Cancel"}
           </Button>
+          {busy === "follow" && jobId && (
+            <Button type="danger" htmlType="button" loading={stopping} disabled={stopping} onClick={() => void stop()}>
+              Stop ingestion
+            </Button>
+          )}
           <Button type="primary" htmlType="submit" disabled={!canSubmit} loading={busy !== null}>
             {replaceMode ? "Save changes" : mode === "file" ? "Upload" : "Add"}
           </Button>
@@ -328,3 +348,15 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
     </Modal>
   );
 }
+
+/** What a Stop came to: a running job only stops before it publishes, and one that ended
+ *  meanwhile stays as it ended. */
+function stopped(uri: string, r: IngestCancelResult): string {
+  if (!r.found) return `${uri} has no ingestion to stop`;
+  if (r.cancelled) return r.state === "processing" ? `Stopping ${uri} before it publishes` : `Stopped ${uri}`;
+  if (published(r)) return `${uri} was already added`;
+  if (r.state === "failed") return `${uri} had already failed`;
+  return `${uri} was already stopped`;
+}
+
+const published = (r: IngestCancelResult) => r.found && (r.state === "ready" || r.state === "partial");

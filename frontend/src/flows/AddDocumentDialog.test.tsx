@@ -4,7 +4,7 @@
  * publishes; a format no extractor reads is refused before anything is sent; a job
  * that fails says why; pasted text is a text write.
  */
-import { cleanup, render, screen, waitFor, within } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -15,6 +15,7 @@ vi.mock("../api", async (importOriginal) => ({
   ingestKnowledge: vi.fn(),
   knowledgeIngestStatus: vi.fn(),
   addKnowledge: vi.fn(),
+  cancelIngestion: vi.fn(),
 }));
 vi.mock("../components/Toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../components/Toast")>()),
@@ -24,6 +25,7 @@ import { toast } from "../components/Toast";
 import {
   type KnowledgeUpload,
   addKnowledge,
+  cancelIngestion,
   ingestKnowledge,
   type KnowledgeIngestStatus,
   knowledgeFormats,
@@ -182,6 +184,104 @@ describe("AddDocumentDialog", () => {
     release(); // the pause ends after the close: the loop sees the abort and polls no more
     await new Promise((r) => setTimeout(r, 20));
     expect(vi.mocked(knowledgeIngestStatus).mock.calls.length).toBe(polls);
+    expect(onAdded).not.toHaveBeenCalled();
+  });
+
+  it("stops the job it follows with knowledge.ingest_cancel", async () => {
+    ingestClock.sleep = () => new Promise<void>(() => {});
+    vi.mocked(knowledgeIngestStatus).mockResolvedValue(status("processing", { stage: "embed" }));
+    vi.mocked(cancelIngestion).mockResolvedValue({ found: true, state: "cancelled", cancelled: true });
+    const { dialog, onOpenChange } = mount();
+    await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    const user = await pick("spec.pdf");
+    await user.click(within(dialog).getByRole("button", { name: "Upload" }));
+    await user.click(await within(dialog).findByRole("button", { name: "Stop ingestion" }));
+    await waitFor(() => expect(cancelIngestion).toHaveBeenCalledWith(identity, "job-1"));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(vi.mocked(toast).mock.calls.at(-1)?.[0]).toBe("Stopped spec.pdf");
+  });
+
+  it("a Stop that finds the job already published adds it like any other", async () => {
+    ingestClock.sleep = () => new Promise<void>(() => {});
+    vi.mocked(knowledgeIngestStatus).mockResolvedValue(status("processing", { stage: "embed" }));
+    vi.mocked(cancelIngestion).mockResolvedValue({ found: true, state: "ready", cancelled: false });
+    const { dialog, onAdded } = mount();
+    await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    const user = await pick("spec.pdf");
+    await user.click(within(dialog).getByRole("button", { name: "Upload" }));
+    await user.click(await within(dialog).findByRole("button", { name: "Stop ingestion" }));
+    await waitFor(() => expect(onAdded).toHaveBeenCalled());
+    expect(vi.mocked(toast).mock.calls.at(-1)?.[0]).toBe("spec.pdf was already added");
+  });
+
+  it("holds the dialog while a Stop runs", async () => {
+    ingestClock.sleep = () => new Promise<void>(() => {});
+    vi.mocked(knowledgeIngestStatus).mockResolvedValue(status("processing", { stage: "embed" }));
+    vi.mocked(cancelIngestion).mockImplementation(() => new Promise(() => {}));
+    const { dialog, onOpenChange } = mount();
+    await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    const user = await pick("spec.pdf");
+    await user.click(within(dialog).getByRole("button", { name: "Upload" }));
+    await user.click(await within(dialog).findByRole("button", { name: "Stop ingestion" }));
+    await waitFor(() => expect(cancelIngestion).toHaveBeenCalled());
+    // The footer's Close is off and every other close goes through the one guard, held until the Stop answers.
+    for (const close of within(dialog).getAllByRole("button", { name: "Close" })) await user.click(close);
+    await user.keyboard("{Escape}");
+    fireEvent.pointerDown(document.body);
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  });
+
+  it("a job that publishes while its Stop runs is added once, by the Stop's answer", async () => {
+    let poll = 0;
+    let answer: (r: { found: boolean; state: string; cancelled: boolean }) => void = () => {};
+    let tick: () => void = () => {};
+    ingestClock.sleep = () => new Promise<void>((r) => (tick = r));
+    vi.mocked(knowledgeIngestStatus).mockImplementation(async () =>
+      ++poll === 1 ? status("processing", { stage: "embed" }) : status("ready", { revision: 2 }),
+    );
+    vi.mocked(cancelIngestion).mockImplementation(() => new Promise((r) => (answer = r)));
+    const { dialog, onAdded, onOpenChange } = mount();
+    await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    const user = await pick("spec.pdf");
+    await user.click(within(dialog).getByRole("button", { name: "Upload" }));
+    await user.click(await within(dialog).findByRole("button", { name: "Stop ingestion" }));
+    // The Stop stopped the follow: its pause ends and it polls no more.
+    await act(async () => tick());
+    expect(knowledgeIngestStatus).toHaveBeenCalledTimes(1);
+    expect(onAdded).not.toHaveBeenCalled();
+    await act(async () => answer({ found: true, state: "ready", cancelled: false }));
+    expect(onAdded).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(toast).mock.calls.at(-1)?.[0]).toBe("spec.pdf was already added");
+    expect(onOpenChange.mock.calls.filter(([v]) => v === false)).toHaveLength(1);
+  });
+
+  it("a Stop that fails says the job may still run, adds nothing and closes", async () => {
+    ingestClock.sleep = () => new Promise<void>(() => {});
+    vi.mocked(knowledgeIngestStatus).mockResolvedValue(status("processing", { stage: "embed" }));
+    vi.mocked(cancelIngestion).mockRejectedValue(new Error("down"));
+    const { dialog, onAdded, onOpenChange } = mount();
+    await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    const user = await pick("spec.pdf");
+    await user.click(within(dialog).getByRole("button", { name: "Upload" }));
+    await user.click(await within(dialog).findByRole("button", { name: "Stop ingestion" }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(vi.mocked(toast).mock.calls.at(-1)).toEqual([
+      "Stop failed (down); spec.pdf may still be extracting",
+      "error",
+    ]);
+    expect(onAdded).not.toHaveBeenCalled();
+  });
+
+  it("a Stop of a running job says it stops before it publishes", async () => {
+    ingestClock.sleep = () => new Promise<void>(() => {});
+    vi.mocked(knowledgeIngestStatus).mockResolvedValue(status("processing", { stage: "embed" }));
+    vi.mocked(cancelIngestion).mockResolvedValue({ found: true, state: "processing", cancelled: true });
+    const { dialog, onAdded } = mount();
+    await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    const user = await pick("spec.pdf");
+    await user.click(within(dialog).getByRole("button", { name: "Upload" }));
+    await user.click(await within(dialog).findByRole("button", { name: "Stop ingestion" }));
+    await waitFor(() => expect(vi.mocked(toast).mock.calls.at(-1)?.[0]).toBe("Stopping spec.pdf before it publishes"));
     expect(onAdded).not.toHaveBeenCalled();
   });
 
