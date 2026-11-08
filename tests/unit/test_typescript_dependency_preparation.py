@@ -191,6 +191,23 @@ async def test_a_long_unbroken_output_is_redacted_promptly(checkout: Path, tmp_p
 
 
 @pytest.mark.asyncio
+async def test_a_credential_cut_at_the_window_start_is_not_kept(
+    checkout: Path, tmp_path: Path
+) -> None:
+    env = _installer(tmp_path)
+    # The redaction window (the output's last 4 * ERROR_CHARS characters) starts
+    # inside "user:hunter2", after the scheme its pattern needs.
+    start = "fetch https://us"
+    rest = "er:hunter2@h.example/x?token="
+    line = start + rest + "t" * (4 * tier_health.ERROR_CHARS - 1 - len(rest))
+    (tmp_path / "npm").write_text(f"#!/bin/sh\necho first\necho '{line}'\nexit 1\n")
+    with pytest.raises(RuntimeError) as failed:
+        await deps.prepare_dependencies(checkout, (), env)
+    record = tier_health.failed(None, "typescript", recorder.error_text(failed.value), NOW)
+    assert "hunter2" not in record.error
+
+
+@pytest.mark.asyncio
 async def test_an_install_timeout_is_recorded_as_a_timeout(
     checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -193,8 +193,13 @@ async def prepare_dependencies(
             )
             # The installer first, for readers of the first line; then the end of the
             # output, redacted before the cut so the budget is what the record keeps.
-            # Redaction scans a bounded window: on a long token it is quadratic.
+            # Redaction scans a bounded window of whole lines (on a long token it is
+            # quadratic, and a line cut at the window's start could lose the scheme its
+            # credential pattern needs).
             room = max(0, ERROR_CHARS - len(error_text(ToolOutputError(head))) - 1)
-            tail = redact(output[-4 * ERROR_CHARS :])[-room:] if room else ""
+            window = output[-4 * ERROR_CHARS :]
+            if len(output) > len(window):
+                window = window.partition("\n")[2]
+            tail = redact(window)[-room:] if room else ""
             raise ToolOutputError(f"{head}\n{tail}")
     await asyncio.to_thread(marker.write_text, fingerprint)
