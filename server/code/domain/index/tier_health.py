@@ -221,8 +221,8 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
             re.IGNORECASE,
         ),
     ),
-    # a file this tier's user cannot read or write: git quotes it; a Python file error
-    # is recorded with it (`error_text`)
+    # a file this tier's user cannot read or write: git quotes it or cannot add an object;
+    # a Python file error is recorded with its path (`error_text`)
     (
         "permission",
         re.compile(
