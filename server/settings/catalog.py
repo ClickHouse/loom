@@ -1037,7 +1037,7 @@ class CodeSettings(BaseModel):
     code_ingest_max_files_per_commit: int = 500
     # CPU seconds after which a tree-sitter parse stops reading its file, which then takes
     # its reader's fallback (`code.index_errors` lists most); raising it re-reads nothing.
-    code_parse_timeout_seconds: Annotated[float, LIVE] = Field(default=3.0, gt=0)
+    code_parse_timeout_s: Annotated[float, LIVE] = Field(default=3.0, gt=0)
     # The ingest pass's own deadline (seconds), kept at the supervisor's cap;
     # `code_ingest_pass_budget_fraction` keeps a pass under it.
     code_ingest_max_pass_seconds: int = 900
@@ -1695,7 +1695,7 @@ class CodeSettings(BaseModel):
     code_pr_overlay_file_ttl_s: Annotated[float, LIVE] = Field(default=3600.0, gt=0)
     # Seconds after a PR overlay begins past which it starts no parse; the files it did
     # not reach are counted in `overlay_note` and read by a later request.
-    code_pr_overlay_parse_window_seconds: Annotated[float, LIVE] = Field(default=10.0, gt=0)
+    code_pr_overlay_parse_window_s: Annotated[float, LIVE] = Field(default=10.0, gt=0)
     # Seconds code.repos keeps the worker-ledger answer every repository's status
     # shares.
     code_status_ledger_passes_ttl_s: Annotated[float, LIVE] = Field(default=15.0, gt=0)

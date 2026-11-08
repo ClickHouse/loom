@@ -2,7 +2,7 @@
 
 Some grammars take quadratic time on short repeated tokens, so a 1 MB file could hold
 a worker or a serving replica for hours. Every parse of repository text goes through
-`parse`, which stops reading the source after `code_parse_timeout_seconds` of the
+`parse`, which stops reading the source after `code_parse_timeout_s` of the
 parsing thread's CPU time and raises `ParseTimeout`; each caller takes its parse
 failure path (an indexed file is then chunks without symbols). The deadline is CPU
 time, not wall-clock time, so waiting for the GIL, the lock or a CPU costs none of it.
@@ -32,14 +32,14 @@ _LOCKS: dict[Any, threading.Lock] = {}
 
 
 class ParseTimeout(Exception):
-    """The parse ran past `code_parse_timeout_seconds`."""
+    """The parse ran past `code_parse_timeout_s`."""
 
 
 def parse(parser: Any, source: bytes) -> Any:
     """`parser.parse(source)`, raising `ParseTimeout` past the deadline."""
     from server.settings import settings
 
-    budget = settings.code_parse_timeout_seconds
+    budget = settings.code_parse_timeout_s
     deadline = time.thread_time() + budget  # waiting on the lock costs no CPU time
     expired = False
 

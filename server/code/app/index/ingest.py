@@ -213,7 +213,7 @@ async def ingest_file(
     run_edge = (scope is None or "edge" in scope) and not is_reference
     run_guard = (scope is None or "guard" in scope) and not (is_reference or is_sql)
 
-    # chunking can parse a host file's shell again: off the event loop
+    # chunking can parse again (a host file's shell, a TLA+ spec): off the event loop
     try:  # A declared-only file has no chunks (the reconcile retires any)
         chunks, structural_prefixes, facets = (
             ([], {}, [])

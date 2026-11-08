@@ -1,4 +1,4 @@
-"""Every tree-sitter parse of repository text stops at `code_parse_timeout_seconds`."""
+"""Every tree-sitter parse of repository text stops at `code_parse_timeout_s`."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ _SLOW = [
 def test_a_slow_parse_stops_at_the_deadline_and_the_file_is_chunked(
     monkeypatch: pytest.MonkeyPatch, path: str, source: bytes
 ) -> None:
-    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 0.2)
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 0.2)
     start = time.monotonic()
     pf, err = parse_for_ingest(path, source)
     assert time.monotonic() - start < 5
@@ -49,7 +49,7 @@ def test_a_host_file_whose_shell_parse_stops_keeps_its_chunks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "code_host_islands", True)
-    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 0.2)
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 0.2)
     source = b"build:\n\t" + b"a=(" * 30_000 + b"\n"
     pf, err = parse_for_ingest("Makefile", source)
     assert pf is not None and "ParseTimeout" in err
@@ -120,7 +120,7 @@ def test_a_header_whose_parse_stops_is_read_as_not_indexed(
     from server.code.app.index.ingest_stats import FileIngestStats
     from server.code.domain.extract.treesitter import parse_cpp
 
-    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 0.2)
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 0.2)
     monkeypatch.setattr(ih, "_needs_header", lambda pf, hd: True)
     monkeypatch.setattr(ih, "_header_cache", {})
 
@@ -190,7 +190,7 @@ def test_the_headers_of_one_source_stop_at_one_deadline(
     from server.code.app.index.ingest_stats import FileIngestStats
     from server.code.domain.extract.treesitter import parse_cpp
 
-    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 0.2)
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 0.2)
     monkeypatch.setattr(ih, "_needs_header", lambda pf, hd: True)
     read: list[str] = []
 
@@ -225,7 +225,7 @@ def test_an_imported_module_whose_parse_stops_reads_as_empty(
 ) -> None:
     from server.code.domain.extract import lang_python
 
-    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 0.05)
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 0.05)
     lang_python._reexport_facts.cache_clear()
     slow = "def g():\n    pass\n" + "x = 1\n" * 400_000  # names `g` when parsed whole
     try:
@@ -257,7 +257,7 @@ def test_the_event_loop_runs_while_an_ingest_round_parses(
     from server.code.app.index.round_reads import RoundReads
     from tests.unit.test_code_ingest_pass_budget import _ReadRepo
 
-    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 0.5)
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 0.5)
     reads = RoundReads(_ReadRepo(), "o", "code-ns")
     ticks = 0
 
@@ -281,7 +281,7 @@ def test_the_round_does_not_parse_a_timed_out_host_shell_again(
     from tests.unit.test_code_ingest_pass_budget import _ReadRepo
 
     monkeypatch.setattr(settings, "code_host_islands", True)
-    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 0.2)
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 0.2)
     sources = {"Makefile": b"build:\n\t" + b"a=(" * 30_000 + b"\n"}
     reads = RoundReads(_ReadRepo(), "o", "code-ns")
     asyncio.run(reads.prefetch(sources))

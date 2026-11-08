@@ -187,7 +187,7 @@ the extractor stamp:
 7. Any other text, chunked without symbols (`lang_text`).
 
 The parser comes from `ingest_parse._PARSERS`. A failure of that parse, including a missing
-grammar or a tree-sitter parse past `code_parse_timeout_seconds` (`bounded_parse`, one parse
+grammar or a tree-sitter parse past `code_parse_timeout_s` (`bounded_parse`, one parse
 per grammar at a time), degrades to a chunk-only file with `code_files.index_error` set;
 `code.index_errors` reports it; a TLA+ spec instead falls back to its regex reader. A
 timeout in any other parse takes its caller's fallback and records no error.

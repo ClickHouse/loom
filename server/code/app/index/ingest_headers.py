@@ -178,7 +178,7 @@ async def header_context(
     # No header of one source starts after its headers have spent one parse deadline,
     # so they spend up to about two
     spent = 0.0
-    while read < _HEADER_CAP and spent <= settings.code_parse_timeout_seconds:
+    while read < _HEADER_CAP and spent <= settings.code_parse_timeout_s:
         if not queue:
             if includes_done:
                 break

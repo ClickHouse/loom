@@ -364,7 +364,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_INGEST_MAX_COMMITS_PER_PASS` | `int` | `20` |  | Commits past the watermark one pass reads; later ones wait for the next pass. |
 | `LOOM_CODE_INGEST_SECONDS_PER_FILE` | `float` | `2.5` |  | Prior ingest cost per changed file (seconds), refined by observation. A commit predicted to overrun the pass deadline is not started unless it is the first of its pass. |
 | `LOOM_CODE_INGEST_MAX_FILES_PER_COMMIT` | `int` | `500` |  | Changed files indexed per commit; past it the rest are skipped with a warning and heal on the next backfill. |
-| `LOOM_CODE_PARSE_TIMEOUT_SECONDS` | `float` | `3.0` | live | CPU seconds after which a tree-sitter parse stops reading its file, which then takes its reader's fallback (`code.index_errors` lists most); raising it re-reads nothing. |
+| `LOOM_CODE_PARSE_TIMEOUT_S` | `float` | `3.0` | live | CPU seconds after which a tree-sitter parse stops reading its file, which then takes its reader's fallback (`code.index_errors` lists most); raising it re-reads nothing. |
 | `LOOM_CODE_INGEST_MAX_PASS_SECONDS` | `int` | `900` |  | The ingest pass's own deadline (seconds), kept at the supervisor's cap; `code_ingest_pass_budget_fraction` keeps a pass under it. |
 | `LOOM_CODE_INGEST_SLICE_SHARE` | `float` | `0.5` |  | Share of the commit phase one oversized commit may take per pass while other entries wait (it is sliced across passes). |
 | `LOOM_CODE_INGEST_PASS_BUDGET_FRACTION` | `float` | `0.75` |  | Fraction of the deadline after which the pass stops STARTING units, finishes the in-flight round, saves cursors and returns `partial: true`. |
@@ -685,7 +685,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_INGEST_SIBLING_TEXT_TTL_S` | `float` | `600.0` | live | Seconds the ingest keeps a sibling-text answer (a manifest, a listing, a config, a barrel). |
 | `LOOM_CODE_PR_OVERLAY_CACHE_TTL_S` | `float` | `60.0` | live | Seconds a PR overlay (the PR's changed files over its base) is cached; one that left changed files unreached is not. |
 | `LOOM_CODE_PR_OVERLAY_FILE_TTL_S` | `float` | `3600.0` | live | Seconds one PR file's parse is kept, so a push that changes one file re-parses that file alone; a PR's next review follows its next push. |
-| `LOOM_CODE_PR_OVERLAY_PARSE_WINDOW_SECONDS` | `float` | `10.0` | live | Seconds after a PR overlay begins past which it starts no parse; the files it did not reach are counted in `overlay_note` and read by a later request. |
+| `LOOM_CODE_PR_OVERLAY_PARSE_WINDOW_S` | `float` | `10.0` | live | Seconds after a PR overlay begins past which it starts no parse; the files it did not reach are counted in `overlay_note` and read by a later request. |
 | `LOOM_CODE_STATUS_LEDGER_PASSES_TTL_S` | `float` | `15.0` | live | Seconds code.repos keeps the worker-ledger answer every repository's status shares. |
 | `LOOM_CODE_STATUS_RECENT_COMMITS_TTL_S` | `float` | `60.0` | live | Seconds a repository's recent-commits listing for code.repos is cached. |
 | `LOOM_CODE_MESSAGE_GREP_ERROR_CODES_TTL_S` | `float` | `600.0` | live | Seconds a repository's error-code table is cached for message search. |

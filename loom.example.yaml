@@ -1201,7 +1201,7 @@ settings:
   # CPU seconds after which a tree-sitter parse stops reading its file, which then takes
   # its reader's fallback (`code.index_errors` lists most); raising it re-reads nothing.
   # [live]
-  # code_parse_timeout_seconds: 3.0
+  # code_parse_timeout_s: 3.0
 
   # The ingest pass's own deadline (seconds), kept at the supervisor's cap;
   # `code_ingest_pass_budget_fraction` keeps a pass under it. [restart]
@@ -2082,7 +2082,7 @@ settings:
 
   # Seconds after a PR overlay begins past which it starts no parse; the files it did
   # not reach are counted in `overlay_note` and read by a later request. [live]
-  # code_pr_overlay_parse_window_seconds: 10.0
+  # code_pr_overlay_parse_window_s: 10.0
 
   # Seconds code.repos keeps the worker-ledger answer every repository's status shares.
   # [live]

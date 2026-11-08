@@ -569,7 +569,7 @@ async def _in_turn[T](
         task.add_done_callback(finished)
     # a parse waiting on its grammar's lock elsewhere in the process is not waited for
     # past one parse deadline after the request's own
-    wait = max(0.0, deadline + settings.code_parse_timeout_seconds - time.monotonic())
+    wait = max(0.0, deadline + settings.code_parse_timeout_s - time.monotonic())
     done, _ = await asyncio.wait({task}, timeout=wait)
     return cast("T", task.result()) if done else None
 
@@ -656,14 +656,14 @@ async def _parse_post_image(
     path_prefixes: tuple[str, ...],
 ) -> None:
     """Parse the post-image into `ov`. An overlay starts no parse once
-    `code_pr_overlay_parse_window_seconds` have passed since it began."""
+    `code_pr_overlay_parse_window_s` have passed since it began."""
     paths = parsable_paths(ov.changed_paths, path_prefixes, ov.hunks)
     if not paths:
         return
     # path -> (source, digest, parsed file this request already holds, symbols, names)
     files: dict[str, tuple[bytes, str, Any, tuple[Any, ...], frozenset[str]]] = {}
     names: set[str] = set()
-    deadline = time.monotonic() + settings.code_pr_overlay_parse_window_seconds
+    deadline = time.monotonic() + settings.code_pr_overlay_parse_window_s
     timed_out = 0
     for p in paths:
         source = await read(p)

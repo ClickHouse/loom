@@ -389,11 +389,11 @@ def test_a_push_that_changes_one_file_parses_that_file_alone(
 def test_an_overlay_past_its_parse_time_leaves_the_rest_out(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "code_pr_overlay_parse_window_seconds", 1e-9)
+    monkeypatch.setattr(settings, "code_pr_overlay_parse_window_s", 1e-9)
     ov = asyncio.run(po.load_posted_overlay(_Repo(), "acme", "code-ch", _img()))
     assert ov.ok and ov.symbols == [] and ov.unreached == 1
     assert po.NOT_REACHED in ov.disclosure()["overlay_note"]
-    monkeypatch.setattr(settings, "code_pr_overlay_parse_window_seconds", 60.0)
+    monkeypatch.setattr(settings, "code_pr_overlay_parse_window_s", 60.0)
     later = asyncio.run(po.load_posted_overlay(_Repo(), "acme", "code-ch", _img()))
     assert later is not ov and later.symbols and later.note == ""  # not cached: finished
 
@@ -425,7 +425,7 @@ def test_concurrent_requests_parse_a_file_once(monkeypatch: pytest.MonkeyPatch) 
 def test_a_file_whose_parse_runs_past_the_deadline_is_counted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 0.2)
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 0.2)
     slow = b"package x\nvar s = " + b"`" * 60_000
     sources = {PATH: POST.encode(), "src/slow.go": slow}
     ov = po.PrOverlay(
@@ -497,7 +497,7 @@ def test_an_open_brief_over_a_partial_overlay_is_served_unstored(
 
 
 def test_the_event_loop_runs_while_an_overlay_parses(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 0.5)
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 0.5)
     slow = (b"package x\nvar s = " + b"`" * 60_000).decode()
     img = po.PostImage(pr_number=7, files={"src/slow.go": slow}, diff="")
     ticks = 0
@@ -604,7 +604,7 @@ def test_another_namespace_does_not_wait_for_its_turn(monkeypatch: pytest.Monkey
 def test_a_started_parse_is_not_waited_for_past_one_deadline_after_the_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 0.1)
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 0.1)
     monkeypatch.setattr(po, "_parsed_facts", _slow_facts(0.5))
 
     async def late() -> tuple[Any, float]:
@@ -632,8 +632,8 @@ def test_edges_not_reached_past_the_window_are_counted(monkeypatch: pytest.Monke
 
     asyncio.run(po._parse_post_image(_Repo(), "acme", "code-ch", ov, read=read, path_prefixes=()))
     po._FILE_EDGES.clear()  # the facts stay cached: the edges need a parse again
-    monkeypatch.setattr(settings, "code_pr_overlay_parse_window_seconds", 1e-9)
-    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 1e-9)
+    monkeypatch.setattr(settings, "code_pr_overlay_parse_window_s", 1e-9)
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 1e-9)
     again = po.PrOverlay(pr_number=7, changed_paths=[PATH], hunks={PATH: [(1, 1)]})
     asyncio.run(
         po._parse_post_image(_Repo(), "acme", "code-ch", again, read=read, path_prefixes=())
@@ -668,7 +668,7 @@ def test_an_edge_parse_that_times_out_is_counted(monkeypatch: pytest.MonkeyPatch
 def test_a_started_parse_that_ends_within_one_deadline_is_returned(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 2.0)
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 2.0)
     monkeypatch.setattr(po, "_parsed_facts", _slow_facts(0.2))
 
     async def late() -> Any:
@@ -715,10 +715,10 @@ def test_a_mirrored_overlay_with_unreached_files_is_not_cached(
             )
         )
 
-    monkeypatch.setattr(settings, "code_pr_overlay_parse_window_seconds", 1e-9)
+    monkeypatch.setattr(settings, "code_pr_overlay_parse_window_s", 1e-9)
     partial = load()
     assert partial.unreached == 1
-    monkeypatch.setattr(settings, "code_pr_overlay_parse_window_seconds", 60.0)
+    monkeypatch.setattr(settings, "code_pr_overlay_parse_window_s", 60.0)
     later = load()
     assert later is not partial and later.symbols and later.unreached == 0
     assert load() is later  # a complete overlay is cached
