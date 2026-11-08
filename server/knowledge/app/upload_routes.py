@@ -79,6 +79,7 @@ def _admit(auth: Any, org: str, namespace: str) -> None:
         namespace,
         org=_bucket_org(auth, org),
         actor=getattr(auth, "subject", None),
+        label="knowledge.upload",
     )
 
 

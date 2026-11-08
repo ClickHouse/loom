@@ -44,8 +44,8 @@ from server.observability import cost_accumulator, sli
 from server.observability.budgets import effective_budget_ms
 from server.observability.ledger import emit_agent_event
 from server.observability.run_context import set_ledger_run
+from server.operations.base import Role
 from server.settings import settings
-from server.settings.catalog import OP_BUDGETS_P99_MS
 
 log = logging.getLogger(__name__)
 
@@ -117,34 +117,32 @@ class _Row:
                 # The caller's own client asked: its tool calls are `loom-assistant`'s.
                 subject=self.auth.subject,
                 transport="http",
-                slo_class=_slo_class(),
-                budget_ms=effective_budget_ms(
-                    bridge.ASSISTANT_OP, OP_BUDGETS_P99_MS[bridge.ASSISTANT_OP]
-                ),
+                slo_class=_sli()[0],
+                budget_ms=_sli()[1],
             )
         except Exception as e:  # noqa: BLE001 — telemetry never fails an answer
             log.debug("assistant answer: ledger row not written: %s", e)
 
 
-def _slo_class() -> str:
-    """The SLO class the op transport records for `assistant.ask`, so the route's rows
-    and the op's fall in one."""
+def _sli() -> tuple[str, int]:
+    """(SLO class, budget) as the op transport records them for `assistant.ask`
+    (`transport._common.sli_columns`), so the route's rows and the op's fall in one."""
     from server.operations.registry import OPERATIONS_BY_NAME
 
     op = OPERATIONS_BY_NAME[bridge.ASSISTANT_OP]
-    return sli.slo_class(op.name, writes=not op.read_only, admin=False)
+    admin = op.required_role >= Role.ADMIN
+    slo = sli.slo_class(op.name, writes=not op.read_only, admin=admin)
+    return slo, effective_budget_ms(op.name, op.budget_p99_ms)
 
 
 class _Held:
     """What one admitted answer holds until its response ends: its per-replica slot, one
     of the org's in-flight slots, and its row."""
 
-    def __init__(self, ticket: bridge.Ticket, row: _Row) -> None:
-        self.ticket, self.row = ticket, row
+    def __init__(self, ticket: bridge.Ticket, row: _Row, slots: contextlib.ExitStack) -> None:
+        self.ticket, self.row, self.slots = ticket, row, slots
         self.answer = bridge.Answer()
         self.finished = False  # the stream reached its end, or its error event
-        self.slots = contextlib.ExitStack()
-        self.slots.enter_context(tenant_slots.hold(ticket.org))
 
     def close(self, error: BaseException | None) -> None:
         self.ticket.release()
@@ -194,6 +192,7 @@ async def chat_completions(request: Request) -> Any:
     The caller needs `viewer` on the namespace."""
     bearer = _bearer(request)
     row = _Row(bearer, bearer.org, request.headers.get("X-Loom-Namespace") or "")
+    slots = contextlib.ExitStack()
     try:
         try:
             auth = effective_auth(bearer, request.headers.get("X-Loom-On-Behalf-Of") or "")
@@ -216,22 +215,20 @@ async def chat_completions(request: Request) -> Any:
         await check_acted_for(auth, org)
         await bridge.authorize(auth, org, namespace)
         # Drawn once the caller is authorized and before any cost check, as the op
-        # transport draws them.
+        # transport draws them; the org's in-flight slot too, before a token is minted.
         admit_route(bridge.ASSISTANT_OP, namespace, org=org, actor=auth.subject)
+        slots.enter_context(tenant_slots.hold(org))
         ticket = await bridge.open_answer(auth, org, namespace)
     except (LoomServerError, HTTPException, PermissionError) as e:
+        slots.close()
         refused = _refusal(e)
         row.write(refused)  # a refused answer leaves its row, as a refused op does
         raise refused from e
     except Exception as e:
+        slots.close()
         row.write(e)  # INTERNAL_ERROR, as the op transport records it
         raise
-    try:
-        held = _Held(ticket, row)
-    except BaseException as e:
-        ticket.release()
-        row.write(e)
-        raise
+    held = _Held(ticket, row, slots)
     try:
         await note_restricted_access(
             auth, op=bridge.ASSISTANT_OP, org=org, namespace=namespace, transport="http"

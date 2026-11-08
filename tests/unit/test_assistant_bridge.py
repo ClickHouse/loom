@@ -137,6 +137,17 @@ def _answer(
 QUESTION = [{"role": "user", "content": "How many memories?"}]
 
 
+def _org_slot(org: str) -> Any:
+    """One of the org's in-flight slots, held as the route holds it for an answer."""
+    import contextlib
+
+    from server.core import tenant_slots
+
+    slots = contextlib.ExitStack()
+    slots.enter_context(tenant_slots.hold(org))
+    return slots
+
+
 def test_an_answer_runs_the_seeded_agent_with_its_own_token(world: _World) -> None:
     answer, chunks, (acc, run) = _answer(_caller(), QUESTION)
     body = world.librechat_body
@@ -496,13 +507,11 @@ def test_the_answers_row_names_who_acted_and_its_budget(
     http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
     (row,) = rows
     assert row["impersonated_by"] == "trusted-ui"
-    assert row["budget_ms"] > 0
-    # The op transport's class for the same operation, so both land in one SLI.
-    from server.observability.sli import slo_class
-    from server.operations.registry import OPERATIONS_BY_NAME
+    # What the op transport records for the same operation, so both land in one SLI.
+    from server.transport._common import sli_columns
 
-    op = OPERATIONS_BY_NAME["assistant.ask"]
-    assert row["slo_class"] == slo_class(op.name, writes=not op.read_only, admin=False)
+    columns = sli_columns("assistant.ask", "http")
+    assert (row["slo_class"], row["budget_ms"]) == (columns["slo_class"], columns["budget_ms"])
 
 
 def test_a_client_that_went_away_is_its_own_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -559,7 +568,7 @@ def test_a_request_past_the_ops_bounds_is_refused() -> None:
 
 
 def test_an_org_at_its_in_flight_limit_is_refused_before_the_stream(
-    client: Any, monkeypatch: pytest.MonkeyPatch
+    client: Any, world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from server.core import tenant_slots
 
@@ -570,6 +579,7 @@ def test_an_org_at_its_in_flight_limit_is_refused_before_the_stream(
     assert r.status_code == 429 and r.json()["detail"]["code"] == "RATE_LIMITED"
     (row,) = rows
     assert row["error_code"] == "RATE_LIMITED" and bridge._running == {}
+    assert "minted" not in world.delegated  # refused before a token was made
 
 
 def test_a_caller_refused_access_draws_no_rate_limit(
@@ -650,7 +660,7 @@ def test_a_client_leaving_mid_stream_is_its_own_failure_and_releases_all(
     async def run() -> None:
         ticket = await bridge.open_answer(_caller(), ORG, NS)
         row = routes._Row(_caller(), ORG, NS)
-        held = routes._Held(ticket, row)
+        held = routes._Held(ticket, row, _org_slot(ORG))
         response = routes._AnswerStream(
             routes._streamed(bridge.stream(ticket, QUESTION, held.answer), held), held
         )
@@ -693,7 +703,7 @@ def test_a_body_that_fails_to_close_still_frees_the_org_slot_and_writes_its_row(
 
     async def run() -> None:
         ticket = await bridge.open_answer(_caller(), ORG, NS)
-        held = routes._Held(ticket, routes._Row(_caller(), ORG, NS))
+        held = routes._Held(ticket, routes._Row(_caller(), ORG, NS), _org_slot(ORG))
         response = routes._AnswerStream(body(), held)
 
         async def send(message: dict[str, Any]) -> None:
@@ -728,3 +738,18 @@ def test_an_unexpected_error_before_the_stream_leaves_its_row(
     assert r.status_code == 500
     (row,) = rows
     assert row["error_code"] == "INTERNAL_ERROR" and bridge._running == {}
+
+
+def test_a_chunk_librechat_sends_malformed_is_skipped(world: _World) -> None:
+    world.stream_body = (
+        b"data: null\n\n"
+        b"data: 1\n\n"
+        b'data: {"id": "chatcmpl-8", "choices": [null, {"delta": null}]}\n\n'
+        b'data: {"id": "chatcmpl-8", "choices": [{"delta": {"content": "Seven."}}]}\n\n'
+        b'data: {"id": "chatcmpl-8", "choices": [], "usage": {"prompt_tokens": "n/a"}}\n\n'
+        b"data: [DONE]\n\n"
+    )
+    answer, _, (acc, _) = _answer(_caller(), QUESTION)
+    assert "".join(answer.text) == "Seven." and answer.usage_seen is False
+    # Unreadable usage counts as none: the ceiling is charged.
+    assert acc.cost_usd == pytest.approx(settings.assistant_answer_ceiling_usd)

@@ -332,22 +332,24 @@ def cmd_setup_bridge(args: argparse.Namespace) -> None:
             extra_namespaces=namespaces[1:],
         )
         admin = minted["token"]
-        for person in (p for p in people if p["org"] == org):
-            body = {
-                "org": org,
-                "namespace": person["namespace"],
-                "subject": person["name"],
-                "role": "viewer",
-            }
-            code, out, _ = loom_call(st["loom_url"], admin, "grants.create", body)
-            if code != 200:
-                sys.exit(f"grants.create {person['name']}: {code} {out}")
-        # The admin token did its one job: it is not left live.
-        subprocess.run(
-            [args.loom_bin, "revoke-token", "--jti", minted["jti"], "--reason", "qualify"],
-            check=True,
-            capture_output=True,
-        )
+        try:
+            for person in (p for p in people if p["org"] == org):
+                body = {
+                    "org": org,
+                    "namespace": person["namespace"],
+                    "subject": person["name"],
+                    "role": "viewer",
+                }
+                code, out, _ = loom_call(st["loom_url"], admin, "grants.create", body)
+                if code != 200:
+                    sys.exit(f"grants.create {person['name']}: {code} {out}")
+        finally:
+            # The admin token did its one job: it is not left live, whatever happened.
+            subprocess.run(
+                [args.loom_bin, "revoke-token", "--jti", minted["jti"], "--reason", "qualify"],
+                check=True,
+                capture_output=True,
+            )
     st["bridge"] = True
     # The agent's model, for the report's prices: agent.yaml's, unless the server sets
     # LOOM_ASSISTANT_MODEL, which the harness cannot see.

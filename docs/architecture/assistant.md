@@ -107,13 +107,13 @@ steps:
    `delegate`): `viewer` on the request's namespace alone, minted for the caller's own
    subject with consumer `loom-assistant`, as a service-account token when the caller's
    is one, and expiring when an answer may run no longer (`LOOM_ASSISTANT_ANSWER_TTL_S`,
-   default ten minutes). Delegation applies every rule a minted child follows: the creator's live
-   grant, the end user, the ancestor subjects and their issue times, the chain depth
-   limit, and the caller's token id among the child's `parents`. The bridge also asks
-   for the caller's sign-in session among the `parents` (`delegate`'s `ends_with_session`), so a
-   dashboard or `loom login` caller's answer token ends at sign-out, as a third-party
-   client's already does. The token is not listed in `loom.service_accounts`: it lives
-   for one answer.
+   default ten minutes). Delegation applies every rule a minted child follows: the
+   creator's live grant, the end user, the ancestor subjects and their issue times, the
+   chain depth limit, and the caller's token id among the child's `parents`. The bridge
+   also asks for the caller's sign-in session among the `parents` (`delegate`'s
+   `ends_with_session`), so a dashboard or `loom login` caller's answer token ends at
+   sign-out, as a third-party client's already does. The token is not listed in
+   `loom.service_accounts`: it lives for one answer.
 3. Call LibreChat's agents API with Loom's service key, the seeded agent's id in place
    of any `model` the caller names, the answer token as `parent_message_id`, and the
    text of the caller's `user` and `assistant` messages (no `system` message, which
@@ -835,9 +835,9 @@ spend to the same budget as its own model calls:
   (`server/observability/budget.py`, `daily_cost_cap_usd`, default
   `LOOM_DEFAULT_DAILY_COST_CAP_USD`) with `fail_open=False`, so a failed budget read
   refuses, and with the assistant held to its own share of the cap
-  (`LOOM_ASSISTANT_BUDGET_SHARE`, default half), so questions cannot spend what extraction and the conflict resolver
-  need. Both surfaces record their spend under one operation, `assistant.ask`, which the
-  share check sums.
+  (`LOOM_ASSISTANT_BUDGET_SHARE`, default half), so questions cannot spend what
+  extraction and the conflict resolver need. Both surfaces record their spend under one
+  operation, `assistant.ask`, which the share check sums.
 - The check reads spend already recorded, so answers running at once could each pass it;
   each replica runs at most a set number of answers per namespace at once
   (`LOOM_ASSISTANT_CONCURRENT_ANSWERS`, default 2), which bounds the overshoot to that
@@ -849,8 +849,7 @@ spend to the same budget as its own model calls:
   `agent_events` row, where every model spend is counted. An answer cut before its final
   chunk (a disconnect, the stop button, a timeout), or on a model Loom has no rate for,
   is charged a per-answer ceiling (`LOOM_ASSISTANT_ANSWER_CEILING_USD`, default $0.10)
-  instead, so no answer spends for
-  free.
+  instead, so no answer spends for free.
 
 At the default cap of $1 a day, half of it buys about 15 answers at the mean of $0.033
 per answer that the [qualification](../features/integrations/librechat.md#qualification)
@@ -895,10 +894,10 @@ by an older build.
    and recommendation questions
    ([the deployed assistant](../features/integrations/librechat.md#the-deployed-assistant)).
    Built.
-4. The bridge: the chat route and `assistant.ask`, with the answer's token, the refusals,
-   the budget share, the per-replica limit, the spend on the answer's ledger row and
-   the answer's id on its tool calls' rows (built); then the citation check; then the
-   SDKs' streaming clients.
+4. The bridge: the chat route and `assistant.ask`, with the answer's token, the
+   refusals, the budget share, the per-replica limit, the spend on the answer's ledger
+   row and the answer's id on its tool calls' rows (built); then the citation check;
+   then the SDKs' streaming clients.
 5. The chat on the dashboard's Assistant page.
 
 Each part moves its section of this page from design to the description of what is

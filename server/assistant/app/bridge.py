@@ -308,6 +308,8 @@ def _note(answer: Answer, data: str) -> None:
         chunk = json.loads(data)
     except ValueError:
         return
+    if not isinstance(chunk, dict):
+        return  # not a chunk: a LibreChat that misbehaves skips it
     if not answer.run_id and chunk.get("id"):
         answer.run_id = clean_run_id(chunk["id"])
         set_ledger_run(answer.run_id)
@@ -315,11 +317,16 @@ def _note(answer: Answer, data: str) -> None:
         answer.error = json.dumps(chunk["error"])[:300]
     usage = chunk.get("usage")
     if isinstance(usage, dict):
-        answer.prompt_tokens = int(usage.get("prompt_tokens") or 0)
-        answer.completion_tokens = int(usage.get("completion_tokens") or 0)
-        answer.usage_seen = True
-    for choice in chunk.get("choices") or []:
-        content = (choice.get("delta") or {}).get("content")
+        try:
+            answer.prompt_tokens = int(usage.get("prompt_tokens") or 0)
+            answer.completion_tokens = int(usage.get("completion_tokens") or 0)
+            answer.usage_seen = True
+        except (TypeError, ValueError):
+            pass  # unreadable usage counts as none: the answer is charged the ceiling
+    choices = chunk.get("choices")
+    for choice in choices if isinstance(choices, list) else []:
+        delta = choice.get("delta") if isinstance(choice, dict) else None
+        content = delta.get("content") if isinstance(delta, dict) else None
         if isinstance(content, str):
             answer.text.append(content)
 
