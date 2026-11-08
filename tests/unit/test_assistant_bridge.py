@@ -333,13 +333,13 @@ def test_a_ticket_prints_neither_secret() -> None:
     assert "sk-secret" not in repr(ticket) and "answer.jwt" not in repr(ticket)
 
 
-def test_a_refusal_mid_stream_is_an_error_event() -> None:
-    event = bridge.error_event(RateLimitedError("spent", retry_after_s=60))
+def test_a_failure_mid_stream_is_an_error_event() -> None:
+    event = bridge.error_event(AssistantUpstreamError("LibreChat failed"))
     assert event.startswith(b"data: ") and event.endswith(b"\n\n")
-    assert json.loads(event[6:])["error"]["code"] == "RATE_LIMITED"
     # Classed as the HTTP refusal of it is: whose move it is, and whether asking again helps.
-    upstream = json.loads(bridge.error_event(AssistantUpstreamError("LibreChat failed"))[6:])
-    assert upstream["error"]["category"] == "dependency" and upstream["error"]["retryable"] is True
+    error = json.loads(event[6:])["error"]
+    assert error["code"] == "ASSISTANT_UPSTREAM_FAILED"
+    assert error["category"] == "dependency" and error["retryable"] is True
 
 
 @pytest.fixture
@@ -419,6 +419,30 @@ def test_the_chat_route_streams_the_agents_chunks(client: Any) -> None:
     assert row["success"] is True and row["cost"] > 0
     # The streamed body runs in a task of its own; the row still names the answer.
     assert row["run"] == "chatcmpl-1"
+
+
+def test_librechat_failing_mid_stream_ends_the_stream_with_its_error_and_row(
+    client: Any, world: _World
+) -> None:
+    from server.core import tenant_slots
+
+    http, rows = client
+    world.stream_body = _sse(
+        {"id": "chatcmpl-8", "choices": [{"delta": {"content": "Sev"}}]},
+        {"error": {"message": "the model stopped"}},
+    )
+    r = http.post(ROUTE, headers=HEADERS, json={"stream": True, "messages": QUESTION})
+    assert r.status_code == 200
+    events = [line for line in r.text.split("\n\n") if line]
+    error = json.loads(events[-1][6:])["error"]
+    assert error["code"] == "ASSISTANT_UPSTREAM_FAILED"
+    assert error["category"] == "dependency" and error["retryable"] is True
+    # One row, the failure's (not the close's, not a client's leaving), with the answer's
+    # id and the ceiling, since LibreChat's stream began; both slots are free.
+    (row,) = rows
+    assert row["error_code"] == "ASSISTANT_UPSTREAM_FAILED" and row["run"] == "chatcmpl-8"
+    assert row["cost"] == pytest.approx(settings.assistant_answer_ceiling_usd)
+    assert bridge._running == {} and tenant_slots._IN_FLIGHT.get(ORG, 0) == 0
 
 
 def test_a_refused_question_is_an_http_error_with_its_row(client: Any, world: _World) -> None:

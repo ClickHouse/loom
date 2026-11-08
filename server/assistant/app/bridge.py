@@ -383,8 +383,8 @@ def _charge(answer: Answer) -> None:
 
 
 def error_event(e: LoomServerError) -> bytes:
-    """A refusal once the stream has begun, as the error event OpenAI's streams send,
-    with the `category` and `retryable` every coded error body carries."""
+    """LibreChat's failure once the stream has begun, as the error event OpenAI's streams
+    send, with the `category` and `retryable` every coded error body carries."""
     return f"data: {json.dumps({'error': classified(e.to_detail(), e.status_code)})}\n\n".encode()
 
 

@@ -278,7 +278,7 @@ async def _streamed(chunks: AsyncIterator[bytes], held: _Held) -> AsyncIterator[
         async for chunk in chunks:
             yield chunk
     except LoomServerError as e:
-        # The status is sent: the refusal goes out as an error event, and on the row.
+        # The status is sent: LibreChat's failure goes out as an error event, and on the row.
         held.row.write(e)
         held.finished = True
         yield bridge.error_event(e)
