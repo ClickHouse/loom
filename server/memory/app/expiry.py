@@ -423,9 +423,9 @@ async def replay_mirror(recorded: list[RecordedMirror], *, ch: Any | None = None
     took out. An anonymize whose head is still the anonymized shell
     (`_is_anonymized_shell`), which keeps no vector, retires bare every live vector up
     to that head: a status write since the sweep (a supersede) may have copied the old
-    text above the recorded version. The
-    pin is the head's version + 1, the highest no write drawn from the head can tie with
-    (`version_over`). Any other head (rewritten since) takes the recorded version.
+    text above the recorded version. The pin is the head's version + 1, the highest no
+    write drawn from the head can tie with (`version_over`). Any other head (rewritten
+    or deleted since) takes the recorded version.
 
     A demote copies the key's live head, its expiry and confidence, onto the key's live
     vectors as a metadata copy at read + 1: a write since the sweep (a touch, a verify, a
