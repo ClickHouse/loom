@@ -444,12 +444,12 @@ def test_the_tag_run_signs_the_digests_it_made_and_a_later_run_verifies_them() -
     assert tag["outputs"]["digests"] == "${{ steps.tag.outputs.digests }}"
     (tagging,) = [s for s in tag["steps"] if s.get("id") == "tag"]
     assert 'digests+=("$image@$digest")' in tagging["run"]
-    steps = {s.get("name"): s for s in jobs["sign"]["steps"]}
-    sign = steps["Sign each image's index"]
+    steps = {s.get("id"): s for s in jobs["sign"]["steps"]}
+    sign = steps["sign"]
     assert sign["if"] == "${{ needs.docker-tag.result == 'success' }}"
     assert sign["env"]["DIGESTS"] == "${{ needs.docker-tag.outputs.digests }}"
     assert 'cosign sign --yes "$ref"' in sign["run"]
-    verify = steps["Verify the published images' signatures"]
+    verify = steps["verify"]
     assert verify["if"] == "${{ needs.preflight.outputs.images_published == 'true' }}"
     assert "cosign sign" not in verify["run"]
     assert "release.yml@refs/tags/v$VERSION" in verify["run"]

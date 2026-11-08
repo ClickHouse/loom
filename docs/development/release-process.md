@@ -280,25 +280,15 @@ version builds and tags none (`scripts/release/published_images.sh`), smoke-test
 ones, and goes on to the registries. Release images build without the cache, so a rebuild would
 move the version's tags onto other bytes.
 
-When only one of the two carries the version (a failed `docker-tag`), use "Re-run failed jobs" on
-the tag's run, which tags the same build. "Re-run all jobs" would start with a `preflight` that
-refuses the half-tagged version, and every "Re-run failed jobs" after it fails in that `preflight`
-again. To recover from there, tag the missing image by hand from that run's digests (from its
-`scanned-<artifact>-<arch>` artifacts), adding `-t ghcr.io/clickhouse/<image>:X.Y` for a final
-version and `-t ghcr.io/clickhouse/<image>:latest` when
-`python3 scripts/release/make_latest.py X.Y.Z` prints `true` (with `GH_TOKEN` and
-`GITHUB_REPOSITORY=ClickHouse/loom` set), then dispatch the tag:
-
-```bash
-docker buildx imagetools create -t ghcr.io/clickhouse/<image>:X.Y.Z \
-  ghcr.io/clickhouse/<image>@<amd64 digest> ghcr.io/clickhouse/<image>@<arm64 digest>
-```
-
-After a failed `sign` (Sigstore down, say), use "Re-run failed jobs" on that same attempt of the
-tag's run: it keeps `docker-tag`'s digests and signs them. Once a later run has started on the tag
-("Re-run all jobs", the tag pushed again, a dispatch), it finds the images out and only verifies
-their signatures, which they lack, and only a run that tagged them can sign them: release a new
-version, and move `:latest` back by hand if it moved.
+A failed `docker-tag` (one image tagged, not the other) or a failed `sign` (Sigstore down, say)
+is recovered by "Re-run failed jobs" on the tag-push run, within 30 days of it: that attempt keeps
+its `preflight` result and `docker-tag`'s digests, so it tags the same build and signs what it
+tagged. A dispatch or a second push of the tag starts a run of its own and leaves that one
+re-runnable; a dispatch that failed at `sign` passes once the tag-push run has signed. Once "Re-run
+all jobs" has replaced the tag-push run's attempt, or the 30 days have passed, no run can tag or
+sign that build (a run on a half-tagged version fails its `preflight`, and a run on a published
+tag only verifies signatures that only the tagging run can make): release a new version, and move
+`:latest` back by hand if it moved.
 
 Never move a tag whose images are published: `published_images.sh` fails when a published image
 was built from another commit than the run's, and a fix needs a new version.

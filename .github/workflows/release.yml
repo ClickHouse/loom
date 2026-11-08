@@ -18,9 +18,8 @@ name: release
 # architecture's own runner) -> docker-tag -> sign (keyless, the digests
 # docker-tag made; a run on a published tag verifies them) and docker-smoke (the
 # quickstart and the installer rehearsal) -> github-release -> release-check
-# (tag push only),
-# and pypi, npm, mcp-registry (dispatch only). A re-run after a partial publish is
-# safe: the bundle keeps the ClickHouse release it was first published with,
+# (tag push only), and pypi, npm, mcp-registry (dispatch only). A re-run after a
+# partial publish is safe: the bundle keeps the ClickHouse release it was first published with,
 # the release is updated in place, PyPI skips files it already has, npm and the
 # MCP Registry skip a version they already have, a re-run of failed jobs tags
 # the same build again, and a run on a tag whose images are published builds
@@ -612,7 +611,7 @@ jobs:
 
   # The run that tags signs the indexes it made, by digest; a later run on the
   # tag verifies those signatures instead, so an image tag moved since is
-  # refused. The GitHub Release and the SDK registries wait for this job.
+  # refused. The GitHub Release and the registries wait for this job.
   sign:
     name: Sign both images, or verify their signatures
     if: ${{ !cancelled() && !inputs.dry_run && (needs.docker-tag.result == 'success' || needs.preflight.outputs.images_published == 'true') }}
@@ -634,6 +633,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       # The indexes docker-tag made, which X.Y.Z, X.Y, latest and a digest pin name.
       - name: Sign each image's index
+        id: sign
         if: ${{ needs.docker-tag.result == 'success' }}
         env:
           DIGESTS: ${{ needs.docker-tag.outputs.digests }}
@@ -642,6 +642,7 @@ jobs:
           for ref in $DIGESTS; do cosign sign --yes "$ref"; done
       # A run that tagged but did not sign is repaired by re-running its failed jobs.
       - name: Verify the published images' signatures
+        id: verify
         if: ${{ needs.preflight.outputs.images_published == 'true' }}
         env:
           VERSION: ${{ needs.version.outputs.version }}
@@ -650,7 +651,7 @@ jobs:
             cosign verify "$image:$VERSION" \
               --certificate-identity "https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v$VERSION" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null \
-              || { echo "::error::$image:$VERSION carries no signature from release.yml on v$VERSION: re-run the failed jobs (not all jobs) of the tag's run; once a later run has started on the tag, release a new version"; exit 1; }
+              || { echo "::error::$image:$VERSION carries no signature from release.yml on v$VERSION: re-run the failed jobs (not all jobs) of the tag-push run, within 30 days; after Re-run all jobs there, release a new version"; exit 1; }
           done
 
   docker-smoke:

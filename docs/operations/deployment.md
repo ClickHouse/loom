@@ -979,7 +979,8 @@ changed).
 Every release publishes a multi-arch image (linux/amd64 and linux/arm64) to
 `ghcr.io/clickhouse/loom`, tagged `X.Y.Z`, `X.Y` and, for a stable release, `latest`.
 Both images (`loom` and `loom-extractor`, below) include build provenance and an SBOM, and
-carry a keyless signature from the release workflow. Check one with cosign 3 or later:
+carry a keyless signature from the release workflow (a release published before the workflow
+signed carries none). Check one with cosign 3 or later:
 
 ```bash
 cosign verify ghcr.io/clickhouse/loom:X.Y.Z \
