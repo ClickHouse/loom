@@ -85,6 +85,7 @@ _SKIP_OPS = {
     "knowledge.bulk_add",
     "knowledge.upsert",
     "knowledge.delete",
+    "knowledge.restore",
     "knowledge.bulk_delete",
     "knowledge.update_metadata",
     "knowledge.dedup_resolve",

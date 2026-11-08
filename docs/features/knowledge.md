@@ -53,6 +53,7 @@ the operations reference.
 | `knowledge.update_metadata` | writer | Edit `title`, `description` or `tags`; `reindex=true` rewrites the chunks' context.    |
 | `knowledge.delete`          | writer | Supersede a document and its chunks.                                                   |
 | `knowledge.bulk_delete`     | writer | The same for up to 500 `source_uris`.                                                  |
+| `knowledge.restore`         | writer | Undo a delete: the document's last version and its chunks are live again.              |
 | `knowledge.reads`           | viewer | How often agents opened each document over the last `days` (1–30).                     |
 | `knowledge.inspect`         | viewer | A report on the namespace's documents ([below](#inspecting-a-namespaces-documents)).   |
 | `knowledge.dedup_list`      | admin  | Documents (and, optionally, chunks) of the namespace with identical content hashes.    |
@@ -837,6 +838,7 @@ that scope, and `memory_findings` is skipped, since the audit reads every user's
 | Change the title, tags or blurb        | `knowledge.update_metadata`                             | The document row changes; chunks keep the old context in both legs unless `reindex=true` rewrites it. |
 | Rename a document                      | `knowledge.delete`, then `knowledge.add` at the new URI | `source_uri` is the identity agents cite, so it is not editable.                                      |
 | Remove a document                      | `knowledge.delete`                                      | Chunks and the document row are superseded; searches stop returning them at once.                     |
+| Bring a deleted document back          | `knowledge.restore`                                     | The deleted version and its chunks are live again ([below](#restoring-a-deleted-document)).           |
 | Erase a person's or a namespace's data | [`erasure.request`](./memory/retention-and-erasure.md)  | The erasure saga deletes documents, chunks and stored originals, and cascades to external systems.    |
 
 `knowledge.add` does not retire an earlier version at the same `source_uri`; use
@@ -888,6 +890,40 @@ which Loom's do not use, so a replica behind a write could call its object unnam
 the min age well above the floor there (the 3600 default leaves about 45 minutes), or send
 every Loom process to one replica. `loom doctor` warns about this topology
 (`replica_consistency`).
+
+### Restoring a deleted document
+
+`knowledge.restore` undoes a `knowledge.delete` or `knowledge.bulk_delete`. On the
+dashboard, the notice that a Library delete raises carries Undo, which calls it for the
+namespace the delete ran in. A delete lists the document's live chunks as retired in
+`loom.chunk_supersessions` at the time it stamps on the document row; restore removes
+those rows and writes the document row back live, so the deleted revision and its chunks
+are live again. `restored: true` comes with `chunks_restored`, the chunks searchable now,
+and `original`: `kept` (the stored original downloads again), `gone` (the sweep had
+removed it, so the restored document has none) or `none`. Otherwise `reason` says why:
+
+| `reason`            | Meaning                                                                                                                                    |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `not_found`         | The namespace holds no document at this `source_uri` (never written, or removed by a purge or a retention TTL).                            |
+| `live`              | Nothing to restore. `doc_id` and `revision` name the live version, which may be a later write.                                             |
+| `revision_mismatch` | The deleted document is not at `if_revision`.                                                                                              |
+| `not_restorable`    | A delete did not retire it (an erasure superseded it, or it has no chunks), an erasure reached it or its original, or one still covers it. |
+| `expired`           | The delete is more than 89 days old.                                                                                                       |
+
+Restore asks for the signature a delete leaves (chunks of the document's revision, listed
+as retired at the row's own `superseded_at`) and reads the erasure ledger
+(`loom.erasure_requests`) before and after it writes, so it never brings back what an
+erasure reached. The ledger keeps a request 90 days, so a restore reaches deletes of the
+last 89. `if_revision` restores only when the deleted document is at that revision
+(`knowledge.get` with `include_superseded=true` reads it). Restore takes the source's
+claim, as an ingest's publish and a metadata edit do, and refuses with
+`PRECONDITION_FAILED` when the document changed between its read and its write; calling it
+again is safe. Datasets published from the document were deleted with it and stay deleted,
+and the sweep may have removed its original or an ingested file's extraction artifact;
+ingesting the file again brings both back. A document a source sync retired is retired
+again by the next sync if the source no longer lists it. How restore orders its reads and
+writes against erasures, other writes and the sweep, and the cases it cannot take back:
+[failure and recovery](../architecture/failure-and-recovery.md#knowledge-restore).
 
 ## Ingesting files
 

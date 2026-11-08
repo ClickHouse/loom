@@ -234,6 +234,12 @@ async def list_requests(
     )
 
 
+# An erasure still open for a reader that started at `since`: not completed, or completed
+# after it, less the clock margin.
+_UNFINISHED_SINCE = """(status != 'completed'
+    OR completed_at >= fromUnixTimestamp({since:Int64}) - INTERVAL {margin:UInt32} SECOND)"""
+
+
 async def unfinished_since(
     org: str,
     since_s: int,
@@ -254,11 +260,44 @@ async def unfinished_since(
             f"""
             SELECT toString(id) AS erasure_id, scope_type, scope_value, toString(status) AS state
             FROM loom.erasure_requests FINAL
-            WHERE org = {{org:String}}
-              AND (status != 'completed'
-                   OR completed_at
-                      >= fromUnixTimestamp({{since:Int64}}) - INTERVAL {{margin:UInt32}} SECOND)
+            WHERE org = {{org:String}} AND {_UNFINISHED_SINCE}
             {limit_clause}
             """,
             params={"org": org, "since": int(since_s), "margin": int(margin_s)},
+        )
+
+
+async def unfinished_reaching(
+    org: str,
+    namespace: str,
+    user_id: str | None,
+    since_s: int,
+    margin_s: int,
+    *,
+    ch: _CHClient | None = None,
+) -> list[dict[str, Any]]:
+    """The erasures unfinished since `since_s` that may reach a row of `namespace`: its own,
+    the user scopes of `user_id` (of every user when None), and every other scope, which
+    the caller parses (namespace lists). Each row has `scope_type`, `scope_value` and
+    `purge`."""
+    ch = ch or _default_client()
+    with sequential_reads():
+        return await ch.query_all(
+            f"""
+            SELECT scope_type, scope_value, purge
+            FROM loom.erasure_requests FINAL
+            WHERE org = {{org:String}} AND {_UNFINISHED_SINCE}
+              AND ((scope_type = 'namespace' AND scope_value = {{ns:String}})
+                   OR (scope_type = 'user_id'
+                       AND ({{any_user:Bool}} OR scope_value = {{uid:String}}))
+                   OR scope_type NOT IN ('namespace', 'user_id'))
+            """,
+            params={
+                "org": org,
+                "ns": namespace,
+                "uid": user_id or "",
+                "any_user": user_id is None,
+                "since": int(since_s),
+                "margin": int(margin_s),
+            },
         )

@@ -5765,6 +5765,12 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.dedup_list": 400,
     "knowledge.dedup_resolve": 400,
     "knowledge.delete": 100,
+    # The reads and writes in server/knowledge/app/restore.py: the document's rows by (org,
+    # namespace, source_uri) (the chunk and supersession reads range over the namespace's key
+    # prefix), the erasure ledger twice (every namespace list of the org's last 90 days is
+    # read and parsed, so their count is not bounded), the source's claim, the bucket's two
+    # locates, a few lightweight DELETEs and row inserts.
+    "knowledge.restore": 200,
     # The configured extractors' capabilities, each cached a minute; a cold read waits at
     # most the listing's 5 s bound, and a service it could not read is not waited for
     # again for a minute.

@@ -3888,6 +3888,22 @@ export interface KnowledgeReadsOutput {
   reads?: Array<Record<string, unknown>>;
 }
 
+export interface KnowledgeRestoreInput {
+  org: string;
+  namespace: string;
+  source_uri: string;
+  if_revision?: number | null;
+}
+
+export interface KnowledgeRestoreOutput {
+  restored: boolean;
+  reason?: "" | "not_found" | "live" | "revision_mismatch" | "not_restorable" | "expired";
+  doc_id?: string;
+  revision?: number | null;
+  chunks_restored?: number;
+  original?: "kept" | "gone" | "none";
+}
+
 export interface KnowledgeSearchInput {
   org: string;
   namespace: string;
@@ -10089,6 +10105,7 @@ export type OpName =
   | "knowledge.outline"
   | "knowledge.query"
   | "knowledge.reads"
+  | "knowledge.restore"
   | "knowledge.search"
   | "knowledge.source.add"
   | "knowledge.source.check"
@@ -10447,6 +10464,7 @@ export interface OpMap {
   "knowledge.outline": { input: KnowledgeOutlineInput; output: KnowledgeOutlineOutput };
   "knowledge.query": { input: KnowledgeQueryInput; output: KnowledgeQueryOutput };
   "knowledge.reads": { input: KnowledgeReadsInput; output: KnowledgeReadsOutput };
+  "knowledge.restore": { input: KnowledgeRestoreInput; output: KnowledgeRestoreOutput };
   "knowledge.search": { input: KnowledgeSearchInput; output: KnowledgeSearchOutput };
   "knowledge.source.add": { input: KnowledgeSourceAddInput; output: KnowledgeSourceAddOutput };
   "knowledge.source.check": { input: KnowledgeSourceCheckInput; output: KnowledgeSourceCheckOutput };
@@ -10805,6 +10823,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "knowledge.outline", group: "knowledge", method: "outline", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "knowledge.query", group: "knowledge", method: "query", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 1500, audit: false, readOnly: true },
   { name: "knowledge.reads", group: "knowledge", method: "reads", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 500, audit: false, readOnly: true },
+  { name: "knowledge.restore", group: "knowledge", method: "restore", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 200, audit: true, readOnly: false },
   { name: "knowledge.search", group: "knowledge", method: "search", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 250, audit: false, readOnly: true },
   { name: "knowledge.source.add", group: "knowledge", method: "sourceAdd", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
   { name: "knowledge.source.check", group: "knowledge", method: "sourceCheck", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: false, readOnly: false },
@@ -11028,4 +11047,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 355;
+export const GENERATED_OP_COUNT = 356;

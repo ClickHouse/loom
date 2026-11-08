@@ -382,6 +382,26 @@ class KnowledgeClient:
         payload["source_uri"] = source_uri
         return await self._agent.transport.post("/v1/knowledge.delete", payload)
 
+    async def restore(
+        self,
+        source_uri: str,
+        *,
+        if_revision: int | None = None,
+    ) -> dict[str, Any]:
+        """Undo a `delete` or `bulk_delete`: the deleted revision and its chunks are
+        live again.
+
+        Answers `restored`, or why not in `reason`: `not_found`, `live` (nothing
+        to restore), `revision_mismatch`, `not_restorable` (no delete retired it,
+        or an erasure reached it), `expired` (the delete is past the 89-day
+        window). `original` says whether the stored original downloads again.
+        `if_revision` restores only that deleted revision."""
+        payload = self._scope()
+        payload["source_uri"] = source_uri
+        if if_revision is not None:
+            payload["if_revision"] = if_revision
+        return await self._agent.transport.post("/v1/knowledge.restore", payload)
+
     async def search(
         self,
         query: str,

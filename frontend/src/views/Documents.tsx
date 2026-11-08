@@ -10,6 +10,8 @@ import {
   ApiError,
   listKnowledge,
   deleteKnowledge,
+  restoreKnowledge,
+  type RestoreRefusal,
   bulkDeleteKnowledge,
   downloadKnowledge,
   getKnowledge,
@@ -102,6 +104,15 @@ function linkedCollection(): string | null {
   // The page never prints text a link made up: only a collection's name counts.
   return isCollectionName(name) ? name : null;
 }
+
+// Why a restore left the document deleted (`knowledge.restore`'s `reason`).
+const RESTORE_REFUSED: Record<RestoreRefusal, string> = {
+  not_found: "the namespace no longer holds it",
+  live: "a live version is already there",
+  revision_mismatch: "it changed since it was deleted",
+  not_restorable: "an erasure reached it, or no delete retired it",
+  expired: "the delete is too old to undo",
+};
 
 export function Documents() {
   const picked = useIdentity();
@@ -403,20 +414,48 @@ export function Documents() {
       !(await confirmAction({
         title: "Delete this document?",
         message:
-          "All chunks for this URI will be tombstoned. The original file (if uploaded) gets removed too. This isn't reversible — you'd have to re-upload to bring it back.",
+          "Its chunks leave search at once. Undo on the notice that follows brings it back; its uploaded file may not come back.",
         confirmLabel: "Delete",
         danger: true,
       }))
     )
       return;
+    const place = { org: identity.org, namespace: identity.namespace };
     try {
-      await deleteKnowledge({ org: identity.org, namespace: identity.namespace }, source_uri);
-      toast("Deleted", "ok");
+      await deleteKnowledge(place, source_uri);
+      // Keyed by the document, so a later delete of it replaces this notice and its Undo.
+      toast(`Deleted ${source_uri}`, "ok", {
+        key: `delete:${place.org}/${place.namespace}/${source_uri}`,
+        action: { label: "Undo", run: () => void onRestore(place, source_uri) },
+      });
       // The row and its menu leave with the next read: focus then goes to the search.
       focusSearchOnRead.current = true;
       reload();
     } catch (e) {
       toastError("Delete failed", e);
+    }
+  };
+
+  // The delete's Undo: the place it was deleted from, whatever the page shows now.
+  const onRestore = async (place: { org: string; namespace: string }, source_uri: string) => {
+    // The Undo button leaves with its notice: focus goes to the search, or to the page
+    // when the notice outlived the Library.
+    (searchRef.current ?? document.getElementById("main"))?.focus();
+    try {
+      const r = await restoreKnowledge(place, source_uri);
+      if (r.restored) {
+        toast(
+          r.original === "gone"
+            ? `Restored ${source_uri}; its uploaded original was already removed`
+            : `Restored ${source_uri}`,
+          "ok",
+        );
+        reload();
+      } else {
+        toast(`${source_uri} was not restored: ${RESTORE_REFUSED[r.reason]}`, "info");
+      }
+    } catch (e) {
+      toastError("Restore failed", e);
     }
   };
 
@@ -659,7 +698,7 @@ export function Documents() {
       !(await confirmAction({
         title: `Delete ${selected.size} document${selected.size === 1 ? "" : "s"}?`,
         message:
-          "All chunks for the selected URIs will be tombstoned and their original files removed. Not reversible — you'd have to re-upload to bring them back.",
+          "Their chunks leave search at once. A bulk delete has no Undo here: each document can be restored through the API, though its uploaded file may not come back.",
         confirmLabel: "Delete",
         danger: true,
       }))

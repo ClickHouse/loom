@@ -586,6 +586,37 @@ class KnowledgeDeleteOutput(BaseModel):
     chunks_tombstoned: int
 
 
+class KnowledgeRestoreInput(BaseModel):
+    """Undo a `knowledge.delete` or `knowledge.bulk_delete` of one document.
+
+    The deleted revision and its chunks are live again; what an erasure retired never is."""
+
+    org: str
+    namespace: str
+    # The deleted document to restore.
+    source_uri: str
+    # Precondition: restore only when the deleted document is at this revision (from
+    # `knowledge.get` with `include_superseded=true`); None restores whatever was deleted.
+    if_revision: int | None = None
+
+
+class KnowledgeRestoreOutput(BaseModel):
+    # True when the document and its chunks were made live again.
+    restored: bool
+    # Why nothing was restored, "" when it was (the reasons: docs/features/knowledge.md).
+    reason: Literal["", "not_found", "live", "revision_mismatch", "not_restorable", "expired"] = ""
+    # The id of the document the answer is about: the restored one, the live one, or the
+    # deleted one left retired.
+    doc_id: str = ""
+    # That document's revision; None when no document was found.
+    revision: int | None = None
+    # Chunks searchable again after the restore.
+    chunks_restored: int = 0
+    # The stored original: `kept` (downloadable again), `gone` (the sweep had removed
+    # it, so the restored document has none) or `none` (it never had one).
+    original: Literal["kept", "gone", "none"] = "none"
+
+
 class KnowledgeUpdateMetadataInput(BaseModel):
     """Edit doc-level metadata (title, description, tags). Leaves chunk
     embeddings and stored context alone unless reindex=True. To change content, use

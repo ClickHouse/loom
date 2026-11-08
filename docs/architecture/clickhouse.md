@@ -633,7 +633,16 @@ on `valid_to`, `invalid_at`, `version`; `set` on `status` and `memory_type`.
 Loom deletes memory by writing a tombstone version (`tombstoned_at` set, every other column
 carried). It is visible to the next `FINAL` read, keeps prior versions in
 `memory_versions` and leaves `memory.restore` a window. Physical removal is for erasure
-with `purge=true` and runner state.
+with `purge=true`, runner state, and the supersession rows `knowledge.restore` removes.
+
+- **`knowledge.restore`** runs a lightweight `DELETE FROM loom.chunk_supersessions` for the
+  rows one delete wrote: the document's `source_uri`, the ingestions of its revision and
+  the `superseded_at` the delete stamped on its row (`server/knowledge/store/restore.py`).
+  The chunks then read as live through `LIVE_CHUNK_SQL`, on builds N-1 and N alike. No
+  materialized view writes the table, and a row another retirement wrote stays. When it
+  takes itself back under a purge that may cover the document, it also deletes the one
+  `loom.documents` row it wrote (by its `version`), so the purge leaves no copy of the
+  content.
 
 - **Counter folds** on `loom.memory` (the usage fold's `evidence_count` /
   `recall_count`) use batched lightweight `UPDATE`: one statement per chunk of

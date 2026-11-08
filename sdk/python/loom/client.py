@@ -1355,6 +1355,15 @@ class KnowledgeOps:
             "_ops.KnowledgeReadsOutput", await self._agent.call("knowledge.reads", body, **options)
         )
 
+    async def restore(
+        self, body: _ops.KnowledgeRestoreBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeRestoreOutput:
+        """`knowledge.restore`."""
+        return cast(
+            "_ops.KnowledgeRestoreOutput",
+            await self._agent.call("knowledge.restore", body, **options),
+        )
+
     async def search(
         self, body: _ops.KnowledgeSearchBody | None = None, /, **options: Any
     ) -> _ops.KnowledgeSearchOutput:

@@ -274,6 +274,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "change better (one fact vs a whole doc).\n"
         "ARGS: Same as knowledge.add. `source_uri` is the dedup key."
     ),
+    "knowledge.restore": (
+        "WHAT: Undo a knowledge.delete or knowledge.bulk_delete: the deleted revision "
+        "and its chunks are searchable again. Never brings back what an erasure retired.\n"
+        "WHEN: The user asks to bring back a document they or an agent deleted.\n"
+        "WHEN NOT: To change a document use knowledge.upsert; a document that is "
+        "live answers `reason: live` and restores nothing.\n"
+        "ARGS: `source_uri`; `if_revision` restores only that deleted revision."
+    ),
     "knowledge.delete": (
         "WHAT: Tombstone a document by `source_uri`. Searches stop "
         "returning it immediately; the row is preserved for audit.\n"

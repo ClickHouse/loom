@@ -465,6 +465,60 @@ The metrics are described in [monitoring](../operations/monitoring.md).
 - **Namespace size drives read latency**, because vector reads are exact scans.
 - **Single-node ClickHouse OSS** has no replication and no failover.
 
+## Knowledge restore
+
+`knowledge.restore` ([restoring a deleted document](../features/knowledge.md#restoring-a-deleted-document))
+must never bring back what an erasure reached. An erasure leaves its own marks: it stamps
+every chunk of its scope, a deleted document's too, and supersedes a live row in place.
+Restore also reads the erasure ledger for an erasure that may reach the document and had
+not finished when the document was written: of its namespace, of a namespace list naming
+it, or of the user who wrote the restored revision (of any user, for the live leftovers of
+a cut-off restore, which no signature ties to a writer).
+
+It reads the ledger before writing the row and again after: when the second read finds an
+erasure, it takes back what it wrote, and it does the same when anything fails once it
+starts writing. Under a purge it deletes its own row, so no copy of the content is left.
+When a merge has folded the delete's row into it, that leaves the source with no row: a
+purge that covers the document would leave none either, and one that only may cover it
+(an unreadable list, or any user's purge for a cut-off restore's leftovers) costs the
+document's retired row, which is the fail-closed choice.
+Otherwise, and when the ledger cannot be read, it writes the row back retired, keeping any
+mark an erasure put on it meanwhile: deleting it could leave the source with no row, since
+a merge may fold the delete's row into it at any moment. When no row of the source is left
+(a purge took them all), it writes nothing back.
+
+A restore whose caller goes away (the client disconnects, the request is cancelled)
+before it answers still runs to its end under the claim and takes itself back, since no
+audit row would record it; its undo finishes before the claim is given up. A caller that
+goes away after the restore answered, while the transport writes its audit row, can leave
+the restore standing with no audit row, as any audited write can.
+
+What it cannot take back:
+
+- A restore cut off before its undo leaves the chunks searchable under a retired row;
+  calling it again finishes it, unless a delete runs first, which lists those chunks at a
+  new time and leaves the document past restoring.
+- An erasure that registers and completes between its two ledger reads, followed by a
+  failure of the undo (or of the second read and the undo, or the process ending between
+  them): the row stays live, and a later call answers `live`.
+- A purge the undo cannot read the ledger for leaves the row retired: the purge's residue
+  census, which counts every row, reports it only if it runs after the undo.
+- The original sweep deletes an original no live row names once it is old enough, and
+  checks only its age at the delete. A sweep pass that read the namespace while the
+  document was deleted can delete the original after restore found it, so the restored
+  row names an original that is gone (and answers `kept`); the download then fails. Any
+  write that names an existing original again shares this window.
+
+Concurrent writes: a text write (`knowledge.add`, `knowledge.upsert`) and a delete take no
+claim. A text write that lands on the same source during a restore can leave both
+versions' chunks searchable, as it can during a delete, until the next write of that
+source. One that started before the restore stores its row under a lower version, so the
+restored row hides it, as a delete's row hides one that started before the delete: write
+it again. When a restore takes itself back after a later write's row won, it leaves that
+row as it is and retires only its own chunks. A delete that lands during a restore can
+leave the document live with no searchable chunks (`chunks_restored: 0`), which a second
+delete settles.
+
 ## Invariants
 
 - A successful write has committed its primary rows; a failure of either fails the request.

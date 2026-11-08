@@ -430,6 +430,28 @@ How often agents opened each document over the last `days` (`knowledge.get` ledg
 | `window_days` | `int` | The look-back window the counts cover, in days, after clamping to 1-30. |
 | `reads` | `list[dict[str, Any]]` | [{source_uri, reads, agents, last_read_at}], most read first |
 
+## `knowledge.restore`
+
+Undo a `knowledge.delete` or `knowledge.bulk_delete` of one document.
+
+`POST /v1/knowledge.restore` · MCP `loom_knowledge_restore` · role `writer` · idempotent · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `source_uri` | `str` | required | The deleted document to restore. |
+| `if_revision` | `int \| None` | `None` | Precondition: restore only when the deleted document is at this revision (from `knowledge.get` with `include_superseded=true`); None restores whatever was deleted. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `restored` | `bool` | True when the document and its chunks were made live again. |
+| `reason` | `Literal['', 'not_found', 'live', 'revision_mismatch', 'not_restorable', 'expired']` | Why nothing was restored, "" when it was (the reasons: docs/features/knowledge.md). |
+| `doc_id` | `str` | The id of the document the answer is about: the restored one, the live one, or the deleted one left retired. |
+| `revision` | `int \| None` | That document's revision; None when no document was found. |
+| `chunks_restored` | `int` | Chunks searchable again after the restore. |
+| `original` | `Literal['kept', 'gone', 'none']` | The stored original: `kept` (downloadable again), `gone` (the sweep had removed it, so the restored document has none) or `none` (it never had one). |
+
 ## `knowledge.search`
 
 Search the user's uploaded document library — bills, contracts, receipts, resumes, policies, manuals, technical docs.
