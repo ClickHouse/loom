@@ -1215,9 +1215,10 @@ At the memory row's version, the sweep then mirrors the action: tombstone and an
 retire the key's vectors in `memory_embeddings` and `entity_vectors`, and demote copies
 its `memory_embeddings` rows. The next pass never selects a key it wrote, so a failed
 mirror is recorded as a `memory_expiry_mirror` projection failure, which
-`projection_repair` replays from the key's live head as it is then: a demote copies its
-expiry and confidence, and an anonymize whose head is still the anonymized shell retires
-every vector up to that head. A pass cut off between its insert and that record records
+`projection_repair` replays. A replayed retire is bare, so no late copy of the text
+lands after a redaction's purge: a tombstone retires at its recorded version, and an
+anonymize whose head is still the anonymized shell retires every vector up to that
+head. A replayed demote copies the live head's expiry and confidence. A pass cut off between its insert and that record records
 nothing, as with any fail-open projection.
 
 Table-level retention and tiering are operator TTLs, off by default

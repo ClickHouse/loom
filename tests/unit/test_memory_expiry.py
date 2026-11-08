@@ -615,7 +615,7 @@ async def test_a_failed_mirror_is_recorded_per_writer_and_the_repair_applies_it(
     clients: list[Any] = []
 
     async def _retire_ok(items, *, ch=None, bare=False) -> int:
-        assert not bare  # a tombstone keeps its vector for memory.restore
+        assert bare  # a late copy of the text could land after a redaction's purge
         clients.append(ch)
         for (_o, _n, _a, _u, _s, key), version in items:
             retired.append((key, version))
@@ -780,7 +780,8 @@ async def test_a_replay_mirrors_the_heads_as_they_are_now(
     applied: list[Any] = []
     copied: list[Any] = []
 
-    async def _apply(items, *, ch=None) -> None:
+    async def _apply(items, *, ch=None, bare=False) -> None:
+        assert bare  # every replayed retire is bare
         applied.append(items)
 
     async def _reemit(items, *, ch=None) -> int:

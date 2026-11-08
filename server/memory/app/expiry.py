@@ -375,11 +375,13 @@ def _mirror_items(mirrors: list[tuple[str, Any, int]], *, cfg: ExpiryConfig) -> 
     return items
 
 
-async def apply_mirror(items: list[MirrorItem], *, ch: Any | None = None) -> None:
+async def apply_mirror(
+    items: list[MirrorItem], *, ch: Any | None = None, bare: bool = False
+) -> None:
     """Search reads loom.memory_embeddings, so the post-action lands there too, at each
     item's pin (the memory row's version on the first attempt), on rows below it only:
-    tombstone retires the key's vectors, keeping the vector for `memory.restore`;
-    anonymize retires them bare; demote copies them with the expiry cleared and
+    tombstone retires the key's vectors, keeping the vector for `memory.restore` unless
+    `bare`; anonymize retires them bare; demote copies them with the expiry cleared and
     confidence lowered. One batched call per action."""
     import server.memory.store as memory_repo
 
@@ -392,7 +394,7 @@ async def apply_mirror(items: list[MirrorItem], *, ch: Any | None = None) -> Non
         if action == "demote" and copy is not None
     ]
     if tombstoned := pins("tombstone"):
-        await memory_repo.retire_vectors_for_keys(tombstoned, ch=ch)
+        await memory_repo.retire_vectors_for_keys(tombstoned, ch=ch, bare=bare)
     if anonymized := pins("anonymize"):
         await memory_repo.retire_vectors_for_keys(anonymized, ch=ch, bare=True)
     if copies:
@@ -414,8 +416,10 @@ async def replay_mirror(recorded: list[RecordedMirror], *, ch: Any | None = None
     """The mirror of a recorded failure, run after later writes may have landed, from
     the keys' live heads as they are now.
 
-    A tombstone runs as recorded: the key's vectors below the version hold the text it
-    took out. An anonymize whose head is still the anonymized shell
+    A tombstone runs as recorded, bare: the key's vectors below the version hold the
+    text it took out, and a late copy of that text could land after a redaction's
+    purge. A restore of the key then rebuilds its vector from scratch (the embedding
+    worker), not from the tombstone. An anonymize whose head is still the anonymized shell
     (`_is_anonymized_shell`), which keeps no vector, retires bare every live vector up
     to that head: a status write since the sweep (a supersede) may have copied the old
     text above the recorded version. The pin is the head's version + 1, the highest no
@@ -444,7 +448,7 @@ async def replay_mirror(recorded: list[RecordedMirror], *, ch: Any | None = None
             retires.append((key, pin, action, None))
         elif head is not None and head.sensitivity != "high":
             copies.append((key, {"expires_at": head.expires_at, "confidence": head.confidence}))
-    await apply_mirror(retires, ch=ch)
+    await apply_mirror(retires, ch=ch, bare=True)
     if copies:
         await memory_repo.reemit_embedding_rows_for_keys(copies, ch=ch)
 
