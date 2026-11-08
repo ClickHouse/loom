@@ -150,8 +150,14 @@ async def read_registry(ch: Any | None = None) -> bool:
     try:
         from server.code.store.index import CodeRepo
 
-        rows = await CodeRepo(ch).active_code_repos()
-        set_registry_repos([row_to_config(r) for r in rows if r.get("namespace") and r.get("repo")])
+        store = CodeRepo(ch)
+        rows = await store.active_code_repos()
+        page = frozenset(
+            (str(r["org"]), str(r["namespace"])) for r in await store.page_namespaces()
+        )
+        set_registry_repos(
+            [row_to_config(r) for r in rows if r.get("namespace") and r.get("repo")], page
+        )
         _LOADED_AT = time.monotonic()
         _EVER_LOADED = True
         return True
@@ -272,19 +278,25 @@ async def upsert_access(
     row carrying the chosen classification and join policy. An existing registry row is
     copied whole (every column, including ones added by later migrations) with only
     those two fields, `created_by` and the stamps changed, so a member's add stays one;
-    an entry that had no active row gets an access row (`row_kind = 'access'`) built from the
-    repository as configured, so `refresh_db_repos` reads one row per namespace and
+    an operator entry with no active row gets an access row (`row_kind = 'access'`)
+    built from the repository as configured, so `refresh_db_repos` reads one row per namespace and
     `_with_registry` lets it win over the entry."""
     from datetime import UTC, datetime
 
     from server.code.store.index import CodeRepo
+    from server.core.ch import sequential_reads
 
     repo = CodeRepo(ch)
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
-    current = await repo.code_repo_row(cfg.org, cfg.namespace)
-    # A removed branch's inactive row is no row: copying it would bring that branch back.
+    with sequential_reads():  # a lagging read must not replace a row with a new one
+        current = await repo.code_repo_row(cfg.org, cfg.namespace)
+    # An inactive row (a removed branch) is not brought back to life.
     if current and current.get("active") is not False:
         row = dict(current)
+    elif cfg.source != "config":
+        from server.core.errors import ValidationError
+
+        raise ValidationError(f"{cfg.namespace} was removed", code="NOT_A_REPO")
     else:
         row = {
             "org": cfg.org,
@@ -296,7 +308,7 @@ async def upsert_access(
             "exclude": list(cfg.exclude),
             "github_token_enc": encrypt_token(cfg.github_token),
             "created_at": now,
-            "row_kind": "access" if cfg.source == "config" else "page",
+            "row_kind": "access",
         }
     row.update(
         {

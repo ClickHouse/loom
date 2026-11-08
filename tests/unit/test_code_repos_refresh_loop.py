@@ -22,6 +22,9 @@ class _Repo:
     async def active_code_repos(self) -> list[dict[str, Any]]:
         return list(self.rows)
 
+    async def page_namespaces(self) -> list[dict[str, Any]]:
+        return []
+
 
 def _row(classification: str) -> dict[str, Any]:
     return {

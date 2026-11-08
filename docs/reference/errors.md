@@ -212,10 +212,6 @@ above.
 
 Each code below is an anchor: `errors.md#<code in lowercase>` is the address an HTTP error's `Link` header names.
 
-#### `ACCESS_FROM_CONFIG`
-
-Raised in `server/code/app/repo_admin.py`.
-
 #### `ACTIVITY_UNAVAILABLE`
 
 Raised in `server/memory/app/profile.py`.

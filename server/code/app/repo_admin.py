@@ -719,22 +719,6 @@ async def _require_widening(input: Any, subject: str, ch: Any) -> None:
         )
 
 
-async def _require_own_access_row(input: Any, ch: Any) -> None:
-    """Only an operator entry's own access row widens it (`repos._with_registry`): an
-    entry whose namespace holds another active registry row can only be restricted
-    from the page, so the directory row is not widened past what the snapshot says."""
-    from server.code.store.index import CodeRepo
-
-    with sequential_reads():
-        row = await CodeRepo(ch).code_repo_row(input.org, input.namespace)
-    if row and row.get("active") is not False and row.get("row_kind") != "access":
-        raise ValidationError(
-            f"the access of {input.namespace} is set in the deployment's "
-            "LOOM_CODE_REPOS_JSON; from the page it can only be restricted",
-            code="ACCESS_FROM_CONFIG",
-        )
-
-
 async def handle_code_repo_set_access(input: Any) -> Any:
     """The repository's maintainer (the transport's ADMIN gate
     on the namespace) sets its classification and join policy. The decision
@@ -793,8 +777,6 @@ async def handle_code_repo_set_access(input: Any) -> Any:
         )
         if was_restricted and cls == "standard":
             await _require_widening(input, subject, ch)
-        if cfg.source == "config" and cls != "restricted":
-            await _require_own_access_row(input, ch)
         previous_policy = str(
             (row or {}).get("join_policy") or ("open" if cfg.public else "approval")
         )

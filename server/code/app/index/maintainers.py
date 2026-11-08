@@ -96,11 +96,11 @@ def _branches(org: str, repo: str) -> dict[str, str]:
 
 
 def _reaches(source: str, target: str) -> bool:
-    """An admin change on a branch whose source is `source` (``config`` or
-    ``registry``) reaches a branch whose source is `target`. Any
-    org member may add a branch of a repository the operator configures, so a
-    branch added from the page never passes its admins (or a revoke of one) to
-    an operator entry; the operator's admins reach every branch."""
+    """An admin change on a branch whose `admins_source` is `source` (``config`` or
+    ``registry``) reaches a branch whose one is `target`. Any org member may add a
+    branch of a repository the operator configures, so a branch on the ``registry``
+    side never passes its admins (or a revoke of one) to one on the ``config`` side;
+    the operator's admins reach every branch."""
     return source == "config" or target != "config"
 
 

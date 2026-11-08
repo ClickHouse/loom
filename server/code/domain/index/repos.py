@@ -296,69 +296,67 @@ def registry_namespaces() -> frozenset[tuple[str, str]]:
     return _registry_namespaces if settings.code_self_service_enabled else frozenset()
 
 
-def set_registry_repos(entries: list[RepoConfig]) -> None:
-    """Replace the registry snapshot with a fresh read."""
-    global _registry_repos, _registry_namespaces
+def set_registry_repos(
+    entries: list[RepoConfig], page_namespaces: frozenset[tuple[str, str]] = frozenset()
+) -> None:
+    """Replace the registry snapshot with a fresh read: the active entries, and the
+    (org, namespace) of every branch a member added from the page, removed ones too."""
+    global _registry_repos, _registry_namespaces, _page_namespaces
     _registry_repos = list(entries)
     _registry_namespaces = frozenset((c.org, c.namespace) for c in _registry_repos)
+    _page_namespaces = page_namespaces
+
+
+# Namespaces a member added from the page, active or removed (`set_registry_repos`).
+_page_namespaces: frozenset[tuple[str, str]] = frozenset()
+# The operator entries skipped for a member's namespace, logged once each per process.
+_skipped_logged: set[str] = set()
 
 
 def configured_repos() -> list[RepoConfig]:
     """The repo list every code worker iterates: the operator's entries, then the
-    self-service registry's (the operator wins on a namespace collision). Invalid JSON
-    degrades to the scalar single-repo config with a loud log (a typo must not silently
-    stop all indexing) — loud once, then a gauge."""
-    skipped: list[str] = []
-    out = _with_registry(_configured_from_env(), skipped)
-    if skipped:
-        refused = {
-            f"added_from_page:{ns}": (
-                f"code repo {ns} skipped: a member added that namespace from the "
-                "Repositories page first; list the entry under another namespace"
-            )
-            for ns in skipped
-        }
-        _publish_config_errors({**_config_errors, **refused})
-    return out
+    self-service registry's. Invalid JSON degrades to the scalar single-repo config
+    with a loud log (a typo must not silently stop all indexing) — loud once, then a
+    gauge."""
+    return _with_registry(_configured_from_env())
 
 
-def _with_registry(
-    env_repos: list[RepoConfig], skipped: list[str] | None = None
-) -> list[RepoConfig]:
-    """The operator's entries first, then the registry's. An entry's ACCESS row
-    (`code.repo.set_access`) wins with its classification and join policy (the entry
-    keeps every other field), so the maintainer's decision survives every boot. An entry
-    whose namespace a member added from the page is skipped (its namespace appended to
-    `skipped`), and the member's branch listed instead; any other registry row for an
-    entry's namespace (an operator admin's branch, or a row with no `row_kind`) only
-    narrows the entry. An access row whose entry is gone is dropped."""
+def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:
+    """The operator's entries first, then the registry's. An entry whose namespace a
+    member added from the page, even one removed since, is skipped: that member's
+    grants there must not become an operator entry's. A registry row for an entry's
+    own namespace is a maintainer's ACCESS row (or a branch an operator entry's admin
+    added): its classification and join policy win over the entry's (the entry keeps
+    every other field), so the maintainer's decision survives every boot. An access
+    row whose entry is gone is dropped."""
     import dataclasses
 
     rows = {(c.org, c.namespace): c for c in registry_repos()}
+    taken = _page_namespaces | {key for key, c in rows.items() if c.row_kind == "page"}
     out: list[RepoConfig] = []
     for c in env_repos:
-        row = rows.get((c.org, c.namespace))
-        if row is None:
+        if (c.org, c.namespace) in taken:
+            if c.label not in _skipped_logged:
+                _skipped_logged.add(c.label)
+                logger.warning(
+                    "code repo %s skipped: a member added that namespace from the "
+                    "Repositories page; list the entry under another namespace",
+                    c.label,
+                )
+            continue
+        access = rows.get((c.org, c.namespace))
+        if access is None:
             out.append(c)
             continue
-        if row.row_kind == "page":
-            if skipped is not None:
-                skipped.append(c.namespace)
-            continue
-        if row.row_kind == "access":
-            restricted = row.classification == "restricted"
-            public, access_source = row.public, "registry"
-        else:
-            restricted = "restricted" in (c.classification, row.classification)
-            public, access_source = c.public and row.public, "config"
+        restricted = access.classification == "restricted"
         out.append(
             dataclasses.replace(
                 c,
-                classification="restricted" if restricted else "standard",
-                public=public and not restricted,
+                classification=access.classification,
+                public=access.public and not restricted,
                 org_readable=c.org_readable and not restricted,
-                access_source=access_source,
-                row_kind=row.row_kind,
+                access_source="registry",
+                row_kind=access.row_kind,
             )
         )
     seen = {(c.org, c.namespace) for c in out}

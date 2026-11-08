@@ -95,11 +95,12 @@ Rules:
   source is not an operator entry (one whose holder keeps an admin grant given on an
   operator entry other than the revoked one is rewritten by the next sync instead); an
   operator copy kept there goes at the next sync once its operator grant is gone.
-- An operator entry that names a namespace a member already added here is skipped, as
-  a configuration error (`loom.code.repos_config_errors`), and the member's branch
-  stays as it was: list the entry under another namespace. Any other registry row
-  of an entry's namespace that is not the entry's access row only narrows its access,
-  and `code.repo.set_access` can then only restrict it (`ACCESS_FROM_CONFIG`).
+- An operator entry that names a namespace a member added here, even one removed
+  since, is skipped, with a warning in the server log, since that member's grants
+  there would become an operator entry's: list the entry under another namespace.
+  A registry row that records no kind is read as the entry's access row, and while
+  self-service is off the registry is not read: review a namespace's grants before
+  listing it in either case.
 - The access row `code.repo.set_access` writes for an operator entry is dropped once
   the entry leaves the configuration, so the namespace is no longer indexed; it does
   not count against the org's repository quota.

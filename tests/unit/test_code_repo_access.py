@@ -82,38 +82,20 @@ def test_an_access_row_wins_over_the_entry_but_keeps_its_other_fields(monkeypatc
     assert repos._with_registry([entry])[0].access_source == "config"
 
 
-@pytest.mark.parametrize("kind", ["", "operator"])
-def test_a_row_that_is_not_an_access_row_only_narrows_the_entry(monkeypatch, kind) -> None:
-    # A row from before row_kind may be a member's add: it never widens the entry.
-    row = dataclasses.replace(
-        _cfg("code-weave", classification="standard", public=True, source="registry"),
-        row_kind=kind,
-    )
-    monkeypatch.setattr(repos, "registry_repos", lambda: [row])
-    (weave,) = repos._with_registry([_cfg("code-weave", classification="restricted")])
-    assert weave.classification == "restricted" and weave.public is False
-    assert weave.access_source == "config" and weave.row_kind == kind
-    (closed,) = repos._with_registry([_cfg("code-weave", classification="standard")])
-    assert closed.public is False
-    narrowing = dataclasses.replace(row, classification="restricted", public=False)
-    monkeypatch.setattr(repos, "registry_repos", lambda: [narrowing])
-    (narrowed,) = repos._with_registry([_cfg("code-weave", classification="standard", public=True)])
-    assert narrowed.classification == "restricted" and narrowed.org_readable is False
-
-
-def test_an_entry_whose_namespace_a_member_added_is_skipped(monkeypatch) -> None:
+def test_an_entry_whose_namespace_a_member_added_is_skipped(monkeypatch, caplog) -> None:
+    # The member's branch is listed as it was, and the entry is logged once.
     row = dataclasses.replace(_cfg("code-weave", source="registry"), row_kind="page")
     monkeypatch.setattr(repos, "registry_repos", lambda: [row])
-    def env() -> list[Any]:
-        repos._publish_config_errors({})  # as a clean LOOM_CODE_REPOS_JSON parse does
-        return [_cfg("code-weave")]
-
-    monkeypatch.setattr(repos, "_configured_from_env", env)
-    assert repos.configured_repos() == [row]  # the member's branch, as it was
-    assert repos.config_errors_for("code-weave")
+    monkeypatch.setattr(repos, "_skipped_logged", set())
+    assert repos._with_registry([_cfg("code-weave")]) == [row]
+    assert repos._with_registry([_cfg("code-weave")]) == [row]
+    assert len([r for r in caplog.records if "code-weave" in r.getMessage()]) == 1
+    # Removed since: the namespace still holds the member's grants, so it stays skipped.
     monkeypatch.setattr(repos, "registry_repos", lambda: [])
-    assert repos.configured_repos() == [_cfg("code-weave")]
-    assert repos.config_errors_for("code-weave") == []
+    repos.set_registry_repos([], frozenset({(ORG, "code-weave")}))
+    assert repos._with_registry([_cfg("code-weave")]) == []
+    repos.set_registry_repos([])
+    assert repos._with_registry([_cfg("code-weave")]) == [_cfg("code-weave")]
 
 
 def test_an_access_row_whose_entry_is_gone_is_not_a_branch(monkeypatch) -> None:
@@ -235,13 +217,6 @@ async def test_set_access_writes_registry_and_directory_and_needs_confirm_to_wid
             )
         )
     assert e.value.to_detail()["code"] == "RESTRICTED_NOT_OPEN"
-    # An entry's namespace holding a row that is not its access row: only a restriction.
-    ch.registry = {"active": True, "row_kind": ""}
-    ch.inserts.clear()
-    with pytest.raises(ValidationError) as e:
-        await h.handle_code_repo_set_access(inp)
-    assert e.value.to_detail()["code"] == "ACCESS_FROM_CONFIG" and ch.inserts == []
-    ch.registry = None
     with pytest.raises(ValidationError) as e:
         await h.handle_code_repo_set_access(
             SimpleNamespace(
@@ -430,6 +405,14 @@ async def test_upsert_access_copies_an_existing_registry_row_and_builds_one_for_
     )
     row = ch3.inserts[0][1][0]
     assert row["row_kind"] == "access" and row["repo"] == "ClickHouse/weave"
+    with pytest.raises(ValidationError):  # a removed branch added from the page
+        await reg.upsert_access(
+            _cfg("code-x", source="registry"),
+            classification="restricted",
+            join_policy="approval",
+            created_by="a",
+            ch=_CH2(existing | {"active": False}),
+        )
 
 
 @pytest.mark.asyncio

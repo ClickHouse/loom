@@ -113,17 +113,11 @@ async def insert_first_row(cfg: Any, client: Any, *, restricted: bool, join_poli
 
 async def _access_row(cfg: Any, client: Any) -> dict[str, Any] | None:
     """The namespace's registry row read now; None for an inactive one, which a removed
-    branch added from the page leaves behind and which decides nothing. An operator
-    entry follows only its access row: any other row only narrows it, as this
-    process's snapshot already says (`repos._with_registry`)."""
+    branch added from the page leaves behind and which decides nothing."""
     from server.code.store.index import CodeRepo
 
     row = await CodeRepo(client).code_repo_row(cfg.org, cfg.namespace)
-    if row is None or row.get("active") is False:
-        return None
-    if cfg.source == "config" and row.get("row_kind") != "access":
-        return None
-    return row
+    return row if row is not None and row.get("active") is not False else None
 
 
 async def _register_first_row(cfg: Any, client: Any, *, restricted: bool, public: bool) -> None:

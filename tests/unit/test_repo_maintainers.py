@@ -1111,14 +1111,14 @@ async def test_the_ingest_pass_syncs_each_repository_with_a_restricted_page_bran
 
     monkeypatch.setattr(maintainers, "sync_quietly", _sync)
 
-    def entry(ns: str, classification: str) -> Any:
+    def entry(ns: str, classification: str, row_kind: str = "page") -> Any:
         return SimpleNamespace(
             org="clickhouse",
             namespace=ns,
             repo="Org/z",
             source="registry",
             classification=classification,
-            row_kind="page",
+            row_kind=row_kind,
         )
 
     ch = _FakeCH([])
@@ -1129,6 +1129,12 @@ async def test_the_ingest_pass_syncs_each_repository_with_a_restricted_page_bran
     def going() -> bool:
         return False
 
+    # A restricted branch an operator admin added is the operator's side: not synced.
+    standard.append(entry("code-z-4", "restricted", row_kind="operator"))
+    await maintainers.sync_restricted_page_branches(standard, exhausted=going)
+    assert synced == ["code-z-2"]
+    synced.clear()
+    standard.pop()
     await maintainers.sync_restricted_page_branches(standard, exhausted=going)
     snapshot = [entry("code-z-1", "restricted"), *standard]
     monkeypatch.setattr(repos, "configured_repos", lambda: snapshot)

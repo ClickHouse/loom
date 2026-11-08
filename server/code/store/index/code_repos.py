@@ -30,6 +30,14 @@ class CodeReposMixin(CodeRepoBase):
         )
         return rows
 
+    async def page_namespaces(self) -> list[dict[str, Any]]:
+        """(org, namespace) of every branch a member added from the page, removed ones
+        too: an operator entry is never listed for one (`repos._with_registry`)."""
+        rows: list[dict[str, Any]] = await self._ch.query_all(
+            "SELECT org, namespace FROM loom.code_repos FINAL WHERE row_kind = 'page'"
+        )
+        return rows
+
     async def active_code_repo_count(self, org: str) -> int:
         row = await self._ch.query_one(
             # An operator entry's access row is not a repository the org added.

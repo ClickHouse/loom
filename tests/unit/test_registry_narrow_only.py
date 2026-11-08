@@ -147,12 +147,7 @@ async def test_a_maintainer_s_widening_reaches_the_row_only_while_its_access_row
     class _Access(_Client):
         async def query_one(self, sql, params=None):
             if "loom.code_repos" in sql:
-                return {
-                    "row_kind": "access",
-                    "classification": access,
-                    "updated_at": at,
-                    "join_policy": "closed",
-                }
+                return {"classification": access, "updated_at": at, "join_policy": "closed"}
             return self.existing
 
     client = _Access(existing=existing)
@@ -233,12 +228,7 @@ async def test_a_page_branch_opens_only_while_its_registry_row_says_open(
     class _Registry(_Client):
         async def query_one(self, sql, params=None):
             if "loom.code_repos" in sql:
-                return {
-                    "row_kind": "access",
-                    "classification": "standard",
-                    "join_policy": join_policy,
-                    "updated_at": at,
-                }
+                return {"classification": "standard", "join_policy": join_policy, "updated_at": at}
             return {
                 "classification": "standard",
                 "join_policy": "approval",
@@ -263,7 +253,7 @@ async def test_a_narrowing_reaches_the_row_only_while_the_registry_row_says_rest
     class _Access(_Client):
         async def query_one(self, sql, params=None):
             if "loom.code_repos" in sql:
-                return {"row_kind": "access", "classification": access}
+                return {"classification": access}
             return {"classification": "standard", "join_policy": "approval"}
 
     client = _Access()
@@ -280,11 +270,7 @@ async def test_a_first_row_follows_a_registry_row_newer_than_the_snapshot() -> N
     class _Restricted(_Client):
         async def query_one(self, sql, params=None):
             if "loom.code_repos" in sql:
-                return {
-                    "row_kind": "access",
-                    "classification": "restricted",
-                    "join_policy": "approval",
-                }
+                return {"classification": "restricted", "join_policy": "approval"}
             return None
 
     client = _Restricted()
@@ -302,11 +288,7 @@ async def test_a_first_row_follows_a_standard_registry_row_over_a_restricted_sna
     class _Standard(_Client):
         async def query_one(self, sql, params=None):
             if "loom.code_repos" in sql:
-                return {
-                    "row_kind": "access",
-                    "classification": "standard",
-                    "join_policy": "approval",
-                }
+                return {"classification": "standard", "join_policy": "approval"}
             return None
 
     client = _Standard()
@@ -320,7 +302,7 @@ async def test_a_first_row_keeps_the_registry_row_s_closed_policy() -> None:
     class _Closed(_Client):
         async def query_one(self, sql, params=None):
             if "loom.code_repos" in sql:
-                return {"row_kind": "access", "classification": "standard", "join_policy": "closed"}
+                return {"classification": "standard", "join_policy": "closed"}
             return None
 
     client = _Closed()
@@ -335,7 +317,7 @@ async def test_a_restricted_first_row_is_never_open() -> None:
     class _RestrictedOpen(_Client):
         async def query_one(self, sql, params=None):
             if "loom.code_repos" in sql:
-                return {"row_kind": "access", "classification": "restricted", "join_policy": "open"}
+                return {"classification": "restricted", "join_policy": "open"}
             return None
 
     client = _RestrictedOpen()
@@ -352,33 +334,10 @@ async def test_an_inactive_registry_row_decides_nothing() -> None:
     class _Removed(_Client):
         async def query_one(self, sql, params=None):
             if "loom.code_repos" in sql:
-                return {
-                    "row_kind": "access",
-                    "classification": "standard",
-                    "join_policy": "open",
-                    "active": False,
-                }
+                return {"classification": "standard", "join_policy": "open", "active": False}
             return None
 
     client = _Removed()
-    assert await registry.ensure_registered(_cfg("restricted"), ch=client)
-    ((_table, (row,)),) = client.inserted
-    assert (row["classification"], row["join_policy"]) == ("restricted", "approval")
-
-
-@pytest.mark.parametrize("kind", ["page", ""])
-@pytest.mark.asyncio
-async def test_an_operator_entry_follows_no_registry_row_but_its_access_row(kind: str) -> None:
-    """A member who added the namespace from the page before the operator listed it
-    (or a row from before `row_kind`) does not widen the operator's entry."""
-
-    class _Added(_Client):
-        async def query_one(self, sql, params=None):
-            if "loom.code_repos" in sql:
-                return {"row_kind": kind, "classification": "standard", "join_policy": "open"}
-            return None
-
-    client = _Added()
     assert await registry.ensure_registered(_cfg("restricted"), ch=client)
     ((_table, (row,)),) = client.inserted
     assert (row["classification"], row["join_policy"]) == ("restricted", "approval")
