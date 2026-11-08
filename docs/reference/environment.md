@@ -61,7 +61,7 @@ reported as `build_commit`). The image always carries the local CPU embedder and
 default model, and sets `LOOM_LOCAL_EMBEDDING_MODEL_DIR=/app/models`. The remaining
 `ARG`s pin toolchain versions and checksums for the compiler-tier indexers
 (`GO_VERSION`, `NODE_VERSION`, `SCIP_GO_VERSION`, `SCIP_CLANG_VERSION`, their
-`*_SHA256*` values and `LLVM_SIGNER_FPR`, the LLVM signing key);
+`*_SHA256*` values and `LLVM_SIGNER_FPR`, the LLVM signing key's fingerprint);
 `scripts/install-code-toolchains.sh` pins the tools it installs with npm
 (scip-typescript, scip-python and the package managers).
 
