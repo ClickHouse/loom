@@ -844,5 +844,5 @@ async def sync_quietly(org: str, namespace: str, *, ch: Any | None = None) -> No
     """The fan-out never fails the op or pass that runs it."""
     try:
         await sync_repo_maintainers(org, namespace, ch=ch)
-    except Exception:  # the op or pass that ran the fan-out must not fail
+    except Exception:  # see the docstring; logged with its traceback
         log.warning("repo maintainers: sync failed for %s/%s", org, namespace, exc_info=True)

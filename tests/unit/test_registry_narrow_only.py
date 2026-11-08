@@ -271,3 +271,19 @@ async def test_a_first_row_follows_a_registry_row_newer_than_the_snapshot() -> N
     assert await registry.ensure_registered(cfg, ch=client)
     ((_table, (row,)),) = client.inserted
     assert (row["classification"], row["join_policy"]) == ("restricted", "approval")
+
+
+@pytest.mark.asyncio
+async def test_a_first_row_keeps_a_restriction_either_source_holds() -> None:
+    """A restricted snapshot beats a standard registry row: either one restricts."""
+
+    class _Standard(_Client):
+        async def query_one(self, sql, params=None):
+            if "loom.code_repos" in sql:
+                return {"classification": "standard", "join_policy": "open"}
+            return None
+
+    client = _Standard()
+    assert await registry.ensure_registered(_cfg("restricted"), ch=client)
+    ((_table, (row,)),) = client.inserted
+    assert (row["classification"], row["join_policy"]) == ("restricted", "approval")

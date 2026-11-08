@@ -114,7 +114,8 @@ async def _write_row(cfg: Any, client: Any) -> bool:
     row = await namespace_row(cfg.org, cfg.namespace, ch=client)
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
     if row is None:
-        # The registry row read now wins over this process's snapshot of it.
+        # A restriction in either the registry row read now or the snapshot counts;
+        # the registry row's join policy replaces the snapshot's.
         access = await CodeRepo(client).code_repo_row(cfg.org, cfg.namespace)
         if access is not None:
             restricted = restricted or str(access.get("classification")) == "restricted"
@@ -191,10 +192,9 @@ async def _write_row(cfg: Any, client: Any) -> bool:
 
 
 def _newer(access: dict[str, Any], row: dict[str, Any]) -> bool:
-    """The access row was written after the directory row. `code.repo.set_access`
-    writes the directory row first, so a directory row as new as or newer than the
-    access row belongs to a change whose access row is not written yet; the registrar
-    leaves it alone."""
+    """The access row was written after the directory row: only then is it a decision
+    the directory has not taken yet (`code.repo.set_access` writes the directory row
+    first)."""
     written, seen = access.get("updated_at"), row.get("updated_at")
     return written is not None and seen is not None and written > seen
 
