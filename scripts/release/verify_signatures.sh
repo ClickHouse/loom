@@ -5,12 +5,12 @@
 #   verify_signatures.sh VERSION IMAGE...
 set -euo pipefail
 
-version=${1:?version}
-shift
-[ "$#" -gt 0 ] || {
+[ "$#" -ge 2 ] || {
   echo "usage: verify_signatures.sh VERSION IMAGE..." >&2
   exit 2
 }
+version=$1
+shift
 identity="https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v$version"
 for image in "$@"; do
   cosign verify "$image:$version" --certificate-identity "$identity" \

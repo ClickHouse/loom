@@ -497,7 +497,8 @@ def test_an_image_that_does_not_verify_fails_with_the_recovery(tmp_path: Path) -
     assert len((tmp_path / "calls").read_text().splitlines()) == 1  # stops at the first
 
 
-def test_no_image_to_verify_is_a_usage_error(tmp_path: Path) -> None:
+@pytest.mark.parametrize("args", [[], ["1.2.0"]], ids=["nothing", "no image"])
+def test_a_missing_version_or_image_is_a_usage_error(args: list[str]) -> None:
     script = ROOT / "scripts/release/verify_signatures.sh"
-    result = subprocess.run(["bash", str(script), "1.2.0"], capture_output=True, text=True)
+    result = subprocess.run(["bash", str(script), *args], capture_output=True, text=True)
     assert result.returncode == 2 and "usage:" in result.stderr
