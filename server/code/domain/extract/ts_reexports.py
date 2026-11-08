@@ -44,7 +44,7 @@ _EXPORT_STAR_RE = re.compile(
 # A clause stops at the next `import` keyword: an import with no `from` would otherwise
 # search on to the end of the file from each one, quadratic in a file of them.
 _IMPORT_RE = re.compile(
-    r"""\bimport\s++((?:(?!\bimport\b)[^;'"])+?)(?<=\S)\s+from\s*["']([^"']+)["']"""
+    r"""(?<![\w$])import\s++((?:(?!(?<![\w$])import(?![\w$]))[^;'"])+?)(?<=\S)\s+from\s*["']([^"']+)["']"""
 )
 
 

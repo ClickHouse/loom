@@ -175,6 +175,21 @@ def test_import_names_over_a_run_of_braces_cost_linear_time() -> None:
     grows_linearly(run, 20_000, 80_000)
 
 
+def test_an_import_list_holding_the_word_import_keeps_its_names() -> None:
+    from types import SimpleNamespace
+
+    from server.code.app.index.ingest_edges import _import_names
+
+    src = 'import {\n  Foo, // eslint-disable-line import/no-deprecated\n  $import,\n} from "./foo";\n'
+    got = _import_names(SimpleNamespace(source=src.encode()), {"Foo": "./foo", "$import": "./foo"})
+    assert got == [("Foo", "Foo", "./foo"), ("$import", "$import", "./foo")]
+    glob = 'const g = "/*";\nimport { A } from "./a";\n'  # a string's `/*` opens no comment
+    assert _import_names(SimpleNamespace(source=glob.encode()), {"A": "./a"}) == [("A", "A", "./a")]
+    assert [
+        m.group(2) for m in ts_reexports._IMPORT_RE.finditer('import { $import } from "./a"')
+    ] == ["./a"]
+
+
 def test_a_named_export_list_run_resolves_in_linear_time() -> None:
     def run(n: int) -> None:
         ts_reexports.declared_name("export{X}\n" * n + 'import X from "y"', "X")

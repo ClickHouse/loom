@@ -659,16 +659,24 @@ async def _reexport_chains(
 
 
 # A clause stops at the next `import` keyword: an import with no `from` would otherwise
-# search on to the end of the file from each one, quadratic in a file of them.
+# search on to the end of the file from each one, quadratic in a file of them. It runs on
+# the text without comments, whose `import` would end a clause early; strings are kept
+# (a `//` in one is no comment), an unclosed quote to the end of its line.
+_COMMENT_OR_STRING_RE = re.compile(
+    r"""("(?:[^"\\\n]|\\.)*+"?|'(?:[^'\\\n]|\\.)*+'?|`(?:[^`\\]|\\.)*+`?)"""
+    r"|//[^\n]*|/\*.*?(?:\*/|\Z)",
+    re.S,
+)
 _IMPORT_CLAUSE_RE = re.compile(
-    r"""\bimport\s++((?:(?!\bimport\b)[^;'"])+?)(?<=\S)\s+from\s*["']([^"']+)["']"""
+    r"""(?<![\w$])import\s++((?:(?!(?<![\w$])import(?![\w$]))[^;'"])+?)(?<=\S)\s+from\s*["']([^"']+)["']"""
 )
 
 
 def _import_names(pf: ParsedFile, bindings: dict[str, str]) -> list[tuple[str, str, str]]:
     """(local name, imported name | 'default', specifier) per import binding;
     namespace imports are skipped (their members bind through the root)."""
-    text = pf.source.decode("utf-8", "replace")
+    raw = pf.source.decode("utf-8", "replace")
+    text = _COMMENT_OR_STRING_RE.sub(lambda m: m.group(1) or " ", raw)
     out: list[tuple[str, str, str]] = []
     for m in _IMPORT_CLAUSE_RE.finditer(text):
         clause, spec = m.group(1), m.group(2)
