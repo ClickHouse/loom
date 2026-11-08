@@ -694,7 +694,7 @@ async def _require_widening(input: Any, subject: str, ch: Any) -> None:
         return  # auth off: no principal to hold a grant
     if not await maintainers.holds_own_admin(ch, input.org, input.namespace, subject):
         raise AuthInsufficientError(
-            f"{input.namespace} is restricted and you hold no admin grant of its own there "
+            f"{input.namespace} is restricted and you hold no admin grant of your own there "
             "(a copy that does not come from one of the repository's operator entries does "
             "not count); ask one of its admins"
         )

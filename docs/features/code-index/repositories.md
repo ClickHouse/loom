@@ -85,7 +85,8 @@ Rules:
   such a copy may have granted or approved others there, themselves included: review
   its grants. Widening the branch again does not bring back a copy a restriction
   revoked; grant that admin on a sibling again. Only an admin with a grant given there,
-  or a copy of one from an operator entry, can widen it, not one holding such a copy.
+  or a copy of one from an operator entry, can widen it; a copy from a branch added here
+  does not count.
 - A revoke follows the same path. One made on an operator entry removes from a branch
   added here only a copied grant, and none from a standard one while the subject holds
   an admin grant given on a branch added here. A copy that is a branch's only admin
