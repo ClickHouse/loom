@@ -95,12 +95,12 @@ Rules:
   source is not an operator entry (one whose holder keeps an admin grant given on an
   operator entry other than the revoked one is rewritten by the next sync instead); an
   operator copy kept there goes at the next sync once its operator grant is gone.
-- An operator entry that names a namespace already added here keeps that namespace's
-  admins, who do not reach the repository's other operator entries, and its registry
-  row only narrows the entry's access. The server logs a warning for it: review its
-  grants, or list the entry under another namespace. A registry row
-  written before migration 089 also only narrows its entry; a wider access set from
-  the page before then goes in the entry's configuration.
+- An operator entry that names a namespace a member already added here is skipped, as
+  a configuration error (`loom.code.repos_config_errors`), and the member's branch
+  stays as it was: list the entry under another namespace. A registry row written
+  before migration 089 cannot be told apart from an access row, so it only narrows
+  its entry; a wider access set from the page before then goes in the entry's
+  configuration.
 - The access row `code.repo.set_access` writes for an operator entry is dropped once
   the entry leaves the configuration, so the namespace is no longer indexed.
 - A copy on an operator namespace whose `granted_by` is `repo-maintainers:<namespace>`

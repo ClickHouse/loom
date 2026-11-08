@@ -82,9 +82,9 @@ def test_an_access_row_wins_over_the_entry_but_keeps_its_other_fields(monkeypatc
     assert repos._with_registry([entry])[0].access_source == "config"
 
 
-@pytest.mark.parametrize("kind", ["page", ""])
-def test_a_row_the_operator_did_not_write_only_narrows_the_entry(monkeypatch, kind) -> None:
-    # A member's add of the namespace (or a row from before row_kind) never widens it.
+@pytest.mark.parametrize("kind", ["", "operator"])
+def test_a_row_that_is_not_an_access_row_only_narrows_the_entry(monkeypatch, kind) -> None:
+    # A row from before row_kind may be a member's add: it never widens the entry.
     row = dataclasses.replace(
         _cfg("code-weave", classification="standard", public=True, source="registry"),
         row_kind=kind,
@@ -101,14 +101,12 @@ def test_a_row_the_operator_did_not_write_only_narrows_the_entry(monkeypatch, ki
     assert narrowed.classification == "restricted" and narrowed.org_readable is False
 
 
-def test_a_member_add_of_an_operator_namespace_is_logged_once(monkeypatch, caplog) -> None:
+def test_an_entry_whose_namespace_a_member_added_is_skipped(monkeypatch) -> None:
     row = dataclasses.replace(_cfg("code-weave", source="registry"), row_kind="page")
     monkeypatch.setattr(repos, "registry_repos", lambda: [row])
     monkeypatch.setattr(repos, "_configured_from_env", lambda: [_cfg("code-weave")])
-    monkeypatch.setattr(repos, "_taken_logged", set())
-    repos.configured_repos()
-    repos.configured_repos()
-    assert len([r for r in caplog.records if "code-weave" in r.getMessage()]) == 1
+    assert repos.configured_repos() == [row]  # the member's branch, as it was
+    assert repos.config_errors_for("code-weave")
 
 
 def test_an_access_row_whose_entry_is_gone_is_not_a_branch(monkeypatch) -> None:

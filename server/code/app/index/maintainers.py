@@ -79,12 +79,9 @@ def reset_for_tests() -> None:
 
 
 def admins_source(cfg: Any) -> str:
-    """``config`` when the branch's admins are the operator's: an operator entry whose
-    namespace no member added from the page first, or a branch an operator entry's
-    admin added from it (`code.repo.add_branch`); ``registry`` for any other branch
-    added from the page. A row from before `row_kind` keeps its entry's source."""
-    if cfg.row_kind == "page":
-        return "registry"
+    """``config`` when the branch's admins are the operator's: an operator entry, or a
+    branch an operator entry's admin added from it (`code.repo.add_branch`);
+    ``registry`` for any other branch added from the page."""
     return "config" if cfg.row_kind == "operator" else str(cfg.source)
 
 

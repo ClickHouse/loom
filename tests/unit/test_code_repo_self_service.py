@@ -534,7 +534,8 @@ async def test_a_branch_of_a_self_service_source_ignores_an_operator_entry_of_it
         "code_repos_json",
         json.dumps([{"org": ORG, "namespace": "code-widgets", "repo": "acme/widgets"}]),
     )
-    assert links.tracker_namespaces_for(ORG, "code-widgets") == ["tracker-w"]
+    # The entry is skipped: the member's namespace stays theirs and reads no map.
+    assert links.tracker_namespaces_for(ORG, "code-widgets") == []
     assert links.tracker_namespaces_for(ORG, "code-widgets-release-1-2") == []
 
 

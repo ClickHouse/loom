@@ -239,21 +239,6 @@ async def test_a_self_service_branch_admin_is_never_mirrored_onto_an_operator_en
     ]
 
 
-async def test_an_operator_entry_a_member_added_first_passes_no_admin_to_the_others(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # code-z was added from the page before the operator listed it: its creator stays
-    # its admin but is not copied onto the operator's other entries.
-    taken = [
-        _Cfg("clickhouse", "code-z", "Org/z", row_kind="page"),
-        _Cfg("clickhouse", "code-z-26-5", "Org/z"),
-    ]
-    monkeypatch.setattr(repos, "configured_repos", lambda: taken)
-    ch = _FakeCH([_admin("code-z", "mallory"), _admin("code-z-26-5", "ops")])
-    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
-    assert [(r["namespace"], r["subject"]) for r in ch.inserted] == [("code-z", "ops")]
-
-
 async def test_a_branch_an_operator_admin_added_is_an_operator_branch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
