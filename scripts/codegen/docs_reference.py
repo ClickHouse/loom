@@ -48,6 +48,11 @@ if str(ROOT) not in sys.path:  # run as a file
 
 from scripts.codegen.common import write_atomic  # noqa: E402
 from scripts.codegen.sdk_py_admin_gen import render_admin_routes_table  # noqa: E402
+from server.core.errors import (  # noqa: E402
+    CLASS_BY_CODE,
+    UNVERIFIED_CODES,
+    error_class,
+)
 
 if TYPE_CHECKING:
     from server.operations.base import Operation
@@ -601,20 +606,42 @@ def render_errors() -> str:
         "Each code below is an anchor: `errors.md#<code in lowercase>` is the address an "
         "HTTP error's `Link` header names.\n",
     ]
-    for code in sorted({*typed, *others}):
+    for code in sorted({*typed, *others, *CLASS_BY_CODE}):
         out.append(f"#### `{code}`\n")
         if code in typed:
             status, doc, qual = typed[code]
             line = f"HTTP {status}, raised as `{qual}`."
             if doc:
                 line += f" {doc}"
+            line += _error_class_text(code, status)
         else:
+            if code not in others:
+                raise SystemExit(
+                    f"CLASS_BY_CODE lists {code!r}, which nothing under server/ answers"
+                )
             modules = ", ".join(f"`{m}`" for m in sorted(others[code]))
             line = f"Raised in {modules}."
+            if code in CLASS_BY_CODE:
+                line += _error_class_text(code, 0)
         if code in common:
             line += " What to do: [common errors](#common-errors-and-what-to-do)."
         out.append(line + "\n")
     return "\n".join(out)
+
+
+def _error_class_text(code: str, status: int) -> str:
+    category, retryable = error_class(code, status)
+    answer = "yes" if retryable else "no"
+    # server.core.errors.handler_failure_detail: a handler's 5xx on an op that is not idempotent.
+    if retryable and status >= 500:
+        answer = "yes for an idempotent op, no for another op once it ran"
+    if code in UNVERIFIED_CODES:
+        # Where MCP answers the same either way is said once, in the envelope section.
+        answer += (
+            "; when the check could not run, `dependency` and yes"
+            " ([the error envelope](#the-error-envelope-over-http))"
+        )
+    return f" Category `{category}`, retryable: {answer}."
 
 
 def _common_error_codes() -> set[str]:

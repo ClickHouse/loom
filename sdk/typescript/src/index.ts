@@ -24,7 +24,7 @@ export type {
 export { LoomClient, readEnv } from "./client.js";
 export type { CredentialOptions, LoginOptions, WhoAmI } from "./credentials.js";
 export { accessToken, defaultProfile, login, logout, StoredLogin, sameServer, whoami } from "./credentials.js";
-export type { LoomErrorDetail, LoomErrorOptions } from "./errors.js";
+export type { ErrorCategory, LoomErrorDetail, LoomErrorOptions } from "./errors.js";
 export {
   AuthError,
   BackendUnavailable,

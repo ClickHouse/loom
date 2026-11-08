@@ -41,7 +41,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from loom.errors import AuthInvalid, BackendUnavailable, LoomError
+from loom.errors import AuthInvalid, BackendUnavailable, LoomError, _busy
 
 CREDENTIALS_FILE = Path("~/.loom/credentials")
 DEFAULT_SERVER = "http://localhost:7777"
@@ -466,7 +466,7 @@ def _failed(r: httpx.Response, doing: str) -> LoomError:
     LoomError, never an httpx one."""
     error = _oauth_error(r) or f"HTTP {r.status_code}"
     if r.status_code == 429 or r.status_code >= 500:
-        return BackendUnavailable(f"{doing}: {error}; retry")
+        return _busy(f"{doing}: {error}; retry", r.status_code)
     if r.status_code in (401, 403) or error == "invalid_grant":
         return AuthInvalid(f"{doing}: {error}; run `loom login` again")
     return LoomError(f"{doing}: {error}")

@@ -13,8 +13,9 @@ What is retried and why:
   `Idempotency-Key` the server dedups on. Any other op that timed out may
   still be executing (a read-only `memory.ask` would run its synthesis twice)
   and is never retried by default;
-- never a response cut off, or any other transport failure: the server may
-  have acted.
+- a response cut off or a write that broke off, by the same rule as a read
+  timeout: the call may have run, as a timed-out one may;
+- never a request that could not be sent (a bad URL, a proxy refusal).
 
 The server's `Retry-After` (or its body's `retry_after_s`) replaces the
 backoff when within `max_retry_after_s`. A 429 is not a retry: it is pacing, bounded by the
@@ -56,8 +57,8 @@ class RetryPolicy:
     statuses: frozenset[int] = field(default_factory=_default_statuses)
     #: Retry when the connection failed before a response.
     retry_connection_errors: bool = True
-    #: Retry a read timeout: never, only for ops the server dedups (registry-idempotent,
-    #: not read-only), or always.
+    #: Retry a read timeout, or a call whose response never arrived whole: never, only for
+    #: ops the server dedups (registry-idempotent, not read-only), or always.
     retry_timeouts: RetryTimeouts = "idempotent"
     #: Honour a `Retry-After` on a retried status instead of the backoff.
     respect_retry_after: bool = True

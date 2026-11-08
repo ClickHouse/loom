@@ -30,7 +30,7 @@ from typing import Any
 import httpx
 
 from loom.credentials import _origin
-from loom.errors import AuthInvalid, BackendUnavailable, LoomError
+from loom.errors import AuthInvalid, BackendUnavailable, LoomError, _busy
 
 ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange"
@@ -215,7 +215,7 @@ def _answer(send: Callable[[], httpx.Response], what: str) -> dict[str, Any]:
     if not isinstance(body, dict):
         body = {}
     if r.status_code == 429 or r.status_code >= 500:
-        raise BackendUnavailable(f"{what}: {r.status_code}; retry shortly")
+        raise _busy(f"{what}: {r.status_code}; retry shortly", r.status_code)
     if r.status_code != 200:
         why = f"{body.get('error', r.status_code)} {body.get('error_description', '')}"
         raise AuthInvalid(f"{what}: {why.strip()}")

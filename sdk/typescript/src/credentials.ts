@@ -22,7 +22,15 @@
  * pulls them; in a browser a client never looks for a stored login.
  */
 
-import { AuthError, BackendUnavailable, LoomError, NETWORK_ERROR_CODE } from "./errors.js";
+import {
+  AuthError,
+  BackendUnavailable,
+  busy,
+  classed,
+  connectFailed,
+  LoomError,
+  NETWORK_ERROR_CODE,
+} from "./errors.js";
 import type { TokenProvider } from "./machine.js";
 import { envVar, proc } from "./runtime.js";
 
@@ -615,23 +623,13 @@ async function exchange(
     return { status: res.status, headers: res.headers, text: await res.text(), url };
   } catch (e) {
     const why = (e as { cause?: { code?: string } }).cause?.code ?? (e as Error).name ?? "error";
-    throw new BackendUnavailable(`cannot reach ${origin(url) ?? url}: ${why}`, { cause: e, code: NETWORK_ERROR_CODE });
+    // The sign-in request was not answered: asked again, as the transport does.
+    const err = new BackendUnavailable(`cannot reach ${origin(url) ?? url}: ${why}`, {
+      cause: e,
+      code: NETWORK_ERROR_CODE,
+    });
+    throw classed(err, "dependency", true);
   }
-}
-
-const CONNECT_CODES = new Set([
-  "ECONNREFUSED",
-  "ENOTFOUND",
-  "EAI_AGAIN",
-  "EHOSTUNREACH",
-  "ENETUNREACH",
-  "UND_ERR_CONNECT_TIMEOUT",
-]);
-
-/** Whether the request failed before reaching the server, so nothing it carried was spent. */
-function neverConnected(e: unknown): boolean {
-  const cause = (e as { cause?: { cause?: { code?: string } } }).cause;
-  return CONNECT_CODES.has(cause?.cause?.code ?? "");
 }
 
 function parsed(r: Answer): unknown {
@@ -664,7 +662,7 @@ function oauthField(r: Answer, field: "error" | "error_description"): string {
 function failed(r: Answer, doing: string): LoomError {
   const error = oauthField(r, "error") || `HTTP ${r.status}`;
   const opts = { status: r.status, code: oauthField(r, "error") };
-  if (r.status === 429 || r.status >= 500) return new BackendUnavailable(`${doing}: ${error}; retry`, opts);
+  if (r.status === 429 || r.status >= 500) return busy(`${doing}: ${error}; retry`, opts);
   if (r.status === 401 || r.status === 403 || error === "invalid_grant")
     return new AuthError(`${doing}: ${error}; run \`loom login\` again`, opts);
   return new LoomError(`${doing}: ${error}`, opts);
@@ -854,14 +852,18 @@ async function refresh(
     // Nothing reached the server, so nothing was spent: try once more. (A
     // lost answer cannot be asked again: the server spent the token, and
     // presenting it twice ends the session.)
-    if (!neverConnected(e)) throw e;
+    if (!connectFailed(e)) throw e;
     r = await exchange(f, endpoint, { form }, left(REFRESH_TIMEOUT_MS));
   }
   const marked = Boolean(entry.marked);
   if (marked && r.status >= 400 && r.status < 500 && !r.headers.has(SESSIONS_HEADER))
-    throw new BackendUnavailable(
-      `${entry.server} answered from a build that predates this session; retry, or run \`loom login\` if it persists`,
-      { status: r.status },
+    throw classed(
+      new BackendUnavailable(
+        `${entry.server} answered from a build that predates this session; retry, or run \`loom login\` if it persists`,
+        { status: r.status },
+      ),
+      "dependency",
+      true,
     );
   if (r.status === 400 && oauthField(r, "error") === "invalid_grant") {
     drop(n, profile);

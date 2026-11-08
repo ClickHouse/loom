@@ -73,7 +73,9 @@ def test_error_shape_matches_loom_errors():
     c = TestClient(_app())
     r = c.post("/echo", content=b"x" * (LIMIT + 5))
     body = json.loads(r.content)
-    assert set(body) == {"detail"} and set(body["detail"]) == {"code", "message", "limit_bytes"}
+    assert set(body) == {"detail"}
+    assert set(body["detail"]) == {"code", "message", "limit_bytes", "category", "retryable"}
+    assert body["detail"]["category"] == "input" and body["detail"]["retryable"] is False
 
 
 @pytest.mark.parametrize("bad", [b"abc", b""])

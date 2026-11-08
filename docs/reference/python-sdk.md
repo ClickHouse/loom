@@ -203,22 +203,51 @@ whole `detail` object: a 422's `errors`, a `SCHEMA_PENDING`'s `table` and
 body has no code (`loom.errors.from_response`); a 429 is always `RateLimited`
 and a 5xx always a `BackendUnavailable`.
 
-| Class                  | Code(s)                                                                         | Notes                                                                        |
-| ---------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `ValidationError`      | `VALIDATION_FAILED`; status 400, 422                                            |                                                                              |
-| `AuthInvalid`          | `AUTH_INVALID`; status 401                                                      |                                                                              |
-| `AuthInsufficient`     | `AUTH_INSUFFICIENT`; status 403                                                 |                                                                              |
-| `NotFound`             | `RESOURCE_NOT_FOUND`; status 404                                                |                                                                              |
-| `PreconditionFailed`   | `PRECONDITION_FAILED`; status 409, 412 without a known code                     | `.current_sha256`: retry without re-reading                                  |
-| `IdempotentConflict`   | `IDEMPOTENT_CONFLICT`                                                           |                                                                              |
-| `BackendUnavailable`   | `BACKEND_UNAVAILABLE`, any 5xx, and `NETWORK` (no response)                     | `cannot reach <base_url>: …`, or `response from <base_url> cut off: …`       |
-| `RateLimited`          | `RATE_LIMITED`; status 429                                                      | subclass of `BackendUnavailable`; `.retry_after_s`                           |
-| `Overloaded`           | `OVERLOADED`                                                                    | subclass of `BackendUnavailable`; `.retry_after_s`                           |
-| `BackendTimeout`       | `BACKEND_TIMEOUT`                                                               | subclass of `BackendUnavailable`                                             |
-| `SchemaPending`        | `SCHEMA_PENDING`                                                                | subclass of `BackendUnavailable`                                             |
-| `IdempotentInProgress` | `IDEMPOTENT_IN_PROGRESS`                                                        | subclass of `BackendUnavailable`; `.retry_after_s`; retried by the transport |
-| `LoomError`            | any other code on any other status (423 `LOCKED`, …), and `OVERRIDE_NOT_STORED` | match on `.code`; a 409 `PINNED_CONFLICT` is a `PreconditionFailed`          |
-| `LoomError`            | `INVALID_RESPONSE`                                                              | a 2xx body that is not a JSON object                                         |
+`.category` (an `ErrorCategory`, one of six names) and `.retryable` read the server's
+`detail` ([the error envelope](./errors.md#the-error-envelope-over-http)). For an error
+whose body has neither, or one the SDK raised itself:
+
+- a connection the server never saw (code `NETWORK`) is `dependency` and retryable;
+- a call that may have run (a response that was cut off, a write that broke off, or one
+  that did not arrive in time) is `dependency` and retryable only on an idempotent op;
+- a request that could not be sent (code `NETWORK`) is not retryable on any op: `input`
+  for one httpx will not send (an invalid header), `dependency` for a proxy refusal;
+- a 2xx whose body is not a JSON object (`INVALID_RESPONSE`) is `internal`;
+- a `base_url` that is not an http(s) URL with a host is refused when the transport is
+  built, with an `input` `LoomError`, not retryable;
+- an error raised before sending is `dependency` and retryable when a service the SDK
+  needed first was down (an identity provider, a secret store; a sign-in answered 429 is
+  `capacity`), `auth` when the caller is not signed in, else `input`;
+- a code the SDK never retries is `configuration` (`CODED_WIDTH_MISMATCH`,
+  `GATEWAY_REQUIRED`), `internal` (`MODEL_CALL_UNATTRIBUTED`) or `dependency`
+  (`PUBLICATION_PENDING`: the write is committed and its rows follow), not retryable;
+- a 5xx on an op that is not idempotent is not retryable, since the call may have written,
+  unless its code proves the handler never ran (`AUTH_UNAVAILABLE`). This is stricter than
+  the server, which also keeps a refusal it makes before dispatch retryable
+  (`CONFIG_DRIFT`, `MODEL_CHANGE_IN_PROGRESS`, an `OVERLOADED` from the auth gate): a body
+  without the fields does not say where it came from;
+- any other code is classed by its HTTP status alone, so one the server lists with its own
+  class (the [error codes](./errors.md#error-codes) say which) can read differently there.
+
+`knowledge.wait_for_ingest` running out raises the built-in `TimeoutError`, not a
+`LoomError`, so it has neither field.
+
+| Class                  | Code(s)                                                                         | Notes                                                                                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ValidationError`      | `VALIDATION_FAILED`; status 400, 422                                            |                                                                                                                                              |
+| `AuthInvalid`          | `AUTH_INVALID`; status 401                                                      |                                                                                                                                              |
+| `AuthInsufficient`     | `AUTH_INSUFFICIENT`; status 403                                                 |                                                                                                                                              |
+| `NotFound`             | `RESOURCE_NOT_FOUND`; status 404                                                |                                                                                                                                              |
+| `PreconditionFailed`   | `PRECONDITION_FAILED`; status 409, 412 without a known code                     | `.current_sha256`: retry without re-reading                                                                                                  |
+| `IdempotentConflict`   | `IDEMPOTENT_CONFLICT`                                                           |                                                                                                                                              |
+| `BackendUnavailable`   | `BACKEND_UNAVAILABLE`, any 5xx, and `NETWORK` (no response)                     | `cannot reach <base_url>: …`, `no response from <base_url>: …` (a write that broke off, a timeout), or `response from <base_url> cut off: …` |
+| `RateLimited`          | `RATE_LIMITED`; status 429                                                      | subclass of `BackendUnavailable`; `.retry_after_s`                                                                                           |
+| `Overloaded`           | `OVERLOADED`                                                                    | subclass of `BackendUnavailable`; `.retry_after_s`                                                                                           |
+| `BackendTimeout`       | `BACKEND_TIMEOUT`                                                               | subclass of `BackendUnavailable`                                                                                                             |
+| `SchemaPending`        | `SCHEMA_PENDING`                                                                | subclass of `BackendUnavailable`                                                                                                             |
+| `IdempotentInProgress` | `IDEMPOTENT_IN_PROGRESS`                                                        | subclass of `BackendUnavailable`; `.retry_after_s`; retried by the transport                                                                 |
+| `LoomError`            | any other code on any other status (423 `LOCKED`, …), and `OVERRIDE_NOT_STORED` | match on `.code`; a 409 `PINNED_CONFLICT` is a `PreconditionFailed`                                                                          |
+| `LoomError`            | `INVALID_RESPONSE`                                                              | a 2xx body that is not a JSON object                                                                                                         |
 
 A model call the inference gateway refused for its identity raises `AuthInsufficient`
 with code `MODEL_CALL_REFUSED` (403, never retried). One it asked to wait raises
@@ -252,14 +281,15 @@ except RateLimited as e:
 
 The retry policy is one frozen dataclass, `RetryPolicy`, set on the Agent and
 overridable per call with a `RetryPolicy` or a dict of its fields; every field
-is validated and named when wrong. Defaults: 3 attempts; 0.1 s backoff
-doubling to 5 s with jitter; 408 and 5xx retried for registry-idempotent ops
-(any other op only on a 408 or a 503 `AUTH_UNAVAILABLE`, which the server
-answers before running it); connection errors retried; a read timeout retried
-only for idempotent ops that are not read-only (`retry_timeouts="idempotent"`),
-since the server deduplicates their `Idempotency-Key` (a timed-out `memory.ask`
-is not run twice); a `Retry-After` on a retried status
-honoured up to 60 s. A 429 is paced, not retried.
+is validated and named when wrong. Defaults: 3 attempts; 0.1 s backoff doubling
+to 5 s with jitter; 408 and 5xx retried for registry-idempotent ops (any other
+op only on a 408 or a 503 `AUTH_UNAVAILABLE`, which the server answers before
+running it), except an answer the server classes `configuration`, which only an
+operator's fix ends; connection errors retried; a call that may have run (timed
+out, cut off or broken off) retried only for idempotent ops that are not
+read-only (`retry_timeouts="idempotent"`), since the server deduplicates their
+`Idempotency-Key` (a timed-out `memory.ask` is not run twice); a `Retry-After`
+on a retried status honoured up to 60 s. A 429 is paced, not retried.
 
 ```python
 from loom import Agent, RetryPolicy

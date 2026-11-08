@@ -360,6 +360,17 @@ describe("accessToken", () => {
     expect(srv.sent).toHaveLength(0);
   });
 
+  it.each([
+    [503, "dependency"],
+    [429, "capacity"],
+  ] as const)("calls a sign-in answered %s retryable when called directly", async (status, category) => {
+    const srv = fakeServer();
+    store("default", { expires_at: now() - 10 });
+    srv.queue("/oauth/token", { status, body: { error: "temporarily_unavailable" } });
+    const err = (await accessToken(undefined, { fetch: srv.fetch }).catch((e: unknown) => e)) as LoomError;
+    expect([err.category, err.retryable]).toEqual([category, true]);
+  });
+
   it("refreshes a minute before expiry and keeps the session and the marker", async () => {
     const srv = fakeServer();
     store("default", { expires_at: now() + 30, session: "keep" });

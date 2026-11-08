@@ -493,6 +493,8 @@ def test_an_op_refuses_a_revoked_acted_for_subject_with_no_index_reason(
     assert r.json()["detail"] == {
         "code": "AUTH_INSUFFICIENT",
         "message": "the subject this request acts for is revoked, deprovisioned or disabled",
+        "category": "auth",
+        "retryable": False,
     }
 
 

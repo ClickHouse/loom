@@ -150,7 +150,7 @@ describe("Transport", () => {
   });
 
   it("names the unreachable base URL and sets code NETWORK when fetch itself fails", async () => {
-    const cause = new TypeError("fetch failed");
+    const cause = new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } });
     const { t, calls } = transport([{ status: 0, throw: cause }], { retry: { retryConnectionErrors: false } });
     const err = await t.post("memory.get", {}).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(BackendUnavailable);
@@ -160,7 +160,50 @@ describe("Transport", () => {
     expect(e.status).toBe(0);
     expect(e.cause).toBe(cause);
     expect(e.requestId).toBe(calls[0].headers["X-Request-Id"]);
+    // The server never saw it: resending is safe.
+    expect([e.category, e.retryable]).toEqual(["dependency", true]);
   });
+
+  it("resends a dropped socket only on an op the server dedups", async () => {
+    const dropped = { status: 0, throw: new TypeError("fetch failed", { cause: { code: "UND_ERR_SOCKET" } }) };
+    for (const [op, retryable] of [
+      ["memory.set_from_messages", false],
+      ["memory.ask", true],
+    ] as const) {
+      const { t, calls } = transport([dropped, { status: 200, body: {} }]);
+      const err = (await t.post(op, {}).catch((e: unknown) => e)) as LoomError;
+      expect([err.code, err.retryable, calls.length]).toEqual([NETWORK_ERROR_CODE, retryable, 1]);
+    }
+    const { t, calls } = transport([dropped, { status: 200, body: {} }]);
+    await expect(t.post("memory.set", {})).resolves.toEqual({});
+    expect(calls.length).toBe(2);
+  });
+
+  it.each([
+    [{ retryTimeouts: "never" }, "memory.set", 1],
+    [{ retryTimeouts: "always" }, "memory.set_from_messages", 2],
+    [{ retryConnectionErrors: false }, "memory.set", 2],
+  ] as const)("resends a dropped socket under %o as the timeout setting says", async (retry, op, sent) => {
+    const dropped = { status: 0, throw: new TypeError("fetch failed", { cause: { code: "UND_ERR_SOCKET" } }) };
+    const { t, calls } = transport([dropped, { status: 200, body: {} }], { retry });
+    await t.post(op, {}).catch(() => undefined);
+    expect(calls.length).toBe(sent);
+  });
+
+  it.each(["localhost:7777", "not a url", "ftp://loom.test", "http://u:p@loom.test", "http://"])(
+    "refuses baseUrl %s when it is built",
+    (baseUrl) => {
+      let err: unknown;
+      try {
+        new Transport({ baseUrl });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(LoomError);
+      expect([(err as LoomError).category, (err as LoomError).retryable]).toEqual(["input", false]);
+      expect((err as LoomError).message).not.toContain("u:p");
+    },
+  );
 
   it("surfaces BackendUnavailable after the last 5xx and never retries a 4xx", async () => {
     const { t, calls } = transport([
@@ -175,6 +218,53 @@ describe("Transport", () => {
     ]);
     await expect(t2.post("memory.get", {})).rejects.toBeInstanceOf(NotFound);
     expect(c2.length).toBe(1);
+  });
+
+  it("keeps retryable on a 5xx the handler never ran, or one the server calls retryable", async () => {
+    const unloaded = { status: 503, body: { detail: { code: "AUTH_UNAVAILABLE", message: "m" } } };
+    const { t } = transport([unloaded, unloaded, unloaded]);
+    const err = (await t.post("memory.set_from_messages", {}).catch((e: unknown) => e)) as LoomError;
+    expect([err.category, err.retryable]).toEqual(["dependency", true]);
+    const detail = { code: "MODEL_CHANGE_IN_PROGRESS", message: "m", category: "capacity", retryable: true };
+    const named = { status: 503, body: { detail } };
+    const { t: t2 } = transport([named, named, named]);
+    const err2 = (await t2.post("memory.set_from_messages", {}).catch((e: unknown) => e)) as LoomError;
+    expect([err2.category, err2.retryable]).toEqual(["capacity", true]);
+  });
+
+  it("classes a fieldless 5xx as not retryable on an op that is not idempotent, and retryable on a read", async () => {
+    // memory.set_from_messages is not idempotent: the 503 may follow a write it made.
+    const { t } = transport([{ status: 503, body: { detail: { code: "BACKEND_UNAVAILABLE", message: "m" } } }]);
+    const err = (await t.post("memory.set_from_messages", {}).catch((e: unknown) => e)) as LoomError;
+    expect([err.category, err.retryable]).toEqual(["dependency", false]);
+    const { t: t2 } = transport([
+      { status: 503 },
+      { status: 503 },
+      { status: 503, body: { detail: { code: "BACKEND_UNAVAILABLE", message: "m" } } },
+    ]);
+    const read = (await t2.post("memory.get", {}).catch((e: unknown) => e)) as LoomError;
+    expect([read.category, read.retryable]).toEqual(["dependency", true]);
+  });
+
+  it("does not retry an answer the server classes configuration", async () => {
+    const detail = { code: "SCHEMA_PENDING", message: "m", category: "configuration", retryable: false };
+    const { t, calls } = transport([
+      { status: 503, body: { detail } },
+      { status: 200, body: {} },
+    ]);
+    const err = (await t.post("memory.get", {}).catch((e: unknown) => e)) as LoomError;
+    expect([err.retryable, calls.length]).toEqual([false, 1]);
+  });
+
+  it("classes a fieldless OVERLOADED by its status, retryable only on an idempotent op", async () => {
+    // A handler's OVERLOADED may follow a statement that wrote, as the server's rule says.
+    const overloaded = { status: 503, body: { detail: { code: "OVERLOADED", message: "m" } } };
+    const { t } = transport([overloaded]);
+    const err = (await t.post("memory.set_from_messages", {}).catch((e: unknown) => e)) as LoomError;
+    expect([err.category, err.retryable]).toEqual(["dependency", false]);
+    const { t: t2 } = transport([overloaded, overloaded, overloaded]);
+    const read = (await t2.post("memory.get", {}).catch((e: unknown) => e)) as LoomError;
+    expect([read.category, read.retryable]).toEqual(["dependency", true]);
   });
 
   it("maps 422 to ValidationError carrying code, message, status and request id", async () => {
@@ -222,7 +312,7 @@ describe("Transport", () => {
 
   it("retries a connection failure but not a timeout on a non-idempotent op", async () => {
     const { t, calls } = transport([
-      { status: 0, throw: new TypeError("fetch failed") },
+      { status: 0, throw: new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } }) },
       { status: 200, body: {} },
     ]);
     await t.post("memory.get", {});
@@ -232,6 +322,33 @@ describe("Transport", () => {
     const { t: t2, calls: c2 } = transport([{ status: 0, throw: abort }]);
     await expect(t2.post("memory.set_from_messages", {}, { timeoutMs: 5 })).rejects.toBeInstanceOf(TimeoutError);
     expect(c2.length).toBe(1);
+  });
+
+  it("classes a token that never arrives as dependency and retryable: the call was never sent", async () => {
+    const f = fakeFetch([{ status: 200, body: {} }]);
+    const t = new Transport({
+      baseUrl: "http://loom.test/",
+      tokenProvider: { token: () => new Promise<string>(() => {}) },
+      fetch: f.fetch,
+      sleep,
+    });
+    const err = (await t.post("memory.get", {}, { timeoutMs: 5 }).catch((e: unknown) => e)) as TimeoutError;
+    expect(err).toBeInstanceOf(TimeoutError);
+    expect([err.category, err.retryable]).toEqual(["dependency", true]);
+    expect(f.calls.length).toBe(0);
+  });
+
+  it("calls a timed-out call retryable only on an idempotent op, a read included", async () => {
+    const abort = Object.assign(new Error("aborted"), { name: "AbortError" });
+    for (const [op, retryable] of [
+      ["memory.set", true],
+      ["memory.search", true],
+      ["memory.set_from_messages", false],
+    ] as const) {
+      const { t } = transport([{ status: 0, throw: abort }], { retry: { retryTimeouts: "never" } });
+      const err = (await t.post(op, {}, { timeoutMs: 5 }).catch((e: unknown) => e)) as TimeoutError;
+      expect([err.category, err.retryable]).toEqual(["dependency", retryable]);
+    }
   });
 
   it("paces the next call when the last response said the budget is at the floor", async () => {
@@ -310,6 +427,7 @@ describe("Transport cancellation and the whole-call timeout", () => {
       const err = await t.post("memory.get", {}, { signal: c.signal }).catch((e: unknown) => e);
       expect(err, String(status)).toBeInstanceOf(LoomError);
       expect((err as LoomError).message).toMatch(/aborted by caller/);
+      expect([(err as LoomError).category, (err as LoomError).retryable]).toEqual(["input", false]);
       expect(Date.now() - t0).toBeLessThan(2_000);
       expect(n).toBe(1);
     }
@@ -330,7 +448,7 @@ describe("Transport cancellation and the whole-call timeout", () => {
     }
   });
 
-  it("names a body cut off mid-stream and does not retry it: the server may have acted", async () => {
+  it("names a body cut off mid-stream and resends it only on an op the server dedups", async () => {
     let n = 0;
     const fetch = async () => {
       n++;
@@ -342,11 +460,18 @@ describe("Transport cancellation and the whole-call timeout", () => {
       return new Response(stream, { status: 200 });
     };
     const t = new Transport({ baseUrl: "http://x", fetch, logLevel: "off", sleep: async () => {} });
-    const err = (await t.post("memory.get", {}).catch((e: unknown) => e)) as BackendUnavailable;
-    expect(err).toBeInstanceOf(BackendUnavailable);
-    expect(err.code).toBe(NETWORK_ERROR_CODE);
-    expect(err.message).toMatch(/cut off: terminated/);
-    expect(n).toBe(1);
+    for (const [op, retryable, sent] of [
+      ["memory.set", true, 3],
+      ["memory.ask", true, 1],
+      ["memory.set_from_messages", false, 1],
+    ] as const) {
+      n = 0;
+      const err = (await t.post(op, {}).catch((e: unknown) => e)) as BackendUnavailable;
+      expect(err).toBeInstanceOf(BackendUnavailable);
+      expect([err.code, err.category, err.retryable]).toEqual([NETWORK_ERROR_CODE, "dependency", retryable]);
+      expect(err.message).toMatch(/cut off: terminated/);
+      expect(n).toBe(sent);
+    }
   });
 });
 

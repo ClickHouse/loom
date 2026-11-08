@@ -32,7 +32,7 @@ import logging
 from typing import Any
 
 from server.core.background import TaskSet
-from server.core.errors import LoomServerError, caller_text
+from server.core.errors import LoomServerError, caller_text, unverified_class
 from server.identity.app import history_policy as _policy
 from server.identity.domain import policy_rules
 from server.operations.base import Operation, Role
@@ -66,7 +66,13 @@ class PolicyForbiddenError(LoomServerError):
     status_code = 403
 
     def __init__(self, message: str, decision: policy_rules.PolicyDecision) -> None:
-        super().__init__(message, **decision.to_detail())
+        # Denied because the check could not run (no enforcing rule decided): the same
+        # write can pass once the store answers. A best guess, since a rule's read can also
+        # fail the same way every time (a query over a limit).
+        unverified = not decision.enforcing_rules and bool(decision.enforcing_errors)
+        super().__init__(
+            message, **decision.to_detail(), **unverified_class("POLICY_FORBIDDEN", unverified)
+        )
         self.decision = decision
 
 

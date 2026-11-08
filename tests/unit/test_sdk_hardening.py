@@ -370,11 +370,12 @@ async def test_errors_carry_request_id_status_and_the_5xx_body_class() -> None:
     [
         (httpx.ReadError("connection reset"), "response from http://x cut off: ReadError"),
         (httpx.RemoteProtocolError("peer closed"), "response from http://x cut off"),
-        (httpx.WriteError("broken pipe"), "cannot reach http://x: WriteError"),
+        (httpx.WriteError("broken pipe"), "no response from http://x: WriteError"),
+        (httpx.WriteTimeout("slow"), "no response from http://x: WriteTimeout"),
         (httpx.ProxyError("407"), "cannot reach http://x: ProxyError"),
     ],
 )
-async def test_every_other_httpx_failure_is_typed_and_not_retried(
+async def test_every_other_httpx_failure_is_typed_and_not_retried_on_an_op_that_is_not_idempotent(
     exc: Exception, said: str
 ) -> None:
     calls = 0
@@ -387,10 +388,11 @@ async def test_every_other_httpx_failure_is_typed_and_not_retried(
     t = Transport("http://x")
     _mock(t, handler)
     with pytest.raises(BackendUnavailable, match=re.escape(said)) as info:
-        await t.post("/v1/memory.get", {})  # idempotent: still one POST
+        await t.post("/v1/memory.set_from_messages", {})
     await t.close()
     assert info.value.code == NETWORK_ERROR_CODE and info.value.__cause__ is exc
     assert info.value.request_id and calls == 1
+    assert (info.value.category, info.value.retryable) == ("dependency", False)
 
 
 @pytest.mark.parametrize(

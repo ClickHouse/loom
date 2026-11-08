@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, Literal, cast, get_args
+
+#: Whose move an error is (`LoomError.category`).
+ErrorCategory = Literal["input", "auth", "capacity", "dependency", "configuration", "internal"]
 
 
 class LoomError(Exception):
@@ -20,10 +24,30 @@ class LoomError(Exception):
     request_id: str = ""
     status: int = 0
     detail: dict[str, Any]
+    #: The SDK's own `(category, retryable)` for this error, used when the server's
+    #: `detail` names none.
+    _sdk_class: tuple[ErrorCategory, bool] | None = None
 
     def __init__(self, *args: object) -> None:
         super().__init__(*args)
         self.detail = {}
+
+    @property
+    def category(self) -> ErrorCategory:
+        """Whose move it is: the server's `detail.category` (`input`, `auth`,
+        `capacity`, `dependency`, `configuration` or `internal`), else the SDK's own
+        classing (the Errors section of the Python SDK reference)."""
+        named = self.detail.get("category")
+        if named in get_args(ErrorCategory):
+            return cast(ErrorCategory, named)
+        return _fallback_class(self)[0]
+
+    @property
+    def retryable(self) -> bool:
+        """The server's `detail.retryable`: resending the same request unchanged
+        can succeed later. Else the SDK's own classing, as for `category`."""
+        named = self.detail.get("retryable")
+        return named if isinstance(named, bool) else _fallback_class(self)[1]
 
 
 class ValidationError(LoomError):
@@ -45,6 +69,17 @@ class NotFound(LoomError):
 class BackendUnavailable(LoomError):
     code = "BACKEND_UNAVAILABLE"
 
+
+#: 5xx codes never resent, with their category: a deployment's configuration (the
+#: operator's fix is named in the error and in /v1/health), a model call that names
+#: no customer (a server path to fix, not a passing fault), and a write already
+#: committed whose rows are still on their way.
+_NEVER_RETRIED: Mapping[str, ErrorCategory] = {
+    "CODED_WIDTH_MISMATCH": "configuration",
+    "GATEWAY_REQUIRED": "configuration",
+    "MODEL_CALL_UNATTRIBUTED": "internal",
+    "PUBLICATION_PENDING": "dependency",
+}
 
 #: The wait assumed when the server names none (or one past the cap).
 DEFAULT_RETRY_AFTER_S = 1.0
@@ -116,12 +151,59 @@ class CodedWidthMismatch(BackendUnavailable):
     code = "CODED_WIDTH_MISMATCH"
 
 
-#: `code` of a `BackendUnavailable` for a request that got no complete
-#: response: the server could not be reached, or its answer was cut off.
+#: `code` of a `BackendUnavailable` for a request that got no complete response:
+#: the server could not be reached, the request could not be sent, or the call may
+#: have run (cut off, broken off or timed out); `.retryable` says which.
 NETWORK_ERROR_CODE = "NETWORK"
 #: `code` of a `LoomError` for a 2xx whose body is not a JSON object — a proxy
 #: or gateway page, most often. Not retried: the server may have acted.
 INVALID_RESPONSE_CODE = "INVALID_RESPONSE"
+
+
+def _set_sdk_class(err: LoomError, category: ErrorCategory, retryable: bool) -> None:
+    """Give `err` the SDK's own class, used when the server's `detail` names none."""
+    err._sdk_class = (category, retryable)
+
+
+def _busy(message: str, status: int) -> BackendUnavailable:
+    """A sign-in answer that can pass later (a 429 or a 5xx), classed retryable."""
+    err = BackendUnavailable(message)
+    _set_sdk_class(err, "capacity" if status == 429 else "dependency", True)
+    return err
+
+
+def _fallback_class(e: LoomError) -> tuple[ErrorCategory, bool]:
+    """The class of an error whose body names none: one the SDK raised itself (no
+    response, an unreadable answer, a call it could not send), a code the SDK never
+    retries, else the server's rule by HTTP status (a proxy's page, or a server
+    without the fields)."""
+    if e._sdk_class is not None:
+        return e._sdk_class
+    if e.code == NETWORK_ERROR_CODE:
+        return "dependency", False
+    if e.code == INVALID_RESPONSE_CODE:
+        return "internal", False
+    if e.code in _NEVER_RETRIED:
+        return _NEVER_RETRIED[e.code], False
+    status = e.status
+    if status == 0:
+        # Raised before the call was sent: a service the SDK needed first (an identity
+        # provider, a secret store) is down, the caller is not signed in, or the call
+        # itself is wrong.
+        if isinstance(e, BackendUnavailable):
+            return "dependency", True
+        if isinstance(e, (AuthInvalid, AuthInsufficient)):
+            return "auth", False
+        return "input", False
+    if status in (401, 403):
+        return "auth", False
+    if status in (408, 429):
+        return "capacity", True
+    if status in (502, 503, 504):
+        return "dependency", True
+    if status >= 500:
+        return "internal", False
+    return "input", False
 
 
 class IdempotentConflict(LoomError):

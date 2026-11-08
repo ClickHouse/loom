@@ -78,7 +78,7 @@ assert p["ok"], (p["missing_ops"], p["missing_fields"])
 print(OPS["memory.search"].idempotent, OPS["memory.search"].role)
 ```
 
-`agent.memory.search(...)` and `agent.knowledge.search(...)` also accept `**extra`, so a field the server shipped this week rides the body without an SDK release. Errors are typed by the server's `detail.code`, and by HTTP status when a body carries none: `NotFound`, `ValidationError`, `AuthInvalid`, `AuthInsufficient`, `PreconditionFailed`, `RateLimited`, `BackendUnavailable` — every one carries `.request_id` (the `X-Request-Id` the server echoed) and `.status`.
+`agent.memory.search(...)` and `agent.knowledge.search(...)` also accept `**extra`, so a field the server shipped this week rides the body without an SDK release. Errors are typed by the server's `detail.code`, and by HTTP status when a body carries none: `NotFound`, `ValidationError`, `AuthInvalid`, `AuthInsufficient`, `PreconditionFailed`, `RateLimited`, `BackendUnavailable` — every one carries `.request_id` (the `X-Request-Id` the server echoed), `.status`, and the server's `.category` and `.retryable`, the SDK's own when the body names none ([the error envelope](../../docs/reference/errors.md#the-error-envelope-over-http)).
 
 `await agent.capabilities()` pairs `ops.capabilities` with what the bearer token itself says (`roles` / `ns_roles`, decoded, not verified) so an integration does not poll ops its token cannot call: `caps.can_call("conflicts.list")` is `True` / `False` when known and `None` when the SDK cannot tell — then make the call; `await agent.can_call(op)` answers for the Agent's namespace; `caps.callable()` lists every served op the token may call. Cached 60 s.
 
@@ -135,7 +135,7 @@ async with agent.session("thread-42", user_id="u1") as s:
 
 ## Retries and logging
 
-The retry policy is one frozen dataclass, set on the Agent and overridable per call with a `RetryPolicy` or a dict of its fields; every field is validated and named when wrong. Defaults: 3 attempts; 0.1 s backoff doubling to 5 s with ±25 % jitter; 408 and 5xx retried for registry-idempotent ops (any other op only on a 408 or a 503 `AUTH_UNAVAILABLE`, which the server answers before running it); connection errors retried; a read timeout retried only when the registry marks the op idempotent (the server dedups its `Idempotency-Key`); a `Retry-After` on a retried status honoured up to 60 s. A 429 is paced, not retried.
+The retry policy is one frozen dataclass, set on the Agent and overridable per call with a `RetryPolicy` or a dict of its fields; every field is validated and named when wrong. Defaults: 3 attempts; 0.1 s backoff doubling to 5 s with ±25 % jitter; 408 and 5xx retried for registry-idempotent ops (any other op only on a 408 or a 503 `AUTH_UNAVAILABLE`, which the server answers before running it), except an answer the server classes `configuration`; connection errors retried; a read timeout, a cut-off response or a write that broke off retried only for an op the registry marks idempotent and not read-only (the server dedups its `Idempotency-Key`); a `Retry-After` on a retried status honoured up to 60 s. A 429 is paced, not retried.
 
 ```python
 from loom import Agent, RetryPolicy

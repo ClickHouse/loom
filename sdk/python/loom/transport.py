@@ -30,12 +30,14 @@ from loom._logging import logger, redact_headers, redact_secret
 from loom._version import __version__
 from loom.credentials import StoredLogin
 from loom.errors import (
+    _NEVER_RETRIED,
     DEFAULT_RETRY_AFTER_S,
     INVALID_RESPONSE_CODE,
     NETWORK_ERROR_CODE,
     BackendUnavailable,
     LoomError,
     RateLimited,
+    _set_sdk_class,
     from_response,
 )
 from loom.machine import MachineLogin
@@ -133,6 +135,15 @@ def consumer_label(value: Any) -> str:
     return text[:CONSUMER_MAX_CHARS]
 
 
+def _sendable(url: str) -> bool:
+    """Whether `url` parses as an http(s) URL with a host."""
+    try:
+        parsed = httpx.URL(url)
+    except httpx.InvalidURL:
+        return False
+    return parsed.scheme in ("http", "https") and bool(parsed.host)
+
+
 def _without_userinfo(url: str) -> str:
     """`url` as a repr or an error message may show it: no `user:password@`."""
     return str(httpx.URL(url).copy_with(userinfo=b"")) if "@" in url else url
@@ -202,49 +213,59 @@ _CALL: contextvars.ContextVar[_Call | None] = contextvars.ContextVar("loom_call"
 
 # The server never saw these: safe to retry under `retry_connection_errors`.
 _CONNECTION_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
-# The server may still be processing these: retried only when the policy says
-# so (by default, only for an op whose Idempotency-Key the server dedups on:
-# idempotent and not read-only, so a timed-out `memory.ask` is not run twice).
-_TIMEOUT_ERRORS = (httpx.ReadTimeout, httpx.WriteTimeout)
 # The server answered but the response broke off: it may have acted.
 _CUT_OFF_ERRORS = (httpx.ReadError, httpx.RemoteProtocolError, httpx.DecodingError)
+# Sent, or partly sent, and maybe run (timed out, cut off, broken off): resent only when
+# the timeout policy says so (by default, only for an op whose Idempotency-Key the server
+# dedups on: idempotent and not read-only, so a timed-out `memory.ask` is not run twice).
+_MAY_HAVE_RUN = (httpx.ReadTimeout, httpx.WriteTimeout, httpx.WriteError, *_CUT_OFF_ERRORS)
 # A retried status re-runs the op: only an idempotent op's Idempotency-Key is
 # deduplicated, so any other op is retried only on an answer that proves the
 # handler never ran — a 408 (the request never fully arrived) or a refusal
 # the server makes before dispatch.
 _NEVER_RAN_CODES = frozenset({"AUTH_UNAVAILABLE"})
-# 5xx answers to a deployment's configuration, which no retry changes: the
-# operator's fix is named in the error (and in /v1/health). A model call that
-# names no customer is a server path to fix, not a passing fault.
-_CONFIGURATION_CODES = frozenset(
-    {"CODED_WIDTH_MISMATCH", "GATEWAY_REQUIRED", "MODEL_CALL_UNATTRIBUTED"}
-)
 
 
 def _never_ran(status: int, code: str) -> bool:
     return status == 408 or code in _NEVER_RAN_CODES
 
 
+def _mark_maybe_applied(err: LoomError, *, idempotent: bool) -> None:
+    """A 5xx whose body names no `retryable`, on an op that is not idempotent, may follow
+    a write the call made (as the server's own rule says), unless its code proves the
+    handler never ran: not retryable, whatever its status alone would say."""
+    named = isinstance(err.detail.get("retryable"), bool)
+    if idempotent or named or err.status < 500 or _never_ran(err.status, err.code):
+        return
+    _set_sdk_class(err, err.category, False)
+
+
 def unreachable_error(
     base_url: str, exc: BaseException, *, request_id: str = ""
 ) -> BackendUnavailable:
     """`BackendUnavailable` for a request that got no complete response:
-    `cannot reach <base_url>: <reason>` (or `response from <base_url> cut
-    off: <reason>`), `code="NETWORK"`, `status=0`, `request_id` the id this
-    SDK sent. The httpx exception rides along as `__cause__`."""
+    `cannot reach <base_url>: <reason>`, `response from <base_url> cut off:
+    <reason>`, or `no response from <base_url>: <reason>` for a write that broke
+    off or a call that timed out; `code="NETWORK"`, `status=0`, `request_id` the id
+    this SDK sent. The httpx exception rides along as `__cause__`."""
     base_url = _without_userinfo(base_url)
     detail = str(exc).strip()
     reason = type(exc).__name__ + (f": {detail}" if detail else "")
-    where = (
-        f"response from {base_url} cut off"
-        if isinstance(exc, _CUT_OFF_ERRORS)
-        else f"cannot reach {base_url}"
-    )
+    if isinstance(exc, _CUT_OFF_ERRORS):
+        where = f"response from {base_url} cut off"
+    elif isinstance(exc, _MAY_HAVE_RUN):
+        where = f"no response from {base_url}"
+    else:
+        where = f"cannot reach {base_url}"
     err = BackendUnavailable(f"{where}: {reason}")
     err.code = NETWORK_ERROR_CODE
     err.status = 0
     err.request_id = request_id
     err.__cause__ = exc
+    if isinstance(exc, _CONNECTION_ERRORS):
+        _set_sdk_class(err, "dependency", True)  # the server never saw it
+    elif isinstance(exc, httpx.LocalProtocolError):
+        _set_sdk_class(err, "input", False)  # a request httpx will not send: the caller's to fix
     return err
 
 
@@ -280,6 +301,11 @@ class Transport:
         auth: StoredLogin | MachineLogin | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
+        if not _sendable(self._base_url):
+            # Refused when built, not on the first call.
+            bad = LoomError("Transport: base_url must be an http(s) URL with a host")
+            _set_sdk_class(bad, "input", False)
+            raise bad
         #: The consumer this process speaks for. Stamped into every body that
         #: names none (the ledger's `consumer` column); '' sends nothing and
         #: leaves every payload unchanged.
@@ -650,21 +676,21 @@ class Transport:
                     error=e,
                 )
                 continue
-            except _TIMEOUT_ERRORS as e:
+            except _MAY_HAVE_RUN as e:
+                lost = unreachable_error(self.base_url, e, request_id=request_id)
+                _set_sdk_class(lost, "dependency", idempotent)
                 slept_s += await self._retry_or_raise(
                     op_path,
                     policy,
                     attempt,
                     slept_s,
                     allowed=policy.retries_timeout(idempotent=deduplicated),
-                    why=f"timed out ({type(e).__name__}); idempotent",
+                    why=f"no complete response ({type(e).__name__})",
                     request_id=request_id,
-                    error=unreachable_error(self.base_url, e, request_id=request_id),
+                    error=lost,
                 )
                 continue
             except httpx.RequestError as e:
-                # Any other failure (a response cut off, a protocol or proxy
-                # error): typed, and not retried — the server may have acted.
                 raise unreachable_error(self.base_url, e, request_id=request_id) from e
             elapsed_ms = (time.monotonic() - t0) * 1000
             self._record_rate_state(op_path, resp)
@@ -674,7 +700,10 @@ class Transport:
                 allowed = (
                     resp.status_code != 429
                     and policy.retries_status(resp.status_code)
-                    and err.code not in _CONFIGURATION_CODES
+                    and err.code not in _NEVER_RETRIED
+                    # Only the server's `configuration` class stops a resend; `retryable: false`
+                    # alone does not (an INTERNAL_ERROR on an idempotent op is worth one).
+                    and err.detail.get("category") != "configuration"
                     and (idempotent or _never_ran(resp.status_code, err.code))
                 )
                 delay = self._retry_delay(
@@ -686,6 +715,7 @@ class Transport:
                     hint=retry_hint(resp, err.detail),
                 )
                 if delay is None:
+                    _mark_maybe_applied(err, idempotent=idempotent)
                     raise err
                 why = f"{resp.status_code} {err.code}"
                 slept_s += await self._backoff(op_path, policy, attempt, delay, why, echoed)

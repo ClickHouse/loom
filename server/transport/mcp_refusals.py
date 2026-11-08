@@ -49,6 +49,11 @@ def refusal_body(e: BaseException) -> dict[str, Any] | None:
     body.setdefault("code", _default_code(status))
     body.setdefault("message", "")
     body["status"] = status
+    return _with_retry_after(body, headers)
+
+
+def _with_retry_after(body: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
+    """`body` with the `Retry-After` header as `retry_after_s`, which MCP has no header for."""
     retry = headers.get("Retry-After") or headers.get("retry-after")
     if retry and "retry_after_s" not in body:
         try:
@@ -59,15 +64,17 @@ def refusal_body(e: BaseException) -> dict[str, Any] | None:
 
 
 def server_failure(e: BaseException) -> dict[str, Any] | None:
-    """A LoomServerError the server raised as a 5xx (OVERLOADED, BACKEND_TIMEOUT,
-    SCHEMA_PENDING, EMBED_TIMEOUT): its wire detail plus `status`, the body
-    HTTP answers with. None for anything else. It stays a JSON-RPC error, but
-    one that names its code and hint instead of reading as an internal error."""
-    from server.core.errors import LoomServerError
-
-    if not isinstance(e, LoomServerError) or int(e.status_code) < 500:
+    """A 5xx the server raised with a code (a LoomServerError such as OVERLOADED or
+    BACKEND_TIMEOUT, or an HTTPException whose detail names one): its wire detail plus
+    `status`, the body HTTP answers with. None for anything else. It stays a JSON-RPC
+    error, but one that names its code and hint instead of reading as an internal error."""
+    got = _status_and_detail(e)
+    if got is None:
         return None
-    return {**e.to_detail(), "status": int(e.status_code)}
+    status, detail, headers = got
+    if status < 500 or not isinstance(detail, dict) or not detail.get("code"):
+        return None
+    return _with_retry_after({**detail, "status": status}, headers)
 
 
 def refusal_text(body: dict[str, Any]) -> str:
@@ -89,3 +96,44 @@ def _default_code(status: int) -> str:
         423: "LOCKED",
         429: "RATE_LIMITED",
     }.get(status, f"HTTP_{status}")
+
+
+def _with_line(block: dict[str, Any], line: str) -> dict[str, Any]:
+    if block.get("type") == "text" and isinstance(block.get("text"), str):
+        return {**block, "text": block["text"] + line}
+    return block
+
+
+def classify_tool_errors(resp: dict[str, Any]) -> dict[str, Any]:
+    """A `tools/call` answer with the error envelope's `category` and `retryable` on
+    its refusal body or its JSON-RPC error data, the fields HTTP's `detail` carries.
+    A fault carries its code (`INTERNAL_ERROR` for one Loom does not name)."""
+    from server.core.errors import classified
+
+    result = resp.get("result")
+    if isinstance(result, dict) and result.get("isError"):
+        body = result.get("structuredContent")
+        if isinstance(body, dict) and body.get("code"):
+            classed = classified(body, _status_of(body, 0))
+            # The text says it too, for a host that shows the model only the text.
+            said = "do not retry unchanged"
+            if classed["retryable"]:
+                wait = classed.get("retry_after_s")
+                said = "retry later" if wait is None else f"retry after {wait} s"
+            line = f"\n({classed['category']}: {said})"
+            content = [_with_line(c, line) for c in result.get("content") or []]
+            answer = {**result, "structuredContent": classed, "content": content}
+            return {**resp, "result": answer}
+        return resp
+    error = resp.get("error")
+    if not isinstance(error, dict):
+        return resp
+    data = error.get("data")
+    if isinstance(data, dict) and data.get("code"):
+        return {**resp, "error": {**error, "data": classified(data, _status_of(data, 500))}}
+    return resp
+
+
+def _status_of(body: dict[str, Any], default: int) -> int:
+    status = body.get("status")
+    return status if isinstance(status, int) else default

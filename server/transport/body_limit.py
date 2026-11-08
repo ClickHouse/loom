@@ -28,6 +28,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from server.core.errors import classified
+
 CODE = "PAYLOAD_TOO_LARGE"
 
 
@@ -35,7 +37,8 @@ def _too_large_response(limit: int, declared: int | None) -> tuple[dict[str, Any
     msg = f"request body exceeds LOOM_MAX_REQUEST_BYTES ({limit} bytes)" + (
         f"; declared {declared}" if declared is not None else ""
     )
-    body = json.dumps({"detail": {"code": CODE, "message": msg, "limit_bytes": limit}}).encode()
+    detail = classified({"code": CODE, "message": msg, "limit_bytes": limit}, 413)
+    body = json.dumps({"detail": detail}).encode()
     headers = [
         (b"content-type", b"application/json"),
         (b"content-length", str(len(body)).encode()),

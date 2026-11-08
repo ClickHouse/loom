@@ -20,7 +20,7 @@ from pydantic import BaseModel, ValidationError
 from server.code.app.common import schedule_code_trace_validation_failure
 from server.code.domain.scope import apply_code_scope, current_code_scope
 from server.core import llm_free
-from server.core.errors import LoomServerError
+from server.core.errors import LoomServerError, unverified_class
 from server.core.naming import named, present
 from server.identity.app.caller_home import home_namespace
 from server.observability import genai
@@ -183,9 +183,16 @@ def _forbidden_result(
     from server.transport import access_refusal as ar
 
     if ar.is_plane_op(op.name) and ns:
-        return ar.mcp_result(ar.refusal(str(getattr(auth, "subject", "") or ""), org or "", ns))
+        # One answer whether or not the check ran, as the namespace screen gives.
+        subject = str(getattr(auth, "subject", "") or "")
+        return ar.mcp_result(ar.refusal(subject, org or "", ns))
     msg = f"role check failed for {op.name}: {err}"
-    body = {"error": msg, "code": gates.ROLE_REFUSAL_CODE, "required_role": op.required_role.name}
+    body = {
+        "error": msg,
+        "code": gates.ROLE_REFUSAL_CODE,
+        "required_role": op.required_role.name,
+        **unverified_class(gates.ROLE_REFUSAL_CODE, bool(getattr(err, "unverified", False))),
+    }
     return {"content": [{"type": "text", "text": msg}], "isError": True, "structuredContent": body}
 
 
@@ -610,16 +617,21 @@ async def _idempotency_gate(
         unset=("run_id",) if call.stamped_run else (),
     )
     if replay.conflict:
-        code = "IDEMPOTENT_IN_PROGRESS" if replay.in_progress else "IDEMPOTENT_CONFLICT"
-        # After the rate limiter, which bounds these rows: one per entry.
-        _emit_mcp_event(
-            op.name, arguments, 0, success=False, error_code=code, request_id=request_id
-        )
-        msg = "Idempotency key reused with different tool arguments."
-        body: dict[str, Any] = {"error": msg, "code": code}
         if replay.in_progress:
             msg = gates.IN_PROGRESS_MESSAGE
-            body = {"error": msg, "code": code, "in_progress": True, "retry_after_s": 1}
+            body: dict[str, Any] = {
+                "error": msg,
+                "code": "IDEMPOTENT_IN_PROGRESS",
+                "in_progress": True,
+                "retry_after_s": 1,
+            }
+        else:
+            msg = "Idempotency key reused with different tool arguments."
+            body = {"error": msg, "code": "IDEMPOTENT_CONFLICT"}
+        # After the rate limiter, which bounds these rows: one per entry.
+        _emit_mcp_event(
+            op.name, arguments, 0, success=False, error_code=body["code"], request_id=request_id
+        )
         return (
             _ok(
                 req_id,

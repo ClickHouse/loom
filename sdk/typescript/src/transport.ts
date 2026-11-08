@@ -1,10 +1,12 @@
 /**
  * The wire: `POST {baseUrl}/v1/{op}` with a JSON body.
  *
- * Mirrors the Python SDK's `Transport`: connect failures and 5xx are retried
- * with exponential backoff (the server did not process the request); a 429 is
+ * Mirrors the Python SDK's `Transport`: a failed connection is retried with
+ * exponential backoff (the server did not process the request), and a 5xx only for an
+ * idempotent op or a code the server answers before running it; a 429 is
  * retried after the server's `Retry-After` for at most `ratelimitMaxWaitS` per
- * call before `RateLimited` surfaces; a read timeout is NOT retried (the server
+ * call before `RateLimited` surfaces; a timeout, a cut-off response or a socket
+ * dropped after sending is retried only for an op the server dedups (the server
  * may still be processing). The per-call timeout and the caller's `signal`
  * cover the whole exchange, body included, and every sleep between attempts:
  * an aborted signal sends nothing more. Idempotent ops that are not read-only
@@ -33,10 +35,13 @@
 import {
   AuthError,
   BackendUnavailable,
+  classed,
+  connectFailed,
   errorFromResponse,
   INVALID_RESPONSE_CODE,
   LoomError,
   NETWORK_ERROR_CODE,
+  NEVER_RETRIED,
   RateLimited,
   TimeoutError,
 } from "./errors.js";
@@ -147,6 +152,16 @@ export function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/** Whether fetch can send to `url`: http(s), with no credentials in it. */
+function isSendable(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return /^https?:$/.test(u.protocol) && !u.username && !u.password;
+  } catch {
+    return false;
+  }
+}
+
 export class Transport {
   readonly baseUrl: string;
   /** Distinct `X-Loom-Hint` texts already logged by this transport. */
@@ -171,6 +186,13 @@ export class Transport {
 
   constructor(opts: TransportOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
+    // A URL fetch cannot send fails before it leaves, which would read as a lost call.
+    if (!isSendable(this.baseUrl))
+      throw classed(
+        new LoomError("Transport: baseUrl must be an http(s) URL with no credentials in it"),
+        "input",
+        false,
+      );
     // A blank or whitespace key is no key: an exported-but-empty LOOM_API_KEY
     // must not send `Bearer ` and turn a clear 401 into a puzzle.
     this.#apiKey = opts.apiKey?.trim() || undefined;
@@ -480,36 +502,50 @@ export class Transport {
       const ex = await this.exchange(ctx, responseMs);
       if ("failed" in ex) {
         const e = ex.error;
+        // A call that may have run (timed out, cut off, dropped after sending) is resent
+        // only where the server dedups it, unless the policy says always.
+        const mayRerun =
+          policy.retryTimeouts === "always" || (policy.retryTimeouts === "idempotent" && ctx.deduplicated);
         if (isAbort(e)) {
           throwIfAborted(ctx, e);
-          const err = new TimeoutError(`${op}: no response within the call's ${timeoutMs} ms timeout`, {
-            op,
-            cause: e,
-            requestId,
-          });
-          const may = policy.retryTimeouts === "always" || (policy.retryTimeouts === "idempotent" && ctx.deduplicated);
-          if (may && (await retryAfter(attempt, `ran past the call's ${timeoutMs} ms timeout`))) continue;
+          // Retryable on any idempotent op; resent only by the timeout rule.
+          const err = classed(
+            new TimeoutError(`${op}: no response within the call's ${timeoutMs} ms timeout`, {
+              op,
+              cause: e,
+              requestId,
+            }),
+            "dependency",
+            ctx.idempotent,
+          );
+          if (mayRerun && (await retryAfter(attempt, `ran past the call's ${timeoutMs} ms timeout`))) continue;
           throw err;
         }
         if (ex.failed === "body") {
-          // The server answered, so it may have acted: not retried.
-          throw new BackendUnavailable(`${op}: response from ${this.baseUrl} cut off: ${describe(e)}`, {
+          // The server answered, so it may have acted: resent as a timed-out call is.
+          if (mayRerun && (await retryAfter(attempt, `response cut off: ${describe(e)}`))) continue;
+          const cut = new BackendUnavailable(`${op}: response from ${this.baseUrl} cut off: ${describe(e)}`, {
             op,
             cause: e,
             requestId,
             code: NETWORK_ERROR_CODE,
           });
+          throw classed(cut, "dependency", ctx.idempotent);
         }
-        // connect failure: the server never saw it. Name the
-        // server the SDK could not reach and give the error a stable code, so
-        // a wrong base URL reads as one thing and not `status 0 code ""`.
-        if (policy.retryConnectionErrors && (await retryAfter(attempt, `connection failed: ${describe(e)}`))) continue;
-        throw new BackendUnavailable(`${op}: cannot reach ${this.baseUrl}: ${describe(e)}`, {
+        // No response: a socket dropped after the request went out may follow a write, so
+        // it is resent as a timed-out call is.
+        const unsent = connectFailed(e);
+        const resend = unsent ? policy.retryConnectionErrors : mayRerun;
+        if (resend && (await retryAfter(attempt, `${unsent ? "connection failed" : "no response"}: ${describe(e)}`)))
+          continue;
+        const where = unsent ? "cannot reach" : "no response from";
+        const err = new BackendUnavailable(`${op}: ${where} ${this.baseUrl}: ${describe(e)}`, {
           op,
           cause: e,
           requestId,
           code: NETWORK_ERROR_CODE,
         });
+        throw classed(err, "dependency", unsent || ctx.idempotent);
       }
       const { res, text } = ex;
       this.recordRate(op, res);
@@ -567,7 +603,10 @@ export class Transport {
       if (err instanceof RateLimited) throw err;
       const retried =
         policy.statuses.has(res.status) &&
-        !CONFIGURATION_CODES.has(err.code) &&
+        !NEVER_RETRIED.has(err.code) &&
+        // Only the server's `configuration` class stops a resend; `retryable: false`
+        // alone does not (an INTERNAL_ERROR on an idempotent op is worth one).
+        err.detail.category !== "configuration" &&
         (ctx.idempotent || neverRan(res.status, err.code));
       if (retried) {
         const hintS = retryHint(res.headers, err.detail, this.now());
@@ -575,6 +614,7 @@ export class Transport {
         if (attempt < policy.maxAttempts)
           this.log.warn(`${op}: backoff budget of ${policy.totalBackoffBudgetMs} ms spent; giving up`);
       }
+      markMaybeApplied(err, ctx.idempotent);
       throw err;
     }
   }
@@ -588,19 +628,19 @@ export class Transport {
  */
 const NEVER_RAN_CODES: ReadonlySet<string> = new Set(["AUTH_UNAVAILABLE"]);
 
-/**
- * 5xx answers to a deployment's configuration, which no retry changes: the
- * operator's fix is named in the error (and in /v1/health). A model call that
- * names no customer is a server path to fix, not a passing fault.
- */
-const CONFIGURATION_CODES: ReadonlySet<string> = new Set([
-  "CODED_WIDTH_MISMATCH",
-  "GATEWAY_REQUIRED",
-  "MODEL_CALL_UNATTRIBUTED",
-]);
-
 function neverRan(status: number, code: string): boolean {
   return status === 408 || NEVER_RAN_CODES.has(code);
+}
+
+/**
+ * A 5xx whose body names no `retryable`, on an op that is not idempotent, may follow a
+ * write the call made (as the server's own rule says), unless its code proves the handler
+ * never ran: not retryable, whatever its status alone would say.
+ */
+function markMaybeApplied(err: LoomError, idempotent: boolean): void {
+  const named = typeof err.detail.retryable === "boolean";
+  if (idempotent || named || err.status < 500 || neverRan(err.status, err.code)) return;
+  classed(err, err.category, false);
 }
 
 interface AttemptContext {
@@ -697,7 +737,10 @@ function untilTimeoutOrAbort<T>(work: T | Promise<T>, ms: number, ctx: AttemptCo
   const cut = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       const requestId = ctx.headers["X-Request-Id"] ?? "";
-      reject(new TimeoutError(`${ctx.op}: no token within ${ms} ms`, { op: ctx.op, requestId }));
+      // The call was never sent: asking again is safe once the token provider answers.
+      reject(
+        classed(new TimeoutError(`${ctx.op}: no token within ${ms} ms`, { op: ctx.op, requestId }), "dependency", true),
+      );
     }, ms);
     onAbort = () => {
       try {
@@ -718,11 +761,13 @@ function untilTimeoutOrAbort<T>(work: T | Promise<T>, ms: number, ctx: AttemptCo
 function throwIfAborted(ctx: AttemptContext, cause?: unknown): void {
   if (!ctx.opts.signal?.aborted) return;
   const requestId = ctx.headers["X-Request-Id"] ?? "";
-  throw new LoomError(`${ctx.op}: aborted by caller`, {
+  const err = new LoomError(`${ctx.op}: aborted by caller`, {
     op: ctx.op,
     cause: cause ?? ctx.opts.signal.reason,
     requestId,
   });
+  // The caller's choice, maybe after the call was sent: it may have run.
+  throw classed(err, "input", false);
 }
 
 function describe(e: unknown): string {

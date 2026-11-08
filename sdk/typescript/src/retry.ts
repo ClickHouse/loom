@@ -12,7 +12,9 @@
  *   not read-only (`retryTimeouts: "idempotent"`), because the request
  *   carried an `Idempotency-Key` the server dedups on; any other op that
  *   timed out may still be executing (a read-only `memory.ask` would run its
- *   synthesis twice) and is never retried by default.
+ *   synthesis twice) and is never retried by default;
+ * - a response cut off or a socket dropped after sending, by the same rule as
+ *   a timeout: the call may have run, as a timed-out one may.
  * A 429 is not a retry: it is pacing, bounded by
  * `ratelimitMaxWaitS`.
  */
@@ -33,9 +35,10 @@ export interface RetryPolicy {
   backoffJitter: number;
   /** HTTP statuses retried (a 429 is paced, not retried). */
   statuses: ReadonlySet<number>;
-  /** Retry when the connection failed before a response. */
+  /** Retry when the connection failed (Node names a connect-phase error). */
   retryConnectionErrors: boolean;
-  /** Retry a per-call timeout: never, only for registry-idempotent ops, or always. */
+  /** Retry a per-call timeout, a cut-off response or a socket dropped after sending: never,
+   *  only for ops the server dedups (registry-idempotent, not read-only), or always. */
   retryTimeouts: RetryTimeouts;
   /** Honour a `Retry-After` on a retried status instead of the backoff. */
   respectRetryAfter: boolean;

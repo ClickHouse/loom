@@ -254,15 +254,19 @@ def test_login_keeps_polling_through_a_server_hiccup(server, monkeypatch) -> Non
     assert _stored()["profiles"]["default"]["access_token"]
 
 
-def test_a_refresh_the_server_cannot_answer_now_is_retryable(server) -> None:
+@pytest.mark.parametrize(("status", "category"), [(503, "dependency"), (429, "capacity")])
+def test_a_refresh_the_server_cannot_answer_now_is_retryable(
+    server, status: int, category: str
+) -> None:
     from loom.errors import BackendUnavailable
 
     credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
     server.queued["/oauth/token"] = [
-        httpx.Response(503, json={"detail": {"error": "temporarily_unavailable"}})
+        httpx.Response(status, json={"detail": {"error": "temporarily_unavailable"}})
     ]
-    with pytest.raises(BackendUnavailable):
+    with pytest.raises(BackendUnavailable) as info:
         credentials.access_token(refused="a1")
+    assert (info.value.category, info.value.retryable) == (category, True)
     assert _stored()["profiles"]["default"]["refresh_token"] == "r1"  # kept for the retry
 
 
