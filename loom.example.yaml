@@ -1198,9 +1198,10 @@ settings:
   # heal on the next backfill. [restart]
   # code_ingest_max_files_per_commit: 500
 
-  # CPU seconds after which a tree-sitter parse stops reading its file; such a file is
-  # indexed as chunks without symbols and its parse error is recorded until it is
-  # ingested again (`code.index_errors` lists it; a backfill re-reads it). [live]
+  # CPU seconds after which a tree-sitter parse stops reading its file. A file of a
+  # known language is then indexed as chunks without symbols, its parse error recorded
+  # until it is ingested again (`code.index_errors` lists it); the shell detector reads
+  # a timeout as "not shell". [live]
   # code_parse_timeout_seconds: 3.0
 
   # The ingest pass's own deadline (seconds), kept at the supervisor's cap;

@@ -46,6 +46,8 @@ def parse(parser: Any, source: bytes) -> Any:
 
     def read(offset: int, _point: Any) -> bytes:
         nonlocal expired
+        if offset >= len(source):
+            return b""  # the end, read in full
         if expired or time.thread_time() > deadline:
             expired = True
             return b""

@@ -181,7 +181,7 @@ def _parses_as_shell(source: bytes) -> bool:
         return False
     try:
         tree = bounded_parse.parse(_bash_parser(), source)
-    except Exception:  # noqa: BLE001 — grammar missing or a parser fault: not shell
+    except Exception:  # noqa: BLE001 — grammar missing, a parser fault or a timeout: not shell
         return False
     root = tree.root_node
     if root.has_error:

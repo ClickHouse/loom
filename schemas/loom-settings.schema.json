@@ -1352,7 +1352,7 @@
           "default": 3.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "CPU seconds after which a tree-sitter parse stops reading its file; such a file is indexed as chunks without symbols and its parse error is recorded until it is ingested again (`code.index_errors` lists it; a backfill re-reads it)."
+          "description": "CPU seconds after which a tree-sitter parse stops reading its file. A file of a known language is then indexed as chunks without symbols, its parse error recorded until it is ingested again (`code.index_errors` lists it); the shell detector reads a timeout as \"not shell\"."
         },
         "code_path_prefixes": {
           "default": "",
