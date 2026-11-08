@@ -8,7 +8,6 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
-from server.core.sql_literal import sql_string
 from server.insights.domain.analysis import ANALYST_USER
 from server.insights.domain.deploy_delta import (
     DeployDelta,
@@ -168,7 +167,7 @@ _QL_WINDOW = (
     " AND event_time < {swap:DateTime} + INTERVAL {window:UInt32} MINUTE"
     " AND http_user_agent LIKE {ua:String}"
     # insights.query runs callers' SQL, not the deployment's own workload.
-    f" AND user != {sql_string(ANALYST_USER)}"
+    " AND user != {analyst:String}"
 )
 
 
@@ -328,7 +327,13 @@ async def collect(
         ]
     except Exception:  # noqa: BLE001 — each section stands on its own
         out.reads = []
-    ql = dict(params, ua=f"%os_user:{ch_os_user}%", top=int(top), min_runs=int(min_runs))
+    ql = dict(
+        params,
+        ua=f"%os_user:{ch_os_user}%",
+        analyst=ANALYST_USER,
+        top=int(top),
+        min_runs=int(min_runs),
+    )
     try:
         rows = await ch.query_all(shapes_sql(cluster), params=ql)
         out.shapes = [

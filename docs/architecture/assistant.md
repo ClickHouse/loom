@@ -343,9 +343,9 @@ changes it. It keeps the secrets out of what is logged instead:
 - Every statement that carries the key or the password runs with
   `log_queries_cut_to_length = 1` (`TEXT_CUT_FROM_LOG` in
   `server/insights/domain/analysis.py`), which ClickHouse Cloud leaves unconstrained.
-  ClickHouse then logs
-  the statement, in `system.query_log` and in its server log, as only the number of
-  characters it removed. The printed SQL sets it first, for the session it runs in.
+  ClickHouse then logs the statement, in `system.query_log` and in its server log, as
+  only the number of characters it removed. The printed SQL sets it first, for the
+  session it runs in.
 - ClickHouse itself leaves the password out of a logged `IDENTIFIED BY`.
 - An error raised inside a row policy quotes the policy, and ClickHouse logs that error
   in `system.query_log`'s `exception` column; the probe's unsigned read raises one on
@@ -628,7 +628,9 @@ unknown column quotes the scope it was looked up in, the caller's statement insi
 wrapper), also for a restricted namespace whose ledger drops the text; ClickHouse Cloud
 pins `log_queries_min_type`, so the error rows cannot be left out. The probe's own
 refused reads add a few error rows from the analyst at every probe. The deploy delta
-leaves the analyst's statements out of its shapes. The rows are stored nowhere.
+leaves the analyst's statements out of its shapes. The rows a statement returns are
+stored nowhere; an error can quote a value it failed on, which ClickHouse's logs keep
+([stored data](#stored-data-and-erasure)).
 
 ## Isolation proof
 
@@ -840,16 +842,26 @@ token.
 
 ## Stored data and erasure
 
-| Where                                       | What the assistant leaves                                                                           | How it is deleted                                     |
-| ------------------------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| `loom.assistant_service`                    | one row: the service user's email and agent id, its sealed password and agents API key              | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
-| `loom.analysis_secrets`                     | one row: the analysis key and the analyst's password, sealed                                        | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
-| `loom.analysis_canary`                      | one constant row in a reserved scope, which the probe reads                                         | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
-| `loom.agent_events`                         | one row per bridge request and per tool call, under the answer's token                              | as every ledger row                                   |
-| LibreChat users, API keys, agents, sessions | the service user, its key, the agent definition and the sign-in sessions of each boot that signs in | kept; no memory content                               |
-| LibreChat `transactions`                    | token counts per answer and its message id, no content                                              | kept, a few hundred bytes per answer                  |
-| LibreChat logs                              | the service user's id and email and request ids, no message text, token or password                 | LibreChat's default: one file per day, kept 14 days   |
-| the dashboard                               | the current chat, in the tab's memory                                                               | gone when the tab closes                              |
+| Where                                       | What the assistant leaves                                                                            | How it is deleted                                         |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `loom.assistant_service`                    | one row: the service user's email and agent id, its sealed password and agents API key               | holds no memory content (a `NO_MEMORY_CONTENT` entry)     |
+| `loom.analysis_secrets`                     | one row: the analysis key and the analyst's password, sealed                                         | holds no memory content (a `NO_MEMORY_CONTENT` entry)     |
+| `loom.analysis_canary`                      | one constant row in a reserved scope, which the probe reads                                          | holds no memory content (a `NO_MEMORY_CONTENT` entry)     |
+| `loom.agent_events`                         | one row per bridge request and per tool call, under the answer's token                               | as every ledger row                                       |
+| LibreChat users, API keys, agents, sessions | the service user, its key, the agent definition and the sign-in sessions of each boot that signs in  | kept; no memory content                                   |
+| LibreChat `transactions`                    | token counts per answer and its message id, no content                                               | kept, a few hundred bytes per answer                      |
+| LibreChat logs                              | the service user's id and email and request ids, no message text, token or password                  | LibreChat's default: one file per day, kept 14 days       |
+| ClickHouse's `system.query_log` and log     | each analyst statement without its text; a refused one's error, which can quote an allowlisted value | ClickHouse's own log retention; erasure does not reach it |
+| the dashboard                               | the current chat, in the tab's memory                                                                | gone when the tab closes                                  |
+
+An error ClickHouse raises on a statement can quote the value it failed on: a
+`toUInt64(title)` refused on a title quotes the title. That value is one of the caller's
+own allowlisted metadata columns (a key, a title, a user id), never a memory value or
+document text, and it is kept in `system.query_log`'s `exception` column and in the
+server log for as long as ClickHouse keeps them. Erasure does not reach either one: the
+server log records every error whatever `log_queries` says, and ClickHouse Cloud pins
+`log_queries_min_type`, so the error rows cannot be left out of `system.query_log`. Both
+are read only by whoever administers ClickHouse and by Loom's own user.
 
 The agents API stores no questions, answers or tool outputs, so LibreChat holds nothing
 an erasure must reach. An answer is computed from the rows the answer's token reads at

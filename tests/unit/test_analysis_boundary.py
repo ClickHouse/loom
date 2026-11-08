@@ -282,7 +282,7 @@ def _local_error(sql: str) -> str:
 @pytest.mark.skipif(clickhouse_local.CLICKHOUSE is None, reason="needs the clickhouse binary")
 def test_the_policy_computes_the_signature_loom_signs() -> None:
     payload = boundary.scope_payload("acme", "a,b", 123, "qid-1")
-    rows = clickhouse_local.run([], f"SELECT {boundary._hmac_sql(KEY, sql_string(payload))} AS s")
+    rows = clickhouse_local.run([], f"SELECT {boundary.hmac_sql(KEY, sql_string(payload))} AS s")
     assert rows == [{"s": boundary.sign_scope(KEY, "acme", "a,b", 123, "qid-1")}]
 
 

@@ -3,8 +3,8 @@ same credentials and the same config mounts as the bundled `clickhouse`
 service of compose.yaml, so CI validates what `make dev` and the installer run. Two
 intended differences: CI omits named_collections.xml (gitignored, built from
 an operator secret, only used by SQL ai* functions), and adds
-dev/clickhouse-ci/log_queries_readonly.xml, which pins log_queries for Loom's
-user as ClickHouse Cloud does."""
+dev/clickhouse-ci/log_queries_readonly.xml, which pins query logging for
+Loom's user as ClickHouse Cloud does."""
 
 from __future__ import annotations
 

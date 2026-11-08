@@ -459,11 +459,13 @@ def test_the_scope_key_stays_out_of_the_query_log(ch_client) -> None:
 
     policy = ch_client.query(
         "SELECT select_filter FROM system.row_policies "
-        "WHERE short_name = {p:String} AND database = currentDatabase() AND table = 'memory'",
+        "WHERE short_name = {p:String} AND database = 'loom' AND table = 'memory'",
         parameters={"p": boundary.POLICY_NAME},
     ).result_rows[0][0]
     literals = re.findall(r"unhex\('([0-9a-f]+)'\)", policy)
-    assert literals
+    # The decrypt arguments, and the pads they evaluate to, which must never be printed.
+    key = bytes.fromhex(next(h for h in literals if len(h) == 64)).ljust(64, b"\0")
+    literals += [bytes(b ^ pad for b in key).hex() for pad in (0x36, 0x5C)]
     ch_client.command("SYSTEM FLUSH LOGS")
     refused, logged = ch_client.query(
         "SELECT countIf(user = 'loom_analyst' AND exception LIKE '%UNKNOWN_SETTING%'), "
@@ -531,7 +533,7 @@ def _policy(ch_client, table: str) -> str:
     system.row_policies: SHOW CREATE prints the key's literals as [HIDDEN]."""
     using = ch_client.query(
         "SELECT select_filter FROM system.row_policies WHERE short_name = {p:String} "
-        "AND database = currentDatabase() AND table = {t:String}",
+        "AND database = 'loom' AND table = {t:String}",
         parameters={"p": boundary.POLICY_NAME, "t": table},
     ).result_rows[0][0]
     analyst = f"`{boundary.ANALYST_USER}`"
