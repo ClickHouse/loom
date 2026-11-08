@@ -233,7 +233,7 @@ def scope_payload(org: str, namespaces: str, exp: int, query_id: str) -> str:
     ClickHouse's length() counts a String, so no two scopes share a payload.
     The statement's query id comes last: a signature read inside one statement
     (getSetting) and sent with another reads nothing, since the policy signs
-    the query id ClickHouse gives the statement it checks."""
+    the query id Loom sends with the statement it checks (initialQueryID())."""
     exp_s = str(exp)
     return (
         f"{len(org.encode())}:{org}{len(namespaces.encode())}:{namespaces}"

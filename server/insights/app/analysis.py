@@ -26,8 +26,9 @@ from typing import Any
 from uuid import UUID
 
 from server.core import leases
-from server.core.ch import statement_timeout
+from server.core.ch import query_tag_var, statement_timeout
 from server.core.ch_errors import error_code, error_line
+from server.core.ch_request_cost import request_query_id
 from server.core.errors import (
     AnalysisUnavailableError,
     RateLimitedError,
@@ -217,8 +218,11 @@ def _scope_extra(org: str, namespaces: list[str], key: bytes | None = None) -> d
     default). It sends no cap: the caps profile's apply, so a replica whose
     own settings differ from the stored caps (during a roll) still runs."""
     exp = int(time.time()) + scope_ttl_s()
-    query_id = str(uuid.uuid4())
-    return dict(boundary.scope_settings(key or _key(), org, namespaces, exp, query_id))
+    # The request's own query id where there is one, as every statement Loom
+    # sends carries; a retry resends it and replaces its own orphaned attempt.
+    query_id = request_query_id(query_tag_var.get()) or str(uuid.uuid4())
+    signed = boundary.scope_settings(key or _key(), org, namespaces, exp, query_id)
+    return {**signed, "replace_running_query": 1}
 
 
 async def provision() -> None:
@@ -465,14 +469,19 @@ async def _probe() -> tuple[str, bool, str]:
         )
     if not await _canary_reads(_loaded):
         return "the analyst's policies do not accept this replica's key", True, ""
-    reserved = _scope_extra(boundary.CANARY_ORG, [boundary.CANARY_NAMESPACE])
+
+    def reserved() -> dict[str, Any]:
+        # One query id per statement: a statement still running past its
+        # client deadline must not hold the id the next one is sent with.
+        return _scope_extra(boundary.CANARY_ORG, [boundary.CANARY_NAMESPACE])
+
     for t in boundary.TABLES:
         # Every allowlisted table's sort key leads with (org, namespace), so
         # this count reads a granule or so, however large the table.
         # No row of a real table sits in the reserved scope: a row here means
         # a policy Loom did not write widens what the analyst reads.
         try:
-            admitted = await store.count_rows(t.name, password=_password(), extra=reserved)
+            admitted = await store.count_rows(t.name, password=_password(), extra=reserved())
         except Exception as e:
             if error_code(e) == _ACCESS_DENIED:
                 return f"{boundary.ANALYST_USER} lacks its grants on {t.name}", True, ""
@@ -489,7 +498,7 @@ async def _probe() -> tuple[str, bool, str]:
             )
     for shown in store.REFUSED_READS:
         try:
-            await store.read_refused(shown, password=_password(), extra=reserved)
+            await store.read_refused(shown, password=_password(), extra=reserved())
         except Exception as e:  # noqa: BLE001 — a refusal is the expected answer
             if error_code(e) == _ACCESS_DENIED:
                 continue

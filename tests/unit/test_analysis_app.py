@@ -650,3 +650,11 @@ def test_statements_under_the_analysis_lease_are_bounded_inside_it(
             return ch.statement_timeout_var.get()
 
     assert asyncio.run(run()) == leases.statement_bound(60)
+
+
+def test_a_retry_replaces_its_own_running_attempt(ready: None) -> None:
+    # The retry ladder resends a statement's settings, query id included; a
+    # first attempt still running would otherwise refuse it (code 216).
+    extra = app._scope_extra("acme", ["ns"])
+    assert extra["replace_running_query"] == 1
+    assert extra["query_id"] and extra["query_id"] != app._scope_extra("acme", ["ns"])["query_id"]

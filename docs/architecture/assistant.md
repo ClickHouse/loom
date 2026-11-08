@@ -267,12 +267,13 @@ the expiry is in the future, and the signature matches the hash ClickHouse compu
 the key written into the policy. A statement may set custom settings itself
 (`readonly = 2` allows it), but without the key it cannot sign another scope, so a
 changed scope reads nothing. A statement can read its own scope with `getSetting`, but
-the policy signs `initialQueryID()`, the id ClickHouse gives the statement it checks, so
-a signature lifted from one statement reads nothing when sent with another, by the same
-caller or any other. The policy reads every setting through `toString`, so a statement
-that sets one to a number or an array cannot make the policy raise an error, whose
-message would quote the policy and its key; and Loom never passes on a ClickHouse
-message that names the scope settings.
+the policy signs the query id Loom sends with the statement (`initialQueryID()`, the
+same on every server the statement fans out to), so a signature lifted from one
+statement reads nothing when sent with another, by the same caller or any other. The
+policy reads every setting through `toString`, so a statement that sets one to a number
+or an array cannot make the policy raise an error, whose message would quote the policy
+and its key; and Loom never passes on a ClickHouse message that names the scope
+settings.
 
 Each policy also carries its table's live predicate, the one the erasure census counts
 (`tombstoned_at IS NULL` on `loom.memory`), and the profile holds `final = 1` and

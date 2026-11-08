@@ -242,8 +242,9 @@ def test_a_scope_read_inside_one_statement_reads_nothing_from_another(
             "insights.query",
             {"org": org_called, "namespace": ns_called, "sql": replay},
         )
+        # The same org's replay shows the query-id binding alone: its org matches.
         assert r.status_code in {200, *_REFUSED}, r.text
-        if r.status_code == 200 and org_called == seed.org_b:
+        if r.status_code == 200:
             assert f"own/{seed.nonce}" not in str(r.json()["rows"]), r.text
 
 
