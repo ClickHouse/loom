@@ -71,8 +71,8 @@ async def ensure_registered(
     client = ch or get_client()
     try:
         # Under the account claim every writer of the directory row holds, then the admins
-        # claim `code.repo.set_access` holds; reads are sequential: a stale read must not
-        # open or widen a restricted row.
+        # claim a maintainer copy onto this branch holds, so a copy lands before a narrowing
+        # or sees it; reads are sequential: a stale read must not open or widen a restricted row.
         async with AsyncExitStack() as held:
             if not account_held:
                 await held.enter_async_context(account_change(cfg.org, cfg.namespace))

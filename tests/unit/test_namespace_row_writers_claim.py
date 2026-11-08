@@ -53,12 +53,14 @@ async def test_the_code_registrar_writes_under_the_account_claim(claims: MemoryC
 
 @pytest.mark.asyncio
 async def test_a_caller_holding_the_account_claim_registers_under_it(
-    claims: MemoryClaims,
+    claims: MemoryClaims, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(grant_claims, "WAIT_S", 0.2)  # a wait on its own claim fails fast
     client = _Client(claims)
     cfg = repo_config(org=ORG, namespace="code-p", repo="ClickHouse/p", git_branch="main")
     async with grant_claims.account_change(ORG, "code-p", wait_s=0):
         assert await code_registry.ensure_registered(cfg, ch=client, sync=False, account_held=True)
+        assert client.held_at_insert and all(_account("code-p") in h for h in client.held_at_insert)
 
 
 @pytest.mark.asyncio

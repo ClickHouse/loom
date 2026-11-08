@@ -77,7 +77,7 @@ async def test_no_claim_is_waited_on_under_the_account_claim(
         events.append("release")
 
     async def _ensure(cfg: Any, **kw: Any) -> bool:
-        events.append(f"ensure sync={kw.get('sync', True)}")
+        events.append(f"ensure sync={kw.get('sync', True)} account_held={kw.get('account_held')}")
         return True
 
     async def _sync(cfg: Any, client: Any) -> None:
@@ -117,4 +117,11 @@ async def test_no_claim_is_waited_on_under_the_account_claim(
         remote_head="abc",
     )
     # The grant first: a replica that has not loaded the entry still sees the name in use.
-    assert events == ["claim", "grant", "entry", "ensure sync=False", "release", "sync"]
+    assert events == [
+        "claim",
+        "grant",
+        "entry",
+        "ensure sync=False account_held=True",
+        "release",
+        "sync",
+    ]
