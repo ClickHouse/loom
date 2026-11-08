@@ -30,7 +30,7 @@ def describe(cfg: Any) -> str:
     return f"Code index of {cfg.repo} @ {cfg.git_branch} (read-only reference data)"
 
 
-async def _sync_maintainers(cfg: Any, client: Any) -> None:
+async def sync_maintainers(cfg: Any, client: Any) -> None:
     """On first sight of a branch namespace each process, bring onto it the admins
     of the repository's branches that reach it (`maintainers._reaches`). Until
     the self-service registry is first read the sync does nothing, and a later
@@ -46,13 +46,14 @@ async def _sync_maintainers(cfg: Any, client: Any) -> None:
 
 async def ensure_registered(cfg: Any, *, ch: Any | None = None, sync: bool = True) -> bool:
     """Idempotent. Returns True when a row was inserted this call. `sync=False` leaves the
-    maintainers' fan-out, whose claims wait, to a caller holding a claim of its own."""
+    maintainers' fan-out, whose claims wait, to a caller that runs `sync_maintainers` once
+    its own claim is released."""
     from server.core.ch import get_client
 
     key = (cfg.org, cfg.namespace)
     if key in _DONE:
         if sync and key not in _SYNCED:
-            await _sync_maintainers(cfg, ch or get_client())
+            await sync_maintainers(cfg, ch or get_client())
         return False
     client = ch or get_client()
     restricted = cfg.classification == "restricted"
@@ -119,7 +120,7 @@ async def ensure_registered(cfg: Any, *, ch: Any | None = None, sync: bool = Tru
                 )
             _DONE.add(key)
             if sync:
-                await _sync_maintainers(cfg, client)
+                await sync_maintainers(cfg, client)
             return False
         await client.insert(
             "loom.namespaces",
@@ -156,7 +157,7 @@ async def ensure_registered(cfg: Any, *, ch: Any | None = None, sync: bool = Tru
             "restricted" if restricted else "standard",
         )
         if sync:
-            await _sync_maintainers(cfg, client)
+            await sync_maintainers(cfg, client)
         return True
     except Exception as e:  # noqa: BLE001 — directory is a convenience, never block indexing
         logger.warning(

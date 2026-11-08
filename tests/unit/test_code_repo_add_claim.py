@@ -80,7 +80,7 @@ async def test_no_claim_is_waited_on_under_the_account_claim(
         events.append(f"ensure sync={kw.get('sync', True)}")
         return True
 
-    async def _sync(org: str, namespace: str) -> None:
+    async def _sync(cfg: Any, client: Any) -> None:
         events.append("sync")
 
     cfg = SimpleNamespace(org="dev", namespace="code-x")
@@ -100,7 +100,7 @@ async def test_no_claim_is_waited_on_under_the_account_claim(
     monkeypatch.setattr(repo_admin, "registry_repos", lambda: [cfg])
     monkeypatch.setattr(registry, "ensure_registered", _ensure)
     monkeypatch.setattr("server.identity.app.registration.grant_self_admin", _grant)
-    monkeypatch.setattr(repo_admin, "_sync_maintainers", _sync)
+    monkeypatch.setattr(registry, "sync_maintainers", _sync)
     monkeypatch.setattr(bootstrap, "set_stage", AsyncMock())
     await repo_admin._register(
         org="dev",

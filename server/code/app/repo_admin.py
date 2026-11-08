@@ -105,20 +105,11 @@ def _indexed(org: str, repo: str, git_remote: str, branch: str) -> bool:
     )
 
 
-
 def _in_use_error(repo: str, branch: str, namespace: str) -> ValidationError:
     return ValidationError(
         f"{repo} @ {branch} is {namespace}, already in use here (join it if it is indexed)",
         code="REPO_EXISTS",
     )
-
-
-async def _sync_maintainers(org: str, namespace: str) -> None:
-    """The repository's other maintainers get this branch and the creator gets the
-    repository's other branches; outside the account claim, as its own claims wait."""
-    from server.code.app.index import maintainers
-
-    await maintainers.sync_quietly(org, namespace)
 
 
 async def _register(
@@ -140,8 +131,9 @@ async def _register(
 ) -> CodeRepoAddOutput:
     from server.auth.default_namespace import auth_off_subject
     from server.code.app.index.bootstrap import set_stage
-    from server.code.app.index.registry import ensure_registered
+    from server.code.app.index.registry import ensure_registered, sync_maintainers
     from server.code.store.index import CodeRepo
+    from server.core.ch import get_client
 
     subject = current_caller()[0] or auth_off_subject()
     # Checked again under the account claim sign-up and register hold: the probe took time.
@@ -178,7 +170,8 @@ async def _register(
         )
         if cfg is not None:
             await ensure_registered(cfg, sync=False)  # synced below, after the claim
-    await _sync_maintainers(org, namespace)
+    if cfg is not None:  # outside the account claim, as the fan-out's own claims wait
+        await sync_maintainers(cfg, get_client())
     code_repo = CodeRepo()
     await set_stage(code_repo, org, namespace, "queued", remote_head=remote_head[:12])
     return CodeRepoAddOutput(
