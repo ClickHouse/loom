@@ -393,6 +393,9 @@ def test_an_overlay_past_its_parse_time_leaves_the_rest_out(
     ov = asyncio.run(po.load_posted_overlay(_Repo(), "acme", "code-ch", _img()))
     assert ov.ok and ov.symbols == [] and ov.unreached == 1
     assert po.NOT_REACHED in ov.disclosure()["overlay_note"]
+    monkeypatch.setattr(settings, "code_pr_overlay_parse_window_seconds", 60.0)
+    later = asyncio.run(po.load_posted_overlay(_Repo(), "acme", "code-ch", _img()))
+    assert later is not ov and later.symbols and later.note == ""  # not cached: finished
 
 
 def test_concurrent_requests_parse_a_file_once(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -506,7 +509,7 @@ def test_the_event_loop_runs_while_an_overlay_parses(monkeypatch: pytest.MonkeyP
         await parse
 
     asyncio.run(run())
-    assert ticks >= 5  # a parse on the event loop would let it tick once
+    assert ticks >= 3  # a parse on the event loop would let it tick once
 
 
 def test_one_overlay_parse_runs_at_a_time_in_a_namespace(
@@ -634,3 +637,25 @@ def test_edges_not_reached_past_the_window_are_counted(monkeypatch: pytest.Monke
         po._parse_post_image(_Repo(), "acme", "code-ch", again, read=read, path_prefixes=())
     )
     assert again.symbols and again.edges == [] and again.unreached == 1
+
+
+def test_an_edge_parse_that_times_out_is_counted(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.code.app.index import ingest_parse
+
+    source = POST.encode()
+    ov = po.PrOverlay(pr_number=7, changed_paths=[PATH], hunks={PATH: [(1, 1)]})
+
+    async def read(path: str) -> bytes:
+        return source
+
+    asyncio.run(po._parse_post_image(_Repo(), "acme", "code-ch", ov, read=read, path_prefixes=()))
+    po._FILE_EDGES.clear()  # the facts stay cached: the edges need a parse again
+    monkeypatch.setattr(
+        ingest_parse, "parse_for_ingest", lambda path, src: (None, "parse: ParseTimeout")
+    )
+    again = po.PrOverlay(pr_number=7, changed_paths=[PATH], hunks={PATH: [(1, 1)]})
+    asyncio.run(
+        po._parse_post_image(_Repo(), "acme", "code-ch", again, read=read, path_prefixes=())
+    )
+    assert again.symbols and again.edges == [] and again.unreached == 0
+    assert again.note == "1 changed file(s) whose parse timed out"

@@ -1199,7 +1199,8 @@ settings:
   # code_ingest_max_files_per_commit: 500
 
   # CPU seconds after which a tree-sitter parse stops reading its file; such a file is
-  # indexed as chunks without symbols and its parse error is recorded. [live]
+  # indexed as chunks without symbols and its parse error is recorded until it is
+  # ingested again (`code.index_errors` lists it; a backfill re-reads it). [live]
   # code_parse_timeout_seconds: 3.0
 
   # The ingest pass's own deadline (seconds), kept at the supervisor's cap;
