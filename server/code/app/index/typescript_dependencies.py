@@ -18,6 +18,7 @@ from pathlib import Path
 
 from server.code.app.index.gitrepo import auth_env
 from server.code.app.index.sandbox import run_job
+from server.code.app.index.tier_health import ToolOutputError
 from server.code.app.index.untrusted_files import read_checkout_file, read_package_json
 from server.settings import settings
 
@@ -149,7 +150,7 @@ async def prepare_dependencies(
             **extra_env,
         }
         if not await asyncio.to_thread(shutil.which, command[0], path=install_env.get("PATH")):
-            raise RuntimeError(
+            raise ToolOutputError(
                 f"TypeScript dependency tool {command[0]} is missing; "
                 "run sh scripts/install-code-toolchains.sh on native installations"
             )
@@ -167,10 +168,12 @@ async def prepare_dependencies(
                 merge_stderr=True,
             )
         except TimeoutError:
-            raise RuntimeError(f"TypeScript dependency installation timed out in {root}") from None
+            raise ToolOutputError(
+                f"TypeScript dependency installation timed out in {root}"
+            ) from None
         if done.returncode != 0:
             tail = done.stdout.decode("utf-8", "replace")[-2000:]
-            raise RuntimeError(
+            raise ToolOutputError(
                 f"TypeScript dependency installation failed in {root} "
                 f"({command[0]}, exit {done.returncode}): {tail}"
             )

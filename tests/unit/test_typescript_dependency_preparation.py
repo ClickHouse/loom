@@ -106,6 +106,20 @@ async def test_missing_package_manager_has_native_installation_instruction(
         await deps.prepare_dependencies(checkout, (), {"PATH": str(tmp_path)})
 
 
+@pytest.mark.asyncio
+async def test_a_failed_install_is_recorded_with_the_installer_output(
+    checkout: Path, tmp_path: Path
+) -> None:
+    from server.code.app.index import tier_health
+
+    env = _installer(tmp_path, fail=True)
+    (tmp_path / "npm").write_text("#!/bin/sh\necho 'Failed to parse package.json'\nexit 1\n")
+    with pytest.raises(RuntimeError) as failed:
+        await deps.prepare_dependencies(checkout, (), env)
+    text = tier_health.error_text(failed.value)
+    assert "(npm, exit 1)" in text and "Failed to parse package.json" in text
+
+
 def test_named_project_cannot_escape_checkout(checkout: Path) -> None:
     with pytest.raises(ValueError, match="escapes"):
         deps.install_roots(checkout, ("../outside",))
