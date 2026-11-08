@@ -181,13 +181,30 @@ async def test_a_redacted_tail_still_fits_the_record_whole(checkout: Path, tmp_p
 
 
 @pytest.mark.asyncio
-async def test_a_long_unbroken_output_is_redacted_promptly(checkout: Path, tmp_path: Path) -> None:
+async def test_long_unbroken_output_does_not_stall_the_error(
+    checkout: Path, tmp_path: Path
+) -> None:
     env = _installer(tmp_path)
-    (tmp_path / "npm").write_text("#!/bin/sh\nprintf 'a.%.0s' $(seq 100000)\nexit 1\n")
+    # 100 lines of 2000 characters with no space: each line is costly to redact.
+    (tmp_path / "npm").write_text(
+        "#!/bin/sh\nfor i in $(seq 100); do printf 'a.%.0s' $(seq 1000); echo; done\nexit 1\n"
+    )
     started = time.monotonic()
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as failed:
         await deps.prepare_dependencies(checkout, (), env)
     assert time.monotonic() - started < 5, "redacting the whole output is quadratic"
+    assert str(failed.value).endswith("a.a.a.")
+
+
+@pytest.mark.asyncio
+async def test_a_last_line_longer_than_the_window_is_left_out_by_name(
+    checkout: Path, tmp_path: Path
+) -> None:
+    env = _installer(tmp_path)
+    (tmp_path / "npm").write_text("#!/bin/sh\necho first\nprintf 'x%.0s' $(seq 3000)\nexit 1\n")
+    with pytest.raises(RuntimeError) as failed:
+        await deps.prepare_dependencies(checkout, (), env)
+    assert str(failed.value).endswith(deps._LINE_TOO_LONG)
 
 
 @pytest.mark.asyncio

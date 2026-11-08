@@ -128,6 +128,9 @@ def _install_command(checkout: Path, root: Path) -> tuple[list[str], dict[str, s
     ], {}
 
 
+_LINE_TOO_LONG = "(the last output line is too long to keep; the server log has it)"
+
+
 def _project(checkout: Path, root: Path) -> str:
     """The install root as an error names it: no host path."""
     return "the checkout root" if root == checkout else f"project {os.path.relpath(root, checkout)}"
@@ -191,15 +194,12 @@ async def prepare_dependencies(
                 f"TypeScript dependency installation failed ({command[0]}, exit "
                 f"{done.returncode}) in {_project(checkout, root)}"
             )
-            # The installer first, for readers of the first line; then the end of the
-            # output, redacted before the cut so the budget is what the record keeps.
-            # Redaction scans a bounded window of whole lines (on a long token it is
-            # quadratic, and a line cut at the window's start could lose the scheme its
-            # credential pattern needs).
+            # Redact before the cut, so the budget is what the record keeps; only whole lines
+            # of a bounded window: redaction is quadratic, and a cut line can lose a scheme.
             room = max(0, ERROR_CHARS - len(error_text(ToolOutputError(head))) - 1)
             window = output[-4 * ERROR_CHARS :]
             if len(output) > len(window):
-                window = window.partition("\n")[2]
+                window = window.partition("\n")[2] or _LINE_TOO_LONG
             tail = redact(window)[-room:] if room else ""
             raise ToolOutputError(f"{head}\n{tail}")
     await asyncio.to_thread(marker.write_text, fingerprint)
