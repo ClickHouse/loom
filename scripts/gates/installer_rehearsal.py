@@ -445,8 +445,7 @@ class Rehearsal:
         mounts: tuple[str, ...] = (),
         env: dict[str, str] | None = None,
     ) -> str:
-        """`script` in a fresh container of `image`, as this host's user, with
-        `env` added to the release's."""
+        """`script` in a fresh container of `image`, as this host's user."""
         # A fresh HOME: the Docker client inside is signed in to nothing.
         env = {**self.release.env, **(env or {}), "HOME": str(home), "LOOM_PORT": str(port)}
         # Named, so a container that outlives its `docker run` (a timeout) is removed.
@@ -494,13 +493,17 @@ class Rehearsal:
             url = f"{GITHUB_RELEASES}/download/v{release.previous}/install.sh"
             self.one_liner(image, home, port, url, env={"LOOM_VERSION": release.previous})
             return
+        bundle = {
+            "LOOM_INSTALL_BUNDLE": "/previous/loom-stack.tar.gz",
+            "LOOM_INSTALL_CHECKSUM": "/previous/loom-stack.tar.gz.sha256",
+        }
         self.container(
             image,
             home,
             port,
-            "LOOM_INSTALL_BUNDLE=/previous/loom-stack.tar.gz"
-            " LOOM_INSTALL_CHECKSUM=/previous/loom-stack.tar.gz.sha256 sh /previous/install.sh",
+            "sh /previous/install.sh",
             mounts=(f"{files}:/previous:ro",),
+            env=bundle,
         )
 
     def rehearse(self, distro: str, stacks: ExitStack) -> None:

@@ -202,15 +202,19 @@ def test_the_published_previous_release_is_installed_by_name(
     release = rehearsal.Release("1.2.0", "1.1.0", "unused", env={})
     docker = rehearsal.HostDocker("/compose", 0)
     rehearsing = rehearsal.Rehearsal(release, ExitStack(), tmp_path, "id", docker)
-    calls: list[tuple[str, dict[str, str] | None]] = []
-    monkeypatch.setattr(
-        rehearsing,
-        "container",
-        lambda image, home, port, script, env=None: calls.append((script, env)),
-    )
+    commands: list[tuple[str, ...]] = []
+
+    def docker(*args: str, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        commands.append(args)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(rehearsal, "run", docker)
     rehearsing.install_previous("image", tmp_path, 1)
+    (command,) = commands
     url = f"{rehearsal.GITHUB_RELEASES}/download/v1.1.0/install.sh"
-    assert calls == [(f'curl -fsSL "{url}" | sh', {"LOOM_VERSION": "1.1.0"})]
+    assert command[-1] == f'curl -fsSL "{url}" | sh'
+    for variable in ("LOOM_VERSION=1.1.0", f"HOME={tmp_path}", "LOOM_PORT=1"):
+        assert command[command.index(variable) - 1] == "-e"
 
 
 @pytest.mark.parametrize("flag", ["--version", "--previous-version"])
