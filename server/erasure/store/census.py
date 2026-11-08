@@ -453,9 +453,10 @@ _CENSUS: tuple[Substrate, ...] = (
 #   shared*.tombstone                — org-wide promoted rows, matched by
 #                                       provenance not by scope.
 #   consolidated.tombstone           — loom.memory rows under another identity,
-#                                       their vectors and code links. The memory
-#                                       row counts the summaries in both scopes;
-#                                       their vectors and code links only in the
+#                                       their search rows and code links. The
+#                                       memory row counts the summaries in both
+#                                       scopes; their loom.memory_embeddings and
+#                                       loom.memory_code_links rows only in the
 #                                       namespace scope. `memory.retire` (the
 #                                       user-scope owner of loom.memory) runs the
 #                                       same pass again.
