@@ -59,6 +59,12 @@ describe("ThreadActions", () => {
   });
 
   it("titles a thread built by appends, which has no row to update, by writing one", async () => {
+    vi.mocked(api.getConversationThread).mockResolvedValueOnce({
+      found: true,
+      msg_count: 1,
+      agent: "claude-code",
+      created_at: null,
+    } as never);
     render(<ThreadActions identity={identity} thread={thread} canRename canDelete={false} onChanged={vi.fn()} />);
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
@@ -123,10 +129,7 @@ describe("ThreadActions", () => {
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     await waitFor(() =>
-      expect(toast).toHaveBeenCalledWith(
-        'Deleted part of "Deploy plan", then failed: down; 2 messages are left',
-        "error",
-      ),
+      expect(toast).toHaveBeenCalledWith('Deleted part of "Deploy plan", then failed: down', "error"),
     );
   });
 
@@ -156,5 +159,30 @@ describe("ThreadActions", () => {
     await waitFor(() =>
       expect(toast).toHaveBeenCalledWith('Deleted part of "Deploy plan"; 4 messages are left', "info"),
     );
+  });
+
+  it("keeps the count it read when the next agent's delete fails", async () => {
+    vi.mocked(api.getConversationThread).mockResolvedValueOnce({ found: true, msg_count: 2, agent: "codex" } as never);
+    vi.mocked(api.deleteThread).mockResolvedValueOnce({ total: 1 }).mockRejectedValueOnce(new Error("down"));
+    render(<ThreadActions identity={identity} thread={thread} canRename={false} canDelete onChanged={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(
+        'Deleted part of "Deploy plan", then failed: down; 2 messages are left',
+        "error",
+      ),
+    );
+  });
+
+  it("writes no row for a conversation deleted while the rename was open", async () => {
+    render(<ThreadActions identity={identity} thread={thread} canRename canDelete={false} onChanged={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename conversation" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
+    expect(await within(dialog).findByText("This conversation was deleted")).toBeInTheDocument();
+    expect(api.renameThread).not.toHaveBeenCalled();
+    expect(api.createThreadRow).not.toHaveBeenCalled();
   });
 });

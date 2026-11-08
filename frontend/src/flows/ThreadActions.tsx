@@ -90,11 +90,14 @@ function RenameDialog({
     try {
       // The row belongs to the agent that opened the thread, not always the last writer;
       // a thread built by appends has none yet, so one is written with the title.
-      const t = title.trim();
+      const newTitle = title.trim();
       const head = await getConversationThread(identity, "*", thread.thread_id, { limit: 1 });
+      if (!head.found) throw new Error("This conversation was deleted");
       // A row deleted since the read answers `updated: false` too.
-      const r = head.created_at ? await renameThread(identity, head.agent, thread.thread_id, t) : { updated: false };
-      if (!r.updated) await createThreadRow(identity, thread.agent, thread.thread_id, t);
+      const { updated } = head.created_at
+        ? await renameThread(identity, head.agent, thread.thread_id, newTitle)
+        : { updated: false };
+      if (!updated) await createThreadRow(identity, thread.agent, thread.thread_id, newTitle);
       toast("Renamed", "ok");
       onClose(true);
     } catch (e) {
@@ -142,6 +145,8 @@ async function deleteEveryAgent(
     while (parts < MAX_AGENTS) {
       await deleteThread(id, agent, thread.thread_id);
       parts++;
+      // What was left before this delete is no longer known.
+      left = 0;
       const rest = await getConversationThread(id, "*", thread.thread_id, { limit: 1 });
       if (!rest.found) return { parts, left: 0 };
       left = rest.msg_count;
