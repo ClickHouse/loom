@@ -20,12 +20,24 @@ mkdir -p "$toolchain_prefix"
 toolchain_prefix=$(cd "$toolchain_prefix" && pwd)
 npm install --global --prefix "$toolchain_prefix" --no-fund --no-audit \
   '@sourcegraph/scip-typescript@0.4.0' '@sourcegraph/scip-python@0.6.6' \
-  'pnpm@12.3.1' 'yarn@1.22.22' 'bun@1.4.2'
+  'pnpm@12.15.0' 'yarn@1.22.22' 'bun@1.4.2'
 # Keep both Yarn lockfile formats supported without downloading a tool at
 # indexing time or following a repository's executable yarnPath/plugins.
 npm install --global --prefix "$toolchain_prefix/yarn-modern" --no-fund --no-audit \
   '@yarnpkg/cli-dist@4.18.1'
 ln -sf ../yarn-modern/bin/yarn "$toolchain_prefix/bin/yarn-modern"
+
+# The TypeScript tier installs with this pnpm and never fetches the one a repository
+# pins: it must load a workspace that sets lockfile options.
+probe=$(mktemp -d)
+trap 'rm -rf "$probe"' EXIT
+printf 'packages: []\nlockfile:\n  includeResolutionSettings: true\n' >"$probe/pnpm-workspace.yaml"
+printf '{"name":"probe","private":true}\n' >"$probe/package.json"
+(cd "$probe" && "$toolchain_prefix/bin/pnpm" config list \
+  --config.manage-package-manager-versions=false >/dev/null) || {
+  echo 'The installed pnpm cannot load a pnpm-workspace.yaml that sets lockfile options.' >&2
+  exit 1
+}
 
 printf '\nCompiler indexers installed. Set PATH in the shell that starts Loom:\n'
 printf 'export PATH="%s/bin:$PATH"\n' "$toolchain_prefix"
