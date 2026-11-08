@@ -232,3 +232,20 @@ def test_an_imported_module_whose_parse_stops_reads_as_empty(
         assert lang_python._reexport_facts("pkg/__init__.py", slow) == (frozenset(), {}, ())
     finally:
         lang_python._reexport_facts.cache_clear()
+
+
+def test_helper_parses_that_stop_take_their_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.code.domain.declaration import Declarations
+    from server.code.domain.extract import bounded_parse
+    from server.code.domain.extract.lang_detect import detect_shell
+
+    shell, go = b"a=(1 2)\necho hi\n", b"package x\nfunc f() {}\n"
+    assert detect_shell("tests/queries/tool", shell) == "shell"
+    assert Declarations.parse("x.go", go) is not None
+
+    def stops(parser: Any, source: bytes) -> Any:
+        raise bounded_parse.ParseTimeout("stopped")
+
+    monkeypatch.setattr(bounded_parse, "parse", stops)
+    assert detect_shell("tests/queries/tool", shell) == ""
+    assert Declarations.parse("x.go", go) is None
