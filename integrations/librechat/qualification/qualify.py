@@ -323,14 +323,15 @@ def cmd_setup_bridge(args: argparse.Namespace) -> None:
     people = load("fixture.json")["people"]
     for org in sorted({p["org"] for p in people}):
         namespaces = sorted({p["namespace"] for p in people if p["org"] == org})
-        admin = mint(
+        minted = mint(
             args.loom_bin,
             subject=f"qualify-admin-{org}",
             org=org,
             namespace=namespaces[0],
             role="admin",
             extra_namespaces=namespaces[1:],
-        )["token"]
+        )
+        admin = minted["token"]
         for person in (p for p in people if p["org"] == org):
             body = {
                 "org": org,
@@ -341,6 +342,12 @@ def cmd_setup_bridge(args: argparse.Namespace) -> None:
             code, out, _ = loom_call(st["loom_url"], admin, "grants.create", body)
             if code != 200:
                 sys.exit(f"grants.create {person['name']}: {code} {out}")
+        # The admin token did its one job: it is not left live.
+        subprocess.run(
+            [args.loom_bin, "revoke-token", "--jti", minted["jti"], "--reason", "qualify"],
+            check=True,
+            capture_output=True,
+        )
     st["bridge"] = True
     # The agent's model, for the report's prices: agent.yaml's, unless the server sets
     # LOOM_ASSISTANT_MODEL, which the harness cannot see.

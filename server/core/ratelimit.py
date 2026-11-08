@@ -803,8 +803,9 @@ def get_limiter() -> Limiter:
 
 def admit_route(op_name: str, namespace: str, *, org: str, actor: str | None) -> None:
     """The rate-limit buckets of `op_name`, drawn for a route that serves it outside
-    the op dispatcher, as the transports draw them for the op: RATE_LIMITED when one is
-    empty; a limiter that fails admits the request, as it admits an op."""
+    the op dispatcher, as the transports draw them for the op as interactive traffic
+    (the route is not classified): RATE_LIMITED when one is empty; a limiter that fails
+    admits the request, as it admits an op."""
     from server.core import fail_open
     from server.core.errors import RateLimitedError
 

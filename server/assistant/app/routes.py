@@ -117,13 +117,22 @@ class _Row:
                 # The caller's own client asked: its tool calls are `loom-assistant`'s.
                 subject=self.auth.subject,
                 transport="http",
-                slo_class=sli.slo_class(bridge.ASSISTANT_OP, writes=False, admin=False),
+                slo_class=_slo_class(),
                 budget_ms=effective_budget_ms(
                     bridge.ASSISTANT_OP, OP_BUDGETS_P99_MS[bridge.ASSISTANT_OP]
                 ),
             )
         except Exception as e:  # noqa: BLE001 — telemetry never fails an answer
             log.debug("assistant answer: ledger row not written: %s", e)
+
+
+def _slo_class() -> str:
+    """The SLO class the op transport records for `assistant.ask`, so the route's rows
+    and the op's fall in one."""
+    from server.operations.registry import OPERATIONS_BY_NAME
+
+    op = OPERATIONS_BY_NAME[bridge.ASSISTANT_OP]
+    return sli.slo_class(op.name, writes=not op.read_only, admin=False)
 
 
 class _Held:
@@ -167,13 +176,15 @@ class _AnswerStream(StreamingResponse):
             error = e
             raise
         finally:
-            # Ends the body however the response ended, so its charge lands on the row.
-            await self.body_iterator.aclose()  # type: ignore[attr-defined]
-            if error is None and not self.held.finished:
-                # The response returned with the stream unfinished: the client left
-                # (below ASGI 2.4 Starlette absorbs the disconnect).
-                error = asyncio.CancelledError()
-            self.held.close(error)
+            try:
+                # Ends the body however the response ended, so its charge lands on the row.
+                await self.body_iterator.aclose()  # type: ignore[attr-defined]
+            finally:
+                if error is None and not self.held.finished:
+                    # The response returned with the stream unfinished: the client left
+                    # (below ASGI 2.4 Starlette absorbs the disconnect).
+                    error = asyncio.CancelledError()
+                self.held.close(error)
 
 
 @router.post("/v1/assistant/chat/completions")
@@ -212,6 +223,9 @@ async def chat_completions(request: Request) -> Any:
         refused = _refusal(e)
         row.write(refused)  # a refused answer leaves its row, as a refused op does
         raise refused from e
+    except Exception as e:
+        row.write(e)  # INTERNAL_ERROR, as the op transport records it
+        raise
     try:
         held = _Held(ticket, row)
     except BaseException as e:

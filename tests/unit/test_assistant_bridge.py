@@ -496,7 +496,13 @@ def test_the_answers_row_names_who_acted_and_its_budget(
     http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
     (row,) = rows
     assert row["impersonated_by"] == "trusted-ui"
-    assert row["slo_class"] == "read" and row["budget_ms"] > 0
+    assert row["budget_ms"] > 0
+    # The op transport's class for the same operation, so both land in one SLI.
+    from server.observability.sli import slo_class
+    from server.operations.registry import OPERATIONS_BY_NAME
+
+    op = OPERATIONS_BY_NAME["assistant.ask"]
+    assert row["slo_class"] == slo_class(op.name, writes=not op.read_only, admin=False)
 
 
 def test_a_client_that_went_away_is_its_own_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -668,3 +674,57 @@ def test_a_client_leaving_mid_stream_is_its_own_failure_and_releases_all(
     assert row["error_code"] == "HTTP_499" and row["run"] == "chatcmpl-7"
     assert row["cost"] == pytest.approx(settings.assistant_answer_ceiling_usd)
     assert bridge._running == {} and tenant_slots._IN_FLIGHT.get(ORG, 0) == 0
+
+
+def test_a_body_that_fails_to_close_still_frees_the_org_slot_and_writes_its_row(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.assistant.app import routes
+    from server.core import tenant_slots
+
+    rows: list[dict[str, Any]] = []
+    monkeypatch.setattr(routes, "emit_agent_event", lambda **kw: rows.append(kw))
+
+    async def body() -> Any:
+        try:
+            yield b"data: {}\n\n"
+        finally:
+            raise AssistantUpstreamError("closing LibreChat's stream failed")
+
+    async def run() -> None:
+        ticket = await bridge.open_answer(_caller(), ORG, NS)
+        held = routes._Held(ticket, routes._Row(_caller(), ORG, NS))
+        response = routes._AnswerStream(body(), held)
+
+        async def send(message: dict[str, Any]) -> None:
+            raise OSError("the client's socket closed")
+
+        async def receive() -> dict[str, Any]:
+            await asyncio.sleep(10)
+            return {"type": "http.disconnect"}
+
+        with pytest.raises(BaseException):  # noqa: B017 — whichever error ends it
+            await response({"type": "http", "asgi": {"spec_version": "2.4"}}, receive, send)
+
+    asyncio.run(run())
+    assert len(rows) == 1 and tenant_slots._IN_FLIGHT.get(ORG, 0) == 0
+
+
+def test_an_unexpected_error_before_the_stream_leaves_its_row(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.assistant.app import routes
+
+    async def broken(*_: Any) -> None:
+        raise RuntimeError("a bug")
+
+    http, rows = client
+    monkeypatch.setattr(routes, "check_acted_for", broken)
+    from fastapi.testclient import TestClient
+
+    r = TestClient(http.app, raise_server_exceptions=False).post(
+        ROUTE, headers=HEADERS, json={"messages": QUESTION}
+    )
+    assert r.status_code == 500
+    (row,) = rows
+    assert row["error_code"] == "INTERNAL_ERROR" and bridge._running == {}
