@@ -10,10 +10,11 @@ time, so a busy host does not time out a file that parses in time on an idle one
 The parser's own progress callback cannot be used: the binding builds its arguments
 with a format code Python 3.12 rejects and crashes. The parser instead reads the
 source `_CHUNK` bytes at a time through a callback that checks the deadline; past it
-the callback answers end of input and the parse finishes on what it has read. Work
-the parser does after its last read is not bounded. The binding holds the GIL while
-it parses, and the callback is where another thread can take it, so a parse run in a
-thread lets the event loop run every few tens of milliseconds.
+the callback answers end of input and the parse finishes on what it has read. The
+binding holds the GIL while it parses, and the callback is where another thread can
+take it, so a parse run in a thread lets the event loop run every few tens of
+milliseconds. Work the parser does after its last read is not bounded, and holds the
+GIL throughout.
 """
 
 from __future__ import annotations

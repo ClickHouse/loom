@@ -551,7 +551,7 @@ def _slow_facts(seconds: float) -> Any:
 def test_a_request_waiting_past_its_window_leaves_the_file_unreached(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(po, "_parsed_facts", _slow_facts(0.3))
+    monkeypatch.setattr(po, "_parsed_facts", _slow_facts(1.0))
 
     async def two() -> list[Any]:
         scope = ("acme", "code-ch")
