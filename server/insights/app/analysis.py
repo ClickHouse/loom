@@ -25,6 +25,7 @@ from uuid import UUID
 from server.core import leases
 from server.core.ch import statement_timeout
 from server.core.ch_errors import error_code, error_line
+from server.core.ch_names import database
 from server.core.errors import AnalysisUnavailableError, RateLimitedError, ValidationError
 from server.core.secrets_at_rest import seal, unseal
 from server.insights.api.models_analysis import (
@@ -179,14 +180,25 @@ def entity_statements(
     return boundary.entity_sql(store.target_database(), _password(), _key(), caps(), granted, roles)
 
 
-# What `loom ch-setup --print-analyst-sql` tells an admin to check first.
-FOREIGN_POLICIES_SQL = (
-    "SELECT short_name, table FROM system.row_policies WHERE database = currentDatabase() "
-    "AND table IN ("
-    + ", ".join(f"'{t}'" for t in boundary.allowlisted_tables())
-    + f") AND NOT is_restrictive AND short_name NOT IN ('{boundary.POLICY_NAME}', "
-    f"'{boundary.OTHERS_POLICY_NAME}');"
-)
+def printed_checks() -> list[str]:
+    """What `loom ch-setup --print-analyst-sql` tells an admin to run first,
+    naming Loom's database, since the admin's session may be in another:
+    the permissive policies Loom did not write on the analysis tables, and
+    other databases whose tables carry the analyst's scope policy."""
+    db = _sql_string(database())
+    tables = ", ".join(_sql_string(t) for t in boundary.allowlisted_tables())
+    ours = f"{_sql_string(boundary.POLICY_NAME)}, {_sql_string(boundary.OTHERS_POLICY_NAME)}"
+    return [
+        "SELECT short_name, table FROM system.row_policies "
+        f"WHERE database = {db} AND table IN ({tables}) AND NOT is_restrictive "
+        f"AND short_name NOT IN ({ours});",
+        "SELECT DISTINCT database FROM system.row_policies "
+        f"WHERE short_name = {_sql_string(boundary.POLICY_NAME)} AND database != {db};",
+    ]
+
+
+def _sql_string(value: str) -> str:
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
 async def own_grant_revokes() -> list[str]:
@@ -194,7 +206,7 @@ async def own_grant_revokes() -> list[str]:
     printed SQL, whose writer cannot read system.grants. The allowlist is
     granted after them. None before the user exists."""
     try:
-        lines = await store.own_grant_lines(password=_password(), extra=_time_cap())
+        lines = await store.own_grant_lines(password=_password(), extra={})
     except Exception:  # noqa: BLE001 — no user yet, or it refuses this password: nothing to revoke
         return []
     out = []
@@ -214,18 +226,11 @@ def printed_statements(revokes: list[str]) -> list[str]:
 
 
 def _scope_extra(org: str, namespaces: list[str], key: bytes | None = None) -> dict[str, Any]:
-    """The settings one statement carries: the scope signed with `key` (the
-    stored one by default), and the time cap as the statement's own
-    `max_execution_time` so the class deadline Loom adds to every read never
-    asks for more than the profile allows."""
+    """The scope one statement carries, signed with `key` (the stored one by
+    default). It sends no cap: the caps profile's apply, so a replica whose
+    own settings differ from the stored caps (during a roll) still runs."""
     exp = int(time.time()) + _SCOPE_TTL_S
-    signed = boundary.scope_settings(key or _key(), org, namespaces, exp)
-    return {**signed, **_time_cap()}
-
-
-def _time_cap() -> dict[str, Any]:
-    limit = float(settings.ch_analysis_max_execution_s)
-    return {"max_execution_time": int(limit) if limit.is_integer() else limit}
+    return dict(boundary.scope_settings(key or _key(), org, namespaces, exp))
 
 
 async def provision() -> None:
@@ -450,13 +455,13 @@ async def _probe() -> tuple[str, bool]:
                 continue
             return f"{boundary.ANALYST_USER} was not refused `{sql}`: {error_line(e)}", False
         return f"{boundary.ANALYST_USER} can run `{sql}`: its grants are too wide", True
-    if await store.own_version(password=_password(), extra=_time_cap()) != boundary.ENTITY_VERSION:
+    if await store.own_version(password=_password(), extra={}) != boundary.ENTITY_VERSION:
         # Another build's entities: the allowlist checks below are its to make.
         return "", False
     for table in [*(t.name for t in boundary.TABLES), boundary.CANARY_TABLE]:
         if not await _signed_only(db, table):
             return f"{boundary.ANALYST_USER} reads {table} unsigned: it has no scope policy", True
-    granted = await store.own_grants(password=_password(), extra=_time_cap())
+    granted = await store.own_grants(password=_password(), extra={})
     if extra_grants := sorted(granted - boundary.allowed_columns()):
         return (
             f"{boundary.ANALYST_USER} holds grants outside the allowlist: {extra_grants[:5]}",
@@ -470,7 +475,7 @@ async def _signed_only(db: str, table: str) -> bool:
     under Loom's scope policy does. Any other failure is raised."""
     try:
         await store.run_statement(
-            f"SELECT 1 FROM {db}.{table} LIMIT 1", password=_password(), extra=_time_cap()
+            f"SELECT 1 FROM {db}.{table} LIMIT 1", password=_password(), extra={}
         )
     except Exception as e:
         if error_code(e) == _UNKNOWN_SETTING:

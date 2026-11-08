@@ -477,8 +477,10 @@ def statement_settings(
         out["log_comment"] = f"{tag} {statement_digest(sql)}".strip()
     analyst = _analyst_var.get()
     if analyst is not None:
-        # The analyst's profile pins its own caps: a traffic class's or the
-        # caller's settings could only collide with them.
+        # The analyst's profile pins its own caps, its time cap included: a
+        # class deadline, a traffic class's or the caller's settings could only
+        # collide with them.
+        out.pop("max_execution_time", None)
         out.update(analyst[2])
         return _with_request_query_id(out)
     tclass = traffic_class_var.get()[0]

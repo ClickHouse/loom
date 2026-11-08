@@ -368,8 +368,9 @@ keeps:
   column N dropped are refused until the roll forward.
 - **The order of a write.** The version is the last of the entities. A first draw by a
   boot or `loom ch-setup`, made while no analyst user exists, stores the secrets row
-  before it creates the user. A rotation, by the CLI or the printed SQL, is a short
-  maintenance step that keeps analysis unavailable while it runs:
+  before it creates the user. A rotation, by the CLI or the printed SQL (both with
+  [part 2](#build-order)), is a short maintenance step that keeps analysis unavailable
+  while it runs:
 
   1. It deletes the secrets row, which only decides what a rotation cut short looks
      like: a lost row, which `loom doctor` maps to `--rotate-analysis-key`.
@@ -447,10 +448,11 @@ keeps:
   it, the one under the lease included, runs with the read-your-writes setting Loom uses
   across replicas (`own_write_reads` in `server/core/ch.py`). A replica reads the key
   from the row at each probe (with [part 2](#build-order), before each statement); a
-  rotation's `KILL QUERY` (the order of a write)
-  ends the statements already running. A row that does not open, or is gone while the
+  rotation's `KILL QUERY` (the order of a write) ends the statements already running. A row that does not open, or is gone while the
   analyst user exists, answers `ANALYSIS_UNAVAILABLE` and is a `loom doctor` problem.
-  `loom ch-setup --rotate-analysis-key` is the recovery. It runs from a CLI at least as
+  Until [part 2](#build-order) the recovery is to drop the analyst user and run
+  `loom ch-setup` again; with it, the recovery is `loom ch-setup --rotate-analysis-key`,
+  which runs from a CLI at least as
   new as the stored version, first proves its `LOOM_JWT_SECRET` is the deployment's
   against the root's own record in `loom.signing_keys` (refusing where none is
   recorded), and refuses while the analysis row opens; then, holding the lease, it draws

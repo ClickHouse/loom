@@ -473,10 +473,12 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
         print(
             "-- Holds the analyst password and scope key: save it to a file and run it in one "
             "session,\n-- clickhouse-client --log_queries=0 --multiquery --queries-file <file>, "
-            "so neither reaches system.query_log.\n-- First list the permissive row policies "
-            "Loom did not write on the analysis tables;\n-- drop or make restrictive any it "
-            "returns, since the policy below for every other user would widen them:\n-- "
-            + analysis.FOREIGN_POLICIES_SQL
+            "so neither reaches system.query_log.\n-- First run these two checks. The first "
+            "lists permissive row policies Loom did not write on\n-- the analysis tables: drop "
+            "or make restrictive any it returns, since the policy below for\n-- every other "
+            "user would widen them. The second lists other Loom databases on this server\n-- "
+            "writing the same analyst user: analysis needs one Loom per ClickHouse service.\n-- "
+            + "\n-- ".join(analysis.printed_checks())
         )
         for stmt in _analyst_sql():
             print(f"{stmt};")

@@ -37,6 +37,24 @@ def _query(namespace: str = "ns") -> InsightsQueryInput:
     return InsightsQueryInput(org="acme", namespace=namespace, sql="SELECT 1")
 
 
+class _NoLease:
+    def __init__(self, *_: Any) -> None:
+        pass
+
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(self, *_: Any) -> None:
+        return None
+
+
+def _returns(value: Any):
+    async def fn(*_: Any, **__: Any) -> Any:
+        return value
+
+    return fn
+
+
 @pytest.mark.parametrize(
     ("message", "answer"),
     [
@@ -112,15 +130,8 @@ def test_a_foreign_permissive_policy_stops_the_repair(
     async def write(statements: list[str], **_: Any) -> None:
         written.append(statements)
 
-    class _Lease:
-        async def __aenter__(self) -> None:
-            return None
-
-        async def __aexit__(self, *_: Any) -> None:
-            return None
-
     monkeypatch.setattr(app, "_probe", probe)
-    monkeypatch.setattr(app, "lease", _Lease)
+    monkeypatch.setattr(app, "lease", _NoLease)
     monkeypatch.setattr(app.store, "sealed_secrets", none)
     monkeypatch.setattr(app.store, "can_manage_access", yes)
     monkeypatch.setattr(app.store, "foreign_policies", foreign)
@@ -142,36 +153,11 @@ def test_ch_setup_refuses_a_new_key_beside_a_live_analyst_user(
     async def no(*_: Any, **__: Any) -> bool:
         return False
 
-    class _Lease:
-        async def __aenter__(self) -> None:
-            return None
-
-        async def __aexit__(self, *_: Any) -> None:
-            return None
-
-    monkeypatch.setattr(app, "lease", _Lease)
+    monkeypatch.setattr(app, "lease", _NoLease)
     monkeypatch.setattr(app.store, "sealed_secrets", none)
     monkeypatch.setattr(app.store, "analyst_user_absent", no)
     with pytest.raises(RuntimeError, match=f"DROP USER {boundary.ANALYST_USER}"):
         asyncio.run(app.rewrite())
-
-
-class _NoLease:
-    def __init__(self, *_: Any) -> None:
-        pass
-
-    async def __aenter__(self) -> None:
-        return None
-
-    async def __aexit__(self, *_: Any) -> None:
-        return None
-
-
-def _returns(value: Any):
-    async def fn(*_: Any, **__: Any) -> Any:
-        return value
-
-    return fn
 
 
 def test_ch_setup_refuses_over_a_newer_builds_entities(
@@ -210,7 +196,7 @@ def _provisioning(monkeypatch: pytest.MonkeyPatch, *, stored: Any, caps: str, fo
     return written
 
 
-def _current(monkeypatch: pytest.MonkeyPatch) -> boundary.Stored:
+def _current() -> boundary.Stored:
     statements = app.entity_statements()
     return boundary.Stored(boundary.ENTITY_VERSION, boundary.entity_digest(statements))
 
@@ -218,7 +204,7 @@ def _current(monkeypatch: pytest.MonkeyPatch) -> boundary.Stored:
 def test_a_boot_writes_only_the_caps_when_only_a_cap_changed(
     monkeypatch: pytest.MonkeyPatch, ready: None
 ) -> None:
-    written = _provisioning(monkeypatch, stored=_current(monkeypatch), caps="old", foreign=[])
+    written = _provisioning(monkeypatch, stored=_current(), caps="old", foreign=[])
     asyncio.run(app.provision())
     assert written == [boundary.caps_sql(app.caps())]
 
@@ -227,7 +213,7 @@ def test_a_boot_writes_nothing_when_the_entities_and_caps_are_current(
     monkeypatch: pytest.MonkeyPatch, ready: None
 ) -> None:
     digest = boundary.caps_digest(app.caps())
-    written = _provisioning(monkeypatch, stored=_current(monkeypatch), caps=digest, foreign=[])
+    written = _provisioning(monkeypatch, stored=_current(), caps=digest, foreign=[])
     asyncio.run(app.provision())
     assert written == []
 
@@ -260,7 +246,7 @@ def test_a_foreign_policy_outlasts_a_clean_probe(
     monkeypatch.setattr(app.store, "other_deployments", _returns([]))
     monkeypatch.setattr(app.store, "foreign_policies", _returns(["bi_scope ON memory"]))
     asyncio.run(app.reprobe())
-    assert app.analysis_state() == (False, app.analysis_state()[1])
+    assert app.analysis_state()[0] is False
     assert "bi_scope ON memory" in app.analysis_state()[1]
 
 
@@ -328,3 +314,30 @@ def test_a_column_grant_in_another_database_is_outside_the_allowlist(
     monkeypatch.setattr(app.store, "database", lambda: "loom")
     held = asyncio.run(app.store.own_grants(password="pw", extra={}, ch=_Ch()))
     assert ("memory", "org") not in held
+
+
+def test_analyst_statements_send_no_time_cap_of_their_own() -> None:
+    # The caps profile's MAX applies: a replica whose own cap differs from the
+    # stored one (during a roll) must not send a value the profile refuses.
+    from server.core import ch
+
+    with ch.as_analyst(boundary.ANALYST_USER, "pw", {}):
+        assert "max_execution_time" not in ch.statement_settings("SELECT 1")
+
+
+def test_the_printed_checks_name_looms_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The admin's session may sit in another database: the checks never read currentDatabase().
+    monkeypatch.setattr(app, "database", lambda: "loom_prod")
+    checks = app.printed_checks()
+    assert all("currentDatabase" not in c for c in checks)
+    assert "database = 'loom_prod'" in checks[0]
+    assert "database != 'loom_prod'" in checks[1]
+
+
+def test_the_per_org_count_comes_back_down_when_a_statement_fails(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    monkeypatch.setattr(app.store, "run_statement", _failing("Code: 62. DB::Exception: Syntax"))
+    with pytest.raises(ValidationError):
+        asyncio.run(app.handle_insights_query(_query()))
+    assert app._running == {}
