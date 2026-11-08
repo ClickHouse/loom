@@ -19,9 +19,10 @@ gives no grant on the operator's namespaces.
   the subject's newest such grant is respected, and so is a request made there
   since: admin is not re-added. An older row of any kind is replaced. Called
   after an admin grant is created or approved on a code namespace, when a branch
-  is added, and by the registrar on each pass until the self-service registry
-  is read, then once per process per namespace (so environment-registered
-  branches inherit). Each pass also revokes, on a restricted branch added from
+  is added or restricted, and by the registrar on each pass until the self-service
+  registry is read, then once per process per namespace (so environment-registered
+  branches inherit) and on every pass for a restricted branch added from the
+  page. Each pass also revokes, on a restricted branch added from
   the page, every copy whose source is not an operator entry, or rewrites it as a
   copy of the subject's operator grant.
 * ``revoke_repo_maintainer`` — a revoked admin leaves the branches the revoke
@@ -316,8 +317,9 @@ async def _rewrite_wanted(
     branch must not keep it."""
     if await _mirror_wanted(client, org, row, now, seen):
         return row
-    if now is None or not await _copy_unchanged(client, org, row, now, seen):
+    if not await _copy_unchanged(client, org, row, now, seen):
         return None
+    assert now is not None  # `_copy_unchanged` read it live
     _log_stray(org, now)
     return _revoke_row(org, now)
 

@@ -881,7 +881,9 @@ async def test_the_registrar_syncs_a_branch_once_the_registry_is_read(
     monkeypatch.setattr(maintainers, "sync_quietly", _sync)
     monkeypatch.setattr(registry, "_DONE", {("clickhouse", "code-x")})
     monkeypatch.setattr(registry, "_SYNCED", set())
-    cfg = SimpleNamespace(org="clickhouse", namespace="code-x")
+    cfg = SimpleNamespace(
+        org="clickhouse", namespace="code-x", source="config", classification="standard"
+    )
     monkeypatch.setattr(repo_registry, "registry_read", lambda: False)
     assert await registry.ensure_registered(cfg, ch=object()) is False
     assert ("clickhouse", "code-x") not in registry._SYNCED  # not marked synced
@@ -889,6 +891,14 @@ async def test_the_registrar_syncs_a_branch_once_the_registry_is_read(
     await registry.ensure_registered(cfg, ch=object())
     await registry.ensure_registered(cfg, ch=object())
     assert synced == ["code-x", "code-x"]  # once while unread, once after, then done
+    # A restricted branch added from the page, on every pass: a restriction whose own
+    # sync failed still has its stray copies revoked.
+    cfg = SimpleNamespace(
+        org="clickhouse", namespace="code-x", source="registry", classification="restricted"
+    )
+    await registry.ensure_registered(cfg, ch=object())
+    await registry.ensure_registered(cfg, ch=object())
+    assert synced == ["code-x"] * 4
 
 
 async def test_code_init_reads_the_registry_before_it_registers(

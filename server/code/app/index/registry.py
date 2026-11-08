@@ -53,7 +53,10 @@ async def ensure_registered(cfg: Any, *, ch: Any | None = None, sync: bool = Tru
 
     key = (cfg.org, cfg.namespace)
     if key in _DONE:
-        if sync and key not in _SYNCED:
+        # A restricted branch added from the page is synced on every pass, so the copies
+        # it must not hold go even when the sync after its restriction failed.
+        restricted_page = cfg.source == "registry" and cfg.classification == "restricted"
+        if sync and (key not in _SYNCED or restricted_page):
             await sync_maintainers(cfg, ch or get_client())
         return False
     client = ch or get_client()
@@ -118,7 +121,8 @@ async def _write_row(cfg: Any, client: Any) -> bool:
         )
         return True
     classification = str(row.get("classification") or "standard")
-    if public and classification == "standard" and str(row.get("join_policy")) != "open":
+    opening = public and classification == "standard" and str(row.get("join_policy")) != "open"
+    if opening and await _access_still_open(cfg, client):
         # The config says the repository is public; the row is brought to open +
         # discoverable. Open means joinable, not readable — the row stays
         # visibility=private; reads need the join.
@@ -160,6 +164,21 @@ async def _write_row(cfg: Any, client: Any) -> bool:
                 cfg.namespace,
             )
     return False
+
+
+async def _access_still_open(cfg: Any, client: Any) -> bool:
+    """The registry row read now still opens the repository, when one sets its access:
+    this process's snapshot of it may predate a maintainer's change."""
+    from server.code.store.index import CodeRepo
+
+    if cfg.source != "registry" and cfg.access_source != "registry":
+        return True  # the operator's entry alone says public
+    access = await CodeRepo(client).code_repo_row(cfg.org, cfg.namespace)
+    return (
+        access is not None
+        and str(access.get("classification")) != "restricted"
+        and str(access.get("join_policy")) == "open"
+    )
 
 
 async def _access_still_standard(cfg: Any, client: Any) -> bool:

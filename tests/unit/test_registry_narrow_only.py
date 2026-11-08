@@ -186,3 +186,21 @@ async def test_the_registrar_reads_and_writes_the_row_under_the_admins_claim(
     assert reads == [True]
     assert [r["join_policy"] for _, rows in client.inserted for r in rows] == ["open"]
     assert held == ["code-p"]
+
+
+@pytest.mark.parametrize("join_policy", ["open", "approval"])
+@pytest.mark.asyncio
+async def test_a_page_branch_opens_only_while_its_registry_row_says_open(join_policy: str) -> None:
+    """The snapshot may predate a maintainer closing it to approval."""
+
+    class _Registry(_Client):
+        async def query_one(self, sql, params=None):
+            if "loom.code_repos" in sql:
+                return {"classification": "standard", "join_policy": join_policy}
+            return {"classification": "standard", "join_policy": "approval"}
+
+    client = _Registry()
+    cfg = dataclasses.replace(_cfg("standard"), public=True, source="registry")
+    await registry.ensure_registered(cfg, ch=client)
+    opened = [r["join_policy"] for _, rows in client.inserted for r in rows]
+    assert opened == (["open"] if join_policy == "open" else [])
