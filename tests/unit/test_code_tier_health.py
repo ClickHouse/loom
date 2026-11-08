@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -443,6 +444,8 @@ async def test_a_checkout_the_worker_cannot_search_is_not_the_tiers_failure(
         return False
 
     try:
+        if os.access(checkout, os.X_OK):
+            pytest.skip("this user can search a mode-0 directory (root)")
         with patch.object(compiler_tier, "checkout_for", return_value=str(checkout)):
             result = await _run_tier("server.code.workers.scip_full", repo, not_due)
     finally:

@@ -89,8 +89,8 @@ async def run_tier[R: TierResult](
     a later pass with nothing due could not clear it. Each entry's outcome is its
     `health_tier` record (default: `producer`; `tier_health.record`): a failure, or a
     success unless `run_repo` returned False (it attempted nothing: the entry was not
-    due) or added a skip. An entry the tier does
-    not own drops its record (`tier_health.forget`)."""
+    due) or added a skip. An entry the tier does not own drops its record
+    (`tier_health.forget`)."""
     from server.code.domain.index.repos import configured_repos
     from server.code.store.index import CodeRepo
 
