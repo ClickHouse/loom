@@ -1,7 +1,8 @@
 """Validated input for the operator's model setup flow.
 
-These models describe onboarding, not the full set of development providers.
-Local and fake embeddings remain backend options but are not setup choices.
+These models describe onboarding, not the full set of development providers:
+the local embedder is a setup choice (the released stack's default), the fake one
+is not.
 """
 
 from typing import Annotated, Literal
@@ -9,6 +10,8 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, StringConstraints, model_validator
+
+from server.settings.catalog import DEFAULT_LOCAL_EMBEDDING_MODEL, LOCAL_EMBEDDING_MODELS
 
 ModelName = Annotated[
     str,
@@ -52,8 +55,20 @@ class LLMSetup(SetupModel):
     verification_models: list[ModelName] | None = Field(default=None, max_length=8)
 
 
+def local_width(model: str) -> int | None:
+    """The width of a `local` / `local:<alias>` model, None for any other name."""
+    if model == "local":
+        alias = DEFAULT_LOCAL_EMBEDDING_MODEL
+    elif model.startswith("local:"):
+        alias = model.removeprefix("local:")
+    else:
+        return None
+    known = LOCAL_EMBEDDING_MODELS.get(alias)
+    return known[1] if known else None
+
+
 class EmbeddingSetup(SetupModel):
-    provider: Literal["openai", "gemini", "compatible"]
+    provider: Literal["openai", "gemini", "compatible", "local"]
     model: ModelName
     dimensions: int = Field(default=3072, ge=1, le=65535, strict=True)
     base_url: str = Field(default="", max_length=2048)
@@ -62,6 +77,16 @@ class EmbeddingSetup(SetupModel):
     @model_validator(mode="after")
     def validate_endpoint(self) -> "EmbeddingSetup":
         self.base_url = self.base_url.strip().rstrip("/")
+        if self.provider == "local":
+            width = local_width(self.model)
+            if width is None:
+                aliases = ", ".join(f"local:{alias}" for alias in sorted(LOCAL_EMBEDDING_MODELS))
+                raise ValueError(f"A local model is `local` or one of {aliases}")
+            if self.dimensions != width or self.base_url or self.send_dimensions:
+                raise ValueError(
+                    f"{self.model} embeds {width} dimensions and takes no endpoint options"
+                )
+            return self
         if self.provider != "compatible":
             if self.dimensions > 3072:
                 raise ValueError("Built-in embedding providers support at most 3072 dimensions")

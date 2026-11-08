@@ -20,6 +20,7 @@ from server.core.vectors import codes_state
 from server.embedding._provider import MalformedEmbedding
 from server.embedding.compatible import CompatibleEmbedder
 from server.embedding.gemini import GeminiEmbedder
+from server.embedding.local import LocalEmbedder
 from server.embedding.openai import OpenAIEmbedder
 from server.insights.api.models_provider_setup import (
     ProviderCheck,
@@ -59,6 +60,12 @@ async def _probe_embedding(
     base_url: str = "",
     send_dimensions: bool = False,
 ) -> None:
+    if provider == "local":
+        # Loads the model the server would, fetching a pinned file it lacks.
+        vector = await LocalEmbedder(spec=model).embed("Loom provider connection check.")
+        if len(vector) != dimensions or not all(math.isfinite(v) for v in vector):
+            raise ValueError("invalid embedding dimensions or values")
+        return
     client = (
         CompatibleEmbedder(
             model=model,
@@ -96,10 +103,12 @@ async def _check(
     check = ProviderCheck(
         role=role, provider=provider, model=model, ready=False, code="provider_error"
     )
-    if provider not in ("openai", "anthropic", "gemini", "compatible"):
+    if provider not in ("openai", "anthropic", "gemini", "compatible", "local"):
         check.code = "unsupported_provider"
         return check
-    keyless = provider in ("openai", "anthropic", "compatible") and gateway.keyless()
+    keyless = provider == "local" or (
+        provider in ("openai", "anthropic", "compatible") and gateway.keyless()
+    )
     if not key.strip() and not keyless:
         check.code = "missing_key"
         return check

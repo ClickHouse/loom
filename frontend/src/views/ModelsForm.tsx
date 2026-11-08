@@ -6,6 +6,7 @@ import { PasswordField } from "@clickhouse/click-ui/PasswordField";
 import { Select } from "@clickhouse/click-ui/Select";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import {
+  LOCAL_MODELS,
   MODEL_JOBS,
   type EmbeddingProvider,
   type LlmProvider,
@@ -38,11 +39,11 @@ const errorMessages: Record<string, string> = {
 
 export function initialModelConfiguration(status: ModelStatus): ModelConfiguration {
   const llm = status.llm_provider === "anthropic" ? "anthropic" : "openai";
-  const embedding =
-    status.embedding_provider === "compatible"
-      ? "compatible"
-      : status.embedding_provider === "gemini"
-        ? "gemini"
+  const embedding: EmbeddingProvider =
+    status.embedding_provider === "compatible" || status.embedding_provider === "gemini"
+      ? status.embedding_provider
+      : status.embedding_provider === "local" && status.embedding_model in LOCAL_MODELS
+        ? "local"
         : "openai";
   return {
     llm: {
@@ -59,14 +60,12 @@ export function initialModelConfiguration(status: ModelStatus): ModelConfigurati
     embedding: {
       provider: embedding,
       model:
-        ["openai", "gemini", "compatible"].includes(status.embedding_provider) && status.embedding_model
+        status.embedding_provider === embedding && status.embedding_model
           ? status.embedding_model
           : embedding === "gemini"
             ? "gemini-embedding-001"
             : "text-embedding-3-large",
-      dimensions: ["openai", "gemini", "compatible"].includes(status.embedding_provider)
-        ? status.embedding_dimensions
-        : 3072,
+      dimensions: status.embedding_provider === embedding ? status.embedding_dimensions : 3072,
       ...(embedding === "compatible"
         ? { base_url: status.embedding_base_url ?? "", send_dimensions: status.embedding_send_dimensions ?? false }
         : {}),
@@ -183,12 +182,14 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
                 embedding: {
                   provider,
                   model:
-                    provider === "compatible"
-                      ? ""
-                      : provider === "gemini"
-                        ? "gemini-embedding-001"
-                        : "text-embedding-3-large",
-                  dimensions: 3072,
+                    provider === "local"
+                      ? "local"
+                      : provider === "compatible"
+                        ? ""
+                        : provider === "gemini"
+                          ? "gemini-embedding-001"
+                          : "text-embedding-3-large",
+                  dimensions: provider === "local" ? LOCAL_MODELS.local.dimensions : 3072,
                 },
               });
             }}
@@ -196,14 +197,38 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
             <Select.Item value="openai">OpenAI</Select.Item>
             <Select.Item value="gemini">Google Gemini</Select.Item>
             <Select.Item value="compatible">Other (OpenAI-compatible API)</Select.Item>
+            <Select.Item value="local">Local (on this server, no key)</Select.Item>
           </Select>
-          <TextField
-            label="Embedding model"
-            required
-            disabled={embeddingLocked}
-            value={configuration.embedding.model}
-            onChange={(value) => change({ ...configuration, embedding: { ...configuration.embedding, model: value } })}
-          />
+          {configuration.embedding.provider === "local" ? (
+            <Select
+              label="Embedding model"
+              disabled={embeddingLocked}
+              value={configuration.embedding.model}
+              onSelect={(value) => {
+                const model = value as keyof typeof LOCAL_MODELS;
+                change({
+                  ...configuration,
+                  embedding: { provider: "local", model, dimensions: LOCAL_MODELS[model].dimensions },
+                });
+              }}
+            >
+              {(Object.keys(LOCAL_MODELS) as (keyof typeof LOCAL_MODELS)[]).map((model) => (
+                <Select.Item key={model} value={model}>
+                  {`${LOCAL_MODELS[model].label}, ${LOCAL_MODELS[model].dimensions} dimensions`}
+                </Select.Item>
+              ))}
+            </Select>
+          ) : (
+            <TextField
+              label="Embedding model"
+              required
+              disabled={embeddingLocked}
+              value={configuration.embedding.model}
+              onChange={(value) =>
+                change({ ...configuration, embedding: { ...configuration.embedding, model: value } })
+              }
+            />
+          )}
         </div>
         {embeddingLocked && (
           <p role="note" className="text-sm text-text-muted">
@@ -307,7 +332,7 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
                 })
               }
             />
-            {configuration.embedding.provider !== "compatible" && dimensionsField}
+            {!["compatible", "local"].includes(configuration.embedding.provider) && dimensionsField}
           </div>
         </details>
         <p className="text-sm text-text-muted">

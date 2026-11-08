@@ -99,7 +99,7 @@ describe("Models & keys", () => {
     expect(onSave.mock.calls[0][0].embedding).toMatchObject({ provider: "openai", model: "text-embedding-3-large" });
   });
 
-  it("offers only hosted embedding providers", () => {
+  it("offers the hosted embedding providers and the local one, never the fake one", () => {
     render(<ModelsForm status={status} onValidate={vi.fn()} onSave={vi.fn()} />);
     fireEvent.click(screen.getByLabelText("Embedding provider"));
     const options = screen.getByRole("dialog").querySelectorAll("[data-value]");
@@ -107,7 +107,25 @@ describe("Models & keys", () => {
       "openai",
       "gemini",
       "compatible",
+      "local",
     ]);
+  });
+
+  it("keeps the local embedder a server runs and asks for no key for it", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const local = { ...status, embedding_provider: "local", embedding_model: "local", embedding_dimensions: 384 };
+    expect(initialModelConfiguration(local).embedding).toEqual({ provider: "local", model: "local", dimensions: 384 });
+    render(
+      <ModelsForm status={local} onValidate={vi.fn().mockResolvedValue({ ready: true, checks: [] })} onSave={onSave} />,
+    );
+    choose("LLM provider", "Anthropic (Claude)");
+    choose("Embedding model", "bge-base, 768 dimensions");
+    expect(screen.queryByLabelText("Embedding dimensions")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Anthropic API key"), { target: { value: "llm-test-key" } });
+    fireEvent.click(screen.getByRole("button", { name: "Test & apply" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave.mock.calls[0][0].embedding).toEqual({ provider: "local", model: "local:bge-base", dimensions: 768 });
+    expect(onSave.mock.calls[0][0].keys).toEqual({ anthropic: "llm-test-key" });
   });
 
   it("keeps configured models even when a key needs attention", () => {

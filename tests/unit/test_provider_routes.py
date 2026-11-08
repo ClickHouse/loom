@@ -265,3 +265,20 @@ def test_oversized_input_is_rejected(client: TestClient) -> None:
 
 def test_forms_cannot_trigger_billable_checks(client: TestClient) -> None:
     assert client.post("/v1/admin/models/validate", data={"key": "value"}).status_code == 415
+
+
+def test_a_local_embedder_needs_only_the_llm_key(client, monkeypatch):
+    local = payload()
+    local["embedding"] = {"provider": "local", "model": "local", "dimensions": 384}
+    local["keys"] = {"anthropic": "test-secret"}
+    saved = ProviderSetupInput.model_validate(local)
+    monkeypatch.setattr(routes, "open_configuration", Mock(return_value=saved))
+    monkeypatch.setattr(
+        routes,
+        "configurations",
+        AsyncMock(return_value=[{"state": "active", "version": 125, "envelope": "encrypted"}]),
+    )
+    monkeypatch.setattr(routes, "environment_provider_key", lambda _: "")
+    body = client.get("/v1/admin/models").json()
+    assert (body["embedding_provider"], body["embedding_model"]) == ("local", "local")
+    assert not body["requires_setup"]

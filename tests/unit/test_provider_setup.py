@@ -1,4 +1,4 @@
-"""The onboarding contract cannot silently select local or fake embeddings."""
+"""The onboarding contract: hosted embedders and the local one, never the fake one."""
 
 import pytest
 from pydantic import ValidationError
@@ -7,7 +7,7 @@ from server.insights.api.models_provider_setup import EmbeddingSetup, LLMSetup, 
 from server.insights.domain.provider_setup import llm_setup_settings
 
 
-@pytest.mark.parametrize("provider", ["local", "fake", "anthropic", "", "voyage"])
+@pytest.mark.parametrize("provider", ["fake", "anthropic", "", "voyage"])
 def test_embedding_setup_rejects_unsupported_providers(provider: str) -> None:
     with pytest.raises(ValidationError):
         EmbeddingSetup.model_validate({"provider": provider, "model": "test-model"})
@@ -18,6 +18,30 @@ def test_embedding_setup_accepts_hosted_providers(provider: str) -> None:
     setup = EmbeddingSetup.model_validate({"provider": provider, "model": " test-model "})
     assert setup.model == "test-model"
     assert setup.dimensions == 3072
+
+
+@pytest.mark.parametrize(
+    ("model", "dimensions"), [("local", 384), ("local:bge-base", 768), ("local:minilm", 384)]
+)
+def test_a_local_model_is_set_up_at_its_own_width(model: str, dimensions: int) -> None:
+    setup = EmbeddingSetup(provider="local", model=model, dimensions=dimensions)
+    assert (setup.model, setup.dimensions) == (model, dimensions)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"model": "local:gigantic"},
+        {"model": "text-embedding-3-large"},
+        {"dimensions": 768},
+        {"base_url": "https://example.com/v1"},
+    ],
+)
+def test_a_local_setup_refuses_another_model_width_or_endpoint(changes: dict) -> None:
+    with pytest.raises(ValidationError):
+        EmbeddingSetup.model_validate(
+            {"provider": "local", "model": "local", "dimensions": 384, **changes}
+        )
 
 
 def test_compatible_provider_requires_explicit_endpoint() -> None:

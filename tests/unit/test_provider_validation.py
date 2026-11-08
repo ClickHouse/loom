@@ -264,3 +264,40 @@ async def test_a_width_the_coded_tables_cannot_take_is_refused_before_any_probe(
     embedding = result.checks[-1]
     assert embedding.code == ("ready" if ready else "unsupported_dimensions")
     assert embed.await_count == (1 if ready else 0)
+
+
+@pytest.mark.asyncio
+async def test_a_local_embedder_needs_no_key_and_is_probed(monkeypatch: pytest.MonkeyPatch) -> None:
+    llm, embed = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(validation, "_probe_llm", llm)
+    monkeypatch.setattr(validation, "_probe_embedding", embed)
+    local = {"provider": "local", "model": "local", "dimensions": 384}
+    result = await validation.validate_providers(
+        setup_input(embedding=local), {"anthropic": "llm-key"}
+    )
+    assert result.ready, result.checks
+    embed.assert_awaited_once_with("local", "local", "", 384, "", False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("width", "ok"), [(384, True), (768, False)])
+async def test_the_local_probe_embeds_with_the_named_model(
+    monkeypatch: pytest.MonkeyPatch, width: int, ok: bool
+) -> None:
+    seen: list[str] = []
+
+    class Local:
+        def __init__(self, spec: str) -> None:
+            seen.append(spec)
+
+        async def embed(self, text: str) -> list[float]:
+            return [0.1] * width
+
+    monkeypatch.setattr(validation, "LocalEmbedder", Local)
+    probe = validation._probe_embedding("local", "local:minilm", "", 384)
+    if ok:
+        await probe
+    else:
+        with pytest.raises(ValueError, match="dimensions"):
+            await probe
+    assert seen == ["local:minilm"]

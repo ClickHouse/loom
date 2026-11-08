@@ -106,9 +106,9 @@ def _status_values(saved: ProviderSetupInput | None) -> dict[str, Any]:
         "verification_models": saved.llm.verification_models if saved else None,
         "requires_setup": (
             llm_provider not in ("openai", "anthropic")
-            or embedding_provider not in ("openai", "gemini", "compatible")
+            or embedding_provider not in ("openai", "gemini", "compatible", "local")
             or not keys.get(llm_provider, False)
-            or not keys.get(embedding_provider, False)
+            or (embedding_provider != "local" and not keys.get(embedding_provider, False))
         ),
     }
 

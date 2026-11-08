@@ -1,8 +1,16 @@
 import { getJson, post } from "../api";
 
 export type LlmProvider = "openai" | "anthropic";
-export type EmbeddingProvider = "openai" | "gemini" | "compatible";
-export type ModelProvider = LlmProvider | EmbeddingProvider;
+export type EmbeddingProvider = "openai" | "gemini" | "compatible" | "local";
+/** The providers that take an API key: the local embedder runs on the server. */
+export type ModelProvider = LlmProvider | Exclude<EmbeddingProvider, "local">;
+
+/** The local embedder's models and their widths (server/settings/catalog.py). */
+export const LOCAL_MODELS = {
+  local: { label: "bge-small (default)", dimensions: 384 },
+  "local:bge-base": { label: "bge-base", dimensions: 768 },
+  "local:minilm": { label: "MiniLM", dimensions: 384 },
+} as const;
 
 export const MODEL_JOBS = {
   llm_fallback_model: "Fallback model (optional)",
