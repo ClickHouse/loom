@@ -643,9 +643,9 @@ class ClickHouseSettings(BaseModel):
     # shipped config defines `loom_reader` (SELECT only). Empty = `ch_user`.
     ch_reader_user: str = ""
 
-    # Caps for insights.query statements, each pinned as a MAX in the loom_analyst
-    # user's caps profile so no statement can raise it. A boot whose ClickHouse user
-    # has access management writes that profile when a cap here changed.
+    # Caps and pacing for insights.query. The statement caps are pinned as a MAX in
+    # the loom_analyst user's caps profile so no statement can raise them; a boot
+    # whose ClickHouse user has access management writes that profile when one changed.
     # --- analysis statements (insights.query) ---
     # Seconds one insights.query statement may run.
     ch_analysis_max_execution_s: float = Field(default=10.0, ge=0.1, le=300.0)

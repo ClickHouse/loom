@@ -700,6 +700,8 @@ jobs:
         env:
           LOOM_AUTH_REQUIRED: "true"
           LOOM_INSTANCE_LABEL: "ci:integration-auth"
+          # The analysis probe cases wait on it; the test step reads the same value.
+          LOOM_CH_ANALYSIS_PROBE_INTERVAL_S: "10"
         # Several web processes, as the image runs: a session's MCP calls and its
         # DELETE land on different ones.
         run: |
@@ -716,6 +718,7 @@ jobs:
         env:
           LOOM_AUTH_REQUIRED: "true"
           LOOM_BASE_URL: http://localhost:7778
+          LOOM_CH_ANALYSIS_PROBE_INTERVAL_S: "10"
         run: >-
           pytest -q
           tests/integration/test_cross_principal_leakage.py

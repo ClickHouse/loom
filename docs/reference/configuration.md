@@ -155,7 +155,7 @@ Ceilings for the reads a caller shapes (code.grep, code.search with a pattern or
 
 ### Analysis statements (insights.query)
 
-Caps for insights.query statements, each pinned as a MAX in the loom_analyst user's caps profile so no statement can raise it. A boot whose ClickHouse user has access management writes that profile when a cap here changed.
+Caps and pacing for insights.query. The statement caps are pinned as a MAX in the loom_analyst user's caps profile so no statement can raise them; a boot whose ClickHouse user has access management writes that profile when one changed.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |

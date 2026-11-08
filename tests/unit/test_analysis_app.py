@@ -617,3 +617,35 @@ def test_the_probe_loop_waits_ch_analysis_probe_interval_s(
 
     asyncio.run(run())
     assert waits == [17.0]
+
+
+def test_a_scope_outlives_every_attempt_of_one_statement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A retry past the scope's expiry would read no rows rather than fail.
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "ch_analysis_max_execution_s", 120.0)
+    monkeypatch.setattr(settings, "ch_replica_bound_retries", 2)
+    attempts = 1 + 1 + 2
+    assert app.scope_ttl_s() > (120 + 5) * attempts
+
+
+def test_statements_under_the_analysis_lease_are_bounded_inside_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import contextlib
+
+    from server.core import ch, leases
+
+    @contextlib.asynccontextmanager
+    async def held(*_: Any, **__: Any) -> Any:
+        yield None
+
+    monkeypatch.setattr(app.leases, "cluster_lease", held)
+
+    async def run() -> float:
+        async with app.lease():
+            return ch.statement_timeout_var.get()
+
+    assert asyncio.run(run()) == leases.statement_bound(60)

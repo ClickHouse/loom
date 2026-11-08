@@ -11,11 +11,13 @@ of every process, and runs statements.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
 import secrets
 import time
+from collections.abc import AsyncIterator
 from datetime import date, datetime
 from decimal import Decimal
 from ipaddress import IPv4Address, IPv6Address
@@ -48,8 +50,6 @@ from server.settings import settings
 
 log = logging.getLogger(__name__)
 
-# How long a signed scope is good for: one statement's run and its retries.
-_SCOPE_TTL_S = 60  # not a setting: a signature lives one statement and its retries
 
 # The ClickHouse codes a statement's own shape causes, answered as a 422 that
 # quotes ClickHouse: a refused table, column or function, bad SQL, a missing
@@ -102,7 +102,7 @@ class SetupRefused(RuntimeError):
 
 
 _WRITE_LEASE = "analysis.entities"
-_LEASE_TTL_S = 60  # not a setting: each write statement times out well inside it
+_LEASE_TTL_S = 60  # not a setting: the statements under it are bounded by its share
 _SECRETS_PURPOSE = "analysis.secrets"
 _loaded: tuple[bytes, str] | None = None
 
@@ -215,7 +215,7 @@ def _scope_extra(org: str, namespaces: list[str], key: bytes | None = None) -> d
     """The scope one statement carries, signed with `key` (the stored one by
     default). It sends no cap: the caps profile's apply, so a replica whose
     own settings differ from the stored caps (during a roll) still runs."""
-    exp = int(time.time()) + _SCOPE_TTL_S
+    exp = int(time.time()) + scope_ttl_s()
     return dict(boundary.scope_settings(key or _key(), org, namespaces, exp))
 
 
@@ -351,10 +351,22 @@ async def rewrite() -> None:
         await store.write_entities(await _current_statements())
 
 
-def lease(ch: Any = None) -> Any:
-    # Each statement a holder sends times out well inside the lease, so a
-    # holder that lost it has nothing left to land.
-    return leases.cluster_lease(_WRITE_LEASE, ttl_s=_LEASE_TTL_S, wait_s=120, ch=ch)
+def scope_ttl_s() -> int:
+    """How long a signed scope is good for: one statement's client wait (its
+    time cap and five seconds) for every attempt the retry ladder can make (the
+    first, one transient retry and the replica-bound retries), and a margin. A
+    retry past it would read no rows rather than fail."""
+    attempts = 2 + int(settings.ch_replica_bound_retries)
+    return int((float(settings.ch_analysis_max_execution_s) + 5) * attempts) + 10
+
+
+@contextlib.asynccontextmanager
+async def lease(ch: Any = None) -> AsyncIterator[None]:
+    """Hold the analysis lease, with every statement sent under it bounded well
+    inside the lease, so a holder that lost it has nothing left to land."""
+    async with leases.cluster_lease(_WRITE_LEASE, ttl_s=_LEASE_TTL_S, wait_s=120, ch=ch):
+        with statement_timeout(leases.statement_bound(_LEASE_TTL_S)):
+            yield
 
 
 async def reprobe() -> None:

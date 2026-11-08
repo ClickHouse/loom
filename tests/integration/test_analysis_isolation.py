@@ -13,6 +13,7 @@ enforces auth (an auth-off server ignores tokens); skips otherwise.
 
 from __future__ import annotations
 
+import os
 import re
 import time
 import uuid
@@ -415,16 +416,17 @@ def test_the_statement_text_stays_out_of_the_query_log(
 
 
 # The cases below change the analyst's entities by hand, as an admin could,
-# and wait for the probe (every minute, on each web process) to answer. Each
-# puts the entities back and waits for every process to answer again.
-_PROBE_WAIT_S = 150
+# and wait for the probe (every LOOM_CH_ANALYSIS_PROBE_INTERVAL_S on each web
+# process; set it for the server and this run alike) to answer. Each puts the
+# entities back and waits for every process to answer again.
+_PROBE_INTERVAL_S = float(os.environ.get("LOOM_CH_ANALYSIS_PROBE_INTERVAL_S") or 60)
+_PROBE_WAIT_S = 2 * _PROBE_INTERVAL_S + 30
 # A policy statement holds the key: it stays out of system.query_log.
 _UNLOGGED = {"log_queries": 0}
 
 
 def _probed_until(base: str, s: _Seed, done, description: str) -> None:
-    """Send a statement on each try, since the probe runs beside a statement
-    once a minute, until `done()` holds."""
+    """Wait for the probe, sending a statement on each try, until `done()` holds."""
 
     def tried() -> bool:
         _query(base, s, "SELECT 1")
@@ -434,12 +436,12 @@ def _probed_until(base: str, s: _Seed, done, description: str) -> None:
 
 
 def _answers_again(base: str, s: _Seed) -> None:
-    """Each web process keeps its own probe answer and probes again a minute
+    """Each web process keeps its own probe answer and probes again one interval
     after its last probe, so wait past that and for a run of answers."""
     start = time.monotonic()
 
     def healthy() -> bool:
-        if time.monotonic() - start < 65:
+        if time.monotonic() - start < _PROBE_INTERVAL_S + 5:
             return False
         return all(_query(base, s, "SELECT 1").status_code == 200 for _ in range(10))
 

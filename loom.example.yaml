@@ -156,9 +156,9 @@ settings:
   # ch_reader_user: ""
 
   # --- analysis statements (insights.query) ---
-  # Caps for insights.query statements, each pinned as a MAX in the loom_analyst user's
-  # caps profile so no statement can raise it. A boot whose ClickHouse user has access
-  # management writes that profile when a cap here changed.
+  # Caps and pacing for insights.query. The statement caps are pinned as a MAX in the
+  # loom_analyst user's caps profile so no statement can raise them; a boot whose
+  # ClickHouse user has access management writes that profile when one changed.
 
   # Seconds one insights.query statement may run. [restart]
   # ch_analysis_max_execution_s: 10.0
