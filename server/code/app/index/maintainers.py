@@ -27,12 +27,12 @@ gives no grant on the operator's namespaces.
   operator grant (``_stray``), or rewrites it as a copy of the subject's one.
 * ``revoke_repo_maintainer`` — a revoked admin leaves the branches the revoke
   reaches, except a branch where they are the only active admin (the handler's
-  own guard) other than a restricted branch added from the page whose copy is of
-  the grant revoked. From an operator entry it takes off a branch added from the
-  page only a mirror, and none from a standard one while the subject holds an
-  admin grant given on one. On a restricted branch added from the page it takes only
-  copies, and a page branch's revoke only those whose source is not an operator
-  entry.
+  own guard), until a sync takes such a copy off a restricted branch added from
+  the page once it no longer traces to an operator grant. From an operator entry
+  it takes off a branch added from the page only a mirror, and none from a
+  standard one while the subject holds an admin grant given on one. On a
+  restricted branch added from the page it takes only copies, and a page
+  branch's revoke only those whose source is not an operator entry.
 
 Readers stay per branch: the approval fan-out already turns a person's branch requests
 into one decision. Restricted branches also need the token to name them — a person's
@@ -337,9 +337,9 @@ async def _restricted_since(
 async def _copy_unchanged(
     client: Any, org: str, row: dict[str, Any], now: dict[str, Any] | None, seen: _Seen
 ) -> dict[str, Any] | None:
-    """A planned row on a restricted branch added from the page is written while the
-    row the plan read is unchanged, with no last-admin guard: a copy never keeps the
-    branch's last admin."""
+    """A stray copy's planned row on a restricted branch added from the page is written
+    while the row the plan read is unchanged, with no last-admin guard: a stray never
+    keeps the branch's last admin."""
     read = seen.get((row["namespace"], row["subject"]))
     return row if read is not None and _live(now) and _version(now) == _version(read) else None
 
@@ -685,8 +685,8 @@ async def revoke_repo_maintainer(
     """Revoke `subject`'s active admin grant on the other branches of the
     repository the revoke reaches, or lower it to `lowered_to`; a branch where
     they are the only active admin keeps them (the same guard `grants.revoke`
-    applies), but not a restricted branch added from the page holding a copy of
-    the grant revoked, which no copy keeps.
+    applies); on a restricted branch added from the page the next sync takes such a
+    copy once it no longer traces to an operator grant (`_stray`).
     `repo` is what `read_repo` answered, and the caller holds
     `repo_admin_claims` on it.
 
@@ -762,11 +762,7 @@ async def revoke_repo_maintainer(
             revoked=lowered_to is None,
             role=lowered_to or "admin",
         )
-        # A copy of the grant this revoke takes keeps no restricted branch, its last
-        # admin or not; one of another entry's grant is the next sync's to judge.
-        if ns in restricted and planned["granted_by"] == f"{GRANTED_BY_PREFIX}{namespace}":
-            strays.append(planned)
-        elif len(admins[ns]) <= 1:
+        if len(admins[ns]) <= 1:
             log.warning(
                 "repo maintainers: %s/%s keeps %r — only admin of that branch", org, ns, subject
             )

@@ -117,7 +117,8 @@ async def test_existing_row_already_restricted_is_left_alone() -> None:
 
 
 @pytest.mark.parametrize(
-    ("access", "written"), [("standard", "after"), ("restricted", "after"), ("standard", "before")]
+    ("access", "written"),
+    [("standard", "after"), ("restricted", "after"), ("standard", "before"), ("standard", "same")],
 )
 @pytest.mark.asyncio
 async def test_a_maintainer_s_widening_reaches_the_row_only_while_its_access_row_says_so(
@@ -135,7 +136,7 @@ async def test_a_maintainer_s_widening_reaches_the_row_only_while_its_access_row
         "classification": "restricted",
         "updated_at": datetime(2026, 9, 1, 10, 0, 0),
     }
-    at = datetime(2026, 9, 1, 11 if written == "after" else 9, 0, 0)
+    at = datetime(2026, 9, 1, {"after": 11, "before": 9, "same": 10}[written], 0, 0)
 
     class _Access(_Client):
         async def query_one(self, sql, params=None):

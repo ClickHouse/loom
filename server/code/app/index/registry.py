@@ -137,8 +137,6 @@ async def _write_row(cfg: Any, client: Any) -> bool:
     if access is None:
         access_open = str(cfg.source) != "registry"  # the operator's entry alone says public
     else:
-        # `code.repo.set_access` writes the directory row first: one newer than the
-        # access row is a change whose access row is not written yet.
         access_open = (
             not access_restricted
             and str(access.get("join_policy")) == "open"
@@ -170,8 +168,6 @@ async def _write_row(cfg: Any, client: Any) -> bool:
             cfg.namespace,
             row.get("classification"),
         )
-    # `code.repo.set_access` writes the directory row first: one newer than the
-    # access row is a restriction whose access row is not written yet.
     if widening and access is not None and not access_restricted and _newer(access, row):
         # A maintainer opened the repository; the directory follows the access
         # row, not the entry's default
@@ -190,7 +186,9 @@ async def _write_row(cfg: Any, client: Any) -> bool:
 
 
 def _newer(access: dict[str, Any], row: dict[str, Any]) -> bool:
-    """The access row was written after the directory row."""
+    """The access row was written after the directory row. `code.repo.set_access`
+    writes the directory row first, so one as new or newer than the access row is a
+    change whose access row is not written yet; the registrar leaves it alone."""
     written, seen = access.get("updated_at"), row.get("updated_at")
     return written is not None and seen is not None and written > seen
 
