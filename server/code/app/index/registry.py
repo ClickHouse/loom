@@ -11,8 +11,9 @@ row read again under the namespace's admins claim, as this process's snapshot of
 predate a maintainer's change: a standard row not yet open is opened when an access row
 newer than it says open, or with no access row when the operator's entry says public; a
 row not restricted is narrowed when the entry is restricted and no access row says
-otherwise; a restricted row is widened when a standard access row is newer than it (the
-maintainer's own decision). A newer access row is required because
+otherwise; an operator entry's restricted row is widened when a standard access row is
+newer than it (the maintainer's own decision; a page branch's is widened only by
+`code.repo.set_access`). A newer access row is required because
 `code.repo.set_access` writes the directory row first. The entry's mirror and checkouts
 are tightened by the ingest pass, not here.
 """

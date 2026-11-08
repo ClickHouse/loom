@@ -303,3 +303,17 @@ async def test_a_first_row_keeps_the_registry_row_s_closed_policy() -> None:
     assert await registry.ensure_registered(cfg, ch=client)
     ((_table, (row,)),) = client.inserted
     assert row["join_policy"] == "closed"
+
+
+@pytest.mark.asyncio
+async def test_a_restricted_first_row_is_never_open() -> None:
+    class _RestrictedOpen(_Client):
+        async def query_one(self, sql, params=None):
+            if "loom.code_repos" in sql:
+                return {"classification": "restricted", "join_policy": "open"}
+            return None
+
+    client = _RestrictedOpen()
+    assert await registry.ensure_registered(_cfg("standard"), ch=client)
+    ((_table, (row,)),) = client.inserted
+    assert (row["classification"], row["join_policy"]) == ("restricted", "approval")
