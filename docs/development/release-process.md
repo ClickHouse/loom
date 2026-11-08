@@ -228,8 +228,7 @@ there costs a candidate number, not a final version.
    refused downgrade under each one's own `sh` and `awk`, and an upgrade over the previous
    final release's installer, or, in a dry run of a commit after its version's release, over
    that release's own; `scripts/gates/installer_rehearsal.py`);
-8. `github-release` creates the GitHub Release only after both images exist and their signatures
-   verify, with notes
+8. `github-release` creates the GitHub Release once both images exist and are verified, with notes
    generated from the commits since the previous final release (`prepare.py previous`, an
    output of `version`; a candidate's notes start there too), or updates it on a re-run, keeping
    its notes as they are, and attaches the verified files. A bundle the release already
@@ -307,11 +306,10 @@ A failed `docker-tag` (one image tagged, not the other) or a failed `sign` (Sigs
   run can tag or sign that build: a run on a half-tagged version fails its `preflight`, and a run
   on a published tag verifies signatures but cannot make them. Release a new version.
 
-Until that version is out, the unsigned build's moving tags still name it. Point `:latest` (if it
-moved) and, for a final, `:X.Y` back at the previous release that carried each, for both images.
-An `X.Y.0` has no earlier release carrying `:X.Y`, which names the unsigned build until `X.Y.1` is
-out. With `<previous>` that release's version, the tag moves only once that release's signature
-verifies:
+Until that version is out, the build's moving tags still name it. Point `:latest` (if it moved) and,
+for a final, `:X.Y` back at the previous release that carried each, for both images. An `X.Y.0` has
+no earlier release carrying `:X.Y`, which names this build until `X.Y.1` is out. With
+`<previous>` that release's version, the tag moves only once that release's signature verifies:
 
 ```bash
 digest=$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:<previous> \
@@ -323,10 +321,11 @@ cosign verify "ghcr.io/clickhouse/<image>@$digest" \
 ```
 
 For a `<previous>` published before the release workflow signed, which carries no signature, run
-the `imagetools create` line alone. Either way, check that the tag names the digest:
+the `digest=` line, then the `docker buildx imagetools create` command without the
+`cosign verify … &&` before it. Either way, check that the tag names the digest:
 
 ```bash
-[ "$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:<tag> --format '{{json .Manifest}}' | jq -re .digest)" = "$digest" ] \
+[ -n "$digest" ] && [ "$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:<tag> --format '{{json .Manifest}}' | jq -re .digest)" = "$digest" ] \
   || { echo "<tag> does not name $digest" >&2; false; }
 ```
 

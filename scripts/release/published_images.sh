@@ -72,6 +72,6 @@ for image in "$@"; do
   out+=("$image")
 done
 if [ "${#out[@]}" -gt 0 ] && [ "${#missing[@]}" -gt 0 ]; then
-  fail "only ${out[*]} carries $version, not ${missing[*]}: a half-tagged version: re-run the failed jobs of the run that tagged it, or see docs/development/release-process.md#a-failed-tag-or-signature"
+  fail "only ${out[*]} carries $version, not ${missing[*]} (half-tagged): re-run the failed jobs of the run that tagged it (docs/development/release-process.md#a-failed-tag-or-signature)"
 fi
 [ "${#missing[@]}" -eq 0 ] && echo true || echo false
