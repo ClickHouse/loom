@@ -55,7 +55,8 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
         why=(
             "The ingest worker takes the next job as soon as one ends instead of waiting "
             "2 s after every job, so a queue of small documents drains at the speed of its "
-            "jobs; a pass that finds no job still waits knowledge_ingest_idle_interval_seconds."
+            "jobs; a pass that finds no job still waits "
+            "`LOOM_KNOWLEDGE_INGEST_IDLE_INTERVAL_SECONDS`."
         ),
     ),
 )

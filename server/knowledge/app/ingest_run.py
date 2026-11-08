@@ -626,9 +626,13 @@ async def take_and_run(job: dict[str, Any]) -> str | None:
             if current is None or current["state"] not in OPEN_STATES:
                 return None
             # A due row read from a lagging replica can name a job that has since been put
-            # back to wait out a retry delay: it is not due yet.
+            # back to wait out a retry delay: it is not due yet. Only a due time moved past
+            # the row's counts, so a fresh job whose writer's clock runs ahead of this one
+            # is not held back.
             now = datetime.now(UTC).replace(tzinfo=None)
-            if current["state"] == "pending" and current["next_attempt_at"] > now:
+            if current["state"] == "pending" and current["next_attempt_at"] > max(
+                now, job["next_attempt_at"]
+            ):
                 return None
             # Its own publish first: a published revision stays published, even
             # if a cancel came after it.

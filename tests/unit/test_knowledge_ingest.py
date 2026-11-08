@@ -756,6 +756,16 @@ def test_a_job_put_back_to_wait_is_not_run_from_a_due_row_read_before_it(
     assert world.job(job_id) == waiting  # untouched: no attempt spent, no run
 
 
+def test_a_fresh_job_written_by_a_clock_ahead_of_the_workers_still_runs(world: World) -> None:
+    """Its due time is the writer's clock and has not moved since the due row was
+    read: the worker runs it, whatever its own clock says."""
+    job_id = _ingest(world, _upload(world))
+    job = world.job(job_id)
+    assert job is not None
+    job["next_attempt_at"] = _now() + timedelta(seconds=3)  # the writer's clock runs ahead
+    assert asyncio.run(ingest_run.take_and_run(dict(job))) == "ready"
+
+
 def test_by_default_the_worker_takes_the_next_job_at_once_and_waits_only_when_idle() -> None:
     """A pass that ran a job is followed at once, so a queue drains at the speed of
     its jobs; one that found none waits the idle interval."""
