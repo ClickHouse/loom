@@ -69,7 +69,9 @@ def world(monkeypatch: pytest.MonkeyPatch, auth_attempts: Any, tmp_path: Path) -
     # The grant listing waits a revocation refresh past the first cutoff.
     monkeypatch.setattr(settings, "jwt_revocation_cache_ttl_seconds", 0.0)
     ch = KeptCH(
-        tmp_path / "ch", ddl("namespaces"), ddl("namespace_grants"), ddl("service_accounts")
+        tmp_path / "ch",
+        *(ddl(t) for t in ("namespaces", "namespace_grants", "service_accounts")),
+        *(ddl(t) for t in ("task_inboxes", "task_poster_policies", "tasks")),
     )
     for module in (ss, agent_claim, login):
         monkeypatch.setattr(module, "get_client", lambda: ch)
