@@ -129,11 +129,14 @@ def test_a_dry_run_builds_and_smokes_and_publishes_nothing() -> None:
     assert ran == BUILD | {"docker", "docker-smoke"}
 
 
+@pytest.mark.parametrize(("event", "dry_run"), [("push", None), ("workflow_dispatch", False)])
 @pytest.mark.parametrize(
     "failed", ["docker", "docker-tag", "sign", "docker-smoke", "verify", "preflight"]
 )
-def test_a_failure_before_the_release_publishes_nothing(failed: str) -> None:
-    ran = run(event="workflow_dispatch", dry_run=False, published=False, fail=frozenset({failed}))
+def test_a_failure_before_the_release_publishes_nothing(
+    failed: str, event: str, dry_run: bool | None
+) -> None:
+    ran = run(event=event, dry_run=dry_run, published=False, fail=frozenset({failed}))
     assert not ran & ({"github-release", "release-check"} | REGISTRIES)
 
 
@@ -150,9 +153,12 @@ def test_a_tag_push_whose_images_are_published_builds_and_tags_none() -> None:
     assert ran == BUILD | {"sign", "docker-smoke", "github-release", "release-check"}
 
 
+@pytest.mark.parametrize(("event", "dry_run"), [("push", None), ("workflow_dispatch", False)])
 @pytest.mark.parametrize("failed", ["docker-smoke", "sign"])
-def test_a_failed_smoke_or_signature_on_the_published_tag_publishes_nothing(failed: str) -> None:
-    ran = run(event="workflow_dispatch", dry_run=False, published=True, fail=frozenset({failed}))
+def test_a_failed_smoke_or_signature_on_the_published_tag_publishes_nothing(
+    failed: str, event: str, dry_run: bool | None
+) -> None:
+    ran = run(event=event, dry_run=dry_run, published=True, fail=frozenset({failed}))
     assert not ran & ({"github-release", "release-check"} | REGISTRIES)
 
 

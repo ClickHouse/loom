@@ -92,7 +92,9 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           IMAGES: ghcr.io/clickhouse/loom ghcr.io/clickhouse/loom-extractor
-        run: bash scripts/release/verify_signatures.sh "$VERSION" $IMAGES
+        run: |
+          # shellcheck disable=SC2086 # one argument per image
+          bash scripts/release/verify_signatures.sh "$VERSION" $IMAGES
 
   sdks:
     name: SDKs from PyPI and npm

@@ -43,6 +43,7 @@ esac
 """
 
 IMAGES = "ghcr.io/clickhouse/loom ghcr.io/clickhouse/loom-extractor"
+VERIFY = 'bash scripts/release/verify_signatures.sh "$VERSION" $IMAGES'
 
 
 def _preflight(
@@ -450,17 +451,16 @@ def test_the_tag_run_signs_the_digests_it_made_and_every_run_verifies_them() -> 
     assert steps["sign"]["if"] == "${{ needs.docker-tag.result == 'success' }}"
     assert steps["sign"]["env"]["DIGESTS"] == "${{ needs.docker-tag.outputs.digests }}"
     assert "if" not in steps["verify"]  # after signing too, before anything publishes
-    assert steps["verify"]["run"] == VERIFY
+    assert VERIFY in steps["verify"]["run"]
 
 
-VERIFY = 'bash scripts/release/verify_signatures.sh "$VERSION" $IMAGES'
-
-
-def test_release_check_verifies_with_the_same_script() -> None:
+def test_release_check_verifies_every_image_the_release_signs_with_the_same_script() -> None:
     check = yaml.safe_load((ROOT / ".github/workflows/release-check.yml").read_text())
     (step,) = [s for s in check["jobs"]["signatures"]["steps"] if "run" in s]
-    assert step["run"] == VERIFY
+    release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    assert VERIFY in step["run"]
     assert step["env"]["VERSION"] == "${{ inputs.version }}"
+    assert step["env"]["IMAGES"] == release["env"]["IMAGES"]
 
 
 def _verify(tmp_path: Path, cosign: str) -> subprocess.CompletedProcess[str]:
@@ -494,3 +494,10 @@ def test_an_image_that_does_not_verify_fails_with_the_recovery(tmp_path: Path) -
         "could not verify release.yml's signature on ghcr.io/clickhouse/loom:1.2.0" in result.stdout
     )
     assert "#a-failed-tag-or-signature" in result.stdout
+    assert len((tmp_path / "calls").read_text().splitlines()) == 1  # stops at the first
+
+
+def test_no_image_to_verify_is_a_usage_error(tmp_path: Path) -> None:
+    script = ROOT / "scripts/release/verify_signatures.sh"
+    result = subprocess.run(["bash", str(script), "1.2.0"], capture_output=True, text=True)
+    assert result.returncode == 2 and "usage:" in result.stderr

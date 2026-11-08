@@ -16,8 +16,9 @@ name: release
 # installer bundle names, migrated and schema-checked) -> build -> verify
 # (inspect the exact files) -> docker (build and scan each image on each
 # architecture's own runner) -> docker-tag -> sign (keyless, the indexes
-# docker-tag made; every run verifies both images' X.Y.Z tag) and docker-smoke (the
-# quickstart and the installer rehearsal) -> github-release -> release-check
+# docker-tag made; every run verifies both images' X.Y.Z tag) and
+# docker-smoke (the quickstart and the installer rehearsal) -> github-release
+# -> release-check
 # (tag push only), and pypi, npm, mcp-registry (dispatch only). A re-run after a
 # partial publish is safe: the bundle keeps the ClickHouse release it was first
 # published with, the release is updated in place, PyPI skips files it already
@@ -642,13 +643,16 @@ jobs:
         env:
           DIGESTS: ${{ needs.docker-tag.outputs.digests }}
         run: |
+          # shellcheck disable=SC2086 # one argument per image
           for ref in $DIGESTS; do cosign sign --yes "$ref"; done
       # After signing, and on a published tag: what users and release-check verify.
       - name: Verify both images' signatures
         id: verify
         env:
           VERSION: ${{ needs.version.outputs.version }}
-        run: bash scripts/release/verify_signatures.sh "$VERSION" $IMAGES
+        run: |
+          # shellcheck disable=SC2086 # one argument per image
+          bash scripts/release/verify_signatures.sh "$VERSION" $IMAGES
 
   docker-smoke:
     name: Released quickstart (${{ matrix.arch }})
