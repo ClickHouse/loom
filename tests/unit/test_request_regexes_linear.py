@@ -144,6 +144,7 @@ CASES: list[tuple[str, Callable[[str], object], str, str]] = [
     ),
     ("query_planner._MIXED_RE", _finditer(query_planner, "_MIXED_RE"), "", "a-"),
     ("sql_names._STATED_CLASS_RE", _search(sql_names, "_STATED_CLASS_RE"), "", "a"),
+    ("sql_names._ANY_REG_RE prefixed", _finditer(sql_names, "_ANY_REG_RE"), "", "_register"),
     (
         "sql_names._STATED_CLASS_RE blanks",
         _then(_search(sql_names, "_STATED_CLASS_RE"), "b::"),
@@ -524,3 +525,9 @@ def test_a_rewrite_reads_what_the_original_read(
     old = _ORIGINAL[name]
     for s in _texts(pieces, seed=len(name)):
         assert read_new(new, s) == read_old(old, s), repr(s)
+
+
+def test_a_registration_call_on_a_prefixed_name_is_read() -> None:
+    text = 'self._register("arrayFold"); auto_register<T>("sumMap"); registerFunction("abs")'
+    assert sql_names._ANY_REG_RE.findall(text) == ["arrayFold", "sumMap", "abs"]
+    assert sql_names._shape_re("arrayFold").search(text)

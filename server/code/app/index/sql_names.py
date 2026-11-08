@@ -171,7 +171,7 @@ def _shape_re(name: str) -> re.Pattern[str]:
     q = re.escape(name)
     return re.compile(
         r"(?:(?P<const>\bname\s*=\s*)|(?P<ret>\breturn\s+)|"
-        r'(?P<reg>(?<!\w)register\w*(?:\s*<[^>()]{0,200}>)?\s*\(\s*))"' + q + r'"'
+        r'(?P<reg>(?<!\w)(?>\w*register)\w*+(?:\s*<[^>()]{0,200}>)?\s*\(\s*))"' + q + r'"'
     )
 
 
@@ -203,7 +203,7 @@ def names_match(sql_name: str, cls: str) -> bool:
 _ANY_CONST_RE = re.compile(r'\bname\s*=\s*"([A-Za-z_][A-Za-z0-9_]{2,60})"')
 _ANY_RETURN_RE = re.compile(r'\breturn\s+"([A-Za-z_][A-Za-z0-9_]{2,60})"\s*;')
 _ANY_REG_RE = re.compile(
-    r'(?<!\w)register\w*(?:\s*<[^>()]{0,200}>)?\s*\(\s*"([A-Za-z_][A-Za-z0-9_]{2,60})"'
+    r'(?<!\w)(?>\w*register)\w*+(?:\s*<[^>()]{0,200}>)?\s*\(\s*"([A-Za-z_][A-Za-z0-9_]{2,60})"'
 )
 
 
