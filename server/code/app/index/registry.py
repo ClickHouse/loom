@@ -149,9 +149,9 @@ async def _write_row(cfg: Any, client: Any) -> bool:
     else:
         access_open = follows_access and str(access.get("join_policy")) == "open"
     if opening and access_open:
-        # The config says the repository is public; the row is brought to open +
-        # discoverable. Open means joinable, not readable — the row stays
-        # visibility=private; reads need the join.
+        # The access row newer than the row (or, with none, the operator's entry) says
+        # public; the row is brought to open + discoverable. Open means joinable, not
+        # readable — the row stays visibility=private; reads need the join.
         opened = dict(row)
         opened.update(join_policy="open", visibility="private", updated_at=now)
         await client.insert("loom.namespaces", [opened])
@@ -174,12 +174,12 @@ async def _write_row(cfg: Any, client: Any) -> bool:
             cfg.namespace,
             row.get("classification"),
         )
-    if widening and follows_access and access is not None:  # `access` for the type checker
+    if widening and follows_access:
         # A maintainer opened the repository; the directory follows the access
         # row, not the entry's default
         widened = dict(row)
         widened["classification"] = "standard"
-        widened["join_policy"] = str(access.get("join_policy") or "approval")
+        widened["join_policy"] = str((access or {}).get("join_policy") or "approval")
         widened["updated_at"] = now
         await client.insert("loom.namespaces", [widened])
         logger.warning(
