@@ -150,14 +150,12 @@ async def read_registry(ch: Any | None = None) -> bool:
     try:
         from server.code.store.index import CodeRepo
 
-        store = CodeRepo(ch)
-        rows = await store.active_code_repos()
+        rows = await CodeRepo(ch).registry_rows()
         page = frozenset(
-            (str(r["org"]), str(r["namespace"])) for r in await store.page_namespaces()
+            (str(r["org"]), str(r["namespace"])) for r in rows if r.get("row_kind") == "page"
         )
-        set_registry_repos(
-            [row_to_config(r) for r in rows if r.get("namespace") and r.get("repo")], page
-        )
+        active = [r for r in rows if r.get("active") and r.get("namespace") and r.get("repo")]
+        set_registry_repos([row_to_config(r) for r in active], page)
         _LOADED_AT = time.monotonic()
         _EVER_LOADED = True
         return True
@@ -293,7 +291,9 @@ async def upsert_access(
     # An inactive row (a removed branch) is not brought back to life.
     if current and current.get("active") is not False:
         row = dict(current)
-    elif cfg.source != "config":
+    elif cfg.source != "config" or (current or {}).get("row_kind") == "page":
+        # A removed branch added from the page: an operator entry is never listed for
+        # its namespace, where that member keeps their grants.
         from server.core.errors import ValidationError
 
         raise ValidationError(f"{cfg.namespace} was removed", code="NOT_A_REPO")

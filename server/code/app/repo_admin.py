@@ -600,22 +600,28 @@ async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepo
         remote_head=head,
         exclude_generated=bool(getattr(src, "exclude_generated", True)),
         scip_producer=str(getattr(src, "scip_producer", "") or ""),
-        row_kind="operator" if await _added_by_operator(src) else "page",
+        row_kind="operator" if await _added_by_operator(src, namespace) else "page",
     )
     await _inherit_tracker_links(input.org, input.namespace, namespace)
     return out
 
 
-async def _added_by_operator(src: Any) -> bool:
-    """A branch added from `src` keeps the operator's admins: `src` is on the operator
-    side and the caller holds an admin grant of their own there, not a copy from a
-    branch added from the page (`maintainers.holds_own_admin`)."""
+async def _added_by_operator(src: Any, namespace: str) -> bool:
+    """`namespace`, added from `src`, keeps the operator's admins: `src` is on the
+    operator side, the caller holds an admin grant of their own there, not a copy from
+    a branch added from the page (`maintainers.holds_own_admin`), and `namespace` never
+    had a registry row: the grants of a removed branch stay, and a member's must not
+    reach the operator's entries."""
     from server.auth.context import current_auth
     from server.code.app.index import maintainers
+    from server.code.store.index import CodeRepo
     from server.core.ch import get_client
 
     if maintainers.admins_source(src) != "config":
         return False
+    with sequential_reads():
+        if await CodeRepo().code_repo_row(src.org, namespace) is not None:
+            return False
     if current_auth() is None:
         return True  # auth off: no principal to hold a grant
     subject = current_caller()[0]

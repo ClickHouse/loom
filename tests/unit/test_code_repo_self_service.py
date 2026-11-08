@@ -156,6 +156,7 @@ class _CH:
         self.taken: set[str] = set()
         self.count = 0
         self.heads: dict[str, str] = {"code-clickhouse": "a" * 40}  # namespace -> git_head
+        self.repo_rows: dict[str, dict[str, Any]] = {}  # namespace -> registry row
 
     async def query_one(
         self, sql: str, params: dict[str, Any] | None = None
@@ -163,8 +164,10 @@ class _CH:
         params = params or {}
         if "AS in_use" in sql:  # the in-use read: a name taken is in use
             return {"in_use": 1} if params.get("ns") in self.taken else None
-        if "loom.code_repos" in sql:
-            return {"n": self.count}
+        if "loom.code_repos" in sql:  # the org's count, or a namespace's row
+            if "count()" in sql:
+                return {"n": self.count}
+            return self.repo_rows.get(str(params.get("ns")))
         if "loom.code_index_state" in sql:
             head = self.heads.get(str(params.get("ns"))) if params.get("key") == "git_head" else ""
             return {"state_value": head} if head else None
@@ -183,7 +186,7 @@ class _CH:
                 if t == "loom.namespaces" and r["classification"] == "restricted"
             ]
         return [
-            dict(r, **{"classification": "standard"})
+            {"active": True, **r, "classification": "standard"}
             for _t, rows in self.inserted
             for r in rows
             if _t == "loom.code_repos"
@@ -459,6 +462,25 @@ async def test_a_branch_added_from_an_operator_entry_is_one_only_by_its_own_admi
     )
     (row,) = [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
     assert row["row_kind"] == ("operator" if own else "page")
+
+
+@pytest.mark.asyncio
+async def test_a_removed_page_namespace_added_again_from_an_operator_entry_stays_page(
+    plane, monkeypatch
+) -> None:
+    # Its member's grants stay there and must not reach the operator's entries.
+    from server.code.app.index import maintainers
+
+    async def _holds(*_a: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(maintainers, "holds_own_admin", _holds)
+    plane.ch.repo_rows["code-clickhouse-26-8"] = {"active": False, "row_kind": "page"}
+    await admin.handle_code_repo_add_branch(
+        CodeRepoAddBranchInput(org=ORG, namespace="code-clickhouse", branch="26.8")
+    )
+    (row,) = [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
+    assert row["row_kind"] == "page"
 
 
 def _link_rows(plane: Any) -> list[tuple[str, str, str, str]]:

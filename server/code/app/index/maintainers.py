@@ -871,7 +871,7 @@ async def sync_restricted_page_branches(
         mine = [c for c in page if c.org == org]
         try:
             restricted = await _restricted(
-                get_client(), org, {c.namespace: "registry" for c in mine}
+                get_client(), org, {c.namespace: admins_source(c) for c in mine}
             )
         except Exception as e:  # noqa: BLE001 — an unread directory waits for the next pass
             log.warning("repo maintainers: %s classification unreadable: %s", org, e)

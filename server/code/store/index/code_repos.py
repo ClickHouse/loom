@@ -30,11 +30,22 @@ class CodeReposMixin(CodeRepoBase):
         )
         return rows
 
-    async def page_namespaces(self) -> list[dict[str, Any]]:
-        """(org, namespace) of every branch a member added from the page, removed ones
-        too: an operator entry is never listed for one (`repos._with_registry`)."""
+    async def registry_rows(self) -> list[dict[str, Any]]:
+        """The rows the registry snapshot is read from, in one statement: every active
+        row, the columns a `RepoConfig` is built from, and the removed branches a member
+        added from the page, which an operator entry is never listed for
+        (`repos._with_registry`)."""
         rows: list[dict[str, Any]] = await self._ch.query_all(
-            "SELECT org, namespace FROM loom.code_repos FINAL WHERE row_kind = 'page'"
+            """
+            SELECT org, namespace, repo, git_remote, git_branch, path_prefixes, exclude,
+                   toString(classification) AS classification,
+                   toString(join_policy) AS join_policy, github_token_enc,
+                   exclude_generated, toString(scip_producer) AS scip_producer,
+                   toString(row_kind) AS row_kind, active
+            FROM loom.code_repos FINAL
+            WHERE active OR row_kind = 'page'
+            ORDER BY org, namespace
+            """
         )
         return rows
 

@@ -332,10 +332,9 @@ def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:
     import dataclasses
 
     rows = {(c.org, c.namespace): c for c in registry_repos()}
-    taken = _page_namespaces | {key for key, c in rows.items() if c.row_kind == "page"}
     out: list[RepoConfig] = []
     for c in env_repos:
-        if (c.org, c.namespace) in taken:
+        if (c.org, c.namespace) in _page_namespaces:
             if c.label not in _skipped_logged:
                 _skipped_logged.add(c.label)
                 logger.warning(
