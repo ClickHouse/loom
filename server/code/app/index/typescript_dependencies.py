@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -20,8 +21,9 @@ from server.code.app.index.gitrepo import auth_env
 from server.code.app.index.sandbox import run_job
 from server.code.app.index.tier_health import ToolOutputError
 from server.code.app.index.untrusted_files import read_checkout_file, read_package_json
-from server.code.domain.index.tier_health import ERROR_CHARS
 from server.settings import settings
+
+logger = logging.getLogger("loom.code_index.typescript_dependencies")
 
 LOCKFILES = (
     "package-lock.json",
@@ -125,6 +127,16 @@ def _install_command(checkout: Path, root: Path) -> tuple[list[str], dict[str, s
     ], {}
 
 
+# The end of a failed install's output its error keeps: with the first line it fits the
+# tier-health record (600 characters).
+_OUTPUT_CHARS = 400
+
+
+def _where(checkout: Path, root: Path) -> str:
+    """The install root as the record shows it: relative to the checkout, no host path."""
+    return str(root.relative_to(checkout)) if root != checkout else "the checkout root"
+
+
 async def prepare_dependencies(
     checkout: Path, projects: tuple[str, ...], env: dict[str, str], *, force: bool = False
 ) -> None:
@@ -171,16 +183,18 @@ async def prepare_dependencies(
             )
         except TimeoutError:
             raise ToolOutputError(
-                f"TypeScript dependency installation timed out after {timeout_s}s in {root}"
+                f"TypeScript dependency installation ({command[0]}) timed out after "
+                f"{timeout_s}s in {_where(checkout, root)}"
             ) from None
         if done.returncode != 0:
-            summary = (
-                f"TypeScript dependency installation failed in {root} "
-                f"({command[0]}, exit {done.returncode})"
+            output = done.stdout.decode("utf-8", "replace")
+            logger.warning(
+                "TypeScript dependency installation in %s failed: %s", root, output[-2000:]
             )
-            # The summary first, for readers of the first line; then as much of the
-            # output's end as the tier-health record keeps beside it.
-            room = max(0, ERROR_CHARS - len(f"{ToolOutputError.__name__}: {summary}\n"))
-            output = done.stdout.decode("utf-8", "replace")[-room:] if room else ""
-            raise ToolOutputError(f"{summary}\n{output}")
+            # The installer first, for readers of the first line; the output's end fits
+            # beside it in the tier-health record.
+            raise ToolOutputError(
+                f"TypeScript dependency installation failed ({command[0]}, exit "
+                f"{done.returncode}) in {_where(checkout, root)}\n{output[-_OUTPUT_CHARS:]}"
+            )
     await asyncio.to_thread(marker.write_text, fingerprint)

@@ -123,7 +123,8 @@ async def test_a_failed_install_is_recorded_with_the_installer_and_its_last_outp
     with pytest.raises(RuntimeError) as failed:
         await deps.prepare_dependencies(checkout, (), env)
     record = tier_health.failed(None, "typescript", recorder.error_text(failed.value), NOW)
-    assert "(npm, exit 1)" in record.error and "Failed to parse" in record.error
+    first = "ToolOutputError: TypeScript dependency installation failed (npm, exit 1) in the checkout root"
+    assert record.error.startswith(first + "\n") and record.error.endswith("Failed to parse")
     assert "(npm, exit 1)" in bounded_error(failed.value)[1], "the ledger keeps the first line"
 
 
