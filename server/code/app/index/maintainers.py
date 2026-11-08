@@ -195,10 +195,9 @@ async def read_repo(org: str, namespace: str, *, ch: Any | None = None) -> str |
     from server.core.ch import get_client
 
     client = ch or get_client()
-    if not registry_read():
-        # Never read: `repo_of` would refuse. A failed read is GrantBusyError, retry.
-        await _read_registry_now(client)
-    if repo_of(org, namespace) is None and not await _is_code_namespace(client, org, namespace):
+    # Never read, `repo_of` refuses: the directory row alone says whether this is code.
+    listed = registry_read() and repo_of(org, namespace) is not None
+    if not listed and not await _is_code_namespace(client, org, namespace):
         return None
     await _read_registry_now(client)
     return repo_of(org, namespace)
@@ -567,7 +566,10 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
     from server.code.app.index.repo_registry import registry_read
 
     if not registry_read():
-        if (org, namespace) not in _UNSYNCED:
+        from server.core.ch import get_client
+
+        code = await _is_code_namespace(ch or get_client(), org, namespace)
+        if code and (org, namespace) not in _UNSYNCED:
             _UNSYNCED.add((org, namespace))
             log.warning(
                 "repo maintainers: %s/%s not synced — the self-service registry is not read yet",

@@ -52,7 +52,7 @@ def code_ns(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(
         repos,
-        "repo_for_namespace",
+        "config_entry",
         lambda org, ns: _Cfg() if (org, ns) == ("clickhouse", "code-clickhouse") else None,
     )
 

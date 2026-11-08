@@ -127,11 +127,24 @@ async def test_the_mirrors_health_block_names_an_unread_registry(monkeypatch) ->
 def test_the_doctor_reads_the_registry_before_its_mirror_checks(monkeypatch) -> None:
     # The mirror checks list the configured entries, which refuse until that read.
     from server.cli import doctor
+    from server.code.app.index import mirrors
 
     order: list[str] = []
-    monkeypatch.setattr(doctor, "_run_live_checks", lambda: [])
-    monkeypatch.setattr(doctor, "_doctor_problems", lambda: order.append("registry") or [])
-    monkeypatch.setattr(doctor, "_code_mirror_checks", lambda: order.append("mirrors") or [])
-    monkeypatch.setattr(doctor, "_problem_checks", lambda problems: [])
-    doctor._run_doctor_checks()
+    monkeypatch.setattr(doctor, "_read_code_registry", lambda: order.append("registry"))
+    monkeypatch.setattr(mirrors, "doctor_checks", lambda: order.append("mirrors") or [])
+    doctor._code_mirror_checks()
     assert order == ["registry", "mirrors"]
+
+
+@pytest.mark.asyncio
+async def test_memory_for_file_answers_without_links_while_the_registry_is_unread(
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from server.memory.app import for_file
+
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    call = SimpleNamespace(org="o", extra_namespaces=["code-x"], tags=["repo:o/x"])
+    assert await for_file._linked(call, "src/a.py", ["n"]) is None

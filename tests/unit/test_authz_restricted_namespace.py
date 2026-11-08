@@ -65,7 +65,7 @@ def restricted(monkeypatch: pytest.MonkeyPatch):
             return _Cfg("standard", state["org_readable"])
         return _Cfg(cls, state["org_readable"]) if cls else None
 
-    monkeypatch.setattr(repos, "repo_for_namespace", _repo_for)
+    monkeypatch.setattr(repos, "config_entry", _repo_for)
 
     async def _restricted_set(org):
         if state["unavailable"]:

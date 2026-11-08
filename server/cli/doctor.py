@@ -491,6 +491,31 @@ def _doctor_tier_failures() -> tuple[Any, ...] | None:
         return None
 
 
+def _read_code_registry() -> None:
+    """Read the self-service registry once, bounded; a failure leaves it unread."""
+    import asyncio
+
+    from server.code.app.index import repo_registry
+    from server.core.ch import get_client
+    from server.settings import settings
+
+    if repo_registry.registry_read() or not settings.ch_host:
+        return
+
+    async def read() -> None:
+        client = get_client()
+        try:
+            await client.connect()
+            await repo_registry.refresh_db_repos(force=True)
+        finally:
+            await client.disconnect()
+
+    try:
+        asyncio.run(asyncio.wait_for(read(), timeout=5))
+    except Exception:  # noqa: BLE001 — a doctor line must never crash the doctor
+        return
+
+
 def _doctor_problems() -> list[Any]:
     """The shared problem list as the doctor sees it: settings, and the failing
     code-index tiers read once from ClickHouse — no probed dim, breaker, lease or
@@ -542,14 +567,14 @@ def _problem_checks(problems: list[Any]) -> list[tuple[str, str, str]]:
 def _run_doctor_checks() -> list[tuple[str, str, str]]:
     """The live checks (Python, settings, JWT, ClickHouse, LLM) followed
     by the shared problem list, as (name, grade, detail)."""
-    problems = _doctor_problems()  # reads the registry the mirror checks list entries from
-    return _run_live_checks() + _code_mirror_checks() + _problem_checks(problems)
+    return _run_live_checks() + _code_mirror_checks() + _problem_checks(_doctor_problems())
 
 
 def _code_mirror_checks() -> list[tuple[str, str, str]]:
     try:
         from server.code.app.index.mirrors import doctor_checks
 
+        _read_code_registry()  # the entries the checks list refuse until it is read
         return doctor_checks()
     except Exception as e:  # noqa: BLE001 — a doctor line must never crash the doctor
         return [("code_mirrors", WARN, f"not checked: {type(e).__name__}: {e}")]

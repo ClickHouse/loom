@@ -165,7 +165,7 @@ def _fakes(monkeypatch: pytest.MonkeyPatch) -> None:
             return None
         return _CodeEntry(namespace, *CODE[namespace])
 
-    monkeypatch.setattr(repos, "repo_for_namespace", _code_entry)
+    monkeypatch.setattr(repos, "config_entry", _code_entry)
     monkeypatch.setattr(grant_cache, "_read", _read)
     monkeypatch.setattr(authz, "grant_role_for", _grant_role_for)
     monkeypatch.setattr(service_accounts, "inheriting_creator", _inheriting)

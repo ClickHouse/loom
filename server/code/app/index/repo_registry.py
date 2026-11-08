@@ -26,8 +26,8 @@ from server.code.domain.index import repos as repos_domain
 from server.code.domain.index.remote import parse_remote
 from server.code.domain.index.repos import (
     RepoConfig,
-    registry_loaded,
     registry_repos,
+    registry_unread,
     set_registry_repos,
 )
 from server.core.secrets_at_rest import seal, unseal
@@ -172,7 +172,7 @@ async def read_registry(ch: Any | None = None) -> bool:
 def registry_read() -> bool:
     """The snapshot holds what loom.code_repos held at some read, or there is no registry
     (self-service off): False while every read since the process started failed."""
-    return not settings.code_self_service_enabled or registry_loaded()
+    return not registry_unread()
 
 
 async def start_refresher(ch: Any | None = None) -> asyncio.Task[None]:

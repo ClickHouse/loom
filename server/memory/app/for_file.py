@@ -510,11 +510,11 @@ async def _linked(
     from server.memory.app.code_link_reads import current_links, readable_namespaces
     from server.memory.store import code_links
 
-    trunks = [t for ns in input.extra_namespaces if (t := trunk_namespace(input.org, ns))]
-    trunks = trunks or [t for t in [namespace_for_tags(input.org, input.tags)] if t]
-    if not trunks:
-        return {}
     try:
+        trunks = [t for ns in input.extra_namespaces if (t := trunk_namespace(input.org, ns))]
+        trunks = trunks or [t for t in [namespace_for_tags(input.org, input.tags)] if t]
+        if not trunks:
+            return {}
         links = await code_links.for_paths(
             input.org, trunks, [path], namespaces=nss, states=list(STATE_RANK)
         )

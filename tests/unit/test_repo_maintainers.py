@@ -842,28 +842,26 @@ async def test_a_revoke_off_a_code_namespace_reads_no_registry(
     assert reads == [True]
 
 
-async def test_a_revoke_on_a_process_that_never_read_the_registry_reads_it_first(
+async def test_a_revoke_on_a_process_that_never_read_the_registry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Unread, the snapshot refuses: the revoke reads the registry rather than fail, on
-    # a memory namespace too, and answers busy while that read fails.
+    # Unread, the snapshot refuses: a memory namespace is told by its directory row and
+    # reads no registry; a code namespace reads it, and answers busy while that fails.
     monkeypatch.setattr(repos, "_registry_loaded", False)
     monkeypatch.setattr(repo_registry, "registry_read", lambda: repos._registry_loaded)
+    reads: list[bool] = []
 
     async def _failed(_ch: Any = None) -> bool:
+        reads.append(True)
         return False
 
     monkeypatch.setattr(repo_registry, "read_registry", _failed)
-    _code_rows(monkeypatch, set())
-    with pytest.raises(GrantBusyError):
-        await maintainers.read_repo("clickhouse", "team-kb", ch=object())
-
-    async def _read(_ch: Any = None) -> bool:
-        repos._registry_loaded = True
-        return True
-
-    monkeypatch.setattr(repo_registry, "read_registry", _read)
+    _code_rows(monkeypatch, {"code-x"})
     assert await maintainers.read_repo("clickhouse", "team-kb", ch=object()) is None
+    assert reads == []
+    with pytest.raises(GrantBusyError):
+        await maintainers.read_repo("clickhouse", "code-x", ch=object())
+    assert reads == [True]
 
 
 async def test_a_branch_added_after_read_repo_is_reached_by_the_revoke(
@@ -1003,6 +1001,7 @@ async def test_no_sync_before_the_self_service_registry_is_read(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     monkeypatch.setattr(repo_registry, "registry_read", lambda: False)
+    _code_rows(monkeypatch, {"code-x", "code-y"})  # told by their directory rows
     ch = _FakeCH([_admin("code-x", "alice")])
     assert await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch) == 0
     assert ch.inserted == []

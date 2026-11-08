@@ -55,7 +55,7 @@ def plane(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(
         repos,
-        "repo_for_namespace",
+        "config_entry",
         lambda org, ns: _Cfg() if (org, ns) == (ORG, CODE_NS) else None,
     )
 

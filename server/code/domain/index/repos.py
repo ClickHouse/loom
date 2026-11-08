@@ -302,9 +302,10 @@ _page_namespaces: frozenset[tuple[str, str]] = frozenset()
 _registry_loaded = False
 
 
-def registry_loaded() -> bool:
-    """The snapshot holds what loom.code_repos held at some read (no I/O)."""
-    return _registry_loaded
+def registry_unread() -> bool:
+    """Self-service is on and loom.code_repos has not reached the snapshot since the
+    process started (no I/O)."""
+    return settings.code_self_service_enabled and not _registry_loaded
 
 
 def registry_namespaces() -> frozenset[tuple[str, str]]:
@@ -360,29 +361,24 @@ def configured_repos() -> list[RepoConfig]:
 
 def require_registry_read() -> None:
     """RegistryUnread while self-service is on and the registry has never been read."""
-    if settings.code_self_service_enabled and not _registry_loaded:
+    if registry_unread():
         raise RegistryUnread("the self-service repository registry is not read yet; retry")
 
 
 def config_entries() -> list[RepoConfig]:
     """`configured_repos()` before the registry's first read too, for what decides
-    access: a namespace's kind and classification, whether it is a code entry. Until
-    that read no operator entry is org-readable, and no access row applies: an entry
-    carries the classification its configuration gives. Never for reading, fetching or
-    indexing a repository: `tests/unit/test_repo_snapshot_contract.py` pins its
-    callers."""
-    if settings.code_self_service_enabled and not _registry_loaded:
-        return _with_registry(_configured_from_env())
-    return configured_repos()
+        access: a namespace's kind and classification, whether it is a code entry. Until
+        that read no operator entry is org-readable, and no access row applies: an entry
+        carries the classification its configuration gives, so a name it lists may be one a
+    maintainer restricted since: the directory row decides that. Never for reading, fetching or
+        indexing a repository: `tests/unit/test_repo_snapshot_contract.py` pins its
+        callers."""
+    return _with_registry(_configured_from_env()) if registry_unread() else configured_repos()
 
 
 def config_entry(org: str, namespace: str) -> RepoConfig | None:
-    """`config_entries()`' entry for (org, namespace), with the same limits: once the
-    registry is read, `repo_for_namespace` itself, as `config_entries()` is then
-    `configured_repos()`."""
-    if settings.code_self_service_enabled and not _registry_loaded:
-        return next((c for c in config_entries() if (c.org, c.namespace) == (org, namespace)), None)
-    return repo_for_namespace(org, namespace)
+    """`config_entries()`' entry for (org, namespace), with the same limits."""
+    return next((c for c in config_entries() if (c.org, c.namespace) == (org, namespace)), None)
 
 
 def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:
@@ -397,7 +393,7 @@ def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:
     rows = {(c.org, c.namespace): c for c in registry_repos()}
     taken = page_namespaces()
     # Unread, a member's namespace is not known yet: no operator entry is org-readable.
-    unread = settings.code_self_service_enabled and not _registry_loaded
+    unread = registry_unread()
     out: list[RepoConfig] = []
     for c in env_repos:
         if (c.org, c.namespace) in taken:
