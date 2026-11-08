@@ -50,7 +50,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: librechat
-          image: {{ printf "%s:%s@%s" .image.repository .image.tag .image.digest }}
+          image: {{ if .image.digest }}{{ printf "%s:%s@%s" .image.repository .image.tag .image.digest }}{{ else }}{{ printf "%s:%s" .image.repository .image.tag }}{{ end }}
           imagePullPolicy: {{ .image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false
@@ -156,7 +156,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: mongo
-          image: {{ printf "%s:%s@%s" .mongo.image.repository .mongo.image.tag .mongo.image.digest }}
+          image: {{ if .mongo.image.digest }}{{ printf "%s:%s@%s" .mongo.image.repository .mongo.image.tag .mongo.image.digest }}{{ else }}{{ printf "%s:%s" .mongo.image.repository .mongo.image.tag }}{{ end }}
           imagePullPolicy: {{ .mongo.image.pullPolicy }}
           args: ["mongod", "--noauth", "--quiet", "--bind_ip_all"]
           securityContext:
