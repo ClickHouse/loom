@@ -93,6 +93,8 @@ FAILING_FULL = tier_health.failed(None, "clang_full", "harness exit 1: x", T0).t
         ("chmod: changing permissions of 'x': Operation not permitted", "permission"),
         ("git@github.com: Permission denied (publickey).", "credential"),
         ("git@h.example: Permission denied (publickey,password).", "credential"),
+        ("git@h.example: Permission denied (password).", "credential"),
+        ("error: failed to open file: Permission denied (os error 13)", "permission"),
         (
             "error: insufficient permission for adding an object to repository database "
             "./objects\nfatal: failed to write object",
