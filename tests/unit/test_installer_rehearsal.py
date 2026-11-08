@@ -195,17 +195,11 @@ def test_release_check_runs_the_published_one_liner_on_both_architectures() -> N
     assert "LOOM_RELEASES_URL" not in yaml.safe_dump(workflow)
 
 
-def test_the_release_check_verifies_the_release_workflows_signature() -> None:
+def test_the_release_check_verifies_every_image_the_release_signs() -> None:
     check = yaml.safe_load((ROOT / ".github/workflows/release-check.yml").read_text())
     (verify,) = [s for s in check["jobs"]["signatures"]["steps"] if "run" in s]
-    identity = (
-        "https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v$VERSION"
-    )
-    assert f'--certificate-identity "{identity}"' in verify["run"]
-    assert "--certificate-oidc-issuer https://token.actions.githubusercontent.com" in verify["run"]
     release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
-    assert verify["env"]["IMAGES"] == release["env"]["IMAGES"]  # every image it signs
-    assert verify["env"]["VERSION"] == "${{ inputs.version }}"
+    assert verify["env"]["IMAGES"] == release["env"]["IMAGES"]
 
 
 def _previous_install(

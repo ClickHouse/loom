@@ -16,7 +16,7 @@ name: release
 # installer bundle names, migrated and schema-checked) -> build -> verify
 # (inspect the exact files) -> docker (build and scan each image on each
 # architecture's own runner) -> docker-tag -> sign (keyless, the indexes
-# docker-tag made; every run verifies both version tags) and docker-smoke (the
+# docker-tag made; every run verifies both images' X.Y.Z tag) and docker-smoke (the
 # quickstart and the installer rehearsal) -> github-release -> release-check
 # (tag push only), and pypi, npm, mcp-registry (dispatch only). A re-run after a
 # partial publish is safe: the bundle keeps the ClickHouse release it was first
@@ -302,6 +302,7 @@ jobs:
           name: release-files
           path: release/
           if-no-files-found: error
+          retention-days: ${{ inputs.dry_run && 1 || 30 }} # as long as the run can be re-run
 
   verify:
     name: Verify the release files
@@ -623,6 +624,9 @@ jobs:
       packages: write
       id-token: write # the keyless signature's certificate names this workflow and tag
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Log in to ghcr.io
         if: ${{ needs.docker-tag.result == 'success' }}
@@ -644,13 +648,7 @@ jobs:
         id: verify
         env:
           VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          for image in $IMAGES; do
-            cosign verify "$image:$VERSION" \
-              --certificate-identity "https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v$VERSION" \
-              --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null \
-              || { echo "::error::could not verify release.yml's signature on $image:$VERSION (cosign's error above); see docs/development/release-process.md#a-failed-tag-or-signature"; exit 1; }
-          done
+        run: bash scripts/release/verify_signatures.sh "$VERSION" $IMAGES
 
   docker-smoke:
     name: Released quickstart (${{ matrix.arch }})

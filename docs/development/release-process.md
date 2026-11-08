@@ -289,11 +289,10 @@ installer, and creating the signed release tag is its review gate.
 A failed `docker-tag` (one image tagged, not the other) or a failed `sign` (Sigstore down, say):
 
 - Use "Re-run failed jobs" on the run that tagged the images (the tag push, or the dispatch that
-  built and tagged them), within 30 days of it (its scanned images are kept as long). That attempt
+  built and tagged them), within 30 days of it, as long as its artifacts are kept. That attempt
   keeps its `preflight` result and `docker-tag`'s digests, so it tags the same build and signs
-  what it tagged. Another run on the
-  tag (a dispatch, a second push) is a run of its own: re-run that run's failed jobs, or dispatch
-  the tag again, once the tagging run has signed.
+  what it tagged. Another run on the tag (a dispatch, a second push) is a run of its own: re-run
+  that run's failed jobs, or dispatch the tag again, once the tagging run has signed.
 - Never re-run a run that failed before tagging once another run has tagged: its `preflight` saw
   no images, so it rebuilds and would move the published tags.
 - Once "Re-run all jobs" has replaced the tagging run's attempt, or the 30 days have passed, no

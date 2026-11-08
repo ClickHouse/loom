@@ -6,7 +6,6 @@ calls them."""
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -441,11 +440,6 @@ def test_only_sign_and_the_registries_get_an_oidc_token() -> None:
     assert set(oidc) == {"sign", "pypi", "npm", "mcp-registry"}
 
 
-def _verify_args(run: str) -> list[str]:
-    """The identity and issuer a step's `cosign verify` checks."""
-    return re.findall(r"--certificate-(?:identity|oidc-issuer) \S+", run)
-
-
 def test_the_tag_run_signs_the_digests_it_made_and_every_run_verifies_them() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
     tag = jobs["docker-tag"]
@@ -456,8 +450,47 @@ def test_the_tag_run_signs_the_digests_it_made_and_every_run_verifies_them() -> 
     assert steps["sign"]["if"] == "${{ needs.docker-tag.result == 'success' }}"
     assert steps["sign"]["env"]["DIGESTS"] == "${{ needs.docker-tag.outputs.digests }}"
     assert "if" not in steps["verify"]  # after signing too, before anything publishes
-    # The same identity and issuer release-check verifies, which its own test pins.
+    assert steps["verify"]["run"] == VERIFY
+
+
+VERIFY = 'bash scripts/release/verify_signatures.sh "$VERSION" $IMAGES'
+
+
+def test_release_check_verifies_with_the_same_script() -> None:
     check = yaml.safe_load((ROOT / ".github/workflows/release-check.yml").read_text())
-    (user,) = [s for s in check["jobs"]["signatures"]["steps"] if "run" in s]
-    args = _verify_args(steps["verify"]["run"])
-    assert len(args) == 2 and args == _verify_args(user["run"])
+    (step,) = [s for s in check["jobs"]["signatures"]["steps"] if "run" in s]
+    assert step["run"] == VERIFY
+    assert step["env"]["VERSION"] == "${{ inputs.version }}"
+
+
+def _verify(tmp_path: Path, cosign: str) -> subprocess.CompletedProcess[str]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "cosign").write_text(f'#!/bin/sh\necho "$*" >> {tmp_path}/calls\n{cosign}\n')
+    (bin_dir / "cosign").chmod(0o755)
+    return subprocess.run(
+        ["bash", str(ROOT / "scripts/release/verify_signatures.sh"), "1.2.0", *IMAGES.split()],
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_each_image_is_verified_against_the_release_workflows_identity(tmp_path: Path) -> None:
+    result = _verify(tmp_path, "exit 0")
+    assert result.returncode == 0, result.stderr
+    identity = "https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v1.2.0"
+    issuer = "https://token.actions.githubusercontent.com"
+    assert (tmp_path / "calls").read_text().splitlines() == [
+        f"verify {image}:1.2.0 --certificate-identity {identity} --certificate-oidc-issuer {issuer}"
+        for image in IMAGES.split()
+    ]
+
+
+def test_an_image_that_does_not_verify_fails_with_the_recovery(tmp_path: Path) -> None:
+    result = _verify(tmp_path, "exit 1")
+    assert result.returncode == 1
+    assert (
+        "could not verify release.yml's signature on ghcr.io/clickhouse/loom:1.2.0" in result.stdout
+    )
+    assert "#a-failed-tag-or-signature" in result.stdout
