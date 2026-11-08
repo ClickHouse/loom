@@ -10,7 +10,6 @@ read-only root filesystem. */}}
 {{- end }}
 {{- $name := include "loom.assistantName" $ }}
 {{- $mongo := include "loom.assistantMongoName" $ }}
-{{- $loom := include "loom.fullname" $ }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -136,6 +135,18 @@ spec:
     spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 999

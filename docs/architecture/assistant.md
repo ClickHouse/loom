@@ -231,7 +231,7 @@ namespace's guide (`namespace.guide_get`), or Loom's own writing guide
 The agent names no namespace on its calls: on the assistant toolset a call that names
 none reads the first namespace its token names
 ([the assistant toolset](../reference/mcp.md#the-assistant-toolset)), which for an
-answer's token is the request's. A test pins a digest of the instructions and tools to
+answer's token is the request's. A test pins a digest of the name, provider, instructions and tools to
 the version, so a change to either bumps it.
 
 ## The analysis op
@@ -777,19 +777,20 @@ rules. Its log level stays at `info`, which writes no message text. The deployme
 violation bans off (`BAN_VIOLATIONS=false`) and the unverified-user expiry off
 (`ALLOW_UNVERIFIED_EMAIL_LOGIN=true`, so LibreChat never deletes the service user it
 registered without a mail server), so a burst of replica restarts cannot lock Loom out;
-only Loom reaches LibreChat, so the bans protect nothing there. Within Loom,
-repository code runs sandboxed with no route to LibreChat (`--unshare-net`; a job's
-egress proxy reaches public hosts on ports 443 and 22 alone), except an operator
-repository's build on a host without the sandbox, which already runs with Loom's own
-environment ([the repository-job sandbox](../operations/code-index-operations.md#repository-job-sandbox)).
-Registration stays on (`ALLOW_REGISTRATION=true`) for the same reason. The
-configuration's agent and remote-agent permissions apply to every LibreChat role, so
-the service user needs no particular one. LibreChat runs without Redis, so one replica runs, and its run bookkeeping (each
-run's agent, model and ids, never the request) stays in its own memory. LibreChat's
-registration logs its request, password included, when the email is already in use or
-the request is malformed; Loom registers only under the lease and only after LibreChat
-said the email does not exist, and the qualification searches LibreChat's logs and
-database for the service user's password as it does for a token.
+only Loom reaches LibreChat, so the bans protect nothing there, and registration stays
+on (`ALLOW_REGISTRATION=true`) because only Loom can register. Within Loom, repository
+code runs sandboxed with no route to LibreChat (`--unshare-net`; a job's egress proxy
+reaches public hosts on ports 443 and 22 alone), except an operator repository's build
+on a host without the sandbox, which already runs with Loom's own environment
+([the repository-job sandbox](../operations/code-index-operations.md#repository-job-sandbox)).
+The configuration's agent and remote-agent permissions apply to every LibreChat role, so
+the service user needs no particular one. LibreChat runs without Redis, so one replica
+runs, and its run bookkeeping (each run's agent, model and ids, never the request) stays
+in its own memory. LibreChat's registration logs its request, password included, when
+the email is already in use or the request is malformed; Loom registers only under the
+lease and only after LibreChat said the email does not exist, and the qualification
+searches LibreChat's logs and database for the service user's password as it does for a
+token.
 
 ## Stored data and erasure
 

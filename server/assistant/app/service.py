@@ -61,7 +61,7 @@ class ServiceRefused(RuntimeError):
 
 
 def assistant_state() -> tuple[bool | None, str]:
-    """(ready, why not) for health and `loom doctor`."""
+    """(ready, why not) for `/v1/health`."""
     return _ready, _problem
 
 

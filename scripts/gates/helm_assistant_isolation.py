@@ -73,6 +73,15 @@ def main() -> None:
     kind = render("values-kind.yaml", *ON)
     renamed = render("values-kind.yaml", *ON, "fullnameOverride=other")
     assert checksum(kind) != checksum(renamed)
+    # LibreChat's MCP server is the Loom Service's port, whatever the release sets.
+    (config,) = [
+        d
+        for d in render("values-kind.yaml", *ON, "service.port=80")
+        if d["kind"] == "ConfigMap" and "librechat.yaml" in d.get("data", {})
+    ]
+    mcp = yaml.safe_load(config["data"]["librechat.yaml"])
+    assert mcp["mcpServers"]["loom"]["url"] == "http://loom:80/mcp?toolset=assistant", mcp
+    assert mcp["mcpSettings"]["allowedAddresses"] == ["loom:80"], mcp
     print("assistant isolation: policies, one pod at a time and the config checksum checked")
 
 

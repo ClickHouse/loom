@@ -19,9 +19,11 @@ CHART = ROOT / "deploy" / "helm" / "loom" / "templates" / "assistant-config.yaml
 def _chart_config() -> dict:
     text = CHART.read_text()
     block = text.split("  librechat.yaml: |\n", 1)[1].split("\n{{- end }}", 1)[0]
-    # The template's two substitutions: the Loom Service, and the escaped braces.
+    # The template's substitutions: the Loom Service and its port, and the escaped braces.
     block = (
-        block.replace("{{ $loom }}", "loom").replace('{{ "{{" }}', "{{").replace('{{ "}}" }}', "}}")
+        block.replace("{{ $loom }}:{{ $.Values.service.port }}", "loom:7777")
+        .replace('{{ "{{" }}', "{{")
+        .replace('{{ "}}" }}', "}}")
     )
     return yaml.safe_load(re.sub(r"^    ", "", block, flags=re.M))
 

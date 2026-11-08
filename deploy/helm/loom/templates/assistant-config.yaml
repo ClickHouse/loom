@@ -33,11 +33,11 @@ data:
         capabilities: ["tools"]
     mcpSettings:
       allowedAddresses:
-        - {{ $loom }}:7777
+        - {{ $loom }}:{{ $.Values.service.port }}
     mcpServers:
       loom:
         type: streamable-http
-        url: http://{{ $loom }}:7777/mcp?toolset=assistant
+        url: http://{{ $loom }}:{{ $.Values.service.port }}/mcp?toolset=assistant
         requiresOAuth: false
         startup: false
         timeout: 60000
