@@ -1120,7 +1120,7 @@ async def _capped_blob(git_dir: str, sha: str, path: str, max_bytes: int) -> byt
     whole = False  # every byte git writes was read: it exits on its own
     try:
         async with asyncio.timeout(settings.code_git_timeout_s):
-            proc.stdin.write(f"{spec}\n".encode())
+            proc.stdin.write(os.fsencode(spec) + b"\n")  # a raw byte as git's argv takes it
             await proc.stdin.drain()
             proc.stdin.close()
             try:

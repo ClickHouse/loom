@@ -62,6 +62,7 @@ def test_a_capped_read_of_a_missing_path_or_a_directory_is_none(tmp_path: Path) 
     assert asyncio.run(show_file(git_dir, "f" * 40, "src/f000.py", max_bytes=10)) is None
     long = "a/" + "w" * 70_000 + ".py"  # git echoes it past the 64 KiB line limit
     assert asyncio.run(show_file(git_dir, sha, long, max_bytes=10)) is None
+    assert asyncio.run(show_file(git_dir, sha, "a\udc80.py", max_bytes=10)) is None  # raw byte
 
 
 def _pipe_capacity() -> int:
@@ -246,7 +247,7 @@ def test_a_dependents_batch_skips_an_oversize_file(tmp_path, monkeypatch) -> Non
     assert got == {"a.py": b"x = 1\n"} and out.skipped == 2
 
 
-def test_a_heal_records_an_oversize_file_and_names_it_skipped(tmp_path, monkeypatch) -> None:
+def test_a_heal_records_an_oversize_file_and_counts_it(tmp_path, monkeypatch) -> None:
     git_dir, sha = _commit(tmp_path, {"big.json": _BIG, "a.py": b"x = 1\n"})
     monkeypatch.setattr(settings, "code_ingest_max_file_bytes", 100)
     monkeypatch.setattr(settings, "code_ingest_round_files", 0)
@@ -268,7 +269,7 @@ def test_a_heal_records_an_oversize_file_and_names_it_skipped(tmp_path, monkeypa
             show_file=show_file,
         )
     )
-    assert ingested == ["a.py"] and res.skipped_paths == ["big.json"] and res.errors == 0
+    assert ingested == ["a.py"] and res.files == 2 and res.skipped_paths == [] and res.errors == 0
     (row,) = repo.file_rows()
     assert row["path"] == "big.json" and row["index_error"].startswith("skipped: ")
 
@@ -369,6 +370,7 @@ def test_a_heal_counts_a_failed_oversize_record_and_goes_on(tmp_path, monkeypatc
         )
     )
     assert ingested == ["a.py"] and res.errors == 1
+    assert res.skipped_paths == []  # not unindexable: the next reconcile asks again
 
 
 def test_an_instruction_file_over_the_cap_is_reported_not_linted(tmp_path, monkeypatch) -> None:

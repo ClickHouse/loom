@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from server.code.app.index.denylist import Denylist, default_denylist
 from server.code.app.index.describe import _describe_new_chunks
@@ -420,11 +420,11 @@ async def read_capped(
     commit_sha: str,
     embedding_model: str,
     denylist: Denylist | None,
-) -> tuple[bytes | None, bool | None]:
+) -> tuple[bytes | None, FileIngestStats | Literal[False] | None]:
     """`path`'s bytes at `commit_sha`, read under `code_ingest_max_file_bytes`, None
     when the commit holds no file there. A larger file is not read: `record_oversize`
-    records its verdict and the bytes come back None. The second item is whether that
-    record was written (False when it failed, logged); None for a file within the cap."""
+    records its verdict and the bytes come back None. The second item is that record's
+    stats, False when it failed (logged), None for a file within the cap."""
     from server.code.app.index.gitrepo import BlobTooLarge
     from server.settings import settings as _settings
 
@@ -433,7 +433,7 @@ async def read_capped(
         return await show_file(git_dir, commit_sha, path, max_bytes=cap), None
     except BlobTooLarge as e:
         try:
-            await record_oversize(
+            return None, await record_oversize(
                 repo,
                 org,
                 ns,
@@ -446,7 +446,6 @@ async def read_capped(
         except Exception as err:  # noqa: BLE001 — per-file, keep going
             logger.warning("%s: recording oversize %s failed: %s", git_dir, path, err)
             return None, False
-        return None, True
 
 
 async def _write_error_row(
