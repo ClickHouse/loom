@@ -2233,14 +2233,14 @@ The current status of some memories, by id: which automatic retirements still st
 
 ## `memory.sweep_expired`
 
-Run one expiry-sweep pass now — the same pass the `memory_expiry_sweep` worker runs on its interval, scoped to an org and optionally a namespace.
+Run one expiry-sweep pass now — the same pass the `memory_expiry_sweep` worker runs on its interval, scoped to one namespace.
 
 `POST /v1/memory.sweep_expired` · MCP `loom_memory_sweep_expired` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
-| `namespace` | `str \| None` | `None` | The namespace the op reads or writes. |
+| `namespace` | `str` | required | The namespace swept; required, so the gate checks the caller's admin role there (the worker sweeps every namespace). |
 | `limit` | `int` | `500` | At most this many expired rows handled in the pass. |
 | `dry_run` | `bool` | `False` | True counts and samples what the pass would do, writing nothing. |
 

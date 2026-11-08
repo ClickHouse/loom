@@ -48,8 +48,8 @@ async def _init(args: argparse.Namespace) -> int:
         print(f"cloning {cfg.git_remote} -> {git_dir} (bare)…")
         # A private remote authenticates through the
         # environment (gitrepo.auth_env), never through the URL, so the
-        # token reaches neither argv nor code_index_state.repo_remote; a
-        # restricted entry's clone is readable by this user only.
+        # token reaches neither argv nor code_index_state.repo_remote; git
+        # runs under umask 077, so only this user reads the mirror, mid-clone too.
         from server.code.app.index.gitrepo import auth_env, upload_pack_args
 
         proc = await asyncio.create_subprocess_exec(
@@ -65,13 +65,13 @@ async def _init(args: argparse.Namespace) -> int:
             git_dir,
             env=auth_env(cfg.github_token, cfg.git_remote),
             start_new_session=True,
+            umask=0o077,
         )
         rc = await wait_or_stop(proc)
         if rc != 0:
             print("clone failed", file=sys.stderr)
             return 1
-        if cfg.classification == "restricted":
-            await asyncio.to_thread(os.chmod, git_dir, 0o700)
+        await asyncio.to_thread(os.chmod, git_dir, 0o700)
     else:
         print(f"bare clone already at {git_dir}")
 

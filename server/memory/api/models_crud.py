@@ -19,6 +19,7 @@ from pydantic import (
     model_validator,
 )
 
+from server.core.naming import present
 from server.memory.api.models_common import FileRefs, MemorySetPeer, MemoryType, _Identity
 from server.memory.domain.code_change import CodeState
 from server.memory.domain.delete_marks import caller_trace
@@ -1203,15 +1204,25 @@ class MemoryRedactOutput(BaseModel):
 
 class MemorySweepExpiredInput(BaseModel):
     """Run one expiry-sweep pass now — the same pass the
-    `memory_expiry_sweep` worker runs on its interval, scoped to an org and
-    optionally a namespace. `dry_run=True` reports what would happen."""
+    `memory_expiry_sweep` worker runs on its interval, scoped to one namespace.
+    `dry_run=True` reports what would happen."""
 
     org: str
-    namespace: str | None = None
+    # The namespace swept; required, so the gate checks the caller's admin role
+    # there (the worker sweeps every namespace).
+    namespace: str
     # At most this many expired rows handled in the pass.
     limit: int = Field(default=500, ge=1, le=5000)
     # True counts and samples what the pass would do, writing nothing.
     dry_run: bool = False
+
+    @model_validator(mode="after")
+    def _names_a_namespace(self) -> MemorySweepExpiredInput:
+        # Blank or "-" reads as no namespace at the gate, and the scan as the whole
+        # org. Refused, never rewritten: the gate reads the field verbatim.
+        if present(self.namespace) is None:
+            raise ValueError("namespace: name the namespace to sweep")
+        return self
 
 
 class MemorySweepExpiredOutput(BaseModel):

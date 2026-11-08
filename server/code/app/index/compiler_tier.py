@@ -231,6 +231,13 @@ def resolve_checkout(cfg: RepoConfig, producer: str) -> tuple[Path, Path, str | 
         # harness configures its build tree on the first run.
         from server.code.app.index.gitrepo import auth_env
 
+        # Made before `git init`, which keeps its mode: no checkout is readable by
+        # another user, and an entry restricted later needs no window closed.
+        try:
+            os.makedirs(checkout, mode=0o700, exist_ok=True)
+        except OSError as e:
+            logger.warning("compiler tier: could not create %s: %s", checkout, e)
+            return checkout, bare, f"checkout missing at {checkout} (mkdir failed)"
         init = subprocess.run(
             ["git", "init", "-q", str(checkout)], capture_output=True, text=True, env=auth_env()
         )

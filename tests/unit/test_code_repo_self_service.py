@@ -4,7 +4,11 @@ operator's config; the worker clones and builds the first index."""
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
+import pwd
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -151,6 +155,7 @@ class _CH:
         self.inserted: list[tuple[str, list[dict[str, Any]]]] = []
         self.taken: set[str] = set()
         self.count = 0
+        self.heads: dict[str, str] = {"code-clickhouse": "a" * 40}  # namespace -> git_head
 
     async def query_one(
         self, sql: str, params: dict[str, Any] | None = None
@@ -158,6 +163,9 @@ class _CH:
         params = params or {}
         if "loom.code_repos" in sql:
             return {"n": self.count}
+        if "loom.code_index_state" in sql:
+            head = self.heads.get(str(params.get("ns"))) if params.get("key") == "git_head" else ""
+            return {"state_value": head} if head else None
         if "loom.namespaces" in sql:
             return {"one": 1} if params.get("ns") in self.taken else None
         return None
@@ -165,6 +173,13 @@ class _CH:
     async def query_all(
         self, sql: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
+        if "loom.namespaces" in sql:  # the restricted directory rows
+            return [
+                r
+                for t, rows in self.inserted
+                for r in rows
+                if t == "loom.namespaces" and r["classification"] == "restricted"
+            ]
         return [
             dict(r, **{"classification": "standard"})
             for _t, rows in self.inserted
@@ -198,6 +213,8 @@ def plane(monkeypatch: pytest.MonkeyPatch):
     reg.reset_for_tests()
 
     async def _remote_ok(repo: str, branch: str, token: str, **_: Any) -> str:
+        if token == "no-access":
+            raise ValueError(f"{repo} is not readable with this token")
         if branch == "nope":
             raise ValueError(f"{repo} has no branch named {branch!r}")
         return "abc123def456" + "0" * 28
@@ -235,7 +252,7 @@ def plane(monkeypatch: pytest.MonkeyPatch):
         """The real store (its registry statements run on `ch`), state writes recorded."""
 
         states: list[tuple[str, str, str, str]] = []
-        # (org, namespace, key) -> value, what get_state answers
+        # (org, namespace, key) -> value, what the state reads answer
         stored: dict[tuple[str, str, str], str] = {}
 
         async def set_state(
@@ -244,11 +261,10 @@ def plane(monkeypatch: pytest.MonkeyPatch):
             _CodeRepo.states.append((org, ns, key, value))
             _CodeRepo.stored[(org, ns, key)] = value
 
-        async def get_state(self, org: str, ns: str, key: str) -> str:
-            return _CodeRepo.stored.get((org, ns, key), "")
-
         async def get_state_or_none(self, org: str, ns: str, key: str) -> str | None:
-            return _CodeRepo.stored.get((org, ns, key))
+            if (org, ns, key) in _CodeRepo.stored:
+                return _CodeRepo.stored[(org, ns, key)]
+            return await super().get_state_or_none(org, ns, key)  # `ch`: the git_head rows
 
     monkeypatch.setattr(code_repo_mod, "CodeRepo", _CodeRepo)
     _CodeRepo.states.clear()
@@ -315,7 +331,7 @@ async def test_code_repo_add_restricted_is_never_open_and_stores_the_token_encry
 
 
 @pytest.mark.asyncio
-async def test_code_repo_add_refusals_are_sentences(plane) -> None:
+async def test_code_repo_add_refusals_are_sentences(plane, monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(ValidationError) as ei:
         await admin.handle_code_repo_add(CodeRepoAddInput(org=ORG, repo="not-a-repo"))
     assert ei.value.to_detail()["code"] == "BAD_REPO"
@@ -336,11 +352,18 @@ async def test_code_repo_add_refusals_are_sentences(plane) -> None:
         )
     assert ei.value.to_detail()["code"] == "REPO_EXISTS"
     plane.ch.count = 3
-    with pytest.raises(ValidationError) as ei:
-        await admin.handle_code_repo_add(
-            CodeRepoAddInput(org=ORG, repo="acme/fourth", branch="main")
-        )
-    assert ei.value.to_detail()["code"] == "REPO_QUOTA"
+
+    async def no_remote_job(*_a: Any, **_k: Any) -> str:
+        raise AssertionError("a full org is refused before any remote job")
+
+    monkeypatch.setattr(reg, "remote_has_branch", no_remote_job)
+    monkeypatch.setattr(reg, "remote_branches", no_remote_job)
+    for branch in ("main", ""):  # a blank branch would ask the remote for its default
+        with pytest.raises(ValidationError) as ei:
+            await admin.handle_code_repo_add(
+                CodeRepoAddInput(org=ORG, repo="acme/fourth", branch=branch, branches=["dev"])
+            )
+        assert ei.value.to_detail()["code"] == "REPO_QUOTA"
 
 
 @pytest.mark.asyncio
@@ -794,3 +817,399 @@ async def test_the_link_reads_around_a_registration_read_their_own_writes(
     )
     link_reads = [on for key, on in seen if key in (links.OVERRIDE_KEY, links.BRANCH_OF_KEY)]
     assert link_reads and all(link_reads)
+
+
+@pytest.mark.asyncio
+async def test_a_branch_of_an_entry_restricted_by_its_directory_row_is_restricted(
+    plane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The entry's own classification says standard and it is public, but its
+    directory row restricts it: the new branch is restricted and not open."""
+    from server.auth.directory import ClassificationUnavailable
+    from server.core.errors import BackendUnavailableError
+    from server.identity.app import namespace_classification as nc
+
+    await admin.handle_code_repo_add(
+        CodeRepoAddInput(org=ORG, repo="acme/widgets", branch="main", join_policy="open")
+    )
+    directory = {"state": "restricted"}
+
+    async def is_restricted(org: str, namespace: str) -> bool:
+        if directory["state"] == "unreadable":
+            raise ClassificationUnavailable(org)
+        return directory["state"] == "restricted" and namespace == "code-widgets"
+
+    monkeypatch.setattr(nc, "is_restricted", is_restricted)
+    out = await admin.handle_code_repo_add_branch(
+        CodeRepoAddBranchInput(org=ORG, namespace="code-widgets", branch="release/1.2")
+    )
+    assert out.join_policy == "approval"
+    rows = [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
+    assert rows[-1]["classification"] == "restricted"
+    assert rows[-1]["join_policy"] == "approval"
+    # restricted by a row newer than this process's snapshot
+    directory["state"] = "stale"
+
+    async def fresh_row(_ch: Any, org: str, namespace: str) -> dict[str, Any]:
+        return {"org": org, "namespace": namespace, "classification": "restricted"}
+
+    monkeypatch.setattr(admin, "_directory_row", fresh_row)
+    out = await admin.handle_code_repo_add_branch(
+        CodeRepoAddBranchInput(org=ORG, namespace="code-widgets", branch="release/1.4")
+    )
+    rows = [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
+    assert out.join_policy == "approval" and rows[-1]["classification"] == "restricted"
+    directory["state"] = "unreadable"
+
+    async def no_remote_call(*_a: Any, **_k: Any) -> str:
+        raise AssertionError("an unreadable classification refuses before the remote")
+
+    monkeypatch.setattr(reg, "remote_has_branch", no_remote_call)
+    with pytest.raises(BackendUnavailableError):
+        await admin.handle_code_repo_add_branch(
+            CodeRepoAddBranchInput(org=ORG, namespace="code-widgets", branch="release/1.3")
+        )
+    # an unreadable directory row refuses the same way
+    directory["state"] = "stale"
+
+    async def unreadable_row(*_a: Any, **_k: Any) -> dict[str, Any]:
+        raise BackendUnavailableError("directory down")
+
+    monkeypatch.setattr(admin, "_directory_row", unreadable_row)
+    registered = len(plane.ch.inserted)
+    with pytest.raises(BackendUnavailableError):
+        await admin.handle_code_repo_add_branch(
+            CodeRepoAddBranchInput(org=ORG, namespace="code-widgets", branch="release/1.5")
+        )
+    assert len(plane.ch.inserted) == registered  # nothing registered
+
+
+@pytest.mark.asyncio
+async def test_a_branch_of_a_closed_entry_is_closed(plane, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A maintainer closed the repository with `code.repo.set_access`: its new
+    branch takes no join requests either."""
+    await admin.handle_code_repo_add(
+        CodeRepoAddInput(org=ORG, repo="acme/widgets", branch="main", join_policy="open")
+    )
+
+    async def closed_row(_ch: Any, org: str, namespace: str) -> dict[str, Any]:
+        return {"org": org, "namespace": namespace, "join_policy": "closed"}
+
+    monkeypatch.setattr(admin, "_directory_row", closed_row)
+    out = await admin.handle_code_repo_add_branch(
+        CodeRepoAddBranchInput(org=ORG, namespace="code-widgets", branch="release/1.2")
+    )
+    assert out.join_policy == "closed"
+    rows = [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
+    assert rows[-1]["join_policy"] == "closed"
+
+
+@pytest.mark.asyncio
+async def test_an_extra_branch_past_the_quota_runs_no_remote_job(
+    plane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The primary branch takes the org's last slot; the extra branch is skipped for
+    the quota before any remote job is spent on it."""
+
+    async def active_count(org: str) -> int:
+        # 0 before the primary branch is registered, the quota once it is
+        registered = [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
+        return 3 if registered else 0
+
+    asked: list[str] = []
+
+    async def remote_ok(repo: str, branch: str, token: str, **_: Any) -> str:
+        asked.append(branch)
+        return "abc123def456" + "0" * 28
+
+    monkeypatch.setattr(reg, "active_count", active_count)
+    monkeypatch.setattr(reg, "remote_has_branch", remote_ok)
+    out = await admin.handle_code_repo_add(
+        CodeRepoAddInput(org=ORG, repo="acme/widgets", branch="main", branches=["dev"])
+    )
+    assert asked == ["main"]
+    assert out.skipped == [{"branch": "dev", "reason": "the org's repository quota is reached"}]
+
+
+@pytest.mark.asyncio
+async def test_add_sees_an_entry_another_replica_registered_moments_ago(plane) -> None:
+    """The duplicate check reads the registry afresh: an entry written by another
+    replica inside the refresh interval is found under another spelling."""
+    await admin.handle_code_repo_add(CodeRepoAddInput(org=ORG, repo="acme/widgets", branch="main"))
+    plane.ch.inserted.append(
+        ("loom.code_repos", [_row(namespace="code-gadget", repo="acme/gadget")])
+    )
+    with pytest.raises(ValidationError) as ei:
+        await admin.handle_code_repo_add(
+            CodeRepoAddInput(org=ORG, repo="https://www.github.com/acme/gadget", branch="main")
+        )
+    assert ei.value.to_detail()["code"] == "REPO_EXISTS"
+
+
+@pytest.mark.asyncio
+async def test_add_branch_of_a_configured_entry_waits_for_its_first_index(plane) -> None:
+    """Before the backfill the operator may still restrict the entry; a branch added
+    then would be a standard self-service index of the same repository."""
+    plane.ch.heads.clear()
+    with pytest.raises(ValidationError) as ei:
+        await admin.handle_code_repo_add_branch(
+            CodeRepoAddBranchInput(org=ORG, namespace="code-clickhouse", branch="26.8")
+        )
+    assert ei.value.to_detail()["code"] == "REPO_NOT_INDEXED"
+    assert not [t for t, _ in plane.ch.inserted if t == "loom.code_repos"]
+
+
+@pytest.mark.asyncio
+async def test_a_branch_already_indexed_under_another_name_is_refused(
+    plane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.settings import settings
+
+    entry = {"namespace": "code-ch", "repo": "ClickHouse/ClickHouse", "git_branch": "master"}
+    monkeypatch.setattr(settings, "code_repos_json", json.dumps([entry]))
+    reg.reset_for_tests()
+    plane.ch.heads["code-ch"] = "a" * 40
+    with pytest.raises(ValidationError) as ei:
+        await admin.handle_code_repo_add_branch(
+            CodeRepoAddBranchInput(org=ORG, namespace="code-ch", branch="master")
+        )
+    # the namespace that holds it may be restricted: the refusal does not name it
+    assert ei.value.to_detail()["code"] == "REPO_EXISTS" and "code-ch" not in str(ei.value)
+    with pytest.raises(ValidationError) as ei:
+        await admin.handle_code_repo_add(
+            CodeRepoAddInput(org=ORG, repo="clickhouse/clickhouse", branch="master")
+        )
+    assert ei.value.to_detail()["code"] == "REPO_EXISTS" and "code-ch" not in str(ei.value)
+    out = await admin.handle_code_repo_add(
+        CodeRepoAddInput(org=ORG, repo="ClickHouse/ClickHouse", branch="26.8", branches=["master"])
+    )
+    assert out.skipped == [{"branch": "master", "reason": "already indexed here"}]
+    rows = [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
+    assert [r["git_branch"] for r in rows] == ["26.8"]
+
+
+@pytest.mark.asyncio
+async def test_a_configured_entry_on_another_host_is_matched_by_its_remote(
+    plane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.settings import settings
+
+    entry = {
+        "namespace": "code-internal-tool",
+        "repo": "group/tool",
+        "git_remote": "https://gitlab.com/group/tool.git",
+        "git_branch": "main",
+    }
+    monkeypatch.setattr(settings, "code_repos_json", json.dumps([entry]))
+    reg.reset_for_tests()
+    with pytest.raises(ValidationError) as ei:
+        await admin.handle_code_repo_add(
+            CodeRepoAddInput(org=ORG, repo="https://gitlab.com/group/tool", branch="main")
+        )
+    assert ei.value.to_detail()["code"] == "REPO_EXISTS"
+
+
+def _two_spellings(monkeypatch: pytest.MonkeyPatch, plane: Any) -> None:
+    """Two operator entries of one repository, the second named freely."""
+    from server.settings import settings
+
+    entries = [
+        {
+            "namespace": "code-ch",
+            "repo": "ClickHouse/ClickHouse",
+            "git_remote": "https://github.com/ClickHouse/ClickHouse.git",
+            "git_branch": "master",
+        },
+        {
+            "namespace": "code-ch-lts",
+            "repo": "clickhouse-lts",
+            "git_remote": "https://www.github.com/clickhouse/clickhouse",
+            "git_branch": "26.3",
+        },
+    ]
+    monkeypatch.setattr(settings, "code_repos_json", json.dumps(entries))
+    reg.reset_for_tests()
+    plane.ch.heads.update({"code-ch": "a" * 40, "code-ch-lts": "b" * 40})
+
+
+@pytest.mark.asyncio
+async def test_add_branch_finds_a_branch_held_by_an_entry_spelled_differently(
+    plane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _two_spellings(monkeypatch, plane)
+    for ns, branch in (("code-ch", "26.3"), ("code-ch-lts", "master")):
+        with pytest.raises(ValidationError) as ei:
+            await admin.handle_code_repo_add_branch(
+                CodeRepoAddBranchInput(org=ORG, namespace=ns, branch=branch)
+            )
+        assert ei.value.to_detail()["code"] == "REPO_EXISTS"
+    assert not [t for t, _ in plane.ch.inserted if t == "loom.code_repos"]
+
+
+@pytest.mark.asyncio
+async def test_an_entry_is_known_by_its_remote_not_its_free_name(
+    plane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An entry named `group/tool` whose remote is on another host is not the GitHub
+    repository of that name."""
+    from server.settings import settings
+
+    entry = {
+        "namespace": "code-internal-tool",
+        "repo": "group/tool",
+        "git_remote": "https://gitlab.com/group/tool.git",
+        "git_branch": "main",
+    }
+    monkeypatch.setattr(settings, "code_repos_json", json.dumps([entry]))
+    reg.reset_for_tests()
+    out = await admin.handle_code_repo_add(
+        CodeRepoAddInput(org=ORG, repo="group/tool", branch="main")
+    )
+    assert out.namespace == "code-tool"
+
+
+@pytest.mark.asyncio
+async def test_a_caller_who_cannot_read_the_remote_learns_nothing_of_the_index(
+    plane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _two_spellings(monkeypatch, plane)
+    with pytest.raises(ValidationError) as ei:
+        await admin.handle_code_repo_add(
+            CodeRepoAddInput(
+                org=ORG, repo="ClickHouse/ClickHouse", branch="master", access_token="no-access"
+            )
+        )
+    assert ei.value.to_detail()["code"] == "REMOTE_REFUSED"
+    out = await admin.handle_code_repo_add(
+        CodeRepoAddInput(
+            org=ORG,
+            repo="ClickHouse/ClickHouse",
+            branch="26.8",
+            branches=["master", "26.3", "26.7"],
+            access_token="",
+        )
+    )
+    held = [b for b in out.skipped if b["reason"] == "already indexed here"]
+    assert [b["branch"] for b in held] == ["master", "26.3"]
+
+
+@pytest.mark.asyncio
+async def test_remote_branches_lists_a_branch_held_under_another_name_without_its_namespace(
+    plane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The picker learns the branch is taken; the namespace that holds it is named only
+    to a caller who may read it."""
+    from types import SimpleNamespace as NS
+
+    import server.auth.authz as authz
+
+    _two_spellings(monkeypatch, plane)
+
+    async def _branches(repo: str, token: str, **_: Any) -> dict[str, Any]:
+        names = ["master", "26.3", "26.8"]
+        return {"default_branch": "master", "branches": [{"name": n} for n in names]}
+
+    monkeypatch.setattr(reg, "remote_branches", _branches)
+
+    async def _in_scope(org: str, ns: str, *a: Any, **k: Any) -> bool:
+        return ns == "code-ch"
+
+    monkeypatch.setattr(authz, "row_in_scope", _in_scope)
+    out = await admin.handle_code_repo_remote_branches(
+        NS(org=ORG, repo="https://github.com/clickhouse/ClickHouse.git", access_token="")
+    )
+    assert out.indexed == [
+        {"branch": "26.3", "namespace": ""},  # code-ch-lts: not readable by this caller
+        {"branch": "master", "namespace": "code-ch"},
+    ]
+    assert "26.3" not in out.suggested
+
+
+@pytest.mark.asyncio
+async def test_the_entry_not_the_namespace_name_is_what_refuses(
+    plane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`code-ch` is not the name `namespace_for` gives ClickHouse@master (`code-clickhouse`),
+    so the derived name is free and only the entry check can refuse; its remote is
+    spelled with a dot segment as well."""
+    from server.settings import settings
+
+    entry = {
+        "namespace": "code-ch",
+        "repo": "ch",
+        "git_remote": "https://github.com/ClickHouse/./ClickHouse.git",
+        "git_branch": "master",
+    }
+    monkeypatch.setattr(settings, "code_repos_json", json.dumps([entry]))
+    reg.reset_for_tests()
+    plane.ch.heads["code-ch"] = "a" * 40
+    assert not await admin._namespace_taken(
+        ORG, reg.namespace_for("ClickHouse/ClickHouse", "master")
+    )
+    with pytest.raises(ValidationError) as ei:
+        await admin.handle_code_repo_add(
+            CodeRepoAddInput(org=ORG, repo="ClickHouse/ClickHouse", branch="master")
+        )
+    assert "is already indexed here; join it instead" in str(ei.value)
+    with pytest.raises(ValidationError) as ei:
+        await admin.handle_code_repo_add_branch(
+            CodeRepoAddBranchInput(org=ORG, namespace="code-ch", branch="master")
+        )
+    assert str(ei.value).endswith("is already indexed here")
+
+
+@pytest.mark.asyncio
+async def test_a_remote_check_runs_in_the_sandbox_without_the_servers_ssh_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sandbox builds the job: an empty HOME, no agent socket, and no mount of the
+    server's HOME or a directory above it, so an ssh remote answers only to what the
+    caller can reach, never to a key of the server's."""
+    from server.code.app.index import sandbox
+    from server.code.app.index.sandbox import JobResult
+
+    seen: dict[str, Any] = {}
+
+    async def _exec(*argv: Any, env: Any = None, **_: Any) -> Any:
+        seen.update(argv=list(argv), env=dict(env))
+        return SimpleNamespace()
+
+    async def _result(proc: Any, job: Any) -> Any:
+        return JobResult(0, b"abc123\trefs/heads/main\n", b"")
+
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/run/user/1000/agent.sock")
+    monkeypatch.setattr(sandbox, "sandbox_available", lambda: True)
+    monkeypatch.setattr(sandbox, "_seccomp_fd", lambda: os.open(os.devnull, os.O_RDONLY))
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _exec)
+    monkeypatch.setattr(sandbox, "_result", _result)
+    remote = "ssh://git@github.com/acme/widget.git"
+    assert await reg.remote_has_branch("acme/widget", "main", "", git_remote=remote) == "abc123"
+    argv, env = seen["argv"], seen["env"]
+    assert "ls-remote" in argv and remote in argv
+    assert env["HOME"] == "/tmp/home"
+    assert not {"SSH_AUTH_SOCK", "GIT_SSH", "SSH_ASKPASS"} & set(env)
+    assert "ProxyCommand" in env["GIT_SSH_COMMAND"] and "-i " not in env["GIT_SSH_COMMAND"]
+    assert any(argv[i : i + 2] == ["--dir", "/tmp/home"] for i in range(len(argv)))
+    home = Path.home().absolute()
+    sources = [Path(argv[i + 1]) for i, a in enumerate(argv) if a in ("--bind", "--ro-bind")]
+    # a python under HOME (a uv-managed one) may be mounted, never HOME or ~/.ssh; ssh
+    # finds ~/.ssh through the user database, so its home counts as well
+    passwd_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    assert sources
+    for ssh in {home / ".ssh", passwd_home / ".ssh"}:
+        assert not [src for src in sources if ssh.is_relative_to(src)]
+
+
+@pytest.mark.asyncio
+async def test_an_add_without_the_sandbox_is_refused(
+    plane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.code.app.index import sandbox
+
+    monkeypatch.setattr(sandbox, "sandbox_available", lambda: False)
+    with pytest.raises(ValidationError) as ei:
+        await admin.handle_code_repo_add(
+            CodeRepoAddInput(org=ORG, repo="acme/widgets", branch="main")
+        )
+    assert ei.value.to_detail()["code"] == "SANDBOX_UNAVAILABLE"
+    assert not [t for t, _ in plane.ch.inserted if t == "loom.code_repos"]

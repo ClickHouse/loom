@@ -351,6 +351,7 @@ async def test_code_registry_writes_open_for_a_public_repo_and_approval_otherwis
         classification="restricted",
         public=True,
         org_readable=False,
+        git_dir="",
     )
     assert await registry.ensure_registered(pub, ch=c) is True
     assert await registry.ensure_registered(priv, ch=c) is True

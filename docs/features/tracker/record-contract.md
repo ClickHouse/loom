@@ -77,7 +77,17 @@ mapping is `server/tracker/domain/mapping.py`, and the columns read per table ar
    and is on by default (`LOOM_TRACKER_SELF_SERVICE_ENABLED`, at most
    `LOOM_TRACKER_SELF_SERVICE_MAX_SOURCES` per org, default 10;
    `LOOM_TRACKER_SELF_SERVICE_ALLOW_PRIVATE_HOSTS=true` for a local development
-   ClickHouse). The password is stored encrypted and never returned.
+   ClickHouse). The password is stored encrypted and never returned. `inspect` by
+   name needs `admin` on one of the source's namespaces; `set_mapping`, `rotate` and
+   `remove` need it on every one, since each changes what every namespace of the source
+   reads. A standard namespace is decided by the gate at `admin`, and a restricted one
+   by the restricted gate's rules except that the token need not name it; registering
+   the source is not enough once the registrant's grant is revoked
+   ([restricted namespaces](../../architecture/security.md#restricted-namespaces)). A
+   dashboard session of anyone but a platform admin is a `writer` token, so it cannot
+   change or retire a source with a private (restricted) namespace: that takes a token
+   with the `admin` role, which an operator mints with `loom mint-token --roles admin`.
+   The page shows those buttons disabled with the reason; the server decides.
 
    An operator can configure the same source instead ([configuration](#configuration)); a
    configured entry wins over a registered one of the same name and is changed only in

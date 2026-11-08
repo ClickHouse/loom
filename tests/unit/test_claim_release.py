@@ -91,10 +91,12 @@ def env(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr(revocation, "wait_out", wait)
     state["waited"] = waited
 
-    def run(token: str, row: dict[str, Any] | None = _ROW, org: str = "acme") -> tuple[Any, _CH]:
+    def run(
+        token: str, row: dict[str, Any] | None = _ROW, org: str = "acme", namespace: str = "repo-x"
+    ) -> tuple[Any, _CH]:
         ch = _CH(row)
         monkeypatch.setattr(cr, "get_client", lambda: ch)
-        inp = cr.ClaimReleaseInput(org=org, namespace="repo-x")
+        inp = cr.ClaimReleaseInput(org=org, namespace=namespace)
         return asyncio.run(cr.claim_release(inp, _Req(token))), ch  # type: ignore[arg-type]
 
     return run, state
@@ -186,6 +188,31 @@ def test_a_release_of_a_restricted_namespace_writes_the_access_audit_row(
     assert kw["subject"]["op"] == "admin.claim_release"
     assert (kw["subject"]["transport"], kw["subject"]["roles"]) == ("http", ["org_admin"])
     assert kw["actor"] == actor_for("op", is_service_account=True)  # `_tok` mints a service account
+
+
+def test_an_unreadable_classification_is_answered_like_a_missing_namespace(
+    env: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.auth.directory import ClassificationUnavailable
+
+    async def unreadable(org: str, ns: str) -> bool:
+        raise ClassificationUnavailable(org)
+
+    monkeypatch.setattr(nc, "is_restricted", unreadable)
+    run, _ = env
+    assert _status(run, _tok(["org_admin"])) == 404
+
+
+def test_a_collection_is_answered_like_a_missing_namespace(env: Any) -> None:
+    """No org role reaches a collection, and its name may carry an end user's id."""
+    run, _ = env
+    assert _status(run, _tok(["org_admin"]), namespace="col-u-alice") == 404
+
+
+def test_a_row_restricted_after_the_snapshot_is_answered_like_a_missing_one(env: Any) -> None:
+    run, _ = env
+    fresh = dict(_ROW, classification="restricted")
+    assert _status(run, _tok(["org_admin"]), row=fresh) == 404
 
 
 def test_auth_off_releases_as_local(env: Any, monkeypatch: pytest.MonkeyPatch) -> None:

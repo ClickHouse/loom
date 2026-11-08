@@ -27,8 +27,12 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import TYPE_CHECKING, Any
 
 from server.auth.directory import ClassificationUnavailable
+
+if TYPE_CHECKING:
+    from server.auth.jwt import AuthInfo
 
 log = logging.getLogger(__name__)
 
@@ -134,6 +138,27 @@ async def is_restricted(org: str, namespace: str) -> bool:
     return namespace in await restricted_set(org)
 
 
+async def may_administer(
+    info: AuthInfo, org: str, namespace: str, *, row: dict[str, Any] | None
+) -> bool:
+    """Whether `info` may make or unmake admins of a namespace (claim release,
+    adoption): for a restricted one, only as the restricted gate admits it at
+    admin. `row`, the directory row the caller read, restricts too, since it may
+    be newer than the classification snapshot. An unreadable classification
+    refuses. These routes take no delegated token (no org role is delegated)."""
+    from server.auth.authz import Role, restricted_allows
+
+    try:
+        restricted = await is_restricted(org, namespace)
+    except ClassificationUnavailable:
+        return False
+    if not restricted:
+        if row is None or row.get("classification") != RESTRICTED:
+            return True
+        note_restricted(org, namespace)  # the row is newer: the audit row reads the snapshot
+    return await restricted_allows(info, Role.ADMIN, org, namespace)
+
+
 __all__ = [
     "CLASSIFICATIONS",
     "RESTRICTED",
@@ -141,6 +166,7 @@ __all__ = [
     "config_classification",
     "is_restricted",
     "is_restricted_cached",
+    "may_administer",
     "note_restricted",
     "reset",
     "restricted_set",

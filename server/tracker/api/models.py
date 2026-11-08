@@ -700,8 +700,8 @@ class TrackerSourceInspectInput(BaseModel):
     plus a first mapping of it onto loom's logical model. Writes nothing."""
 
     org: str = Field(..., description="The org.")
-    # a registered tracker, by name: its stored endpoint and credential (the
-    # registrant or a namespace admin) — the page edits a mapping without
+    # a registered tracker, by name: its stored endpoint and credential (an
+    # admin of one of its namespaces) — the page edits a mapping without
     # ever seeing the password; otherwise the connection fields below
     name: str = Field("", description="A registered tracker to inspect with its own credential.")
     host: str = Field("", description="ClickHouse host (a URL is accepted).")
@@ -736,8 +736,8 @@ class TrackerSourceInspectOutput(BaseModel):
 
 class TrackerSourceSetMappingInput(BaseModel):
     """Change a registered tracker's mapping, with the same
-    checks as add; `mapping: null` returns it to the views case. The
-    registrant or an admin of one of its namespaces."""
+    checks as add; `mapping: null` returns it to the views case. An admin
+    of every one of its namespaces may."""
 
     org: str = Field(..., description="The org.")
     name: str = Field(..., description="The tracker's name.")
@@ -778,8 +778,8 @@ class TrackerSourceCheckOutput(BaseModel):
 
 
 class TrackerSourceRotateInput(BaseModel):
-    """Replace a registered source's credential. The
-    registrant or an admin of one of its namespaces may; the new credential
+    """Replace a registered source's credential. An admin of every one
+    of its namespaces may; the new credential
     passes the same read-only and contract checks first."""
 
     org: str = Field(..., description="The org.")
@@ -798,9 +798,9 @@ class TrackerSourceRotateOutput(BaseModel):
 
 
 class TrackerSourceRemoveInput(BaseModel):
-    """Retire a registered tracker source and its namespaces. The
-    registrant or an admin of one of its namespaces may; `confirm` must equal
-    the name. A source the deployment's configuration owns is changed there."""
+    """Retire a registered tracker source and its namespaces. An admin of
+    every one of its namespaces may; `confirm` must equal the name. A source
+    the deployment's configuration owns is changed there."""
 
     org: str = Field(..., description="The org.")
     name: str = Field(..., description="The source name.")

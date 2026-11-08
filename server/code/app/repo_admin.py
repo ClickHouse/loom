@@ -17,6 +17,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from server.auth import authz
 from server.auth.context import current_caller
 from server.code.api.models_repos import (
     CodeRepoAddBranchInput,
@@ -30,9 +31,12 @@ from server.code.api.models_repos import (
 )
 from server.code.app.common import require_code_intel
 from server.code.app.index import repo_registry as reg
+from server.code.app.index.bootstrap import awaits_first_index, restrict_entry
+from server.code.domain.index import repos as code_repos
+from server.code.domain.index.remote import repo_key
 from server.code.domain.index.repos import registry_repos
 from server.core.ch import own_write_reads
-from server.core.errors import AuthInsufficientError, ValidationError
+from server.core.errors import AuthInsufficientError, BackendUnavailableError, ValidationError
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -84,6 +88,15 @@ async def _namespace_taken(org: str, namespace: str) -> bool:
         return True
     subject = current_caller()[0] or auth_off_subject()
     return not await namespace_claimable(org, namespace, subject)
+
+
+def _indexed(org: str, repo: str, git_remote: str, branch: str) -> bool:
+    """`repo` @ `branch` is already indexed in the org, under whatever namespace."""
+    want = repo_key(repo, git_remote)
+    return any(
+        c.org == org and c.git_branch == branch and repo_key(c.repo, c.git_remote) == want
+        for c in code_repos.configured_repos()
+    )
 
 
 async def _make_maintainer(org: str, namespace: str, subject: str) -> None:
@@ -163,15 +176,16 @@ async def _register(
     )
 
 
-def _indexed_branches(org: str, repo: str) -> list[dict[str, str]]:
-    """The branches of `repo` already indexed in `org` (config + registry)."""
-    from server.code.domain.index.repos import configured_repos
-
-    out = [
-        {"branch": c.git_branch, "namespace": c.namespace}
-        for c in configured_repos()
-        if c.org == org and c.repo.lower() == repo.lower()
-    ]
+async def _indexed_branches(org: str, repo: str, git_remote: str) -> list[dict[str, str]]:
+    """The branches of the repository already indexed in `org` (config + registry). The
+    namespace is named only where the caller may read it; elsewhere it is ''."""
+    want = repo_key(repo, git_remote)
+    out = []
+    for c in code_repos.configured_repos():
+        if c.org != org or repo_key(c.repo, c.git_remote) != want:
+            continue
+        readable = await authz.row_in_scope(org, c.namespace, hides_answer=False)
+        out.append({"branch": c.git_branch, "namespace": c.namespace if readable else ""})
     return sorted(out, key=lambda x: x["branch"])
 
 
@@ -194,7 +208,7 @@ async def handle_code_repo_remote_branches(input: Any) -> Any:
     except ValueError as e:
         raise ValidationError(str(e), code="REMOTE_REFUSED") from None
     await reg.refresh_db_repos()
-    indexed = _indexed_branches(input.org, repo)
+    indexed = await _indexed_branches(input.org, repo, git_remote)
     taken = {x["branch"] for x in indexed}
     ordered = remote["branches"]  # default, release newest-first, the rest
     q = str(getattr(input, "query", "") or "").strip().lower()
@@ -275,13 +289,10 @@ async def _add_extra_branches(
         if not reg.valid_branch(branch):
             skipped.append({"branch": branch, "reason": "not a branch name git accepts"})
             continue
-        namespace = reg.namespace_for(repo, branch)
-        if await _namespace_taken(input.org, namespace):
-            skipped.append({"branch": branch, "reason": f"already indexed as {namespace}"})
-            continue
         if await reg.active_count(input.org) >= settings.code_self_service_max_repos:
             skipped.append({"branch": branch, "reason": "the org's repository quota is reached"})
             continue
+        # The remote first: what is indexed here is told only to a caller who reads it.
         try:
             head = await reg.remote_has_branch(
                 repo,
@@ -291,6 +302,14 @@ async def _add_extra_branches(
             )
         except ValueError as e:
             skipped.append({"branch": branch, "reason": str(e)})
+            continue
+        namespace = reg.namespace_for(repo, branch)
+        if _indexed(input.org, repo, git_remote, branch):
+            # The namespace that holds it may be restricted: it is not named.
+            skipped.append({"branch": branch, "reason": "already indexed here"})
+            continue
+        if await _namespace_taken(input.org, namespace):
+            skipped.append({"branch": branch, "reason": f"the namespace {namespace} is taken"})
             continue
         out = await _register(
             org=input.org,
@@ -321,6 +340,13 @@ async def handle_code_repo_add(input: CodeRepoAddInput) -> CodeRepoAddOutput:
         repo, git_remote, provider = reg.normalize_remote(input.repo)
     except ValueError as e:
         raise ValidationError(str(e), code="BAD_REPO") from None
+    # Before any remote job: a full org spends none.
+    if await reg.active_count(input.org) >= settings.code_self_service_max_repos:
+        raise ValidationError(
+            f"this org already holds {settings.code_self_service_max_repos} repository indexes; "
+            "retire one or ask the operator to raise the limit",
+            code="REPO_QUOTA",
+        )
     token = input.access_token
     branch = input.branch.strip()
     if not branch:
@@ -338,22 +364,24 @@ async def handle_code_repo_add(input: CodeRepoAddInput) -> CodeRepoAddOutput:
     classification = input.classification
     # A restricted repository is never open: a maintainer approves each reader.
     join_policy = "approval" if classification == "restricted" else input.join_policy
-    namespace = reg.namespace_for(repo, branch)
-    if await _namespace_taken(input.org, namespace):
-        raise ValidationError(
-            f"{repo} @ {branch} is already indexed here as {namespace}; join it instead",
-            code="REPO_EXISTS",
-        )
-    if await reg.active_count(input.org) >= settings.code_self_service_max_repos:
-        raise ValidationError(
-            f"this org already holds {settings.code_self_service_max_repos} repository indexes; "
-            "retire one or ask the operator to raise the limit",
-            code="REPO_QUOTA",
-        )
+    # The remote first: what is indexed here is told only to a caller who reads it.
     try:
         head = await reg.remote_has_branch(repo, branch, token, git_remote=git_remote)
     except ValueError as e:
         raise ValidationError(str(e), code="REMOTE_REFUSED") from None
+    namespace = reg.namespace_for(repo, branch)
+    # Another replica's entry counts too: the duplicate check reads a fresh registry.
+    await reg.refresh_db_repos(force=True)
+    if _indexed(input.org, repo, git_remote, branch):
+        # The namespace that holds it may be restricted: it is not named.
+        raise ValidationError(
+            f"{repo} @ {branch} is already indexed here; join it instead", code="REPO_EXISTS"
+        )
+    if await _namespace_taken(input.org, namespace):
+        raise ValidationError(
+            f"the namespace {namespace} that {repo} @ {branch} would get is taken in this org",
+            code="REPO_EXISTS",
+        )
     out = await _register(
         org=input.org,
         namespace=namespace,
@@ -474,18 +502,53 @@ async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepo
     await _require_sandbox()
     _require_same_org(input.org)
     from server.code.domain.index.repos import repo_for_namespace
+    from server.code.store.index import CodeRepo
 
-    await reg.refresh_db_repos()
+    await reg.refresh_db_repos(force=True)
     src: Any = repo_for_namespace(input.org, input.namespace)
     if src is None:
         raise ValidationError(f"{input.namespace} is not a repository index", code="NOT_A_REPO")
     branch = input.branch.strip()
     if not reg.valid_branch(branch):
         raise ValidationError(f"{branch!r} is not a branch name git accepts", code="BAD_BRANCH")
+    if await awaits_first_index(src, CodeRepo()):
+        # The operator may still restrict the entry before its backfill; a branch
+        # added now would be a standard index of the same repository.
+        raise ValidationError(
+            f"{input.namespace} has no first index yet; add its branches after "
+            "`loom code backfill`",
+            code="REPO_NOT_INDEXED",
+        )
+    from server.auth.directory import ClassificationUnavailable
+    from server.core.ch import get_client
+    from server.identity.app.namespace_classification import is_restricted
+    from server.identity.domain.join_policy import effective_join_policy
+
+    # The entry may be restricted or closed by its directory row alone; the branch
+    # is too. Read before any remote call, so an outage refuses with no traffic.
+    try:
+        restricted = await is_restricted(input.org, input.namespace)
+    except ClassificationUnavailable:
+        raise BackendUnavailableError(
+            f"the classification of {input.namespace} cannot be read; retry"
+        ) from None
+    # A failed read raises the client's own backend error: nothing is registered.
+    row = await _directory_row(get_client(), input.org, input.namespace)
+    # The row read here may be newer than the classification snapshot.
+    restricted = restricted or (row is not None and row.get("classification") == "restricted")
+    if row is not None and effective_join_policy(row) == "closed":
+        join_policy = "closed"
+    elif src.public and not restricted:
+        join_policy = "open"
+    else:
+        join_policy = "approval"
     namespace = reg.namespace_for(src.repo, branch)
+    if _indexed(input.org, src.repo, src.git_remote, branch):
+        raise ValidationError(f"{src.repo} @ {branch} is already indexed here", code="REPO_EXISTS")
     if await _namespace_taken(input.org, namespace):
         raise ValidationError(
-            f"{src.repo} @ {branch} is already indexed here as {namespace}", code="REPO_EXISTS"
+            f"the namespace {namespace} that {src.repo} @ {branch} would get is taken in this org",
+            code="REPO_EXISTS",
         )
     if await reg.active_count(input.org) >= settings.code_self_service_max_repos:
         raise ValidationError(
@@ -498,11 +561,6 @@ async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepo
         )
     except ValueError as e:
         raise ValidationError(str(e), code="REMOTE_REFUSED") from None
-    join_policy = (
-        "approval"
-        if src.classification == "restricted"
-        else ("open" if getattr(src, "public", False) else "approval")
-    )
     out = await _register(
         org=input.org,
         namespace=namespace,
@@ -510,7 +568,7 @@ async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepo
         git_remote=src.git_remote,
         provider=reg.normalize_remote(src.git_remote)[2],
         branch=branch,
-        classification=src.classification,
+        classification="restricted" if restricted else src.classification,
         join_policy=join_policy,
         github_token=src.github_token,
         path_prefixes=list(src.path_prefixes),
@@ -598,8 +656,9 @@ async def handle_code_repo_set_access(input: Any) -> Any:
     on the namespace) sets its classification and join policy. The decision
     lands as a registry row that wins over the deployment's entry
     (`repos._with_registry`) and as a new version of the directory row, so
-    both authorization inputs agree; the classification cache is dropped so
-    this process enforces at once, and every other process re-reads the row
+    both authorization inputs agree; this process enforces at once (a restriction
+    joins the classification snapshot, a widening drops it), and every other
+    process re-reads the row
     within `code_repos_refresh_seconds`. Widening restricted → standard
     needs `confirm` = namespace; a restricted index is never `open`."""
     require_code_intel()
@@ -654,9 +713,14 @@ async def handle_code_repo_set_access(input: Any) -> Any:
         )
         await ch.insert("loom.namespaces", [new_row])
         directory_updated = True
-    nc.reset()
     if cls == "restricted":
+        # Joins this process's snapshot at once; a reset first would leave it nothing
+        # to join, and the next request would wait on a directory read instead.
         nc.note_restricted(input.org, input.namespace)
+        # This host's mirror at once; every other host's at its next mirror round.
+        await asyncio.to_thread(restrict_entry, cfg)
+    else:
+        nc.reset()  # a widening drops the stale restricted entry
     return CodeRepoSetAccessOutput(
         org=input.org,
         namespace=input.namespace,

@@ -394,9 +394,13 @@ async def _run_repo(
 
     # Directory row so the namespace shows up (kind=code) in the dashboard. Once per
     # process per repo; failures are logged, never fatal.
+    from server.code.app.index.bootstrap import restrict_if_restricted
     from server.code.app.index.registry import ensure_registered
 
     await ensure_registered(cfg)
+    # Every pass, not once per process: a mirror an older build cloned, or one whose
+    # mode was changed by hand, is tightened once the entry is restricted.
+    await restrict_if_restricted(cfg)
 
     if not await fetch_entry(cfg, git_dir, repo, result):
         return None  # watermark unmoved; supervisor backoff handles cadence

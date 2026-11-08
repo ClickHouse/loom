@@ -126,10 +126,53 @@ export function operatorOwned(source: Pick<TrackerSource, "origin">): boolean {
 
 /** Whether the caller may see the source's admin verbs (a request the token cannot make
  *  is never offered): a registry source the caller maintains, once the write ops
- *  (`tracker.source.add/check/rotate/remove`) are listed by `ops.capabilities`. Out of
- *  scope here; this is the gate the menu will hang from. */
+ *  (`tracker.source.add/check/rotate/remove`) are listed by `ops.capabilities`. Which of
+ *  them it may use is `trackerVerbs`. */
 export function canAdminister(source: Pick<TrackerSource, "namespaces" | "origin">, opsPresent: boolean): boolean {
   return opsPresent && source.origin === "registry" && source.namespaces.some((n) => n.member_role === "admin");
+}
+
+/** The token claims a tracker source's verbs read: its org and flat roles. */
+export type TrackerToken = { org?: string; roles?: string[] } | null;
+
+export interface TrackerVerbs {
+  /** `tracker.source.set_mapping`, `rotate` and `remove`: each changes what every
+   *  namespace of the source reads, so each needs admin on all of them. */
+  manage: boolean;
+  /** Why they are not offered, in words; "" when they are. */
+  reason: string;
+}
+
+const ADMIN_ROLES = new Set(["admin", "org_admin", "platform_admin"]);
+
+/** The tracker source verbs the caller may use, by the rule `server/tracker/app/sources.py`
+ *  (`_authority`) applies: admin on every namespace of the source. A public namespace
+ *  counts when the caller holds admin there (`member_role`). A private (restricted) one
+ *  also needs a token of its org whose own role is admin, as the restricted gate caps
+ *  every op at the token's role: a writer dashboard session cannot manage a private
+ *  tracker; an admin-role token can. The server stays the authority (a scoped or
+ *  delegated token's limits are not here). */
+export function trackerVerbs(
+  source: Pick<TrackerSource, "namespaces">,
+  org: string,
+  token: TrackerToken,
+): TrackerVerbs {
+  const adminToken = !!token && token.org === org && (token.roles ?? []).some((r) => ADMIN_ROLES.has(r.toLowerCase()));
+  const administers = (n: TrackerSourceNamespace) =>
+    n.member_role === "admin" && (n.classification !== "restricted" || adminToken);
+  const manage = source.namespaces.length > 0 && source.namespaces.every(administers);
+  if (manage) return { manage, reason: "" };
+  // The token is the reason only when the session administers every namespace.
+  const blockedPrivate =
+    !adminToken &&
+    source.namespaces.every((n) => n.member_role === "admin") &&
+    source.namespaces.some((n) => n.classification === "restricted");
+  return {
+    manage,
+    reason: blockedPrivate
+      ? "A private namespace of this tracker needs an admin-role token of this org; this session's token is not one."
+      : "You do not administer every namespace of this tracker.",
+  };
 }
 
 // ---------------------------------------------------------------------------

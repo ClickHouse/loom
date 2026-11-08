@@ -985,18 +985,44 @@ async def admin_namespace_adopt(
     request: Request,
     input: NamespaceAdoptInput,
 ) -> dict[str, object]:
-    """Install a new admin on a namespace that has no remaining active admin
-    grant. Recovery path for orphaned namespaces. Refuses if the namespace
+    """Install a new admin on a standard namespace that has no remaining active
+    admin grant: the recovery path for an orphaned one. Refuses if the namespace
     already has an active admin — use `grants.create` from that session instead.
-    """
+    A collection, an unregistered name, a restricted namespace the restricted gate
+    refuses the caller at admin and an unreadable classification get one 404; an
+    orphaned restricted namespace is an operator's to repair."""
     # Redundant with the router-level dependency; kept because this handler
     # also needs the verified subject as the audit actor.
     info = await require_org_admin(request)
     refuse_foreign_org(info, input.org, "adopt a namespace in")
     actor = info.subject if info is not None else "dev-admin"
 
+    from server.auth.sharing import is_collection
     from server.identity.app.grants import adopt_namespace
+    from server.identity.app.namespace_classification import may_administer
+    from server.identity.app.registration import namespace_row
+    from server.identity.app.restricted_access import note_restricted_access
 
+    # One 404 for every refusal below, so the answer tells no names apart.
+    not_found = HTTPException(
+        status_code=404,
+        detail={
+            "code": "NAMESPACE_NOT_FOUND",
+            "message": f"{input.namespace!r} is not a namespace of org {input.org!r}",
+        },
+    )
+    # A collection is never adopted (`adopt_namespace`); its name, which may carry
+    # an end user's id, gets the same answer as a missing one.
+    if is_collection(input.namespace):
+        raise not_found
+    row = await namespace_row(input.org, input.namespace)
+    if row is None:
+        raise not_found
+    if info is not None and not await may_administer(info, input.org, input.namespace, row=row):
+        raise not_found
+    await note_restricted_access(
+        info, op="admin.namespace.adopt", org=input.org, namespace=input.namespace, transport="http"
+    )
     now = await adopt_namespace(input.org, input.namespace, input.new_admin, actor=actor)
     if now is None:
         raise HTTPException(

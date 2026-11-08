@@ -17,7 +17,7 @@ Query the audit log (tamper-evident per-row hashes).
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
-| `namespace` | `str \| None` | `None` | When namespace is None, the handler fans out across the caller's accessible namespaces. |
+| `namespace` | `str \| None` | `None` | None: every namespace the caller may read; naming one it cannot read gives an empty page. |
 | `event_type` | `str \| None` | `None` | exact match |
 | `since` | `datetime \| None` | `None` | only rows ts >= since |
 | `limit` | `int` | `50` | At most this many rows per page, newest first; 1 to 500. |

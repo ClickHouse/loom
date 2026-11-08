@@ -99,6 +99,7 @@ def _cfg(namespace: str, branch: str, repo: str = "ClickHouse/ClickHouse") -> An
         org=ORG,
         namespace=namespace,
         repo=repo,
+        git_remote="",
         git_branch=branch,
         classification="standard",
         public=True,
@@ -143,9 +144,13 @@ async def test_remote_branches_names_default_suggested_indexed_and_cap(monkeypat
     async def _count(org: str, **kw):
         return 3
 
+    async def _readable(org: str, ns: str, *a: Any, **k: Any) -> bool:
+        return True  # the namespaces' scoping: test_code_repo_self_service.py
+
     monkeypatch.setattr(reg, "remote_branches", _remote)
     monkeypatch.setattr(reg, "refresh_db_repos", _refresh)
     monkeypatch.setattr(reg, "active_count", _count)
+    monkeypatch.setattr("server.auth.authz.row_in_scope", _readable)
     monkeypatch.setattr(
         repos,
         "configured_repos",
@@ -339,7 +344,7 @@ async def test_add_registers_every_chosen_branch_and_skips_per_branch(monkeypatc
         "remote_head": "sha-26.8",
     }
     assert {s["branch"]: s["reason"] for s in out.skipped} == {
-        "26.6": "already indexed as code-clickhouse-26-6",
+        "26.6": "the namespace code-clickhouse-26-6 is taken",
         "ghost": "ClickHouse/ClickHouse has no branch named 'ghost'",
         "..bad": "not a branch name git accepts",
     }

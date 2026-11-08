@@ -53,6 +53,7 @@ async def run_pass() -> CodePrHistoryResult:
 
 
 async def _run(result: CodePrHistoryResult) -> None:
+    from server.code.app.index.bootstrap import awaits_first_index
     from server.code.app.index.pass_budget import rotate_to
     from server.code.domain.index.repos import configured_repos
     from server.code.store.index import CodeRepo
@@ -86,6 +87,9 @@ async def _run(result: CodePrHistoryResult) -> None:
             result.note = f"PR history is not available for {cfg.provider} remotes"
             continue
         try:
+            if await awaits_first_index(cfg, repo):
+                result.note = f"{cfg.label}: no git_head watermark yet; run `loom code backfill`"
+                continue
             await _sync_repo(cfg, repo, result)
             await _sync_items(cfg, repo, result)
             await _fill_pr_heads(cfg, repo, result)

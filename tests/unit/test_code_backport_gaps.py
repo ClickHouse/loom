@@ -49,6 +49,7 @@ class _Cfg:
     repo: str = "ClickHouse/ClickHouse"
     git_dir: str = "var/code_repos/clickhouse.git"
     classification: str = "standard"
+    source: str = "config"
 
 
 def _groups() -> list[pp.HunkGroup]:
@@ -818,8 +819,11 @@ class _GapsRepo:
 
 
 class _CodeRepo:
-    def __init__(self, prs: list[int]) -> None:
-        self.prs = prs
+    def __init__(self, prs: list[int], head: str = "a" * 40) -> None:
+        self.prs, self.head = prs, head
+
+    async def get_state(self, org, ns, key):
+        return self.head if key == "git_head" else ""
 
     async def labelled_fixes_in_window(
         self, org, ns, *, since, label_prefix="pr-must-backport", limit=2000
@@ -1013,6 +1017,27 @@ async def test_pass_computes_labelled_fixes_writes_rows_in_batches_and_counts(wo
         "wall_ms",
         "resume",
     }
+
+
+@pytest.mark.asyncio
+async def test_a_trunk_before_its_first_index_computes_nothing(worker_cfg) -> None:
+    calls: list[Any] = []
+
+    async def _runner(req):
+        calls.append(req)
+        return _out(req.pr_number)
+
+    repo = _GapsRepo(stamps={})
+    result = wk.BackportGapsResult()
+    await wk._run(
+        result,
+        now=NOW,
+        repo=repo,
+        code_repo=_CodeRepo([101], head=""),
+        source_factory=lambda org, ns: _WantedSource([105]),
+        runner=_runner,
+    )
+    assert calls == [] and repo.inserted == [] and result.namespaces == 0
 
 
 @pytest.mark.asyncio

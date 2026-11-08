@@ -410,7 +410,7 @@ reading needs a grant or a token that names it.
   namespace with the token it holds.
 - Refreshing (`writer`) and administering (`admin`) always come from grants.
 - An unowned code namespace is adopted with `POST /v1/admin/namespace.adopt` (or
-  `loom namespaces-adopt`).
+  `loom namespaces-adopt`); a restricted one never is (below).
 
 See [code index repositories](../features/code-index/repositories.md).
 
@@ -450,6 +450,11 @@ exists. If the classification cannot be read, access is denied.
 - `POST /v1/admin/token.mint`, like every [delegated](#delegated-tokens) mint, names a
   restricted namespace only for a caller holding a grant there at or above the requested
   role (pass `ns_roles` for per-namespace roles).
+- `POST /v1/admin/namespace.adopt` and `POST /v1/admin/claim_release` answer
+  `NAMESPACE_NOT_FOUND` on a restricted namespace the restricted gate refuses the caller at
+  admin (a token naming it and a direct admin grant), so an org admin cannot adopt a
+  restricted namespace that has no admin. Adopting a name with no directory row, or one
+  whose classification cannot be read, gets the same answer.
 - `LOOM_RESTRICTED_SERVE=false` refuses every restricted read while ingest continues.
 
 > **Warning:** `loom mint-token` signs locally and is not checked against grants. Whoever

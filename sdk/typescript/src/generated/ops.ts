@@ -6847,7 +6847,7 @@ export interface MemoryStatusesOutput {
 
 export interface MemorySweepExpiredInput {
   org: string;
-  namespace?: string | null;
+  namespace: string;
   limit?: number;
   dry_run?: boolean;
 }

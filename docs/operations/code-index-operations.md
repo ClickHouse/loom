@@ -101,8 +101,45 @@ LOOM_CODE_REPOS_JSON='[
 | `git_extra_branches`                 | globs of other remote branches the shared mirror should carry                                                                 |
 | `github_token`                       | per-entry override of `LOOM_CODE_GITHUB_TOKEN`                                                                                |
 
+Name a `git_remote` host in ASCII, as punycode for an internationalised name: a page
+add refuses any other, so the two spell a host alike.
+
+An entry whose `git_remote` is a local path or `file://` mirror is known by its `repo`,
+which a page add of the same repository must match: name a mirror of a repository on a
+host other than GitHub as `host/owner/name` in `repo`.
+
 `public` is read when `loom code init` first registers the namespace; editing it later
 does not change the join policy, which a maintainer changes with `code.repo.set_access`.
+A configured entry starts with no maintainer. `POST /v1/admin/namespace.adopt` refuses a
+restricted namespace, and no route or command installs the first direct grant on a
+configured restricted namespace, so a private repository is set up in this order:
+
+1. Configure the entry without `classification`, with `public` false (the default) and no
+   `org_readable`, and leave `LOOM_CODE_ORG_READABLE` at its default, `false`. Until step
+   3 the namespace is standard: a grant there, or a token whose claim covers it (a `*`
+   claim included, not only one naming it), reads it.
+2. Run `loom code init` for it, which writes the namespace's directory row (adopt answers
+   `NAMESPACE_NOT_FOUND` before that), and adopt it for its maintainer. Do not run
+   `loom code backfill` (or any `loom code backfill-*` command) yet: a configured entry
+   gets no first index, PR history, backport verdicts or extra branches
+   (`code.repo.add_branch` answers `REPO_NOT_INDEXED`) until the backfill writes its
+   `git_head` watermark, so nothing of the repository is indexed until you run it. The
+   entry's git mirror is cloned meanwhile, and its history reads pass the same gate, so
+   finish step 3 before handing out `*` tokens of the org.
+3. The maintainer restricts it with `code.repo.set_access` (`classification: "restricted"`
+   and `join_policy: "approval"` or `"closed"`; both are required); then set
+   `classification: "restricted"` on the entry as well, so either input restricts, and run
+   `loom code backfill`. Mirrors and compiler-tier checkouts are created at mode 0700;
+   one an older build created, or whose mode was changed by hand, is set to 0700 at once
+   on the host that serves the call, and on every other host that holds it at that
+   host's next mirror round, once the host reads the namespace's directory row as
+   restricted (within half a minute).
+
+The restriction is per branch: each branch's index is its own namespace. A person whose
+own token reads the repository on its host can still add another of its branches with
+`code.repo.add`, into a new standard namespace; that person can already read the
+repository. Set up each configured branch of a private repository in the order above.
+
 An entry that names no `scip_producer` keeps `scip_checkout_dir` for C/C++ (see
 [Compiler tier](#compiler-tier)), so name the producer when you prepare that tree for
 another language.

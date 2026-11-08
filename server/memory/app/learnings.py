@@ -105,42 +105,30 @@ async def handle_learnings_quality(
 ) -> LearningsQualityOutput:
     """Per-namespace approve-ratio rollup of the learnings queue.
 
-    Scope: the caller sees ONLY namespaces they have access to (JWT
-    namespaces ∪ accepted grants), otherwise the panel leaks candidate
-    counts + queue depths across the org's namespaces.
+    Scope: the namespaces the caller may read, as every org-wide rollup
+    scopes them (`resolve_org_scope`: an org admin's view leaves out the
+    restricted namespaces and collections it cannot read); a named namespace
+    the transport gate has checked. Otherwise the panel leaks candidate
+    counts and queue depths across the org's namespaces.
     """
-    from server.auth.context import current_auth
+    from server.auth.context import resolve_org_scope
     from server.core.ch import get_client
 
-    # ORG_ADMIN+ sees org-wide; everyone else only their member namespaces.
-    # No auth context (single-user dev) falls through to org-wide.
-    from server.operations.base import Role as _R
-
-    allowed_ns: list[str] | None = None
-    auth = current_auth()
-    if auth is not None and auth.subject:
-        platform_view = any(r >= _R.ORG_ADMIN for r in getattr(auth, "roles", []) or [])
-        if not platform_view:
-            from server.auth.context import rollup_member_namespaces
-
-            allowed_ns = await rollup_member_namespaces(input.org)
-
-    ch = get_client()
     params: dict[str, Any] = {"org": input.org}
     where = "org = {org:String}"
     if input.namespace:
         where += " AND namespace = {ns:String}"
         params["ns"] = input.namespace
-    elif allowed_ns is not None:
-        # No namespace access → empty result, not WHERE namespace IN ().
-        if not allowed_ns:
+    else:
+        scope = await resolve_org_scope(input.org)
+        if not scope.accessible:
             return LearningsQualityOutput(rows=[])
-        where += " AND namespace IN {ns_list:Array(String)}"
-        params["ns_list"] = allowed_ns
+        where += scope.where
+        params.update(scope.params)
     if input.source_kind:
         where += " AND source_kind = {sk:String}"
         params["sk"] = input.source_kind
-    rows = await ch.query_all(
+    rows = await get_client().query_all(
         f"""
         SELECT
             namespace,

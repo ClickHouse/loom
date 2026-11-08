@@ -5,10 +5,11 @@ namespaces would be invisible to the dashboard's sidebar, un-mintable from Setup
 indistinguishable from memory namespaces. Each ingest pass calls
 ensure_registered() once per process per repo entry: if no directory row exists, insert
 one with kind='code' and visibility='private' (read access stays grant-driven — see
-docs). An existing row is never rewritten here — with one exception: when the config
-classifies the entry `restricted` and the row says `standard`, the row is re-inserted in
-full, narrowed. Narrowing is the only direction this module ever moves a row; widening
-is the operator's.
+docs). An existing row is re-inserted in full in three cases only: the config says the
+repository is public and the row is a standard one not yet open (join_policy=open); the
+config classifies the entry `restricted` and the row does not (narrowed); a maintainer's
+access row says `standard` and the row says restricted (widened, the maintainer's own
+decision). The entry's mirror and checkouts are tightened by the ingest pass, not here.
 """
 
 from __future__ import annotations

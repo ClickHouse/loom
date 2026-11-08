@@ -69,7 +69,7 @@ def test_operator_entry_gets_a_checkout_per_tier_scip_clang_included(tmp_path: P
     assert actual == tmp_path / "operator-owned.python" and (actual / ".git").exists()
 
 
-def test_a_checkout_that_cannot_be_created_is_reported_with_gits_reason(tmp_path: Path) -> None:
+def test_a_checkout_that_cannot_be_created_is_reported_with_the_reason(tmp_path: Path) -> None:
     bare = _bare_repo(tmp_path)
     (tmp_path / "a-file").write_text("")
     cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "a-file" / "checkout"))
@@ -77,7 +77,7 @@ def test_a_checkout_that_cannot_be_created_is_reported_with_gits_reason(tmp_path
     _actual, _bare, missing = resolve_checkout(cfg, "python")
 
     assert missing is not None and missing.startswith("checkout missing at ")
-    assert "(git init: " in missing
+    assert "(mkdir failed)" in missing  # made 0700 before `git init` runs
 
 
 @pytest.mark.asyncio

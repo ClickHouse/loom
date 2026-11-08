@@ -1050,13 +1050,21 @@ async def _tune_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
     await store.tagged_in_other_categories(ORG, NS, "billing", scope=scope, ch=ch)
 
 
+# The handlers whose org-wide reads `resolve_org_scope` scopes: an org admin's
+# `*` claim renders the whole-org branch, the corpus's listed claim the member one.
+_ORG_ROLLUPS = frozenset({"cost", "learnings", "audit", "agents"})
+
+
 def cases() -> list[Case]:
     out = [
         Case(
             f"handlers.{name.lstrip('_')}",
             module,
             _handler_drive(module),
-            {"filled": (False,) if name in _FILL_INERT else (False, True)},
+            {
+                "filled": (False,) if name in _FILL_INERT else (False, True),
+                **({"claim": ("listed", "*")} if name in _ORG_ROLLUPS else {}),
+            },
             rows=_memory_ops_rows if name == "_memory_ops" else _HANDLER_ROWS,
         )
         for name, module in HANDLER_MODULES

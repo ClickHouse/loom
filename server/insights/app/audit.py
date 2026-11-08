@@ -116,45 +116,23 @@ async def handle_audit_list(input: AuditListInput) -> AuditListOutput:
     scope_where = ""
     params: dict[str, Any] = {}
     if input.namespace:
-        # A supplied namespace must still be one the caller may see. The op sets
-        # skip_namespace_authz, so the transport gate doesn't cover this branch —
-        # without the check a non-admin could read any namespace's audit trail by
-        # naming it. Mirror the org-scope rule: a restricted namespace the caller
-        # fails the two-factor check for is hidden from everyone, admins and `*`
-        # tokens included (resolve_org_scope drops the same set); otherwise
-        # admins (and auth-off) pass and a non-admin is held to their own
-        # namespaces.
-        from server.auth.authz import claim_cap, may_be_restricted, restricted_allows
-        from server.auth.context import (
-            current_auth,
-            resolve_my_namespaces,
-        )
-        from server.auth.fail_closed import refused_unverified, reset
-        from server.operations.base import Role
+        # The op sets skip_namespace_authz so the org-wide read reaches the
+        # handler; a named namespace takes the gate here, as a read of it would
+        # (restricted, collections, delegated tokens), and an empty page when it
+        # refuses, so the answer confirms nothing.
+        from server.auth.authz import row_in_scope
+        from server.auth.context import current_auth
+        from server.identity.app.restricted_access import note_restricted_access
 
-        auth = current_auth()
-        if auth is not None and auth.subject:
-            # The caller named this one: one check decides it, and marks the
-            # request when a read it needed failed.
-            if await may_be_restricted(input.org, input.namespace) and not await restricted_allows(
-                auth, Role.VIEWER, input.org, input.namespace
-            ):
-                return AuditListOutput(rows=[], next_cursor=None)
-            is_admin = any(
-                r.value >= Role.ORG_ADMIN.value for r in getattr(auth, "roles", []) or []
-            )
-            if not is_admin:
-                # Covered if the JWT reaches the namespace — can_access honours
-                # the `*` org/namespace wildcards (operator tooling) — or a
-                # grant elevates the caller into it.
-                reset()
-                covered = (
-                    auth.can_access(input.org, input.namespace)
-                    and await claim_cap(auth, input.org, input.namespace) != 0
-                ) or input.namespace in await resolve_my_namespaces(input.org)
-                if not covered:
-                    refused_unverified()
-                    return AuditListOutput(rows=[], next_cursor=None)
+        if not await row_in_scope(input.org, input.namespace):
+            return AuditListOutput(rows=[], next_cursor=None)
+        await note_restricted_access(
+            current_auth(),
+            op="audit.list",
+            org=input.org,
+            namespace=input.namespace,
+            transport="op",
+        )
         scope_where = " AND namespace = {ns:String}"
         params["ns"] = input.namespace
     else:

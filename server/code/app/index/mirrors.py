@@ -38,6 +38,7 @@ from server.code.app.index.bootstrap import (
     mirror_job,
     mirror_ready,
     network_refusal,
+    restrict_if_restricted,
 )
 from server.code.app.index.mirror_locks import fetch_lock_path, partial_mirror, try_lock
 from server.code.domain.index import repos
@@ -264,6 +265,8 @@ async def host_round() -> None:
     for git_dir, cfgs in _groups(repos.configured_repos()).items():
         if not await asyncio.to_thread(os.path.isdir, git_dir):
             continue
+        for cfg in cfgs:
+            await restrict_if_restricted(cfg)
         async with _host_lock(fetch_lock_path(git_dir)) as held:
             if held:
                 await _fetch_round(git_dir, cfgs)

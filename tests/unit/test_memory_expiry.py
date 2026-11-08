@@ -265,6 +265,80 @@ def test_sweep_op_is_admin_and_worker_is_registered() -> None:
     assert s.memory_expiry_sweep_enabled is True and s.memory_expiry_sweep_interval_seconds == 300
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"org": "acme"},
+        {"org": "acme", "namespace": ""},
+        {"org": "acme", "namespace": "-"},
+        {"org": "acme", "namespace": "  "},
+    ],
+)
+def test_sweep_op_names_the_namespace_it_sweeps(body: dict[str, str]) -> None:
+    """With no namespace the gate checked the caller's role only, and an admin of
+    one namespace swept, and sampled, every namespace of the org. The op sweeps
+    one named namespace, which the gate checks; the worker sweeps them all."""
+    from pydantic import ValidationError
+
+    from server.memory.api.models_crud import MemorySweepExpiredInput
+
+    with pytest.raises(ValidationError):
+        MemorySweepExpiredInput(**body)
+    assert MemorySweepExpiredInput(org="acme", namespace="ns").namespace == "ns"
+
+
+@pytest.mark.parametrize("named", ["ns-a", "ns-b"])
+def test_the_gate_holds_a_sweep_to_the_namespace_the_admin_token_covers(
+    monkeypatch: pytest.MonkeyPatch, named: str
+) -> None:
+    """Through the transport gate: an admin token of ns-a sweeps ns-a, and naming
+    ns-b (where it holds no grant) is refused before the handler runs."""
+    import asyncio
+
+    from server.auth import authz
+    from server.auth.jwt import AuthInfo
+    from server.operations.base import Role
+    from server.operations.registry import ALL_OPERATIONS
+    from server.transport import gates
+
+    async def no_cap(*a: object, **k: object) -> None:
+        return None
+
+    async def standard(org: str, namespace: str) -> bool:
+        return False
+
+    async def no_grant(org: str, namespace: str, subject: str) -> None:
+        return None
+
+    async def admitted(*a: object, **k: object) -> None:
+        return None
+
+    monkeypatch.setattr(authz, "claim_cap", no_cap)
+    monkeypatch.setattr(authz, "may_be_restricted", standard)
+    monkeypatch.setattr(authz, "grant_role_for", no_grant)
+    # What an admitted call leaves (the restricted-access audit, first-write
+    # registration) writes to ClickHouse; the gate's decision is what is tested.
+    monkeypatch.setattr(gates, "_admitted", admitted)
+    op = next(o for o in ALL_OPERATIONS if o.name == "memory.sweep_expired")
+    token = AuthInfo(
+        subject="sa:ops",
+        org="acme",
+        namespaces=("ns-a",),
+        roles=(Role.ADMIN,),
+        is_service_account=True,
+    )
+    target = gates.authz_target(op, org="acme", namespace=named, auth=token)
+
+    async def run() -> None:
+        await gates.authorize(op, token, target, transport="http")
+
+    if named == "ns-a":
+        asyncio.run(run())
+    else:
+        with pytest.raises(PermissionError):
+            asyncio.run(run())
+
+
 # --- a namespace's table TTL owns its rows; loom sets no expiry ---
 
 

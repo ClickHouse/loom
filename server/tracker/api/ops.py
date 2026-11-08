@@ -215,7 +215,7 @@ tracker_source_inspect = Operation(
     skip_namespace_authz=True,
     maturity="experimental",
 )
-# The registrant or a namespace admin (checked in the handler).
+# An admin of every namespace of the source (checked in the handler).
 tracker_source_set_mapping = Operation(
     name="tracker.source.set_mapping",
     input_model=TrackerSourceSetMappingInput,
@@ -255,8 +255,8 @@ tracker_source_check = Operation(
     deployment_scoped=True,
     maturity="experimental",
 )
-# rotate / remove: the handler requires the registrant or an admin of one of
-# the source's namespaces (an org-level op has no namespace for the gate)
+# rotate / remove: the handler requires admin on every namespace of the source
+# (`sources._authority`); an org-level op has no namespace for the transport gate
 tracker_source_rotate = Operation(
     name="tracker.source.rotate",
     input_model=TrackerSourceRotateInput,

@@ -3,6 +3,7 @@ import { ApiError } from "./errors";
 import { joinState } from "./joinActions";
 import {
   canAdminister,
+  trackerVerbs,
   freshnessOf,
   isOpAbsent,
   mappingProblems,
@@ -118,6 +119,34 @@ describe("sortSources, freshnessOf, namespaceLabel, canAdminister", () => {
     );
     expect(canAdminister(source({ origin: "config", namespaces: [ns({ member_role: "admin" })] }), true)).toBe(false);
     expect(canAdminister(source({ namespaces: [ns({ member_role: "admin" })] }), true)).toBe(false);
+  });
+});
+
+describe("trackerVerbs", () => {
+  const pub = ns({ namespace: "tracker-pub", member_role: "admin" });
+  const priv = ns({ namespace: "tracker-priv", classification: "restricted", member_role: "admin" });
+  const writer = { org: "dev", roles: ["writer"] };
+  const admin = { org: "dev", roles: ["admin"] };
+
+  it("a writer session holding the grants manages a public tracker", () => {
+    expect(trackerVerbs(source({ namespaces: [pub] }), "dev", writer)).toEqual({ manage: true, reason: "" });
+  });
+  it("a private namespace needs an admin-role token of the org, whatever the grant", () => {
+    const mixed = source({ namespaces: [pub, priv] });
+    const v = trackerVerbs(mixed, "dev", writer);
+    expect(v.manage).toBe(false);
+    expect(v.reason).toMatch(/admin-role token of this org/);
+    expect(trackerVerbs(mixed, "dev", admin)).toEqual({ manage: true, reason: "" });
+    expect(trackerVerbs(mixed, "dev", { org: "other", roles: ["admin"] }).manage).toBe(false);
+    expect(trackerVerbs(mixed, "dev", null).manage).toBe(false);
+  });
+  it("managing needs every namespace, public ones too", () => {
+    const notPub = ns({ namespace: "tracker-pub2", member_role: "viewer" });
+    for (const token of [admin, writer]) {
+      const v = trackerVerbs(source({ namespaces: [pub, notPub, priv] }), "dev", token);
+      expect(v.manage).toBe(false);
+      expect(v.reason).toMatch(/every namespace/);
+    }
   });
 });
 

@@ -30,6 +30,7 @@ import {
 import { axeViolations, unlabeledControls } from "../test/axe";
 import { proposeName, RegisterTrackerSourceDialog, RetireSourceDialog } from "./TrackerSourceDialogs";
 import { TrackersPanel } from "../views/TrackersPanel";
+import { useStore } from "../lib/state";
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
@@ -623,6 +624,32 @@ describe("the Trackers list", () => {
     expect(await within(rows[0]).findByRole("button", { name: "Copy the view draft for edges" })).toBeInTheDocument();
     expect(checkTrackerSource).toHaveBeenCalledWith("dev", "kj");
     expect(await axeViolations(document.body)).toEqual([]);
+  });
+
+  it("disables the verbs a writer session cannot use on a private tracker, and says why", () => {
+    useStore.setState({ whoami: { authenticated: true, subject: "ann", org: "dev", roles: ["writer"] } });
+    const priv = { ...src().namespaces[0], namespace: "tracker-kj-private", classification: "restricted" as const };
+    try {
+      render(
+        <main>
+          <TrackersPanel
+            org="dev"
+            sources={[src({ namespaces: [src().namespaces[0], priv] })]}
+            selfService
+            loading={false}
+            onAdd={() => {}}
+            onChanged={() => {}}
+          />
+        </main>,
+      );
+      for (const name of ["Edit mapping", "Rotate credential", "Retire"]) {
+        expect(screen.getByRole("button", { name })).toBeDisabled();
+      }
+      expect(screen.getByRole("button", { name: "Check now" })).toBeEnabled();
+      expect(screen.getByText(/needs an admin-role token of this org/)).toBeInTheDocument();
+    } finally {
+      useStore.setState({ whoami: null });
+    }
   });
 
   it("with none connected, says how and offers the one button", () => {
