@@ -20,6 +20,7 @@ from server.code.app.index.gitrepo import auth_env
 from server.code.app.index.sandbox import run_job
 from server.code.app.index.tier_health import ToolOutputError
 from server.code.app.index.untrusted_files import read_checkout_file, read_package_json
+from server.code.domain.index.tier_health import ERROR_CHARS
 from server.settings import settings
 
 LOCKFILES = (
@@ -139,6 +140,7 @@ async def prepare_dependencies(
     # An interrupted install may have created node_modules already. Keep a
     # pending marker until every root succeeded so the next pass retries it.
     await asyncio.to_thread(marker.write_text, "installing")
+    timeout_s = settings.code_scip_ts_delta_timeout_seconds
     for root in roots:
         command, extra_env = await asyncio.to_thread(_install_command, checkout, root)
         # Do not pass the server environment (JWT, provider and ClickHouse keys).
@@ -160,7 +162,7 @@ async def prepare_dependencies(
             done = await run_job(
                 command,
                 env=install_env,
-                timeout_s=settings.code_scip_ts_delta_timeout_seconds,
+                timeout_s=timeout_s,
                 writable=[checkout],
                 readonly=[checkout / ".git"],
                 cwd=root,
@@ -169,14 +171,16 @@ async def prepare_dependencies(
             )
         except TimeoutError:
             raise ToolOutputError(
-                "TypeScript dependency installation timed out after "
-                f"{settings.code_scip_ts_delta_timeout_seconds}s in {root}"
+                f"TypeScript dependency installation timed out after {timeout_s}s in {root}"
             ) from None
         if done.returncode != 0:
-            tail = done.stdout.decode("utf-8", "replace")[-2000:]
-            # Last, so the record, which keeps the end of the error, keeps it too.
-            raise ToolOutputError(
-                f"{tail}\nTypeScript dependency installation failed in {root} "
+            summary = (
+                f"TypeScript dependency installation failed in {root} "
                 f"({command[0]}, exit {done.returncode})"
             )
+            # The summary first, for readers of the first line; then as much of the
+            # output's end as the tier-health record keeps beside it.
+            room = max(0, ERROR_CHARS - len(f"{ToolOutputError.__name__}: {summary}\n"))
+            output = done.stdout.decode("utf-8", "replace")[-room:] if room else ""
+            raise ToolOutputError(f"{summary}\n{output}")
     await asyncio.to_thread(marker.write_text, fingerprint)
