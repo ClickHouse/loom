@@ -626,11 +626,12 @@ analyst's password, for its own query id, until its expiry. A statement ClickHou
 refuses is logged with its error message, which can quote the whole statement (an
 unknown column's error quotes the query it was looked up in, the caller's statement
 inside the wrapper), also for a restricted namespace whose ledger drops the text;
-ClickHouse Cloud pins `log_queries_min_type`, so the error rows cannot be left out. The
-probe's refused reads add an error row per allowlisted table, one for the canary and one
-per refused read, at every probe. The deploy delta leaves the analyst's statements out of
-its shapes. The rows a statement returns are stored nowhere; an error can quote a value it failed on, which ClickHouse's
-logs keep ([stored data](#stored-data-and-erasure)).
+ClickHouse Cloud pins `log_queries_min_type`, so the error rows cannot be left out.
+Each probe adds error rows to `system.query_log`: one for each allowlisted table and the
+canary (the unsigned reads) and one for each read it expects refused. The deploy delta
+leaves the analyst's statements out of its shapes. The rows a statement returns are
+stored nowhere; an error can quote a value it failed on, which ClickHouse's logs keep
+([stored data](#stored-data-and-erasure)).
 
 ## Isolation proof
 
