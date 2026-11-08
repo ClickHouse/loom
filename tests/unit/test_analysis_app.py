@@ -111,7 +111,7 @@ def test_a_reserved_scope_read_refused_for_want_of_grants_is_repairable(
     monkeypatch.setattr(
         app.store, "run_statement", _failing("Code: 497. DB::Exception: Not enough privileges")
     )
-    problem, repairable = asyncio.run(app._probe())
+    problem, repairable, _ = asyncio.run(app._probe())
     assert "lacks its grants on" in problem
     assert repairable
 
@@ -121,8 +121,8 @@ def test_a_foreign_permissive_policy_stops_the_repair(
 ) -> None:
     written: list[list[str]] = []
 
-    async def probe() -> tuple[str, bool]:
-        return "memory admits rows in the reserved scope", True
+    async def probe() -> tuple[str, bool, str]:
+        return "memory admits rows in the reserved scope", True, ""
 
     async def yes(*_: Any, **__: Any) -> bool:
         return True
@@ -249,7 +249,7 @@ def test_a_foreign_policy_outlasts_a_clean_probe(
     monkeypatch: pytest.MonkeyPatch, ready: None, caplog: pytest.LogCaptureFixture
 ) -> None:
     # Such a policy widens another user, never the analyst, so the probe passes.
-    monkeypatch.setattr(app, "_probe", _returns(("", False)))
+    monkeypatch.setattr(app, "_probe", _returns(("", False, "")))
     monkeypatch.setattr(app.store, "sealed_secrets", _returns(None))
     monkeypatch.setattr(app.store, "can_manage_access", _returns(True))
     monkeypatch.setattr(app.store, "other_deployments", _returns([]))

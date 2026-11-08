@@ -106,8 +106,6 @@ _LEASE_TTL_S = 60
 _SECRETS_PURPOSE = "analysis.secrets"
 _loaded: tuple[bytes, str] | None = None
 _REPROBE_S = 60.0
-# Names behind the last probe's answer (grants on other tables), for the log.
-_probe_detail = ""
 
 # Whether this process's last probe passed: None = not probed yet.
 _ready: bool | None = None
@@ -377,16 +375,12 @@ async def reprobe() -> None:
         stored = _opened(await store.sealed_secrets())
         if stored is not None and stored != _loaded and await _canary_reads(stored):
             _loaded = stored
-        problem, repairable = await _probe()
-        detail = _probe_detail
+        problem, repairable, detail = await _probe()
         manages = await store.can_manage_access()
         if problem and repairable and manages:
-            blocked, detail = await _write_under_lease()
-            if not blocked:
-                problem = (await _probe())[0]
-                detail = _probe_detail
-            else:
-                problem = blocked
+            problem, detail = await _write_under_lease()
+            if not problem:
+                problem, _, detail = await _probe()
         elif not problem and manages:
             # A policy added since the last write widens other users, not the
             # analyst, so only this check sees it.
@@ -458,29 +452,28 @@ def _scrubbed(text: str) -> str:
 # system.one and the rows of system.tables and system.columns it holds grants
 # on, so the probe asks for tables it must not.
 _PROBE_REFUSED = (
-    "SELECT count() FROM system.query_log",
-    "SELECT count() FROM system.users",
+    ("SELECT count() FROM system.query_log", "system.query_log"),
+    ("SELECT count() FROM system.users", "system.users"),
     # LIMIT 1: a LIMIT 0 statement can finish before ClickHouse checks columns.
-    "SELECT toString(value) FROM {db}.memory LIMIT 1",
+    ("SELECT toString(value) FROM {db}.memory LIMIT 1", "memory.value"),
 )
 _UNKNOWN_SETTING = 115
 
 
-async def _probe() -> tuple[str, bool]:
-    """('', _) when the analyst user is held as the allowlist says, else why
-    not and whether a write of the entities repairs it, with any names behind
-    it left in `_probe_detail` for the log. It runs as the analyst itself, so
-    it needs no access management."""
-    global _probe_detail
-    _probe_detail = ""
+async def _probe() -> tuple[str, bool, str]:
+    """('', _, '') when the analyst user is held as the allowlist says, else
+    why not, whether a write of the entities repairs it, and the names behind
+    it for the log only (`/v1/health` shows the first). It runs as the analyst
+    itself, so it needs no access management."""
     db = store.target_database()
     if _loaded is None:
         return (
             "this replica holds no analyst secrets: loom.analysis_secrets has no row it can open",
             True,
+            "",
         )
     if not await _canary_reads(_loaded):
-        return "the analyst's policies do not accept this replica's key", True
+        return "the analyst's policies do not accept this replica's key", True, ""
     reserved = _scope_extra(boundary.CANARY_ORG, [boundary.CANARY_NAMESPACE])
     for t in boundary.TABLES:
         # Every allowlisted table's sort key leads with (org, namespace), so
@@ -493,7 +486,7 @@ async def _probe() -> tuple[str, bool]:
             )
         except Exception as e:
             if error_code(e) == _ACCESS_DENIED:
-                return f"{boundary.ANALYST_USER} lacks its grants on {t.name}", True
+                return f"{boundary.ANALYST_USER} lacks its grants on {t.name}", True, ""
             raise
         if rows and rows[0][0] != 0:
             # Seen as the analyst, a missing policy (under the server default a
@@ -503,27 +496,32 @@ async def _probe() -> tuple[str, bool]:
                 f"{t.name} admits rows in the reserved scope: {boundary.ANALYST_USER} has no "
                 "scope policy on it, or a row policy Loom did not write widens it",
                 True,
+                "",
             )
-    for sql in _PROBE_REFUSED:
+    for sql, shown in _PROBE_REFUSED:
         try:
             await store.run_statement(sql.format(db=db), password=_password(), extra=reserved)
         except Exception as e:  # noqa: BLE001 — a refusal is the expected answer
             if error_code(e) == _ACCESS_DENIED:
                 continue
-            return f"{boundary.ANALYST_USER} was not refused `{sql}` ({error_kind(e)})", False
-        return f"{boundary.ANALYST_USER} can run `{sql}`: its grants are too wide", True
+            return f"{boundary.ANALYST_USER} was not refused {shown} ({error_kind(e)})", False, ""
+        return f"{boundary.ANALYST_USER} may read {shown}: its grants are too wide", True, ""
     if await store.own_version(password=_password(), extra={}) != boundary.ENTITY_VERSION:
         # Another build's entities: the allowlist checks below are its to make.
-        return "", False
+        return "", False, ""
     for table in [*(t.name for t in boundary.TABLES), boundary.CANARY_TABLE]:
         if not await _signed_only(db, table):
-            return f"{boundary.ANALYST_USER} reads {table} unsigned: it has no scope policy", True
+            problem = f"{boundary.ANALYST_USER} reads {table} unsigned: it has no scope policy"
+            return problem, True, ""
     granted = await store.own_grants(password=_password(), extra={})
     if extra_grants := sorted(granted - boundary.allowed_columns()):
         # The grants can name other databases and tables: they go to the log only.
-        _probe_detail = f"grants: {extra_grants[:5]}"
-        return f"{boundary.ANALYST_USER} holds grants outside the allowlist", True
-    return "", False
+        return (
+            f"{boundary.ANALYST_USER} holds grants outside the allowlist",
+            True,
+            f"grants: {extra_grants[:5]}",
+        )
+    return "", False, ""
 
 
 async def _signed_only(db: str, table: str) -> bool:

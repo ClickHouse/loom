@@ -154,9 +154,12 @@ def test_a_failed_analysis_probe_names_the_kind(monkeypatch: pytest.MonkeyPatch)
     assert shown[0].message.endswith("RuntimeError")
 
 
+@pytest.mark.parametrize("manages", [False, True])
 def test_an_extra_analyst_grant_names_no_database(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, manages: bool
 ) -> None:
+    # With access management the repair writes, the grant survives (an admin's
+    # role, say), and the second probe's answer is the one shown.
     from server.insights.app import analysis
     from server.insights.domain import analysis as boundary
     from server.observability import problems
@@ -183,7 +186,8 @@ def test_an_extra_analyst_grant_names_no_database(
         "own_grants",
         lambda **_: returns(frozenset(boundary.allowed_columns()) | {foreign}),
     )
-    monkeypatch.setattr(analysis.store, "can_manage_access", lambda: returns(False))
+    monkeypatch.setattr(analysis.store, "can_manage_access", lambda: returns(manages))
+    monkeypatch.setattr(analysis, "_write_under_lease", lambda: returns(("", "")))
     asyncio.run(analysis.reprobe())
     ok, error = analysis.analysis_state()
     shown = problems._analysis_problems(
