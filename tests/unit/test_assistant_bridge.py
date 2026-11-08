@@ -198,19 +198,20 @@ def test_a_refused_answer_names_no_librechat_text(world: _World) -> None:
     assert "librechat:3080" not in str(e.value) and "500" in str(e.value)
 
 
-def test_a_refusal_whose_body_never_ends_is_read_only_to_its_bound(world: _World) -> None:
+def test_a_refusals_body_is_never_read(world: _World) -> None:
+    # Endless, stalled or broken: the status decides, and nothing of the body is logged.
     served = [0]
 
     class _Endless(httpx.AsyncByteStream):
         async def __aiter__(self) -> Any:
             while True:
-                served[0] += 1024
-                yield b"<html>" + b"x" * 1018
+                served[0] += 1
+                yield b"x" * 1024
 
     world.override = lambda _request: httpx.Response(502, stream=_Endless())
     with pytest.raises(AssistantUpstreamError, match="502"):
         _answer(_caller(), QUESTION)
-    assert served[0] <= bridge._REFUSAL_READ_BYTES + 1024
+    assert served[0] == 0
 
 
 def test_a_refusal_whose_body_stalls_is_still_the_refusal(
@@ -334,7 +335,7 @@ def test_only_the_callers_text_turns_reach_the_agent() -> None:
         bridge.admitted_messages([{"role": "assistant", "content": "no question"}])
 
 
-def test_a_logged_librechat_text_names_neither_secret() -> None:
+def test_a_logged_librechat_error_names_neither_secret() -> None:
     ticket = bridge.Ticket(ORG, NS, "agent_1", "sk-secret", "answer.jwt." + "x" * 400, 7)
     echoed = f"bad request: parent_message_id={ticket.token} key=sk-secret".encode()
     logged = bridge._redacted(ticket, echoed)

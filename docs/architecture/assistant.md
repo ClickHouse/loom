@@ -710,9 +710,9 @@ the allowlist. The bridge's tests (`tests/unit/test_assistant_bridge.py`,
 `test_delegation.py`, `test_assistant_service.py`, and `test_mcp_unauthenticated.py` for
 the MCP endpoint) show that:
 
-- an answer's token is never wider than the caller's token, never outlives it or, under
-  a sign-in session, the answer's limit, and ends with the caller's token, subject,
-  creator or sign-out; a dashboard caller in the last minutes of its access token is
+- an answer's token is never wider than the caller's token, never outlives it (under a
+  sign-in session, the answer's limit instead), and ends with the caller's token,
+  subject, creator or sign-out; a dashboard caller in the last minutes of its access token is
   answered;
 - a request to LibreChat without a token reads nothing, and one with a token reads as
   it;
@@ -862,7 +862,8 @@ per answer that the [qualification](../features/integrations/librechat.md#qualif
 of the assistant toolset measured on that model, and 11 at its maximum of $0.043; a
 namespace that asks more raises its `daily_cost_cap_usd`. The deployed agent's
 qualification measured a mean of $0.033 and a maximum of $0.048 per answer over its 28
-cases ([the deployed assistant](../features/integrations/librechat.md#the-deployed-assistant)).
+cases asked of LibreChat directly, and a mean of $0.027 and a maximum of $0.047 asked
+through the chat route ([the deployed assistant](../features/integrations/librechat.md#the-deployed-assistant)).
 
 ## Who can use it
 

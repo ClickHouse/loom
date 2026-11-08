@@ -11,7 +11,6 @@ LibreChat sends back to Loom on every tool call (docs/architecture/assistant.md)
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import itertools
 import json
 import logging
@@ -60,9 +59,6 @@ _CONNECT_S = 10.0  # not a setting: LibreChat is on the same network
 
 # The answers this replica runs per (org, namespace), by slot id.
 _running: dict[tuple[str, str], set[int]] = {}
-# What of a refusal's body is read for its log line: far more than the 300 characters
-# logged, so a secret it echoes is whole when it is taken out.
-_REFUSAL_READ_BYTES = 8192  # not a setting: a log line's bound
 _slot_ids = itertools.count(1)
 
 
@@ -273,13 +269,9 @@ async def stream(
                 )
             try:
                 if r.status_code != 200:
-                    # The answer's deadline bounds reading the refusal too; a body that
-                    # stalls past it is still the refusal its status says.
-                    head = b""
-                    with contextlib.suppress(TimeoutError):
-                        async with asyncio.timeout_at(deadline):
-                            head = await _head(r)
-                    _refused(ticket, r.status_code, _redacted(ticket, head))
+                    # Its status says it all: the body is not read, so no stalled, endless
+                    # or broken body holds the answer, and no secret it echoes is logged.
+                    _refused(ticket, r.status_code)
                 answer.started = True
                 lines = r.aiter_lines()
                 while True:
@@ -314,20 +306,9 @@ async def stream(
     yield b"data: [DONE]\n\n"
 
 
-async def _head(r: httpx.Response) -> bytes:
-    """The start of a refusal's body, enough to log: a proxy's error page or a body that
-    never ends is not read whole."""
-    out = b""
-    async for part in r.aiter_bytes():
-        out += part
-        if len(out) >= _REFUSAL_READ_BYTES:
-            break
-    return out[:_REFUSAL_READ_BYTES]
-
-
 def _redacted(ticket: Ticket, text: bytes) -> str:
-    """LibreChat's text for a log line, without the answer's token or the service key it
-    may echo back, cut after the redaction so no part of either survives."""
+    """LibreChat's error text for a log line, without the answer's token or the service
+    key it may echo back, cut after the redaction so no part of either survives."""
     out = text.decode("utf-8", "replace")
     for secret, name in ((ticket.token, "<answer token>"), (ticket.api_key, "<service key>")):
         if secret:
@@ -335,11 +316,11 @@ def _redacted(ticket: Ticket, text: bytes) -> str:
     return out[:300]
 
 
-def _refused(ticket: Ticket, status: int, text: str) -> NoReturn:
+def _refused(ticket: Ticket, status: int) -> NoReturn:
     """LibreChat refused the request. A key or agent it no longer knows (401, 403, 404)
     means the stored ones went stale: the service is set up again, unless another answer
     already did and this one only carried the key it replaced."""
-    log.warning("LibreChat refused an answer (%s): %s", status, text)
+    log.warning("LibreChat refused an answer (%s)", status)
     if status in (401, 403, 404):
         stored = service.answering()
         if stored is None or stored == (ticket.agent_id, ticket.api_key):
