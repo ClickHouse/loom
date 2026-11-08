@@ -1337,7 +1337,7 @@ A merged PR's review brief: the point read of what the ingest built at merge —
 | `overlay` | `bool` | On the wire only for `open: true`. |
 | `overlay_head_sha` | `str` | The open PR's head the brief was read or built at; '' when the mirror lacks it. |
 | `overlay_added` | `int` | Functions the open PR adds (the symbols section's `via: added` rows). |
-| `overlay_note` | `str` | Why no open brief exists (`head_not_in_mirror` \| `no_merge_base` \| `no_repo_entry`); when one was served, '' or how many changed files its overlay did not fully read (such a brief is not stored). |
+| `overlay_note` | `str` | Why no open brief exists (`head_not_in_mirror` \| `no_merge_base` \| `no_repo_entry`); when one was served, '' or how many changed files its overlay did not fully read (a brief whose overlay left files unreached is not stored). |
 | `tier` | `str` | The tier served. |
 | `built_at` | `str` | When the brief was built (ISO-8601 UTC); '' when `source` is missing. |
 | `indexed_commit` | `str` | The fast-tier watermark the brief was built against; '' when it was unread. |

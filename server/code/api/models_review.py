@@ -147,7 +147,7 @@ class CodeReviewBriefOutput(BaseModel):
     overlay_added: int = 0
     # Why no open brief exists (`head_not_in_mirror` | `no_merge_base` | `no_repo_entry`);
     # when one was served, '' or how many changed files its overlay did not fully read
-    # (such a brief is not stored).
+    # (a brief whose overlay left files unreached is not stored).
     overlay_note: str = ""
     # The tier served.
     tier: str = "standard"

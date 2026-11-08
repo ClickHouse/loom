@@ -131,7 +131,7 @@ class PrOverlay:
     edges: list[OverlayEdge] = field(default_factory=list)
     reason: str = ""  # '' when the overlay is live
     note: str = ""  # what a live overlay left out
-    unreached: int = 0  # changed files it started no parse of: a later request reads them
+    unreached: int = 0  # changed files whose parse it did not get back: a later request reads them
 
     @property
     def ok(self) -> bool:
@@ -500,7 +500,8 @@ _FILE_FACTS: TtlCache[tuple[str, str], _Facts] = TtlCache(
 # namespace's dict is kept once made, so every waiter watches the same one.
 _RUNNING: defaultdict[tuple[str, str], dict[Any, asyncio.Future[Any]]] = defaultdict(dict)
 # Overlay parses run here, not in the default executor, so a pile of them never holds
-# back the process's other threaded work
+# back the process's other threaded work; two, so one slow namespace leaves room for
+# another without a parse per request
 _PARSE_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="loom-overlay-parse")
 
 
@@ -567,8 +568,8 @@ async def _in_turn[T](
 
         task.add_done_callback(finished)
     # a parse waiting on its grammar's lock elsewhere in the process is not waited for
-    # past one more parse deadline
-    wait = max(0.0, deadline - time.monotonic()) + settings.code_parse_timeout_seconds
+    # past one parse deadline after the request's own
+    wait = max(0.0, deadline + settings.code_parse_timeout_seconds - time.monotonic())
     done, _ = await asyncio.wait({task}, timeout=wait)
     return cast("T", task.result()) if done else None
 
