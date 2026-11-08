@@ -182,8 +182,10 @@ not share memory.
 ## The MCP entry and its header helper
 
 The plugin's `.mcp.json` points at `<server_url>/mcp?toolset=<toolset>` and gets its
-headers from `bin/loom-mcp-headers.mjs`. Claude Code runs it in the plugin root and the
-entry passes it the session's project directory (`${CLAUDE_PROJECT_DIR}`):
+headers from `bin/loom-mcp-headers.mjs`. Claude Code runs the helper in the plugin root,
+so the URL ends in `#${CLAUDE_PROJECT_DIR}`: Claude Code hands the helper the URL with the
+project directory filled in, and never sends the fragment to the server. The helper
+sends:
 
 - `Authorization: Bearer <token>`, from the same lookup as the hooks except the install
   option (see above). With no token, the helper performs the same first-session sign-up
@@ -191,9 +193,7 @@ entry passes it the session's project directory (`${CLAUDE_PROJECT_DIR}`):
   still running.
 - `X-Loom-Code-Scope: <org>/<namespace>`, the code namespace the project's checkout
   resolves to. The server applies it to every `code.*` call that names no namespace, so
-  the model does not have to pass one. `LOOM_MCP_CODE_SCOPE=off` disables it. Claude Code
-  writes the project path into the command unquoted, so the shell reads it: a path
-  holding `$` or `\` can lose the header, and one holding `"` or `` ` `` can stop the helper.
+  the model does not have to pass one. `LOOM_MCP_CODE_SCOPE=off` disables it.
 
 The checkout's repository is found from its remotes (`origin`, then `upstream`, then the
 rest) through `code.repos`. A GitHub fork with no index of its own resolves to its

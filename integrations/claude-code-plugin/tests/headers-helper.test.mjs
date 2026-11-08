@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 process.env.LOOM_HOOK_NO_MAIN = "1";
-import { checkoutScope, headersFor, hookToken } from "../bin/loom-mcp-headers.mjs";
+import { checkoutScope, headersFor, hookToken, projectDir } from "../bin/loom-mcp-headers.mjs";
 import { cachePathFor, scopeHeader } from "../lib/repo-scope.mjs";
 import { execSync } from "node:child_process";
 import { hostEnv, withTmpdir } from "./host-env.mjs";
@@ -27,8 +27,8 @@ function sandbox() {
   return { tmp: mk("loom-headers-tmp-"), home: mk("loom-headers-home-"), cwd: mk("loom-headers-cwd-") };
 }
 
-function run(env, box = sandbox(), args = []) {
-  const out = execFileSync(process.execPath, [HELPER, ...args], {
+function run(env, box = sandbox()) {
+  const out = execFileSync(process.execPath, [HELPER], {
     encoding: "utf8",
     env: hostEnv({ PATH: process.env.PATH, HOME: box.home, TMPDIR: box.tmp, LOOM_MCP_HOOK_WAIT_MS: "0", ...env }),
     cwd: box.cwd,
@@ -74,7 +74,8 @@ test("the plugin's .mcp.json uses the helper and a localhost default URL", () =>
   const block = JSON.parse(fs.readFileSync(fileURLToPath(new URL("../.mcp.json", import.meta.url)), "utf8"));
   const loom = block.mcpServers.loom;
   assert.equal(loom.type, "http");
-  assert.equal(loom.url, "${user_config.server_url}/mcp?toolset=${user_config.toolset}"); // the toolset is a setting
+  // the toolset is a setting; the fragment carries the project directory to the helper
+  assert.equal(loom.url, "${user_config.server_url}/mcp?toolset=${user_config.toolset}#${CLAUDE_PROJECT_DIR}");
   assert.match(loom.headersHelper, /process\.env\.CLAUDE_PLUGIN_ROOT,'bin','loom-mcp-headers\.mjs'/);
   assert.match(loom.headersHelper, /\$CLAUDE_PLUGIN_ROOT\/bin\/loom-mcp-headers\.mjs/);
   assert.equal(loom.headers, undefined, "no static header: the helper supplies it");
@@ -143,24 +144,33 @@ test("the helper reads the shunt's cache for the checkout it runs in", () => {
   });
 });
 
-test("the helper names the project directory it is given, not the checkout it runs in", () => {
+test("the helper names the project directory in its URL's fragment, not the checkout it runs in", () => {
   // Claude Code starts the helper in the plugin root, which may sit inside
-  // another checkout, and passes the session's project directory.
+  // another checkout, and hands it the entry's URL with the project
+  // directory substituted as it is.
   const project = gitRepo();
   const pluginCheckout = gitRepo();
   const box = { ...sandbox(), cwd: pluginCheckout };
   const entry = (namespace) => JSON.stringify({ ts: Date.now(), indexed: true, org: "clickhouse", namespace });
   fs.writeFileSync(cachePathFor(project, box.tmp), entry("code-project"));
   fs.writeFileSync(cachePathFor(pluginCheckout, box.tmp), entry("code-plugin"));
-  assert.deepEqual(run({ LOOM_API_KEY: "env.tok" }, box, [project]).parsed, {
+  const url = (dir) => ({ LOOM_API_KEY: "env.tok", CLAUDE_CODE_MCP_SERVER_URL: `http://h/mcp?toolset=coding#${dir}` });
+  assert.deepEqual(run(url(project), box).parsed, {
     Authorization: "Bearer env.tok",
     "X-Loom-Code-Scope": "clickhouse/code-project",
   });
-  // an empty or unsubstituted project directory names no checkout, never the cwd's
-  for (const arg of ["", "${CLAUDE_PROJECT_DIR}"])
-    assert.deepEqual(run({ LOOM_API_KEY: "env.tok" }, box, [arg]).parsed, { Authorization: "Bearer env.tok" }, arg);
-  // no argument (the Codex entry): the checkout the helper runs in
-  assert.deepEqual(run({ LOOM_API_KEY: "env.tok" }, box).parsed["X-Loom-Code-Scope"], "clickhouse/code-plugin");
+  // an empty or unsubstituted fragment names no checkout, never the cwd's
+  for (const dir of ["", "${CLAUDE_PROJECT_DIR}"])
+    assert.deepEqual(run(url(dir), box).parsed, { Authorization: "Bearer env.tok" }, dir);
+  // a URL without a fragment (the Codex entry): the checkout the helper runs in
+  const codex = { LOOM_API_KEY: "env.tok", CLAUDE_CODE_MCP_SERVER_URL: "http://h/mcp?toolset=coding" };
+  assert.equal(run(codex, box).parsed["X-Loom-Code-Scope"], "clickhouse/code-plugin");
+});
+
+test("projectDir: the fragment as it is, whatever the path holds", () => {
+  const dir = `/home/me/odd #50% $(id) \`x\` "q" it's`;
+  assert.equal(projectDir({ CLAUDE_CODE_MCP_SERVER_URL: `http://h/mcp?toolset=coding#${dir}` }), dir);
+  assert.equal(projectDir({}), process.cwd());
 });
 
 test("checkoutScope: cache miss → one bounded lookup that also fills the cache", async () => {

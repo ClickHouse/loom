@@ -133,7 +133,11 @@ def test_plugin_mcp_json_mounts_the_coding_toolset() -> None:
     # the LOOM_BASE_URL-then-localhost behaviour (Claude Code expands the env form
     # inside a substituted default — verified on 2.1.273)
     # The toolset is the plugin's `toolset` setting (default `coding`)
-    assert loom["url"] == "${user_config.server_url}/mcp?toolset=${user_config.toolset}"
+    # The fragment hands the header helper the project directory (never sent)
+    assert (
+        loom["url"]
+        == "${user_config.server_url}/mcp?toolset=${user_config.toolset}#${CLAUDE_PROJECT_DIR}"
+    )
     manifest = json.loads(
         (root / "integrations/claude-code-plugin/.claude-plugin/plugin.json").read_text()
     )
