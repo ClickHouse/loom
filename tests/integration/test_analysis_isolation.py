@@ -574,8 +574,22 @@ def test_a_widening_policy_makes_analysis_unavailable(
             description="the probe to report the widening policy",
         )
         assert r.json()["detail"]["code"] == "ANALYSIS_UNAVAILABLE", r.text
-        # The policy's name goes to the server log, never to a caller.
+        # The policy's name goes to the server log, never to a caller or to
+        # /v1/health, which answers without a token.
         assert "widen_test" not in r.text, r.text
+        # Each web process probes on its own clock: wait for one that reports it.
+        health = wait_until(
+            lambda: (
+                (h := httpx.get(f"{control_plane_url}/v1/health", timeout=30).text).count(
+                    "analysis_user_failing"
+                )
+                and h
+            ),
+            max_wait=_PROBE_WAIT_S,
+            interval=2,
+            description="/v1/health to report the analysis problem",
+        )
+        assert "widen_test" not in health
         assert "widen_test" in str(ch_client.command("SHOW ROW POLICIES ON loom.memory"))
     finally:
         ch_client.command("DROP ROW POLICY IF EXISTS `widen_test` ON loom.memory")

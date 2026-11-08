@@ -152,3 +152,43 @@ def test_a_failed_analysis_probe_names_the_kind(monkeypatch: pytest.MonkeyPatch)
     )
     assert shown and "ch-internal-7" not in shown[0].message
     assert shown[0].message.endswith("RuntimeError")
+
+
+def test_an_extra_analyst_grant_names_no_database(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from server.insights.app import analysis
+    from server.insights.domain import analysis as boundary
+    from server.observability import problems
+
+    async def run(sql: str, **_: Any) -> Any:
+        if sql.startswith("SELECT count()") and "system." not in sql:
+            return [], [], [(1,)] if boundary.CANARY_TABLE in sql else [(0,)]
+        raise RuntimeError("Code: 497. DB::Exception: Not enough privileges")
+
+    async def returns(value: Any, *_: Any, **__: Any) -> Any:
+        return value
+
+    foreign = ("*", "GRANT SELECT ON otherdb.payroll TO loom_analyst")
+    monkeypatch.setattr(analysis, "_ready", None)
+    monkeypatch.setattr(analysis, "_problem", "")
+    monkeypatch.setattr(analysis, "_loaded", (bytes(32), "pw"))
+    monkeypatch.setattr(analysis.store, "target_database", lambda: "`loom`")
+    monkeypatch.setattr(analysis.store, "sealed_secrets", lambda: returns(None))
+    monkeypatch.setattr(analysis.store, "run_statement", run)
+    monkeypatch.setattr(analysis.store, "own_version", lambda **_: returns(boundary.ENTITY_VERSION))
+    monkeypatch.setattr(analysis, "_signed_only", lambda *_: returns(True))
+    monkeypatch.setattr(
+        analysis.store,
+        "own_grants",
+        lambda **_: returns(frozenset(boundary.allowed_columns()) | {foreign}),
+    )
+    monkeypatch.setattr(analysis.store, "can_manage_access", lambda: returns(False))
+    asyncio.run(analysis.reprobe())
+    ok, error = analysis.analysis_state()
+    shown = problems._analysis_problems(
+        settings, problems.HealthState(analysis_ok=ok, analysis_error=error)
+    )
+    assert shown and "grants outside the allowlist" in shown[0].message
+    assert "payroll" not in shown[0].message
+    assert any("payroll" in r.message for r in caplog.records)

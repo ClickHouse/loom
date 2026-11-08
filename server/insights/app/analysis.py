@@ -106,6 +106,8 @@ _LEASE_TTL_S = 60
 _SECRETS_PURPOSE = "analysis.secrets"
 _loaded: tuple[bytes, str] | None = None
 _REPROBE_S = 60.0
+# Names behind the last probe's answer (grants on other tables), for the log.
+_probe_detail = ""
 
 # Whether this process's last probe passed: None = not probed yet.
 _ready: bool | None = None
@@ -376,10 +378,15 @@ async def reprobe() -> None:
         if stored is not None and stored != _loaded and await _canary_reads(stored):
             _loaded = stored
         problem, repairable = await _probe()
+        detail = _probe_detail
         manages = await store.can_manage_access()
         if problem and repairable and manages:
             blocked, detail = await _write_under_lease()
-            problem = blocked or (await _probe())[0]
+            if not blocked:
+                problem = (await _probe())[0]
+                detail = _probe_detail
+            else:
+                problem = blocked
         elif not problem and manages:
             # A policy added since the last write widens other users, not the
             # analyst, so only this check sees it.
@@ -461,8 +468,11 @@ _UNKNOWN_SETTING = 115
 
 async def _probe() -> tuple[str, bool]:
     """('', _) when the analyst user is held as the allowlist says, else why
-    not and whether a write of the entities repairs it. It runs as the
-    analyst itself, so it needs no access management."""
+    not and whether a write of the entities repairs it, with any names behind
+    it left in `_probe_detail` for the log. It runs as the analyst itself, so
+    it needs no access management."""
+    global _probe_detail
+    _probe_detail = ""
     db = store.target_database()
     if _loaded is None:
         return (
@@ -510,10 +520,9 @@ async def _probe() -> tuple[str, bool]:
             return f"{boundary.ANALYST_USER} reads {table} unsigned: it has no scope policy", True
     granted = await store.own_grants(password=_password(), extra={})
     if extra_grants := sorted(granted - boundary.allowed_columns()):
-        return (
-            f"{boundary.ANALYST_USER} holds grants outside the allowlist: {extra_grants[:5]}",
-            True,
-        )
+        # The grants can name other databases and tables: they go to the log only.
+        _probe_detail = f"grants: {extra_grants[:5]}"
+        return f"{boundary.ANALYST_USER} holds grants outside the allowlist", True
     return "", False
 
 
