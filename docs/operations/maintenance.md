@@ -37,14 +37,15 @@ before ClickHouse applies it; watch `system.mutations`.
     read is skipped. Every other row is written with its other columns as that second read
     found them.
   - When a skipped row is an old-model row still stored with other text or identity,
-    `--delete-old` keeps its org's old-model rows for a later run. The `resume:` token
-    carries the orgs kept so far, and the run names them before it deletes.
+    `--delete-old` keeps its org's old-model rows for a later run, which re-embeds all of
+    that org's old-model rows (scope it with `--org`). The `resume:` token carries the
+    orgs kept so far, and the run names them before it deletes.
   - A deletion, redaction or erasure that lands between that read and the insert, or whose
     mutation has not reached the row yet, can leave the row live with its new vector. Run
-    such a redaction again after `--delete-old`, and delete such a conversation turn or
-    thread again; the orphan-vector sweep tombstones a deleted memory's leftover vector,
-    and an erasure's verify step finds the row and retries. `--in-database` reads each
-    table once, as its statement starts, so run it while nothing redacts or erases.
+    such a redaction again once the run has finished, and delete such a conversation turn
+    or thread again; the orphan-vector sweep tombstones a deleted memory's leftover
+    vector, and an erasure's verify step finds the row and retries. `--in-database` reads
+    each table once, as its statement starts, so run it while nothing redacts or erases.
 - **A model of another width.** On ClickHouse 26.8 or later a fresh install codes its
   vector columns (`Quantized`) where `enable_quantized_codec` can be on
   ([ClickHouse](../architecture/clickhouse.md#gated-clickhouse-settings)), and a coded
