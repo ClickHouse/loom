@@ -12,7 +12,10 @@ import { Alert } from "../components/ui";
 interface Thread {
   thread_id: string;
   agent: string;
+  /** The stored title, "" when none was set; the rename starts from it. */
   title: string;
+  /** What the list shows for the thread, which may stand in for a missing title. */
+  label: string;
 }
 
 /** A thread row's menu: Rename (conversation.update, WRITER) and Delete
@@ -31,7 +34,7 @@ export function ThreadActions({
   onChanged: () => void;
 }) {
   const [renaming, setRenaming] = useState(false);
-  const name = thread.title || thread.thread_id;
+  const name = thread.label || thread.thread_id;
 
   const remove = async () => {
     const ok = await confirmAction({
@@ -119,8 +122,9 @@ function RenameDialog({
   );
 }
 
-/** The thread's first turn across every agent; `agent` is the row's owner while a row is
- *  left, else the oldest remaining turn's writer. */
+/** The thread across every agent, read for its owner and what is left (one turn, the least
+ *  the read returns); `agent` is the row's owner while a row is left, else the oldest
+ *  remaining turn's writer. */
 const readHead = (id: Pick<Identity, "org" | "namespace">, threadId: string) =>
   getConversationThread(id, "*", threadId, { limit: 1 });
 

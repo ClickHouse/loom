@@ -60,7 +60,7 @@ describe("NamespacePicker's New badge", () => {
       return el as HTMLElement;
     });
 
-  it("badges a new namespace, and picking it marks it seen and drops the badge", async () => {
+  it("badges a new namespace, and picking it marks it seen and clears is_new", async () => {
     open();
     const billing = await rowButton("billing");
     expect(within(billing).getByText("New")).toBeInTheDocument();

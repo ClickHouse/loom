@@ -59,7 +59,19 @@ describe("SessionBriefsSection", () => {
     expect(screen.getByText("Restore the session brief handoff/billing.")).toBeInTheDocument();
   });
 
-  const briefs = () => listBriefs.mockResolvedValue([{ brief_key: "handoff/billing", goal: "Billing handoff" }]);
+  // One brief, its section open, its body ready to read.
+  const briefs = () => {
+    listBriefs.mockResolvedValue([{ brief_key: "handoff/billing", goal: "Billing handoff" }]);
+    getBrief.mockResolvedValue({
+      found: true,
+      brief_key: "handoff/billing",
+      revision: 1,
+      revisions: 1,
+      rendered: "b",
+      updated_at: null,
+    });
+    setFoldOpen("session-briefs", true);
+  };
   const as = (role: "viewer" | "writer") =>
     useStore.setState({
       whoami: { authenticated: true, subject: "a@x", org: "o", roles: ["VIEWER"], namespaces: ["ns"] },
@@ -71,15 +83,6 @@ describe("SessionBriefsSection", () => {
     as("writer");
     briefs();
     deleteBrief.mockResolvedValue({ deleted: true });
-    getBrief.mockResolvedValue({
-      found: true,
-      brief_key: "handoff/billing",
-      revision: 1,
-      revisions: 1,
-      rendered: "b",
-      updated_at: null,
-    });
-    setFoldOpen("session-briefs", true);
     render(<SessionBriefsSection org="o" namespace="ns" />);
     fireEvent.click(await screen.findByRole("button", { name: "Forget brief Billing handoff" }));
     await waitFor(() => expect(deleteBrief).toHaveBeenCalledWith({ org: "o", namespace: "ns" }, "handoff/billing"));
@@ -89,17 +92,8 @@ describe("SessionBriefsSection", () => {
   it("offers a viewer no Forget", async () => {
     as("viewer");
     briefs();
-    getBrief.mockResolvedValue({
-      found: true,
-      brief_key: "handoff/billing",
-      revision: 1,
-      revisions: 1,
-      rendered: "b",
-      updated_at: null,
-    });
-    setFoldOpen("session-briefs", true);
     render(<SessionBriefsSection org="o" namespace="ns" />);
-    expect(await screen.findByRole("button", { name: /handoff\/billing|Billing handoff/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /handoff\/billing/ })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Forget brief Billing handoff" })).toBeNull();
   });
 });

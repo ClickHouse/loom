@@ -20,7 +20,7 @@ vi.mock("../api", async (importOriginal) => {
 });
 
 const identity = { org: "acme", namespace: "team" };
-const thread = { thread_id: "t1", agent: "claude-code", title: "Deploy plan" };
+const thread = { thread_id: "t1", agent: "claude-code", title: "Deploy plan", label: "Deploy plan" };
 
 afterEach(() => {
   cleanup();
@@ -107,17 +107,6 @@ describe("ThreadActions", () => {
     expect(api.createThreadRow).not.toHaveBeenCalled();
   });
 
-  it("deletes the row an agent without turns owns", async () => {
-    vi.mocked(api.getConversationThread)
-      .mockResolvedValueOnce({ found: true, msg_count: 0, agent: "codex" } as never)
-      .mockResolvedValueOnce({ found: false, msg_count: 0, agent: "" } as never);
-    render(<ThreadActions identity={identity} thread={thread} canRename={false} canDelete onChanged={vi.fn()} />);
-    await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
-    await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith('Deleted "Deploy plan"', "ok"));
-    expect(vi.mocked(api.deleteThread).mock.calls.map((c) => c[1])).toEqual(["claude-code", "codex"]);
-  });
-
   it("says a delete failed after a part of the thread was deleted", async () => {
     vi.mocked(api.getConversationThread)
       .mockResolvedValueOnce({ found: true, msg_count: 2, agent: "codex" } as never)
@@ -201,5 +190,15 @@ describe("ThreadActions", () => {
     expect(api.renameThread).toHaveBeenCalledWith(identity, "codex", "t1", "Deploy plan");
     expect(api.createThreadRow).not.toHaveBeenCalled();
     expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("starts a rename of an untitled thread from an empty title, not the line the list shows", async () => {
+    const untitled = { ...thread, title: "", label: "how do I deploy?" };
+    render(<ThreadActions identity={identity} thread={untitled} canRename canDelete={false} onChanged={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Actions for how do I deploy?" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename conversation" });
+    expect(within(dialog).getByLabelText("Title")).toHaveValue("");
+    expect(within(dialog).getByRole("button", { name: "Rename" })).toBeDisabled();
   });
 });

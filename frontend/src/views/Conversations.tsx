@@ -408,7 +408,7 @@ export function Conversations() {
                 trailing={
                   <ThreadActions
                     identity={identity}
-                    thread={{ thread_id: t.thread_id, agent: t.agent, title }}
+                    thread={{ thread_id: t.thread_id, agent: t.agent, title: t.title ?? "", label: title }}
                     canRename={canRenameThread}
                     canDelete={canDeleteThread}
                     onChanged={() => setThreadsRetry((n) => n + 1)}
