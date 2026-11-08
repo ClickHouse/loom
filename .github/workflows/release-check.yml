@@ -89,8 +89,9 @@ jobs:
       - name: Both images carry the release workflow's keyless signature
         env:
           VERSION: ${{ inputs.version }}
+          IMAGES: ghcr.io/clickhouse/loom ghcr.io/clickhouse/loom-extractor
         run: |
-          for image in ghcr.io/clickhouse/loom ghcr.io/clickhouse/loom-extractor; do
+          for image in $IMAGES; do
             cosign verify "$image:$VERSION" \
               --certificate-identity "https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v$VERSION" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null

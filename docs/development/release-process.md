@@ -209,10 +209,12 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    (the document extractor service), each for linux/amd64 and linux/arm64 on that
    architecture's own runner and without the build cache (so from the package archives as
    they are that day), with provenance and an SBOM, pushes each by digest and scans it;
-   `docker-tag` joins each image's two digests under its tags, signs each joined index with
-   a keyless signature (cosign, with the run's GitHub identity, so the certificate names
-   `release.yml` and the tag), and tags neither image until all four have passed (a failure
-   there can leave one tagged, and re-running it tags and signs both);
+   `docker-tag` joins each image's two digests under its tags, and tags neither image until
+   all four have passed (a failure there can leave one tagged, and re-running it tags both);
+   `sign` then signs the index each image's version tag names with a keyless signature
+   (cosign, with the run's GitHub identity, so the certificate names `release.yml` and the
+   tag), on every run that publishes, so a run on a tag whose images are out signs them
+   again and a missing signature is repaired;
 7. `docker-smoke` installs the bundle with those images, on the ClickHouse release it
    names, on amd64 and arm64, then runs the release's own `install.sh` and bundle as the
    one-liner in clean Debian, Ubuntu and Alpine containers (install, round trip, re-run, a
@@ -251,6 +253,8 @@ the package's visibility to public in its settings, then re-run the failed jobs.
      --certificate-identity https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/vX.Y.Z \
      --certificate-oidc-issuer https://token.actions.githubusercontent.com
    ```
+
+   Releases before 1.2.0 carry no signature, so a check of one fails its `signatures` job.
 
 The server and extractor images are published before the GitHub Release, so an installer
 shown on the release page never points at a missing image.

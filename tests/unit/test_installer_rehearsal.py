@@ -412,13 +412,7 @@ def test_a_bundle_that_names_no_release_is_refused(tmp_path: Path, named: str) -
         rehearsal.bundle_version(tmp_path)
 
 
-def test_the_release_signs_each_image_it_tags_and_the_check_verifies_it() -> None:
-    release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
-    tag = release["jobs"]["docker-tag"]
-    assert tag["permissions"]["id-token"] == "write"
-    run = "\n".join(s.get("run", "") for s in tag["steps"])
-    assert 'cosign sign --yes "$image@$digest"' in run
-    assert run.index("imagetools create") < run.index("cosign sign")
+def test_the_release_check_verifies_the_release_workflows_signature() -> None:
     check = yaml.safe_load((ROOT / ".github/workflows/release-check.yml").read_text())
     verify = "\n".join(s.get("run", "") for s in check["jobs"]["signatures"]["steps"])
     assert "release.yml@refs/tags/v$VERSION" in verify

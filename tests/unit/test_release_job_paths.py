@@ -98,6 +98,7 @@ def test_a_tag_push_builds_tags_smokes_and_releases() -> None:
     assert ran == BUILD | {
         "docker",
         "docker-tag",
+        "sign",
         "docker-smoke",
         "github-release",
         "release-check",
@@ -105,19 +106,22 @@ def test_a_tag_push_builds_tags_smokes_and_releases() -> None:
 
 
 def test_the_registry_dispatch_on_the_published_tag_reaches_every_registry() -> None:
-    """No image is built or tagged again, and the registries still publish."""
+    """No image is built or tagged again, the published ones are signed again,
+    and the registries still publish."""
     ran = run(event="workflow_dispatch", dry_run=False, published=True)
-    assert ran == BUILD | {"docker-smoke", "github-release"} | REGISTRIES
+    assert ran == BUILD | {"sign", "docker-smoke", "github-release"} | REGISTRIES
 
 
 def test_a_dispatch_on_a_tag_whose_images_are_not_out_builds_them_and_publishes() -> None:
     ran = run(event="workflow_dispatch", dry_run=False, published=False)
-    assert ran == BUILD | {"docker", "docker-tag", "docker-smoke", "github-release"} | REGISTRIES
+    assert ran == (
+        BUILD | {"docker", "docker-tag", "sign", "docker-smoke", "github-release"} | REGISTRIES
+    )
 
 
 def test_a_prerelease_dispatch_skips_only_the_mcp_registry_listing() -> None:
     ran = run(event="workflow_dispatch", dry_run=False, published=True, prerelease=True)
-    assert ran == BUILD | {"docker-smoke", "github-release", "pypi", "npm"}
+    assert ran == BUILD | {"sign", "docker-smoke", "github-release", "pypi", "npm"}
 
 
 def test_a_dry_run_builds_and_smokes_and_publishes_nothing() -> None:
@@ -125,7 +129,9 @@ def test_a_dry_run_builds_and_smokes_and_publishes_nothing() -> None:
     assert ran == BUILD | {"docker", "docker-smoke"}
 
 
-@pytest.mark.parametrize("failed", ["docker", "docker-tag", "docker-smoke", "verify", "preflight"])
+@pytest.mark.parametrize(
+    "failed", ["docker", "docker-tag", "sign", "docker-smoke", "verify", "preflight"]
+)
 def test_a_failure_before_the_release_publishes_nothing(failed: str) -> None:
     ran = run(event="workflow_dispatch", dry_run=False, published=False, fail=frozenset({failed}))
     assert not ran & ({"github-release", "release-check"} | REGISTRIES)
@@ -138,9 +144,10 @@ def test_a_failure_on_the_published_tag_smokes_and_publishes_nothing(failed: str
 
 
 def test_a_tag_push_whose_images_are_published_builds_and_tags_none() -> None:
-    """A re-run of every job, or the tag pushed again at the same commit."""
+    """A re-run of every job, or the tag pushed again at the same commit: what is
+    out is signed again, so a run that tagged but did not sign is repaired."""
     ran = run(event="push", dry_run=None, published=True)
-    assert ran == BUILD | {"docker-smoke", "github-release", "release-check"}
+    assert ran == BUILD | {"sign", "docker-smoke", "github-release", "release-check"}
 
 
 def test_a_failed_smoke_on_the_published_tag_publishes_nothing() -> None:

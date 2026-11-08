@@ -428,3 +428,19 @@ def test_the_registries_publish_after_a_release_that_skipped_its_image_jobs(name
     condition = job["if"]
     assert condition.startswith("${{ !cancelled() && needs.github-release.result == 'success' && ")
     assert "github.event_name == 'workflow_dispatch'" in condition
+
+
+def test_every_image_the_release_builds_is_signed_and_the_check_verifies_each() -> None:
+    jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
+    images = jobs["preflight"]["env"]["IMAGES"].split()
+    sign = jobs["sign"]
+    assert sign["permissions"]["id-token"] == "write"
+    assert "id-token" not in jobs["docker-tag"]["permissions"]
+    (step,) = [s for s in sign["steps"] if "cosign sign" in s.get("run", "")]
+    assert step["env"]["IMAGES"].split() == images
+    assert 'cosign sign --yes "$image@$digest"' in step["run"]
+    assert '"$image:$VERSION"' in step["run"]  # the index the version tag names
+    assert "sign" in jobs["github-release"]["needs"]
+    check = yaml.safe_load((ROOT / ".github/workflows/release-check.yml").read_text())
+    (verify,) = [s for s in check["jobs"]["signatures"]["steps"] if "run" in s]
+    assert verify["env"]["IMAGES"].split() == images

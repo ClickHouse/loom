@@ -555,12 +555,10 @@ jobs:
     permissions:
       contents: read
       packages: write
-      id-token: write # the keyless signature's certificate names this workflow and tag
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       # Asked when it is applied, so a re-run never moves Latest back (make_latest.py).
       - name: Is this the highest final version
         id: latest
@@ -582,10 +580,8 @@ jobs:
         with:
           pattern: scanned-*
       # No image is tagged until every one has scanned: each image's tags name
-      # one index of its amd64 and arm64 digests, signed keyless with this
-      # run's identity (the signature is stored beside it in the registry). A
-      # failure here can leave one image tagged and not the other; re-running
-      # this job tags and signs both again.
+      # one index of its amd64 and arm64 digests. A failure here can leave one
+      # image tagged and not the other; re-running this job tags both again.
       - name: Tag the scanned images
         env:
           LATEST: ${{ steps.latest.outputs.latest }}
@@ -604,8 +600,41 @@ jobs:
             docker buildx imagetools create "${args[@]}" "${sources[@]}"
             # jq -e: a failed inspect leaves no digest, which fails the step, never an empty pin.
             digest=$(docker buildx imagetools inspect "$version_tag" --format '{{json .Manifest}}' | jq -re .digest)
-            cosign sign --yes "$image@$digest"
             echo "Pin $image with \`$pin: $digest\`" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+  # Every run that publishes signs, so a run after one that tagged but did not
+  # sign (or a dispatch on the tag) signs what is out; a second signature on a
+  # digest is harmless.
+  sign:
+    name: Sign both images
+    if: ${{ !cancelled() && !inputs.dry_run && (needs.docker-tag.result == 'success' || needs.preflight.outputs.images_published == 'true') }}
+    needs: [version, preflight, docker-tag]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # the keyless signature's certificate names this workflow and tag
+    steps:
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to ghcr.io
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # The index the version tag names, which X.Y, latest and a digest pin name too.
+      - name: Sign each image's index
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          IMAGES: ghcr.io/clickhouse/loom ghcr.io/clickhouse/loom-extractor
+        run: |
+          for image in $IMAGES; do
+            # jq -e: a failed inspect leaves no digest, which fails the step.
+            digest=$(docker buildx imagetools inspect "$image:$VERSION" --format '{{json .Manifest}}' | jq -re .digest)
+            cosign sign --yes "$image@$digest"
           done
 
   docker-smoke:
@@ -678,8 +707,8 @@ jobs:
 
   github-release:
     name: GitHub Release (artifacts attached)
-    if: ${{ !cancelled() && !inputs.dry_run && needs.verify.result == 'success' && needs.docker-smoke.result == 'success' && (needs.docker-tag.result == 'success' || needs.preflight.outputs.images_published == 'true') }}
-    needs: [version, preflight, verify, docker-tag, docker-smoke]
+    if: ${{ !cancelled() && !inputs.dry_run && needs.verify.result == 'success' && needs.docker-smoke.result == 'success' && needs.sign.result == 'success' }}
+    needs: [version, preflight, verify, docker-tag, sign, docker-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # One publish at a time across every tag, so the downgrade check below
