@@ -129,9 +129,8 @@ _CHECKS: dict[str, tuple[RuleContract, str, str, str, list[str]]] = {
             uncertainty="A rolling change of the embedding model passes through this state.",
         ),
         "other_model",
-        "Live documents whose live chunks were all embedded by another embedding model "
-        "than this server's: search reads only the server's model, so it does not return "
-        "them.",
+        "Live documents whose live chunks were all embedded by a model other than this "
+        "server's: search reads only the server's model, so it does not return them.",
         "For a text document, the rechunk command cuts and embeds it again under the "
         "current model." + _INGESTED,
         ["knowledge.search", "documents_without_chunks", _RECHUNK, *_INGESTED_REFS],
