@@ -199,7 +199,6 @@ async def header_context(
         stats.headers_read += int(from_db)
         if text is None:
             continue
-        # parsing is CPU work: in a thread, so the event loop runs at the parser's reads
         cost, timed_out = await asyncio.to_thread(_add_header, hd, hp, text)
         spent += cost
         if timed_out:

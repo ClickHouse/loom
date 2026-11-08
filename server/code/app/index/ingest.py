@@ -186,7 +186,6 @@ async def ingest_file(
     if refused:
         return stats
 
-    # parsing is CPU work: in a thread, so the event loop runs at the parser's reads
     pf, stats.error = (
         parsed if parsed is not None else await asyncio.to_thread(parse_for_ingest, path, source)
     )
@@ -218,7 +217,7 @@ async def ingest_file(
         chunks, structural_prefixes, facets = (
             ([], {}, [])
             if declared_only
-            # chunking is CPU work (a host file's shell may be parsed again): in a thread
+            # a host file's shell may be parsed again
             else await asyncio.to_thread(
                 _chunks_for, pf, path, source, max_chunk_chars, (org, ns), stats.error
             )

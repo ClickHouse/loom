@@ -418,7 +418,7 @@ def test_concurrent_requests_parse_a_file_once(monkeypatch: pytest.MonkeyPatch) 
 
     first, second = asyncio.run(both())
     assert calls == [PATH]
-    assert first is not None and second is not None and first[1] == second[1]
+    assert first is not None and second is not None and first[1] is second[1]
     assert first[1].symbols
 
 

@@ -211,8 +211,7 @@ async def _derive_edges(
             name_table,
             lane_context,
         )
-        # CPU work that may parse an imported module: in a thread, so the event loop
-        # runs at the parser's reads
+        # it may parse a module the file imports
         edges, misses = await asyncio.to_thread(
             extract_edges_and_misses,
             pf,
@@ -364,7 +363,6 @@ async def _simple_lane_edges(repo: CodeRepo, org: str, ns: str, pf: ParsedFile) 
     if pf.lang == "tla":
         from server.code.domain.extract.lang_tla import tla_external_edges, tla_local_edges
 
-        # it parses the spec again: in a thread, so the event loop runs at the parser's reads
         local, external = await asyncio.to_thread(tla_local_edges, pf)
         if not external:
             return local
