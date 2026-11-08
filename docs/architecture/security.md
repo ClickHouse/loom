@@ -754,8 +754,8 @@ inboxes, sources and the like), or, on the Postgres authority, a memory there
 (`steps_pg.pg_holds_namespace`). Every other table keyed by namespace is exempt with a
 reason (`tests/unit/test_in_use_coverage.py`), which a new table cannot skip. A namespace
 can hold such rows without a registry row when auto-registration failed or was off, for
-data older than it, and for a grant made before the first write. The check is one
-statement that stops at the first row in each table
+data older than it, and for a grant made before the first write. The ClickHouse read is
+one statement that stops at the first row in each table
 (`server/identity/store/namespace_census.py`, `in_use`), read under the name's claim and
 the account's (`account_change`, which `namespace.register` and `namespace.restore` hold
 too) with sequential consistency; when it cannot be read the sign-up fails and nothing is
