@@ -425,8 +425,7 @@ def _analyst_sql() -> list[str]:
     from server.insights.app import analysis
 
     async def _go(_ch: Any) -> list[str]:
-        async with analysis.lease():
-            await analysis.load_secrets(may_draw=True)
+        await analysis.load_for_print()
         return analysis.printed_statements(await analysis.own_grant_revokes())
 
     return run_connected(_go)
@@ -435,7 +434,7 @@ def _analyst_sql() -> list[str]:
 def _write_analyst() -> None:
     """Write insights.query's analyst user under this deployment's key, for a
     deployment whose server user cannot (one with access management writes it
-    at boot), or to move the key once every replica runs a new secret."""
+    at boot)."""
     from server.cli._ch import run_connected
     from server.insights.app.analysis import rewrite
 
@@ -517,7 +516,9 @@ def register_ch_setup_cli(sub: Any) -> None:
         help=(
             "Print the SQL that writes insights.query's analyst user, for an admin where "
             "LOOM_CH_USER lacks access management. It holds the user's password and the "
-            "scope key stored sealed in loom.analysis_secrets: run it with "
+            "scope key stored sealed in loom.analysis_secrets (drawn when there is none; "
+            "where LOOM_CH_USER cannot list users, a missing row is drawn again, which moves "
+            "the key): run it in full with "
             "`clickhouse-client --log_queries=0 --multiquery --queries-file <file>`, do not "
             "store it."
         ),

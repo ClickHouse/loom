@@ -331,13 +331,15 @@ stored key. Elsewhere an admin uses one of two commands:
 - `loom ch-setup --print-analyst-sql` prints SQL for an admin to run by hand, and needs
   no access management to print (where `--print-sql` prints the admin SQL
   `loom ch-setup` would run, with the reader's password as a placeholder). It draws the
-  secrets on a first install and otherwise prints the stored key's entity set, with a
-  `REVOKE` before the grants for each grant the analyst's own `SHOW GRANTS` lists,
-  headed by the command that runs it in one session and by two checks the admin runs
-  first: the permissive policies Loom did not write, and other databases carrying the
-  analyst's scope policy. With [part 2](#build-order) it proves its `LOOM_JWT_SECRET` as
-  the rotation below does, draws a fresh key and password, and prints a complete
-  rotation, in the order of a write, with the command that runs it in one session
+  secrets on a first install and otherwise prints the stored key's entity set; over a
+  lost row it refuses where Loom's user can see that the analyst user exists, and where
+  it cannot it draws again, which moves the key. The SQL comes with a `REVOKE` before
+  the grants for each grant the analyst's own `SHOW GRANTS` lists, headed by the command
+  that runs it in one session and by two checks the admin runs first: the permissive
+  policies Loom did not write, and other databases carrying the analyst's scope policy.
+  With [part 2](#build-order) it proves its `LOOM_JWT_SECRET` as the rotation below
+  does, draws a fresh key and password, and prints a complete rotation, in the order of
+  a write, with the command that runs it in one session
   (`clickhouse-client --log_queries=0 --distributed_ddl_output_mode=throw --multiquery --queries-file <file>`):
   the delete, the new password, the `KILL QUERY`, the rest of the entity set under the
   new key, a settle of `SELECT sleep(...)` statements, the `KILL QUERY` again, and last

@@ -284,17 +284,35 @@ async def _write_under_lease() -> str:
     return ""
 
 
+_LOST_ROW = (
+    "loom.analysis_secrets has no row while the analyst user exists, so the key the replicas "
+    f"hold is lost: drop the user (`DROP USER {boundary.ANALYST_USER}`) and run `loom ch-setup` "
+    "again to draw a new key"
+)
+
+
+async def load_for_print() -> None:
+    """Load the secrets for `loom ch-setup --print-analyst-sql`, drawing them
+    when there are none. Where Loom's user can see that the analyst user
+    exists, a lost row is refused as `rewrite` refuses it; where it cannot, a
+    missing row is drawn again, which moves the key."""
+    async with lease():
+        if (
+            await store.sealed_secrets() is None
+            and await store.can_manage_access()
+            and not await store.analyst_user_absent()
+        ):
+            raise RuntimeError(_LOST_ROW)
+        await load_secrets(may_draw=True)
+
+
 async def rewrite() -> None:
     """Write the analyst user whatever is stored (`loom ch-setup`). It draws
     the secrets only while no analyst user exists, so a lost row never puts
     a new key beside replicas that still hold the old one."""
     async with lease():
         if await store.sealed_secrets() is None and not await store.analyst_user_absent():
-            raise RuntimeError(
-                "loom.analysis_secrets has no row while the analyst user exists, so the key "
-                f"the replicas hold is lost: drop the user (`DROP USER {boundary.ANALYST_USER}`) "
-                "and run `loom ch-setup` again to draw a new key"
-            )
+            raise RuntimeError(_LOST_ROW)
         await load_secrets(may_draw=True)
         stored = await store.stored_entities()
         if stored is not None and stored.version > boundary.ENTITY_VERSION:

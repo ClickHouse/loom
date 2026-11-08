@@ -23,6 +23,8 @@ import hmac
 from dataclasses import dataclass
 from typing import NamedTuple
 
+from server.core.sql_literal import sql_string
+
 # Bumped whenever the allowlist, the profile or the policy shape changes. The
 # profile carries it, and a build writes the entities only when its version is
 # at least the stored one, so during a rolling upgrade build N-1 never puts
@@ -339,7 +341,7 @@ def caps_sql(caps: Caps) -> list[str]:
     one and is the profile the analyst user carries. A boot writes them, so a
     cap setting never touches the version."""
     caps_profile = f"`{CAPS_PROFILE}`"
-    stamp = f"{CAPS_DIGEST_SETTING} = {sql_literal(caps_digest(caps))} CONST"
+    stamp = f"{CAPS_DIGEST_SETTING} = {sql_string(caps_digest(caps))} CONST"
     settings_ = ", ".join([f"INHERIT '{ANALYST_USER}'", *caps_settings(caps), stamp])
     return [
         f"CREATE SETTINGS PROFILE IF NOT EXISTS {caps_profile} SETTINGS {settings_}",
@@ -350,11 +352,6 @@ def caps_sql(caps: Caps) -> list[str]:
 def caps_digest(caps: Caps) -> str:
     """What the caps profile holds, so a boot writes it only when a cap changed."""
     return hashlib.sha256("\n".join(caps_settings(caps)).encode()).hexdigest()[:32]
-
-
-def sql_literal(value: str) -> str:
-    """`value` as a ClickHouse string literal."""
-    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
 class Grant(NamedTuple):
@@ -399,7 +396,7 @@ def entity_sql(
     comes last, so a write cut short is written again by the next boot. `db`
     is already quoted."""
     user = f"`{ANALYST_USER}`"
-    identified = f"IDENTIFIED WITH sha256_password BY {sql_literal(password)}"
+    identified = f"IDENTIFIED WITH sha256_password BY {sql_string(password)}"
     condition = policy_filter(key)
     profile = profile_settings()
 
@@ -435,7 +432,7 @@ def entity_sql(
         *profile,
         # A string, as ClickHouse stores a number setting as `UInt64_1`.
         f"{VERSION_SETTING} = '{ENTITY_VERSION}' CONST",
-        f"{DIGEST_SETTING} = {sql_literal(_digest(db, profile))} CONST",
+        f"{DIGEST_SETTING} = {sql_string(_digest(db, profile))} CONST",
     ]
     out.append(f"ALTER SETTINGS PROFILE {user} SETTINGS " + ", ".join(stamp))
     return out

@@ -45,6 +45,7 @@ from server.core.ch_schema_guard import guard_pending_schema
 from server.core.ch_statement_text import capture_statement, statement_digest
 from server.core.ch_target import connection_kwargs
 from server.core.ch_writes import dedup_settings, insert_dedup_token
+from server.core.sql_literal import sql_string
 from server.core.traffic_context import traffic_class_var
 from server.settings import settings
 
@@ -481,7 +482,6 @@ def statement_settings(
         # class deadline, a traffic class's or the caller's settings could only
         # collide with them.
         out.pop("max_execution_time", None)
-        out.pop("use_query_condition_cache", None)  # pinned CONST in the profile
         out.update(analyst[2])
         return _with_request_query_id(out)
     tclass = traffic_class_var.get()[0]
@@ -589,10 +589,6 @@ async def _turn_off_unsafe_condition_cache(client: AsyncClient) -> None:
         log.info("ClickHouse %s: sessions run with use_query_condition_cache = 0", oldest)
 
 
-def _sql_string(value: str) -> str:
-    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
-
-
 _STORED_KINDS = "('MATERIALIZED', 'ALIAS', 'EPHEMERAL')"  # as rmt_carry reads the lists
 
 
@@ -600,10 +596,10 @@ def _stray_columns_sql(table: str, stored: frozenset[str]) -> str:
     """How many stored columns `table` has outside `stored`: 0 while the lists a
     carried write took still describe it."""
     db, name = split_table(table)
-    known = ", ".join(_sql_string(c) for c in sorted(stored))
+    known = ", ".join(sql_string(c) for c in sorted(stored))
     return (
-        f"SELECT count() AS n FROM system.columns WHERE database = {_sql_string(db)} "
-        f"AND table = {_sql_string(name)} AND default_kind NOT IN {_STORED_KINDS} "
+        f"SELECT count() AS n FROM system.columns WHERE database = {sql_string(db)} "
+        f"AND table = {sql_string(name)} AND default_kind NOT IN {_STORED_KINDS} "
         f"AND name NOT IN [{known}]"
     )
 
@@ -632,7 +628,7 @@ def start_guard(deadline_ms_sql: str) -> str:
     clock, epoch milliseconds: a literal or a query parameter) with `DEADLINE_MESSAGE`."""
     return (
         f"throwIf(toUnixTimestamp64Milli(now64(3)) > {deadline_ms_sql}, "
-        f"{_sql_string(DEADLINE_MESSAGE)}) = 0"
+        f"{sql_string(DEADLINE_MESSAGE)}) = 0"
     )
 
 
@@ -667,10 +663,10 @@ def _fenced_statement(
         ""
         if stored is None
         else f"throwIf(({_stray_columns_sql(table, stored)}) != 0, "
-        f"{_sql_string(FENCE_MESSAGE)}) = 0 AND "
+        f"{sql_string(FENCE_MESSAGE)}) = 0 AND "
     )
     return (
-        f"INSERT INTO {qualify(table)} ({cols}) SELECT {cols} FROM input({_sql_string(structure)}) "
+        f"INSERT INTO {qualify(table)} ({cols}) SELECT {cols} FROM input({sql_string(structure)}) "
         f"WHERE {fence}{start_guard(str(round(deadline * 1000)))} FORMAT Native\n"
     )
 

@@ -341,3 +341,33 @@ def test_the_per_org_count_comes_back_down_when_a_statement_fails(
     with pytest.raises(ValidationError):
         asyncio.run(app.handle_insights_query(_query()))
     assert app._running == {}
+
+
+def test_print_sql_refuses_a_new_key_beside_a_live_analyst_user(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    drew: list[bool] = []
+    monkeypatch.setattr(app, "lease", _NoLease)
+    monkeypatch.setattr(app.store, "sealed_secrets", _returns(None))
+    monkeypatch.setattr(app.store, "can_manage_access", _returns(True))
+    monkeypatch.setattr(app.store, "analyst_user_absent", _returns(False))
+    monkeypatch.setattr(app, "load_secrets", lambda **kw: drew.append(kw["may_draw"]))
+    with pytest.raises(RuntimeError, match="DROP USER"):
+        asyncio.run(app.load_for_print())
+    assert not drew
+
+
+def test_print_sql_draws_where_it_cannot_see_the_users(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    drew: list[bool] = []
+
+    async def load(*, may_draw: bool) -> None:
+        drew.append(may_draw)
+
+    monkeypatch.setattr(app, "lease", _NoLease)
+    monkeypatch.setattr(app.store, "sealed_secrets", _returns(None))
+    monkeypatch.setattr(app.store, "can_manage_access", _returns(False))
+    monkeypatch.setattr(app, "load_secrets", load)
+    asyncio.run(app.load_for_print())
+    assert drew == [True]

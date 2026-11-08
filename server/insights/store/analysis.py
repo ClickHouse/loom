@@ -14,6 +14,7 @@ from typing import Any
 from server.core.ch import as_analyst, own_write_reads, uncaptured
 from server.core.ch_names import database, quote
 from server.core.repo_base import _CHClient, _default_client
+from server.core.sql_literal import sql_string
 from server.insights.domain import analysis as boundary
 
 log = logging.getLogger(__name__)
@@ -114,10 +115,8 @@ def foreign_policies_sql(db: str) -> str:
     write, in the database the SQL expression `db` names. ClickHouse ORs
     permissive policies, so Loom's `USING 1` policy for every other user
     would widen what each of them lets its users read."""
-    tables = ", ".join(boundary.sql_literal(t) for t in boundary.allowlisted_tables())
-    ours = ", ".join(
-        boundary.sql_literal(n) for n in (boundary.POLICY_NAME, boundary.OTHERS_POLICY_NAME)
-    )
+    tables = ", ".join(sql_string(t) for t in boundary.allowlisted_tables())
+    ours = ", ".join(sql_string(n) for n in (boundary.POLICY_NAME, boundary.OTHERS_POLICY_NAME))
     return (
         f"SELECT short_name, table FROM system.row_policies WHERE database = {db} "
         f"AND table IN ({tables}) AND NOT is_restrictive AND short_name NOT IN ({ours}) "
@@ -130,14 +129,14 @@ def other_deployments_sql(db: str) -> str:
     analyst's scope policy: another Loom writing the same server-wide user."""
     return (
         "SELECT DISTINCT database FROM system.row_policies WHERE short_name = "
-        f"{boundary.sql_literal(boundary.POLICY_NAME)} AND database != {db} ORDER BY database"
+        f"{sql_string(boundary.POLICY_NAME)} AND database != {db} ORDER BY database"
     )
 
 
 def printed_checks() -> list[str]:
     """Both checks naming Loom's database, for an admin whose session may
     sit in another one."""
-    db = boundary.sql_literal(database())
+    db = sql_string(database())
     return [f"{foreign_policies_sql(db)};", f"{other_deployments_sql(db)};"]
 
 
