@@ -217,6 +217,14 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
             re.IGNORECASE,
         ),
     ),
+    # a file this tier's user cannot write; an ssh key refusal is a credential, above
+    (
+        "permission",
+        re.compile(
+            r"permission denied|operation not permitted|^PermissionError\b",
+            re.IGNORECASE | re.MULTILINE,
+        ),
+    ),
     ("harness", re.compile(r"^(?:\w+: )?harness exit", re.IGNORECASE | re.MULTILINE)),
 )
 
@@ -327,6 +335,12 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
             "CMake could not configure the build tree, or the host has no clang: the "
             "lines above `>> cmake configure failed` say which. The tier retries the "
             "run: fix the build, or give the host what the configure needs."
+        )
+    if kind == "permission":
+        return (
+            "The tier's user cannot write a file the error names, often one another user "
+            "created under the code repos root: share the root through "
+            "LOOM_CODE_REPOS_SHARED_GID and give the group write access to what is there."
         )
     if kind == "harness":
         return "The indexer failed: the error holds the tail of its output."

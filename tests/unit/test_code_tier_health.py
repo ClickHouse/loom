@@ -85,6 +85,13 @@ FAILING_FULL = tier_health.failed(None, "clang_full", "harness exit 1: x", T0).t
         ("RuntimeError: harness exit 2: cmake: error in CMakeLists.txt", "harness"),
         ("ValueError: something else", "unknown"),
         ("harness exit 1: curl: (22) The requested URL returned error: 404", "harness"),
+        (
+            "harness exit 255: error: cannot open '.git/FETCH_HEAD': Permission denied",
+            "permission",
+        ),
+        ("PermissionError: [Errno 13] Permission denied: '/r/checkout/.git/index'", "permission"),
+        ("chmod: changing permissions of 'x': Operation not permitted", "permission"),
+        ("git@github.com: Permission denied (publickey).", "credential"),
     ],
 )
 def test_an_error_is_classified_into_its_kind(text: str, kind: str) -> None:
@@ -94,6 +101,21 @@ def test_an_error_is_classified_into_its_kind(text: str, kind: str) -> None:
 def test_a_harness_exit_that_names_a_network_error_is_a_network_failure() -> None:
     text = "RuntimeError: harness exit 1: fatal: unable to access: Connection refused"
     assert tier_health.classify(text) == "network"
+
+
+def test_a_file_error_is_recorded_with_the_file_and_a_permission_fix() -> None:
+    error = PermissionError(13, "Permission denied", "/r/checkout/.git/FETCH_HEAD")
+    text = recorder.error_text(error)
+    assert text == "PermissionError: [Errno 13] Permission denied: '/r/checkout/.git/FETCH_HEAD'"
+    health = tier_health.failed(None, "clang_full", text, T0)
+    assert health.kind == "permission"
+    assert "LOOM_CODE_REPOS_SHARED_GID" in health.fix
+
+
+def test_an_os_error_without_a_file_is_recorded_by_its_kind_only() -> None:
+    assert recorder.error_text(ConnectionRefusedError(111, "refused by 10.0.0.1")) == (
+        "ConnectionRefusedError"
+    )
 
 
 def test_a_credential_fix_names_the_host_the_submodule_and_the_setting() -> None:

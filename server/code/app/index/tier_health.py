@@ -38,9 +38,11 @@ class ToolOutputError(RuntimeError):
 
 def error_text(error: BaseException | str) -> str:
     """The record's error, which `code.index_status` shows a viewer: a tool's or git's
-    output whole (redacted later), any other exception's kind, since its text can
-    carry a statement or the server's address."""
+    output whole (redacted later), a file error with the file it names, any other
+    exception's kind, since its text can carry a statement or the server's address."""
     if isinstance(error, ToolOutputError | GitError):
+        return f"{type(error).__name__}: {error}"
+    if isinstance(error, OSError) and error.filename is not None:
         return f"{type(error).__name__}: {error}"
     if isinstance(error, BaseException):
         return caller_text(error)
