@@ -107,7 +107,7 @@ def _commit(repo: Path, message: str) -> None:
     git_repo.git(repo, "commit", "-q", "--allow-empty", "-m", message)
 
 
-def _previous(repo: Path, out: Path, version: str = "1.2.0") -> subprocess.CompletedProcess[str]:
+def _build_files(repo: Path, out: Path, version: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", str(ROOT / "scripts/gates/previous_release_files.sh"), version,
          "clickhouse/clickhouse-server:26.9.18.11", str(out)],
@@ -144,16 +144,7 @@ def test_the_previous_release_is_the_highest_final_tag_below(
     tmp_path: Path, version: str, previous: str
 ) -> None:
     repo = _repo_with_releases(tmp_path, ["v1.0.0", "v1.1.0", "v1.2.0-rc.1", "v1.9.1", "v1.10.0"])
-    out = tmp_path / "previous"
-    result = _previous(repo, out, version)
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == previous
-    if previous:
-        # Built by that tag's own builder, with that tag's install.sh beside it.
-        assert (out / "loom-stack.tar.gz").read_text() == previous
-        assert (out / "install.sh").is_file()
-    else:
-        assert not out.exists()
+    assert rehearsal.previous_release(version, repo) == previous
 
 
 def test_a_released_version_built_on_another_commit_upgrades_from_its_own_tag(
@@ -163,24 +154,31 @@ def test_a_released_version_built_on_another_commit_upgrades_from_its_own_tag(
     starts from that release, not the one before it."""
     repo = _repo_with_releases(tmp_path, ["v1.0.0", "v1.1.0"])
     _commit(repo, "after the release")
-    result = _previous(repo, tmp_path / "previous", "1.1.0")
-    assert result.stdout.strip() == "1.1.0", result.stderr
+    assert rehearsal.previous_release("1.1.0", repo) == "1.1.0"
 
 
 def test_a_checkout_without_tags_fails_rather_than_skip_the_upgrade(tmp_path: Path) -> None:
-    result = _previous(_repo_with_releases(tmp_path, []), tmp_path / "previous")
-    assert result.returncode != 0 and "no v* tags" in result.stderr
+    with pytest.raises(SystemExit, match=r"no v\* tags"):
+        rehearsal.previous_release("1.2.0", _repo_with_releases(tmp_path, []))
 
 
 def test_only_candidate_tags_are_no_previous_release(tmp_path: Path) -> None:
-    result = _previous(_repo_with_releases(tmp_path, ["v1.2.0-rc.1"]), tmp_path / "previous")
-    assert result.returncode == 0 and result.stdout == "", result.stderr
+    assert rehearsal.previous_release("1.2.0", _repo_with_releases(tmp_path, ["v1.2.0-rc.1"])) == ""
+
+
+def test_a_release_is_built_by_its_own_tag(tmp_path: Path) -> None:
+    repo = _repo_with_releases(tmp_path, ["v1.0.0", "v1.1.0"])
+    out = tmp_path / "previous"
+    result = _build_files(repo, out, "1.1.0")
+    assert result.returncode == 0, result.stderr
+    # Built by that tag's own builder, with that tag's install.sh beside it.
+    assert (out / "loom-stack.tar.gz").read_text() == "1.1.0"
+    assert (out / "install.sh").is_file()
 
 
 def test_a_previous_release_that_fails_to_build_fails(tmp_path: Path) -> None:
     repo = _repo_with_releases(tmp_path, ["v1.1.0"], builder="raise SystemExit(3)\n")
-    result = _previous(repo, tmp_path / "previous")
-    assert result.returncode != 0 and not result.stdout.strip()
+    assert _build_files(repo, tmp_path / "previous", "1.1.0").returncode != 0
 
 
 def test_release_check_runs_the_published_one_liner_on_both_architectures() -> None:

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.release import build_stack_bundle
+from scripts.release import build_stack_bundle, prepare
 from tests.unit import git_repo
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -385,8 +385,8 @@ def test_a_bundle_that_cannot_be_read_is_one_error_line(
     ["1.2.0", "1.2.0-rc.1", "1.2.0-rc.10", "1.2.0-beta.1", "1.2", "1.2.0-rc", "1.2.0-rc.1.2"],
 )
 def test_a_bundle_takes_the_versions_the_release_takes(tmp_path: Path, version: str) -> None:
-    """release.yml's tag parse and build() accept the same versions, so a tag the
-    release runs never fails late, at the bundle."""
+    """release.yml's tag parse, prepare.py and build() accept the same versions,
+    so a tag the release runs never fails late, at the bundle."""
     (parse,) = [
         s for s in _release_workflow()["jobs"]["version"]["steps"] if s.get("id") == "parse"
     ]
@@ -403,7 +403,9 @@ def test_a_bundle_takes_the_versions_the_release_takes(tmp_path: Path, version: 
         capture_output=True,
         text=True,
     )
-    if build_stack_bundle.VERSION_PATTERN.fullmatch(version):
+    taken = build_stack_bundle.VERSION_PATTERN.fullmatch(version) is not None
+    assert taken is bool(prepare.FINAL.fullmatch(version) or prepare.CANDIDATE.fullmatch(version))
+    if taken:
         assert run.returncode == 0, run.stdout + run.stderr
         assert f"version={version}" in output.read_text().splitlines()
     else:

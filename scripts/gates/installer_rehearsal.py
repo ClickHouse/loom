@@ -50,6 +50,7 @@ from typing import Any, NamedTuple
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+from scripts.release import prepare  # noqa: E402
 from scripts.release.build_stack_bundle import (  # noqa: E402
     VERSION_PATTERN,
     pinned_image,
@@ -290,17 +291,37 @@ def published_release(args: argparse.Namespace) -> Release:
     return Release(args.version, args.previous_version or "", installer, env={})
 
 
+def previous_release(version: str, root: Path = ROOT) -> str:
+    """The release the upgrade starts from, or "" for none: the release that is
+    out when `version` is a final tagged on another commit (main, between
+    releases), otherwise the highest final below `version`'s final."""
+    tags = subprocess.run(
+        ["git", "tag", "--list", "v*"], cwd=root, capture_output=True, text=True, check=True
+    ).stdout.split()
+    if not tags:  # a checkout without its tags, not a repository without releases
+        raise SystemExit("FAIL no v* tags: fetch them (fetch-depth: 0)")
+    final = prepare.final_of(version)
+    if version == final and f"v{version}" in tags and not prepare.tag_on_head(version, root):
+        return version
+    try:
+        return prepare.previous_release(final, root).removeprefix("v")
+    except ValueError:  # no final release below this one
+        return ""
+
+
 def build_previous_release(release_dir: Path, version: str, work: Path) -> str:
     """The previous release's own installer, and its bundle built from its tag on
     the ClickHouse release this release's bundle names, in `work/previous`;
     returns its version, or "" when there is none."""
-    clickhouse = pinned_image(release_dir / "loom-stack.tar.gz")
-    previous = run(
-        "bash", str(SCRIPTS / "previous_release_files.sh"), version, clickhouse,
-        str(work / "previous"), capture_output=True, cwd=ROOT,  # its tags
-    ).stdout.strip()  # fmt: skip
+    previous = previous_release(version)
     if not previous:
         print(f"no final release below {version}: no upgrade rehearsed", flush=True)
+        return ""
+    clickhouse = pinned_image(release_dir / "loom-stack.tar.gz")
+    run(
+        "bash", str(SCRIPTS / "previous_release_files.sh"), previous, clickhouse,
+        str(work / "previous"), cwd=ROOT,  # its tags
+    )  # fmt: skip
     return previous
 
 
