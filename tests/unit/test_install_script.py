@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import shutil
@@ -14,16 +13,16 @@ from pathlib import Path
 
 import pytest
 
+from scripts.release import build_stack_bundle
+from tests.unit.install_versions import GUARD_CASES
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _build(tmp: Path) -> tuple[Path, Path]:
-    path = ROOT / "scripts" / "release" / "build_stack_bundle.py"
-    spec = importlib.util.spec_from_file_location("build_stack_bundle", path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.build("9.9.9", tmp / "bundle", "clickhouse/clickhouse-server:26.9.18.11")
+def _build(tmp: Path, version: str = "9.9.9") -> tuple[Path, Path]:
+    return build_stack_bundle.build(
+        version, tmp / "bundle", "clickhouse/clickhouse-server:26.9.18.11"
+    )
 
 
 @pytest.fixture
@@ -43,6 +42,12 @@ def installer_env(tmp_path: Path) -> dict[str, str]:
         "LOOM_INSTALL_CHECKSUM": str(checksum),
         "LOOM_SKIP_START": "1",
     }
+
+
+@pytest.fixture
+def download_env(installer_env: dict[str, str]) -> dict[str, str]:
+    """The installer's environment without a local bundle: it downloads one."""
+    return {k: v for k, v in installer_env.items() if not k.startswith("LOOM_INSTALL_")}
 
 
 @pytest.fixture
@@ -510,3 +515,233 @@ def test_an_upgrade_keeps_an_operators_own_extractor_url(install) -> None:
     env = _env(target)
     assert env["LOOM_DOCUMENT_EXTRACTOR_URL"] == "https://mine:8790"
     assert len(env["LOOM_DOCUMENT_EXTRACTOR_TOKEN"]) == 48
+
+
+def _stub_curl(bin_dir: Path, *, fail: bool = False) -> Path:
+    """A curl that logs each URL and writes the requested -o file (or fails, as
+    a 404 does with -f)."""
+    log = bin_dir / "curl.log"
+    (bin_dir / "curl").write_text(
+        "#!/bin/sh\n"
+        'out=; for a; do [ "$prev" = -o ] && out=$a; prev=$a; done\n'
+        f'for a; do case $a in https://*|http://*) echo "$a" >> "{log}" ;; esac; done\n'
+        + ("exit 22\n" if fail else '[ -z "$out" ] || : > "$out"\n')
+    )
+    (bin_dir / "curl").chmod(0o755)
+    return log
+
+
+@pytest.mark.parametrize(
+    ("version", "base"),
+    [
+        ("latest", "https://github.com/ClickHouse/loom/releases/latest/download"),
+        ("1.2.3", "https://github.com/ClickHouse/loom/releases/download/v1.2.3"),
+    ],
+)
+def test_the_release_files_come_from_github_by_default(
+    download_env: dict[str, str], tmp_path: Path, version: str, base: str
+) -> None:
+    log = _stub_curl(tmp_path / "bin")
+    result = subprocess.run(
+        ["sh", str(ROOT / "install.sh")],
+        env={**download_env, "LOOM_VERSION": version},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    # The stub's empty files fail the checksum: only the URLs are under test.
+    assert result.returncode != 0
+    assert log.read_text().splitlines() == [
+        f"{base}/loom-stack.tar.gz",
+        f"{base}/loom-stack.tar.gz.sha256",
+    ]
+
+
+def test_a_releases_install_sh_downloads_that_release(
+    download_env: dict[str, str], tmp_path: Path
+) -> None:
+    (tmp_path / "install.sh").write_text(build_stack_bundle.stamp_installer("1.2.3"))
+    log = _stub_curl(tmp_path / "bin")
+    result = subprocess.run(
+        ["sh", str(tmp_path / "install.sh")],
+        env=download_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    base = "https://github.com/ClickHouse/loom/releases/download/v1.2.3"
+    assert log.exists(), result.stderr
+    assert log.read_text().splitlines() == [
+        f"{base}/loom-stack.tar.gz",
+        f"{base}/loom-stack.tar.gz.sha256",
+    ]
+
+
+def test_the_release_files_come_from_loom_releases_url_when_set(
+    download_env: dict[str, str], tmp_path: Path
+) -> None:
+    log = _stub_curl(tmp_path / "bin")
+    result = subprocess.run(
+        ["sh", str(ROOT / "install.sh")],
+        env={
+            **download_env,
+            "LOOM_RELEASES_URL": "https://127.0.0.1:8443/ClickHouse/loom/releases",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert log.exists(), result.stderr
+    assert log.read_text().splitlines()[0] == (
+        "https://127.0.0.1:8443/ClickHouse/loom/releases/latest/download/loom-stack.tar.gz"
+    )
+
+
+def test_a_release_without_the_bundle_says_where_the_releases_are(
+    download_env: dict[str, str], tmp_path: Path
+) -> None:
+    _stub_curl(tmp_path / "bin", fail=True)
+    result = subprocess.run(
+        ["sh", str(ROOT / "install.sh")],
+        env={**download_env, "LOOM_VERSION": "9.9.9"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert (
+        "could not download https://github.com/ClickHouse/loom/releases/download/v9.9.9/"
+        "loom-stack.tar.gz: the releases with an installer are listed at "
+        "https://github.com/ClickHouse/loom/releases"
+    ) in result.stderr
+
+
+def test_an_older_installer_refuses_to_downgrade_an_install(install) -> None:
+    """A saved copy of an older release's installer, run over a newer install,
+    refuses: it would start an older Loom and ClickHouse on newer data."""
+    run, target = install
+    target.mkdir()
+    (target / "VERSION").write_text("10.0.0\n")
+    result = run()
+    assert result.returncode == 1
+    assert "Loom 10.0.0 is installed and this installer installs the older 9.9.9" in result.stderr
+    assert (target / "VERSION").read_text() == "10.0.0\n"
+    assert run(LOOM_VERSION="latest").returncode == 1  # latest names no version: the guard holds
+    # A name that is not the bundle's does not lift the guard either.
+    named_other = run(LOOM_VERSION="10.1.0")
+    assert named_other.returncode == 1 and "installs the older 9.9.9" in named_other.stderr
+    for named in ("9.9.9", "v9.9.9"):  # asked for by name, with or without the v
+        (target / "VERSION").write_text("10.0.0\n")
+        assert run(LOOM_VERSION=named).returncode == 0, named
+    assert (target / "VERSION").read_text().strip() == "9.9.9"
+
+
+@pytest.mark.parametrize("installed", ["", "dev"])
+def test_a_version_file_that_names_no_release_does_not_block_the_install(
+    install, installed: str
+) -> None:
+    """The guard compares releases: a VERSION that names no release is no newer install."""
+    run, target = install
+    target.mkdir()
+    (target / "VERSION").write_text(f"{installed}\n")
+    result = run()
+    assert result.returncode == 0, result.stderr
+    assert (target / "VERSION").read_text().strip() == "9.9.9"
+
+
+def test_an_awk_that_fails_refuses_rather_than_lift_the_guard(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, target = install
+    target.mkdir()
+    (target / "VERSION").write_text("9.9.8\n")  # older: a working guard would let it through
+    awk = Path(installer_env["PATH"].split(":")[0]) / "awk"
+    awk.write_text("#!/bin/sh\nexit 2\n")
+    awk.chmod(0o755)
+    result = run()
+    assert result.returncode == 1
+    assert "Loom installer: could not compare the installed Loom 9.9.8 with 9.9.9" in result.stderr
+    assert (target / "VERSION").read_text() == "9.9.8\n"
+
+
+@pytest.mark.parametrize(("installed", "bundle", "refused"), GUARD_CASES)
+def test_only_an_older_bundle_than_the_installed_one_is_refused(
+    install, tmp_path: Path, installed: str, bundle: str, refused: bool
+) -> None:
+    run, target = install
+    target.mkdir()
+    (target / "VERSION").write_text(f"{installed}\n")
+    archive, checksum = _build(tmp_path / "bundle", bundle)
+    result = run(LOOM_INSTALL_BUNDLE=str(archive), LOOM_INSTALL_CHECKSUM=str(checksum))
+    assert result.returncode == (1 if refused else 0), result.stderr
+    assert (target / "VERSION").read_text().strip() == (installed if refused else bundle)
+    if refused:
+        assert f"installs the older {bundle}" in result.stderr
+
+
+LAST_LINE = '{ main "$@"; }\n'
+
+
+def test_the_whole_script_piped_to_sh_installs(install, installer_env: dict[str, str]) -> None:
+    """The control for the cut-off cases below: the same environment, the whole script."""
+    _, target = install
+    text = (ROOT / "install.sh").read_text()
+    result = subprocess.run(
+        ["sh"], input=text, env=installer_env, capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0 and target.exists(), result.stderr
+
+
+def _cut_runs_nothing(install, installer_env: dict[str, str], end: int) -> None:
+    """The first `end` characters of the script, piped to `sh` as `curl | sh`
+    does, run nothing, in an environment where the whole script installs."""
+    _, target = install
+    text = (ROOT / "install.sh").read_text()
+    result = subprocess.run(
+        ["sh"], input=text[:end], env=installer_env, capture_output=True, text=True, check=False
+    )
+    assert not target.exists(), result.stderr
+    assert result.stdout == ""
+    assert "Loom installer:" not in result.stderr
+
+
+@pytest.mark.parametrize("fraction", [0.1, 0.5, 0.9, 0.99])
+def test_a_download_cut_short_runs_nothing(
+    install, installer_env: dict[str, str], fraction: float
+) -> None:
+    """`curl | sh` runs what has arrived: the script is one function called on its
+    last line, so a cut-off copy is a syntax error or defines it without calling it."""
+    text = (ROOT / "install.sh").read_text()
+    _cut_runs_nothing(install, installer_env, int(len(text) * fraction))
+
+
+@pytest.mark.parametrize("into_last_line", range(len(LAST_LINE) - 1))
+def test_a_download_cut_inside_the_last_line_runs_nothing(
+    install, installer_env: dict[str, str], into_last_line: int
+) -> None:
+    """The call is inside braces, so a cut right after `main` or before the
+    closing brace leaves the brace open, and `sh` runs nothing."""
+    text = (ROOT / "install.sh").read_text()
+    assert text.endswith("\n" + LAST_LINE)
+    _cut_runs_nothing(install, installer_env, len(text) - len(LAST_LINE) + into_last_line)
+
+
+def test_an_unreachable_docker_daemon_is_named_before_any_pull(
+    installer_env: dict[str, str], tmp_path: Path
+) -> None:
+    docker = tmp_path / "bin" / "docker"
+    docker.write_text(
+        '#!/bin/sh\n[ "$1 $2 $3" = "compose version --short" ] && echo 2.29.1 && exit 0\n'
+        'echo "$*" >> "$0.log"; exit 1\n'
+    )
+    result = subprocess.run(
+        ["sh", str(ROOT / "install.sh")],
+        env={**installer_env, "LOOM_SKIP_START": "0"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "cannot reach the Docker daemon" in result.stderr
+    assert Path(f"{docker}.log").read_text().splitlines() == ["info"]  # no pull
+    assert not Path(installer_env["LOOM_INSTALL_DIR"]).exists()  # nor any file written

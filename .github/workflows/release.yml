@@ -15,8 +15,9 @@ name: release
 # prerequisites, in seconds) -> clickhouse (the ClickHouse release the
 # installer bundle names, migrated and schema-checked) -> build -> verify
 # (inspect the exact files) -> docker (build and scan each image on each
-# architecture's own runner) -> docker-tag -> docker-smoke -> github-release ->
-# pypi, npm, mcp-registry (dispatch only). A re-run after a partial publish is
+# architecture's own runner) -> docker-tag -> docker-smoke (the quickstart and
+# the installer rehearsal) -> github-release -> release-check (tag push only),
+# and pypi, npm, mcp-registry (dispatch only). A re-run after a partial publish is
 # safe: the bundle keeps the ClickHouse release it was first published with,
 # the release is updated in place, PyPI skips files it already has, npm and the
 # MCP Registry skip a version they already have, a re-run of failed jobs tags
@@ -289,13 +290,13 @@ jobs:
           zip -q "release/plugins/loom-claude-code-plugin-v${VERSION}.zip" LICENSE NOTICE THIRD_PARTY_NOTICES
           zip -q "release/plugins/loom-codex-plugin-v${VERSION}.zip" LICENSE NOTICE THIRD_PARTY_NOTICES
           ls -la release/*
+      # The bundle, its checksum and install.sh, which installs this version.
       - name: Build the source-free Compose installer bundle
         env:
           CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
         run: |
           python scripts/release/build_stack_bundle.py build --version "$VERSION" \
             --clickhouse-image "$CLICKHOUSE_IMAGE"
-          cp install.sh release/stack/install.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-files
@@ -332,7 +333,7 @@ jobs:
           from packaging.version import Version
 
           sys.path.insert(0, os.getcwd())
-          from scripts.release.build_stack_bundle import FILES, pinned_image
+          from scripts.release.build_stack_bundle import FILES, pinned_image, stamped
 
           version = os.environ["VERSION"]
           pyv = str(Version(version))
@@ -415,6 +416,8 @@ jobs:
                       errors.append(f"stack bundle names {pinned}, not the checked release")
                   if release_version != version:
                       errors.append(f"stack bundle version {release_version}, expected {version}")
+              if "\n" + stamped(version) not in pathlib.Path("release/stack/install.sh").read_text():
+                  errors.append(f"install.sh does not install {version}")
 
           for e in errors:
               print(f"::error::{e}")
@@ -619,16 +622,21 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0 # the release tags, for the previous release's installer
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-files
+          path: release
       - name: Install dashboard browser-test dependencies
         working-directory: frontend
         run: |
@@ -650,6 +658,18 @@ jobs:
           python3 scripts/gates/docker_quickstart_smoke.py --image "ghcr.io/clickhouse/loom:$VERSION" \
             --extractor-image "ghcr.io/clickhouse/loom-extractor:$VERSION" \
             --clickhouse-image "$CLICKHOUSE_IMAGE"
+      # The release's own install.sh and bundle, before they are published: the
+      # one-liner in clean Debian, Ubuntu and Alpine containers (install, round
+      # trip, re-run, a refused downgrade) and an upgrade over the previous
+      # release's installer (previous_release_files.sh). The quickstart above
+      # pulled a release's images; a dry run loaded them.
+      - name: The one-line installer in clean containers
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          python3 scripts/gates/installer_rehearsal.py --release-dir release/stack --upgrade \
+            --image "ghcr.io/clickhouse/loom:$VERSION" \
+            --extractor-image "ghcr.io/clickhouse/loom-extractor:$VERSION"
 
   github-release:
     name: GitHub Release (artifacts attached)
@@ -748,6 +768,16 @@ jobs:
             release/npm/*.tgz
             release/plugins/*.zip
             release/stack/*
+
+  # The published release as a user meets it, signed in to nothing. The SDKs are
+  # checked by a dispatch of release-check after the registry dispatch.
+  release-check:
+    name: Published release from outside
+    if: ${{ !cancelled() && needs.github-release.result == 'success' && github.event_name == 'push' }}
+    needs: [version, github-release]
+    uses: ./.github/workflows/release-check.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
 
   pypi:
     name: PyPI (clickhouse-loom)

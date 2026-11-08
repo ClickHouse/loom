@@ -1,27 +1,23 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
+import subprocess
+import sys
 import tarfile
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
+from scripts.release import build_stack_bundle
 from tests.unit import git_repo
 
-
-def _module():
-    path = Path(__file__).parents[2] / "scripts" / "release" / "build_stack_bundle.py"
-    spec = importlib.util.spec_from_file_location("build_stack_bundle", path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = ROOT / "scripts" / "release" / "build_stack_bundle.py"
 
 
 def test_release_stack_bundle_is_complete_and_checksummed(tmp_path: Path) -> None:
-    archive, checksum = _module().build(
+    archive, checksum = build_stack_bundle.build(
         "1.2.3", tmp_path, "clickhouse/clickhouse-server:26.9.18.11"
     )
     expected = checksum.read_text(encoding="utf-8").split()[0]
@@ -49,7 +45,7 @@ def test_release_stack_bundle_is_complete_and_checksummed(tmp_path: Path) -> Non
 
 
 def test_standalone_compose_uses_release_image_and_embeds_no_secret() -> None:
-    root = Path(__file__).parents[2]
+    root = ROOT
     compose = (root / "compose.yaml").read_text(encoding="utf-8")
     env = (root / "deploy" / "standalone" / "env.example").read_text(encoding="utf-8")
     assert "${LOOM_IMAGE_REPOSITORY:-ghcr.io/clickhouse/loom}:${LOOM_VERSION:-latest}" in compose
@@ -69,18 +65,21 @@ def test_standalone_compose_uses_release_image_and_embeds_no_secret() -> None:
 )
 def test_a_bundle_names_one_exact_clickhouse_release(tmp_path: Path, image: str) -> None:
     with pytest.raises(ValueError, match="not one ClickHouse release"):
-        _module().build("1.2.3", tmp_path, image)
+        build_stack_bundle.build("1.2.3", tmp_path, image)
 
 
 def test_a_rerun_reads_the_release_a_published_bundle_names(tmp_path: Path) -> None:
-    module = _module()
-    archive, _ = module.build("1.2.3", tmp_path, "clickhouse/clickhouse-server:26.9.18.11")
-    assert module.pinned_image(archive) == "clickhouse/clickhouse-server:26.9.18.11"
+    archive, _ = build_stack_bundle.build(
+        "1.2.3", tmp_path, "clickhouse/clickhouse-server:26.9.18.11"
+    )
+    assert build_stack_bundle.pinned_image(archive) == "clickhouse/clickhouse-server:26.9.18.11"
 
 
 def _edited_bundle(tmp_path: Path, edit: Callable[[str], str]) -> Path:
     """A built bundle whose compose.yaml `edit` rewrote."""
-    archive, _ = _module().build("1.2.3", tmp_path, "clickhouse/clickhouse-server:26.9.18.11")
+    archive, _ = build_stack_bundle.build(
+        "1.2.3", tmp_path, "clickhouse/clickhouse-server:26.9.18.11"
+    )
     stage = tmp_path / "stage"
     with tarfile.open(archive) as bundle:
         bundle.extractall(stage, filter="data")
@@ -96,7 +95,7 @@ def test_the_pin_is_the_compose_default_not_a_release_a_comment_names(tmp_path: 
     edited = _edited_bundle(
         tmp_path, lambda c: "# e.g. clickhouse/clickhouse-server:26.8.1.1\n" + c
     )
-    assert _module().pinned_image(edited) == "clickhouse/clickhouse-server:26.9.18.11"
+    assert build_stack_bundle.pinned_image(edited) == "clickhouse/clickhouse-server:26.9.18.11"
 
 
 def test_a_bundle_from_before_the_override_names_its_release_bare(tmp_path: Path) -> None:
@@ -107,13 +106,15 @@ def test_a_bundle_from_before_the_override_names_its_release_bare(tmp_path: Path
         )
 
     edited = _edited_bundle(tmp_path, bare)
-    assert _module().pinned_image(edited) == "clickhouse/clickhouse-server:26.5.1.882"
+    assert build_stack_bundle.pinned_image(edited) == "clickhouse/clickhouse-server:26.5.1.882"
 
 
 def test_the_pin_pattern_reads_what_build_writes() -> None:
-    module = _module()
-    written = module._image_default("clickhouse/clickhouse-server:26.9.18.11")
-    assert module._PINNED.fullmatch(written).group(1) == "clickhouse/clickhouse-server:26.9.18.11"
+    written = build_stack_bundle._image_default("clickhouse/clickhouse-server:26.9.18.11")
+    assert (
+        build_stack_bundle._PINNED.fullmatch(written).group(1)
+        == "clickhouse/clickhouse-server:26.9.18.11"
+    )
 
 
 @pytest.mark.parametrize(
@@ -129,30 +130,32 @@ def test_a_new_bundle_never_names_an_older_clickhouse_than_the_last(
     tmp_path: Path, image: str, older: bool
 ) -> None:
     """An upgrading install would start an older server on data a newer one wrote."""
-    module = _module()
-    published, _ = module.build("1.2.3", tmp_path, "clickhouse/clickhouse-server:26.9.18.11")
+    published, _ = build_stack_bundle.build(
+        "1.2.3", tmp_path, "clickhouse/clickhouse-server:26.9.18.11"
+    )
     if older:
         with pytest.raises(ValueError, match="older than clickhouse/clickhouse-server:26.9.18.11"):
-            module.refuse_older(image, [published])
+            build_stack_bundle.refuse_older(image, [published])
     else:
-        module.refuse_older(image, [published])
+        build_stack_bundle.refuse_older(image, [published])
 
 
 def test_a_new_bundle_is_checked_against_the_newest_of_several(tmp_path: Path) -> None:
     """A prerelease can name a newer ClickHouse than the latest final release."""
-    module = _module()
-    final, _ = module.build("1.2.3", tmp_path / "a", "clickhouse/clickhouse-server:26.8.2.1")
-    rc, _ = module.build("1.3.0-rc.1", tmp_path / "b", "clickhouse/clickhouse-server:26.9.18.11")
+    final, _ = build_stack_bundle.build(
+        "1.2.3", tmp_path / "a", "clickhouse/clickhouse-server:26.8.2.1"
+    )
+    rc, _ = build_stack_bundle.build(
+        "1.3.0-rc.1", tmp_path / "b", "clickhouse/clickhouse-server:26.9.18.11"
+    )
     with pytest.raises(ValueError, match="older than clickhouse/clickhouse-server:26.9.18.11"):
-        module.refuse_older("clickhouse/clickhouse-server:26.9.1.5", [final, rc])
+        build_stack_bundle.refuse_older("clickhouse/clickhouse-server:26.9.1.5", [final, rc])
 
 
 def _release_workflow() -> dict:
     import yaml
 
-    return yaml.safe_load(
-        (Path(__file__).parents[2] / ".github" / "workflows" / "release.yml").read_text()
-    )
+    return yaml.safe_load((ROOT / ".github" / "workflows" / "release.yml").read_text())
 
 
 # `gh` as a release step sees it: v1.1.0 is not published yet, and v1.2.0's
@@ -189,12 +192,14 @@ def _run_step(tmp_path: Path, script: str, **env: str):
 
     work = tmp_path / "work"
     work.mkdir(exist_ok=True)
+    (work / "scripts").symlink_to(ROOT / "scripts")
+    other, _ = build_stack_bundle.build(
     # A copy, not a link: through a link, the script's ../../dev would be the
     # real dev/, not the stub written beside it.
-    shutil.copytree(Path(__file__).parents[2] / "scripts" / "release", work / "scripts" / "release")
+    shutil.copytree(ROOT / "scripts" / "release", work / "scripts" / "release")
     git_repo.git(work, "init", "-q")
     git_repo.git(work, "commit", "-q", "--allow-empty", "-m", "release")
-    other, _ = _module().build(
+    other, _ = build_stack_bundle.build(
         "1.2.0", tmp_path / "other", "clickhouse/clickhouse-server:26.9.18.11"
     )
     gh = tmp_path / "bin" / "gh"
@@ -260,8 +265,109 @@ def test_overlapping_releases_recheck_the_bundle_another_tag_published(
     assert job["concurrency"] == {"group": "release-publish", "cancel-in-progress": False}
     (keep,) = [s for s in job["steps"] if "published_bundle.sh" in s.get("run", "")]
     assert keep["env"]["ALLOW_DOWNGRADE"] == "${{ inputs.allow_clickhouse_downgrade }}"
-    _module().build("1.1.0", tmp_path / "work" / "release" / "stack", own)
+    build_stack_bundle.build("1.1.0", tmp_path / "work" / "release" / "stack", own)
     run = _run_step(tmp_path, keep["run"], ALLOW_DOWNGRADE=allow)
     assert (run.returncode == 0) is passes, run.stderr
     if not passes:
         assert "older than clickhouse/clickhouse-server:26.9.18.11" in run.stderr
+
+
+def test_a_releases_install_sh_installs_that_release(tmp_path: Path) -> None:
+    """`releases/latest/download/install.sh` must install the release it came from,
+    not whatever `latest` names by the time it downloads the bundle."""
+    build_stack_bundle.build("1.2.3", tmp_path, "clickhouse/clickhouse-server:26.9.18.11")
+    stamped = (tmp_path / "install.sh").read_text(encoding="utf-8")
+    repository = (ROOT / "install.sh").read_text(encoding="utf-8")
+    assert "\n  RELEASE_VERSION=latest\n" in repository
+    assert stamped == repository.replace(
+        "\n  RELEASE_VERSION=latest\n", "\n  RELEASE_VERSION=1.2.3\n"
+    )
+    assert (tmp_path / "install.sh").stat().st_mode & 0o111
+
+
+@pytest.mark.parametrize("version", ["dev", "v1.2.3", "1.2", "1.2.3-beta.1", "1.2.3; id"])
+def test_a_bundle_names_one_release_version(tmp_path: Path, version: str) -> None:
+    with pytest.raises(ValueError, match="not X.Y.Z or X.Y.Z-rc.N"):
+        build_stack_bundle.build(version, tmp_path, "clickhouse/clickhouse-server:26.9.18.11")
+    assert not any(tmp_path.iterdir())
+
+
+def test_a_refused_build_is_one_error_line(tmp_path: Path) -> None:
+    run = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "build",
+            "--version",
+            "dev",
+            "--output-dir",
+            str(tmp_path),
+            "--clickhouse-image",
+            "clickhouse/clickhouse-server:26.9.18.11",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert run.returncode == 1
+    assert run.stderr == "::error::not X.Y.Z or X.Y.Z-rc.N: 'dev'\n"
+
+
+@pytest.mark.parametrize(
+    "installer",
+    ["#!/bin/sh\nRELEASE_VERSION=${X:-latest}\n", "\n  RELEASE_VERSION=latest\n" * 2],
+    ids=["no default", "two defaults"],
+)
+def test_stamping_refuses_an_installer_without_one_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, installer: str
+) -> None:
+    (tmp_path / "install.sh").write_text(installer)
+    monkeypatch.setattr(build_stack_bundle, "ROOT", tmp_path)
+    with pytest.raises(ValueError, match="RELEASE_VERSION=latest once"):
+        build_stack_bundle.build(
+            "1.2.3", tmp_path / "out", "clickhouse/clickhouse-server:26.9.18.11"
+        )
+    assert not (tmp_path / "out").exists()  # no bundle without its installer
+
+
+def _truncated_bundle(tmp_path: Path) -> Path:
+    whole, _ = build_stack_bundle.build(
+        "1.2.3", tmp_path / "whole", "clickhouse/clickhouse-server:26.9.18.11"
+    )
+    cut = tmp_path / "cut.tar.gz"
+    cut.write_bytes(whole.read_bytes()[:100])
+    return cut
+
+
+def _empty_bundle(tmp_path: Path) -> Path:
+    empty = tmp_path / "empty.tar.gz"
+    with tarfile.open(empty, "w:gz"):
+        pass
+    return empty
+
+
+@pytest.mark.parametrize("command", ["pinned-in", "not-older"])
+@pytest.mark.parametrize(
+    ("bundle", "error"),
+    [
+        (lambda tmp: tmp / "missing.tar.gz", "is not a readable release bundle"),
+        (_truncated_bundle, "is not a readable release bundle"),
+        (_empty_bundle, "has no loom-stack/compose.yaml"),
+    ],
+    ids=["missing", "cut short", "no compose.yaml"],
+)
+def test_a_bundle_that_cannot_be_read_is_one_error_line(
+    tmp_path: Path, command: str, bundle: Callable[[Path], Path], error: str
+) -> None:
+    archive = str(bundle(tmp_path))
+    args = (
+        [archive]
+        if command == "pinned-in"
+        else ["clickhouse/clickhouse-server:26.9.18.11", archive]
+    )
+    run = subprocess.run(
+        [sys.executable, str(SCRIPT), command, *args], capture_output=True, text=True, check=False
+    )
+    assert run.returncode == 1
+    assert run.stderr.startswith("::error::") and error in run.stderr, run.stderr
+    assert "Traceback" not in run.stderr

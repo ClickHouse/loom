@@ -1,0 +1,102 @@
+name: release-check
+
+# A published release, checked from outside as a user meets it, signed in to
+# nothing: the one-line installer from github.com in clean Debian, Ubuntu and
+# Alpine containers on amd64 and arm64 (install, round trip, re-run, a refused
+# downgrade, an upgrade from the previous release), and the SDKs from PyPI and
+# npm. The release workflow calls it after publishing, with neither the upgrade
+# nor the SDKs (they publish later, from the registry dispatch); a maintainer
+# dispatches it for any release, with `previous_version` and `sdks`
+# (docs/development/release-process.md).
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The published release to check (X.Y.Z or X.Y.Z-rc.N)
+        required: true
+      previous_version:
+        description: A published release earlier than version, with install.sh and loom-stack.tar.gz, to upgrade from (X.Y.Z or X.Y.Z-rc.N), or empty for none
+        required: false
+        default: ""
+      sdks:
+        description: Also install the SDKs from PyPI and npm (after the registry dispatch)
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  installer:
+    name: One-line installer (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Only the highest final release is `latest`, and then `latest` must
+      # serve it; another is checked by its own URL.
+      - name: Whether the version is Latest
+        id: latest
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        # An assignment, so a failed listing fails the step.
+        run: |
+          latest=$(python3 scripts/release/make_latest.py "$VERSION")
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+      # Signed in to nothing: no token reaches the rehearsal.
+      - name: The published one-liner in clean containers
+        env:
+          VERSION: ${{ inputs.version }}
+          PREVIOUS: ${{ inputs.previous_version }}
+          LATEST: ${{ steps.latest.outputs.latest }}
+        run: |
+          args=(--published --version "$VERSION" --latest "$LATEST")
+          [ -z "$PREVIOUS" ] || args+=(--previous-version "$PREVIOUS")
+          python3 scripts/gates/installer_rehearsal.py "${args[@]}"
+
+  sdks:
+    name: SDKs from PyPI and npm
+    if: inputs.sdks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: pip install clickhouse-loom
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          python -m venv "$RUNNER_TEMP/sdk"
+          "$RUNNER_TEMP/sdk/bin/pip" install "clickhouse-loom==$VERSION"
+          "$RUNNER_TEMP/sdk/bin/python" -c "import loom, sys; assert loom.__version__ == sys.argv[1], loom.__version__" "$VERSION"
+      - name: npm install @clickhouse/loom
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/npm" && cd "$RUNNER_TEMP/npm"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund "@clickhouse/loom@$VERSION"
+          node -e 'const { SDK_VERSION } = require("@clickhouse/loom"); if (SDK_VERSION !== process.argv[1]) { throw new Error(SDK_VERSION) }' "$VERSION"
+          npm audit signatures
