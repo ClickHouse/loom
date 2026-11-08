@@ -153,6 +153,9 @@ def redact(text: str) -> str:
 
 # --- classification ----------------------------------------------------------------
 
+# ssh's refusal, which names the methods it offered: (publickey), (password,...)
+_SSH_REFUSED = re.compile(r"permission denied \([a-z-]+(?:,[a-z-]+)*\)", re.IGNORECASE)
+
 # The Go harness's line for a module it skipped because it would not build.
 _MODULE_FAILED = re.compile(r"go mod download failed|scip-go failed", re.IGNORECASE)
 
@@ -173,7 +176,8 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "credential",
         re.compile(
             r"could not read (?:username|password)|authentication failed|terminal prompts disabled"
-            r"|invalid username or password|permission denied \(publickey\)"
+            r"|invalid username or password"
+            rf"|{_SSH_REFUSED.pattern}"
             r"|repository not found|support for password authentication"
             # git's own wording; a download step's 404 in a harness log is not a credential
             r"|unable to access '[^']*': the requested url returned error: 40[134]\b",
@@ -215,6 +219,17 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(
             r"timed out after|exceeded \d+(?:\.\d+)?s|timeouterror|stopped by signal",
             re.IGNORECASE,
+        ),
+    ),
+    # a file this tier's user cannot read or write: git quotes it or cannot add an object;
+    # a Python file error is recorded with its path (`error_text`)
+    (
+        "permission",
+        re.compile(
+            r"'[^'\n]*': permission denied|insufficient permission for adding an object"
+            # Python quotes the path as repr does: '...', "..." or b'...'
+            r"|^PermissionError: \[Errno \d+\] [^\n]*: (?:b?'[^'\n]*'|\"[^\"\n]*\")",
+            re.IGNORECASE | re.MULTILINE,
         ),
     ),
     ("harness", re.compile(r"^(?:\w+: )?harness exit", re.IGNORECASE | re.MULTILINE)),
@@ -279,7 +294,7 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
     `name_where=False` the same fix without the host, repository or submodule."""
     where = _where(text) if name_where else ""
     at = f" ({where})" if where else ""
-    if kind == "credential" and "publickey" in text.lower():
+    if kind == "credential" and _SSH_REFUSED.search(text):
         return (
             f"The ssh key was refused{at}: give this host's ssh key read access to the "
             "repository, or use its https remote with a token."
@@ -327,6 +342,12 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
             "CMake could not configure the build tree, or the host has no clang: the "
             "lines above `>> cmake configure failed` say which. The tier retries the "
             "run: fix the build, or give the host what the configure needs."
+        )
+    if kind == "permission":
+        return (
+            "The tier's user cannot read or write a file the error names, often one another user "
+            "created under the code repos root: share the root through "
+            "LOOM_CODE_REPOS_SHARED_GID and give the group write access to what is there."
         )
     if kind == "harness":
         return "The indexer failed: the error holds the tail of its output."

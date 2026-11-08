@@ -35,6 +35,8 @@ const KIND_WORD: Record<string, string> = {
   network: "host unreachable",
   timeout: "timed out",
   disk: "disk full",
+  permission: "permission denied",
+  cmake: "build configure failed",
   harness: "indexer failed",
   module: "module failed to build",
   unknown: "error",
