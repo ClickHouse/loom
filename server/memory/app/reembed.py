@@ -426,7 +426,7 @@ async def _read_again(
     text = cfg["text"]
     present = {i: now[key(r)] for i, r in read.items() if key(r) in now}
     # The text the vector is made from, and the identity the model call was made for.
-    same = [c for c in (text, "agent", "user_id") if c in cols]
+    same = [text, "agent", "user_id"]
     kept = {
         i: read[i] | row for i, row in present.items() if all(row[c] == read[i][c] for c in same)
     }
@@ -442,10 +442,10 @@ async def _rewrite_page(
     key_only: bool,
     read_again: _ReadAgain | None = None,
 ) -> dict[str, int]:
-    """Re-embed and write `chunk`; returns the rows it left unwritten per org,
-    of an org whose model calls were switched off during the run. `read_again`
+    """Re-embed and write `chunk`; returns the rows of held groups (an org whose model
+    calls were switched off during the run) left unwritten, per org. `read_again`
     returns the rows read (by position) as stored now, without those to skip, after
-    their vectors are made and before the insert."""
+    their vectors are made and before the insert; it reports its own skips."""
     cfg = _TABLES[table]
     model, dim = embedder.model_name, embedder.dim
     vecs: list[list[float]] | None = [[] for _ in chunk] if not key_only else None

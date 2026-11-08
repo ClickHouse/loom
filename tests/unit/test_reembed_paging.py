@@ -42,6 +42,7 @@ class _CH:
                 "embedding": [0.0],
                 "embedding_dim": 1,
                 "agent": "a",
+                "user_id": "-",
                 "ts": i,
                 "tombstoned_at": None,
             }
