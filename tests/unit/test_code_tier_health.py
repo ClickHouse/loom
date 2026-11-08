@@ -92,6 +92,12 @@ FAILING_FULL = tier_health.failed(None, "clang_full", "harness exit 1: x", T0).t
         ("PermissionError: [Errno 13] Permission denied: '/r/checkout/.git/index'", "permission"),
         ("chmod: changing permissions of 'x': Operation not permitted", "permission"),
         ("git@github.com: Permission denied (publickey).", "credential"),
+        ("git@h.example: Permission denied (publickey,password).", "credential"),
+        (
+            "error: insufficient permission for adding an object to repository database "
+            "./objects\nfatal: failed to write object",
+            "permission",
+        ),
     ],
 )
 def test_an_error_is_classified_into_its_kind(text: str, kind: str) -> None:

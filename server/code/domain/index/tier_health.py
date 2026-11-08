@@ -173,7 +173,7 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "credential",
         re.compile(
             r"could not read (?:username|password)|authentication failed|terminal prompts disabled"
-            r"|invalid username or password|permission denied \(publickey\)"
+            r"|invalid username or password|permission denied \([^)]*publickey[^)]*\)"
             r"|repository not found|support for password authentication"
             # git's own wording; a download step's 404 in a harness log is not a credential
             r"|unable to access '[^']*': the requested url returned error: 40[134]\b",
@@ -218,7 +218,13 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     # a file this tier's user cannot read or write; an ssh key refusal is a credential, above
-    ("permission", re.compile(r"permission denied|operation not permitted", re.IGNORECASE)),
+    (
+        "permission",
+        re.compile(
+            r"permission denied|operation not permitted|insufficient permission",
+            re.IGNORECASE,
+        ),
+    ),
     ("harness", re.compile(r"^(?:\w+: )?harness exit", re.IGNORECASE | re.MULTILINE)),
 )
 
