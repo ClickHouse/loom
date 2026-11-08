@@ -102,9 +102,8 @@ async def ensure_configured_tracker_namespaces(*, ch: Any | None = None) -> list
             continue
         classification = "restricted" if cfg.restricted else "standard"
         try:
-            # The claim every writer of the directory row holds, as `tracker.source.add` does;
-            # busy, the namespace is left to the boot retry rather than delaying boot.
-            async with account_change(cfg.org, ns, wait_s=0):
+            # The claim every writer of the directory row holds, as `tracker.source.add` does.
+            async with account_change(cfg.org, ns):
                 if await ensure_tracker_registered(
                     cfg.org, ns, classification=classification, ch=ch
                 ):

@@ -110,17 +110,24 @@ async def test_a_namespace_skipped_at_boot_is_registered_on_a_later_try(
     monkeypatch.setattr(sources, "refresh_db_sources", _refresh)
     monkeypatch.setattr(leader, "leads_deployment", lambda: leads[0])
     monkeypatch.setattr(grant_claims, "TTL_S", 0.01)
+    monkeypatch.setattr(grant_claims, "WAIT_S", 0.01)
     monkeypatch.setattr(boot, "_TRACKER_RETRY", None)
     claims.held.add(_account("qa-p"))  # another change holds it
-    await boot.register_tracker_namespaces(client)  # skipped at once, not waited on
+    await boot.register_tracker_namespaces(client)  # skipped once the wait is spent
     assert client.held_at_insert == []
     claims.held.discard(_account("qa-p"))
     await asyncio.wait_for(boot._TRACKER_RETRY, timeout=5)
     assert len(refreshes) == 3 and client.held_at_insert == [{_account("qa-p")}]
 
-    finished = boot._TRACKER_RETRY
+    # A running retry ends once the process no longer leads, writing nothing.
     tracker_registry.reset_for_tests()
-    leads[0] = False
     claims.held.add(_account("qa-p"))
-    await boot.register_tracker_namespaces(client)  # no longer leading: no retry
+    monkeypatch.setattr(boot, "_TRACKER_RETRY", None)
+    await boot.register_tracker_namespaces(client)
+    leads[0] = False
+    await asyncio.wait_for(boot._TRACKER_RETRY, timeout=5)
+    assert client.held_at_insert == [{_account("qa-p")}]
+
+    finished = boot._TRACKER_RETRY
+    await boot.register_tracker_namespaces(client)  # not leading: no retry starts
     assert boot._TRACKER_RETRY is finished

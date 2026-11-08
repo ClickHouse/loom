@@ -237,8 +237,9 @@ async def register_tracker_namespaces(ch: Any) -> None:
     (restricted where listed) — at boot when the lease is held, or when the
     lease is acquired on retry. Never
     fatal: a failed registration logs and the gate keeps refusing. A pass that
-    skipped a namespace (its account claim busy) or failed is tried again in the
-    background while this process leads, so a narrowing does not wait for the next boot."""
+    skipped a namespace (its account claim busy past its wait) or failed is tried again
+    in the background while this process leads, so a narrowing does not wait for the
+    next boot."""
     global _TRACKER_RETRY
     from server.workers import leader
 
@@ -250,7 +251,8 @@ async def register_tracker_namespaces(ch: Any) -> None:
 
 
 async def _retry_tracker_namespaces(ch: Any) -> None:
-    """Every claim TTL, by when a busy holder has finished or been taken over."""
+    """Retry every claim TTL: by then a busy holder has finished or its claim can be
+    taken over."""
     from server.auth.grant_claims import TTL_S
     from server.workers import leader
 
