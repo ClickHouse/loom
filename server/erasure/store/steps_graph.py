@@ -465,12 +465,11 @@ _SUMMARY_DERIVED_STEPS = (
 
 
 async def retire_memory_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
-    """After every step that finds rows by the user's memory keys: the summaries built
-    from the user's memories, the cached answers and precedents that quote them or the
-    user (one cached since the cache steps), then the user's loom.memory rows. Outside
-    a purge this tombstones the rows a write made live since the first steps; in a
-    purge it deletes what those steps only tombstoned, and counts the user's rows. The
-    summaries go first, while the user's rows still name them."""
+    """After every step that finds rows by the user's memory keys. In a purge,
+    `_purge_memory_by_user`. Otherwise it retires what a write made live since the first
+    steps: the summaries built from the user's memories (while the user's rows still
+    name them), their shared copies, the user's rows, then the cached answers and
+    precedents that quote either."""
     ch = ch or _default_client()
     if purge_mode():
         return await _purge_memory_by_user(org, user_id, ch=ch)

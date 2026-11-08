@@ -182,25 +182,22 @@ def _seed(ch_client: Any, org: str) -> None:
     )
 
 
-def _seed_shared(ch_client: Any, org: str) -> None:
-    """Org-wide copies promoted from the two summaries."""
+def _seed_shared(
+    ch_client: Any, org: str, keys: tuple[str, ...] = ("topic-diets", "topic-bob")
+) -> None:
+    """Org-wide copies promoted from summaries, with their search rows."""
     _insert(
         ch_client,
         "loom.shared",
         ["org", "namespace", "memory_key", "value", "memory_type", "confidence"]
         + ["promoted_from", "promotion_event", "promoted_by", "reversible_until", "version"],
         [
-            [org, "ns", key, "text", "fact", 1.0, [f"{org}/ns/a/-/-/{key}"]]
-            + [
-                uuid.UUID(f"00000000-0000-4000-8000-00000000010{i}"),
-                "explicit",
-                datetime(2099, 1, 1),
-                1,
-            ]
-            for i, key in enumerate(("topic-diets", "topic-bob"))
+            [org, "ns", key, "text", "fact", 1.0, [f"{org}/ns/a/-/-/{key}"], uuid.uuid4()]
+            + ["explicit", datetime(2099, 1, 1), 1]
+            for key in keys
         ],
     )
-    for key in ("topic-diets", "topic-bob"):
+    for key in keys:
         vector = build_embedding_row(
             org=org,
             namespace="ns",
@@ -337,6 +334,7 @@ async def test_outside_a_purge_a_late_summary_reopens_its_steps(ch_client, ch) -
     with erasure_mutations.saga_scope(f"erasure-{org}"):
         await _run(_STEPS, org, ch)
         _insert(ch_client, "loom.memory", _MEMORY_COLS, [row])
+        _seed_shared(ch_client, org, ("topic-late",))  # and promoted at once
         residue = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
         assert (residue["loom.memory"], residue["loom.memory_versions"]) == (1, 1)
         reopened = erasure_census.steps_to_reopen(residue, "user_id")
@@ -344,3 +342,8 @@ async def test_outside_a_purge_a_late_summary_reopens_its_steps(ch_client, ch) -
         await _run([s for s in _STEPS if s[0] in reopened], org, ch)
         after = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
     assert (after["loom.memory"], after["loom.memory_versions"]) == (0, 0)
+    # loom.shared is not counted: memory.retire takes the copy
+    shared = f"SELECT memory_key FROM loom.shared FINAL{_WHERE} AND tombstoned_at IS NULL"
+    assert "topic-late" not in _column(ch_client, org, shared)
+    vectors = f"SELECT memory_key FROM loom.memory_embeddings FINAL{_WHERE} AND scope = 'shared'"
+    assert "topic-late" not in _column(ch_client, org, f"{vectors} AND tombstoned_at IS NULL")

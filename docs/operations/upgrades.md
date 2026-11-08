@@ -112,6 +112,12 @@ checkout.
    across the truncate brings the rows back. A truncate drops the parts at once, on every
    replica of a replicated table, with no mutation to wait for, and the loom user holds
    the grant. Each cleared question costs one synthesis on its next ask.
+10. Moving to a build whose user erasure reaches what a consolidated summary of the
+    user's memories fed, a roll forward after a rollback included: once the newer build
+    serves alone, request again each user erasure without `purge` that completed since
+    the rollout began (the `user_id` rows of `loom.erasure_requests`). The old build's
+    saga left the summary's history, chunks, vectors, graph rows and shared copies
+    ([rolling upgrades](../architecture/rolling-upgrades.md), rule 37).
 
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in
@@ -134,6 +140,8 @@ After a rollback to a build without bot token maximums, every bot's tokens last 
 and a bot that build saves keeps 3600 as its maximum; reapply a shorter or longer one
 once the newer build serves
 ([rolling upgrades](../architecture/rolling-upgrades.md), rule 26).
+A user erasure the previous build runs leaves what a summary of the user's memories
+fed; request it again once the newer build serves (rule 37).
 Do not roll back past the build that adds the document bucket while any catalog row
 names an object in it: an older build answers those downloads `410 BLOB_GONE`, its
 erasure deletes the rows and cannot reach their objects, and its sweep never walks the
