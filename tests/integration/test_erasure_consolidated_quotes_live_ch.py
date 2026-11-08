@@ -143,8 +143,13 @@ async def test_the_answers_that_quoted_a_consolidated_row_leave_with_its_source(
     with erasure_mutations.purge_scope(purge), erasure_mutations.saga_scope(f"erasure-{org}"):
         before = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
         # her row and the live summary of it; a purge counts every version, so the
-        # rebuilt summary's first too until a merge drops it
-        assert before["loom.memory"] in ((2, 3) if purge else (2,))
+        # rebuilt summary's first too while no merge has dropped it
+        unmerged = ch_client.query(
+            "SELECT count() FROM loom.memory WHERE org = {org:String} "
+            "AND memory_key = 'topic-rebuilt' AND has(tags, 'src:user_diet')",
+            parameters={"org": org},
+        ).result_rows[0][0]
+        assert before["loom.memory"] == 2 + (unmerged if purge else 0)
         assert {t: before[t] for t in _COUNTED[1:]} == {
             "loom.llm_response_cache": 2,
             "loom.memory_ask_precedents": 2,
