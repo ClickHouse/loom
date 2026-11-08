@@ -25,12 +25,13 @@ Every step others see is the owner's to start: opening the release pull request 
   ```
 
   Its `preflight` warnings name every owner prerequisite still missing ("Before the first release"); a release with any of them fails in its first minute, before a build.
+- For a patch, run the scan and the dry run on the line instead: `gh workflow run docker-smoke.yml -R ClickHouse/loom --ref release/X.Y` (read it with `--event workflow_dispatch`) and the dry run with `--ref release/X.Y`.
 
 ## 1. The version
 
 - One version for the server, both images, the web app, both SDKs, the root skills and the chart's `appVersion`; `prepare.py` moves all of them and the chart's own `version`.
 - The coding-agent plugins keep their own version, bumped in the pull request that changes them. Raise their `minServerVersion` as the [release process](../../../docs/development/release-process.md#cutting-the-release) step 2 says.
-- A minor for features, a patch for fixes only (on a release branch, §7), a major for a break beyond the N−1 rule. A removed field or op is announced one minor ahead in the notes and served as `ignored_args` meanwhile ([unknown and removed fields](../../../docs/reference/http-api.md#unknown-and-removed-fields)).
+- A minor for features, a patch for fixes only (on a release branch, §7), a major for a break beyond the N−1 rule. A field or op to be removed is announced one minor ahead, by hand under the notes' "What changed for clients" (the generated wire diff lists only what has changed), and served as `ignored_args` meanwhile ([unknown and removed fields](../../../docs/reference/http-api.md#unknown-and-removed-fields)).
 
 ## 2. The release pull request
 
@@ -53,7 +54,7 @@ run=$(gh run list -R ClickHouse/loom --workflow release.yml --branch vX.Y.Z-rc.1
 gh run watch -R ClickHouse/loom "$run" --exit-status
 ```
 
-A prerelease takes neither Latest nor `:latest` and is not listed in the MCP Registry. Deploy it to a deployment you run (`loom-deploy`; on Kubernetes set `image.tag` and `extractor.image.tag` to `X.Y.Z-rc.N`) and use it for at least two days. A regression is fixed on `main`, whose files already name `X.Y.Z`; tag `rc.2` on the fix's merge commit and soak again. Never move a tag: once its images are published, the workflow refuses a tag that points elsewhere. Once the final is tagged, a candidate's run is refused (`prepare.py check-tag`), and the message says whether to run the final, do nothing, or delete a stray tag.
+A prerelease takes neither Latest nor `:latest` and is not listed in the MCP Registry. Deploy it to a deployment you run (`loom-deploy`; on Kubernetes set `image.tag` and `extractor.image.tag` to `X.Y.Z-rc.N`) and use it for at least two days. A regression is fixed on `main`, whose files already name `X.Y.Z`; tag `rc.2` on the fix's merge commit (for a patch, on its merge commit on `release/X.Y`, as in §7) and soak again. Never move a tag: once its images are published, the workflow refuses a tag that points elsewhere. Once the final is tagged, a candidate's run is refused (`prepare.py check-tag`), and the message says whether to run the final, do nothing, or delete a stray tag.
 
 ## 4. The final release
 
@@ -87,7 +88,7 @@ The plugins, in a throwaway `HOME`: `claude plugin marketplace add ClickHouse/lo
 
 ## 6. Something is wrong
 
-- **The installer or an image is bad**: move back only the tags the bad release took. When it is Latest (`python3 scripts/release/make_latest.py X.Y.Z` printed `true` for it), point Latest at the release before it (`gh release edit v<previous> -R ClickHouse/loom --latest`) and both images' `:latest` there; a final also took `:X.Y`, which goes back to the previous patch of that line; a candidate took neither. [A failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature) has the commands, which check the previous release's signature before moving a tag. Then ship a patch.
+- **The installer or an image is bad**: move back only the tags the bad release took. When it is Latest (`GITHUB_REPOSITORY=ClickHouse/loom python3 scripts/release/make_latest.py X.Y.Z` prints `true`, with `gh` signed in), point Latest at the release before it (`gh release edit v<previous> -R ClickHouse/loom --latest`) and both images' `:latest` there; a final also took `:X.Y`, which goes back to the previous patch of that line (an `X.Y.0` has none: `:X.Y` stays until `X.Y.1`); a candidate took neither. After that, never dispatch or re-run the bad tag: its `github-release` job makes it Latest again until a higher final is tagged. [A failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature) has the commands, which check the previous release's signature before moving a tag. Then ship a patch.
 
   Never delete a release's assets or tag: an installed version reruns its installer from them. A host already on the bad release keeps it until the patch: the older installer refuses to run over a newer install; going back is [downgrading an installer install](../../../docs/operations/upgrades.md#downgrading-an-installer-install), ClickHouse pinned first.
 - **An SDK is bad**: yank it on PyPI (the project's settings: the release, Yank, with the reason), which keeps pinned installs working; `npm deprecate @clickhouse/loom@X.Y.Z "<reason>; use <fixed version>"` and, if `latest` names it, `npm dist-tag add @clickhouse/loom@<previous> latest`. A version number is never reused: the fix is a new patch.
@@ -99,7 +100,7 @@ For a supported line only: any fix for N, and for N−1 only what [supported ver
 
 ```bash
 git switch -c fix/X.Y-<what> origin/release/X.Y
-git cherry-pick -x <the merge commit on main>
+git cherry-pick -x -s <the merge commit on main>
 ```
 
 Once it merges, the release pull request follows as in §2, from `origin/release/X.Y` and against it, with `prepare.py bump X.Y.<Z+1>`: in one pull request with the fix, the notes would leave the fix out, as they skip the commit that bumps the version. Tag the release pull request's merge commit as in §3 and §4. Latest and `:latest` go only to the highest final version, so a patch to N−1 leaves them on N.

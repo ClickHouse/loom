@@ -35,8 +35,10 @@ the server's version. An SDK at `X.Y` works with a server at `X.Y` or `X.(Y−1)
   ([discovering what a deployment serves](../reference/http-api.md#discovering-what-a-deployment-serves)).
 
 A major release (`X.0`) may break the rule against the last `(X−1).Y` server; its release notes
-say what an SDK at `X.0` needs. An older SDK keeps working against a newer server for as long as the server serves what it calls; a
-removal follows the rule below.
+say what an SDK at `X.0` needs.
+
+An older SDK keeps working against a newer server for as long as the server serves what it calls;
+a removal follows the rule below.
 
 ## Coding-agent plugins
 
@@ -47,10 +49,10 @@ server their hooks support (`minServerVersion`). A session against an older serv
 
 ## Removing something
 
-A removal is announced in the release notes of the minor release before the one that removes it,
-under "What changed for clients". Until the removal, the server serves the old field or flag; after
-it, a removed request field is still accepted and named in `ignored_args`, so a client sending it
-learns of the change without failing.
+A removal is announced, by hand in the release pull request, in the release notes of the minor
+release before the one that removes it, under "What changed for clients". Until the removal, the
+server serves the old field or flag; after it, a removed request field is still accepted and named
+in `ignored_args`, so a client sending it learns of the change without failing.
 
 ## Release artifacts
 
