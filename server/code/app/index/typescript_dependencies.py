@@ -169,12 +169,14 @@ async def prepare_dependencies(
             )
         except TimeoutError:
             raise ToolOutputError(
-                f"TypeScript dependency installation timed out in {root}"
+                "TypeScript dependency installation timed out after "
+                f"{settings.code_scip_ts_delta_timeout_seconds}s in {root}"
             ) from None
         if done.returncode != 0:
             tail = done.stdout.decode("utf-8", "replace")[-2000:]
+            # Last, so the record, which keeps the end of the error, keeps it too.
             raise ToolOutputError(
-                f"TypeScript dependency installation failed in {root} "
-                f"({command[0]}, exit {done.returncode}): {tail}"
+                f"{tail}\nTypeScript dependency installation failed in {root} "
+                f"({command[0]}, exit {done.returncode})"
             )
     await asyncio.to_thread(marker.write_text, fingerprint)

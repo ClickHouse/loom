@@ -5,11 +5,16 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
+from server.code.app.index import tier_health as recorder
 from server.code.app.index import typescript_dependencies as deps
+from server.code.domain.index import tier_health
+
+NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -107,17 +112,21 @@ async def test_missing_package_manager_has_native_installation_instruction(
 
 
 @pytest.mark.asyncio
-async def test_a_failed_install_is_recorded_with_the_installer_output(
+async def test_a_failed_install_is_recorded_with_the_installer_and_its_last_output(
     checkout: Path, tmp_path: Path
 ) -> None:
-    from server.code.app.index import tier_health
-
-    env = _installer(tmp_path, fail=True)
-    (tmp_path / "npm").write_text("#!/bin/sh\necho 'Failed to parse package.json'\nexit 1\n")
+    env = _installer(tmp_path)
+    noise = "x" * 1000
+    (tmp_path / "npm").write_text(f"#!/bin/sh\necho {noise}\necho 'Failed to parse'\nexit 1\n")
     with pytest.raises(RuntimeError) as failed:
         await deps.prepare_dependencies(checkout, (), env)
-    text = tier_health.error_text(failed.value)
-    assert "(npm, exit 1)" in text and "Failed to parse package.json" in text
+    record = tier_health.failed(None, "typescript", recorder.error_text(failed.value), NOW)
+    assert "(npm, exit 1)" in record.error and "Failed to parse" in record.error
+
+
+def test_an_install_timeout_is_a_timeout() -> None:
+    error = deps.ToolOutputError("TypeScript dependency installation timed out after 900s in /c")
+    assert tier_health.classify(recorder.error_text(error)) == "timeout"
 
 
 def test_named_project_cannot_escape_checkout(checkout: Path) -> None:
