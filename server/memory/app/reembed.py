@@ -395,7 +395,7 @@ async def _still_stored(
     if not read:
         return read, []
     cfg, keys = _TABLES[table], _KEY_COLUMNS[table]
-    vectors = (cfg["vec"], cfg.get("key_vec"))
+    vectors = {cfg["vec"], cfg.get("key_vec")} - {None}  # no key axis on two of the tables
     others = [c for c in cols if c not in vectors]
 
     def key(r: dict[str, Any]) -> tuple[str, ...]:
@@ -648,8 +648,9 @@ async def reembed_all(
         # Every org whose rows wait keeps its old vectors: off at the start, off
         # during the run or by now, or with a row the re-read found with other text.
         keep = frozenset(off | left_orgs | await customer.switched_off_orgs())
-        if kept := sorted(keep & {org}) if org else sorted(keep):
-            log(f"old-model rows kept for a later run in: {', '.join(kept)}")
+        kept_orgs = sorted(keep & {org} if org else keep)
+        if kept_orgs:
+            log(f"old-model rows kept for a later run in: {', '.join(kept_orgs)}")
         for table in _TABLES:
             await delete_off_model(
                 ch, table, embedder.model_name, org=org, namespace=namespace, keep_orgs=keep
