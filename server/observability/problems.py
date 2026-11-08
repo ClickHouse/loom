@@ -811,7 +811,7 @@ def _participant_problems(state: HealthState) -> list[Problem]:
 def _constraint_message(error: str) -> str:
     """`Setting max_execution_time shouldn't be greater than 30` out of the error text."""
     m = re.search(r"Setting \w+ [^.(]*", error)
-    return m.group(0).strip() if m else error[:200]
+    return m.group(0).strip() if m else "a setting constraint"
 
 
 # How many failing tiers the `code_tier_failing` message names before it counts the rest.

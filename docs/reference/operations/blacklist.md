@@ -31,7 +31,7 @@ Add a pattern that prevents matching content from being saved to memory.
 | `created_at` | `datetime` | When the pattern was stored (UTC). |
 | `swept` | `int` | Rows the sweep tombstoned; 0 without `sweep`. |
 | `swept_truncated` | `bool` | True when more rows matched than one sweep takes; call `blacklist.sweep`. |
-| `sweep_error` | `str` | "" when the sweep finished, else why not (the pattern is stored either way): `<code>: <message>` (rerun with blacklist.sweep) or the failed match query's message. |
+| `sweep_error` | `str` | "" when the sweep finished, else why not (the pattern is stored either way): `<code>: <message>` (rerun with blacklist.sweep), RE2's reason when a regex cannot run (no query ran), or the kind of error the match query failed with. |
 
 ## `blacklist.list`
 
@@ -86,6 +86,6 @@ Tombstone the live rows an existing pattern matches.
 | `matched` | `int` | Live rows the pattern matched in this call: at most 5,000 in ClickHouse, plus, under the Postgres authority, the parked heads this call tombstoned. |
 | `tombstoned` | `int` | Rows this call tombstoned. |
 | `truncated` | `bool` | True when more rows matched than one call takes; call again. |
-| `error` | `str` | "" when the sweep finished, else `<code>: <message>` once rows may have landed (call again) or the failed match query's message; a failure before that is the call's. |
+| `error` | `str` | "" when the sweep finished, else `<code>: <message>` once rows may have landed (call again), RE2's reason when a regex cannot run (no query ran), or the kind of error the match query failed with; a failure before that is the call's. |
 
 <!-- prettier-ignore-end -->

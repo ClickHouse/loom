@@ -18,7 +18,7 @@ import re
 from typing import Any
 
 from server.auth.context import current_caller
-from server.core.errors import AuthInsufficientError, ValidationError
+from server.core.errors import AuthInsufficientError, ValidationError, caller_text
 from server.settings import settings
 from server.tracker.api.models import (
     TrackerContractInput,
@@ -875,11 +875,13 @@ async def handle_tracker_source_check(input: TrackerSourceCheckInput) -> Tracker
             contract.check(name, ep.database), timeout=settings.tracker_source_check_timeout_s
         )
     except Exception as e:  # noqa: BLE001 — the source did not answer
+        # A viewer reads the summary: the error's kind; the driver's text is logged.
+        logger.warning("tracker.source.check %s: unreachable: %s: %s", name, type(e).__name__, e)
         return TrackerSourceCheckOutput(
             name=name,
             database=ep.database,
             reachable=False,
-            contract={"ok": None, "summary": f"unreachable: {e}"[:300]},
+            contract={"ok": None, "summary": f"unreachable: {caller_text(e)}"[:300]},
         )
     return TrackerSourceCheckOutput(
         name=name,

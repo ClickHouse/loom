@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Required, TypedDict, Unpack
 
+from server.code.domain.index.state import SANDBOX_REQUIRED_REFUSAL
 from server.core import readiness
 from server.settings import settings
 
@@ -176,13 +177,17 @@ def sandbox_state() -> bool | None:
     return _available
 
 
+# What `/v1/health` and `/v1/health/ready` (no token) say of a layout refusal, which
+# names a host path; `loom doctor` and the log name the path.
+LAYOUT_REFUSED = "a sandbox mount is inside Loom's data (`loom doctor` names it)"
+
+
 def readiness_check() -> readiness.CheckResult:
     """With LOOM_CODE_SANDBOX_REQUIRED, ready once the probe found a sandbox."""
     if not settings.code_sandbox_required:
         return readiness.CheckResult(True)
-    refusal = layout_refusal()
-    if refusal:
-        return readiness.CheckResult(False, refusal[:300])
+    if layout_refusal():
+        return readiness.CheckResult(False, LAYOUT_REFUSED)
     if _available is None:
         return readiness.CheckResult(False, "sandbox probe not finished")
     return readiness.result(_available, "LOOM_CODE_SANDBOX_REQUIRED and no sandbox here")
@@ -679,10 +684,7 @@ async def run_job(argv: Sequence[str], **job: Unpack[JobOptions]) -> JobResult:
     if sandbox_available():
         return await run_sandboxed(argv, **job)
     if settings.code_sandbox_required:
-        raise SandboxRequiredError(
-            "repository job refused: LOOM_CODE_SANDBOX_REQUIRED is set and the sandbox "
-            "cannot run here (the 'sandbox probe failed' warning says why)"
-        )
+        raise SandboxRequiredError(SANDBOX_REQUIRED_REFUSAL)
     proc = await asyncio.create_subprocess_exec(
         *argv, env=dict(job["env"]), cwd=job.get("cwd"), **_pipes(job)
     )

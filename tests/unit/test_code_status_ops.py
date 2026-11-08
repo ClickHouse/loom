@@ -256,6 +256,51 @@ async def test_code_repos_filters_to_readable_entries(monkeypatch: pytest.Monkey
     assert ask.readable is False and ask.git_head == "" and ask.counts == {}
 
 
+@pytest.mark.parametrize(
+    ("stored", "shown"),
+    [
+        ("fatal: unable to access 'https://other-org.example/x.git/'", "git clone failed"),
+        ("clone failed: PermissionError: [Errno 13] /srv/loom/x.git", "git clone failed"),
+        ("bwrap: Can't mount proc on /srv/loom/sandbox/newroot/proc", "git clone failed"),
+        ("git clone failed (exit 128)", "git clone failed (exit 128)"),
+        ("clone failed: PermissionError", "clone failed: PermissionError"),
+        ("clone timed out; retrying next pass", "clone timed out; retrying next pass"),
+        ("RuntimeError", "git clone failed"),  # a raised job's kind is never a stage reason
+        ("cancelled", "git clone failed"),
+        ("ERROR: Repository not found.", "git clone failed"),
+        ("FATAL: remote rejected ssh://git@10.0.0.7/acme.git", "git clone failed"),
+        (
+            "repository job refused: LOOM_CODE_SANDBOX_REQUIRED is set and the sandbox "
+            "cannot run here (the 'sandbox probe failed' warning says why)",
+            "repository job refused: LOOM_CODE_SANDBOX_REQUIRED is set and the sandbox "
+            "cannot run here (the 'sandbox probe failed' warning says why)",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_stored_clone_reason_is_shown_only_in_a_shape_this_build_writes(
+    monkeypatch: pytest.MonkeyPatch, stored: str, shown: str
+) -> None:
+    """`code.repos` and `code.index_status` return the bootstrap stage's JSON detail;
+    a reason an older build wrote (git's stderr, a path) reads as the fixed reason."""
+    import json
+
+    import server.auth.context as actx
+    from server.code.api.models_repos import CodeReposInput
+    from server.code.api.models_status import CodeIndexStatusInput
+
+    detail = json.dumps({"reason": stored})
+    monkeypatch.setitem(
+        _STATE, "bootstrap_stage", {"value": "error", "detail": detail, "updated_at": "x"}
+    )
+    monkeypatch.setattr(actx, "current_auth", lambda: None)
+    listed = await repos.handle_code_repos(CodeReposInput(org="clickhouse"))
+    assert json.loads(listed.repos[0].stage_detail) == {"reason": shown}
+    index_status.reset_repo_status_cache()
+    status = await index_status.handle_code_index_status(CodeIndexStatusInput())
+    assert json.loads(status.state["bootstrap_stage"]["detail"]) == {"reason": shown}
+
+
 @pytest.mark.asyncio
 async def test_code_repos_shows_unreadable_entries_to_flat_admins(
     monkeypatch: pytest.MonkeyPatch,
@@ -500,7 +545,7 @@ async def test_index_status_reads_worker_passes_from_the_ledger_not_this_process
                 "last_duration_ms": 4120,
                 "consecutive_failures": 0,
                 "total_runs": 99,
-                "last_error": "",
+                "last_error_kind": "",
             }
         }
 
@@ -511,6 +556,60 @@ async def test_index_status_reads_worker_passes_from_the_ledger_not_this_process
     assert (
         w.last_duration_ms == 4120 and w.interval_seconds > 0
     )  # interval still from the registry meta
+
+
+@pytest.mark.asyncio
+async def test_a_failed_worker_pass_shows_a_viewer_its_kind_not_its_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Code workers run for every org, so a viewer's status reads the ledger's error
+    class (or this replica's `caller_text`), never the error's text."""
+    from server.code.api.models_status import CodeIndexStatusInput
+    from server.workers.status import get_registry, record_pass
+
+    text = "Code: 210. Connection refused (ch-internal-7:9440) SELECT * FROM loom.memory"
+
+    class _Ledger:
+        """Answers the pass summary with what its columns select, the error's text too."""
+
+        sql = ""
+
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            _Ledger.sql = sql
+            row = {
+                "worker": "code_pr_history",
+                "last_error": f"RuntimeError: {text}",
+                "last_error_class": "RuntimeError",
+                "last_status": "failed",
+                "consecutive_failures": 1,
+                "total_runs": 2,
+            }
+            selected = {"worker", "last_status", "consecutive_failures", "total_runs"}
+            selected |= {c for c in ("last_error", "last_error_class") if f"AS {c}," in sql}
+            return [{k: v for k, v in row.items() if k in selected}]
+
+    import server.core.ch as ch_mod
+
+    index_status._ledger_passes_cache.clear()
+    monkeypatch.setattr(ch_mod, "get_client", lambda: _Ledger())
+    try:
+        out = await index_status.handle_code_index_status(CodeIndexStatusInput())
+    finally:
+        index_status._ledger_passes_cache.clear()
+    assert out.workers["code_pr_history"].last_error == "RuntimeError"
+    assert "AS last_error_class," in _Ledger.sql and "AS last_error," not in _Ledger.sql
+
+    async def _none(days: int = 14):
+        return {}
+
+    monkeypatch.setattr(index_status, "_worker_passes_from_ledger", _none)
+    with pytest.raises(RuntimeError), record_pass("code_pr_history"):
+        raise RuntimeError(text)
+    try:
+        out = await index_status.handle_code_index_status(CodeIndexStatusInput())
+    finally:
+        get_registry().reset()
+    assert out.workers["code_pr_history"].last_error == "RuntimeError"
 
 
 @pytest.mark.asyncio

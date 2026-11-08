@@ -36,6 +36,7 @@ from typing import Any, NamedTuple
 from server.core.ch_names import split_table
 from server.core.datetimes import UNIX_EPOCH
 from server.core.datetimes import utc_now as _now
+from server.core.errors import stored_caller_text
 from server.identity.domain.read_scope import (
     READ_SCOPE_KEY,
     ReadFilters,
@@ -55,6 +56,13 @@ STATUS_RUNNING = "running"
 STATUS_HELD = "held"  # reported state; stored as a running lease with a held reason
 STATUS_DONE = "done"
 STATUS_FAILED = "failed"
+# The labels a `last_error` leads with: a held row (`claim_batch` and `status_of` match
+# on it), an unreachable provider, and a request dropped unrun.
+HELD_LABEL = "held: "
+UNREACHABLE_LABEL = "unreachable: "
+DROPPED_LABEL = "dropped: "
+_NEVER_RUN = "never run"
+_EARLIER_ERROR = "an earlier error"
 # Not yet extracted: what `pending_count` counts and the TTL drop looks at.
 WAITING = (STATUS_PENDING, STATUS_RUNNING)
 
@@ -322,7 +330,7 @@ async def mark_unreachable(row: dict[str, Any], *, error: str, ch: Any | None = 
             _mirror(
                 row,
                 status=STATUS_PENDING,
-                last_error=f"unreachable: {error}"[:2000],
+                last_error=f"{UNREACHABLE_LABEL}{error}"[:2000],
                 lease_until=_now() + timedelta(seconds=wait),
             )
         ],
@@ -346,7 +354,7 @@ async def mark_held(
             _mirror(
                 row,
                 status=STATUS_RUNNING,
-                last_error=f"held: {reason}"[:2000],
+                last_error=f"{HELD_LABEL}{reason}"[:2000],
                 lease_until=_now() + timedelta(seconds=max(0.0, float(seconds))),
                 # a row queued before the column existed carries it in its payload
                 enqueued_by=str(row.get("enqueued_by") or "") or enqueued_actor(row),
@@ -414,7 +422,7 @@ async def drop_waiting(
         "model_calls_off",
         ch=ch,
     )
-    why = f"dropped: model calls switched off, waited over {older_than_days} days"
+    why = f"{DROPPED_LABEL}model calls switched off, waited over {older_than_days} days"
     await ch.insert(
         TABLE,
         [
@@ -471,14 +479,16 @@ async def drop_expiring(
         ]
         if items:
             await write_drops(items, "extraction_queue", reason, ch=ch)
-    why = f"dropped: still waiting after {_LAST_DAY} days, a day before the {TTL_DAYS}-day TTL"
+    why = (
+        f"{DROPPED_LABEL}still waiting after {_LAST_DAY} days, a day before the {TTL_DAYS}-day TTL"
+    )
     await ch.insert(
         TABLE,
         [
             _mirror(
                 dict(r),
                 status=STATUS_FAILED,
-                last_error=f"{why} ({r.get('last_error') or 'never run'})"[:2000],
+                last_error=f"{why} ({_prior_error(str(r.get('last_error') or ''))})"[:2000],
                 lease_until=UNIX_EPOCH,
             )
             for r in rows
@@ -486,6 +496,35 @@ async def drop_expiring(
         settings=_SYNC,
     )
     return len(rows)
+
+
+def _prior_error(last_error: str) -> str:
+    """A dropped row's earlier `last_error` as its `dropped: ...` reason quotes it."""
+    if not last_error:
+        return _NEVER_RUN
+    return caller_last_error(last_error) or _EARLIER_ERROR
+
+
+def caller_last_error(last_error: str) -> str:
+    """A batch's `last_error` as `memory.extraction_status(_mine)` shows it: the
+    `held: `, `unreachable: ` or `dropped: ` label and `caller_text`'s shape. A build
+    before that rule stored the error's text, which can carry a statement or a server
+    address; it is cut here on every read."""
+    if last_error.startswith(DROPPED_LABEL):
+        why, sep, prior = last_error.partition(" (")
+        if not sep:
+            return why
+        prior = prior.removesuffix(")")
+        if prior == _NEVER_RUN:
+            return f"{why} ({_NEVER_RUN})"
+        return f"{why} ({caller_last_error(prior) or _EARLIER_ERROR})"
+    for label in (HELD_LABEL, UNREACHABLE_LABEL):
+        if last_error.startswith(label):
+            error = stored_caller_text(last_error.removeprefix(label))
+            if error:
+                return f"{label}{error}"
+            return label.removesuffix(": ")
+    return stored_caller_text(last_error)
 
 
 async def pending_count(
@@ -580,12 +619,21 @@ async def list_status(
         """,
         params=params,
     )
-    return [{**r, "status": status_of(r)} for r in rows]
+    return [_shown(r) for r in rows]
+
+
+def _shown(row: dict[str, Any]) -> dict[str, Any]:
+    """A status row as a reader gets it: its exposed status and its cut `last_error`."""
+    return {
+        **row,
+        "status": status_of(row),
+        "last_error": caller_last_error(str(row.get("last_error") or "")),
+    }
 
 
 def status_of(row: dict[str, Any]) -> str:
     """Expose held work while storing a running lease that older workers understand."""
-    if row["status"] == STATUS_RUNNING and str(row.get("last_error") or "").startswith("held: "):
+    if row["status"] == STATUS_RUNNING and str(row.get("last_error") or "").startswith(HELD_LABEL):
         return STATUS_HELD
     return str(row["status"])
 
@@ -652,7 +700,7 @@ async def list_own_status(
         enqueued_by=enqueued_by,
         scope=scope,
     )
-    return [{**r, "status": status_of(r)} for r in rows]
+    return [_shown(r) for r in rows]
 
 
 class Requeued(NamedTuple):

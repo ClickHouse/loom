@@ -50,24 +50,24 @@ async def _ch_async_client_connected():
 
 def test_registry_records_failure(status_registry) -> None:
     """Failure path bumps consecutive_failures and stores error string."""
-    status_registry.record_failure("widget", duration_ms=42, error="boom")
+    status_registry.record_failure("widget", duration_ms=42, exc=RuntimeError("boom"))
     snap = status_registry.snapshot()
     s = snap["widget"]
-    assert s["last_error"] == "boom"
+    assert s["last_error"] == "RuntimeError: boom" and s["last_error_kind"] == "RuntimeError"
     assert s["consecutive_failures"] == 1
     assert s["last_duration_ms"] == 42
 
 
 def test_registry_success_resets_consecutive_failures(status_registry) -> None:
-    status_registry.record_failure("widget", duration_ms=1, error="x")
-    status_registry.record_failure("widget", duration_ms=1, error="y")
+    status_registry.record_failure("widget", duration_ms=1, exc=RuntimeError("x"))
+    status_registry.record_failure("widget", duration_ms=1, exc=RuntimeError("y"))
     s = status_registry.snapshot()["widget"]
     assert s["consecutive_failures"] == 2
 
     status_registry.record_success("widget", duration_ms=2, outcome={"ok": True})
     s = status_registry.snapshot()["widget"]
     assert s["consecutive_failures"] == 0
-    assert s["last_error"] is None
+    assert s["last_error"] is None and s["last_error_kind"] is None
     assert s["last_outcome"] == {"ok": True}
     assert s["total_runs"] == 3
 

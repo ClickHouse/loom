@@ -157,8 +157,8 @@ async def test_record_writes_a_failure_clears_it_once_and_then_writes_nothing() 
     repo = _StateRepo()
     assert await recorder.record(repo, "o", "ns", "clang") is None  # healthy: no write
     assert repo.writes == []
-    await recorder.record(repo, "o", "ns", "clang", RuntimeError(SUBMODULE_NO_TOKEN))
-    await recorder.record(repo, "o", "ns", "clang", RuntimeError(SUBMODULE_NO_TOKEN))
+    await recorder.record(repo, "o", "ns", "clang", recorder.ToolOutputError(SUBMODULE_NO_TOKEN))
+    await recorder.record(repo, "o", "ns", "clang", recorder.ToolOutputError(SUBMODULE_NO_TOKEN))
     stored = json.loads(repo.state["tier_health:clang"])
     assert (stored["state"], stored["kind"], stored["failed_passes"]) == (
         "failing",
@@ -218,7 +218,7 @@ async def test_a_compiler_tier_records_its_failure_and_clears_it_on_the_next_pas
     repo = _StateRepo()
 
     async def boom(*_: Any) -> None:
-        raise RuntimeError(SUBMODULE_NO_TOKEN)
+        raise recorder.ToolOutputError(SUBMODULE_NO_TOKEN)
 
     async def ok(*_: Any) -> None:
         return None
@@ -446,7 +446,8 @@ async def test_a_failing_leg_records_the_ingest_tier() -> None:
         "walk",
         boom,
     )
-    assert result.tier_outcomes[("o", "code-x", "ingest")] == "walk: RuntimeError: parser crashed"
+    # `code.index_status` shows the record to a viewer: the kind, not the text.
+    assert result.tier_outcomes[("o", "code-x", "ingest")] == "walk: RuntimeError"
 
 
 @pytest.mark.asyncio
@@ -588,7 +589,7 @@ async def test_a_failed_commit_records_the_ingest_tier(monkeypatch: pytest.Monke
     stream._ctx = {}
     assert await stream.step(None) is False
     error = result.tier_outcomes[("o", "code-x", "ingest")]
-    assert error == f"commit {'c' * 12}: RuntimeError: parser crashed"
+    assert error == f"commit {'c' * 12}: RuntimeError"
 
 
 class _FullArgs:
@@ -620,7 +621,7 @@ async def test_scip_full_records_the_full_run(
     monkeypatch.setattr(compiler_tier, "unsandboxed_skip", lambda *_a, **_k: "")
     raised = {
         "harness": scip_full.FullIndexFailed(1, "cmake failed"),
-        "error": RuntimeError("git submodule failed: Could not resolve host: h"),
+        "error": recorder.ToolOutputError("git submodule failed: Could not resolve host: h"),
         "lease_lost": EntryLockLost("entry lease lost"),
     }.get(outcome)
 
@@ -790,7 +791,7 @@ async def test_a_walk_step_that_fails_in_its_own_handler_records_the_ingest_tier
     run = ingest_pass._maybe_reconcile if step == "reconcile" else ingest_pass._maybe_rechunk
     await run(repo, _Cfg(), "a" * 40, result)  # logged, never raised
     ingest_pass._ingest_served(_Cfg(), result)
-    assert result.tier_outcomes[("o", "code-x", "ingest")] == f"{step}: RuntimeError: boom"
+    assert result.tier_outcomes[("o", "code-x", "ingest")] == f"{step}: RuntimeError"
 
 
 def test_an_ssh_remote_credential_fix_names_the_host_and_repository() -> None:
@@ -842,3 +843,24 @@ def test_a_relative_submodule_url_names_its_own_fix() -> None:
     record = tier_health.failed(None, "clang", text, T0)
     assert record.kind == "submodule_url"
     assert "absolute https URL" in record.fix
+
+
+def test_a_recorded_error_keeps_tool_output_and_cuts_any_other_text() -> None:
+    """`code.index_status` shows the record to a viewer: a harness's or git's output
+    about the entry is kept for its fix, a driver's text is cut to the kind."""
+    from server.code.app.index import compiler_tier
+    from server.code.app.index import tier_health as health_app
+    from server.code.app.index.gitrepo import GitError
+
+    driver = RuntimeError("Code: 210. Connection refused (ch-internal-7:9440) INSERT INTO x")
+    assert health_app.error_text(driver) == "RuntimeError"
+    harness = compiler_tier.harness_failure(2, SUBMODULE_NO_TOKEN)
+    assert SUBMODULE_NO_TOKEN in health_app.error_text(harness)
+    assert SUBMODULE_NO_TOKEN in health_app.error_text(GitError(SUBMODULE_NO_TOKEN))
+
+
+@pytest.mark.asyncio
+async def test_a_failed_git_step_keeps_its_output_for_the_record(tmp_path: Path) -> None:
+    with pytest.raises(Exception) as ei:
+        await compiler_tier.git(tmp_path, "rev-parse", "HEAD")
+    assert "rev-parse" in recorder.error_text(ei.value)

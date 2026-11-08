@@ -524,6 +524,12 @@ class _ExtractionQueueRow(BaseModel):
     message_count: int
     content_chars: int
     written: int
+    # Why the last attempt did not finish: the error's kind, or a Loom error's code
+    # and message; `held: ...` while a hold keeps it waiting, `unreachable: ...`
+    # when the model provider could not be reached, `dropped: ...` when it waited
+    # too long. Empty while claimed and once done. The error's text is in the server log;
+    # a row an older build stored with it reads as the label and the kind, or the label
+    # alone when the kind's name does not end in Error (`held: ModelCallsDisabled: ...`).
     last_error: str
     enqueued_at: datetime | None = None
     updated_at: datetime | None = None

@@ -356,6 +356,10 @@ async def test_result_cap_error_is_not_an_outage_on_the_breaker(monkeypatch) -> 
             qi.QaIntelUnavailable, match="upstream quota"
         ):  # a quota error is not a breaker failure
             await qi.query_rows("SELECT 1")
+    # the remote's text stays in the log: the reason reaches the caller
+    with pytest.raises(qi.QaIntelUnavailable) as ei:
+        await qi.query_rows("SELECT 1")
+    assert str(ei.value) == "qa_intel[qa] upstream quota exceeded"
     assert qi.circuit_status("qa")["state"] == "CLOSED"
     client.boom = "connection refused"
     for _ in range(3):

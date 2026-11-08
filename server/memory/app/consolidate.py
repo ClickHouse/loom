@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
@@ -14,6 +15,7 @@ from typing import Any
 import server.memory.store as memory_repo
 from server.core import pg
 from server.core.error_summary import error_summary
+from server.core.errors import stored_caller_text
 from server.core.hashing import hash_text, sha256_value
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_admin import (
@@ -40,6 +42,18 @@ from server.settings import settings
 from server.settings.budgets import llm_max_tokens
 
 log = logging.getLogger(__name__)
+
+# The failure reasons a run records in Loom's own words: `consolidations.list` shows
+# these whole, and any other reason as its error's kind.
+_LOSSY_MERGE = "merge lost distinguishing values: "
+_NO_JSON = "no JSON object in merge response"
+_NOT_OBJECT = "merge response JSON is not an object"
+_NO_CANONICAL = "merge response lacked canonical_key/value"
+_LEFT_LIVE = "merged rows left live: "
+_OWN_REASONS = (_LOSSY_MERGE, _NO_JSON, _NOT_OBJECT, _NO_CANONICAL, _LEFT_LIVE)
+# `error_summary`'s shape: a kind and a code, never a message.
+_SUMMARY = re.compile(r"[A-Za-z_]\w*(?: (?:code|status|sqlstate) \w+)*")
+_UNSHOWN_FAILURE = "the merge failed; the error is in the server log"
 
 _SUPPRESSION_TAG = "polarity:negative"
 # The session a canonical row is written in: a merge spans its writer's sessions.
@@ -75,14 +89,14 @@ def _parse_merge_response(text: str) -> tuple[str, str]:
     start = text.find("{")
     end = text.rfind("}")
     if start < 0 or end <= start:
-        raise ValueError("no JSON object in merge response")
+        raise ValueError(_NO_JSON)
     parsed = json.loads(text[start : end + 1])
     if not isinstance(parsed, dict):
-        raise ValueError("merge response JSON is not an object")
+        raise ValueError(_NOT_OBJECT)
     key = str(parsed.get("canonical_key", "")).strip()
     value = str(parsed.get("canonical_value", "")).strip()
     if not key or not value:
-        raise ValueError("merge response lacked canonical_key/value")
+        raise ValueError(_NO_CANONICAL)
     return key, value
 
 
@@ -440,6 +454,8 @@ async def _ask_merge(llm: Any, cluster: list[dict[str, Any]]) -> tuple[Any, str,
             canonical_key, canonical_value = _parse_merge_response(llm_result.text)
         except ValueError as e:  # our own message, or json's, which quotes nothing
             failure_reason = f"{type(e).__name__}: {e}"
+        except Exception as e:  # noqa: BLE001 — recorded, never silent
+            failure_reason = error_summary(e)
     # A merge that drops a date, quantity, identifier, name or negation one source
     # carried cannot answer every question the sources answered. Descriptive
     # similarity chose the cluster; this is the decision-side check before the sources
@@ -451,7 +467,7 @@ async def _ask_merge(llm: Any, cluster: list[dict[str, Any]]) -> tuple[Any, str,
         verdict = merge_preserves([str(r.get("value") or "") for r in cluster], canonical_value)
         if not verdict.ok:
             refused_lossy = verdict.counts()
-            failure_reason = f"merge lost distinguishing values: {refused_lossy}"[:500]
+            failure_reason = f"{_LOSSY_MERGE}{refused_lossy}"[:500]
             canonical_key = canonical_value = ""
     return llm_result, canonical_key, canonical_value, failure_reason, refused_lossy
 
@@ -936,7 +952,7 @@ async def handle_memory_consolidate(
                     )
 
             if not canonical_key or not canonical_value:
-                failure_reason = failure_reason or "merge response lacked canonical_key/value"
+                failure_reason = failure_reason or _NO_CANONICAL
                 log.warning(
                     "memory.consolidate: merge failed for %s/%s cluster %s: %s",
                     input.org,
@@ -997,7 +1013,7 @@ async def handle_memory_consolidate(
                 llm_result=llm_result,
                 duration_ms=int((_time.monotonic() - cluster_started) * 1000),
                 status="written",
-                failure_reason="" if retired else "merged rows left live: changed since the read",
+                failure_reason="" if retired else f"{_LEFT_LIVE}changed since the read",
             )
 
     await _asyncio.gather(*[_merge_one(i, c) for i, c in enumerate(merge_clusters)])
@@ -1048,5 +1064,23 @@ async def handle_consolidations_list(
             "lim": int(input.limit),
         },
     )
-    out = [ConsolidationRunRow(**r) for r in rows]
+    out = [
+        ConsolidationRunRow(**{**r, "failure_reason": _shown_failure(str(r["failure_reason"]))})
+        for r in rows
+    ]
     return ConsolidationsListOutput(rows=out)
+
+
+def _shown_failure(reason: str) -> str:
+    """A run's `failure_reason` as `consolidations.list` returns it: a reason Loom
+    writes in words (a lossy merge, an unreadable merge response) whole; any other in
+    `caller_text`'s shape, since a stored `<Kind>: <text>` can carry the provider's or
+    the store's text; a fixed sentence for text in neither shape."""
+    if not reason:
+        return reason
+    # A parser reason may be stored after its kind (`ValueError: ...`): the same reason.
+    own = reason.removeprefix("ValueError: ")
+    unmerged = {c.reason for c in (_HeldSince, _KeyTaken, _EmbedFailed)}
+    if own.startswith(_OWN_REASONS) or own in unmerged or _SUMMARY.fullmatch(reason):
+        return own
+    return stored_caller_text(reason) or _UNSHOWN_FAILURE

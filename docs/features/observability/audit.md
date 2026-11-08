@@ -82,6 +82,11 @@ The hash covers `ts`, `event_type`, `org`, `namespace`, `actor`, `subject` and
 The build, instance, consumer and token stamps are outside the hash, so adding a stamp
 column does not invalidate old rows.
 
+`audit.list`, `erasure.export` and `namespace.snapshot` return an `erasure.failed` or
+`erasure.abandoned` row's subject with its failure reason cut to the step and the error's
+kind, so a hash recomputed from those rows can differ from the stored one.
+`dev/verify_audit_chain.py` checks the stored rows.
+
 ## Per-row hashes and checkpoints
 
 Several server replicas write concurrently, so a row-to-row hash chain would fork. Each

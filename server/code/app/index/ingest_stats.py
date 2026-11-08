@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
+
+from server.core.errors import caller_text, stored_caller_text
 
 
 @dataclass
@@ -74,11 +77,35 @@ _ERROR_MAX_CHARS = 200
 
 
 def error_text(stage: str, exc: BaseException) -> str:
-    """Bounded `stage: ExcClass: message` for `code_files.index_error`.
+    """`stage: <caller_text>` for `code_files.index_error`, which `code.index_errors`
+    and the dashboard's Health tile read back to a viewer: a stage's exception can be
+    a ClickHouse error with its statement, so the kind only. Each caller logs the text."""
+    return f"{stage}: {caller_text(exc)}"[:_ERROR_MAX_CHARS]
 
-    Bounded because the column is read back verbatim by `code.index_errors`
-    and the dashboard's Health tile, and a RecursionError's message (or a parser's
-    dump of the offending source) is not something to store per file.
-    """
-    msg = str(exc).replace("\n", " ").strip()
-    return f"{stage}: {type(exc).__name__}: {msg[:_ERROR_MAX_CHARS]}"
+
+# The stage of a file skipped for its size; its reason is Loom's own words.
+SKIPPED = "skipped"
+# The stages `error_text` is called with.
+_STAGES = frozenset({"parse", "chunk", "edges"})
+# Two failed stages are `; `-joined; a Loom message's own `; ` is no split.
+_STAGE_SPLIT = re.compile(r"; (?=(?:parse|chunk|edges): )")
+
+
+def shown_index_error(stored: str) -> str:
+    """`code_files.index_error` as a viewer reads it. A skipped file's reason is kept
+    whole; any other keeps each stage (`; `-joined when two failed) and `caller_text`'s
+    shape of its error, since an error stored as `<stage>: <Kind>: <text>` can carry a
+    ClickHouse statement."""
+    if stored.startswith(f"{SKIPPED}: "):
+        return stored
+    shown = []
+    for i, part in enumerate(_STAGE_SPLIT.split(stored)):
+        stage, _, rest = part.partition(": ")
+        if stage not in _STAGES:
+            # A row with no stage is a bare error; a later part, a fragment of driver text.
+            if i == 0:
+                shown.append(stored_caller_text(part))
+            continue
+        error = stored_caller_text(rest)
+        shown.append(f"{stage}: {error}" if error else stage)
+    return "; ".join(s for s in shown if s)

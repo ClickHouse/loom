@@ -339,7 +339,9 @@ async def held_by(name: str, holder: str, *, ch: Any = None) -> bool:
     try:
         row = await _client(ch).query_one(LOCK_HOLDER, {"name": name})
     except Exception as e:
-        raise LeaseUnavailable(f"lease {name}: {e}") from e
+        # The driver's text can carry a statement or the server's address: logged only.
+        log.warning("lease %s: the holder read failed: %s: %s", name, type(e).__name__, e)
+        raise LeaseUnavailable("the lease store did not answer", operation=name) from e
     return row is not None and str(row["holder"]) == holder and not row["stale"]
 
 

@@ -18,6 +18,7 @@ from server.code.app.common import (
     schedule_code_trace,
     tier_of,
 )
+from server.code.app.index.ingest_stats import shown_index_error
 from server.code.app.index.symbol_forms import natural_name
 from server.code.app.spans import code_span, set_code_span_attributes, span_attrs
 from server.code.app.symbol.coverage import _ctor_edges_absent, _has_ctor_seed, _scip_coverage
@@ -624,7 +625,7 @@ async def _verify_defines(
         + " — its symbol table cannot refute the claim.",
         floors={
             "indexed": f is not None,
-            "index_error": str((f or {}).get("index_error") or ""),
+            "index_error": shown_index_error(str((f or {}).get("index_error") or "")),
         },
     )
 

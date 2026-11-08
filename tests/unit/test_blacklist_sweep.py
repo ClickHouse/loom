@@ -114,6 +114,9 @@ async def test_sweep_reports_truncation_and_a_failed_regex(monkeypatch) -> None:
         ch=_CH(rows),
     )
     assert res.matched == 3 and res.tombstoned == 3 and res.truncated is True
+    # a regex ClickHouse's RE2 cannot run is the caller's to fix: the reason names it,
+    # and no query runs
+    unrunnable = _CH([])
     bad = await bs.sweep_pattern(
         org="o",
         namespace="a",
@@ -121,9 +124,21 @@ async def test_sweep_reports_truncation_and_a_failed_regex(monkeypatch) -> None:
         pattern="(?<=x)y",
         pattern_type="regex",
         scope="namespace",
+        ch=unrunnable,
+    )
+    assert bad.matched == 0 and "not a valid RE2" in bad.error and unrunnable.queries == []
+    # any other failure: the driver's text (the statement, the server's address) stays
+    # in the log
+    down = await bs.sweep_pattern(
+        org="o",
+        namespace="a",
+        pattern_id="p",
+        pattern="x+y",
+        pattern_type="regex",
+        scope="namespace",
         ch=_CH([], fail=True),
     )
-    assert bad.matched == 0 and "lookbehind" in bad.error
+    assert down.matched == 0 and down.error == "the match query failed (RuntimeError)"
 
 
 async def test_add_with_sweep_reports_the_swept_count(monkeypatch) -> None:

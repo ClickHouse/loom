@@ -13,7 +13,10 @@ import hashlib
 import logging
 from dataclasses import dataclass, field
 
+import pydantic
+
 from server.core.datetimes import naive_utc_now
+from server.core.errors import ValidationError, caller_text
 from server.workers import pass_context
 from server.workers.status import record_pass
 
@@ -79,10 +82,15 @@ async def _run(result: CodeScipApplyResult) -> None:
                 got = hashlib.sha256(str(p["payload"]).encode()).hexdigest()
                 want = _fixed_str(p.get("payload_hash"))
                 if want and got != want:
-                    raise ValueError(f"part {p['seq']} hash mismatch")
-            delta = ScipDelta.model_validate_json(payload)
+                    raise ValidationError(f"part {p['seq']} hash mismatch")
+            try:
+                delta = ScipDelta.model_validate_json(payload)
+            except pydantic.ValidationError as e:
+                # The uploader reads `code.scip_status`: the first bad field, not its value.
+                where = ".".join(str(x) for x in e.errors()[0]["loc"]) or "the top"
+                raise ValidationError(f"the batch is not a SCIP delta (at {where})") from e
             if delta.delta_version != 1:
-                raise ValueError(f"unsupported delta_version {delta.delta_version}")
+                raise ValidationError(f"unsupported delta_version {delta.delta_version}")
             stats = await apply_delta(repo, org, ns, delta)
             await repo.upsert_scip_batch(
                 org,
@@ -123,7 +131,9 @@ async def _run(result: CodeScipApplyResult) -> None:
                     base_sha=_fixed_str(batch.get("base_sha")),
                     total_parts=int(batch.get("total_parts") or 0),
                     status="failed",
-                    error=f"{type(e).__name__}: {e}"[:500],
+                    # `code.scip_status` returns it: the kind, or Loom's words about the
+                    # uploader's batch (`VALIDATION_FAILED: ...`); the text is logged above.
+                    error=caller_text(e)[:500],
                     producer=str(batch.get("producer") or ""),
                     created_at=batch.get("created_at"),
                 )

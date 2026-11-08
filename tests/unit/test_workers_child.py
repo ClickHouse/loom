@@ -177,6 +177,8 @@ async def test_a_child_that_cannot_be_created_gives_the_lease_up_and_leaks_no_fd
     workers.start_all()
     await _until(lambda: bool(lease.given_up))
     assert workers.failed_starts == 3 and "could not start" in lease.given_up[0]
+    # `/v1/health` shows the reason without a token: the error's kind, not the path.
+    assert "FileNotFoundError" in lease.given_up[0] and missing not in lease.given_up[0]
     assert workers._watch is not None and workers._watch.done()
     assert workers._write_fd is None and workers._alive_fd is None
     if fds is not None:

@@ -32,6 +32,8 @@ class WorkerStatus:
     last_duration_ms: int | None = None
     last_outcome: dict[str, Any] = field(default_factory=dict)  # worker-specific summary
     last_error: str | None = None  # truncated message; None when last run succeeded
+    # The last failure's class, never its message, which can name an org; None on success.
+    last_error_kind: str | None = None
     consecutive_failures: int = 0
     total_runs: int = 0
 
@@ -58,21 +60,20 @@ class WorkerStatusRegistry:
             s.last_duration_ms = duration_ms
             s.last_outcome = outcome
             s.last_error = None
+            s.last_error_kind = None
             s.consecutive_failures = 0
             s.total_runs += 1
 
-    def record_failure(
-        self,
-        name: str,
-        *,
-        duration_ms: int,
-        error: str,
-    ) -> None:
+    def record_failure(self, name: str, *, duration_ms: int, exc: BaseException) -> None:
+        """A failed pass: `last_error` keeps the text for `/v1/admin/workers.status`;
+        `last_error_kind` is the class only, since the registry is process-wide and a
+        Loom error's message can name another org."""
         with self._lock:
             s = self._statuses.setdefault(name, WorkerStatus(name=name))
             s.last_run_at = datetime.now(UTC)
             s.last_duration_ms = duration_ms
-            s.last_error = error[:512]
+            s.last_error = f"{type(exc).__name__}: {exc}"[:512]
+            s.last_error_kind = type(exc).__name__
             s.consecutive_failures += 1
             s.total_runs += 1
 
@@ -98,6 +99,19 @@ _registry = WorkerStatusRegistry()
 
 def get_registry() -> WorkerStatusRegistry:
     return _registry
+
+
+def shown_worker_row(row: dict[str, Any]) -> dict[str, Any]:
+    """A registry row as a caller other than the platform admin reads it: without
+    `last_error`, its outcome cut to numbers and flags. The registry is process-wide,
+    so a pass's text and an outcome's strings can name another org."""
+    out = {k: v for k, v in row.items() if k != "last_error"}
+    if "last_outcome" in row:
+        outcome = row["last_outcome"] or {}
+        out["last_outcome"] = {
+            k: v for k, v in outcome.items() if isinstance(v, bool | int | float)
+        }
+    return out
 
 
 @dataclass
@@ -126,9 +140,7 @@ def record_pass(name: str) -> Iterator[_PassRecord]:
             yield rec
         except Exception as e:
             duration_ms = int((time.monotonic() - started) * 1000)
-            get_registry().record_failure(
-                name, duration_ms=duration_ms, error=f"{type(e).__name__}: {e}"
-            )
+            get_registry().record_failure(name, duration_ms=duration_ms, exc=e)
             _finish_span(span, success=False, duration_ms=duration_ms, error=e)
             _record_metrics(name, success=False, duration_ms=duration_ms)
             raise

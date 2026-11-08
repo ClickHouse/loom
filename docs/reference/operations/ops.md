@@ -40,7 +40,7 @@ Run the deployment's self-checks (schema contracts, embedding stubs, ClickHouse 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `checks` | `list[OpsHealthCheck]` | One entry per health check (schema contracts, embedding stubs, parts, op mix, workers, ...), each with its status and, when not `ok`, a suggested repair. |
-| `worker_status` | `dict[str, dict[str, Any]]` | Per background worker in this process: last run time, duration, outcome and error, consecutive failures and total runs; empty before any worker has run. |
+| `worker_status` | `dict[str, dict[str, Any]]` | Per background worker in this process: last run time, duration, outcome, the last error's kind (`last_error_kind`), consecutive failures and total runs; empty before any worker has run. |
 | `overall` | `Literal['ok', 'warn', 'fail']` | `fail` when any check failed, else `warn` when any warned, else `ok`. |
 
 ## `ops.projection_failures.list`

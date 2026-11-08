@@ -19,8 +19,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from server.code.app.index.gitrepo import GitError
 from server.code.domain.index import tier_health
 from server.core.datetimes import utc_now
+from server.core.errors import caller_text
 
 if TYPE_CHECKING:
     from server.code.domain.index.state import IndexState
@@ -29,9 +31,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger("loom.code_index.tier_health")
 
 
+class ToolOutputError(RuntimeError):
+    """A tier failure whose message is the tier's own tool output about the entry (a
+    harness exit and its tail): kept in the record for its fix."""
+
+
 def error_text(error: BaseException | str) -> str:
-    if isinstance(error, BaseException):
+    """The record's error, which `code.index_status` shows a viewer: a tool's or git's
+    output whole (redacted later), any other exception's kind, since its text can
+    carry a statement or the server's address."""
+    if isinstance(error, ToolOutputError | GitError):
         return f"{type(error).__name__}: {error}"
+    if isinstance(error, BaseException):
+        return caller_text(error)
     return str(error)
 
 

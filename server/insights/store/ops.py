@@ -34,7 +34,7 @@ async def failed_merges_15m(*, ch: _CHClient | None = None) -> list[dict[str, An
     return list(
         await ch.query_all(
             """
-                SELECT table, count() AS failures, any(exception) AS exception,
+                SELECT table, count() AS failures, any(error) AS error_code,
                        any(merge_reason) AS merge_reason, max(event_time) AS last_failure
                 FROM system.part_log
                 WHERE database = currentDatabase() AND event_type = 'MergeParts' AND error != 0

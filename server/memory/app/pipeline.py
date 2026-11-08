@@ -13,6 +13,7 @@ import time
 from typing import Any
 
 from server.core.datetimes import parse_iso_dt
+from server.core.errors import caller_text
 from server.core.hashing import hash_text
 from server.memory.api.models_bulk import REFUSED, MemoryBulkSetInput, _BulkSetEntry, refused_facts
 from server.memory.api.models_crud import MemoryDeleteInput
@@ -185,7 +186,8 @@ async def _step_fetch_existing_memories(
     except Exception as e:  # noqa: BLE001 — a failed existing-memory read must not fail extraction
         log.warning("fetch_existing_memories step failed: %s", e)
         state.existing_memories = []
-        state.errors.append(f"fetch_existing_failed:{e}")
+        # `memory.set_from_messages` returns these as `pipeline_errors`: the kind.
+        state.errors.append(f"fetch_existing_failed:{caller_text(e)}")
     return state
 
 

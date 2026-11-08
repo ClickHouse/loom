@@ -808,3 +808,42 @@ def test_a_boot_waits_long_enough_to_outwait_a_dead_writers_last_insert(
     assert rmt_carry._boot_wait_s() == rmt_carry.ACK_WAIT_S  # the default write limit
     monkeypatch.setattr(settings, "ch_timeout_write_s", 300)
     assert rmt_carry._boot_wait_s() > rmt_carry._writer_bound_s() > rmt_carry.ACK_WAIT_S
+
+
+def test_an_unreadable_server_clock_refuses_without_the_drivers_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The 503 names the clock, not the driver's text, which can carry the server's
+    address; the text goes to the log."""
+    from server.core.errors import BackendUnavailableError
+
+    class _NoClock(_FakeCH):
+        async def query_one(self, sql: str, *a: Any, **k: Any) -> Any:
+            if "now64" in sql:
+                raise RuntimeError("Code: 210. Connection refused (ch-internal-7:9440)")
+            return await super().query_one(sql, *a, **k)
+
+    monkeypatch.setattr(rmt_carry, "_server_anchor", None)
+    ch = _NoClock(_live(), [_row("k1")])
+    with pytest.raises(BackendUnavailableError) as ei:
+        asyncio.run(rmt_carry.carry_unknown_columns(ch, TABLE, [_row("k1")]))
+    assert ei.value.message == "rmt carry: the server's clock cannot be read; retry"
+
+
+def test_a_typed_error_reading_the_clock_reaches_the_caller_as_raised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Loom error's message is written for callers: it is not rewrapped as a 503."""
+    from server.core.errors import OverloadedError
+
+    class _Busy(_FakeCH):
+        async def query_one(self, sql: str, *a: Any, **k: Any) -> Any:
+            if "now64" in sql:
+                raise OverloadedError("the server is busy; retry")
+            return await super().query_one(sql, *a, **k)
+
+    monkeypatch.setattr(rmt_carry, "_server_anchor", None)
+    ch = _Busy(_live(), [_row("k1")])
+    with pytest.raises(OverloadedError) as ei:
+        asyncio.run(rmt_carry.carry_unknown_columns(ch, TABLE, [_row("k1")]))
+    assert ei.value.message == "the server is busy; retry"

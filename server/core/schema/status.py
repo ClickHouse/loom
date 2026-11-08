@@ -13,11 +13,13 @@ changes at a deploy. Never raises: an unreadable ledger reports `error`.
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 from typing import Any
 
 from server.core.ch_schema_guard import schema_guard_reset
+from server.core.errors import error_kind
 from server.core.paths import MIGRATIONS_DIR
 from server.core.schema.journal import (
     baseline_map,
@@ -26,6 +28,8 @@ from server.core.schema.journal import (
     sorted_migrations,
 )
 from server.settings import settings
+
+log = logging.getLogger(__name__)
 
 _cache: dict[str, Any] = {"at": 0.0, "value": None}
 
@@ -71,11 +75,13 @@ async def schema_status(*, ttl_s: float | None = None, now: float | None = None)
         ledger = [str(r.get("filename") or "").rstrip("\x00") for r in rows]
         out = compare(repo_migrations(), ledger, repo_baselines())
     except Exception as e:  # noqa: BLE001 — health never fails on this read
+        # `/v1/health` shows this without a token: the error's kind; the text is logged.
+        log.warning("schema status: the migrations ledger read failed: %s: %s", type(e).__name__, e)
         out = {
             "pending": None,
             "ledger_only": None,
             "applied": None,
-            "error": f"{type(e).__name__}: {e}"[:200],
+            "error": error_kind(e),
         }
     _cache["at"], _cache["value"] = t, out
     return dict(out)

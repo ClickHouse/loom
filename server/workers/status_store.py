@@ -566,13 +566,13 @@ async def resume_cursor(worker: str, *, ch: Any = None, timeout_s: float = 5.0) 
 
 
 # One row per worker whose name starts with {prefix}: its newest pass and
-# how many passes the window holds (a plane's status panel). `pass_started` is
-# not aliased: it is in the WHERE.
+# how many passes the window holds (a plane's status panel, which a viewer reads:
+# the error's class, never its text). `pass_started` is not aliased: it is in the WHERE.
 PASS_SUMMARY_SQL = f"""
 SELECT worker,
        max(pass_started) AS last_started,
        argMax(pass_finished, pass_started) AS last_finished,
-       argMax(error, pass_started) AS last_error,
+       argMax(error_class, pass_started) AS last_error_class,
        argMax(status, pass_started) AS last_status,
        argMax(consecutive_failures, pass_started) AS consecutive_failures,
        count() AS total_runs
@@ -649,6 +649,7 @@ def _merge_one(
             int((store_at - started).total_seconds() * 1000) if started is not None else None
         )
         row["last_error"] = str(store.get("error") or "") or None
+        row["last_error_kind"] = str(store.get("error_class") or "") or None
         row["consecutive_failures"] = int(store.get("consecutive_failures") or 0)
         row["last_pass_status"] = str(store.get("status") or "ok")
         row["rows_written"] = int(store.get("rows_written") or 0)

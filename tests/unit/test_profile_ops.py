@@ -282,13 +282,16 @@ async def test_profile_activity_503_on_ch_failure() -> None:
 
     class _BrokenCH:
         async def query_all(self, *_a, **_kw) -> list[dict]:
-            raise RuntimeError("table loom.agent_events does not exist")
+            raise RuntimeError("Code: 60. table loom.agent_events (ch-internal-7:9440)")
 
     with patch("server.core.ch.get_client", return_value=_BrokenCH()):
         with pytest.raises(HTTPException) as excinfo:
             await handle_profile_activity(inp)
     assert excinfo.value.status_code == 503
-    assert "ACTIVITY_UNAVAILABLE" in str(excinfo.value.detail)
+    assert excinfo.value.detail == {
+        "code": "ACTIVITY_UNAVAILABLE",
+        "message": "the agent_events read failed (RuntimeError); retry",
+    }
 
 
 @pytest.mark.asyncio

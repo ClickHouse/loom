@@ -26,7 +26,7 @@ from server.code.domain.index.blame_range import sha_text
 from server.code.store.index import CodeRepo
 from server.core import leases
 from server.core.background import TaskSet
-from server.core.errors import LoomServerError, NotFoundError, ValidationError
+from server.core.errors import LoomServerError, NotFoundError, ValidationError, stored_caller_text
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -233,9 +233,18 @@ async def handle_code_scip_status(input: CodeScipStatusInput) -> CodeScipStatusO
         status=str(batch["status"]),
         parts_received=received,
         total_parts=int(batch["total_parts"]),
-        error=str(batch.get("error") or ""),
+        # A stored error can carry the driver's text (a statement, an address): the kind.
+        error=_shown_batch_error(str(batch.get("error") or "")),
         commit_sha=sha_text(batch.get("commit_sha")),
         applied_at=str(batch.get("applied_at") or ""),
+    )
+
+
+def _shown_batch_error(stored: str) -> str:
+    """A failed batch's `error` as `code.scip_status` returns it: `caller_text`'s shape,
+    or a fixed sentence for text in no such shape."""
+    return stored_caller_text(stored) or (
+        "the apply failed; the error is in the server log" if stored else ""
     )
 
 

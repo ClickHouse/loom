@@ -26,7 +26,7 @@ def test_begin_note_current_round_trip_and_bounds():
     D.note("rerank", "input_order_kept", "malformed payload")
     D.note("x", "y")  # no reason
     assert D.current() == [
-        "classify: caller_type_kept (RuntimeError: boom)",
+        "classify: caller_type_kept (RuntimeError)",
         "rerank: input_order_kept (malformed payload)",
         "x: y",
     ]
@@ -166,7 +166,8 @@ async def test_rerank_http_fallback_notes_the_degradation(monkeypatch):
     D.begin()
     out = await R.rerank(endpoint="slow", prompt_template="", query="q", candidates=cands)
     assert out == cands  # fail-open order kept
-    assert D.current() == ["rerank: input_order_kept (ReadTimeout: slow reranker)"]
+    # The note reaches the op's `degraded` list: the kind, the text in the log.
+    assert D.current() == ["rerank: input_order_kept (ReadTimeout)"]
 
 
 def test_output_models_carry_degraded():

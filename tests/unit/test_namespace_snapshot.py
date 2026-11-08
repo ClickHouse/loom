@@ -98,6 +98,54 @@ def test_snapshot_carries_live_grants_only(monkeypatch) -> None:
     assert [g.subject for g in out.grants] == ["alice"]
 
 
+def test_the_audit_tail_cuts_an_erasure_failure_an_older_build_wrote(monkeypatch) -> None:
+    """The tail returns audit subjects: an `erasure.failed` `error` with the driver's
+    text shows the step and the kind; any other subject is as stored."""
+    import asyncio
+    import json
+    from datetime import UTC, datetime
+
+    import server.identity.app.namespace as registry
+    import server.identity.app.namespace_snapshot as ns_handlers
+    import server.memory.app.namespace_types as types
+    from server.identity.api.models import NamespaceSnapshotInput
+
+    text = "Code: 210. Connection refused (ch-internal-7:9440) ALTER TABLE loom.memory"
+    failed = json.dumps({"erasure_id": "e1", "error": f"memory.tombstone: ValueError: {text}"})
+    other = json.dumps({"key": "k", "note": text})
+    now = datetime.now(UTC)
+
+    class _CH:
+        async def query_all(self, sql, params=None):
+            if "loom.audit_log" not in sql:
+                return []
+            return [
+                {"ts": now, "event_type": "erasure.failed", "actor": "a", "subject_json": failed},
+                {"ts": now, "event_type": "memory.set", "actor": "a", "subject_json": other},
+            ]
+
+        async def query_one(self, sql, params=None):
+            return None
+
+        async def insert(self, *a, **k):
+            return None
+
+    async def _no_types(org, namespace):
+        return []
+
+    monkeypatch.setattr(ns_handlers, "get_client", lambda: _CH())
+    monkeypatch.setattr(types, "list_type_configs", _no_types)
+    monkeypatch.setattr(registry, "resolve_subject", lambda *a: "alice")
+    out = asyncio.run(
+        ns_handlers.handle_namespace_snapshot(
+            NamespaceSnapshotInput(org="o", namespace="n", include_audit_tail_n=5)
+        )
+    )
+    tail = [json.loads(a.subject_json) for a in out.audit_tail]
+    assert tail[0]["error"] == "memory.tombstone: ValueError"
+    assert out.audit_tail[1].subject_json == other
+
+
 def test_snapshot_audits_each_high_row_it_carries(monkeypatch) -> None:
     """A snapshot carries high rows on purpose, for a restore; each one is audited as a key
     read of a high row is."""

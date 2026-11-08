@@ -29,6 +29,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from server.core.errors import error_kind
 from server.settings import settings
 
 if TYPE_CHECKING:
@@ -409,12 +410,13 @@ class Limiter:
             target = path or default_path()
             self._shared = _Store(target, slots, clock=self._clock)
         except Exception as e:  # noqa: BLE001 — fall back, say so in health
-            self._shared_reason = (
-                f"shared table unavailable ({type(e).__name__}: {e}); per-process buckets"
+            # `/v1/health` shows the reason without a token: the error's kind.
+            log.warning(
+                "rate limiter: the shared table is unavailable: %s: %s", type(e).__name__, e
             )
-            log.warning("rate limiter: %s", self._shared_reason)
+            self._shared_reason = f"shared table unavailable ({error_kind(e)}); per-process buckets"
             return None
-        self._shared_reason = f"shared table {target}"
+        self._shared_reason = "shared table"  # `/v1/health` shows it: no host path
         return self._shared
 
     # -- overrides kept in loom.runtime_overrides --------------------------
@@ -473,7 +475,8 @@ class Limiter:
             "class_fractions": dict(class_fractions()),
         }
         if store is not None:
-            out.update(store.status())
+            # `/v1/health` answers without a token: the table's host path stays out.
+            out.update({k: v for k, v in store.status().items() if k != "path"})
         return out
 
     def _ns_limit_for(self, namespace: str, op_class: str, traffic_class: str = "") -> Limit:

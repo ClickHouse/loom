@@ -8,6 +8,7 @@ from typing import Any, cast
 
 from server.core.ch import sequential_reads
 from server.core.repo_base import _CHClient, _default_client
+from server.erasure.domain.failure_reason import ABANDONED_REASON_PREFIX
 from server.erasure.store.rows import (
     CheckpointRow,
     LedgerRow,
@@ -47,11 +48,6 @@ async def list_stuck_in_progress(
         },
     )
     return cast("list[ResumeRow]", rows)
-
-
-# The failure_reason prefix of the recovery worker's terminal row: a saga at
-# its attempts budget whose row does not start with it was never abandoned.
-ABANDONED_REASON_PREFIX = "max_attempts ("
 
 
 async def list_unabandoned_exhausted(

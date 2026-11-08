@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.ch_errors import error_code
+from server.core.errors import error_kind
 from server.core.leases import (
     ENGINE_SQL,
     LOCK_HOLDER,
@@ -66,9 +67,20 @@ class LeaseConfig:
 
 
 def describe_error(e: BaseException) -> str:
-    if error_code(e) == 60:
-        return f"table {LOCK_TABLE} absent"
-    return f"{type(e).__name__}: {str(e)[:160]}"
+    """The lock's error as `error` keeps it, which `/v1/health` shows without a token
+    (the workers lease's reason): the absent table, or `error_kind(e)`. The driver's
+    text, which can carry the server's address, is in `operator_error_text`."""
+    return _absent_table(e) or error_kind(e)
+
+
+def operator_error_text(e: BaseException) -> str:
+    """The lock's error with the driver's text, for the operator's output lines."""
+    return _absent_table(e) or f"{type(e).__name__}: {str(e)[:160]}"
+
+
+def _absent_table(e: BaseException) -> str:
+    """The sentence for a server without the lock table (UNKNOWN_TABLE), else ''."""
+    return f"table {LOCK_TABLE} absent" if error_code(e) == 60 else ""
 
 
 # Tables the runner creates itself, before any migration file runs.
@@ -138,6 +150,8 @@ class KeeperLock:
         self.waited_s = 0.0
         # The last failed round's error ('' after a clean one), and its code.
         self.error = ""
+        # The same error with the driver's text, for the operator's output only.
+        self.error_detail = ""
         self.error_code: int | None = None
         self._ever_held = False
         self._last_renew = 0.0
@@ -219,13 +233,14 @@ class KeeperLock:
         started = self.clock()
         try:
             won, row = self._attempt()
-            self.error, self.error_code = "", None
+            self.error, self.error_detail, self.error_code = "", "", None
         except Exception as e:  # noqa: BLE001 — a Keeper or network error retries below; a refusal stops
             self.error, self.error_code = describe_error(e), error_code(e)
+            self.error_detail = operator_error_text(e)
             if not _transient(e):
                 self.outcome = "unleased"
                 return self.outcome
-            self.out(f"  · {self.label} lock: {self.error} — retrying")
+            self.out(f"  · {self.label} lock: {self.error_detail} — retrying")
             won, row = False, None
         poll = self.cfg.poll_s
         announced: str | None = None
@@ -244,10 +259,11 @@ class KeeperLock:
             poll = min(poll * 1.5, self.cfg.poll_max_s)
             try:
                 won, row = self._attempt()
-                self.error, self.error_code = "", None
+                self.error, self.error_detail, self.error_code = "", "", None
             except Exception as e:  # noqa: BLE001 — a failed round; the wait is bounded
                 self.error, self.error_code = describe_error(e), error_code(e)
-                self.out(f"  · {self.label} lock: {self.error} — retrying")
+                self.error_detail = operator_error_text(e)
+                self.out(f"  · {self.label} lock: {self.error_detail} — retrying")
                 won, row = False, None
         self.waited_s = self.clock() - started
         self.held = self._ever_held = True
@@ -275,7 +291,7 @@ class KeeperLock:
                 ch.command(LOCK_RENEW, parameters=self._params())
                 rows = ch.query(LOCK_HOLDER, parameters={"name": self.lock_name}).result_rows
             except Exception as e:  # noqa: BLE001 — a missed renewal is a WARNING until lose_after
-                self.out(f"  · {self.label} lock: renewal failed ({describe_error(e)})")
+                self.out(f"  · {self.label} lock: renewal failed ({operator_error_text(e)})")
                 if self.clock() - self._last_renew >= self.cfg.lose_after:
                     # No renewal for lose_after: stop while the key is still
                     # ours, before another process can take it over.
@@ -300,7 +316,7 @@ class KeeperLock:
         try:
             ch = client()
         except Exception as e:  # noqa: BLE001 — renewals between files remain
-            self.out(f"  · {self.label} lock: no heartbeat connection ({describe_error(e)})")
+            self.out(f"  · {self.label} lock: no heartbeat connection ({operator_error_text(e)})")
             return
         interval = max(self.cfg.ttl_s / 3, 1.0)
 
@@ -328,7 +344,7 @@ class KeeperLock:
             try:
                 self.ch.command(LOCK_RELEASE, parameters=self._params())
             except Exception as e:  # noqa: BLE001 — the key expires by TTL
-                self.out(f"  · {self.label} lock: release failed ({describe_error(e)})")
+                self.out(f"  · {self.label} lock: release failed ({operator_error_text(e)})")
             self.held = self._ever_held = False
 
 
@@ -366,7 +382,7 @@ def bootstrap_keeper_lock(
             if not _transient(e):
                 raise
             if clock() - started >= wait_s:
-                raise KeeperUnavailable(describe_error(e)) from e
+                raise KeeperUnavailable(operator_error_text(e)) from e
         sleep(poll_s)
 
 
@@ -405,4 +421,5 @@ __all__ = [
     "bootstrap_keeper_lock",
     "cluster_lock",
     "describe_error",
+    "operator_error_text",
 ]

@@ -133,9 +133,10 @@ class ErasureRequestOutput(BaseModel):
     # (the Postgres authority or the bucket, which the server log names); `residue` then
     # holds what it did count.
     verified_at: datetime | None = None
-    # A failed saga names the step that failed, and the steps
-    # it did complete, so the recovery worker's terminal row and an operator
-    # re-verify keep both instead of the attempts count alone.
+    # Why a failed saga failed, `""` otherwise: `<step>: <error>` or a bare `<error>`
+    # outside a step, where `<error>` is the exception's kind or a Loom error's
+    # `<CODE>: <message>`, or `verify.residue: ErasureResidueError: residue after
+    # erasure: {table: n}`.
     failure_reason: str = ""
     # Names of the steps finished so far, sorted.
     steps_completed: list[str] = Field(default_factory=list)
@@ -171,7 +172,9 @@ class ErasureStatusOutput(BaseModel):
     requested_at: datetime | None = None
     # When the saga reached its terminal state (UTC); `None` while in progress.
     completed_at: datetime | None = None
-    # The failing step and its error for a failed saga; `None` otherwise.
+    # Why a failed saga failed, `None` otherwise: a reason `erasure.request` names, or
+    # `max_attempts (N) exceeded` once recovery gave up, then `; last: <reason>` if any;
+    # `the saga failed; the error is in the server log` for a reason in neither shape.
     failure_reason: str | None = None
     # Verified forgetting.
     residue_count: int = 0
@@ -267,6 +270,7 @@ class ErasureListRow(BaseModel):
     status: ErasureStatus
     requested_at: datetime
     completed_at: datetime | None = None
+    # Why a failed saga failed, `""` otherwise; the shapes `erasure.status` names.
     failure_reason: str = ""
     steps_completed_count: int = 0
     # Rows tombstoned here but later memory.restore'd; non-zero means

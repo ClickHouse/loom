@@ -20,6 +20,7 @@ from server.code.app.index.entry_lock import check_held
 from server.code.app.index.gitrepo import git_config_env
 from server.code.app.index.sandbox import tool_mounts
 from server.code.app.index.scip_delta import ScipApplyStats, ScipDelta, apply_delta
+from server.code.app.index.tier_health import ToolOutputError
 from server.core.paths import SCIP_HARNESS_DIR
 from server.settings import settings
 
@@ -60,7 +61,7 @@ def work_dir() -> str | None:
     return str(path)
 
 
-class FullIndexFailed(RuntimeError):
+class FullIndexFailed(ToolOutputError):
     def __init__(self, returncode: int, tail: str) -> None:
         super().__init__(f"harness exit {returncode}: {tail[-2000:]}")
         self.returncode = returncode

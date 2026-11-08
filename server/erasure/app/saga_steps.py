@@ -15,6 +15,7 @@ from typing import Any
 from server.auth.grant_claims import account_change, collections_change, group_change
 from server.code.app.index.retire import code_tables_keyed_by_namespace, refresh_code_views
 from server.core import grant_cache
+from server.core.errors import caller_text
 from server.core.principals import personal_name
 from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_graph as graph_steps
@@ -43,15 +44,17 @@ class ErasureResidueError(RuntimeError):
 
 
 class ErasureStepError(RuntimeError):
-    """A saga step failed. Names the step so the ledger's `failure_reason`
-    says where the saga stopped even when the cause has no message (an
-    external backend's transport error can carry an empty one)."""
+    """A saga step failed. Names the step and `caller_text` of the cause, which the
+    ledger's `failure_reason` and the `erasure.failed` audit event carry to the
+    requester. A backend's text (a statement, an address, a remote's response) stays
+    in the log; a residue failure keeps its census counts, since they name what is left."""
 
     def __init__(self, step: str, cause: BaseException) -> None:
         self.step = step
         self.cause = cause
-        msg = str(cause).strip()
-        detail = f"{type(cause).__name__}: {msg}" if msg else type(cause).__name__
+        detail = caller_text(cause)
+        if isinstance(cause, ErasureResidueError) and (counts := str(cause).strip()):
+            detail = f"{type(cause).__name__}: {counts}"
         super().__init__(f"{step}: {detail}")
 
 

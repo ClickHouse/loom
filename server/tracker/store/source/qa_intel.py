@@ -319,9 +319,9 @@ async def query_rows(
         # breaker stays closed for every other shape (the
         # build-history views proxy a playground under a per-shape quota)
         if is_quota_error(e):
-            raise QaIntelUnavailable(
-                f"qa_intel[{credential}] upstream quota: {str(e)[:200]}"
-            ) from e
+            # The remote's text reaches the caller as a reason: logged, not quoted.
+            log.warning("qa_intel[%s] upstream quota: %s", credential, e)
+            raise QaIntelUnavailable(f"qa_intel[{credential}] upstream quota exceeded") from e
         # a remote result cap is the shape of one statement; a
         # statement the server ended at the ceiling WE sent is our budget, not
         # its outage (under a brief's twelve-way fan-out three

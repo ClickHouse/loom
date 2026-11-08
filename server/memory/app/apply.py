@@ -39,6 +39,8 @@ from fastapi import HTTPException
 
 from server.core.datetimes import naive_utc_now, to_naive_utc_second
 from server.core.datetimes import to_naive_utc as _naive
+from server.core.errors import LoomServerError, caller_text
+from server.core.logging_config import request_id_var
 from server.core.numbers import float32
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_apply import (
@@ -57,6 +59,8 @@ from server.memory.domain import lock as _lock
 from server.memory.domain.search_types import hit_row_key, names_row
 
 log = logging.getLogger(__name__)
+# The statuses a single-row handler refuses with, rather than fails.
+_REFUSED_STATUS = frozenset({403, 409, 422, 423})
 
 
 # Which lock class each action is (label is metadata: no lock gates it).
@@ -394,13 +398,25 @@ async def apply_one(row: Any, input: Any) -> ApplyRow:
     except HTTPException as e:
         detail = e.detail if isinstance(e.detail, dict) else {"message": str(e.detail)}
         code = str(detail.get("code", e.status_code))
-        if e.status_code in (403, 409, 422, 423):
+        if e.status_code in _REFUSED_STATUS:
             return ApplyRow(
                 **base, status="refused", detail=f"{code}: {detail.get('message', '')}"[:300]
             )
         return ApplyRow(
             **base, status="failed", detail=f"{code}: {detail.get('message', '')}"[:300]
         )
-    except Exception as e:  # reported on this row's ApplyRow; the batch continues
+    except LoomServerError as e:  # a typed error's message is written for the caller
+        if e.status_code in _REFUSED_STATUS:
+            return ApplyRow(**base, status="refused", detail=caller_text(e)[:300])
+        log.warning("memory.apply: %s failed for %s: %s", input.action, row.memory_key, e)
+        return ApplyRow(**base, status="failed", detail=caller_text(e)[:300])
+    except Exception as e:  # one row's failure must not fail the batch
         log.exception("memory.apply: %s failed for %s", input.action, row.memory_key)
-        return ApplyRow(**base, status="failed", detail=f"{type(e).__name__}: {e}"[:300])
+        # The exception's text can carry a statement or another row's values: the
+        # caller gets its kind and the request id, the server log the rest.
+        rid = request_id_var.get() or "-"
+        return ApplyRow(
+            **base,
+            status="failed",
+            detail=f"{type(e).__name__}: see the server log, request_id={rid}",
+        )

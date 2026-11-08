@@ -58,16 +58,13 @@ def _parts_check(monkeypatch: pytest.MonkeyPatch, ch: _CH) -> Any:
 _FAILURE = {
     "table": "memory_embeddings",
     "failures": 33203,
-    "exception": (
-        "Code: 49. DB::Exception: Text index transform for index content_excerpt_text "
-        "and part 202609_395844_395889_2 not found. (LOGICAL_ERROR)"
-    ),
+    "error_code": 49,
     "merge_reason": "TTLDropMerge",
     "last_failure": "2026-09-20 09:43:12",
 }
 
 
-def test_failed_merges_fail_the_check_and_name_the_exception_and_the_repair(
+def test_failed_merges_fail_the_check_and_name_the_error_code_and_the_repair(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ch = _CH(
@@ -76,7 +73,9 @@ def test_failed_merges_fail_the_check_and_name_the_exception_and_the_repair(
     c = _parts_check(monkeypatch, ch)
     assert c.status == "fail"
     assert "33203 failed merges on loom.memory_embeddings" in c.detail
-    assert "content_excerpt_text" in c.detail
+    # The merge's exception text stays in system.part_log, where the repair points.
+    assert c.detail.endswith("(error code 49)")
+    assert "any(exception)" not in next(q for q in ch.sqls if "system.part_log" in q)
     assert "exclude_materialize_skip_indexes_on_merge" in c.repair
     assert c.data["failed_merges"] == [_FAILURE]
     # The part_log read is bounded to the last quarter hour and to merges.
@@ -132,9 +131,42 @@ def test_a_fresh_server_without_part_log_is_not_a_failure(monkeypatch: pytest.Mo
         monkeypatch, _CH(parts=[{"table": "memory", "parts": 25, "rows": 1}], failed=absent)
     )
     assert c.status == "ok" and c.data["failed_merges"] == []
-    assert str(c.data["part_log"]).startswith("absent: Code: 60")
+    assert c.data["part_log"] == "absent: RuntimeError"  # the driver's text is logged
     # …and the parts thresholds still apply without it.
     c = _parts_check(
         monkeypatch, _CH(parts=[{"table": "memory", "parts": 2800, "rows": 1}], failed=absent)
     )
     assert c.status == "fail" and "2800 active parts" in c.detail
+
+
+def test_an_org_admin_reads_each_workers_error_kind_and_a_probes_kind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The worker registry is the process's, every org's passes in it, and a probe's
+    error can carry a statement: `ops.health` shows kinds; the text is logged."""
+    import server.core.ch as _ch
+    from server.insights.store import ops as ops_store
+    from server.workers.status import get_registry, record_pass
+
+    text = "Code: 210. Connection refused (ch-internal-7:9440) SELECT count() FROM loom.memory"
+
+    async def _stubs(org, namespace=None, *, ch=None):
+        raise RuntimeError(text)
+
+    monkeypatch.setattr(ops_store, "embedding_stub_count", _stubs)
+    monkeypatch.setattr(_ch, "get_client", lambda: _CH(parts=[], failed=[]))
+    try:
+        with pytest.raises(RuntimeError), record_pass("w_ops_health"):
+            raise RuntimeError(text)
+        with record_pass("w_ops_outcome") as rec:
+            rec.outcome = {"rows": 3, "partial": False, "stopped": f"other-org/ns: {text}"}
+        out = asyncio.run(ops_mod.handle_ops_health(OpsHealthInput(org="o")))
+    finally:
+        get_registry().reset()
+    row = out.worker_status["w_ops_health"]
+    assert "last_error" not in row and row["last_error_kind"] == "RuntimeError"
+    # An outcome's strings can name another org or carry text: its numbers remain.
+    assert out.worker_status["w_ops_outcome"]["last_outcome"] == {"rows": 3, "partial": False}
+    stubs = next(c for c in out.checks if c.name == "embedding_stubs")
+    assert stubs.status == "fail" and stubs.detail == "RuntimeError"
+    assert text not in out.model_dump_json()

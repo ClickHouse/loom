@@ -371,7 +371,7 @@ def test_a_parser_fault_keeps_the_file_as_text_chunks_with_the_error_recorded(mo
     src = b"# -*- coding: latin-1 -*-\n" + b"x = '\xe9'\n" * 40
     pf, err = parse_for_ingest("legacy/old.py", src)
     assert pf is not None and pf.lang == "python" and pf.tree is None and pf.symbols == []
-    assert err.startswith("parse: RecursionError:")
+    assert err == "parse: RecursionError"
     chunks, _p, facets = _chunks_for(pf, pf.path, src, 6000, None)
     assert chunks and all(c.path == "legacy/old.py" for c in chunks), "the text-fallback chunks"
     assert facets == []

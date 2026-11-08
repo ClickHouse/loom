@@ -31,6 +31,7 @@ from typing import Annotated, Any
 from pydantic import TypeAdapter
 
 from server.core import embedding_space, readiness
+from server.core.errors import error_kind
 from server.settings import Settings, settings
 
 log = logging.getLogger(__name__)
@@ -217,7 +218,8 @@ async def check(ch: Any) -> None:
     try:
         published = await read_published(ch)
     except Exception as e:  # noqa: BLE001 — a failed read keeps the last verdict
-        STATE["error"] = str(e)
+        # `/v1/health` shows it without a token: the error's kind; the text is logged.
+        STATE["error"] = error_kind(e)
         log.warning("deployment config check failed; keeping the last verdict: %s", e)
         return
     found = compare(settings, published) if published else []

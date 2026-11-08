@@ -19,6 +19,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.core.errors import caller_text
 from server.llm import customer
 from server.tracker.domain.llm_reply import clip, json_object
 
@@ -130,7 +131,7 @@ async def judge(
         raise
     except Exception as e:  # noqa: BLE001 — a judge never breaks the verdict
         log.warning("dupcheck judge failed (open, the fit's verdict stands): %s", e)
-        return Judgement(error=f"{type(e).__name__}: {str(e)[:120]}")
+        return Judgement(error=caller_text(e))  # the provider's text is in the log
     labels, reasons = parse_verdicts(str(getattr(res, "text", "") or ""), numbers)
     return Judgement(
         labels=labels,

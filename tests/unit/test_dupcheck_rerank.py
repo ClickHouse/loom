@@ -61,7 +61,7 @@ class _LLM:
     async def complete(self, system: str, user: str, **kw: Any) -> Any:
         self.calls += 1
         if self.fail:
-            raise RuntimeError("down")
+            raise RuntimeError("down at https://gw.internal:8443")
         return SimpleNamespace(text=self.text, model="m", tokens_in=100, tokens_out=20)
 
 
@@ -69,7 +69,7 @@ def test_rerank_fails_open() -> None:
     got = asyncio.run(
         dr.rerank(_LLM(fail=True), "t", "", [{"number": 1, "title": "a"}], body_chars=50)
     )
-    assert not got.ran and got.picks == [] and got.error
+    assert not got.ran and got.picks == [] and got.error == "RuntimeError"
 
 
 # ---- the handler stage ----------------------------------------------------------

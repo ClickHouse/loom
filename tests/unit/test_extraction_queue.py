@@ -815,6 +815,30 @@ async def test_an_unreachable_provider_spends_no_attempt(
     assert timedelta(seconds=299) < written["lease_until"] - before <= timedelta(seconds=301)
 
 
+_STATEMENT = "Code: 241. DB::Exception: Memory limit exceeded. INSERT INTO loom.memory VALUES"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_replay_stores_its_kind_and_logs_the_text(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """last_error reaches memory.extraction_status readers: the error's kind only."""
+    ch = _replaying(monkeypatch, RuntimeError(_STATEMENT))
+    await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=8))
+    assert ch.inserts[-1][1][0]["last_error"] == "RuntimeError"
+    assert _STATEMENT in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_provider_stores_its_kind_and_logs_the_text(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    ch = _replaying(monkeypatch, httpx.ConnectError("no route to 10.0.0.7:8443"))
+    await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=8))
+    assert ch.inserts[-1][1][0]["last_error"] == "unreachable: ConnectError"
+    assert "10.0.0.7:8443" in caplog.text
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "error", [_status_error(500), httpx.UnsupportedProtocol("no such scheme: htps")]
@@ -848,7 +872,7 @@ async def test_a_held_replay_is_marked_held_with_its_reason_until_its_hold_ends(
     assert (res.skipped, res.failures) == (1, [])
     assert (written["status"], written["attempts"]) == (q.STATUS_RUNNING, 2)
     assert q.status_of(written) == q.STATUS_HELD
-    assert written["last_error"].startswith(f"held: {type(error).__name__}")
+    assert written["last_error"] == f"held: {error.code}: {error.message}"
     left = written["lease_until"] - before
     assert timedelta(seconds=hold - 1) < left <= timedelta(seconds=hold + 1)
 
@@ -995,6 +1019,43 @@ async def test_a_request_still_waiting_on_its_last_day_is_dropped_with_a_record(
 
 
 @pytest.mark.asyncio
+async def test_a_dropped_request_quotes_its_earlier_error_without_the_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A row an older build failed kept `<Kind>: <text>`; the `dropped: ...` reason
+    quotes its label and kind, and a Loom error's code and message."""
+    from server.memory.app import drops
+
+    text = "Code: 210. Connection refused (ch-internal-7:9440) INSERT INTO loom.memory"
+    ch = StubCH()
+    ch.query_all_returns = [
+        [
+            _stored_row(queue_id="a", last_error=f"RuntimeError: {text}"),
+            _stored_row(queue_id="b", last_error=f"unreachable: ConnectError: {text}"),
+            _stored_row(
+                queue_id="c",
+                status=q.STATUS_RUNNING,
+                last_error="held: MODEL_CALLS_DISABLED: model calls are switched off",
+            ),
+            _stored_row(queue_id="d", last_error=""),
+        ]
+    ]
+
+    async def write_drops(items: list[Any], stage: str, reason: str, *, ch: Any = None) -> None:
+        return None
+
+    monkeypatch.setattr(drops, "write_drops", write_drops)
+    assert await q.drop_expiring(ch=ch) == 4
+    quoted = [r["last_error"].rsplit(" (", 1)[1] for r in ch.inserts[-1][1]]
+    assert quoted == [
+        "RuntimeError)",
+        "unreachable: ConnectError)",
+        "held: MODEL_CALLS_DISABLED: model calls are switched off)",
+        "never run)",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_held_batches_count_as_not_yet_extracted() -> None:
     ch = StubCH()
     ch.query_one_returns = [{"n": 3}]
@@ -1015,6 +1076,64 @@ async def test_a_hold_uses_the_previous_workers_running_lease() -> None:
         org="o", namespace="n", status=q.STATUS_HELD, scope=WHOLE_NAMESPACE, ch=ch
     )
     assert public[0]["status"] == q.STATUS_HELD
+
+
+_OLD_TEXT = "Code: 210. Connection refused (ch-internal-7:9440) INSERT INTO loom.memory"
+
+
+@pytest.mark.asyncio
+async def test_a_status_read_cuts_what_an_older_build_stored() -> None:
+    """A build before `caller_text` stored `<Kind>: <text>` (and keeps doing so through a
+    rolling upgrade): `list_status` and `list_own_status` return the label and the kind."""
+    stored = {
+        "a": f"RuntimeError: {_OLD_TEXT}",
+        "b": f"unreachable: ConnectError: {_OLD_TEXT}",
+        "c": f"held: TimeoutError: {_OLD_TEXT}",
+        "d": "held: MODEL_CALLS_DISABLED: model calls are switched off",
+        "e": (
+            "dropped: still waiting after 29 days, a day before the 30-day TTL "
+            f"(RuntimeError: {_OLD_TEXT})"
+        ),
+        "f": "dropped: still waiting after 29 days, a day before the 30-day TTL (never run)",
+        "g": "dropped: model calls switched off, waited over 7 days",
+        "h": "Connection refused (ch-internal-7:9440)",
+        "i": "",
+        "j": "unreachable: ConnectTimeout",  # what this build writes for a bare kind
+    }
+    shown = {
+        "a": "RuntimeError",
+        "b": "unreachable: ConnectError",
+        "c": "held: TimeoutError",
+        "d": "held: MODEL_CALLS_DISABLED: model calls are switched off",
+        "e": "dropped: still waiting after 29 days, a day before the 30-day TTL (RuntimeError)",
+        "f": stored["f"],
+        "g": stored["g"],
+        "h": "",
+        "i": "",
+        "j": "unreachable: ConnectTimeout",
+    }
+    rows = [
+        _stored_row(
+            queue_id=qid,
+            status=q.STATUS_RUNNING if text.startswith(q.HELD_LABEL) else q.STATUS_FAILED,
+            last_error=text,
+        )
+        for qid, text in stored.items()
+    ]
+    ch = StubCH()
+    ch.query_all_returns = [list(rows), list(rows)]
+    public = await q.list_status(org="o", namespace="n", scope=WHOLE_NAMESPACE, ch=ch)
+    own = await q.list_own_status(
+        org="o",
+        namespace="n",
+        queue_ids=list(stored),
+        enqueued_by="process:sa:a",
+        scope=WHOLE_NAMESPACE,
+        ch=ch,
+    )
+    for read in (public, own):
+        assert {r["queue_id"]: r["last_error"] for r in read} == shown
+        assert {r["queue_id"] for r in read if r["status"] == q.STATUS_HELD} == {"c", "d"}
 
 
 def test_the_ttl_drop_follows_the_tables_ttl() -> None:

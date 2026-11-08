@@ -147,8 +147,27 @@ async def test_enforce_fails_closed_for_writes_when_history_cannot_be_read(monke
         await G.gate(WRITE_OP, IDENTITY, {}, ch=FakeCH(fail=True))
     detail = ei.value.to_detail()
     assert detail["determining_rules"] == []  # nobody denied it —
-    assert detail["errors"] and "unreachable" in detail["errors"][0]  # — the check broke
+    assert detail["errors"] == ["formerly: RuntimeError"]  # — the check broke,
+    assert "unreachable" not in str(detail)  # and the store's own text stays in the log
     assert "fail closed" in ei.value.message
+
+
+@pytest.mark.asyncio
+async def test_a_gate_that_cannot_read_its_rules_names_the_error_kind_only(monkeypatch):
+    async def broken(*_a: Any, **_k: Any) -> Any:
+        raise RuntimeError("SELECT * FROM loom.policies WHERE secret = 1")
+
+    monkeypatch.setattr(policy_repo, "list_rules", broken)
+    P.invalidate()
+    _mode(monkeypatch, "enforce")
+    try:
+        with pytest.raises(G.PolicyForbiddenError) as ei:
+            await G.gate(WRITE_OP, IDENTITY, {}, ch=FakeCH(n=2))
+    finally:
+        P.invalidate()
+    detail = ei.value.to_detail()
+    assert detail["errors"] == ["policy gate: RuntimeError"]
+    assert "secret" not in str(detail)
 
 
 @pytest.mark.asyncio

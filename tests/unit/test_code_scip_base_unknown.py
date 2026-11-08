@@ -66,7 +66,8 @@ async def test_the_python_worker_clears_its_watermark_on_base_unknown(
     ):
         res = await py_w.run_pass()
     cleared = [c for c in repo.set_state.await_args_list if c.args[2:4] == (py_w.WATERMARK, "")]
-    assert cleared and cleared[0].kwargs["detail"].startswith("base unknown")
+    # `code.index_status` returns the detail: the harness output stays in the log.
+    assert cleared and cleared[0].kwargs["detail"] == "base unknown"
     assert any("indexes in full" in e for e in res.errors)
     assert res.deltas_applied == 0
 

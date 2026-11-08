@@ -118,14 +118,15 @@ def test_an_unreadable_snapshot_keeps_the_last_verdict() -> None:
     before = dc.drift()
     asyncio.run(dc.check(_Ch(fail=True)))
     assert dc.drift() == before and before
-    assert "ClickHouse down" in dc.STATE["error"]
+    assert dc.STATE["error"] == "ConnectionError"
 
 
 @pytest.mark.usefixtures("deployment")
 def test_not_ready_until_the_first_read_of_the_snapshot_succeeds() -> None:
     asyncio.run(dc.check(_Ch(fail=True)))
     got = dc.readiness_check()
-    assert not got.ok and "ClickHouse down" in got.reason
+    assert not got.ok and got.reason.endswith(": ConnectionError")
+    assert "ClickHouse down" not in got.reason
     asyncio.run(dc.check(_Ch()))  # nothing published yet: nothing to drift from
     assert dc.readiness_check().ok
 

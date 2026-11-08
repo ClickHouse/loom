@@ -14,7 +14,7 @@ requests. Bounded, never raises, and a note also feeds `provider_health`
 (unless it passes `health=False`: a fallback that is no provider's) so the
 /v1/health flag agrees with the responses.
 
-    degraded: ["classify: caller_type_kept (HTTPStatusError: 502 Bad Gateway)",
+    degraded: ["classify: caller_type_kept (HTTPStatusError)",
                "rerank: input_order_kept (ReadTimeout)"]
 """
 
@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import contextvars
 import logging
+
+from server.core.errors import caller_text
 
 log = logging.getLogger(__name__)
 
@@ -48,7 +50,10 @@ def note(provider: str, effect: str, reason: object = "", *, health: bool = True
     try:
         text = str(reason) if reason is not None else ""
         if isinstance(reason, BaseException):
-            text = f"{type(reason).__name__}: {reason}" if str(reason) else type(reason).__name__
+            # The op's `degraded` list gets `caller_text`; provider health, which
+            # `/v1/health` shows without a token, gets the kind below. The call site
+            # logs the text.
+            text = caller_text(reason)
         text = text.replace("\n", " ").strip()[:_MAX_REASON]
         entry = f"{provider}: {effect}" + (f" ({text})" if text else "")
         lst = _notes.get()
@@ -64,7 +69,10 @@ def note(provider: str, effect: str, reason: object = "", *, health: bool = True
         try:
             from server.observability import provider_health
 
-            provider_health.record_failure(provider, text or effect)
+            # `/v1/health` shows less than the note: an exception's kind, else the
+            # effect, since a text reason can quote a remote's answer.
+            failure = reason if isinstance(reason, BaseException) else effect
+            provider_health.record_failure(provider, failure)
         except Exception:  # noqa: BLE001 — a health counter never fails a note
             pass
     except Exception:  # fail open: a note never fails the request it describes

@@ -368,7 +368,8 @@ Loom keeps such indexes out of merges with `exclude_materialize_skip_indexes_on_
 (the text indexes `content_text` and `context_text` on `chunks`): inserted parts still
 build the index, merged parts do without it. The `clickhouse_parts` check of `ops.health`
 (`_clickhouse_parts_check`) reads `system.part_log` for failed `MergeParts` events in the
-last quarter hour and reports the exception and this repair. For the same reason
+last quarter hour and reports the error code and this repair; the exception's text
+stays in `system.part_log`. For the same reason
 memory-content tables carry no rows TTL. The runbook is in
 [troubleshooting](../operations/troubleshooting.md).
 

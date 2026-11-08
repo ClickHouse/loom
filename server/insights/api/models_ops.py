@@ -24,8 +24,9 @@ class OpsHealthOutput(BaseModel):
     # One entry per health check (schema contracts, embedding stubs, parts, op mix, workers,
     # ...), each with its status and, when not `ok`, a suggested repair.
     checks: list[OpsHealthCheck]
-    # Per background worker in this process: last run time, duration, outcome and error,
-    # consecutive failures and total runs; empty before any worker has run.
+    # Per background worker in this process: last run time, duration, outcome, the last
+    # error's kind (`last_error_kind`), consecutive failures and total runs; empty before
+    # any worker has run. The error's text is in `/v1/admin/workers.status`.
     worker_status: dict[str, dict[str, Any]] = {}
     # `fail` when any check failed, else `warn` when any warned, else `ok`.
     overall: Literal["ok", "warn", "fail"]
@@ -53,7 +54,10 @@ class ProjectionFailureRow(BaseModel):
     source_operation: str = ""
     source_resource_id: str = ""
     memory_keys: list[str] = Field(default_factory=list)
+    # The exception's kind, or `-` for a reason Loom recorded as text.
     error_type: str = ""
+    # A Loom-written reason whole; for an exception, `abandoned: <reason>` once a retry
+    # gave up on the row, `""` otherwise (its text stays in the table for an operator).
     error_message: str = ""
     payload: dict[str, Any] = Field(default_factory=dict)
     status: str = "active"

@@ -724,9 +724,9 @@ def _acquire_lease(ch: Client) -> Lease:
         return lock
     if lock.acquire() == "unleased":
         if lock.error_code in NO_KEEPER_CODES:
-            raise KeeperRequired(lock.error)
+            raise KeeperRequired(lock.error_detail)
         # A refusal from the Keeper (a privilege, a bad argument): the boot retries.
-        print(f"  · migration lock: {lock.error}", file=sys.stderr)
+        print(f"  · migration lock: {lock.error_detail}", file=sys.stderr)
         lock.outcome, lock.waited_s = "timeout", cfg.wait_s
         return lock
     print(f"  · migration lock: KeeperMap {LOCK_TABLE}")

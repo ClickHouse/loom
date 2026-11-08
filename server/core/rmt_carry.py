@@ -35,7 +35,7 @@ from typing import Any
 
 from server.core.ch_names import database, logical, split_table
 from server.core.ch_writes import async_insert_settings
-from server.core.errors import BackendUnavailableError
+from server.core.errors import BackendUnavailableError, LoomServerError
 
 log = logging.getLogger(__name__)
 
@@ -287,8 +287,14 @@ async def _admit(ch: Any, t: _Table) -> None:
             )
         try:
             await _measure_skew(ch)
-        except Exception as e:
-            raise BackendUnavailableError(f"rmt carry: the server's clock: {e}; retry") from e
+        except LoomServerError:
+            raise  # a typed error's message is written for callers
+        except Exception as e:  # any driver failure reading the clock refuses the write
+            log.warning("rmt carry: the server's clock cannot be read: %s", e)
+            # The driver's text can carry the server's address: the caller gets none of it.
+            raise BackendUnavailableError(
+                "rmt carry: the server's clock cannot be read; retry"
+            ) from e
 
 
 def _release(gen: int) -> None:

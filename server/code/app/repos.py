@@ -13,6 +13,7 @@ from server.code.api.models_repos import CodeReposInput, CodeReposOutput, CodeRe
 from server.code.app.common import require_code_intel
 from server.code.app.index_status import _repo_status_cached, _s, _status_cache
 from server.code.app.spans import set_code_span_attributes
+from server.code.domain.index.state import STAGE_KEY, shown_detail
 from server.code.store.index import CodeRepo
 from server.core.grant_sql import LIVE_GRANT
 from server.operations.read_projection import project_rows
@@ -165,6 +166,7 @@ async def _code_repo_rows(input: CodeReposInput, wanted: set[str] | None) -> lis
         has_maintainer = maintained is None or key in maintained
         if readable:
             st = await _repo_status_cached(cfg)
+            stage = st.state.get(STAGE_KEY) or {}
             out.append(
                 CodeRepoSummary(
                     org=st.org,
@@ -188,8 +190,8 @@ async def _code_repo_rows(input: CodeReposInput, wanted: set[str] | None) -> lis
                     my_status=standing.get((cfg.org, cfg.namespace), "none"),
                     my_role=roles.get((cfg.org, cfg.namespace), ""),
                     source=cfg.source,
-                    stage=_s((st.state.get("bootstrap_stage") or {}).get("value")),
-                    stage_detail=_s((st.state.get("bootstrap_stage") or {}).get("detail")),
+                    stage=_s(stage.get("value")),
+                    stage_detail=shown_detail(STAGE_KEY, _s(stage.get("detail"))),
                     chunks_total=st.chunks_total,
                     chunks_embedded=st.chunks_embedded,
                     embedding_coverage=st.embedding_coverage,

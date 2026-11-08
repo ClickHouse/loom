@@ -50,7 +50,8 @@ curl -s 'http://localhost:7777/v1/health?include=workers' | jq '.workers_leader'
 ```
 
 - **The HTTP status depends on ClickHouse only:** 200 when `SELECT 1` answers, 503 when
-  it does not (`ch_error` carries the exception). Use it as the liveness probe. A probe
+  it does not (`ch_error` names the error's kind; the text is in the server log). Use it
+  as the liveness probe. A probe
   that reads only the status code (the image's healthcheck, a load balancer) then sees
   an outage instead of a 200 whose body it never parses.
 - **`status`** is `degraded` when ClickHouse is down or any entry in `problems` has
@@ -110,7 +111,12 @@ report's Environment field ([filing an issue](../../CONTRIBUTING.md#filing-an-is
 ### ops.health
 
 `POST /v1/ops.health` (`ORG_ADMIN`) runs deeper checks against ClickHouse. Each check
-returns `status` (`ok`, `warn` or `fail`), `detail` and `repair`.
+returns `status` (`ok`, `warn` or `fail`), `detail` and `repair`. A failed probe's
+`detail` names the error's kind (a Loom error's code and message), and each worker's
+`last_error_kind` the error's class; the error's text is in the server log and in
+`/v1/admin/workers.status`. `/v1/health?include=workers` cuts its worker rows the same
+way when the in-process supervisor runs the workers: no `last_error`, outcome numbers
+and flags only.
 
 | Check                    | Looks at                                                              |
 | ------------------------ | --------------------------------------------------------------------- |

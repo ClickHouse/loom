@@ -20,6 +20,7 @@ from server.core.datetimes import (
     parse_iso_dt,
     to_naive_utc,
 )
+from server.core.errors import caller_text
 from server.identity.domain.read_scope import (
     READ_SCOPE_KEY,
     WHOLE_NAMESPACE,
@@ -124,6 +125,10 @@ def facts_owed_payload(key: Sequence[str], memory_id: str, version: int) -> dict
     return {"key": list(key), "memory_id": memory_id, "version": version}
 
 
+# The `error_type` of a failure recorded with Loom-written text, not an exception.
+TEXT_REASON = "-"
+
+
 def projection_failure_row(
     *,
     org: str,
@@ -142,7 +147,8 @@ def projection_failure_row(
     payload = dict(payload or {})
     if user_id and not payload.get("user_id"):
         payload["user_id"] = user_id
-    error_type = type(error).__name__ if isinstance(error, BaseException) else "Error"
+    # "-" for a reason Loom wrote as text: no exception class has that name.
+    error_type = type(error).__name__ if isinstance(error, BaseException) else TEXT_REASON
     return {
         "failure_id": str(uuid.uuid4()),
         "org": org,
@@ -526,12 +532,19 @@ async def _retry(failure: ProjectionFailureRow, *, ch: Any) -> ProjectionFailure
         # Held by the model-call switch: no attempt, no error; the row stays open.
         return _held(failure)
     except Exception as e:  # noqa: BLE001 — reported on the result; the row stays open
+        # `ops.projection_failures.retry` returns the error: its kind; the text is logged.
+        log.warning(
+            "projection failure %s: the retry failed: %s: %s",
+            failure.failure_id,
+            type(e).__name__,
+            e,
+        )
         return ProjectionFailureRetryResult(
             failure_id=failure.failure_id,
             projection=failure.projection,
             retried=True,
             resolved=False,
-            error=f"{type(e).__name__}: {e}",
+            error=caller_text(e),
         )
 
 

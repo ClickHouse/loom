@@ -9,7 +9,7 @@ import logging
 import time
 from typing import Any
 
-from server.core.errors import ValidationError
+from server.core.errors import ValidationError, caller_text
 from server.llm import customer
 from server.settings import settings
 from server.tracker.api.models import (
@@ -293,7 +293,8 @@ async def _similar_legs(
             # The leg's own store or embedder failed: the leg is unavailable and the
             # answer degraded (`_guarded` records it), never a 500 that also leaves the
             # sibling legs running.
-            raise TrackerUnavailable(f"vector leg: {type(e).__name__}: {e}") from e
+            logger.warning("tracker.similar vector leg failed: %s: %s", type(e).__name__, e)
+            raise TrackerUnavailable(f"vector leg: {caller_text(e)}") from e
 
     timings: dict[str, int] = {}
     if meta is not None:

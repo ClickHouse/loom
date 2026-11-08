@@ -3,8 +3,10 @@ and the deployment catalogue (server/insights/api/models_ops.py has the wire mod
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Literal
 
+from server.core.errors import caller_text
 from server.core.paths import SCHEMA_SQL
 from server.insights.api.models_ops import (
     OpCapability,
@@ -23,6 +25,9 @@ from server.insights.api.models_ops import (
     ProjectionFailureRow,
 )
 from server.insights.store import ops as ops_store
+from server.memory.app.projection_failures import TEXT_REASON
+
+log = logging.getLogger(__name__)
 
 # The parts check fails before inserts do. ClickHouse refuses
 # an INSERT at parts_to_throw_insert (3000 by default, the Cloud ceiling too);
@@ -339,7 +344,7 @@ def _read_schema_sql() -> str:
 async def _clickhouse_parts_check(ch: Any) -> OpsHealthCheck:
     """Parts and the merges that should be shrinking them.
     A merge that failed in the last quarter hour, or a table within 10 % of
-    parts_to_throw_insert, is `fail` with the exception and the repair; half
+    parts_to_throw_insert, is `fail` with the error code and the repair; half
     of the limit is `warn`; a quiet store is `ok`. A read failure of
     system.parts is `fail` too — the check that cannot run is not a check.
     system.part_log is replica-local and does not exist on a fresh server
@@ -359,15 +364,16 @@ async def _clickhouse_parts_check(ch: Any) -> OpsHealthCheck:
             failed = await ops_store.failed_merges_15m(ch=ch)
         except Exception as e:  # noqa: BLE001 — a fresh server has no part_log yet (UNKNOWN_TABLE 60)
             failed = []
-            part_log = f"absent: {str(e)[:120]}"
+            log.info("ops.health: system.part_log not read: %s: %s", type(e).__name__, e)
+            part_log = f"absent: {caller_text(e)}"
         near_throw = [r for r in parts if int(r["parts"]) >= PARTS_FAIL_AT]
         status: Literal["ok", "warn", "fail"]
         if failed or near_throw:
             status = "fail"
             worst = failed[0] if failed else None
             detail = (
-                f"{int(worst['failures'])} failed merges on loom.{worst['table']} in 15 min: "
-                f"{str(worst['exception'])[:160]}"
+                f"{int(worst['failures'])} failed merges on loom.{worst['table']} in 15 min "
+                f"(error code {int(worst['error_code'])})"
                 if worst
                 else f"{near_throw[0]['table']} has {int(near_throw[0]['parts'])} active parts "
                 f"(inserts refused at {PARTS_THROW_DEFAULT})"
@@ -399,9 +405,16 @@ async def _clickhouse_parts_check(ch: Any) -> OpsHealthCheck:
         return OpsHealthCheck(
             name="clickhouse_parts",
             status="fail",
-            detail=str(e),
+            detail=_probe_error("clickhouse_parts", e),
             repair="check system.parts permissions",
         )
+
+
+def _probe_error(check: str, e: Exception) -> str:
+    """A failed probe's detail: `caller_text(e)`. The driver's text can carry a
+    statement or the server's address, so it is logged."""
+    log.warning("ops.health: the %s probe failed: %s: %s", check, type(e).__name__, e)
+    return caller_text(e)
 
 
 async def handle_ops_health(input: OpsHealthInput) -> OpsHealthOutput:
@@ -411,7 +424,7 @@ async def handle_ops_health(input: OpsHealthInput) -> OpsHealthOutput:
 
     from server.core.ch import get_client
     from server.memory.app.snapshot_rows import persisted_columns
-    from server.workers.status import get_registry
+    from server.workers.status import get_registry, shown_worker_row
 
     ch = get_client()
     checks: list[OpsHealthCheck] = []
@@ -471,7 +484,7 @@ async def handle_ops_health(input: OpsHealthInput) -> OpsHealthOutput:
             OpsHealthCheck(
                 name="embedding_stubs",
                 status="fail",
-                detail=str(e),
+                detail=_probe_error("embedding_stubs", e),
                 repair="check loom.memory_embeddings schema and worker logs",
             )
         )
@@ -504,7 +517,7 @@ async def handle_ops_health(input: OpsHealthInput) -> OpsHealthOutput:
             OpsHealthCheck(
                 name="op_mix",
                 status="fail",
-                detail=str(e),
+                detail=_probe_error("op_mix", e),
                 repair="check loom.agent_events (operation, success, agent columns)",
             )
         )
@@ -539,12 +552,15 @@ async def handle_ops_health(input: OpsHealthInput) -> OpsHealthOutput:
             OpsHealthCheck(
                 name="procedure_plane",
                 status="fail",
-                detail=str(e),
+                detail=_probe_error("procedure_plane", e),
                 repair="check loom.procedure_runs and agent_events out_procedure_keys",
             )
         )
 
-    worker_status = get_registry().snapshot()
+    # The registry is the process's, every org's passes in it: an org admin reads each
+    # worker's error kind and its outcome's counts, never an error's text or a string
+    # that names another org (`/v1/admin/workers.status` has those).
+    worker_status = {name: shown_worker_row(row) for name, row in get_registry().snapshot().items()}
     failed_workers = [
         name for name, row in worker_status.items() if row.get("consecutive_failures", 0)
     ]
@@ -567,6 +583,23 @@ async def handle_ops_health(input: OpsHealthInput) -> OpsHealthOutput:
     return OpsHealthOutput(checks=checks, worker_status=worker_status, overall=overall)
 
 
+# What `abandon` appends to a failure's stored message, before the retry's reason.
+_ABANDONED_SEP = "; abandoned: "
+
+
+def _shown_error_message(message: str, status: str, error_type: str) -> str:
+    """A projection failure's message as the list shows it: a reason Loom recorded as
+    text (`error_type` "-") whole, else only the reason a retry abandoned it with,
+    so `""` on a row that is not abandoned. An exception's text can carry a statement
+    or the server's address; `error_type` names its kind."""
+    if error_type == TEXT_REASON:
+        return message
+    _, sep, reason = message.rpartition(_ABANDONED_SEP)
+    if sep and status == "abandoned":
+        return f"abandoned: {reason}"
+    return ""
+
+
 def _projection_failure_row(row: Any) -> ProjectionFailureRow:
     return ProjectionFailureRow(
         failure_id=row.failure_id,
@@ -578,7 +611,7 @@ def _projection_failure_row(row: Any) -> ProjectionFailureRow:
         source_resource_id=row.source_resource_id,
         memory_keys=row.memory_keys,
         error_type=row.error_type,
-        error_message=row.error_message,
+        error_message=_shown_error_message(row.error_message, row.status, row.error_type),
         payload=row.payload,
         status=row.status,
         created_at=row.created_at.isoformat() if row.created_at else None,

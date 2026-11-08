@@ -8,9 +8,11 @@ loom.agent_events.
 
 from __future__ import annotations
 
+import logging
 from html import escape
 from typing import Any
 
+from server.core.errors import caller_text
 from server.memory.api.models_common import _Identity
 from server.memory.api.models_crud import MemoryGetInput, MemorySetInput
 from server.memory.api.models_profile import (
@@ -27,6 +29,8 @@ from server.memory.api.models_profile import (
 )
 from server.memory.domain.context_layout import escape_data
 from server.settings import settings
+
+log = logging.getLogger(__name__)
 
 
 def _canonical_json_str(s: str) -> str:
@@ -470,12 +474,14 @@ async def handle_profile_activity(
             },
         )
     except Exception as e:
-        # 503 not 500 so the dashboard degrades gracefully on a CH failure.
+        # 503 not 500 so the dashboard degrades gracefully on a CH failure. The driver's
+        # text can carry the statement or the server's address: logged only.
+        log.warning("profile.activity: the agent_events read failed: %s: %s", type(e).__name__, e)
         raise HTTPException(
             status_code=503,
             detail={
                 "code": "ACTIVITY_UNAVAILABLE",
-                "message": f"agent_events query failed: {e}",
+                "message": f"the agent_events read failed ({caller_text(e)}); retry",
             },
         ) from e
 

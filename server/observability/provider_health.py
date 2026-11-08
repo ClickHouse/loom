@@ -25,7 +25,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
 
-from server.core.errors import ModelCallRefused
+from server.core.errors import ModelCallRefused, error_kind
 
 _lock = threading.Lock()
 # Set while a candidate configuration is probed: its outcome says nothing about
@@ -52,12 +52,22 @@ def record_success(provider: str) -> None:
         pass
 
 
+def _shown(err: BaseException) -> str:
+    """An error as `/v1/health` (no token) shows it: a Loom error's code or another
+    error's class, and the HTTP status of a provider's refusal. Its text, a Loom
+    error's message included, can name a private gateway's address: logged by the
+    caller, not kept here."""
+    status = getattr(getattr(err, "response", None), "status_code", None)
+    kind = error_kind(err)
+    return f"{kind} (HTTP {status})" if isinstance(status, int) else kind
+
+
 def record_failure(provider: str, err: BaseException | str) -> None:
     """A call to `provider` failed. Keeps a bounded description, not a traceback."""
     if _unrecorded.get():
         return
     try:
-        text = err if isinstance(err, str) else f"{type(err).__name__}: {err}"
+        text = err if isinstance(err, str) else _shown(err)
         with _lock:
             s = _touch(provider)
             s["err_at"] = time.time()

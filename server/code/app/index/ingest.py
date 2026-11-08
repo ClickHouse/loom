@@ -38,7 +38,12 @@ from server.code.app.index.ingest_reconcile import (
     _reconcile_facets,
     _reconcile_symbols,
 )
-from server.code.app.index.ingest_stats import EmbedResult, FileIngestStats, error_text
+from server.code.app.index.ingest_stats import (
+    SKIPPED,
+    EmbedResult,
+    FileIngestStats,
+    error_text,
+)
 from server.code.domain.extract.chunker import Chunk
 from server.code.domain.extract.context_text import module_of
 from server.code.domain.extract.edges_treesitter import Edge
@@ -340,7 +345,7 @@ async def _refused(
         # would be an embedding input the provider rejects, retried by the
         # recovery worker. Record the file with the reason instead, so
         # code.coverage / code.index_errors show it, and index nothing else.
-        stats.error = f"skipped: {len(source)} bytes > code_ingest_max_file_bytes ({cap})"
+        stats.error = f"{SKIPPED}: {len(source)} bytes > code_ingest_max_file_bytes ({cap})"
         await _write_error_row(
             repo,
             org,

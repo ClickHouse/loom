@@ -32,10 +32,11 @@ from server.code.api.models_status import (
     CodeWorkerStatus,
 )
 from server.code.app.common import require_code_intel, resolve_code_identity
+from server.code.app.index.ingest_stats import shown_index_error
 from server.code.app.spans import set_code_span_attributes
 from server.code.app.ttl_cache import TtlCache
 from server.code.domain.index.compiler_tiers import state_value
-from server.code.domain.index.state import IndexState
+from server.code.domain.index.state import IndexState, shown_detail
 from server.code.store.index import CodeRepo
 from server.core.background import create_deferred_task
 from server.settings import settings
@@ -365,7 +366,9 @@ async def _repo_status(cfg: Any, *, state: IndexState | None = None) -> CodeInde
             if not name.startswith("code_"):
                 continue
             w = ledger.get(name) or snap.get(name) or {}
-            err = w.get("last_error") or ""
+            # Passes run for every org, so a viewer reads the error's kind, never its
+            # text: the ledger's class, or the registry's.
+            err = w.get("last_error_kind") or ""
             workers[name] = CodeWorkerStatus(
                 enabled=bool(m.get("enabled", True)),
                 interval_seconds=int(m.get("interval_seconds") or 0),
@@ -413,7 +416,7 @@ async def _repo_status(cfg: Any, *, state: IndexState | None = None) -> CodeInde
         state={
             k: {
                 "value": _s(v.get("value")),
-                "detail": _s(v.get("detail")),
+                "detail": shown_detail(k, _s(v.get("detail"))),
                 "updated_at": str(v.get("updated_at") or ""),
             }
             for k, v in state.items()
@@ -474,7 +477,8 @@ def published_clone_head(state: IndexState, branch: str) -> str:
 
 
 def _counts_max_age_s(state: IndexState) -> float:
-    from server.code.app.index.bootstrap import BUILDING_STAGES, STAGE_KEY
+    from server.code.app.index.bootstrap import BUILDING_STAGES
+    from server.code.domain.index.state import STAGE_KEY
 
     stage = _s((state.get(STAGE_KEY) or {}).get("value"))
     return (
@@ -570,7 +574,7 @@ async def _read_worker_passes(client: Any, days: int) -> dict[str, dict[str, Any
         duration_ms = 0
         if isinstance(started, datetime) and isinstance(finished, datetime) and finished >= started:
             duration_ms = int((finished - started).total_seconds() * 1000)
-        err = str(r.get("last_error") or "")
+        err = str(r.get("last_error_class") or "")
         if not err and str(r.get("last_status") or "") not in ("", "ok", "idle"):
             err = str(r.get("last_status"))
         last_run_at = ""
@@ -581,7 +585,7 @@ async def _read_worker_passes(client: Any, days: int) -> dict[str, dict[str, Any
             "last_duration_ms": duration_ms,
             "consecutive_failures": int(r.get("consecutive_failures") or 0),
             "total_runs": int(r.get("total_runs") or 0),
-            "last_error": err,
+            "last_error_kind": err,
         }
     _ledger_passes_cache.put(cache_key, out)
     return out
@@ -809,7 +813,7 @@ async def handle_code_index_errors(input: CodeIndexErrorsInput) -> CodeIndexErro
             CodeIndexErrorRow(
                 path=str(r.get("path") or ""),
                 lang=str(r.get("lang") or ""),
-                error=str(r.get("index_error") or "")[:500],
+                error=shown_index_error(str(r.get("index_error") or ""))[:500],
                 indexed_commit=_s(r.get("indexed_commit")),
                 at=_ts_or_empty(r.get("created_at")),
             )

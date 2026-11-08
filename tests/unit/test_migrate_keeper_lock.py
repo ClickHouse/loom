@@ -468,7 +468,12 @@ def test_describe_error_names_a_missing_lock_table() -> None:
     from server.core.schema.migrate_lease import describe_error
 
     assert describe_error(RuntimeError("Code: 60. UNKNOWN_TABLE")) == f"table {LOCK_TABLE} absent"
-    assert describe_error(ValueError("x")) == "ValueError: x"
+    # `error` reaches `/v1/health` without a token: the kind; the operator's lines
+    # carry the text.
+    assert describe_error(ValueError("x (ch-internal-7:9440)")) == "ValueError"
+    from server.core.schema.migrate_lease import operator_error_text
+
+    assert operator_error_text(ValueError("x")) == "ValueError: x"
 
 
 def test_a_refused_insert_or_takeover_raises_rather_than_counting_as_lost() -> None:
