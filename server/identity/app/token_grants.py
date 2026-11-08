@@ -112,12 +112,12 @@ async def grant_restricted_to_token(
 
         is_restricted = _isr
     if is_code_namespace is None:
-        from server.code.domain.index.repos import repo_for_namespace
+        from server.code.domain.index.repos import config_entry
         from server.tracker.domain.namespaces import tracker_namespace
 
         def is_code_namespace(o: str, n: str) -> bool:
             # read-only reference data: a repository index or a tracker record
-            return repo_for_namespace(o, n) is not None or tracker_namespace(o, n) is not None
+            return config_entry(o, n) is not None or tracker_namespace(o, n) is not None
 
     granted: list[str] = []
     rows: list[dict[str, Any]] = []

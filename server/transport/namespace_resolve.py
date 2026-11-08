@@ -36,11 +36,11 @@ def _norm(text: str) -> str:
 def known_namespaces(org: str) -> dict[str, str]:
     """namespace → its repository (owner/name), for every configured code
     repository and tracker namespace of `org`."""
-    from server.code.domain.index.repos import configured_repos
+    from server.code.domain.index.repos import config_entries
     from server.tracker.domain.namespaces import configured_namespaces
 
     out: dict[str, str] = {}
-    for r in configured_repos():
+    for r in config_entries():
         if not org or r.org == org:
             out[r.namespace] = r.repo
     for ns, t in configured_namespaces().items():
@@ -90,7 +90,7 @@ def suggestable(org: str, can_access: Any) -> list[str]:
     code scope first, then every namespace the token names, then the
     standard (not restricted) code and tracker namespaces. A restricted
     namespace is never named to a caller outside it."""
-    from server.code.domain.index.repos import configured_repos
+    from server.code.domain.index.repos import config_entries
     from server.code.domain.scope import current_code_scope
     from server.tracker.domain.namespaces import configured_namespaces
 
@@ -98,7 +98,7 @@ def suggestable(org: str, can_access: Any) -> list[str]:
     scope = current_code_scope()
     if scope and (not org or scope[0] == org):
         out.append(scope[1])
-    for r in configured_repos():
+    for r in config_entries():
         if org and r.org != org:
             continue
         if can_access(org, r.namespace) or str(r.classification or "standard") != "restricted":
@@ -113,11 +113,11 @@ def suggestable(org: str, can_access: Any) -> list[str]:
 
 def default_branches(org: str) -> set[str]:
     """The code namespaces that index their repository's default branch."""
-    from server.code.domain.index.repos import configured_repos
+    from server.code.domain.index.repos import config_entries
 
     return {
         r.namespace
-        for r in configured_repos()
+        for r in config_entries()
         if (not org or r.org == org) and str(r.git_branch or "") in ("", "main", "master")
     }
 

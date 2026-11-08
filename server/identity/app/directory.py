@@ -29,12 +29,12 @@ class IdentityDirectory:
         return namespace_classification.config_classification(org, namespace)
 
     def code_entry(self, org: str, namespace: str) -> RepoConfig | None:
-        return repos.repo_for_namespace(org, namespace)
+        return repos.config_entry(org, namespace)
 
     def restricted_code_namespaces(self, org: str) -> set[str]:
         return {
             cfg.namespace
-            for cfg in repos.configured_repos()
+            for cfg in repos.config_entries()
             if cfg.org == org and cfg.classification == "restricted"
         }
 

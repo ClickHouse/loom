@@ -797,7 +797,7 @@ async def handle_namespace_browse(
     guides = await namespace_guides.summaries(input.org, [str(r["namespace"]) for r in rows])
     caller = resolve_subject(None)
     mine: dict[str, tuple[_Standing, str]] = await _my_standing(input.org, caller) if caller else {}
-    from server.code.domain.index.repos import repo_for_namespace
+    from server.code.domain.index.repos import config_entry
 
     out: list[_BrowseEntry] = []
     for r in rows:
@@ -806,7 +806,7 @@ async def handle_namespace_browse(
             continue
         standing: tuple[_Standing, str] = mine.get(r["namespace"], ("none", ""))
         is_code = str(r.get("kind") or "memory") == "code"
-        cfg = repo_for_namespace(input.org, r["namespace"]) if is_code else None
+        cfg = config_entry(input.org, r["namespace"]) if is_code else None
         guide = guides.get(r["namespace"]) if _guide_shown(r, standing, hidden) else None
         out.append(
             _BrowseEntry(

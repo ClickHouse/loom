@@ -131,6 +131,7 @@ def test_configured_repos_appends_registry_and_operator_wins(
     monkeypatch.setattr(settings, "code_repos_json", json.dumps([{"namespace": "code-acme"}]))
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
     reg.reset_for_tests()
+    monkeypatch.setattr(repos, "_registry_loaded", True)  # as a read leaves it
     monkeypatch.setattr(
         repos,
         "_registry_repos",
@@ -972,6 +973,7 @@ async def test_a_branch_already_indexed_under_another_name_is_refused(
     entry = {"namespace": "code-ch", "repo": "ClickHouse/ClickHouse", "git_branch": "master"}
     monkeypatch.setattr(settings, "code_repos_json", json.dumps([entry]))
     reg.reset_for_tests()
+    monkeypatch.setattr(repos, "_registry_loaded", True)  # as a read leaves it
     plane.ch.heads["code-ch"] = "a" * 40
     with pytest.raises(ValidationError) as ei:
         await admin.handle_code_repo_add_branch(
@@ -1146,6 +1148,7 @@ async def test_the_entry_not_the_namespace_name_is_what_refuses(
     }
     monkeypatch.setattr(settings, "code_repos_json", json.dumps([entry]))
     reg.reset_for_tests()
+    monkeypatch.setattr(repos, "_registry_loaded", True)  # as a read leaves it
     plane.ch.heads["code-ch"] = "a" * 40
     assert not await admin._namespace_taken(
         ORG, reg.namespace_for("ClickHouse/ClickHouse", "master")

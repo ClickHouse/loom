@@ -176,11 +176,6 @@ def test_a_code_subcommand_sees_the_repositories_added_from_the_repositories_pag
 
     assert asyncio.run(code_run._then_disconnect(_sub())) == 0
     assert ch.events == ["connect", "disconnect"]
-    # A registry never read: an operator entry for a member's namespace is not skipped
-    # yet, so the subcommand does not run.
-    monkeypatch.setattr(repo_registry, "registry_read", lambda: False)
-    with pytest.raises(SystemExit):
-        asyncio.run(code_run._then_disconnect(_sub()))
 
 
 def test_a_command_leaves_no_deployment_check_armed(

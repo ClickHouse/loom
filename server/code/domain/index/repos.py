@@ -40,6 +40,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from server.core.errors import BackendUnavailableError
 from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.repos")
@@ -204,9 +205,15 @@ def _scalar_repo() -> RepoConfig:
 
 def default_git_dir() -> str:
     """The scalar entry's bare clone (configured or derived from `code_repo`); '' when
-    no scalar repository is configured. The fallback of a read whose namespace has no
-    entry."""
-    return _scalar_repo().git_dir
+    no scalar repository is configured or `configured_repos()` does not list it (a
+    namespace added from the page skips it). The fallback of a read whose namespace has
+    no entry."""
+    base = _scalar_repo()
+    listed = any(
+        c.source == "config" and (c.org, c.namespace) == (base.org, base.namespace)
+        for c in configured_repos()
+    )
+    return base.git_dir if listed else ""
 
 
 def checkout_for(cfg: RepoConfig, producer: str) -> str:
@@ -334,12 +341,39 @@ def reset_for_tests() -> None:
     _skipped_logged.clear()
 
 
+class RegistryUnread(BackendUnavailableError):
+    """The self-service registry has not been read since the process started: which
+    operator entries a member's namespace skips is not known yet."""
+
+
 def configured_repos() -> list[RepoConfig]:
-    """The repo list every code worker iterates: the operator's entries, then the
-    self-service registry's. Invalid JSON degrades to the scalar single-repo config
-    with a loud log (a typo must not silently stop all indexing) — loud once, then a
-    gauge."""
+    """The repo list every code worker and op reads: the operator's entries, then the
+    self-service registry's. RegistryUnread while self-service is on and the registry
+    has never been read, since an operator entry for a namespace added from the page
+    would be listed and its repository read, fetched or indexed there. Invalid JSON
+    degrades to the scalar single-repo config with a loud log (a typo must not
+    silently stop all indexing) — loud once, then a gauge."""
+    if settings.code_self_service_enabled and not _registry_loaded:
+        raise RegistryUnread("the self-service repository registry is not read yet; retry")
     return _with_registry(_configured_from_env())
+
+
+def config_entries() -> list[RepoConfig]:
+    """`configured_repos()` before the registry's first read too, for what decides
+    access: a namespace's kind and classification, whether it is a code entry. Until
+    that read no operator entry is org-readable. Never for reading, fetching or
+    indexing a repository: `tests/unit/test_repo_snapshot_contract.py` pins its
+    callers."""
+    if settings.code_self_service_enabled and not _registry_loaded:
+        return _with_registry(_configured_from_env())
+    return configured_repos()
+
+
+def config_entry(org: str, namespace: str) -> RepoConfig | None:
+    """`config_entries()`' entry for (org, namespace), with the same limits."""
+    if settings.code_self_service_enabled and not _registry_loaded:
+        return next((c for c in config_entries() if (c.org, c.namespace) == (org, namespace)), None)
+    return repo_for_namespace(org, namespace)
 
 
 def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:

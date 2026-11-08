@@ -739,12 +739,6 @@ def test_code_ingest_runs_no_repository_of_a_switched_off_org(monkeypatch) -> No
     asyncio.run(ip._run(result))
     assert ran == ["beta"] and not result.errors  # acme's watermark is never read
     assert synced == ["code-a"]
-    # A registry never read: an operator entry for a member's namespace is not skipped
-    # yet, so the pass indexes nothing.
-    monkeypatch.setattr("server.code.app.index.repo_registry.registry_read", lambda: False)
-    ran.clear()
-    asyncio.run(ip._run(ip.CodeIngestResult()))
-    assert ran == []
 
 
 def test_tracker_links_scores_no_namespace_of_a_switched_off_org(monkeypatch) -> None:
