@@ -19,7 +19,7 @@ gives no grant on the operator's namespaces.
   the subject's newest such grant is respected, and so is a request made there
   since: admin is not re-added. An older row of any kind is replaced. Called
   after an admin grant is created or approved on a code namespace, when a branch
-  is added or restricted, and by the registrar on each pass until the self-service
+  is added, restricted or widened, and by the registrar on each pass until the self-service
   registry is read, then once per process per namespace (so environment-registered
   branches inherit), and by the ingest pass on every pass for a repository with
   a restricted branch added from the page. Each pass also revokes, on a
@@ -837,7 +837,7 @@ async def sync_restricted_page_branches(
 
 
 async def sync_quietly(org: str, namespace: str, *, ch: Any | None = None) -> None:
-    """The fan-out is a consequence, never a reason for the grant op to fail."""
+    """The fan-out is a consequence, never a reason for the op that caused it to fail."""
     try:
         await sync_repo_maintainers(org, namespace, ch=ch)
     except Exception:  # the fan-out never fails the op that caused it

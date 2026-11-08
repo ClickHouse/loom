@@ -540,6 +540,12 @@ async def test_widening_needs_confirm_when_the_row_read_now_says_restricted(monk
         return []
 
     monkeypatch.setattr(reg, "refresh_db_repos", refresh)
+    from server.code.app.index import maintainers
+
+    async def sync(*a, **k):
+        return None
+
+    monkeypatch.setattr(maintainers, "sync_quietly", sync)
     monkeypatch.setattr(
         "server.code.domain.index.repos.repo_for_namespace",
         lambda org, ns: _cfg("code-weave", classification="standard", source="registry"),

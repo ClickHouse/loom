@@ -1063,7 +1063,10 @@ async def test_the_ingest_pass_syncs_each_repository_with_a_restricted_page_bran
     ch.restricted = {"code-z-2"}
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     standard = [entry("code-z-3", "standard"), entry("code-z-2", "standard")]
-    going = lambda: False  # noqa: E731
+
+    def going() -> bool:
+        return False
+
     await maintainers.sync_restricted_page_branches(standard, exhausted=going)
     snapshot = [entry("code-z-1", "restricted"), *standard]
     monkeypatch.setattr(repos, "configured_repos", lambda: snapshot)
