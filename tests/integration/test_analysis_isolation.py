@@ -22,7 +22,7 @@ from dataclasses import dataclass
 import httpx
 import pytest
 
-from server.insights.domain.analysis import TEXT_CUT_FROM_LOG
+from server.insights.domain import analysis as boundary
 from tests.integration._eventually import wait_until
 from tests.integration._resources import unique_org
 
@@ -41,12 +41,13 @@ class _Seed:
     writer_b: str
 
 
-def _call(base: str, token: str, op: str, body: dict) -> httpx.Response:
+def _call(
+    base: str, token: str, op: str, body: dict, headers: dict[str, str] | None = None
+) -> httpx.Response:
     """One call, waiting out a rate limit: insights.query has a small bucket."""
+    headers = {"Authorization": f"Bearer {token}", **(headers or {})}
     for _ in range(10):
-        r = httpx.post(
-            f"{base}/v1/{op}", json=body, headers={"Authorization": f"Bearer {token}"}, timeout=60
-        )
+        r = httpx.post(f"{base}/v1/{op}", json=body, headers=headers, timeout=60)
         if r.status_code != 429 or "analysis statements as it may at once" in r.text:
             return r
         time.sleep(float(r.headers.get("Retry-After") or 1))
@@ -113,12 +114,15 @@ def seed(control_plane_url: str) -> _Seed:
     return s
 
 
-def _query(base: str, s: _Seed, sql: str, token: str | None = None) -> httpx.Response:
+def _query(
+    base: str, s: _Seed, sql: str, token: str | None = None, request_id: str | None = None
+) -> httpx.Response:
     return _call(
         base,
         token or s.viewer_a,
         "insights.query",
         {"org": s.org_a, "namespace": s.ns_a, "sql": sql},
+        {"X-Request-Id": request_id} if request_id else None,
     )
 
 
@@ -376,8 +380,6 @@ def test_a_statement_during_a_policy_rewrite_reads_the_right_rows(
     own rows and no other org's."""
     import threading
 
-    from server.insights.domain import analysis as boundary
-
     policies = [_policy(ch_client, t.name) for t in boundary.TABLES]
     done = threading.Event()
     rewrites: list[int] = []
@@ -387,7 +389,7 @@ def test_a_statement_during_a_policy_rewrite_reads_the_right_rows(
         try:
             while not done.is_set():
                 for stmt in policies:
-                    ch_client.command(stmt, settings=TEXT_CUT_FROM_LOG)
+                    ch_client.command(stmt, settings=boundary.TEXT_CUT_FROM_LOG)
                 rewrites.append(1)
         except BaseException as e:  # noqa: BLE001 — reported to the test below
             failures.append(e)
@@ -435,12 +437,7 @@ def test_the_statement_text_stays_out_of_the_query_log(
 ) -> None:
     marker = f"probe_{seed.nonce}"
     request_id = f"text-{seed.nonce}"
-    r = httpx.post(
-        f"{control_plane_url}/v1/insights.query",
-        json={"org": seed.org_a, "namespace": seed.ns_a, "sql": f"SELECT '{marker}' AS m"},
-        headers={"Authorization": f"Bearer {seed.viewer_a}", "X-Request-Id": request_id},
-        timeout=60,
-    )
+    r = _query(control_plane_url, seed, f"SELECT '{marker}' AS m", request_id=request_id)
     assert r.status_code == 200, r.text
     ch_client.command("SYSTEM FLUSH LOGS")
     # The statement is logged, as on a server that pins log_queries, but not its
@@ -449,7 +446,7 @@ def test_the_statement_text_stays_out_of_the_query_log(
         "SELECT countIf(user = 'loom_analyst' AND startsWith(query_id, {rid:String})), "
         "countIf(query LIKE {m:String}) FROM system.query_log",
         parameters={"rid": f"{request_id}:", "m": f"%{marker}%"},
-        settings={"log_queries_cut_to_length": 1},
+        settings=boundary.TEXT_CUT_FROM_LOG,
     ).result_rows[0]
     assert own > 0
     assert quoted == 0
@@ -459,8 +456,6 @@ def test_the_scope_key_stays_out_of_the_query_log(ch_client) -> None:
     """Every policy holds the key as hex literals, which the server's boot
     wrote and the probe's refused reads quote: no logged statement text or
     error carries one."""
-
-    from server.insights.domain import analysis as boundary
 
     policy = ch_client.query(
         "SELECT select_filter FROM system.row_policies "
@@ -476,7 +471,7 @@ def test_the_scope_key_stays_out_of_the_query_log(ch_client) -> None:
         "OR multiSearchAny(formatted_query, {k:Array(String)}) "
         "OR multiSearchAny(exception, {k:Array(String)})) FROM system.query_log",
         parameters={"k": literals},
-        settings={"log_queries_cut_to_length": 1},
+        settings=boundary.TEXT_CUT_FROM_LOG,
     ).result_rows[0]
     assert refused > 0, "no refused read quoted a policy, so the errors were not checked"
     assert logged == 0
@@ -534,8 +529,6 @@ def _rows_hidden_without_a_policy(ch_client, nonce: str) -> bool:
 def _policy(ch_client, table: str) -> str:
     """The analyst's scope policy on `table` as a CREATE statement. Built from
     system.row_policies: SHOW CREATE prints the key's literals as [HIDDEN]."""
-    from server.insights.domain import analysis as boundary
-
     using = ch_client.query(
         "SELECT select_filter FROM system.row_policies WHERE short_name = {p:String} "
         "AND database = currentDatabase() AND table = {t:String}",
@@ -570,8 +563,6 @@ def test_a_dropped_policy_reads_nothing_and_is_written_again(
     reads no row; under the server default it reads every row until the probe
     writes the policy again. The canary's policy is the one the probe signs
     its own read with."""
-    from server.insights.domain import analysis as boundary
-
     hidden = _rows_hidden_without_a_policy(ch_client, seed.nonce)
 
     statement = _policy(ch_client, table)
@@ -590,7 +581,7 @@ def test_a_dropped_policy_reads_nothing_and_is_written_again(
             "the probe to write the policy again",
         )
     except BaseException:
-        ch_client.command(statement, settings=TEXT_CUT_FROM_LOG)
+        ch_client.command(statement, settings=boundary.TEXT_CUT_FROM_LOG)
         raise
     _answers_again(control_plane_url, seed)
 
@@ -598,8 +589,6 @@ def test_a_dropped_policy_reads_nothing_and_is_written_again(
 def test_a_canary_under_another_key_is_written_again(
     control_plane_url: str, seed: _Seed, ch_client
 ) -> None:
-    from server.insights.domain import analysis as boundary
-
     statement = _policy(ch_client, boundary.CANARY_TABLE)
     other_key = boundary.policy_sql(
         "loom",
@@ -608,7 +597,7 @@ def test_a_canary_under_another_key_is_written_again(
         boundary.policy_filter(os.urandom(32)),
         f"`{boundary.ANALYST_USER}`",
     )
-    ch_client.command(other_key, settings=TEXT_CUT_FROM_LOG)
+    ch_client.command(other_key, settings=boundary.TEXT_CUT_FROM_LOG)
     try:
         _probed_until(
             control_plane_url,
@@ -617,7 +606,7 @@ def test_a_canary_under_another_key_is_written_again(
             "the probe to write the canary's policy again",
         )
     except BaseException:
-        ch_client.command(statement, settings=TEXT_CUT_FROM_LOG)
+        ch_client.command(statement, settings=boundary.TEXT_CUT_FROM_LOG)
         raise
     _answers_again(control_plane_url, seed)
 

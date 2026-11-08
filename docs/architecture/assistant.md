@@ -352,8 +352,8 @@ changes it. It keeps the secrets out of what is logged instead:
   the HMAC, are written in the policy as `decrypt('aes-256-ecb', …)` of themselves
   sealed under the key, which ClickHouse prints as `[HIDDEN]` in an error message and in
   `SHOW CREATE ROW POLICY`. The HMAC is the same, so the signature Loom computes does not
-  change, and a build that wrote the pads in clear signs statements those policies
-  accept.
+  change, so a build N-1, which wrote the pads in clear, signs statements that these
+  policies accept.
 
 The key is in ClickHouse's own access storage (on disk, or in Keeper when access is
 replicated), in a backup of the access entities, in the distributed DDL queue of a
@@ -396,9 +396,8 @@ stored key. Elsewhere an admin uses one of two commands:
   With [part 2](#build-order) it proves its `LOOM_JWT_SECRET` as the rotation below
   does, draws a fresh key and password, and prints a complete rotation, in the order of
   a write, with the command that runs it in one session
-  (`clickhouse-client --distributed_ddl_output_mode=throw --multiquery --queries-file <file>`).
-  The file's first statement, `SET log_queries_cut_to_length = 1`, keeps the rest out of
-  the log; then come the delete, the new password, the `KILL QUERY`, the rest of the entity set under the
+  (`clickhouse-client --distributed_ddl_output_mode=throw --multiquery --queries-file <file>`):
+  the delete, the new password, the `KILL QUERY`, the rest of the entity set under the
   new key, a settle of `SELECT sleep(...)` statements, the `KILL QUERY` again, and last
   the `INSERT` of the new sealed row at a version from ClickHouse's clock in
   nanoseconds. Run in full, it starts analysis on a first install, recovers it after a

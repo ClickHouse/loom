@@ -274,9 +274,8 @@ def _setting(name: str) -> str:
     return f"toString(getSetting('{name}'))"
 
 
-def _hidden(key: bytes, data: bytes) -> str:
+def _sealed_literal(key: bytes, data: bytes) -> str:
     """`data` as a `decrypt` expression, whose arguments ClickHouse prints as [HIDDEN]."""
-    # pyjwt[crypto] guarantees it
     from cryptography.hazmat.primitives import padding
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
@@ -292,8 +291,8 @@ def _hmac_sql(key: bytes, payload: str) -> str:
     """HMAC-SHA256 of `payload` under `key` as ClickHouse computes it, spelled
     as the key's inner and outer pads."""
     padded = key.ljust(_BLOCK, b"\0")
-    ipad = _hidden(key, bytes(b ^ 0x36 for b in padded))
-    opad = _hidden(key, bytes(b ^ 0x5C for b in padded))
+    ipad = _sealed_literal(key, bytes(b ^ 0x36 for b in padded))
+    opad = _sealed_literal(key, bytes(b ^ 0x5C for b in padded))
     inner = f"SHA256(concat({ipad}, {payload}))"
     return f"hex(SHA256(concat({opad}, {inner})))"
 
