@@ -22,8 +22,8 @@ _CHUNK = 4096
 
 # The read callback runs Python, where another thread can take the GIL; a tree-sitter
 # parser is not safe to enter twice, and parsers are shared (cached per grammar). One
-# parse at a time per process is what a parse of bytes, which holds the GIL, gave.
-_LOCK = threading.Lock()
+# parse at a time per grammar keeps a parser to one thread.
+_LOCKS: dict[Any, threading.Lock] = {}
 
 
 class ParseTimeout(Exception):
@@ -34,7 +34,7 @@ def parse(parser: Any, source: bytes) -> Any:
     """`parser.parse(source)`, raising `ParseTimeout` past the deadline."""
     from server.settings import settings
 
-    budget = float(settings.code_parse_timeout_seconds)
+    budget = settings.code_parse_timeout_seconds
     expired = False
 
     def read(offset: int, _point: Any) -> bytes:
@@ -44,7 +44,7 @@ def parse(parser: Any, source: bytes) -> Any:
             return b""
         return source[offset : offset + _CHUNK]
 
-    with _LOCK:
+    with _LOCKS.setdefault(parser.language, threading.Lock()):
         deadline = time.monotonic() + budget
         tree = parser.parse(read)
     if expired:

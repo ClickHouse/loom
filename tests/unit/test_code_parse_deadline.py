@@ -8,6 +8,7 @@ import time
 
 import pytest
 
+from server.code.app.index.ingest_chunks import _chunks_for
 from server.code.app.index.ingest_parse import parse_for_ingest
 from server.settings import settings
 
@@ -42,24 +43,41 @@ def test_a_file_parsed_in_time_keeps_its_symbols() -> None:
     assert pf is not None and len(pf.symbols) == 3000
 
 
+def test_a_host_file_whose_shell_parse_stops_keeps_its_chunks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "code_host_islands", True)
+    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 0.2)
+    source = b"build:\n\t" + b"a=(" * 30_000 + b"\n"
+    pf, err = parse_for_ingest("Makefile", source)
+    assert pf is not None and "ParseTimeout" in err
+    chunks, _, facets = _chunks_for(pf, "Makefile", source, 4000)
+    assert chunks and facets == []
+
+
+def _is_parser(node: ast.expr) -> bool:
+    """`parser`, or a call of a function named `...parser` (`_parser(grammar)`)."""
+    if isinstance(node, ast.Name):
+        return node.id == "parser"
+    if isinstance(node, ast.Call):
+        f = node.func
+        name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else ""
+        return name.endswith("parser") or name == "Parser"
+    return False
+
+
 def test_every_tree_sitter_parse_goes_through_the_deadline() -> None:
-    """A `.parse(...)` call in a module that imports tree-sitter is the bounded one."""
+    """No `.parse(` is called on a parser but in `bounded_parse`."""
     unbounded = []
     for f in _SERVER.rglob("*.py"):
-        text = f.read_text()
-        if "tree_sitter" not in text or f.name == "bounded_parse.py":
+        if f.name == "bounded_parse.py":
             continue
-        for node in ast.walk(ast.parse(text)):
+        for node in ast.walk(ast.parse(f.read_text())):
             if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
                 and node.func.attr == "parse"
-                and not (
-                    isinstance(node.func.value, ast.Name) and node.func.value.id in _NOT_A_PARSER
-                )
+                and _is_parser(node.func.value)
             ):
                 unbounded.append(f"{f.relative_to(_SERVER.parent)}:{node.lineno}")
     assert unbounded == []
-
-
-_NOT_A_PARSER = {"bounded_parse", "ast", "Declarations", "tier_health", "json"}

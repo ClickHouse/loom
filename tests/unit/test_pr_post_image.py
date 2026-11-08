@@ -377,3 +377,12 @@ def test_a_push_that_changes_one_file_parses_that_file_alone(
         (e.from_qualified_name, e.to_qualified_name) for e in ov1.edges
     }
     assert [s.name for s in ov2.added] == [s.name for s in ov1.added]
+
+
+def test_an_overlay_past_its_parse_time_leaves_the_rest_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 1e-9)
+    ov = asyncio.run(po.load_posted_overlay(_Repo(), "acme", "code-ch", _img()))
+    assert ov.ok and ov.symbols == []
+    assert ov.disclosure()["overlay_note"].startswith("1 changed file(s) left out")

@@ -19,6 +19,7 @@ from server.code.app.index.ingest_parse import (
     _statement_records_on,
 )
 from server.code.app.index.ingest_resolve import _PY_LAYOUT_CACHE
+from server.code.domain.extract.bounded_parse import ParseTimeout
 from server.code.domain.extract.chunker import Chunk, chunk_file
 from server.code.domain.extract.context_text import build_context_text
 from server.code.domain.extract.edges_treesitter import call_sites
@@ -229,7 +230,10 @@ def _chunks_for(
     if pf.lang == "config" and _host_islands_on():
         # The host's shell islands as facet rows (programs, dialects, statement facets);
         # chunks stay the line windows
-        hu = host_units(pf)
+        try:
+            hu = host_units(pf)
+        except ParseTimeout:
+            return chunks, {}, []  # the parse step recorded it; the line windows stand
         if hu is not None:
             return chunks, {}, hu.facets
     if pf.lang == "python" and _py_islands_on():

@@ -29,6 +29,7 @@ import functools
 import hashlib
 import logging
 import re
+import time
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -124,6 +125,7 @@ class PrOverlay:
     symbols: list[OverlaySymbol] = field(default_factory=list)
     edges: list[OverlayEdge] = field(default_factory=list)
     reason: str = ""  # '' when the overlay is live
+    note: str = ""  # what a live overlay left out
 
     @property
     def ok(self) -> bool:
@@ -158,7 +160,7 @@ class PrOverlay:
             "overlay": self.ok,
             "overlay_head_sha": self.head_sha if self.ok else "",
             "overlay_added": len(self.added) if self.ok else 0,
-            "overlay_note": self.reason,
+            "overlay_note": self.reason or self.note,
         }
 
 
@@ -503,12 +505,15 @@ def _binding_digest(names: frozenset[str], table: dict[str, list[tuple[str, str,
 
 
 async def _file_facts(
-    path: str, source: bytes, digest: str
-) -> tuple[Any, tuple[Any, ...], frozenset[str]]:
-    """(parsed file or None when cached, symbols, names) of one post-image file."""
+    path: str, source: bytes, digest: str, deadline: float
+) -> tuple[Any, tuple[Any, ...], frozenset[str]] | None:
+    """(parsed file or None when cached, symbols, names) of one post-image file; None
+    when it is not cached and `deadline` has passed."""
     hit = _FILE_FACTS.get((path, digest))
     if hit is not None:
         return None, hit[0], hit[1]
+    if time.monotonic() > deadline:
+        return None
     # parsing is CPU work: off the event loop
     pf, facts = await asyncio.to_thread(_parsed_facts, path, source)
     _FILE_FACTS.put((path, digest), facts)
@@ -575,17 +580,26 @@ async def _parse_post_image(
     # path -> (source, digest, parsed file this request already holds, symbols, names)
     files: dict[str, tuple[bytes, str, Any, tuple[Any, ...], frozenset[str]]] = {}
     names: set[str] = set()
+    # One overlay starts no parse after one parse deadline has passed, so a request
+    # parses for at most about twice `code_parse_timeout_seconds`
+    deadline = time.monotonic() + settings.code_parse_timeout_seconds
+    left_out = 0
     for p in paths:
         source = await read(p)
         if source is None or len(source) > MAX_FILE_BYTES:
             continue
         digest = _digest(source)
-        pf, symbols, file_names = await _file_facts(p, source, digest)
+        facts = await _file_facts(p, source, digest, deadline)
+        if facts is None:
+            left_out += 1
+            continue
+        pf, symbols, file_names = facts
         if not symbols:
             continue
         files[p] = (source, digest, pf, symbols, file_names)
         names |= file_names
     if not files:
+        _note_left_out(ov, left_out)
         return
     # one name-keyed read serves both questions: which post-image functions
     # the index already defines (classification) and what the files' call
@@ -599,10 +613,19 @@ async def _parse_post_image(
         key = (p, digest, _binding_digest(file_names, table))
         edges = _FILE_EDGES.get(key)
         if edges is None:
+            if time.monotonic() > deadline:
+                left_out += 1
+                continue
             # parsing and binding are CPU work: off the event loop
             edges = await asyncio.to_thread(_file_edges, pf, p, source, table)
             _FILE_EDGES.put(key, edges)
         ov.edges.extend(edges)
+    _note_left_out(ov, left_out)
+
+
+def _note_left_out(ov: PrOverlay, left_out: int) -> None:
+    if left_out:
+        ov.note = f"{left_out} changed file(s) left out: the overlay's parse time was spent"
 
 
 async def _name_table(

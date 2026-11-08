@@ -1623,7 +1623,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "over the index — the functions the PR ADDS are `touched_symbols` "
         "seeds (`via: 'added'`, tier 'overlay') and the call sites inside the "
         "PR count as callers; `overlay: true` / `overlay_head_sha` / "
-        "`overlay_added` disclose it, `overlay_note` why not."
+        "`overlay_added` disclose it, `overlay_note` why not or what it left out."
     ),
     "code.outcome": (
         "Tell loom what you did with a code answer, by its trace_run_id: "
