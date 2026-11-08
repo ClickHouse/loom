@@ -1063,13 +1063,29 @@ async def test_the_ingest_pass_syncs_each_repository_with_a_restricted_page_bran
     ch.restricted = {"code-z-2"}
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     standard = [entry("code-z-3", "standard"), entry("code-z-2", "standard")]
-    await maintainers.sync_restricted_page_branches(standard)
+    going = lambda: False  # noqa: E731
+    await maintainers.sync_restricted_page_branches(standard, exhausted=going)
     snapshot = [entry("code-z-1", "restricted"), *standard]
     monkeypatch.setattr(repos, "configured_repos", lambda: snapshot)
-    await maintainers.sync_restricted_page_branches(snapshot)
+    await maintainers.sync_restricted_page_branches(snapshot, exhausted=going)
     assert synced == ["code-z-2", "code-z-1"]
     await maintainers.sync_restricted_page_branches(standard, exhausted=lambda: True)
     assert synced == ["code-z-2", "code-z-1"]  # past the pass budget
+
+    # An org whose directory cannot be read waits for the next pass; the others go on.
+    class _Unreadable(_FakeCH):
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            if "loom.namespaces" in sql and params["org"] == "other":
+                raise ConnectionError("ClickHouse is not answering")
+            return await super().query_all(sql, params)
+
+    ch = _Unreadable([])
+    ch.restricted = {"code-z-2"}
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    other = SimpleNamespace(**{**vars(entry("code-o", "restricted")), "org": "other"})
+    synced.clear()
+    await maintainers.sync_restricted_page_branches([other, *standard], exhausted=going)
+    assert synced == ["code-z-2"]
 
 
 async def test_code_init_reads_the_registry_before_it_registers(

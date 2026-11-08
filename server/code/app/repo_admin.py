@@ -673,6 +673,15 @@ async def _directory_row(ch: Any, org: str, namespace: str) -> dict[str, Any] | 
     return await namespace_row(org, namespace, ch=ch)
 
 
+def _require_confirm(input: Any) -> None:
+    """Widening restricted → standard needs `confirm` = namespace."""
+    if input.confirm.strip() != input.namespace:
+        raise ValidationError(
+            f"opening a restricted repository: type the namespace ({input.namespace}) in `confirm`",
+            code="CONFIRM_REQUIRED",
+        )
+
+
 async def handle_code_repo_set_access(input: Any) -> Any:
     """The repository's maintainer (the transport's ADMIN gate
     on the namespace) sets its classification and join policy. The decision
@@ -710,6 +719,8 @@ async def handle_code_repo_set_access(input: Any) -> Any:
     cfg: Any = repo_for_namespace(input.org, input.namespace)
     if cfg is None:
         raise ValidationError(f"{input.namespace} is not a repository index", code="NOT_A_REPO")
+    if str(cfg.classification) == "restricted" and cls == "standard":
+        _require_confirm(input)  # before any claim; the row read under them may say so too
     ch = get_client()
     subject, _org = current_caller()
     from server.code.app.index import maintainers
@@ -726,12 +737,8 @@ async def handle_code_repo_set_access(input: Any) -> Any:
             str(cfg.classification),
             (row or {}).get("classification"),
         )
-        if was_restricted and cls == "standard" and input.confirm.strip() != input.namespace:
-            raise ValidationError(
-                f"opening a restricted repository: type the namespace ({input.namespace}) "
-                "in `confirm`",
-                code="CONFIRM_REQUIRED",
-            )
+        if was_restricted and cls == "standard":
+            _require_confirm(input)
         previous_policy = str(
             (row or {}).get("join_policy") or ("open" if cfg.public else "approval")
         )
@@ -771,9 +778,6 @@ async def handle_code_repo_set_access(input: Any) -> Any:
         await asyncio.to_thread(restrict_entry, cfg)
     else:
         nc.reset()  # a widening drops the stale restricted entry
-    # A restriction revokes the copies its siblings added from the page gave it; a
-    # widening copies the siblings' admins it never held. The decision is written and
-    # audited either way; a restriction's failed sync is the ingest pass's to finish.
     await maintainers.sync_quietly(input.org, input.namespace, ch=ch)
     return CodeRepoSetAccessOutput(
         org=input.org,

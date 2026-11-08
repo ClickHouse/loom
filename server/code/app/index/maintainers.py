@@ -393,12 +393,12 @@ async def _write_under_claims(
     hold_repo: str | None,
 ) -> int:
     """Write each subject's planned rows that `still_wanted` keeps in one insert,
-    holding the claim of the repository `hold_repo` names (None: the caller holds it)
-    and then its branch claims: with the repository claim first, one change
-    across a subject's branches runs at a time. A subject that fails writes
-    none of its rows; one whose claim is busy does not stop the others, and
-    is raised once all were tried. Any other failure stops at once: Keeper or
-    ClickHouse not answering one subject will not answer the next."""
+    holding the claims `_write_subject` takes (with `hold_repo` None the caller
+    holds the repository's): one change across a subject's branches runs at a
+    time. A subject that fails writes none of its rows; one whose claim is busy
+    does not stop the others, and is raised once all were tried. Any other
+    failure stops at once: Keeper or ClickHouse not answering one subject will
+    not answer the next."""
     seen = {(str(r["namespace"]), str(r["subject"])): r for r in read}
     by_subject: dict[str, list[dict[str, Any]]] = {}
     for row in planned:
@@ -522,7 +522,9 @@ def _plan_mirrors(
 
 async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = None) -> int:
     """Bring every branch of `namespace`'s repository to the union of the active
-    admins of the branches that reach it (`_reaches`). Returns the number of
+    admins of the branches that reach it (`_reaches`); a restricted branch added from
+    the page (`_restricted`) takes the operator entries' admins only, and its stray
+    copies (`_stray`) are revoked or rewritten. Returns the number of
     grant rows written; none while the self-service registry has never been
     read, when the branches added from the page are unknown: a grant made then
     is copied by the next admin grant or approval on a branch of the
@@ -645,7 +647,6 @@ def _revoke_row(org: str, row: dict[str, Any], *, read_at: int) -> dict[str, Any
         now=naive_utc_now(),
         revoked=True,
         role=str(row.get("role") or "admin"),
-        # Above the stray, which a sync may have written after the read.
         version=max(read_at, int(row["version"]) + 1),
     )
 
@@ -810,7 +811,7 @@ async def _write_revokes(
 
 
 async def sync_restricted_page_branches(
-    entries: list[Any], *, exhausted: Callable[[], bool] = lambda: False
+    entries: list[Any], *, exhausted: Callable[[], bool]
 ) -> None:
     """Sync, once each, the repositories among `entries` with a branch added from the
     page that is restricted, by this process's snapshot or by its directory row: the
