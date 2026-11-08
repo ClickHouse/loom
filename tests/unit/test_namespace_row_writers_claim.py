@@ -1,7 +1,7 @@
 """The code and tracker registrars read and write a directory row under the namespace's
 account claim, which every other writer that reads and rewrites the row holds
 (`namespace.register`, `code.repo.set_access`), so neither writes back a row read before
-another's change. The first-write auto-registration inserts only, at the lowest version."""
+another's change."""
 
 from __future__ import annotations
 
@@ -84,29 +84,43 @@ async def test_the_tracker_registrar_writes_under_the_account_claim(
 async def test_a_namespace_skipped_at_boot_is_registered_on_a_later_try(
     claims: MemoryClaims, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Its account claim busy at boot: the narrowing must not wait for the next boot."""
+    """Its account claim busy at boot, then a failed pass: the narrowing must not wait for
+    the next boot, and the retry ends once this process no longer leads."""
     import asyncio
 
     import server.boot as boot
     import server.tracker.app.registry_sources as sources
     from server.tracker.store.source import qa_intel
+    from server.workers import leader
+
+    refreshes: list[int] = []
 
     async def _refresh(**_):
-        return None
+        refreshes.append(1)
+        if len(refreshes) == 2:
+            raise TimeoutError("ClickHouse did not answer")
 
     client = _Client(claims)
+    leads = [True]
     monkeypatch.setattr(qa_intel, "configured", lambda: True)
     monkeypatch.setattr(
         "server.tracker.domain.namespaces.configured_namespaces",
         lambda: {"qa-p": SimpleNamespace(org=ORG, restricted=True)},
     )
     monkeypatch.setattr(sources, "refresh_db_sources", _refresh)
-    monkeypatch.setattr(grant_claims, "WAIT_S", 0.05)
-    monkeypatch.setattr(grant_claims, "TTL_S", 0.05)
+    monkeypatch.setattr(leader, "leads_deployment", lambda: leads[0])
+    monkeypatch.setattr(grant_claims, "TTL_S", 0.01)
     monkeypatch.setattr(boot, "_TRACKER_RETRY", None)
     claims.held.add(_account("qa-p"))  # another change holds it
-    await boot.register_tracker_namespaces(client)
+    await boot.register_tracker_namespaces(client)  # skipped at once, not waited on
     assert client.held_at_insert == []
     claims.held.discard(_account("qa-p"))
     await asyncio.wait_for(boot._TRACKER_RETRY, timeout=5)
-    assert client.held_at_insert == [{_account("qa-p")}]
+    assert len(refreshes) == 3 and client.held_at_insert == [{_account("qa-p")}]
+
+    finished = boot._TRACKER_RETRY
+    tracker_registry.reset_for_tests()
+    leads[0] = False
+    claims.held.add(_account("qa-p"))
+    await boot.register_tracker_namespaces(client)  # no longer leading: no retry
+    assert boot._TRACKER_RETRY is finished
