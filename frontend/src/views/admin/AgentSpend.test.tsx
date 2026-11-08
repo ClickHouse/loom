@@ -18,7 +18,10 @@ afterEach(() => {
 describe("AgentSpend", () => {
   it("lists the coding agents' spend by model for the last week", async () => {
     vi.mocked(api.getAgentSpend).mockResolvedValue({
-      rows: [{ model: "claude-x", turns: 40, sessions: 3, cost_usd: 1.5, unpriced_turns: 0 }],
+      rows: [
+        { model: "claude-x", turns: 40, sessions: 3, cost_usd: 1.5, unpriced_turns: 0 },
+        { model: "local-y", turns: 2, sessions: 1, cost_usd: 0, unpriced_turns: 2 },
+      ],
       total_cost_usd: 1.5,
       total_turns: 40,
       unpriced_turns: 2,
@@ -26,6 +29,9 @@ describe("AgentSpend", () => {
     render(<AgentSpend />);
     expect(await screen.findByText("claude-x")).toBeInTheDocument();
     expect(screen.getByText("$1.5000 over the last 7 days, 2 turns unpriced")).toBeInTheDocument();
+    expect(screen.getByText("$1.5000")).toBeInTheDocument();
+    // A model with no price reads as unpriced, not free.
+    expect(screen.getByText("—")).toBeInTheDocument();
     expect(api.getAgentSpend).toHaveBeenCalledWith(
       expect.objectContaining({ namespace: "team" }),
       7,

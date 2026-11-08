@@ -56,7 +56,14 @@ export function AgentSpend() {
                 { label: <span className="font-mono text-xs">{model}</span> },
                 { label: <span className="tabular">{r.turns.toLocaleString()}</span> },
                 { label: <span className="tabular">{r.sessions.toLocaleString()}</span> },
-                { label: <span className="tabular">${r.cost_usd.toFixed(4)}</span> },
+                {
+                  label:
+                    r.cost_usd > 0 ? (
+                      <span className="tabular">${r.cost_usd.toFixed(4)}</span>
+                    ) : (
+                      <span className="text-text-muted">—</span>
+                    ),
+                },
               ],
             };
           })}

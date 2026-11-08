@@ -1411,10 +1411,9 @@ export async function browseNamespaces(
   return r.rows;
 }
 
-/** One saved revision of a namespace's guide, without its text (`namespace.guide_history`). */
+/** One saved revision of a namespace's guide: who saved it, when and why (`namespace.guide_history`). */
 export interface GuideRevision {
   revision: number;
-  summary: string;
   note: string;
   updated_by: string;
   updated_at: string;

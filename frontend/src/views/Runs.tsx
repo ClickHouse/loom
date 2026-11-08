@@ -699,7 +699,8 @@ export function Runs() {
   const busy = loading && shown !== null;
   // The opened run as run.get answers it: the list row carries only RUNS_FIELDS.
   // A run.get answer for the run opened before is not this one's.
-  const replayed = detail?.run && detail.run.run_id === open?.run_id ? detail.run : open;
+  const fetched = detail?.run && detail.run.run_id === open?.run_id ? detail.run : null;
+  const replayed = fetched ?? open;
   // The page the rows on screen are: the pager pages from it while they are what the list
   // shows, so a second Next during a read asks for the same page; for another filter or
   // page size it pages from the page asked for.
@@ -1141,10 +1142,9 @@ export function Runs() {
               <div className="text-sm whitespace-pre-wrap">{replayed.final_response}</div>
             </Section>
           )}
-          {/* The list row carries only RUNS_FIELDS; the verdict comes with run.get. */}
-          {detail?.run && detail.run.run_id === open?.run_id && detail.run.status !== "active" && canGrade && (
+          {fetched && fetched.status !== "active" && canGrade && (
             <Section title="Did it hold up?">
-              <RunGrade key={detail.run.run_id} identity={identity} run={detail.run} />
+              <RunGrade key={fetched.run_id} identity={identity} run={fetched} />
             </Section>
           )}
           {open && Object.keys(open.metadata || {}).length > 0 && (

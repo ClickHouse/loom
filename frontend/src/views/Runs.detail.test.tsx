@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunGetResponse, RunRow } from "../api";
 import { useStore } from "../lib/state";
 import { must } from "../test/must";
-import { EMPTY_WHY, Runs, hasNoMemoryActivity } from "./Runs";
+import { EMPTY_WHY, RUNS_FIELDS, Runs, hasNoMemoryActivity } from "./Runs";
 
 // A run with no memory activity is folded whether loom inferred it or a program declared
 // it; every empty field on the replay says who fills it; the list filters by agent;
@@ -216,7 +216,9 @@ describe("Runs page", () => {
 
   it("shows the verdict run.get carries, which the list row does not", async () => {
     useStore.setState({ whoami: { authenticated: true, subject: "alice", org: "dev", roles: ["admin"] } });
-    listRuns.mockResolvedValue([full]);
+    // run.list answers with RUNS_FIELDS alone, so the row has no grade fields.
+    const listed = Object.fromEntries(RUNS_FIELDS.map((f) => [f, full[f as keyof RunRow]])) as unknown as RunRow;
+    listRuns.mockResolvedValue([listed]);
     getRun.mockResolvedValue(detail({ run: { ...full, grade: "fail", grade_source: "ci", grade_reason: "red" } }));
     render(<Runs />);
     fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
