@@ -169,15 +169,15 @@ def test_a_registry_outage_is_not_reported_as_a_missing_grant(tmp_path: Path) ->
 
 
 def test_the_workflow_runs_the_preflight_before_any_build() -> None:
-    jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    jobs = workflow["jobs"]
     assert jobs["preflight"]["needs"] == "version"
     assert "preflight" in jobs["clickhouse"]["needs"]
     (step,) = [s for s in jobs["preflight"]["steps"] if "preflight.sh" in s.get("run", "")]
     assert step["env"]["MODE"] == "${{ inputs.dry_run && 'report' || 'strict' }}"
     assert step["env"]["REPOSITORY_PRIVATE"] == "${{ github.event.repository.private }}"
-    # One list of images for both checks, the docker matrix's.
+    # One list of images for the workflow, the docker matrix's.
     matrix = jobs["docker"]["strategy"]["matrix"]["include"]
-    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
     assert workflow["env"]["IMAGES"].split() == [i["image"] for i in matrix if "image" in i]
     (published,) = [s for s in jobs["preflight"]["steps"] if s.get("id") == "images"]
     assert '"$VERSION" $IMAGES)' in published["run"]
@@ -429,10 +429,14 @@ def test_the_registries_publish_after_a_release_that_skipped_its_image_jobs(name
     assert "github.event_name == 'workflow_dispatch'" in condition
 
 
-def test_the_release_signs_the_index_each_version_tag_names() -> None:
+def test_only_sign_and_the_registries_get_an_oidc_token() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
     oidc = [name for name, job in jobs.items() if "id-token" in job.get("permissions", {})]
-    assert oidc == ["sign", "pypi", "npm", "mcp-registry"]  # the one image job, and the registries
+    assert oidc == ["sign", "pypi", "npm", "mcp-registry"]
+
+
+def test_the_release_signs_the_index_each_version_tag_names() -> None:
+    jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
     (step,) = [s for s in jobs["sign"]["steps"] if "cosign sign" in s.get("run", "")]
     assert "for image in $IMAGES; do" in step["run"]
     assert 'cosign sign --yes "$image@$digest"' in step["run"]

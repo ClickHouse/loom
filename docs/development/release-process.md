@@ -213,8 +213,9 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    all four have passed (a failure there can leave one tagged, and re-running it tags both);
    `sign` then signs the index each image's version tag names with a keyless signature
    (cosign, with the run's GitHub identity, so the certificate names `release.yml` and the
-   tag), on every run that publishes, so a run on a tag whose images are out signs them
-   again and a missing signature is repaired;
+   tag), on every run but a dry run once the images are out, so a run on a tag whose images
+   are out signs them again and a missing signature is repaired. Nothing publishes unsigned:
+   with Sigstore down, the GitHub Release and the registries wait for a run that signs;
 7. `docker-smoke` installs the bundle with those images, on the ClickHouse release it
    names, on amd64 and arm64, then runs the release's own `install.sh` and bundle as the
    one-liner in clean Debian, Ubuntu and Alpine containers (install, round trip, re-run, a
@@ -245,8 +246,8 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    `ghcr.io/clickhouse/loom` and `ghcr.io/clickhouse/loom-extractor`;
 9. `release-check` (on a tag push) runs `.github/workflows/release-check.yml` against what
    was just published, signed in to nothing: the one-liner from github.com in the same clean
-   containers, pulling both images anonymously, and both images' signatures, which must come
-   from `release.yml` on that tag:
+   containers, pulling both images anonymously, and verifies both images' signatures, which
+   must come from `release.yml` on that tag:
 
    ```bash
    cosign verify ghcr.io/clickhouse/loom:X.Y.Z \
@@ -254,9 +255,9 @@ the package's visibility to public in its settings, then re-run the failed jobs.
      --certificate-oidc-issuer https://token.actions.githubusercontent.com
    ```
 
-   With cosign 3 or later, which reads the signature the release's cosign stores. A release
-   published before the release workflow signed carries none, so a check of it fails its
-   `signatures` job.
+   Run it with cosign 3 or later, which reads the signature format the release stores. A
+   release published before the release workflow signed carries none, so a check of it fails
+   its `signatures` job.
 
 The server and extractor images are published before the GitHub Release, so an installer
 shown on the release page never points at a missing image.

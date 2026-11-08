@@ -195,6 +195,18 @@ def test_release_check_runs_the_published_one_liner_on_both_architectures() -> N
     assert "LOOM_RELEASES_URL" not in yaml.safe_dump(workflow)
 
 
+def test_the_release_check_verifies_the_release_workflows_signature() -> None:
+    check = yaml.safe_load((ROOT / ".github/workflows/release-check.yml").read_text())
+    (verify,) = [s for s in check["jobs"]["signatures"]["steps"] if "run" in s]
+    identity = (
+        "https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v$VERSION"
+    )
+    assert f'--certificate-identity "{identity}"' in verify["run"]
+    assert "--certificate-oidc-issuer https://token.actions.githubusercontent.com" in verify["run"]
+    release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    assert verify["env"]["IMAGES"] == release["env"]["IMAGES"]  # every image it signs
+
+
 def _previous_install(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, files: Path | None
 ) -> tuple[tuple[str, ...], dict[str, str]]:
@@ -410,12 +422,3 @@ def test_a_bundle_that_names_no_release_is_refused(tmp_path: Path, named: str) -
         archive.add(tmp_path / "VERSION", arcname="loom-stack/VERSION")
     with pytest.raises(SystemExit, match=f"^the bundle names '{named}', not X.Y.Z or X.Y.Z-rc.N$"):
         rehearsal.bundle_version(tmp_path)
-
-
-def test_the_release_check_verifies_the_release_workflows_signature() -> None:
-    check = yaml.safe_load((ROOT / ".github/workflows/release-check.yml").read_text())
-    (verify,) = [s for s in check["jobs"]["signatures"]["steps"] if "run" in s]
-    assert "release.yml@refs/tags/v$VERSION" in verify["run"]
-    assert "--certificate-oidc-issuer https://token.actions.githubusercontent.com" in verify["run"]
-    release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
-    assert verify["env"]["IMAGES"] == release["env"]["IMAGES"]  # every image it signs

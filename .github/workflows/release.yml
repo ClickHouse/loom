@@ -15,8 +15,8 @@ name: release
 # prerequisites, in seconds) -> clickhouse (the ClickHouse release the
 # installer bundle names, migrated and schema-checked) -> build -> verify
 # (inspect the exact files) -> docker (build and scan each image on each
-# architecture's own runner) -> docker-tag -> sign (keyless, every publishing
-# run) and docker-smoke (the quickstart and the installer rehearsal) ->
+# architecture's own runner) -> docker-tag -> sign (keyless, on every run but
+# a dry run once the images are out) and docker-smoke (the quickstart and the installer rehearsal) ->
 # github-release -> release-check (tag push only),
 # and pypi, npm, mcp-registry (dispatch only). A re-run after a partial publish is
 # safe: the bundle keeps the ClickHouse release it was first published with,
@@ -603,9 +603,10 @@ jobs:
             echo "Pin $image with \`$pin: $digest\`" >> "$GITHUB_STEP_SUMMARY"
           done
 
-  # Every run that publishes signs, so a run after one that tagged but did not
-  # sign (or a dispatch on the tag) signs what is out; a second signature on a
-  # digest is harmless.
+  # Every run but a dry run signs once the images are out, tagged now or before,
+  # so a run after one that tagged but did not sign (or a dispatch on the tag)
+  # signs what is out; a second signature on a digest is harmless. Nothing
+  # publishes unsigned: with Sigstore down, the release and the registries wait.
   sign:
     name: Sign both images
     if: ${{ !cancelled() && !inputs.dry_run && (needs.docker-tag.result == 'success' || needs.preflight.outputs.images_published == 'true') }}

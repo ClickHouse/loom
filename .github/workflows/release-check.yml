@@ -84,7 +84,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-      # Signed by the release workflow's run for this tag, and by nothing else.
+      # Accepted only from the release workflow's run on this tag.
       - name: Both images carry the release workflow's keyless signature
         env:
           VERSION: ${{ inputs.version }}
