@@ -27,8 +27,8 @@ function sandbox() {
   return { tmp: mk("loom-headers-tmp-"), home: mk("loom-headers-home-"), cwd: mk("loom-headers-cwd-") };
 }
 
-function run(env, box = sandbox()) {
-  const out = execFileSync(process.execPath, [HELPER], {
+function run(env, box = sandbox(), args = []) {
+  const out = execFileSync(process.execPath, [HELPER, ...args], {
     encoding: "utf8",
     env: hostEnv({ PATH: process.env.PATH, HOME: box.home, TMPDIR: box.tmp, LOOM_MCP_HOOK_WAIT_MS: "0", ...env }),
     cwd: box.cwd,
@@ -141,6 +141,26 @@ test("the helper reads the shunt's cache for the checkout it runs in", () => {
   assert.deepEqual(run({ LOOM_API_KEY: "env.tok" }, { ...box, cwd: sandbox().cwd }).parsed, {
     Authorization: "Bearer env.tok",
   });
+});
+
+test("the helper names the project directory it is given, not the checkout it runs in", () => {
+  // Claude Code starts the helper in the plugin root, which may sit inside
+  // another checkout, and passes the session's project directory.
+  const project = gitRepo();
+  const pluginCheckout = gitRepo();
+  const box = { ...sandbox(), cwd: pluginCheckout };
+  const entry = (namespace) => JSON.stringify({ ts: Date.now(), indexed: true, org: "clickhouse", namespace });
+  fs.writeFileSync(cachePathFor(project, box.tmp), entry("code-project"));
+  fs.writeFileSync(cachePathFor(pluginCheckout, box.tmp), entry("code-plugin"));
+  assert.deepEqual(run({ LOOM_API_KEY: "env.tok" }, box, [project]).parsed, {
+    Authorization: "Bearer env.tok",
+    "X-Loom-Code-Scope": "clickhouse/code-project",
+  });
+  // an empty or unsubstituted project directory names no checkout, never the cwd's
+  for (const arg of ["", "${CLAUDE_PROJECT_DIR}"])
+    assert.deepEqual(run({ LOOM_API_KEY: "env.tok" }, box, [arg]).parsed, { Authorization: "Bearer env.tok" }, arg);
+  // no argument (the Codex entry): the checkout the helper runs in
+  assert.deepEqual(run({ LOOM_API_KEY: "env.tok" }, box).parsed["X-Loom-Code-Scope"], "clickhouse/code-plugin");
 });
 
 test("checkoutScope: cache miss → one bounded lookup that also fills the cache", async () => {

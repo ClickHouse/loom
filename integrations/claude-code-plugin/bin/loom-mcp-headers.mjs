@@ -4,10 +4,12 @@
 // for an agent (LOOM_CLIENT_ID with a workload token) its exchanged token and
 // nothing else; otherwise ~/.loom/config.json, then ~/.loom/token.
 //
-// It also names the code namespace of the checkout it runs in. Claude Code
-// starts a plugin's helper from the plugin root, so there the header does not
-// name the project's checkout (LOOM_CODE_REPO / `code_repo` still name one).
-// The resolved repository (the cache the shunt and the primer share, else one
+// It also names the code namespace of the session's checkout: the project
+// directory given as its argument, else the directory it runs in. Claude Code
+// starts a plugin's helper in the plugin root, so the plugin's `.mcp.json`
+// passes `${CLAUDE_PROJECT_DIR}`; an empty or unsubstituted one names no
+// checkout (LOOM_CODE_REPO / `code_repo` still name a repository). The Codex
+// entry passes none. The resolved repository (the cache the shunt and the primer share, else one
 // bounded lookup) becomes `X-Loom-Code-Scope: org/namespace`, which the server
 // applies to every loom_code_* call that names no namespace.
 // LOOM_MCP_CODE_SCOPE=off disables.
@@ -19,6 +21,7 @@
 // Sign-up off, refused or unreachable → `{}`: the server then answers 401
 // and Claude Code shows the connection as failed, which is the honest state.
 // Stdout is exactly one JSON object; nothing else is written.
+import { isAbsolute } from "node:path";
 import { ensureCredential } from "../lib/first-session.mjs";
 import {
   agentMode,
@@ -51,7 +54,9 @@ export function headersFor(token, scope = null) {
  *  there is neither, without a token, or when disabled. */
 export async function checkoutScope(cwd = process.cwd(), { env = process.env, token = "", post } = {}) {
   if (!envSwitch("LOOM_MCP_CODE_SCOPE", true, env)) return null;
-  const root = gitToplevel(cwd);
+  // Only an absolute directory: git would read "" or a relative one against
+  // the helper's own directory.
+  const root = isAbsolute(String(cwd)) ? gitToplevel(cwd) : "";
   const key = scopeKey(root, env);
   if (!key || !token) return null;
   const cached = readCache(key);
@@ -107,7 +112,8 @@ async function main() {
     // Without LOOM_BASE_URL or a saved URL the configured server is unknown here.
     const knowsServer = Boolean(process.env.LOOM_BASE_URL || readConfigFile(loomConfigPath()).url);
     token = resolveToken() || (knowsServer ? "" : await hookToken()) || (await signedUpToken());
-    out = headersFor(token, await checkoutScope(process.cwd(), { token }));
+    const project = process.argv.length > 2 ? process.argv[2] : process.cwd();
+    out = headersFor(token, await checkoutScope(project, { token }));
   } catch {
     out = headersFor(token);
   }

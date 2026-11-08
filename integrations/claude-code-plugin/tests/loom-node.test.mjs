@@ -452,11 +452,11 @@ test("the generic and Codex hooks start Node through the launcher; each header h
   // cannot, and runs the node on PATH instead.
   assert.ok(
     claude.headersHelper.startsWith(
-      'sh "$CLAUDE_PLUGIN_ROOT/bin/loom-node" "$CLAUDE_PLUGIN_ROOT/bin/loom-mcp-headers.mjs" || node -e "',
+      'sh "$CLAUDE_PLUGIN_ROOT/bin/loom-node" "$CLAUDE_PLUGIN_ROOT/bin/loom-mcp-headers.mjs" "${CLAUDE_PROJECT_DIR}" || node -e "',
     ),
     claude.headersHelper,
   );
-  assert.match(claude.headersHelper, / \|\| node -e "[^"$`\\%]+"$/);
+  assert.match(claude.headersHelper, / \|\| node -e "[^"$`\\%]+" "\$\{CLAUDE_PROJECT_DIR\}"$/);
   const codex = JSON.parse(fs.readFileSync(path.join(codexRoot, ".mcp.json"), "utf8")).mcpServers.loom;
   // Codex runs it with `sh -c` on Unix and `cmd.exe /C` on Windows: node
   // first, which both run; under sh, the launcher when node is missing.
@@ -468,17 +468,23 @@ test("the generic and Codex hooks start Node through the launcher; each header h
 });
 
 /** A Claude Code plugin root with the launcher and a header helper that
- *  prints `out`. */
+ *  prints `out`, or with `out` null its first argument. */
 function claudePlugin(f, out) {
   const plugin = path.join(f.dir, "claude-plugin");
   fs.mkdirSync(path.join(plugin, "bin"), { recursive: true });
   fs.copyFileSync(launcher, path.join(plugin, "bin", "loom-node"));
-  fs.writeFileSync(path.join(plugin, "bin", "loom-mcp-headers.mjs"), `process.stdout.write(${JSON.stringify(out)});\n`);
+  const body = out === null ? "process.argv[2]" : JSON.stringify(out);
+  fs.writeFileSync(path.join(plugin, "bin", "loom-mcp-headers.mjs"), `process.stdout.write(${body});\n`);
   return plugin;
 }
 
-const claudeHelper = () =>
-  JSON.parse(fs.readFileSync(path.join(root, ".mcp.json"), "utf8")).mcpServers.loom.headersHelper;
+/** The helper's command line as Claude Code runs it: `${CLAUDE_PROJECT_DIR}`
+ *  replaced by the project directory as it is, unquoted. */
+const claudeHelper = (project = "/work/project") =>
+  JSON.parse(fs.readFileSync(path.join(root, ".mcp.json"), "utf8")).mcpServers.loom.headersHelper.replaceAll(
+    "${CLAUDE_PROJECT_DIR}",
+    project,
+  );
 
 test("the Claude Code header helper runs through the launcher under sh, LOOM_NODE first", { skip: WINDOWS }, () => {
   const f = fixture();
@@ -538,17 +544,47 @@ test("the Claude Code header helper falls back to the node on PATH when LOOM_NOD
   }
 });
 
+test("both of the Claude Code header helper's branches pass it the project directory", { skip: WINDOWS }, () => {
+  const f = fixture();
+  try {
+    const plugin = claudePlugin(f, null);
+    const onPath = path.dirname(f.node("path-bin"));
+    const project = "/Users/me/Jo's work (v2)/repo";
+    const run = (env) =>
+      spawnSync("/bin/sh", ["-c", claudeHelper(project)], {
+        encoding: "utf8",
+        env: {
+          HOME: f.home,
+          PATH: `${onPath}:/usr/bin:/bin`,
+          CLAUDE_PLUGIN_ROOT: plugin,
+          LOOM_NODE_SYSTEM_DIRS: "",
+          ...env,
+        },
+      });
+    const launched = run({});
+    assert.equal(launched.status, 0, launched.stderr);
+    assert.equal(launched.stdout, project);
+    // the launcher refuses an old LOOM_NODE: the `node -e` branch runs it
+    const fallback = run({ LOOM_NODE: f.node("old", "v16.20.2") });
+    assert.equal(fallback.status, 0, fallback.stderr);
+    assert.equal(fallback.stdout, project);
+  } finally {
+    f.done();
+  }
+});
+
 test("the Claude Code header helper runs under cmd.exe the way Claude Code starts it", { skip: !WINDOWS }, () => {
   const f = fixture();
   try {
-    const plugin = claudePlugin(f, "{}");
-    const r = spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `"${claudeHelper()}"`], {
+    const plugin = claudePlugin(f, null);
+    const project = "C:/Users/me/Jo's work (v2)/repo";
+    const r = spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `"${claudeHelper(project)}"`], {
       encoding: "utf8",
       windowsVerbatimArguments: true,
       env: { ...process.env, CLAUDE_PLUGIN_ROOT: plugin },
     });
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(r.stdout, "{}");
+    assert.equal(r.stdout, project, "the project directory reaches the helper");
   } finally {
     f.done();
   }
