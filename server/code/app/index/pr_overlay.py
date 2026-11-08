@@ -511,7 +511,8 @@ _FILE_EDGES: TtlCache[tuple[str, str, str], _Edges] = TtlCache(
 _NAMES: TtlCache[tuple[str, str, str, str], tuple[tuple[str, str, str], ...]] = TtlCache(
     lambda: settings.code_pr_overlay_file_ttl_s, maxsize=200_000
 )
-# (org, ns) -> (cache key, future) of the one overlay parse in progress for it
+# (org, ns) -> (cache key, future) of the one overlay parse in progress for it in this
+# server process (each web worker, `LOOM_WEB_WORKERS`, has its own)
 _RUNNING: dict[tuple[str, str], tuple[Any, asyncio.Future[Any]]] = {}
 # Overlay parses run here, not in the default executor, so they never hold back other
 # threaded work; two threads, so one slow namespace leaves room for another
@@ -542,10 +543,10 @@ async def _in_turn[T](
 ) -> T | None:
     """`fn(*args)` on the parse pool, `store`d when it finishes; None when `deadline`
     passes before it can start, or a parse deadline after that before it ends. Parsing
-    is CPU work: one overlay parse runs at a time per namespace (`scope`; parses of one
-    grammar also wait for each other across the process, `bounded_parse`), the event
-    loop runs at each of the parser's reads, and a request asking for the key already
-    running awaits that one."""
+    is CPU work: one overlay parse runs at a time per namespace in this process
+    (`scope`; parses of one grammar also wait for each other across the process,
+    `bounded_parse`), the event loop runs at each of the parser's reads, and a request
+    asking for the key already running awaits that one."""
     while (current := _RUNNING.get(scope)) is not None and current[0] != key:
         left = deadline - time.monotonic()
         if left <= 0:
@@ -620,8 +621,9 @@ def _file_edges(
 
     if pf is None:
         pf, err = parse_for_ingest(path, source)
-        if pf is None or parse_timed_out(err):
-            return _Edges((), parse_timed_out(err))
+        timed_out = parse_timed_out(err)
+        if pf is None or timed_out:
+            return _Edges((), timed_out)
     try:
         edges, _misses = extract_edges_and_misses(pf, table, None)
     except Exception as e:  # noqa: BLE001 — per file, never the overlay
