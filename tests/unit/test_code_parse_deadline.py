@@ -66,18 +66,26 @@ def _is_parser(node: ast.expr) -> bool:
     return False
 
 
-# Receivers of `.parse(` in the tree-sitter modules that are no parser
-_NOT_A_PARSER = {"bounded_parse", "Declarations"}
+# Receivers of `.parse(` that are no tree-sitter parser: the bounded one, the definition
+# reader over it, the hand-written lane parsers, the regex and Python parsers
+_NOT_A_PARSER = {"bounded_parse", "Declarations", "_Parser", "_sre_parser", "ast"}
+
+
+def _receiver(node: ast.expr) -> str:
+    if isinstance(node, ast.Call):
+        node = node.func
+    return node.id if isinstance(node, ast.Name) else ast.unparse(node)
 
 
 def test_every_tree_sitter_parse_goes_through_the_deadline() -> None:
-    """Outside `bounded_parse`, no `.parse(` is called on a parser, nor at all in a
-    module that names tree-sitter but on `_NOT_A_PARSER`."""
+    """Outside `bounded_parse`, no `.parse(` is called on a parser, nor at all in the code
+    plane's domain or a module that names tree-sitter but on `_NOT_A_PARSER`."""
     unbounded = []
     for f in _SERVER.rglob("*.py"):
         if f.name == "bounded_parse.py":
             continue
         text = f.read_text()
+        scoped = "tree_sitter" in text or f.is_relative_to(_SERVER / "code" / "domain")
         for node in ast.walk(ast.parse(text)):
             if (
                 isinstance(node, ast.Call)
@@ -85,13 +93,7 @@ def test_every_tree_sitter_parse_goes_through_the_deadline() -> None:
                 and node.func.attr == "parse"
                 and (
                     _is_parser(node.func.value)
-                    or (
-                        "tree_sitter" in text
-                        and not (
-                            isinstance(node.func.value, ast.Name)
-                            and node.func.value.id in _NOT_A_PARSER
-                        )
-                    )
+                    or (scoped and _receiver(node.func.value) not in _NOT_A_PARSER)
                 )
             ):
                 unbounded.append(f"{f.relative_to(_SERVER.parent)}:{node.lineno}")

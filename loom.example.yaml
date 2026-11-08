@@ -1199,7 +1199,7 @@ settings:
   # code_ingest_max_files_per_commit: 500
 
   # Longest one tree-sitter parse may run (seconds); a file whose parse runs past it is
-  # indexed as chunks without symbols and its parse error is recorded. [restart]
+  # indexed as chunks without symbols and its parse error is recorded. [live]
   # code_parse_timeout_seconds: 3.0
 
   # The ingest pass's own deadline (seconds), kept at the supervisor's cap;

@@ -176,6 +176,7 @@ def _chunks_for(
     source: bytes,
     max_chunk_chars: int,
     ns_key: tuple[str, str] | None = None,
+    parse_error: str = "",
 ) -> tuple[list[Chunk], dict[int, str], list[Facet]]:
     """The chunks of one parsed file and, for the languages that carry them, the
     deterministic context prefixes (by chunk index) and the facet rows: a reference
@@ -227,9 +228,9 @@ def _chunks_for(
         known = {(x.qualified_name, x.id) for x in pf.symbols}
         pf.symbols.extend(x for x in sh.symbols if (x.qualified_name, x.id) not in known)
         return sh.chunks, dict(sh.prefixes), sh.facets
-    if pf.lang == "config" and _host_islands_on():
+    if pf.lang == "config" and _host_islands_on() and not parse_error:
         # The host's shell islands as facet rows (programs, dialects, statement facets);
-        # chunks stay the line windows
+        # chunks stay the line windows. Not read again when the parse step failed on them.
         try:
             hu = host_units(pf)
         except ParseTimeout:

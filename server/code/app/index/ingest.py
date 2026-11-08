@@ -220,6 +220,7 @@ async def ingest_file(
                 source,
                 max_chunk_chars,
                 (org, ns),
+                stats.error,
             )
         )
     except Exception as chunk_exc:  # noqa: BLE001 — one bad file must not sink the commit

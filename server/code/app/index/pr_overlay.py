@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.code.app.ttl_cache import TtlCache
+from server.code.domain.extract.bounded_parse import ParseTimeout
 from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.pr_overlay")
@@ -476,14 +477,14 @@ async def load_posted_overlay(
 # Per file, so a push that changes one file of a PR re-parses that file alone, for
 # `code_pr_overlay_file_ttl_s`. Only small results are kept (a parsed file holds its
 # tree and source).
-# (path, content digest) -> (the file's symbols, the names it defines or calls).
-_FILE_FACTS: TtlCache[tuple[str, str], tuple[tuple[Any, ...], frozenset[str]]] = TtlCache(
+# (path, content digest) -> (the file's symbols, the names it defines or calls, whether
+# its parse ran past the deadline).
+_Facts = tuple[tuple[Any, ...], frozenset[str], bool]
+_FILE_FACTS: TtlCache[tuple[str, str], _Facts] = TtlCache(
     lambda: settings.code_pr_overlay_file_ttl_s, maxsize=512
 )
-# (path, content digest) -> the parse of it in progress.
-_PARSING: dict[
-    tuple[str, str], asyncio.Future[tuple[Any, tuple[tuple[Any, ...], frozenset[str]]]]
-] = {}
+# The overlay's parse in progress, by its cache key: at most one per process
+_RUNNING: dict[Any, asyncio.Future[Any]] = {}
 # (path, content digest, digest of the name-table rows its names bind to) -> edges.
 _FILE_EDGES: TtlCache[tuple[str, str, str], tuple[OverlayEdge, ...]] = TtlCache(
     lambda: settings.code_pr_overlay_file_ttl_s, maxsize=512
@@ -508,41 +509,62 @@ def _binding_digest(names: frozenset[str], table: dict[str, list[tuple[str, str,
     return h.hexdigest()
 
 
+async def _in_turn(
+    key: Any, deadline: float, store: Callable[[Any], None], fn: Callable[..., Any], *args: Any
+) -> Any:
+    """`fn(*args)` in a thread, `store`d when it finishes; None when `deadline` passes
+    before it can start. Parsing is CPU work: one overlay parse runs at a time per
+    process (the event loop runs at each of the parser's reads), and a request asking
+    for the key already running awaits that one."""
+    while (task := _RUNNING.get(key)) is None and _RUNNING:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return None
+        await asyncio.wait(set(_RUNNING.values()), timeout=left)
+    if task is None:
+        if time.monotonic() > deadline:
+            return None
+        task = asyncio.ensure_future(asyncio.to_thread(fn, *args))
+        _RUNNING[key] = task
+
+        def done(t: asyncio.Future[Any]) -> None:
+            _RUNNING.pop(key, None)
+            if not t.cancelled() and t.exception() is None:
+                store(t.result())  # kept even when every request waiting on it went away
+
+        task.add_done_callback(done)
+    return await asyncio.shield(task)
+
+
 async def _file_facts(
     path: str, source: bytes, digest: str, deadline: float
-) -> tuple[Any, tuple[Any, ...], frozenset[str]] | None:
-    """(parsed file or None when cached, symbols, names) of one post-image file; None
-    when it is not cached and `deadline` has passed."""
-    hit = _FILE_FACTS.get((path, digest))
+) -> tuple[Any, _Facts] | None:
+    """(parsed file or None when cached, facts) of one post-image file; None when it is
+    not cached and `deadline` passes before its parse can start."""
+    key = (path, digest)
+    hit = _FILE_FACTS.get(key)
     if hit is not None:
-        return None, hit[0], hit[1]
-    if time.monotonic() > deadline:
-        return None
-    # Parsing is CPU work, done in a thread (the event loop runs at each of the parser's
-    # reads), once for every request that asks for the same text meanwhile
-    task = _PARSING.get((path, digest))
-    if task is None:
-        task = asyncio.ensure_future(asyncio.to_thread(_parsed_facts, path, source))
-        _PARSING[(path, digest)] = task
-        task.add_done_callback(lambda _: _PARSING.pop((path, digest), None))
-    pf, facts = await asyncio.shield(task)
-    _FILE_FACTS.put((path, digest), facts)
-    return pf, facts[0], facts[1]
+        return None, hit
+    got: tuple[Any, _Facts] | None = await _in_turn(
+        key, deadline, lambda got: _FILE_FACTS.put(key, got[1]), _parsed_facts, path, source
+    )
+    return got
 
 
-def _parsed_facts(path: str, source: bytes) -> tuple[Any, tuple[tuple[Any, ...], frozenset[str]]]:
-    from server.code.app.index.ingest_parse import parse_file
+def _parsed_facts(path: str, source: bytes) -> tuple[Any, _Facts]:
+    from server.code.app.index.ingest_parse import parse_for_ingest
     from server.code.domain.extract.edges_treesitter import collect_call_names
 
-    pf = parse_file(path, source)
+    pf, err = parse_for_ingest(path, source)
+    timed_out = ParseTimeout.__name__ in err
     if pf is None or not pf.symbols:
-        return None, ((), frozenset())
+        return None, ((), frozenset(), timed_out)
     names = {s.name for s in pf.symbols if s.kind in ("function", "method")}
     try:
         names |= collect_call_names(pf)
     except Exception as e:  # noqa: BLE001 — a file whose calls cannot be listed binds nothing
         logger.debug("pr_overlay: call names of %s failed: %s", path, e)
-    return pf, (tuple(pf.symbols), frozenset(names))
+    return pf, (tuple(pf.symbols), frozenset(names), timed_out)
 
 
 def _file_edges(
@@ -550,10 +572,10 @@ def _file_edges(
 ) -> tuple[OverlayEdge, ...]:
     """The calls and inherits edges of one post-image file; `pf` is its parse when this
     request already holds it."""
-    from server.code.app.index.ingest_parse import parse_file
+    from server.code.app.index.ingest_parse import parse_for_ingest
     from server.code.domain.extract.edges_treesitter import extract_edges_and_misses
 
-    pf = pf or parse_file(path, source)
+    pf = pf or parse_for_ingest(path, source)[0]
     try:
         edges, _misses = extract_edges_and_misses(pf, table, None)
     except Exception as e:  # noqa: BLE001 — per file, never the overlay
@@ -599,11 +621,12 @@ async def _parse_post_image(
         if source is None or len(source) > MAX_FILE_BYTES:
             continue
         digest = _digest(source)
-        facts = await _file_facts(p, source, digest, deadline)
-        if facts is None:
+        got = await _file_facts(p, source, digest, deadline)
+        if got is None or got[1][2]:
             left_out += 1
+        if got is None:
             continue
-        pf, symbols, file_names = facts
+        pf, (symbols, file_names, _) = got
         if not symbols:
             continue
         files[p] = (source, digest, pf, symbols, file_names)
@@ -623,12 +646,19 @@ async def _parse_post_image(
         key = (p, digest, _binding_digest(file_names, table))
         edges = _FILE_EDGES.get(key)
         if edges is None:
-            if time.monotonic() > deadline:
-                left_out += 1
-                continue
-            # parsing and binding are CPU work, done in a thread
-            edges = await asyncio.to_thread(_file_edges, pf, p, source, table)
-            _FILE_EDGES.put(key, edges)
+            edges = await _in_turn(
+                key,
+                deadline,
+                functools.partial(_FILE_EDGES.put, key),
+                _file_edges,
+                pf,
+                p,
+                source,
+                table,
+            )
+        if edges is None:
+            left_out += 1
+            continue
         ov.edges.extend(edges)
     _note_left_out(ov, left_out)
 

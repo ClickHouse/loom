@@ -356,13 +356,13 @@ def test_a_push_that_changes_one_file_parses_that_file_alone(
     from server.code.app.index import ingest_parse
 
     parsed: list[str] = []
-    real = ingest_parse.parse_file
+    real = ingest_parse.parse_for_ingest
 
     def counting(path: str, source: bytes) -> Any:
         parsed.append(path)
         return real(path, source)
 
-    monkeypatch.setattr(ingest_parse, "parse_file", counting)
+    monkeypatch.setattr(ingest_parse, "parse_for_ingest", counting)
     repo = _CountingRepo()
     first = po.PostImage(pr_number=7, files={PATH: POST, OTHER: OTHER_POST}, diff="")
     ov1 = asyncio.run(po.load_posted_overlay(repo, "acme", "code-ch", first))
@@ -407,3 +407,21 @@ def test_concurrent_requests_parse_a_file_once(monkeypatch: pytest.MonkeyPatch) 
     first, second = asyncio.run(both())
     assert calls == [PATH]
     assert first is not None and second is not None and first[1] == second[1] != ()
+
+
+def test_a_file_whose_parse_runs_past_the_deadline_is_counted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 0.2)
+    slow = b"package x\nvar s = " + b"`" * 60_000
+    sources = {PATH: POST.encode(), "src/slow.go": slow}
+    ov = po.PrOverlay(
+        pr_number=7, changed_paths=list(sources), hunks={p: [(1, 1)] for p in sources}
+    )
+
+    async def read(path: str) -> bytes:
+        return sources[path]
+
+    asyncio.run(po._parse_post_image(_Repo(), "acme", "code-ch", ov, read=read, path_prefixes=()))
+    assert "checkPartsLimit" in {s.name for s in ov.symbols}
+    assert "changed file(s) not fully read" in ov.note
