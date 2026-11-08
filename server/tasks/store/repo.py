@@ -402,8 +402,8 @@ async def list_tasks(
     newest_first: bool = False,
     ch: _CHClient | None = None,
 ) -> list[TaskRow]:
-    """`posted_by` matches a task's poster subject or its agent label; `from_subject`
-    matches the poster subject alone."""
+    """`posted_by` matches a task's poster subject or its agent label, for a caller that may
+    read `inbox`; `from_subject` matches the poster subject alone, as a token answers for it."""
     ch = ch or _default_client()
     where = ["org = {org:String}", "is_deleted = 0"]
     params: dict[str, Any] = {"org": org, "limit": int(limit)}
