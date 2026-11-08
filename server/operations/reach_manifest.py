@@ -323,6 +323,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "memory.ask": ("sdk_method",),
     "memory.assign_category": ("sdk_method",),
     "memory.auto_retirements": ("dashboard",),
+    "memory.backlinks": ("dashboard",),
     "memory.bulk_get": (
         "sdk_method",
         "dashboard",
@@ -355,7 +356,11 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "dashboard",
     ),
     "memory.demonstrate": ("sdk_method",),
-    "memory.demote": ("sdk_method",),
+    "memory.demote": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "memory.evidence": ("dashboard",),
     "memory.exposure_summary": ("dashboard",),
     "memory.extraction_status": (
         "sdk_method",
@@ -391,16 +396,25 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "memory.lock": ("sdk_method",),
+    "memory.lock": (
+        "sdk_method",
+        "dashboard",
+    ),
     "memory.move": ("dashboard",),
-    "memory.outcome": ("sdk_method",),
+    "memory.outcome": (
+        "sdk_method",
+        "dashboard",
+    ),
     "memory.outcome_run": ("sdk_method",),
     "memory.owner_report": ("dashboard",),
     "memory.pin": (
         "sdk_method",
         "dashboard",
     ),
-    "memory.promote": ("sdk_method",),
+    "memory.promote": (
+        "sdk_method",
+        "dashboard",
+    ),
     "memory.proposal_decide": ("dashboard",),
     "memory.proposals": ("dashboard",),
     "memory.provenance": (
@@ -412,8 +426,12 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "memory.record.history": ("sdk_method",),
     "memory.record.query": ("sdk_method",),
     "memory.record.write": ("sdk_method",),
-    "memory.redact": ("sdk_method",),
+    "memory.redact": (
+        "sdk_method",
+        "dashboard",
+    ),
     "memory.reindex": ("dashboard",),
+    "memory.reject": ("dashboard",),
     "memory.related": (
         "sdk_method",
         "dashboard",
@@ -449,7 +467,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "memory.sweep_expired": ("dashboard",),
     "memory.timeline": ("sdk_method",),
     "memory.touch": ("sdk_method",),
-    "memory.unlock": ("sdk_method",),
+    "memory.unlock": (
+        "sdk_method",
+        "dashboard",
+    ),
     "memory.unpin": ("dashboard",),
     "memory.update": ("sdk_method",),
     "memory.update_by_id": (
