@@ -610,13 +610,20 @@ async def test_a_failed_mirror_is_recorded_per_writer_and_the_repair_applies_it(
     # at or above it, are left alone.
     retired.clear()
     _DEMOTE_REEMITS.clear()
+    _retire_clients.clear()
     monkeypatch.setattr("server.memory.store.retire_vectors_for_keys", _retire_many_ok)
+    heads = {r["memory_key"]: r for r in ch.inserts[0][1]}
+
+    async def _heads(keys, *, ch=None) -> dict[Any, int]:
+        return {k: heads[k[5]]["version"] for k in keys}
+
+    monkeypatch.setattr("server.memory.store.clickhouse_head_versions", _heads)
     no_erasure(monkeypatch)
     results = await pf.retry_failures([pf._row_from_ch(r) for r in recorded], ch=ch)
 
     assert [r.resolved for r in results] == [True, True]
     assert retired == [("a", written["a"]), ("d", written["d"])]
-    assert _retire_clients[-2:] == [ch, ch]  # the repair's client, not the default
+    assert _retire_clients == [ch, ch]  # the repair's client, not the default
     assert _DEMOTE_REEMITS == [
         ("b", {"expires_at": None, "confidence": 0.45, "version": written["b"]})
     ]
@@ -735,3 +742,26 @@ async def test_a_malformed_expiry_mirror_failure_is_abandoned(
     ):
         result = await pf._retry(failure(item), ch=object())
         assert (result.abandoned, result.reason) == (True, "malformed_payload")
+
+
+async def test_a_replayed_demote_yields_to_a_later_head(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A touch after the sweep moves the head and copies the key's vectors at read + 1,
+    # below the sweep's version: a late demote copy would clear the expiry it set. The
+    # retire still runs, as the vectors below the version hold the key's old text.
+    calls: list[Any] = []
+
+    async def _apply(items, *, ch=None) -> int:
+        calls.append(items)
+        return 0
+
+    async def _heads(keys, *, ch=None) -> dict[Any, int]:
+        return {k: 300 for k in keys}  # the touch's version, above the sweep's 200
+
+    monkeypatch.setattr(X, "apply_mirror", _apply)
+    monkeypatch.setattr("server.memory.store.clickhouse_head_versions", _heads)
+    demoted = ("o", "n", "a", "-", "-", "touched")
+    retired_key = ("o", "n", "a", "-", "-", "anonymized")
+    await X.replay_mirror(
+        [(demoted, 200, {"expires_at": None, "confidence": 0.4}), (retired_key, 200, None)]
+    )
+    assert calls == [[(retired_key, 200, None)]]

@@ -1212,11 +1212,13 @@ Expiry is the writer's choice. `ttl_seconds`, `valid_to`, a type's or namespace'
 | `anonymize`           | Replaces the value with a marker, tombstones embeddings, keeps the shell row. |
 
 The sweep then mirrors the action onto `memory_embeddings` and `entity_vectors` at the
-memory row's version, so the mirror leaves a later write's `memory_embeddings` rows
-alone. `entity_vectors` has no version, so its cutoff is the second that version was
-drawn in. The next pass never selects a key it wrote, so a failed mirror is recorded as
-a `memory_expiry_mirror` projection failure, which `projection_repair` replays. A pass
-cut off between its insert and that record records nothing, as with any fail-open
+memory row's version: only rows below it change, so a later write's rows above it stay.
+`entity_vectors` has no version, so its cutoff is the second that version was drawn in.
+The next pass never selects a key it wrote, so a failed mirror is recorded as a
+`memory_expiry_mirror` projection failure, which `projection_repair` replays. The replay
+skips a demote whose key has a later head, since a write since then (a touch's metadata
+copy lands below the sweep's version) owns its expiry; a retire always runs. A pass cut
+off between its insert and that record records nothing, as with any fail-open
 projection.
 
 Table-level retention and tiering are operator TTLs, off by default

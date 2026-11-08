@@ -878,8 +878,8 @@ async def _retry_edges_restore(failure: ProjectionFailureRow, *, ch: Any) -> str
 
 
 async def _retry_expiry_mirror(failure: ProjectionFailureRow, *, ch: Any) -> str:
-    """Apply the sweep's mirror again: it touches only rows below the recorded version."""
-    from server.memory.app.expiry import apply_mirror
+    """Apply the sweep's mirror again (`replay_mirror`)."""
+    from server.memory.app.expiry import replay_mirror
 
     try:
         items = [
@@ -893,7 +893,7 @@ async def _retry_expiry_mirror(failure: ProjectionFailureRow, *, ch: Any) -> str
             raise ValueError("no items, or an item that is not a mirror")
     except (KeyError, TypeError, ValueError):
         return "malformed_payload"
-    await apply_mirror(items, ch=ch)
+    await replay_mirror(items, ch=ch)
     return ""
 
 

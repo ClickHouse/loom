@@ -379,7 +379,7 @@ async def apply_mirror(items: list[MirrorItem], *, ch: Any | None = None) -> int
     entity_vectors, at the memory row's version, so an anonymized key keeps no entity
     names in search either); demote copies them at that version with the expiry
     cleared and confidence lowered. Both touch only memory_embeddings rows below the
-    version, so a replay leaves a later write's rows alone; entity_vectors has no
+    version, never a row a later write landed above it; entity_vectors has no
     version, so its cutoff is the second that version was drawn in. Batched as one
     keyed read and one insert per 500 keys, never one per key, in the sweep and in its
     replay."""
@@ -393,6 +393,31 @@ async def apply_mirror(items: list[MirrorItem], *, ch: Any | None = None) -> int
     if copies:
         n += await memory_repo.reemit_embedding_rows_for_keys(copies, ch=ch)
     return n
+
+
+async def replay_mirror(items: list[MirrorItem], *, ch: Any | None = None) -> int:
+    """`apply_mirror` for a recorded failure, run after later writes may have landed. A
+    demote is replayed only while the key's head is still the sweep's version: a later
+    write (a touch's read + 1 copy sits below that version) owns the key's expiry and
+    confidence. A retire always runs: the key's vectors below the version are its old
+    text, which an anonymize or tombstone took out."""
+    import server.memory.store as memory_repo
+    from server.core import pg
+    from server.memory.store import pg_memory
+
+    demoted = [key for key, _version, copy in items if copy is not None]
+    if demoted:
+        heads = (
+            await pg_memory.head_versions(demoted)
+            if pg.enabled()
+            else await memory_repo.clickhouse_head_versions(demoted, ch=ch)
+        )
+        items = [
+            (key, version, copy)
+            for key, version, copy in items
+            if copy is None or heads.get(key) == version
+        ]
+    return await apply_mirror(items, ch=ch)
 
 
 async def _record_mirror_failures(items: list[MirrorItem], error: Exception) -> None:
