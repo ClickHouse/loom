@@ -164,12 +164,18 @@ async function deleteEveryAgent(
  *  writer), or write one for a thread built by appends, which has none. Answers false
  *  when the conversation is gone. */
 async function retitle(id: Pick<Identity, "org" | "namespace">, thread: Thread, title: string): Promise<boolean> {
-  const head = await readHead(id, thread.thread_id);
+  let head = await readHead(id, thread.thread_id);
   if (!head.found) return false;
   if (head.created_at) {
     if ((await renameThread(id, head.agent, thread.thread_id, title)).updated) return true;
-    // The row went since the read: write one only while the conversation still has turns.
-    if (!(await readHead(id, thread.thread_id)).found) return false;
+    // The row changed since the read: title the one there now, or write one while the
+    // conversation still has turns. Writing over a row would replace its metadata.
+    head = await readHead(id, thread.thread_id);
+    if (!head.found) return false;
+    if (head.created_at) {
+      if ((await renameThread(id, head.agent, thread.thread_id, title)).updated) return true;
+      throw new Error("The conversation changed during the rename; try again");
+    }
   }
   await createThreadRow(id, thread.agent, thread.thread_id, title);
   return true;

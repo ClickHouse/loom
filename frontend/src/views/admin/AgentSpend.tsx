@@ -9,7 +9,19 @@ import { SectionHeading } from "../../components/ui";
 
 const DAYS = 7;
 
-/** The coding agents' own model spend in this namespace (cost.agent_summary), by model. */
+const turns = (n: number) => `${n} ${n === 1 ? "turn" : "turns"}`;
+
+function caption(data: AgentSpendSummary): string {
+  // An unpriced turn counts as $0, so a window with no priced turn has no cost to show.
+  if (data.total_turns > 0 && data.unpriced_turns === data.total_turns) {
+    return `${turns(data.total_turns)} over the last ${DAYS} days, none priced`;
+  }
+  const unpriced = data.unpriced_turns ? `, ${turns(data.unpriced_turns)} unpriced` : "";
+  return `$${data.total_cost_usd.toFixed(4)} over the last ${DAYS} days${unpriced}`;
+}
+
+/** The coding agents' own model spend in this namespace (cost.agent_summary), by model.
+ *  Spending keys it by namespace, so one namespace's rows never paint under another's badge. */
 export function AgentSpend() {
   const identity = useIdentity();
   const [data, setData] = useState<AgentSpendSummary | null>(null);
@@ -25,17 +37,12 @@ export function AgentSpend() {
     },
     [identity.org, identity.namespace, reload],
   );
-  const unpriced = data?.unpriced_turns ? `, ${data.unpriced_turns} turns unpriced` : "";
   return (
     <section className="mt-8">
       <SectionHeading
         label="Coding agents"
         level={2}
-        caption={
-          data
-            ? `$${data.total_cost_usd.toFixed(4)} over the last ${DAYS} days${unpriced}`
-            : `What the coding agents spent on their own model calls, the last ${DAYS} days.`
-        }
+        caption={data ? caption(data) : `What the coding agents spent on their own model calls, the last ${DAYS} days.`}
       />
       {!!error && (
         <ListState kind="error" things="coding agent spend" error={error} onRetry={() => setReload((n) => n + 1)} />

@@ -38,4 +38,27 @@ describe("AgentSpend", () => {
       expect.anything(),
     );
   });
+
+  it("says a window with no priced turn has no cost, and counts one turn as a turn", async () => {
+    vi.mocked(api.getAgentSpend).mockResolvedValueOnce({
+      rows: [{ model: "local-y", turns: 2, sessions: 1, cost_usd: 0, unpriced_turns: 2 }],
+      total_cost_usd: 0,
+      total_turns: 2,
+      unpriced_turns: 2,
+    });
+    render(<AgentSpend />);
+    expect(await screen.findByText("2 turns over the last 7 days, none priced")).toBeInTheDocument();
+    cleanup();
+    vi.mocked(api.getAgentSpend).mockResolvedValueOnce({
+      rows: [
+        { model: "claude-x", turns: 4, sessions: 1, cost_usd: 0.25, unpriced_turns: 0 },
+        { model: "local-y", turns: 1, sessions: 1, cost_usd: 0, unpriced_turns: 1 },
+      ],
+      total_cost_usd: 0.25,
+      total_turns: 5,
+      unpriced_turns: 1,
+    });
+    render(<AgentSpend />);
+    expect(await screen.findByText("$0.2500 over the last 7 days, 1 turn unpriced")).toBeInTheDocument();
+  });
 });

@@ -448,7 +448,7 @@ export function Spending() {
           )}
         </>
       )}
-      <AgentSpend />
+      <AgentSpend key={rowsKey} />
     </PageContainer>
   );
 }

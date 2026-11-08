@@ -131,13 +131,7 @@ export async function gradeRun(
   runId: string,
   grade: "pass" | "fail",
   reason: string,
-): Promise<{ graded: number; skipped_active: number; unchanged: number }> {
-  return post("/v1/run.grade", {
-    org: id.org,
-    namespace: id.namespace,
-    run_id: runId,
-    grade,
-    reason,
-    source: "dashboard",
-  });
+  source: string,
+): Promise<{ graded: number; skipped_active: number; unchanged: number; proposals_decided: unknown[] }> {
+  return post("/v1/run.grade", { org: id.org, namespace: id.namespace, run_id: runId, grade, reason, source });
 }

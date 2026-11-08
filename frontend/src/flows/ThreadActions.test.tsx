@@ -175,6 +175,25 @@ describe("ThreadActions", () => {
     expect(api.createThreadRow).not.toHaveBeenCalled();
   });
 
+  it("titles a row another agent wrote after the read instead of writing over it", async () => {
+    vi.mocked(api.getConversationThread)
+      .mockResolvedValueOnce({ found: true, msg_count: 1, agent: "codex", created_at: "2000-01-01 00:00:00" } as never)
+      .mockResolvedValueOnce({
+        found: true,
+        msg_count: 1,
+        agent: "cursor",
+        created_at: "2000-01-02 00:00:00",
+      } as never);
+    vi.mocked(api.renameThread).mockResolvedValueOnce({ updated: false });
+    render(<ThreadActions identity={identity} thread={thread} canRename canDelete={false} onChanged={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename conversation" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
+    await waitFor(() => expect(api.renameThread).toHaveBeenLastCalledWith(identity, "cursor", "t1", "Deploy plan"));
+    expect(api.createThreadRow).not.toHaveBeenCalled();
+  });
+
   it("writes no row when the conversation went between the read and the update", async () => {
     vi.mocked(api.getConversationThread)
       .mockResolvedValueOnce({ found: true, msg_count: 1, agent: "codex", created_at: "2000-01-01 00:00:00" } as never)
