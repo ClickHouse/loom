@@ -1,10 +1,11 @@
 name: ci
 
+# release/** too: a supported line's patches get the same checks.
 on:
   push:
-    branches: [main, "release/**"] # a supported line's patches too
+    branches: [main, "release/**"]
   pull_request:
-    branches: [main, "release/**"] # a supported line's patches too
+    branches: [main, "release/**"]
 
 # A new push to a pull request cancels its superseded run. Every push to main
 # runs to completion in its own group, so a failure on one merge commit is
@@ -928,11 +929,12 @@ jobs:
         run: |
           uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
-      # On main the base is the previous commit (HEAD~1); on a pull request, origin/main.
+      # On a push the base is the previous commit (HEAD~1); on a pull request, the
+      # branch it targets (main, or a release/X.Y line).
       - name: Mixed-version gate
         run: >-
           python scripts/gates/mixed_version.py --require
-          --base ${{ github.event_name == 'pull_request' && 'origin/main' || 'HEAD~1' }}
+          --base ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD~1' }}
 
   sdk-typescript:
     name: typescript sdk (generated types in sync, lint, tsc, vitest, dist)

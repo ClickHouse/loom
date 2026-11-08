@@ -4,8 +4,6 @@ silent success."""
 
 from __future__ import annotations
 
-import dataclasses
-
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -16,18 +14,11 @@ from server.operations.registry import ALL_OPERATIONS
 from server.transport import http as http_mod
 
 
-async def _never(inp: object) -> object:
-    raise AssertionError("an op the older server does not serve never runs")
-
-
 @pytest.fixture()
 def older_server(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
-    """Every op but `memory.set`, which this server predates."""
-    ops = [
-        dataclasses.replace(op, handler=_never)
-        for op in ALL_OPERATIONS
-        if op.name != "memory.set"
-    ]
+    """The HTTP router with every op but `memory.set`, which this server predates; the
+    production app adds no middleware that answers before routing."""
+    ops = [op for op in ALL_OPERATIONS if op.name != "memory.set"]
     assert len(ops) == len(ALL_OPERATIONS) - 1
     monkeypatch.setattr(http_mod, "ALL_OPERATIONS", ops)
     app = FastAPI()
