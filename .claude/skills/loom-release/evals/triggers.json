@@ -1,0 +1,30 @@
+[
+  {
+    "query": "cut the 1.3.0 release: bump the versions and write the release notes",
+    "should_trigger": true
+  },
+  {
+    "query": "tag a release candidate for 1.3.0 and tell me when it can go final",
+    "should_trigger": true
+  },
+  {
+    "query": "1.3.0 is out, check that the one-line installer and the SDKs work from outside",
+    "should_trigger": true
+  },
+  {
+    "query": "we need a patch release of 1.2 with the fix from main",
+    "should_trigger": true
+  },
+  {
+    "query": "deploy the new build to the blue/green deployment",
+    "should_trigger": false
+  },
+  {
+    "query": "the release workflow's docker job is red on this pull request, why",
+    "should_trigger": false
+  },
+  {
+    "query": "open a pull request for this branch and merge it when CI is green",
+    "should_trigger": false
+  }
+]

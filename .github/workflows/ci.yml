@@ -2,9 +2,9 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, "release/**"] # a supported line's patches too
   pull_request:
-    branches: [main]
+    branches: [main, "release/**"] # a supported line's patches too
 
 # A new push to a pull request cancels its superseded run. Every push to main
 # runs to completion in its own group, so a failure on one merge commit is

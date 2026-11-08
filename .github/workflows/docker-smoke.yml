@@ -2,7 +2,7 @@ name: docker-smoke
 
 on:
   push:
-    branches: [main]
+    branches: [main, "release/**"] # a supported line's patches too
     paths:
       [
         "Dockerfile",
@@ -35,7 +35,7 @@ on:
         ".github/workflows/docker-smoke.yml",
       ]
   pull_request:
-    branches: [main]
+    branches: [main, "release/**"] # a supported line's patches too
     paths:
       [
         "Dockerfile",

@@ -35,7 +35,8 @@ TypeScript SDKs, and the dashboard. This page lists every page in reading order.
   `loom login` and MCP clients.
 - [Use Loom without the dashboard](guides/without-the-dashboard.md): `loom login`, `loom call`
   and the SDK call for every dashboard view.
-- [Upgrades](operations/upgrades.md) · [Backup and recovery](operations/backup-and-recovery.md) ·
+- [Upgrades](operations/upgrades.md) · [Supported versions](operations/supported-versions.md) ·
+  [Backup and recovery](operations/backup-and-recovery.md) ·
   [Monitoring](operations/monitoring.md) · [Maintenance](operations/maintenance.md) ·
   [Runtime settings](operations/runtime-settings.md) ·
   [Troubleshooting](operations/troubleshooting.md) ·
