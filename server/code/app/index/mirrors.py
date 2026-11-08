@@ -26,6 +26,7 @@ import os
 import random
 import shutil
 import time
+from collections import Counter
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -127,33 +128,35 @@ async def history_dir(cfg: Any, *, op: str = "", head: str = "") -> tuple[str, s
 
 
 def mirror_status() -> dict[str, Any]:
-    """This host's mirrors by entry label: `ready`, `cloning` (running or queued),
-    `failed` (the last clone's reason), `absent` (not cloned here, and why), and the
-    ledger merges a ready mirror could not pin (its remote no longer serves them).
-    Reads the disk: an async caller runs it in a thread."""
+    """How many of this host's mirrors are `ready`, `cloning` (running or queued),
+    `failed` (by the last clone's reason) and `absent` (not cloned here, by why), and the
+    ledger merges a ready mirror could not pin (its remote no longer serves them). Counts
+    only: `/v1/health` answers without a token, and an entry's label names its org and
+    namespace. Reads the disk: an async caller runs it in a thread."""
     if not history_enabled():
         return {"history": "none"}
-    out: dict[str, Any] = {
-        "ready": [],
-        "cloning": [],
-        "failed": {},
-        "absent": {},
-        "unpinned_merges": 0,
-    }
+    ready = cloning = unpinned = 0
+    failed: Counter[str] = Counter()
+    absent: Counter[str] = Counter()
     for git_dir, cfgs in _groups(repos.configured_repos()).items():
-        label = cfgs[0].label
         if os.path.isdir(git_dir):
-            out["ready"].append(label)
-            out["unpinned_merges"] += len(pass_fetch.unpinned(git_dir))
+            ready += 1
+            unpinned += len(pass_fetch.unpinned(git_dir))
             continue
         state, reason = job_state(git_dir)
         if state == "cloning" or git_dir in _QUEUED:
-            out["cloning"].append(label)
+            cloning += 1
         elif state == "failed":
-            out["failed"][label] = reason
+            failed[reason] += 1
         else:
-            out["absent"][label] = _absent_reason(cfgs[0]) or "not asked for on this host yet"
-    return out
+            absent[_absent_reason(cfgs[0]) or "not asked for on this host yet"] += 1
+    return {
+        "ready": ready,
+        "cloning": cloning,
+        "failed": dict(failed),
+        "absent": dict(absent),
+        "unpinned_merges": unpinned,
+    }
 
 
 def _warms_up() -> bool:
@@ -168,8 +171,8 @@ async def readiness_check() -> readiness.CheckResult:
     if _warms_up() and not _LISTED.is_set():
         return readiness.result(False, "mirror warm-up has not listed its clones yet")
     status = await asyncio.to_thread(mirror_status)  # walks the mirror directories
-    cloning = status.get("cloning") or []
-    return readiness.result(not cloning, "mirrors cloning: " + ", ".join(cloning)[:300])
+    cloning = status.get("cloning", 0)
+    return readiness.result(not cloning, f"mirrors cloning: {cloning}")
 
 
 # ---- warm-up and the host loop ------------------------------------------------

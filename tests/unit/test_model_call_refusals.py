@@ -207,6 +207,8 @@ def test_a_budget_refusal_is_the_requests_error_and_touches_nothing_else(wire) -
     assert refused.value.status_code == 403 and refused.value.code == "MODEL_CALL_REFUSED"
     detail = refused.value.to_detail()
     assert (detail["gateway_status"], detail["gateway_code"]) == (429, "budget_exceeded")
+    # Extraction rows and agent events store the message: the gateway's own text stays out.
+    assert detail["message"] == "the inference gateway refused this call (429 budget_exceeded)"
     assert wire.agents == ["agent-a"]  # not retried
     assert provider_health.status() == {"degraded": False, "providers": {}}
     assert asyncio.run(customer.switched_off_orgs()) == frozenset()  # no org is off
@@ -280,6 +282,8 @@ def test_a_wait_answer_is_deferred_for_its_retry_after(wire, agent, status, wait
     assert deferred.value.status_code == 503 and deferred.value.code == "MODEL_CALL_DEFERRED"
     detail = deferred.value.to_detail()
     assert (detail["gateway_status"], detail["retry_after_s"]) == (status, wait)
+    wait_message = f"the inference gateway asked this call to wait ({status} agent_request_limit)"
+    assert detail["message"] == wait_message
     assert deferred.value.headers() == {"Retry-After": str(wait)}
     # a wait of two seconds or less is waited out once here, then deferred; longer, at once
     assert wire.agents == [agent] * asked and wire.slept == [1.0] * (asked - 1)

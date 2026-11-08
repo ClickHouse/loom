@@ -251,8 +251,9 @@ def test_mirrors_wait_for_clones_and_not_for_failures(monkeypatch, tmp_path) -> 
         lambda d: ("failed", "auth refused") if d == entries[2].git_dir else ("", ""),
     )
     status = mirrors.mirror_status()
-    assert status["ready"] == ["here"] and status["failed"] == {"broken": "auth refused"}
-    assert asyncio.run(mirrors.readiness_check()).reason == "mirrors cloning: queued"
+    assert status["ready"] == 1 and status["failed"] == {"auth refused": 1}
+    # `/v1/health/ready` answers without a token: a count, no entry's label.
+    assert asyncio.run(mirrors.readiness_check()).reason == "mirrors cloning: 1"
     monkeypatch.setattr(mirrors, "_QUEUED", set())
     assert asyncio.run(mirrors.readiness_check()).ok
 
@@ -286,9 +287,9 @@ def test_health_walks_the_mirrors_only_when_asked(monkeypatch) -> None:
     walked: list[int] = []
     monkeypatch.setattr(settings, "code_intel_enabled", True)
     monkeypatch.setattr(health, "_ping_clickhouse", _down)
-    monkeypatch.setattr(mirrors, "mirror_status", lambda: walked.append(1) or {"ready": []})
+    monkeypatch.setattr(mirrors, "mirror_status", lambda: walked.append(1) or {"ready": 0})
     assert "mirrors" not in _client().get("/v1/health").json() and not walked
-    assert _client().get("/v1/health?include=mirrors").json()["mirrors"] == {"ready": []}
+    assert _client().get("/v1/health?include=mirrors").json()["mirrors"] == {"ready": 0}
 
 
 @pytest.mark.asyncio
