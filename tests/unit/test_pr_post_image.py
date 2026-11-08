@@ -545,6 +545,13 @@ def test_one_overlay_parse_runs_at_a_time_in_a_namespace(
     assert most == 1
 
 
+async def _settled() -> None:
+    """Until the overlay parses in progress end (at most 10 s)."""
+    running = {task for _key, task in po._RUNNING.values()}
+    if running:
+        await asyncio.wait(running, timeout=10)
+
+
 def _slow_facts(seconds: float) -> Any:
     def parse(path: str, source: bytes) -> Any:
         time.sleep(seconds)
@@ -580,7 +587,7 @@ def test_a_parse_is_kept_when_its_request_went_away(monkeypatch: pytest.MonkeyPa
         )
         await asyncio.sleep(0.02)
         task.cancel()
-        await asyncio.sleep(0.3)
+        await _settled()
 
     asyncio.run(cancelled())
     assert po._FILE_FACTS.get(("a.go", "a")) == po._Facts(("a.go",), frozenset(), False)
@@ -615,7 +622,7 @@ def test_a_started_parse_is_not_waited_for_past_one_deadline_after_the_window(
         # the window and one deadline after it have passed: no wait
         got = await po._file_facts(scope, "a.go", b"", "a", time.monotonic() - 1)
         waited = time.monotonic() - start
-        await asyncio.sleep(0.6)
+        await _settled()
         return got, waited
 
     got, waited = asyncio.run(late())
@@ -736,6 +743,7 @@ def test_a_queued_parse_started_too_late_is_dropped(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(po, "_parsed_facts", parse)
 
     async def queued() -> Any:
+        await _settled()  # the pool is free
         # two other namespaces hold both pool threads
         for ns in ("one", "two"):
             asyncio.ensure_future(
@@ -743,7 +751,7 @@ def test_a_queued_parse_started_too_late_is_dropped(monkeypatch: pytest.MonkeyPa
             )
         await asyncio.sleep(0.02)
         got = await po._file_facts(("acme", "three"), "c.go", b"", "c", time.monotonic() + 0.05)
-        await asyncio.sleep(0.6)
+        await _settled()
         return got
 
     assert asyncio.run(queued()) is None
