@@ -589,14 +589,18 @@ async def test_a_failed_mirror_is_recorded_per_key_and_the_repair_applies_it(
 
     assert res.failures == ["mirror:2 keys: ConnectionError"]
     written = {r["memory_key"]: r["version"] for r in ch.inserts[0][1]}
-    assert [(r["projection"], r["memory_keys"]) for r in recorded] == [
-        (pf.EXPIRY_MIRROR, ["a"]),
-        (pf.EXPIRY_MIRROR, ["b"]),
-    ]
-    assert json.loads(recorded[0]["payload"]) == {
-        "key": ["test", "personal", "cursor", "-", "-", "a"],
-        "version": written["a"],
-        "demote": None,
+    # One failure per writer, its keys' items in the payload.
+    (failure,) = recorded
+    assert (failure["projection"], failure["memory_keys"]) == (pf.EXPIRY_MIRROR, ["a", "b"])
+    assert json.loads(failure["payload"]) == {
+        "items": [
+            [["test", "personal", "cursor", "-", "-", "a"], written["a"], None],
+            [
+                ["test", "personal", "cursor", "-", "-", "b"],
+                written["b"],
+                {"expires_at": None, "confidence": 0.45},
+            ],
+        ],
         "user_id": "-",
     }
 
@@ -608,7 +612,7 @@ async def test_a_failed_mirror_is_recorded_per_key_and_the_repair_applies_it(
     no_erasure(monkeypatch)
     results = await pf.retry_failures([pf._row_from_ch(r) for r in recorded], ch=ch)
 
-    assert [r.resolved for r in results] == [True, True]
+    assert [r.resolved for r in results] == [True]
     assert retired == [("a", written["a"])]
     assert _DEMOTE_REEMITS == [
         ("b", {"expires_at": None, "confidence": 0.45, "version": written["b"]})
@@ -619,3 +623,66 @@ async def _retire_many_ok(items, *, ch=None) -> int:
     for (_o, _n, _a, _u, _s, key), version in items:
         retired.append((key, version))
     return len(items)
+
+
+async def test_a_late_mirror_leaves_a_later_writes_vectors_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A replay runs after the sweep: only vector rows below the memory row's version
+    # are copied or retired, never one a write since then landed.
+    from server.memory.store import embeddings
+
+    def _emb(key: str, version: int) -> dict[str, Any]:
+        return {
+            "org": "o",
+            "namespace": "n",
+            "agent": "a",
+            "user_id": "-",
+            "session_id": "-",
+            "scope": "agent",
+            "embedding_model": "m",
+            "memory_key": key,
+            "content": "text",
+            "embedding": [0.1],
+            "version": version,
+            "created_at": _NOW,
+        }
+
+    live = [_emb("old", 100), _emb("new", 300), _emb("gone", 100), _emb("kept", 300)]
+
+    async def _live(ch, keys, **_: Any) -> list[dict[str, Any]]:
+        wanted = set(keys)
+        return [r for r in live if embeddings.identity_key(r) in wanted]
+
+    inserted: list[dict[str, Any]] = []
+
+    async def _insert(rows, *, ch=None) -> None:
+        inserted.extend(rows)
+
+    async def _none(*_a: Any, **_k: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(embeddings, "_live_rows_for_keys", _live)
+    monkeypatch.setattr(embeddings, "insert_embedding_rows", _insert)
+    monkeypatch.setattr(embeddings, "retire_copies_under_unembedded_heads", _none)
+    monkeypatch.setattr(embeddings, "tombstone_entity_vectors_for_keys", _none)
+    monkeypatch.setattr(embeddings, "_default_client", lambda: object())
+
+    def key(k: str) -> tuple[str, str, str, str, str, str]:
+        return ("o", "n", "a", "-", "-", k)
+
+    demote = {"expires_at": None, "confidence": 0.4}
+    await X.apply_mirror(
+        [
+            (key("old"), 200, demote),
+            (key("new"), 200, demote),
+            (key("gone"), 200, None),
+            (key("kept"), 200, None),
+        ]
+    )
+
+    got = {r["memory_key"]: r for r in inserted}
+    assert set(got) == {"old", "gone"}
+    assert got["old"]["version"] == 200 and got["old"]["confidence"] == 0.4
+    assert got["old"]["expires_at"] is None and got["old"]["tombstoned_at"] is None
+    assert got["gone"]["version"] == 200 and got["gone"]["tombstoned_at"] is not None

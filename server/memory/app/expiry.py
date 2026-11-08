@@ -273,13 +273,15 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
                 for row, (action, _r, _v) in zip(version_rows, mirrors, strict=True)
             ]
         )
-        items = mirror_items(mirrors, cfg=cfg)
+        items = _mirror_items(mirrors, cfg=cfg)
         try:
             await apply_mirror(items)
         except Exception as e:  # noqa: BLE001 — the memory rows are authoritative
             # The memory rows already landed and the read filter hides an expired row,
-            # but the next pass never sees these keys again: each one's mirror is
-            # recorded as a projection failure that `projection_repair` replays.
+            # but the next pass never selects these keys again: their mirror is
+            # recorded as a projection failure that `projection_repair` replays. A pass
+            # cut off between the insert and this record (cancelled, or the process
+            # gone) records nothing, as any fail-open projection does.
             log.warning(
                 "memory_expiry_sweep: embeddings mirror failed for %d keys: %s", len(items), e
             )
@@ -296,8 +298,8 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
 
 
 def _demote_overrides(row: Any, cfg: ExpiryConfig) -> dict[str, Any]:
-    """What demote changes on the key's embedding rows: a metadata copy (read + 1).
-    Tombstone and anonymize retire through `retire_vectors_for_keys` instead."""
+    """What demote changes on the key's embedding rows, copied at the memory row's
+    version by `apply_mirror`. Tombstone and anonymize retire the vectors instead."""
     conf = max(cfg.demote_floor, min(1.0, float(row.confidence or 0.0) * cfg.demote_factor))
     return {"expires_at": None, "confidence": round(conf, 4)}
 
@@ -363,7 +365,7 @@ def _leave(res: ExpiryResult, mirrors: list[tuple[str, Any, int]]) -> None:
 MirrorItem = tuple[IdentityKey, int, dict[str, Any] | None]
 
 
-def mirror_items(mirrors: list[tuple[str, Any, int]], *, cfg: ExpiryConfig) -> list[MirrorItem]:
+def _mirror_items(mirrors: list[tuple[str, Any, int]], *, cfg: ExpiryConfig) -> list[MirrorItem]:
     """What each written row's post-action changes on the search side. A demoted 'high'
     head keeps no vector, so it has nothing to mirror."""
     items: list[MirrorItem] = []
@@ -382,11 +384,13 @@ async def apply_mirror(items: list[MirrorItem]) -> int:
     names in search either); demote copies them at that version with the expiry
     cleared and confidence lowered. Both touch only rows below the version, so a
     replay leaves a later write's vectors alone. Batched as one keyed read and one
-    insert per 500 keys, never one per key."""
+    insert per 500 keys, never one per key, in the sweep and in its replay."""
     import server.memory.store as memory_repo
 
     retires = [(key, version) for key, version, copy in items if copy is None]
-    copies = [(key, {**copy, "version": version}) for key, version, copy in items if copy]
+    copies = [
+        (key, {**copy, "version": version}) for key, version, copy in items if copy is not None
+    ]
     n = await memory_repo.retire_vectors_for_keys(retires) if retires else 0
     if copies:
         n += await memory_repo.reemit_embedding_rows_for_keys(copies)
@@ -394,26 +398,32 @@ async def apply_mirror(items: list[MirrorItem]) -> int:
 
 
 async def _record_mirror_failures(items: list[MirrorItem], error: Exception) -> None:
-    """One `memory_expiry_mirror` projection failure per key, for the repair to replay."""
+    """One `memory_expiry_mirror` projection failure per writer (org, namespace, agent,
+    user_id), its items in the payload, so the repair replays each as one batch and a
+    user erasure finds it by `user_id`."""
     from server.memory.app.projection_failures import (
         EXPIRY_MIRROR,
         insert_projection_failures,
         projection_failure_row,
     )
 
+    by_writer: dict[tuple[str, str, str, str], list[MirrorItem]] = {}
+    for item in items:
+        key = item[0]
+        by_writer.setdefault((key[0], key[1], key[2], key[3]), []).append(item)
     rows = [
         projection_failure_row(
-            org=key[0],
-            namespace=key[1],
-            agent=key[2],
+            org=org,
+            namespace=namespace,
+            agent=agent,
             projection=EXPIRY_MIRROR,
             source_operation="memory.sweep_expired",
-            memory_keys=[key[5]],
+            memory_keys=[key[5] for key, _v, _c in group],
             error=error,
-            payload={"key": list(key), "version": version, "demote": copy},
-            user_id=key[3],
+            payload={"items": [[list(key), version, copy] for key, version, copy in group]},
+            user_id=user_id,
         )
-        for key, version, copy in items
+        for (org, namespace, agent, user_id), group in by_writer.items()
     ]
     try:
         await insert_projection_failures(rows)

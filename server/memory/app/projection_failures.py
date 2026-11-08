@@ -115,8 +115,8 @@ EDGES_RESTORE = "entity_edges_restore"
 # the relabel; nothing is owed when it settled without it.
 SENSITIVITY_FACTS = "sensitivity_facts_owed"
 # An expiry sweep's search mirror that failed after its memory rows landed: payload
-# key (the identity key), version (the memory row's) and demote (the embedding
-# overrides, or None for a retire). The sweep never sees the key again.
+# items, each [identity key, the memory row's version, the demote's embedding overrides
+# or None for a retire]. The sweep never selects those keys again.
 EXPIRY_MIRROR = "memory_expiry_mirror"
 # Intents written (a waited async insert) right before the commit their writer then
 # settles itself: the repair leaves one this long, so the two never settle it side by side.
@@ -881,9 +881,12 @@ async def _retry_expiry_mirror(failure: ProjectionFailureRow) -> None:
     """Apply the sweep's mirror again: it touches only rows below the recorded version."""
     from server.memory.app.expiry import apply_mirror
 
-    p = failure.payload
-    key = cast(IdentityKey, tuple(str(c) for c in p["key"]))
-    await apply_mirror([(key, int(p["version"]), p.get("demote"))])
+    await apply_mirror(
+        [
+            (cast(IdentityKey, tuple(str(c) for c in key)), int(version), demote)
+            for key, version, demote in failure.payload["items"]
+        ]
+    )
 
 
 async def _retry_sensitivity_facts(failure: ProjectionFailureRow, *, ch: Any) -> str | None:
