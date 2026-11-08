@@ -136,7 +136,7 @@ SDK has no class for raises the class its HTTP status maps to (a 409
 | `AUTH_UNAVAILABLE`          | 503    | Yes, after `Retry-After` (5 s). The process has not loaded the token revocation list yet; the op did not run, so the SDKs retry it for any op.                                                                                                                                                                                                                                                   |
 | `SCHEMA_PENDING`            | 503    | After the migration it names has run. No `Retry-After`: the wait is an operator action, not a timer.                                                                                                                                                                                                                                                                                             |
 | `ANALYSIS_UNAVAILABLE`      | 503    | After the analyst user is written as the allowlist says; `loom doctor` (`analysis_user_failing`) names the fix. A replica whose probe has no answer from ClickHouse, or a ClickHouse short of memory, answers `OVERLOADED` instead.                                                                                                                                                              |
-| `ASSISTANT_UNAVAILABLE`     | 503    | After the assistant can answer on this replica: no LibreChat is configured (`LOOM_ASSISTANT_LIBRECHAT_URL`), auth is off (an answer is delegated from its caller's token), or this replica's setup has not succeeded yet (at boot, or again after LibreChat refused the stored key), which `/v1/health` (`assistant_service_failing`) names.                                                     |
+| `ASSISTANT_UNAVAILABLE`     | 503    | After the assistant can answer in the web process serving the request: no LibreChat is configured (`LOOM_ASSISTANT_LIBRECHAT_URL`), auth is off (an answer is delegated from its caller's token), or this process's setup has not succeeded yet (at boot, or again after LibreChat refused the stored key), which `/v1/health` (`assistant_service_failing`) names.                              |
 | `ASSISTANT_UPSTREAM_FAILED` | 503    | Yes, by asking again after `retry_after_s`: LibreChat was unreachable, refused the answer, ended it with an error or ran past its limit. Each answer spends model budget, so the SDKs do not resend one on their own.                                                                                                                                                                            |
 | `CODED_WIDTH_MISMATCH`      | 503    | After the embedder and the vector tables agree on a width; `/v1/health` (`coded_width_mismatch`) names the fix. A `memory.set`, `bulk_set`, `update` or `knowledge.*` write left nothing behind.                                                                                                                                                                                                 |
 | `GATEWAY_REQUIRED`          | 503    | After a setting moves the call to a listed host: a model call named a host `LOOM_INFERENCE_GATEWAY_HOSTS` does not list while `LOOM_INFERENCE_GATEWAY_REQUIRED` (or a token exchange) is on. The error names the host. A server whose saved model configuration is refused answers every data-plane request with it, naming no host, until a replacement is saved or the configuration is reset. |
@@ -150,8 +150,9 @@ are 503s because the server cannot serve the request in its current state, not b
 the request is wrong; they send no `Retry-After` since only an operator's fix ends them,
 and the SDKs never resend an answer the server classes `configuration`.
 `ASSISTANT_UNAVAILABLE` is classed the same and sends no `Retry-After`. It ends on its
-own while the replica's setup is still running or retrying; no LibreChat, auth off, or a
-setup problem whose fix `/v1/health` names needs an operator.
+own while the web process's setup is still running or retrying (each web process sets
+the assistant up on its own, and `/v1/health` reports the process that answers it); no
+LibreChat, auth off, or a setup problem whose fix `/v1/health` names needs an operator.
 
 The SDKs' default policy is under [Python SDK](./python-sdk.md#retries-and-logging) and
 [TypeScript SDK](./typescript-sdk.md#retries-pacing-and-logging); the codes they never
@@ -229,7 +230,7 @@ HTTP 503, raised as `server.core.errors.AnalysisUnavailableError`. `insights.que
 
 #### `ASSISTANT_UNAVAILABLE`
 
-HTTP 503, raised as `server.core.errors.AssistantUnavailableError`. The assistant cannot answer on this replica: no LibreChat is configured (`LOOM_ASSISTANT_LIBRECHAT_URL`), auth is off (an answer is delegated from its caller's token), or this replica's setup has… Category `configuration`, retryable: no.
+HTTP 503, raised as `server.core.errors.AssistantUnavailableError`. The assistant cannot answer in this web process: no LibreChat is configured (`LOOM_ASSISTANT_LIBRECHAT_URL`), auth is off (an answer is delegated from its caller's token), or this process's setup… Category `configuration`, retryable: no.
 
 #### `ASSISTANT_UPSTREAM_FAILED`
 

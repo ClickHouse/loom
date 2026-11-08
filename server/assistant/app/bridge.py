@@ -164,7 +164,7 @@ async def _afford(org: str, namespace: str) -> tuple[str, str]:
     answering = service.answering()
     if answering is None:
         raise AssistantUnavailableError(
-            "the assistant is not set up on this replica yet: /v1/health names why"
+            "the assistant is not set up in this web process yet: /v1/health names a failed try"
         )
     if await switched_off(org):
         raise ModelCallsDisabled(f"model calls are switched off for org {org!r}")
@@ -329,11 +329,11 @@ def _refused(ticket: Ticket, status: int) -> NoReturn:
             if stored is not None:
                 service.forget_answering(f"LibreChat refused the stored key or agent ({status})")
             raise AssistantUpstreamError(
-                f"LibreChat refused the stored key or agent ({status}); this replica is "
+                f"LibreChat refused the stored key or agent ({status}); this web process is "
                 "setting the assistant up again: ask again shortly"
             )
         raise AssistantUpstreamError(
-            f"LibreChat refused the key this answer carried ({status}), which this replica "
+            f"LibreChat refused the key this answer carried ({status}), which this web process "
             "has already replaced: ask again"
         )
     raise AssistantUpstreamError(f"LibreChat refused the answer ({status})")

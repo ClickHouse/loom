@@ -155,8 +155,8 @@ def _sli() -> tuple[str, int]:
 
 
 class _Held:
-    """What one admitted answer holds until its response ends: its slot in this web process, one
-    of the org's in-flight slots, and its row."""
+    """What one admitted answer holds until its response ends: its slot in this web
+    process, one of the org's in-flight slots, and its row."""
 
     def __init__(self, ticket: bridge.Ticket, row: _Row, slots: contextlib.ExitStack) -> None:
         self.ticket, self.row, self.slots = ticket, row, slots
