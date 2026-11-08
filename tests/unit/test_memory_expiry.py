@@ -113,7 +113,7 @@ def _stub(monkeypatch: pytest.MonkeyPatch, rows: list[MemoryRow]) -> tuple[_CH, 
     monkeypatch.setattr("server.memory.store.reemit_embedding_rows_for_key", _reemit)
     reemit_calls.clear()
 
-    async def _reemit_many(items, *, ch=None, batch=500) -> int:
+    async def _reemit_many(items, *, ch=None, batch=500, of_content=None) -> int:
         # The pass's mirrors arrive as ONE call; each key keeps
         # its own overrides (tombstone/anonymize vs demote).
         reemit_calls.append(len(items))
@@ -127,7 +127,7 @@ def _stub(monkeypatch: pytest.MonkeyPatch, rows: list[MemoryRow]) -> tuple[_CH, 
     monkeypatch.setattr("server.memory.store.reemit_embedding_rows_for_keys", _reemit_many)
     retired.clear()
 
-    async def _retire_many(items, *, ch=None) -> int:
+    async def _retire_many(items, *, ch=None, bare=False) -> int:
         # Tombstone and anonymize retire memory_embeddings AND entity_vectors.
         for (_o, _n, _a, _u, _s, key), version in items:
             tombstoned_keys.append(key)
@@ -576,7 +576,7 @@ async def test_a_failed_mirror_is_recorded_per_writer_and_the_repair_applies_it(
     ]
     ch, _ = _stub(monkeypatch, rows)
 
-    async def _down(items, *, ch=None) -> int:
+    async def _down(items, *, ch=None, bare=False) -> int:
         raise ConnectionError("insert refused")
 
     monkeypatch.setattr("server.memory.store.retire_vectors_for_keys", _down)
@@ -596,12 +596,8 @@ async def test_a_failed_mirror_is_recorded_per_writer_and_the_repair_applies_it(
     assert (other["memory_keys"], json.loads(other["payload"])["user_id"]) == (["d"], "u2")
     assert json.loads(failure["payload"]) == {
         "items": [
-            [["test", "personal", "cursor", "-", "-", "a"], written["a"], None],
-            [
-                ["test", "personal", "cursor", "-", "-", "b"],
-                written["b"],
-                {"expires_at": None, "confidence": 0.45},
-            ],
+            [["test", "personal", "cursor", "-", "-", "a"], written["a"], "retire"],
+            [["test", "personal", "cursor", "-", "-", "b"], written["b"], "demote"],
         ],
         "user_id": "-",
     }
@@ -632,7 +628,8 @@ async def test_a_failed_mirror_is_recorded_per_writer_and_the_repair_applies_it(
 _retire_clients: list[Any] = []
 
 
-async def _retire_many_ok(items, *, ch=None) -> int:
+async def _retire_many_ok(items, *, ch=None, bare=False) -> int:
+    assert bare  # a late tombstone carries no text a redaction purged
     _retire_clients.append(ch)
     for (_o, _n, _a, _u, _s, key), version in items:
         retired.append((key, version))
@@ -656,7 +653,7 @@ async def test_a_late_mirror_leaves_a_later_writes_vectors_alone(
             "scope": "agent",
             "embedding_model": "m",
             "memory_key": key,
-            "content": "text",
+            "content_excerpt": "the original text",
             "embedding": [0.1],
             "version": version,
             "created_at": _NOW,
@@ -706,6 +703,9 @@ async def test_a_late_mirror_leaves_a_later_writes_vectors_alone(
     assert got["old"]["version"] == 200 and got["old"]["confidence"] == 0.4
     assert got["old"]["expires_at"] is None and got["old"]["tombstoned_at"] is None
     assert got["gone"]["version"] == 200 and got["gone"]["tombstoned_at"] is not None
+    # The retire's tombstone is bare: no text or vector for a redaction to miss.
+    assert not got["gone"]["content_excerpt"] and not got["gone"]["embedding"]
+    assert got["old"]["content_excerpt"] == "the original text"  # a copy keeps its text
     # entity_vectors has no version: a retired key keeps the rows created after the
     # second of the memory row's version, a later write's.
     assert cutoffs == [
@@ -738,7 +738,7 @@ async def test_a_malformed_expiry_mirror_failure_is_abandoned(
 
     for item in (
         [["o", "n", "k"], 200, None],  # not an identity key
-        [["o", "n", "a", "-", "-", "k"], 200, [1]],  # not a demote's overrides
+        [["o", "n", "a", "-", "-", "k"], 200, "erase"],  # not a mirror's action
     ):
         result = await pf._retry(failure(item), ch=object())
         assert (result.abandoned, result.reason) == (True, "malformed_payload")
@@ -753,8 +753,8 @@ async def test_a_replayed_demote_copies_the_head_as_it_is_now(
     # copy. The retire runs as recorded.
     calls: list[Any] = []
 
-    async def _apply(items, *, ch=None) -> int:
-        calls.append(items)
+    async def _apply(items, *, ch=None, of_content=None) -> int:
+        calls.append((items, of_content))
         return 0
 
     later = _REAL_NOW + timedelta(hours=1)
@@ -765,21 +765,28 @@ async def test_a_replayed_demote_copies_the_head_as_it_is_now(
     async def _heads(keys, *, ch=None, sequential=False) -> dict[Any, Any]:
         assert sequential
         live = {
-            touched: SimpleNamespace(version=300, expires_at=later, confidence=0.4),
-            locked: SimpleNamespace(version=310, expires_at=None, confidence=0.4),
+            touched: SimpleNamespace(
+                version=300, expires_at=later, confidence=0.4, content_sha256="a" * 64
+            ),
+            locked: SimpleNamespace(
+                version=310, expires_at=None, confidence=0.4, content_sha256="b" * 64
+            ),
         }
         return {k: SimpleNamespace(**vars(live[k]), sensitivity="") for k in keys if k in live}
 
     monkeypatch.setattr(X, "apply_mirror", _apply)
     monkeypatch.setattr("server.memory.store.memory_rows_by_identity_keys", _heads)
-    demote = {"expires_at": None, "confidence": 0.4}
     await X.replay_mirror(
-        [(k, 200, demote) for k in (touched, locked, deleted)] + [(anonymized, 200, None)]
+        [(k, 200, "demote") for k in (touched, locked, deleted)] + [(anonymized, 200, "retire")]
     )
+    # Each copy is kept to rows of its head's own text.
     assert calls == [
-        [
-            (touched, 300, {"expires_at": later, "confidence": 0.4}),
-            (locked, 310, {"expires_at": None, "confidence": 0.4}),
-            (anonymized, 200, None),
-        ]
+        (
+            [
+                (touched, 300, {"expires_at": later, "confidence": 0.4}),
+                (locked, 310, {"expires_at": None, "confidence": 0.4}),
+                (anonymized, 200, None),
+            ],
+            {touched: "a" * 64, locked: "b" * 64},
+        )
     ]

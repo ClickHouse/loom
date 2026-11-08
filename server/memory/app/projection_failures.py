@@ -115,8 +115,7 @@ EDGES_RESTORE = "entity_edges_restore"
 # the relabel; nothing is owed when it settled without it.
 SENSITIVITY_FACTS = "sensitivity_facts_owed"
 # An expiry sweep's search mirror that failed after its memory rows landed: payload
-# items, each [identity key, the memory row's version, the demote's embedding overrides
-# or None for a retire]; a replayed demote copies the key's head as it is then
+# items, each [identity key, the memory row's version, "retire" or "demote"]
 # (`replay_mirror`). The sweep never selects those keys again.
 EXPIRY_MIRROR = "memory_expiry_mirror"
 # Intents written (a waited async insert) right before the commit their writer then
@@ -883,18 +882,17 @@ async def _retry_expiry_mirror(failure: ProjectionFailureRow, *, ch: Any) -> str
     from server.memory.app.expiry import replay_mirror
 
     try:
-        items = [
-            (cast(IdentityKey, tuple(str(c) for c in key)), int(version), demote)
-            for key, version, demote in failure.payload["items"]
+        recorded = [
+            (cast(IdentityKey, tuple(str(c) for c in key)), int(version), str(action))
+            for key, version, action in failure.payload["items"]
         ]
-        if not items or any(
-            len(key) != 6 or not (demote is None or isinstance(demote, dict))
-            for key, _v, demote in items
+        if not recorded or any(
+            len(key) != 6 or action not in ("retire", "demote") for key, _v, action in recorded
         ):
             raise ValueError("no items, or an item that is not a mirror")
     except (KeyError, TypeError, ValueError):
         return "malformed_payload"
-    await replay_mirror(items, ch=ch)
+    await replay_mirror(recorded, ch=ch)
     return ""
 
 
