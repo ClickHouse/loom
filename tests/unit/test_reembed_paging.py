@@ -11,7 +11,7 @@ import pytest
 from server.core.ch import sequential_reads_active
 from server.memory.app import reembed as rb
 from tests.unit._fake_credentials import OPENAI_KEY
-from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
+from tests.unit.clickhouse_local import CLICKHOUSE, EMBEDDINGS, VECTOR, run
 
 
 class _Emb:
@@ -249,17 +249,16 @@ async def test_a_page_larger_than_one_re_read_is_read_again_in_parts(monkeypatch
 async def test_the_re_read_finds_a_live_row_by_its_key_and_leaves_its_vectors_out() -> None:
     """On the production table definition: the Enum `scope` matches by name, a tombstoned
     or lightweight-deleted row is not found, and no vector column is read."""
-    import re
-
     table = "memory_embeddings"
-    create = re.sub(r"CODEC\(Quantized\([^)]*\)[^)]*\)", "", ddl(table))
     head = "org, namespace, agent, user_id, session_id, scope, embedding_model, memory_key"
+    values = ", ".join(
+        f"('o','n','a','-','-','private','m1','{key}','x',{VECTOR},{VECTOR},2,{tombstone})"
+        for key, tombstone in (("live", "NULL"), ("tombstoned", "now()"), ("deleted", "NULL"))
+    )
     setup = [
-        create,
-        f"INSERT INTO loom.{table} ({head}, content_excerpt, embedding_dim, tombstoned_at) "
-        "VALUES ('o','n','a','-','-','private','m1','live','x',2,NULL), "
-        "('o','n','a','-','-','private','m1','tombstoned','x',2,now()), "
-        "('o','n','a','-','-','private','m1','deleted','x',2,NULL)",
+        *EMBEDDINGS,
+        f"INSERT INTO loom.{table} ({head}, content_excerpt, embedding, memory_key_embedding, "
+        f"embedding_dim, tombstoned_at) VALUES {values}",
         f"DELETE FROM loom.{table} WHERE memory_key = 'deleted'",
     ]
     cols = [

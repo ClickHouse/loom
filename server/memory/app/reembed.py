@@ -289,8 +289,8 @@ async def reembed_table(
     """Re-embed one table's off-model rows to `embedder`. Returns rows written.
     Pages of `batch` rows in sort-key order; `start_after` (a resume token's
     key) continues after that row. `left_orgs` collects the orgs whose rows were
-    left unwritten: switched off during the run, or a row removed or given other
-    text since its page was read (`--delete-old` keeps their old vectors).
+    left unwritten: switched off during the run, or with a row still stored with other
+    text when its page was read again (`--delete-old` keeps their old vectors).
     `key_only`: every live row of the scope but an import key with no key
     vector gets its key-axis vector rebuilt from `key_axis_text` (the value
     vector is kept); tables without a key axis are skipped."""
@@ -647,7 +647,7 @@ async def reembed_all(
         log(f"{waiting} rows of {len(off)} switched-off org(s) left for a later run")
     if delete_old and not dry_run:
         # Every org whose rows wait keeps its old vectors: off at the start, off
-        # during the run or by now, or with a row the re-read before an insert skipped.
+        # during the run or by now, or with a row the re-read found with other text.
         keep = frozenset(off | left_orgs | await customer.switched_off_orgs())
         if keep:
             log(f"old-model rows kept for a later run in: {', '.join(sorted(keep))}")
