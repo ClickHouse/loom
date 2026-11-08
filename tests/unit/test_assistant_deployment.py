@@ -86,3 +86,21 @@ def test_the_guide_keeps_the_bundled_clickhouse_when_it_adds_the_assistant() -> 
     assert flagged and all("--profile bundled" in c for c in flagged), flagged
     # An installed stack's COMPOSE_PROFILES is extended, whatever it holds.
     assert "COMPOSE_PROFILES=\\1,assistant/" in guide
+
+
+@pytest.mark.skipif(not shutil.which("sed"), reason="needs sed")
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [("bundled", "bundled,assistant"), ("", "assistant"), ("a,b", "a,b,assistant")],
+)
+def test_the_guides_sed_adds_the_assistant_to_any_profiles(
+    tmp_path: Path, before: str, after: str
+) -> None:
+    import subprocess
+
+    guide = (ROOT / "docs" / "features" / "integrations" / "librechat.md").read_text()
+    (expression,) = re.findall(r"sed -i\.bak '([^']+)' \.env", guide)
+    env = tmp_path / ".env"
+    env.write_text(f"A=1\nCOMPOSE_PROFILES={before}\n")
+    subprocess.run(["sed", "-i.bak", expression, str(env)], check=True)
+    assert f"COMPOSE_PROFILES={after}\n" in env.read_text()

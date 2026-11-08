@@ -231,16 +231,22 @@ An installed stack runs the profiles `COMPOSE_PROFILES` names (`bundled` with it
 ClickHouse, none with yours), so add `assistant` there and start it:
 
 ```bash
-sed -i.bak 's/^COMPOSE_PROFILES=\(.\{1,\}\)$/COMPOSE_PROFILES=\1,assistant/; s/^COMPOSE_PROFILES=$/COMPOSE_PROFILES=assistant/' .env
+sed -i.bak 's/^COMPOSE_PROFILES=\(.\{1,\}\)$/COMPOSE_PROFILES=\1,assistant/; s/^COMPOSE_PROFILES=$/COMPOSE_PROFILES=assistant/' .env && rm .env.bak
 docker compose up -d
 ```
 
+Re-running `install.sh` to switch ClickHouse (`--clickhouse`, `--bundled`) rewrites
+`COMPOSE_PROFILES`: run the `sed` again afterwards.
+
 A checkout runs this build through `make dev`, whose `--profile bundled` takes the place
-of `COMPOSE_PROFILES`; pass the assistant's profile beside it:
+of `COMPOSE_PROFILES`; pass the assistant's profile beside it. The assistant runs only on
+that stack: `make server` and `make dev-cloud` read the same `.env` but reach no
+`librechat`, so remove `LOOM_ASSISTANT_LIBRECHAT_URL` before using them.
 
 ```bash
-docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml \
-  --profile bundled --profile assistant up -d --build
+LOOM_BUILD_COMMIT=$(git rev-parse --short HEAD) \
+  docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml \
+    --profile bundled --profile assistant up -d --build
 ```
 
 At boot Loom registers its service user, creates the agents API key and the agent from
@@ -264,8 +270,9 @@ services:
 ```
 
 ```bash
-docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml \
-  -f compose.qualify.yaml --profile bundled --profile assistant up -d --build
+LOOM_BUILD_COMMIT=$(git rev-parse --short HEAD) \
+  docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml \
+    -f compose.qualify.yaml --profile bundled --profile assistant up -d --build
 Q=integrations/librechat/qualification/qualify.py
 python $Q seed
 python $Q --librechat-url http://localhost:3080 setup-deployed
