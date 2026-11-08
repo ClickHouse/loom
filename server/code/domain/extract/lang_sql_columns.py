@@ -56,6 +56,7 @@ from server.code.domain.extract.lang_sql_objects import (
     references,
     split_schema,
 )
+from server.code.domain.extract.lang_sql_split import comment_spans, without_spans
 from server.code.domain.extract.treesitter import Symbol
 
 KIND_COLUMN = "column"
@@ -183,7 +184,6 @@ _ALTER_WHERE_RE = re.compile(
 _QUALIFIED_RE = re.compile(r"(?<![\w$.\"`\]])(" + _IDENT + r")\.(" + _IDENT + r")(?![\w$.(])")
 _BARE_RE = re.compile(r"(?<![\w$.\"`\]@:{])(" + _IDENT + r")(?![\w$.(`\"])")
 _STRING_RE = re.compile(r"'(?:[^']|'')*'|\$\$.*?\$\$", re.S)
-_COMMENT_RE = re.compile(r"--[^\n]*|/\*.*?(?:\*/|\Z)", re.S)  # unclosed: to the end
 _KEYWORDS = frozenset(
     w.upper()
     for w in """
@@ -301,10 +301,10 @@ def table_columns(stmt: Statement, obj: CreatedObject | None = None) -> list[Col
     m = _CREATE_TABLE_RE.match(stmt.body)
     if not m:
         return []
-    close = _paren_closes(stmt.body).get(m.end() - 1)
+    close = _paren_closes(stmt.body[m.end() - 1 :]).get(0)  # quotes read from the `(`
     if close is None:
         return []
-    inner = stmt.body[m.end() : close]
+    inner = stmt.body[m.end() : m.end() - 1 + close]
     out: list[ColumnDef] = []
     seen: set[str] = set()
     for item in _split_top_level(inner):
@@ -367,7 +367,7 @@ def file_columns(
 def _strip(body: str) -> str:
     """The statement body without string literals and comments (their text
     is not identifiers), same length not required."""
-    return _STRING_RE.sub("''", _COMMENT_RE.sub(" ", body))
+    return _STRING_RE.sub("''", without_spans(body, comment_spans(body, True), " "))
 
 
 def _alias_map(body: str, refs: References) -> dict[str, str]:

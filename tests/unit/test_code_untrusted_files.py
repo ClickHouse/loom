@@ -305,7 +305,7 @@ def _repo(state: dict[str, str]) -> AsyncMock:
 
 
 async def _run(worker: Any, cfg: Any, state: dict[str, str]) -> tuple[Any, AsyncMock, AsyncMock]:
-    apply = AsyncMock()
+    apply = AsyncMock(return_value=ScipApplyStats())
     repo = _repo(state)
     with (
         patch("server.code.store.index.CodeRepo", return_value=repo),
@@ -464,6 +464,21 @@ async def test_the_go_tier_refuses_more_deltas_than_modules(monkeypatch, tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_the_go_tier_applies_the_root_module_delta(monkeypatch, tmp_path: Path) -> None:
+    _go_host(monkeypatch, tmp_path)
+    monkeypatch.setattr(scip_go_delta, "_module_dirs", AsyncMock(return_value=[""]))
+
+    async def harness(co, base, head, out_dir, modules, cfg):
+        (out_dir / ".json").write_text(json.dumps(_DELTA))  # the harness's name for prefix ""
+        return ""
+
+    monkeypatch.setattr(scip_go_delta, "_run_harness", harness)
+    res, apply, repo = await _run(scip_go_delta, _entry("go"), {"git_head": "b" * 40})
+    assert not res.errors, res.errors
+    apply.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_a_go_window_refuses_more_deltas_than_its_modules(monkeypatch, tmp_path) -> None:
     _go_host(monkeypatch, tmp_path)
     monkeypatch.setattr(scip_go_delta, "_changed_paths", AsyncMock(return_value=["svc/a.go"]))
@@ -594,7 +609,7 @@ async def test_the_full_index_reads_and_keeps_a_plain_delta(monkeypatch, tmp_pat
 
 
 def test_the_go_delta_listing_stops_at_the_first_delta_too_many(tmp_path, monkeypatch) -> None:
-    for name in ("a.json", "b.json", "c.json", "d.json", ".hidden.json", "notes.txt"):
+    for name in ("a.json", "b.json", "c.json", ".json", "notes.txt"):
         (tmp_path / name).write_text("{}")
     listed: list[str] = []
     scandir = os.scandir
@@ -613,13 +628,13 @@ def test_the_go_delta_listing_stops_at_the_first_delta_too_many(tmp_path, monkey
         m.setattr(scip_go_delta.os, "scandir", counted)
         with pytest.raises(RuntimeError, match=r"wrote more deltas than its 1 module\(s\)"):
             scip_go_delta._deltas(tmp_path, 1)
-    assert sum(n.endswith(".json") and not n.startswith(".") for n in listed) == 2
+    assert sum(n.endswith(".json") for n in listed) == 2
     assert [p.name for p in scip_go_delta._deltas(tmp_path, 4)] == [
+        ".json",
         "a.json",
         "b.json",
         "c.json",
-        "d.json",
-    ]  # a hidden name and another file are no deltas
+    ]  # the root module's delta is `.json`; another file is no delta
 
 
 def test_apply_delta_reads_its_kept_delta_under_the_caps(tmp_path: Path) -> None:

@@ -360,3 +360,9 @@ def test_a_file_of_many_messages_parses_in_linear_time() -> None:
 
 def test_a_deep_nest_of_messages_costs_no_more_than_a_flat_file() -> None:
     assert_linear(lambda nest: _proto_cost(nest, 8_000), 0, 300)  # deep against flat
+
+
+def test_a_gotemplate_comment_holding_an_action_is_blanked_whole() -> None:
+    src = b'{{/* {{ include "a" . }} */}}\n{{- /* {{ define "b" }}{{ end }} */ -}}\nx: {{ include "c" . }}\n'
+    pf = gt.parse_gotemplate("charts/c/templates/cm.yaml", src)
+    assert gt.reference_sites(pf) == [(3, "c", "include")] and pf.symbols == []

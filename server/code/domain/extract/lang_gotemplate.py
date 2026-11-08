@@ -60,7 +60,7 @@ _MANIFEST_EXTENSIONS: frozenset[str] = frozenset({".yaml", ".yml", ".txt", ".jso
 # A body stops at the next `{{`, so an unclosed action is not searched on from each; the
 # trim markers and spaces are stripped in `_actions`, not by `\s*` around a lazy body.
 _ACTION_RE = re.compile(r"\{\{-?((?:(?!\{\{).)*?)\}\}", re.S)
-_COMMENT_RE = re.compile(r"\{\{-?\s*/\*(?:(?!\{\{).)*?\*/\s*-?\}\}", re.S)
+_COMMENT_RE = re.compile(r"\{\{-?\s*/\*.*?(?:\*/\s*-?\}\}|\Z)", re.S)  # unclosed: to the end
 _NAMED_RE = re.compile(r'^(define|block)\s+"([^"]+)"')
 _INCLUDE_RE = re.compile(r'(?<![\w.$])(?:include|template)\s+"([^"]+)"')
 _OPENERS: frozenset[str] = frozenset({"if", "range", "with", "define", "block"})

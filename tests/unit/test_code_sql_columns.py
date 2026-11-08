@@ -228,3 +228,13 @@ def test_many_stars_over_a_wide_table_cost_linear_time(width: int) -> None:
         return took
 
     assert_linear(cost, 500, 2_000, floor=0.05, bound=2.0)
+
+
+def test_a_comment_opener_in_a_literal_keeps_the_columns_after_it() -> None:
+    body = "SELECT x FROM s3('https://b/logs/*.parquet') WHERE status = 500"
+    assert lc._strip(body) == "SELECT x FROM s3('') WHERE status = 500"
+
+
+def test_a_quote_in_a_bracketed_table_name_keeps_its_columns() -> None:
+    st = split_statements("CREATE TABLE [it's] (a int, b int);")[0]
+    assert [c.key for c in lc.table_columns(st)] == ["it's.a", "it's.b"]

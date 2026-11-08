@@ -337,7 +337,7 @@ def _deltas(out_dir: Path, most: int) -> list[Path]:
     found: list[Path] = []
     with os.scandir(out_dir) as entries:
         for entry in entries:
-            if entry.name.endswith(".json") and not entry.name.startswith("."):
+            if entry.name.endswith(".json"):  # the root module's is `.json`
                 found.append(Path(entry.path))
                 if len(found) > most:
                     raise RuntimeError(f"Go harness wrote more deltas than its {most} module(s)")

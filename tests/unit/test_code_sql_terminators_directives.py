@@ -3,6 +3,7 @@ tools' directive table."""
 
 from __future__ import annotations
 
+import re
 import time
 
 import pytest
@@ -11,7 +12,7 @@ from server.code.app.index.ingest_parse import parse_file
 from server.code.domain.extract import lang_sql as ls
 from server.code.domain.extract import lang_sql_directives as ld
 from server.code.domain.extract import lang_sql_split
-from tests.unit.code_fixtures import assert_linear
+from tests.unit.code_fixtures import assert_linear, grows_linearly
 
 _PLPGSQL = """\
 CREATE FUNCTION f() RETURNS int AS $$
@@ -281,3 +282,25 @@ def test_a_comment_after_the_last_statement_ends_it_on_its_own_line() -> None:
     for tail in ("-- tail\n", "-- tail\n  "):
         sts = lang_sql_split.split_statements("SELECT 1;\n\nSELECT 2;\n" + tail)
         assert (sts[-1].start_line, sts[-1].end_line) == (3, 4), tail
+
+
+_OLD_COMMENT_RE = re.compile(r"--[^\n]*|/\*.*?\*/", re.S)
+_GLOB = "SELECT x FROM s3('https://b/logs/*.parquet') WHERE status = 500 SETTINGS a = 1"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [_GLOB, "SELECT 1 /* a */, 2 -- c\n/*/ d", "a /*-- x */ b -- /* y\n c /* z", "/* x /*/ y */"],
+)
+def test_a_comment_is_only_one_that_closes(sql: str) -> None:
+    block = re.compile(r"/\*.*?\*/", re.S)
+    for line, old in ((False, block), (True, _OLD_COMMENT_RE)):
+        assert lang_sql_split.comment_spans(sql, line) == [m.span() for m in old.finditer(sql)]
+
+
+def test_a_comment_opener_in_a_literal_keeps_the_statement() -> None:
+    assert lang_sql_split.strip_comments(_GLOB) == _GLOB
+
+
+def test_unclosed_comments_are_read_once() -> None:
+    grows_linearly(lambda n: lang_sql_split.comment_spans("/*" * n, True), 10_000, 40_000)

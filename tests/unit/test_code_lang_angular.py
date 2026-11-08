@@ -65,6 +65,7 @@ def test_an_external_template_is_its_modules_unit_and_binds_by_selector_and_meth
         "$any",
         "$emit",
     ]
+    assert [n for _, n, _ in template_sites('<a [width]="n*px(2)">')] == ["px"]
     selectors = {
         "app-layout-header": ("h1", "src.app.core.layout.header.component::HeaderComponent")
     }
