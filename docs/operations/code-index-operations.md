@@ -341,9 +341,10 @@ memory the workers process has. The full index of such a tree takes about an hou
   process's own 52 MiB. At the defaults that is 52 MiB + 600 B × 6,000,000 +
   6 × 180 MiB, about 4.5 GiB for the worst delta. A synthetic C++-shaped delta has one
   counted byte per about 32 bytes and parses at about 9 times its size, so it meets
-  both caps near 180 MiB, about 1.6 GiB parsed; a real one meets them sooner or later. Raise both together, to what the worker's memory allows
-  by that formula. To measure the per-value cost on a host (about 3.4 GiB at the default
-  count):
+  both caps near 180 MiB, about 1.6 GiB parsed; a real delta with longer names meets
+  them later, one with shorter names sooner. Raise both together, to what the worker's
+  memory allows by that formula. To measure the per-value cost on a host (about 3.4 GiB
+  at the default count):
 
   ```bash
   .venv/bin/python -c "import resource; from server.code.app.index.scip_delta import ScipDelta; n = 2_999_999; raw = b'{\"commit\":\"c\",\"files\":[' + b','.join([b'{\"path\":\"\"}'] * n) + b']}'; ScipDelta.model_validate_json(raw); print(raw.count(b'{') + raw.count(b'[') + raw.count(b','), 'counted,', len(raw) >> 20, 'MiB delta,', resource.getrusage(resource.RUSAGE_SELF).ru_maxrss >> 10, 'MiB peak RSS')"
@@ -426,8 +427,9 @@ memory the workers process has. The full index of such a tree takes about an hou
   namespace, and the imports it would have resolved stay unresolved. Outside a worker
   pass the resolver reads a file from its indexed chunks instead, which hold only files
   within `LOOM_CODE_INGEST_MAX_FILE_BYTES` (any size at 0). A barrel's re-exports are read
-  under the same file cap. A file over the cap is still excluded by its path
-  and by its first 8 KiB (binary, a generated marker), as a file under it is.
+  under the same file cap. A binary or denylisted file over the cap is tombstoned as
+  one under it is, by its path and its first 8 KiB; a generated one gets the skipped
+  row, with no declarations.
 - **The repository's own exclusions are bounded and fail open.** `.loomignore` and
   `.gitattributes` are read up to 1 MiB and give at most 1,000 patterns between them. A
   larger file gives no patterns, and patterns past the 1,000th are dropped, so the paths
