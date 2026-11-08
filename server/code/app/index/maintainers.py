@@ -842,6 +842,19 @@ async def sync_restricted_page_branches(
                 await sync_quietly(org, cfg.namespace)
 
 
+async def holds_stray_copy(client: Any, org: str, namespace: str, subject: str) -> bool:
+    """`subject`'s live row on `namespace` is a copy whose source is none of its
+    repository's operator entries (`_foreign`): one a restricted branch does not keep."""
+    repo = repo_of(org, namespace)
+    if repo is None or not subject:
+        return False
+    config = [b for b, source in _branches(org, repo).items() if source == "config"]
+    row = await client.query_one(
+        _GRANT_ROW_SQL, params={"org": org, "ns": namespace, "sub": subject}
+    )
+    return row is not None and _foreign(row, config)
+
+
 async def sync_quietly(org: str, namespace: str, *, ch: Any | None = None) -> None:
     """The fan-out is a consequence and never fails the op or pass that runs it: a
     failure is logged with its traceback."""

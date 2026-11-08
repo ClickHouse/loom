@@ -1023,9 +1023,7 @@ async def test_the_registrar_syncs_a_branch_once_the_registry_is_read(
     monkeypatch.setattr(maintainers, "sync_quietly", _sync)
     monkeypatch.setattr(registry, "_DONE", {("clickhouse", "code-x")})
     monkeypatch.setattr(registry, "_SYNCED", set())
-    cfg = SimpleNamespace(
-        org="clickhouse", namespace="code-x", source="config", classification="standard"
-    )
+    cfg = SimpleNamespace(org="clickhouse", namespace="code-x")
     monkeypatch.setattr(repo_registry, "registry_read", lambda: False)
     assert await registry.ensure_registered(cfg, ch=object()) is False
     assert ("clickhouse", "code-x") not in registry._SYNCED  # not marked synced

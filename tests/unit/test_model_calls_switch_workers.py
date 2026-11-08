@@ -718,9 +718,7 @@ def test_code_ingest_runs_no_repository_of_a_switched_off_org(monkeypatch) -> No
     page = {"source": "registry", "classification": "restricted", "repo": "Org/a"}
     repos = [
         SimpleNamespace(org="acme", namespace="code-a", label="a", **page),
-        SimpleNamespace(
-            org="beta", namespace="code-b", label="b", source="config", classification="standard"
-        ),
+        SimpleNamespace(org="beta", namespace="code-b", label="b", source="config"),
     ]
     monkeypatch.setattr("server.code.app.index.maintainers.sync_quietly", sync)
 

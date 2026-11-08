@@ -581,3 +581,48 @@ async def test_widening_needs_confirm_when_the_row_read_now_says_restricted(monk
         )
     )
     assert out.previous_classification == "restricted"
+
+
+@pytest.mark.asyncio
+async def test_a_stray_copy_cannot_widen_a_restricted_branch(monkeypatch) -> None:
+    """Its holder could otherwise widen the branch before the next sync revokes the copy,
+    and keep it for good."""
+    from server.code.app import repo_admin as h
+    from server.core.errors import AuthInsufficientError
+
+    async def refresh(*a, **k):
+        return []
+
+    mine = _cfg("code-weave-rc", classification="restricted", source="registry")
+    sibling = dataclasses.replace(mine, namespace="code-weave-dev", classification="standard")
+    monkeypatch.setattr(reg, "refresh_db_repos", refresh)
+    monkeypatch.setattr(repos, "configured_repos", lambda: [sibling, mine])
+    monkeypatch.setattr("server.code.domain.index.repos.repo_for_namespace", lambda org, ns: mine)
+
+    class _Stray(_CH):
+        async def query_one(self, sql, params=None):
+            if "namespace_grants" in sql:
+                return {
+                    "namespace": "code-weave-rc",
+                    "subject": "mallory",
+                    "role": "admin",
+                    "status": "active",
+                    "revoked_at": None,
+                    "granted_by": "repo-maintainers:code-weave-dev",
+                }
+            return await super().query_one(sql, params)
+
+    ch = _Stray({"org": ORG, "namespace": "code-weave-rc", "classification": "restricted"})
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr(h, "current_caller", lambda: ("mallory", ORG))
+    with pytest.raises(AuthInsufficientError):
+        await h.handle_code_repo_set_access(
+            SimpleNamespace(
+                org=ORG,
+                namespace="code-weave-rc",
+                classification="standard",
+                join_policy="approval",
+                confirm="code-weave-rc",
+            )
+        )
+    assert ch.inserts == []

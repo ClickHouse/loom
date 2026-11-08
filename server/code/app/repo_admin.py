@@ -739,6 +739,12 @@ async def handle_code_repo_set_access(input: Any) -> Any:
         )
         if was_restricted and cls == "standard":
             _require_confirm(input)
+            if await maintainers.holds_stray_copy(ch, input.org, input.namespace, subject):
+                # A copy the next sync revokes must not widen the branch and keep itself.
+                raise AuthInsufficientError(
+                    f"{input.namespace} is restricted and your admin grant there is a copy "
+                    "from a branch added from the page; ask one of its own admins"
+                )
         previous_policy = str(
             (row or {}).get("join_policy") or ("open" if cfg.public else "approval")
         )

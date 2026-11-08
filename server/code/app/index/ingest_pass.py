@@ -135,6 +135,7 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
     returns a success with `partial: true`."""
     # A repository a person added since the last pass is
     # picked up here — the registry snapshot is what configured_repos() reads.
+    from server.code.app.index.maintainers import sync_restricted_page_branches
     from server.code.app.index.repo_registry import refresh_db_repos
 
     budget = pass_budget()
@@ -145,8 +146,6 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
     # not keep fetching and indexing it.
     repos = [c for c in selected_repos(org, namespace) if (c.org, c.namespace) not in inactive]
     # Before any entry can be skipped below (no sandbox, an org switched off, a clone).
-    from server.code.app.index.maintainers import sync_restricted_page_branches
-
     await sync_restricted_page_branches(repos, exhausted=budget.exhausted)
     repos = _without_unsandboxed(repos, result)
     # Each phase starts at the entry the previous pass cut it
