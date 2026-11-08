@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -84,7 +85,7 @@ def test_the_guide_keeps_the_bundled_clickhouse_when_it_adds_the_assistant() -> 
     commands = guide.replace("\\\n", " ").split("\n")
     flagged = [c for c in commands if "--profile assistant" in c]
     assert flagged and all("--profile bundled" in c for c in flagged), flagged
-    # An installed stack's COMPOSE_PROFILES is extended, whatever it holds.
+    # An installed stack's COMPOSE_PROFILES, as install.sh writes it, is extended.
     assert "COMPOSE_PROFILES=\\1,assistant/" in guide
 
 
@@ -96,8 +97,7 @@ def test_the_guide_keeps_the_bundled_clickhouse_when_it_adds_the_assistant() -> 
 def test_the_guides_sed_adds_the_assistant_to_any_profiles(
     tmp_path: Path, before: str, after: str
 ) -> None:
-    import subprocess
-
+    # The line as install.sh's set_env writes it: unquoted, no comment after it.
     guide = (ROOT / "docs" / "features" / "integrations" / "librechat.md").read_text()
     (expression,) = re.findall(r"sed -i\.bak '([^']+)' \.env", guide)
     env = tmp_path / ".env"

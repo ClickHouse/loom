@@ -235,13 +235,16 @@ sed -i.bak 's/^COMPOSE_PROFILES=\(.\{1,\}\)$/COMPOSE_PROFILES=\1,assistant/; s/^
 docker compose up -d
 ```
 
+The `sed` reads the line as `install.sh` writes it: unquoted, with no comment after it.
 Re-running `install.sh` to switch ClickHouse (`--clickhouse`, `--bundled`) rewrites
 `COMPOSE_PROFILES`: run the `sed` again afterwards.
 
 A checkout runs this build through `make dev`, whose `--profile bundled` takes the place
 of `COMPOSE_PROFILES`; pass the assistant's profile beside it. The assistant runs only on
 that stack: `make server` and `make dev-cloud` read the same `.env` but reach no
-`librechat`, so remove `LOOM_ASSISTANT_LIBRECHAT_URL` before using them.
+`librechat`, so remove `LOOM_ASSISTANT_LIBRECHAT_URL` before using them. `make down`
+names only `--profile bundled` and leaves LibreChat running; stop it with the same
+command and `down` in place of `up -d --build`.
 
 ```bash
 LOOM_BUILD_COMMIT=$(git rev-parse --short HEAD) \
