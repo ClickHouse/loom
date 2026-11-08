@@ -75,7 +75,11 @@ def test_the_sweep_runs_on_its_own_switch_and_cadence(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(settings, "document_blob_gc_interval_seconds", 1234)
     meta = registry.worker_meta()["document_blob_gc"]
-    assert meta == {"enabled": settings.document_blob_gc_enabled, "interval_seconds": 1234}
+    assert meta == {
+        "enabled": settings.document_blob_gc_enabled,
+        "interval_seconds": 1234,
+        "idle_interval_seconds": None,  # the sweep has no idle cadence
+    }
     monkeypatch.setattr(settings, "document_blob_gc_enabled", False)
     assert registry.worker_meta()["document_blob_gc"]["enabled"] is False
     assert "document_blob_gc" not in {s.name for s in registry.enabled_workers()}
