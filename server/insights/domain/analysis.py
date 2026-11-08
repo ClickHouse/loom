@@ -114,7 +114,9 @@ TABLES: tuple[Table, ...] = (
             *_IDENTITY,
             *_WRITER,
             _c("run_id", "String", "the run that wrote it, '-' for none"),
-            _c("memory_key", "String", "the key; cite it as [memory:<key>@v<version>]"),
+            # A key a query found is cited by the query's fenced sql block: the memory
+            # citation form is checked against the keys a memory read returned.
+            _c("memory_key", "String", "the key; a fact a query found is cited by its sql block"),
             _c("memory_id", "UUID", "the version's id"),
             _c("memory_type", "LowCardinality(String)", "fact, decision, preference, ..."),
             _c("version", "UInt64", "the version number; higher is newer"),

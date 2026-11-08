@@ -74,10 +74,19 @@ export interface AssistantAskInput {
   history?: AssistantMessage[];
 }
 
+export interface AssistantCitation {
+  kind: "memory" | "doc" | "code" | "sql";
+  text: string;
+  verified?: boolean;
+  reason?: string;
+  ref?: string;
+}
+
 export interface AssistantAskOutput {
   answer?: string;
   run_id?: string;
   model?: string;
+  citations?: AssistantCitation[];
 }
 
 export interface AuditListInput {

@@ -187,26 +187,53 @@ an SDK caller sends each time, as with any OpenAI-compatible API. The agent's MC
 connection carries request-time headers, so LibreChat opens it for each answer and
 closes it after; each answer pays one MCP `initialize` and `tools/list`.
 
-**Citations.** The agent's instructions will require a citation on each claim:
+**Citations.** The agent's instructions require a citation on each claim:
 `[memory:<key>@v<version>]`, `[doc:<source_uri> § <section>]`, `[code:<path>:<line>]`,
-or the number of a fenced `sql` block in the answer that holds the statement exactly as
-it ran. The bridge checks each against Loom: a memory key and version must be readable
-by the caller and current, a document section must exist in a live document, and a `sql`
-block's digest must match an `insights.query` call ledgered in this answer. The agent's
-MCP server sends the answer's message id on each tool call as `X-Loom-Run-Id` (the
-agents API fills `{{LIBRECHAT_BODY_MESSAGEID}}` with the id every chunk carries). On the
-assistant toolset the MCP transport labels the call's ledger row with that header, in
+or a fenced `sql` block in the answer that holds the statement exactly as it ran. The
+bridge checks each when the answer ends, inside the answer's slot and for at most ten
+seconds in all (`server/assistant/app/citations.py`). A memory citation is verified when
+one of the answer's own tool calls was returned its key: the exposure rows
+(`loom.memory_exposures`) that the toolset's `memory.search`, `memory.ask`,
+`memory.get`, `memory.list` and `memory.inspect` record under the answer's run,
+whichever user or session the row is under (a search hit on one of a key's chunks counts
+as its key). The assistant toolset drops any `run_id` a call names, so those rows are
+filed under the answer's run; on `memory.search` the argument is also a filter to one
+run's rows, which the assistant gives up. The exposure rows record keys, not versions,
+so a memory citation's version is not compared. Only those reads record exposures: a key
+returned by any other call (`memory.history`, `memory.provenance`, an `insights.query`
+row) is not seen, and its citation comes back unverified with a reason that names the
+reads that count; a fact a query found is cited by the query's `sql` block instead. A
+`sql` block is verified when its digest is the `out_sql_digest` of an `insights.query`
+call ledgered in this answer (`loom.agent_events`). A document citation's section must
+be a heading path of a live document (`knowledge.outline`), and one with no section
+verifies when the document is readable. The document is read through Loom's own routes
+in process with the answer's token, so every gate a read passes applies to it, in a task
+of its own (each check is a task of an `asyncio.gather`) so the read leaves the answer's
+request state alone, and under no run id. A code citation is not checked: a code index
+is a namespace of its own, which the answer's token (viewer on the answer's namespace
+alone) does not reach, so `code.verify_citations` is not called for it. Nor are an
+answer's citations past the fiftieth. The agent's MCP server sends the answer's message
+id on each tool call as `X-Loom-Run-Id` (the agents API fills
+`{{LIBRECHAT_BODY_MESSAGEID}}` with the id every chunk carries). On the assistant
+toolset the MCP transport labels the call's ledger row with that header, in
 `agent_events.run_id`, as HTTP already does; there the header wins over the session's
 run label, and an answer's connection opens no session run, so the bridge reads the
-answer's rows, and its steps (each tool call, its arguments and whether it answered), by
-the org, the namespace, that run id, the caller's subject and the consumer
-`loom-assistant`. A caller who knows its answer's run id could plant a row of its own
-under it; such a row is the caller's own call, so a citation it makes verified misleads
-only the caller. Ledger rows are written in the background and a tool call can land on
-another replica, so the bridge waits up to five seconds for the rows; a citation whose
-row has not arrived by then, or was dropped, comes back unverified. Each citation comes
-back marked `verified` or not, and an answer with no verified citation is shown as
-unsupported, as an abstention is.
+answer's rows by the org, the namespace, that run id and the caller's subject, its
+`insights.query` rows also by the consumer `loom-assistant` its token carries. A caller
+who knows its answer's run id could plant a row of its own under it; such a row is the
+caller's own call, so a citation it makes verified misleads only the caller. The rows
+are written in the background and a tool call can land on another replica, so the bridge
+waits up to five seconds for them; a citation whose row has not arrived by then, or was
+dropped, comes back unverified. A check Loom refuses (a rate limit, an outage), a ledger
+that cannot be read, memory reads that are not recorded
+(`LOOM_MEMORY_EXPOSURE_LEDGER_ENABLED` off), an answer with no run id, a check past the
+ten seconds, or a document read whose token expired (an answer that ran to its limit
+leaves its checks a token near its end) leaves its citation unverified with the reason
+"the check could not run", and never fails the answer. Each citation comes back marked
+`verified` or not, with the reason and its `ref` (the memory key, document source or
+code path it names), in a last `loom.citations` event before the stream's `[DONE]` (and
+a `citations` field on a whole answer and on `assistant.ask`), and an answer with no
+verified citation is shown as unsupported, as an abstention is.
 
 **Rendering.** The answer is model output that stored text can steer, so the dashboard
 renders it as text with Markdown emphasis, lists, tables and code only: no HTML, no
@@ -770,8 +797,8 @@ the MCP endpoint) show that:
   while a boot waits for the lease, and a boot whose read of the service row hits a
   lagging replica still sees the row.
 
-Still to come with the citation check: a `sql` citation verifies in a restricted
-namespace and when its tool call landed on another replica.
+Not yet tested: a `sql` citation in a restricted namespace, and one whose tool call
+landed on another replica (the five-second wait is what covers the second).
 
 A probe of this boundary on ClickHouse 26.9, with a scratch table, user and policy of
 this shape, showed each refusal in the table above, the query cache keeping the two
@@ -963,8 +990,8 @@ by an older build.
    Built.
 4. The bridge: the chat route and `assistant.ask`, with the answer's token, the
    refusals, the budget share, the per-process limit, the spend on the answer's ledger
-   row and the answer's id on its tool calls' rows (built); then the citation check;
-   then the SDKs' streaming clients.
+   row, the answer's id on its tool calls' rows, and the citation check (built); then
+   the SDKs' streaming clients.
 5. The chat on the dashboard's Assistant page.
 
 Each part moves its section of this page from design to the description of what is

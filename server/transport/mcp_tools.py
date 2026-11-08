@@ -19,6 +19,7 @@ from server.operations.base import Operation
 from server.operations.registry import ALL_OPERATIONS
 from server.operations.toolsets import (
     _MCP_HIDDEN_OPS,
+    ASSISTANT_DROPPED_ARGS,
     ASSISTANT_FORCED_ARGS,
     ASSISTANT_NAMED_AGENT_OPS,
     SYNTHETIC_TOOL_OPS,
@@ -326,15 +327,15 @@ def _with_identity(schema: dict[str, Any], op: Operation) -> dict[str, Any]:
     return out
 
 
-def _without_forced(schema: dict[str, Any], forced: dict[str, object]) -> dict[str, Any]:
-    """`schema` without the properties the assistant toolset sets itself: a model is
-    not offered an argument whose value the connection overwrites."""
-    if not forced or not isinstance(schema.get("properties"), dict):
+def _without(schema: dict[str, Any], names: set[str]) -> dict[str, Any]:
+    """`schema` without the properties the assistant connection overwrites or drops: a
+    model is not offered an argument the connection sets or discards."""
+    if not isinstance(schema.get("properties"), dict):
         return schema
-    # A forced argument has a default, so it is never in `required`.
+    # Each has a default, so it is never in `required`.
     return {
         **schema,
-        "properties": {k: v for k, v in schema["properties"].items() if k not in forced},
+        "properties": {k: v for k, v in schema["properties"].items() if k not in names},
     }
 
 
@@ -447,7 +448,9 @@ async def _tools_descriptor(
             # is developer prose.
             input_schema = strip_model_docstring(input_schema)
         if is_assistant(toolset):
-            input_schema = _without_forced(input_schema, ASSISTANT_FORCED_ARGS.get(op.name, {}))
+            input_schema = _without(
+                input_schema, set(ASSISTANT_FORCED_ARGS.get(op.name, {})) | ASSISTANT_DROPPED_ARGS
+            )
             input_schema = _with_identity(input_schema, op)
         descriptor: dict[str, Any] = {
             "name": op.mcp_tool_name,

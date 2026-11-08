@@ -2238,6 +2238,17 @@ def coding_search_description(core_text: str) -> str:
 # `loom_search`, `loom_op` or code tools the connection does not carry. Each names only
 # tools the assistant listing has, and says what a citation takes from the result.
 ASSISTANT_TOOL_DESCRIPTIONS: dict[str, str] = {
+    # The answer's citation check matches the statement itself, not a digest the answer
+    # writes (server/assistant/app/citations.py).
+    "insights.query": (
+        "Run one read-only SQL SELECT (or WITH) over the tables insights_catalog lists, "
+        "for questions no other read answers: counts, rankings and trends over memories, "
+        "conflicts, usage, documents and the request ledger. It reads only this namespace's "
+        "rows, deleted and replaced versions excluded (FINAL is applied for you), and "
+        "returns at most `limit` rows: aggregate rather than page. A statement over a cap "
+        "fails with the cap it hit; add a time or key filter. Show the statement in the "
+        "answer exactly as sent, in a fenced sql block: that block is its citation."
+    ),
     "namespace.audit": (
         "How a namespace is used, read-only: exact-key reads against searches, hash keys, "
         "double-encoded or oversized values, leases stored as memories, version churn. "

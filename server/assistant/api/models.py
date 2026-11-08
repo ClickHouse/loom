@@ -43,6 +43,21 @@ class AssistantAskInput(BaseModel):
     )
 
 
+class AssistantCitation(BaseModel):
+    """One citation an answer wrote, as Loom checked it when the answer ended."""
+
+    kind: Literal["memory", "doc", "code", "sql"]
+    # The citation as the answer wrote it.
+    text: str
+    # True when the answer's own tool calls read the memory key or ran the statement, or
+    # the document holds the section.
+    verified: bool = False
+    # Why it is not verified ('' when it is).
+    reason: str = ""
+    # The memory key, document source or code path it names ('' for sql).
+    ref: str = ""
+
+
 class AssistantAskOutput(BaseModel):
     # The assistant's answer, with its citations as the agent wrote them.
     answer: str = ""
@@ -50,3 +65,5 @@ class AssistantAskOutput(BaseModel):
     run_id: str = ""
     # The model that answered.
     model: str = ""
+    # Each citation in `answer`, checked when the answer ended.
+    citations: list[AssistantCitation] = Field(default_factory=list)

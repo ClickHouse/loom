@@ -5174,6 +5174,17 @@ class AssistantAskOutput(TypedDict, total=False):
     answer: NotRequired[str]
     run_id: NotRequired[str]
     model: NotRequired[str]
+    citations: NotRequired[list["AssistantCitation"]]
+
+
+class AssistantCitation(TypedDict, total=False):
+    "One citation an answer wrote, as Loom checked it when the answer ended."
+
+    kind: Required[Literal["memory", "doc", "code", "sql"]]
+    text: Required[str]
+    verified: NotRequired[bool]
+    reason: NotRequired[str]
+    ref: NotRequired[str]
 
 
 class AuditListInput(TypedDict, total=False):

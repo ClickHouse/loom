@@ -112,13 +112,22 @@ def test_forced_arguments_and_the_consumer_override_the_model(
 ) -> None:
     search = OPERATIONS_BY_NAME["memory.search"].mcp_tool_name
     with pytest.raises(_Stop):
-        _call(search, {"query": "q", "auto_touch": True, "consumer": "someone-else"})
+        _call(
+            search,
+            {"query": "q", "auto_touch": True, "consumer": "someone-else", "run_id": "task-1"},
+        )
     ask = OPERATIONS_BY_NAME["memory.ask"].mcp_tool_name
     with pytest.raises(_Stop):
-        _call(ask, {"query": "q", "reinforce": True})
+        _call(ask, {"query": "q", "reinforce": True, "run_id": "task-2"})
     assert bound[0]["auto_touch"] is False and bound[0]["explain"] is False
     assert bound[0]["consumer"] == "loom-assistant"
-    assert bound[1]["reinforce"] is False and bound[1]["consumer"] == "loom-assistant"
+    # A call's own run would take its rows out of the answer's run.
+    assert "run_id" not in bound[0]
+    assert (
+        bound[1]["reinforce"] is False
+        and "run_id" not in bound[1]
+        and bound[1]["consumer"] == "loom-assistant"
+    )
 
 
 def test_other_toolsets_keep_the_model_arguments(bound: list[dict[str, Any]]) -> None:
@@ -244,6 +253,8 @@ def test_the_listing_offers_no_argument_the_connection_overwrites(
     for op_name, forced in ASSISTANT_FORCED_ARGS.items():
         props = by_name[OPERATIONS_BY_NAME[op_name].mcp_tool_name]["inputSchema"]["properties"]
         assert not set(forced) & set(props), op_name
+    # No assistant tool offers a run of its own.
+    assert not any("run_id" in d["inputSchema"].get("properties", {}) for d in by_name.values())
     # Other listings keep them.
     atomic = {d["name"]: d for d in asyncio.run(mcp._tools_descriptor(toolset="atomic"))}
     assert "reinforce" in atomic["loom_memory_ask"]["inputSchema"]["properties"]
@@ -770,3 +781,63 @@ def test_a_refused_assistant_tool_call_is_ledgered_under_its_answer(
     # In a copy of the context, so the answer id is set for this test alone.
     contextvars.copy_context().run(_refuse)
     assert seen == [run]
+
+
+def test_an_assistant_memory_read_is_recorded_under_its_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The citation check reads the keys an answer's tool calls were returned by the
+    # answer's run and the caller's subject: an assistant call's exposure row names both.
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.memory.app import after_write, exposure_ledger
+    from server.transport.assistant_call import set_answer_run, set_assistant_call
+
+    monkeypatch.setattr(exposure_ledger, "enabled", lambda: True)
+    monkeypatch.setattr(after_write, "schedule", lambda coro, **_kw: coro.close())
+    auth = AuthInfo(
+        subject="alice",
+        org="acme",
+        namespaces=("acme-handbook",),
+        roles=(),
+        is_service_account=False,
+        consumer="loom-assistant",
+    )
+
+    async def _run() -> dict[str, Any] | None:
+        set_current_auth(auth)
+        set_assistant_call(True)
+        set_answer_run("chatcmpl-1")
+        await mcp_call._bind_session_run(OPERATIONS_BY_NAME["memory.search"], None, "", None)
+        return exposure_ledger.record_exposure(
+            operation="memory.search",
+            org="acme",
+            namespace="acme-handbook",
+            keys=["policy/deploy/freeze"],
+        )
+
+    row = asyncio.run(_run())
+    assert row is not None and (row["run_id"], row["actor"]) == ("chatcmpl-1", "alice")
+
+
+def test_the_agent_is_told_to_cite_only_what_the_citation_check_can_verify(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The instructions and the assistant's tool descriptions name the citation forms
+    # server/assistant/app/citations.py checks, so the model is not steered to a form
+    # that always comes back unverified.
+    from server.assistant.app import citations, service
+
+    instructions = service.current_definition().agent_body()["instructions"]
+    # The citation bullet alone (the loaded instructions carry no indent).
+    bullet = instructions.split("cite it:", 1)[1].split("\n- ", 1)[0]
+    # The list of reads, exactly as the check counts them.
+    names = [op_name.replace(".", "_") for op_name in citations.RECORDING_READS]
+    listed = ", ".join(names[:-1]) + " or " + names[-1]
+    assert listed in " ".join(bullet.split()), listed
+    # Memory reads that record no exposure are not offered as citation sources.
+    assert "memory_history" not in bullet and "memory_provenance" not in bullet
+    monkeypatch.setattr(settings, "mcp_code_tools", False)
+    by_name = {d["name"]: d for d in asyncio.run(mcp._tools_descriptor(toolset="assistant"))}
+    query = by_name[OPERATIONS_BY_NAME["insights.query"].mcp_tool_name]["description"]
+    assert "sql_digest" not in query and "fenced sql block" in query

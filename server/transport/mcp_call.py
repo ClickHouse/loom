@@ -28,6 +28,7 @@ from server.observability.consumer import ASSISTANT_CONSUMER
 from server.operations.base import Operation
 from server.operations.toolsets import (
     _MCP_HIDDEN_OPS,
+    ASSISTANT_DROPPED_ARGS,
     ASSISTANT_FORCED_ARGS,
     ASSISTANT_NAMED_AGENT_OPS,
     MCP_ASSISTANT_OPS,
@@ -419,9 +420,10 @@ async def _resolve_connection_tool(
     toolset: str | None,
 ) -> Operation | dict[str, Any]:
     """`_resolve_tool`, and on the assistant toolset first its refusal of any tool it does
-    not carry, then its forced arguments and consumer stamped over the model's own (in
-    place), so the model cannot argue either away. A token whose `consumer` claim names
-    another consumer keeps its claim (`resolve_consumer_and_source`)."""
+    not carry, then its forced arguments and consumer stamped over the model's own and the
+    arguments it drops (`run_id`) removed (in place), so the model cannot argue any of them
+    away. A token whose `consumer` claim names another consumer keeps its claim
+    (`resolve_consumer_and_source`)."""
     on_assistant = assistant_connection(toolset)
     set_assistant_call(on_assistant)
     if not on_assistant:
@@ -434,6 +436,8 @@ async def _resolve_connection_tool(
     tool = await _resolve_tool(req_id, name, auth, client_name, toolset, allow_hidden=True)
     if not isinstance(tool, dict):
         arguments.update(ASSISTANT_FORCED_ARGS.get(tool.name, {}))
+        for dropped in ASSISTANT_DROPPED_ARGS:
+            arguments.pop(dropped, None)
         arguments["consumer"] = ASSISTANT_CONSUMER
     return tool
 
