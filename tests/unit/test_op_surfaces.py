@@ -32,10 +32,7 @@ AGENT_ONLY = {AGENT_STEP, CODE_QUESTION, TRACKER_QUESTION}
 
 # The most DASHBOARD_PENDING may hold: an op leaves it when its control lands,
 # and nothing joins it.
-PENDING_AT_MOST = frozenset(
-    {
-    }
-)
+PENDING_AT_MOST: frozenset[str] = frozenset()
 
 
 def _loom_op(name: str, toolset: str | None = None) -> tuple[dict, dict | None]:

@@ -90,6 +90,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "code.pr_check": ("sdk_method",),
     "code.recent_commits": ("dashboard",),
     "code.refresh": ("dashboard",),
+    "code.reindex": ("dashboard",),
     "code.repo.add": ("dashboard",),
     "code.repo.add_branch": ("dashboard",),
     "code.repo.remote_branches": ("dashboard",),
@@ -163,7 +164,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_example",
         "dashboard",
     ),
-    "conversation.delete": ("sdk_method",),
+    "conversation.delete": (
+        "sdk_method",
+        "dashboard",
+    ),
     "conversation.get": (
         "sdk_method",
         "plugin_hook",
@@ -179,7 +183,11 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     ),
     "conversation.set_logging": ("dashboard",),
     "conversation.threads": ("dashboard",),
-    "conversation.update": ("sdk_method",),
+    "conversation.update": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "cost.agent_summary": ("dashboard",),
     "cost.budget_status": ("dashboard",),
     "cost.record_turns": ("plugin_hook",),
     "cost.summary": (
@@ -532,6 +540,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "dashboard",
     ),
     "namespace.guide_get": ("dashboard",),
+    "namespace.guide_history": ("dashboard",),
     "namespace.guide_set": ("dashboard",),
     "namespace.inventory": (
         "plugin_hook",
@@ -549,6 +558,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "dashboard",
     ),
     "namespace.list_ontology": ("dashboard",),
+    "namespace.mark_seen": ("dashboard",),
     "namespace.register": (
         "sdk_method",
         "dashboard",
@@ -640,11 +650,15 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_example",
         "dashboard",
     ),
-    "run.grade": ("sdk_method",),
+    "run.grade": (
+        "sdk_method",
+        "dashboard",
+    ),
     "run.list": (
         "sdk_method",
         "dashboard",
     ),
+    "session.brief_delete": ("dashboard",),
     "session.brief_get": (
         "plugin_hook",
         "dashboard",

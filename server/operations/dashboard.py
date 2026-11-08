@@ -162,7 +162,8 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
     # ---- client programs
     dict.fromkeys(
         (
-                "code.coverage.unwatch",
+            "code.calibrate",
+            "code.coverage.unwatch",
             "code.coverage.watch",
             "code.outcome",
             "code.scip_ingest",
@@ -237,7 +238,4 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
     },
 )
 
-DASHBOARD_PENDING: frozenset[str] = frozenset(
-    {
-    }
-)
+DASHBOARD_PENDING: frozenset[str] = frozenset()
