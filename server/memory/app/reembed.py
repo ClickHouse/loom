@@ -426,9 +426,8 @@ async def _read_again(
     now = {key(r): r for r in stored}
     text = cfg["text"]
     present = {i: now[key(r)] for i, r in read.items() if key(r) in now}
-    # The text the vector is made from, and the row's agent and user. A change to a key
-    # column reads as gone; on conversation_embeddings none of the three is one, on
-    # memory_embeddings only the text is not, on entity_vectors all three are.
+    # The text the vector is made from, and the row's agent and user; a change to a key
+    # column reads as gone, so only the non-key ones can differ here.
     same = [text, "agent", "user_id"]
     kept = {
         i: read[i] | row for i, row in present.items() if all(row[c] == read[i][c] for c in same)
@@ -668,9 +667,7 @@ async def reembed_all(
         written["skipped_switched_off"] = waiting
         log(f"{waiting} rows of {len(off)} switched-off org(s) left for a later run")
     if delete_old and not dry_run:
-        # Every org whose rows wait keeps its old vectors: off at the start, off
-        # during the run or by now, with a row the re-read found with other text or
-        # identity, or named by the resume token.
+        # Every org whose rows wait keeps its old vectors: what left_orgs collected, and off now.
         keep = frozenset(left_orgs | await customer.switched_off_orgs())
         shown = sorted(keep & {org}) if org else sorted(keep)  # the delete's --org scope
         if shown:

@@ -369,10 +369,10 @@ async def test_a_key_only_row_rewritten_on_the_current_model_keeps_no_org() -> N
 async def test_a_resume_token_carries_the_orgs_delete_old_keeps(monkeypatch) -> None:
     """A run interrupted after skipping a rewritten row: the resumed run's --delete-old
     still keeps that org's old-model rows."""
-    key = ["o", "ns", "m1", "t", "001"]
-    assert rb.decode_resume(rb.encode_resume("conversation_embeddings", key))[2] == []
-    token = rb.encode_resume("conversation_embeddings", key, ["o"])
-    assert rb.decode_resume(token) == ("conversation_embeddings", key, ["o"])
+    after = ["o", "ns", "m1", "t", "001"]
+    assert rb.decode_resume(rb.encode_resume("conversation_embeddings", after))[2] == []
+    token = rb.encode_resume("conversation_embeddings", after, ["o"])
+    assert rb.decode_resume(token) == ("conversation_embeddings", after, ["o"])
 
     ch, deletes = _CH(3), []
 
