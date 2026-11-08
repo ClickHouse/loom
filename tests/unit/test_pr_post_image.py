@@ -408,7 +408,10 @@ def test_concurrent_requests_parse_a_file_once(monkeypatch: pytest.MonkeyPatch) 
     async def both() -> list[Any]:
         deadline = time.monotonic() + 60
         src = POST.encode()
-        return await asyncio.gather(*(po._file_facts(PATH, src, "d", deadline) for _ in range(2)))
+        scope = ("acme", "code-ch")
+        return await asyncio.gather(
+            *(po._file_facts(scope, PATH, src, "d", deadline) for _ in range(2))
+        )
 
     first, second = asyncio.run(both())
     assert calls == [PATH]
@@ -419,6 +422,7 @@ def test_a_file_whose_parse_runs_past_the_deadline_is_counted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "code_parse_timeout_seconds", 0.2)
+    monkeypatch.setattr(po, "_overlay_window", lambda: 60.0)
     slow = b"package x\nvar s = " + b"`" * 60_000
     sources = {PATH: POST.encode(), "src/slow.go": slow}
     ov = po.PrOverlay(
@@ -470,3 +474,21 @@ def test_an_open_brief_over_a_partial_overlay_is_served_unstored(
         )
     )
     assert repo.inserted == [] and payload["overlay_note"] == note and payload["stored"] is False
+
+
+def test_the_event_loop_runs_while_an_overlay_parses(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 0.5)
+    slow = (b"package x\nvar s = " + b"`" * 60_000).decode()
+    img = po.PostImage(pr_number=7, files={"src/slow.go": slow}, diff="")
+    ticks = 0
+
+    async def run() -> None:
+        nonlocal ticks
+        parse = asyncio.ensure_future(po.load_posted_overlay(_Repo(), "acme", "code-ch", img))
+        while not parse.done():
+            await asyncio.sleep(0.01)
+            ticks += 1
+        await parse
+
+    asyncio.run(run())
+    assert ticks >= 5  # a parse on the event loop would let it tick once

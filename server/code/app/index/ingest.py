@@ -14,6 +14,7 @@ All CH I/O goes through CodeRepo; this module owns sequencing only.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from collections.abc import Awaitable, Callable
@@ -185,7 +186,10 @@ async def ingest_file(
     if refused:
         return stats
 
-    pf, stats.error = parsed if parsed is not None else parse_for_ingest(path, source)
+    # parsing is CPU work: in a thread, so the event loop runs at the parser's reads
+    pf, stats.error = (
+        parsed if parsed is not None else await asyncio.to_thread(parse_for_ingest, path, source)
+    )
     if pf is None:
         stats.skipped = True
         return stats

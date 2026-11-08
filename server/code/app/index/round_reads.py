@@ -235,9 +235,8 @@ class RoundReads:
             return
         names: set[str] = set()
         for path, source in sources.items():
-            # one parse can take `code_parse_timeout_seconds`: the loop runs between files
-            await asyncio.sleep(0)
-            parsed = parse_for_round(path, source, denylist)
+            # parsing is CPU work: in a thread, so the event loop runs at the parser's reads
+            parsed = await asyncio.to_thread(parse_for_round, path, source, denylist)
             if parsed is None:
                 continue
             self.parsed[path] = parsed

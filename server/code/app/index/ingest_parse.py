@@ -9,6 +9,7 @@ from typing import Any
 
 from server.code.app.index.denylist import Denylist, default_denylist
 from server.code.app.index.ingest_stats import error_text
+from server.code.domain.extract.bounded_parse import ParseTimeout
 from server.code.domain.extract.lang_detect import detect_by_extension, detect_shell, is_bats_path
 from server.code.domain.extract.lang_hosts import HostUnits, detect_host, host_kind, host_units
 from server.code.domain.extract.lang_py_islands import py_sql_units
@@ -124,8 +125,6 @@ def parse_for_ingest(path: str, source: bytes) -> tuple[ParsedFile | None, str]:
 
 def parse_timed_out(error: str) -> bool:
     """Whether `parse_for_ingest`'s reason says the parse ran past its deadline."""
-    from server.code.domain.extract.bounded_parse import ParseTimeout
-
     return error.startswith(f"parse: {ParseTimeout.__name__}")
 
 

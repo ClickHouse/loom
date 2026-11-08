@@ -1352,7 +1352,7 @@
           "default": 3.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Longest one tree-sitter parse may run (seconds); a file whose parse runs past it is indexed as chunks without symbols and its parse error is recorded."
+          "description": "CPU seconds after which a tree-sitter parse stops reading its file; such a file is indexed as chunks without symbols and its parse error is recorded."
         },
         "code_path_prefixes": {
           "default": "",

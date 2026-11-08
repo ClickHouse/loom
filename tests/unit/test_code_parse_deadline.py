@@ -83,7 +83,9 @@ def _receiver(node: ast.expr) -> str:
 
 def test_every_tree_sitter_parse_goes_through_the_deadline() -> None:
     """Outside `bounded_parse`, no `.parse(` is called on a parser, nor at all in the code
-    plane's domain or a module that names tree-sitter but on `_NOT_A_PARSER`."""
+    plane's domain or a module that names tree-sitter but on `_NOT_A_PARSER`. A parser is
+    known by its name (`parser`, `_parser(...)`), so one held under another name outside
+    those modules is not caught."""
     unbounded = []
     for f in _SERVER.rglob("*.py"):
         if f.name == "bounded_parse.py":
@@ -131,3 +133,16 @@ def test_a_header_whose_parse_stops_is_read_as_not_indexed(
     asyncio.run(ih.header_context(Repo(), "acme", "code", pf, "src/a.cpp", stats))
     assert ih._header_cache[("acme", "code", "src/a.h")] is None
     ih._header_cache.pop(("acme", "code", "src/a.h"))
+
+
+def test_parsers_of_one_grammar_share_one_lock() -> None:
+    import tree_sitter
+    import tree_sitter_go
+
+    from server.code.domain.extract import bounded_parse
+
+    for _ in range(2):
+        parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_go.language()))
+        bounded_parse.parse(parser, b"package x\n")
+    go = tree_sitter.Language(tree_sitter_go.language())
+    assert [lang for lang in bounded_parse._LOCKS if lang == go] == [go]

@@ -13,15 +13,18 @@ every processor) and forgotten when the header itself is re-ingested.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import posixpath
 import re
+import time
 from typing import Any
 
 from server.code.app.index.ingest_stats import FileIngestStats
 from server.code.domain.extract.bounded_parse import ParseTimeout
 from server.code.domain.extract.edges_treesitter import HeaderDecls, remainder_ctor_sites
 from server.code.domain.extract.treesitter import _INCLUDE_RE, ParsedFile
+from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.ingest")
 
@@ -172,7 +175,10 @@ async def header_context(
     includes_done = False
     hd = HeaderDecls()
     read = 0
-    while read < _HEADER_CAP:
+    # The headers of one source parse for about one parse deadline: past it no more
+    # are read
+    spent = 0.0
+    while read < _HEADER_CAP and spent <= settings.code_parse_timeout_seconds:
         if not queue:
             if includes_done:
                 break
@@ -193,9 +199,10 @@ async def header_context(
         stats.headers_read += int(from_db)
         if text is None:
             continue
-        try:
-            hd.add_source(hp, text.encode("utf-8", "replace"))
-        except ParseTimeout:
+        # parsing is CPU work: in a thread, so the event loop runs at the parser's reads
+        cost, timed_out = await asyncio.to_thread(_add_header, hd, hp, text)
+        spent += cost
+        if timed_out:
             _header_cache[(org, ns, hp)] = None  # read as not indexed, not parsed again
             continue
         if hp in sibling_set:
@@ -204,6 +211,17 @@ async def header_context(
             break
     stats.header_paths = tuple(hd.paths)
     return hd if hd.paths else None
+
+
+def _add_header(hd: HeaderDecls, path: str, text: str) -> tuple[float, bool]:
+    """`hd.add_source` of one header: (the CPU seconds it took, whether its parse ran
+    past the deadline)."""
+    start = time.thread_time()
+    try:
+        hd.add_source(path, text.encode("utf-8", "replace"))
+    except ParseTimeout:
+        return time.thread_time() - start, True
+    return time.thread_time() - start, False
 
 
 # the sibling header's own `#include` list, kept beside its text: the field
