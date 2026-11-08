@@ -5,18 +5,20 @@ Loom Service in place of the compose service. CH-free."""
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_CONFIG = ROOT / "integrations" / "librechat" / "assistant.librechat.yaml"
-CHART = ROOT / "deploy" / "helm" / "loom" / "templates" / "assistant.yaml"
+CHART = ROOT / "deploy" / "helm" / "loom" / "templates" / "assistant-config.yaml"
 
 
 def _chart_config() -> dict:
     text = CHART.read_text()
-    block = text.split("  librechat.yaml: |\n", 1)[1].split("\n---", 1)[0]
+    block = text.split("  librechat.yaml: |\n", 1)[1].split("\n{{- end }}", 1)[0]
     # The template's two substitutions: the Loom Service, and the escaped braces.
     block = (
         block.replace("{{ $loom }}", "loom").replace('{{ "{{" }}', "{{").replace('{{ "}}" }}', "}}")
@@ -44,9 +46,21 @@ def test_compose_publishes_no_assistant_port_and_keeps_mongo_internal() -> None:
         service = compose["services"][name]
         assert service["profiles"] == ["assistant"]
         assert "ports" not in service, name
-    assert compose["services"]["librechat-mongo"]["networks"] == ["assistant"]
+    assert compose["services"]["librechat-mongo"]["networks"] == ["assistant-db"]
     assert compose["networks"]["assistant"]["internal"] is True
-    # LibreChat's own egress network is shared with no other service.
+    assert compose["networks"]["assistant-db"]["internal"] is True
+    # LibreChat's database and egress networks are shared with no other service, so
+    # the loom container reaches neither MongoDB nor LibreChat's way out.
     for name, service in compose["services"].items():
+        joined = service.get("networks", [])
+        if name not in ("librechat", "librechat-mongo"):
+            assert "assistant-db" not in joined, name
         if name != "librechat":
-            assert "assistant-egress" not in service.get("networks", []), name
+            assert "assistant-egress" not in joined, name
+
+
+@pytest.mark.skipif(not shutil.which("helm"), reason="needs helm (the CI helm job runs it)")
+def test_the_charts_assistant_is_reached_only_from_loom_and_reaches_loom() -> None:
+    from scripts.gates import helm_assistant_isolation
+
+    helm_assistant_isolation.main()

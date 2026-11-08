@@ -48,10 +48,12 @@ _NO_SUCH_EMAIL = "Email does not exist"
 # request` event, with status 200), so the setup names itself as one.
 _BROWSER_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36"
 
+# The service user's LibreChat name: LibreChat wants at least three characters.
+_USER_NAME = "loom-assistant"
+
 # Whether this process has the service set up: None = not yet tried, False = a problem.
 _ready: bool | None = None
 _problem = ""
-_agent_id = ""
 
 
 class ServiceRefused(RuntimeError):
@@ -68,17 +70,12 @@ def configured() -> bool:
 
 
 def current_definition() -> agent_definition.Definition:
-    """This build's definition: agent.yaml, the assistant toolset's tools, and
-    LOOM_ASSISTANT_MODEL in place of the file's model when set."""
-    from server.operations.registry import OPERATIONS_BY_NAME
-    from server.operations.toolsets import MCP_ASSISTANT_OPS
+    """This build's definition: agent.yaml, the tools the assistant connection lists,
+    and LOOM_ASSISTANT_MODEL in place of the file's model when set."""
+    from server.operations.toolsets import assistant_ops
 
     raw = yaml.safe_load(paths.ASSISTANT_AGENT.read_text())
-    tools = [
-        OPERATIONS_BY_NAME[name].mcp_tool_name
-        for name in MCP_ASSISTANT_OPS
-        if name in OPERATIONS_BY_NAME
-    ]
+    tools = [op.mcp_tool_name for op in assistant_ops()]
     return agent_definition.parse(raw, tools, str(settings.assistant_model))
 
 
@@ -90,7 +87,9 @@ async def lease(ch: Any = None) -> AsyncIterator[None]:
             yield
 
 
-def _opened(sealed: str) -> dict[str, str] | None:
+def opened(sealed: str) -> dict[str, str] | None:
+    """The service user's password and API key from the row's sealed value, None when it
+    does not open with the deployment's secret."""
     plain = unseal(_SEALED_PURPOSE, sealed)
     return json.loads(plain) if plain else None
 
@@ -119,12 +118,11 @@ class _LibreChat:
         if r.status_code != 200 and _NO_SUCH_EMAIL in r.text:
             # Registering only after LibreChat said the email is unknown: it logs a
             # register request, password included, when the email is already in use.
-            name = self._email.split("@", 1)[0]
             r = await self._client.post(
                 "/api/auth/register",
                 json={
-                    "name": name,
-                    "username": name,
+                    "name": _USER_NAME,
+                    "username": _USER_NAME,
                     "email": self._email,
                     "password": self._password,
                     "confirm_password": self._password,
@@ -147,6 +145,14 @@ class _LibreChat:
                 "recreates both"
             )
         return str(r.json()["token"])
+
+    async def agent_status(self, api_key: str, agent_id: str) -> int:
+        """What LibreChat answers the stored key for the stored agent: 200 when both
+        stand, 401 when the key is gone, 404 when the agent is. No sign-in."""
+        r = await self._client.get(
+            f"/api/agents/v1/models/{agent_id}", headers={"Authorization": f"Bearer {api_key}"}
+        )
+        return r.status_code
 
     async def replace_key(self, name: str) -> str:
         """A new agents API key named `name`, after deleting any of that name."""
@@ -186,10 +192,10 @@ class _LibreChat:
         r.raise_for_status()
 
 
-async def ensure_service() -> bool:
-    """Set the service user and agent up, doing only what the row lacks. True once
-    the row has a key, an agent id and this build's definition (or a newer one)."""
-    global _agent_id
+async def ensure_service() -> None:
+    """Set the service user and agent up, doing only what the row lacks, and check
+    with the stored key that LibreChat still holds them (its database replaced, or
+    the agent deleted, makes the step again)."""
     defn = current_definition()
     async with lease():
         row = await store.read()
@@ -199,32 +205,51 @@ async def ensure_service() -> bool:
                 sealed=_sealed(secrets.token_urlsafe(24), ""),
             ).advanced()
             await store.write(row)
-        opened = _opened(row.sealed)
-        if opened is None:
+        secrets_ = opened(row.sealed)
+        if secrets_ is None:
             raise ServiceRefused(
                 "loom.assistant_service does not open with LOOM_JWT_SECRET (set "
                 "LOOM_JWT_SECRET_PREVIOUS to the secret it was sealed under and run "
                 "`loom secrets reseal`)"
             )
+        password, key, agent_id = secrets_["password"], secrets_.get("api_key", ""), row.agent_id
         async with httpx.AsyncClient(
             base_url=str(settings.assistant_librechat_url),
             headers={"User-Agent": _BROWSER_UA},
             timeout=30,  # not a setting: each step is one small request, under the lease
         ) as client:
-            lc = _LibreChat(client, row.email, opened["password"])
-            if not opened.get("api_key"):
+            lc = _LibreChat(client, row.email, password)
+            if key and agent_id:
+                key, agent_id = await _still_held(lc, key, agent_id)
+            if not key:
                 key = await lc.replace_key(defn.name)
-                row = row.advanced(sealed=_sealed(opened["password"], key))
+                row = row.advanced(sealed=_sealed(password, key))
                 await store.write(row)
-            if not row.agent_id:
-                row = row.advanced(agent_id=await lc.one_agent(defn))
+                if agent_id:
+                    # The key was gone, so the user may be new and own no agent.
+                    _, agent_id = await _still_held(lc, key, agent_id)
+            if not agent_id:
+                # A found or new agent gets this build's definition in the next step.
+                row = row.advanced(
+                    agent_id=await lc.one_agent(defn), definition_version=0, definition_model=""
+                )
                 await store.write(row)
             if agent_definition.needs_write(row.definition_version, row.definition_model, defn):
                 await lc.write_agent(row.agent_id, defn)
                 row = row.advanced(definition_version=defn.version, definition_model=defn.model)
                 await store.write(row)
-    _agent_id = row.agent_id
-    return True
+
+
+async def _still_held(lc: _LibreChat, key: str, agent_id: str) -> tuple[str, str]:
+    """(key, agent id), each '' when LibreChat no longer holds it."""
+    status = await lc.agent_status(key, agent_id)
+    if status == 401:
+        return "", agent_id
+    if status == 404:
+        return key, ""
+    if status != 200:
+        raise ServiceRefused(f"LibreChat answered {status} for the assistant's agent")
+    return key, agent_id
 
 
 async def _setup_once() -> bool:
@@ -252,17 +277,20 @@ def _record_failure(e: BaseException) -> None:
 
 
 def start_setup_loop() -> asyncio.Task[None] | None:
-    """Set the service up in this process's background, again every interval until a
-    run succeeds; None when no LibreChat is configured."""
+    """Set the service up in this process's background until a try succeeds, waiting
+    LOOM_ASSISTANT_SETUP_RETRY_S after the first failure and twice as long after each
+    next, up to 16 times as long; None when no LibreChat is configured. Each try signs
+    in at most once, and every process of a replica shares one address in LibreChat's
+    sign-in limit (seven in five minutes), so the waits grow."""
     if not configured():
         return None
 
     async def _run() -> None:
         set_query_tag("assistant.service")  # every process runs it, not a worker
-        while True:
-            if await _setup_once():
-                return
-            await asyncio.sleep(float(settings.assistant_setup_retry_s))
+        failures = 0
+        while not await _setup_once():
+            await asyncio.sleep(float(settings.assistant_setup_retry_s) * 2 ** min(failures, 4))
+            failures += 1
 
     return asyncio.get_running_loop().create_task(_run(), name="loom-assistant-service")
 
@@ -272,5 +300,6 @@ __all__ = [
     "configured",
     "current_definition",
     "ensure_service",
+    "opened",
     "start_setup_loop",
 ]

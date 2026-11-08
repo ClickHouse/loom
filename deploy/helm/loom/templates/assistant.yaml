@@ -11,48 +11,6 @@ read-only root filesystem. */}}
 {{- $name := include "loom.assistantName" $ }}
 {{- $mongo := include "loom.assistantMongoName" $ }}
 {{- $loom := include "loom.fullname" $ }}
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ $name }}
-  labels:
-    {{- include "loom.labels" $ | nindent 4 }}
-    app.kubernetes.io/component: assistant
-data:
-  # integrations/librechat/assistant.librechat.yaml, with the release's Loom Service
-  # as the MCP server (tests/unit/test_assistant_deployment.py keeps them equal).
-  librechat.yaml: |
-    version: 1.3.17
-    cache: true
-    interface:
-      agents: { use: true, create: true, share: false, public: false }
-      remoteAgents: { use: true, create: true, share: false, public: false }
-      mcpServers: { use: true, create: false, share: false, public: false }
-      sharedLinks: { share: false, public: false }
-    memory:
-      disabled: true
-    registration:
-      socialLogins: []
-    endpoints:
-      anthropic:
-        titleConvo: false
-      agents:
-        capabilities: ["tools"]
-    mcpSettings:
-      allowedAddresses:
-        - {{ $loom }}:7777
-    mcpServers:
-      loom:
-        type: streamable-http
-        url: http://{{ $loom }}:7777/mcp?toolset=assistant
-        requiresOAuth: false
-        startup: false
-        timeout: 60000
-        serverInstructions: false
-        headers:
-          Authorization: "Bearer {{ "{{" }}LIBRECHAT_BODY_PARENTMESSAGEID{{ "}}" }}"
-          X-Loom-Run-Id: "{{ "{{" }}LIBRECHAT_BODY_MESSAGEID{{ "}}" }}"
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -61,8 +19,11 @@ metadata:
     {{- include "loom.labels" $ | nindent 4 }}
     app.kubernetes.io/component: assistant
 spec:
-  # LibreChat keeps its run bookkeeping in memory (no Redis): one replica.
+  # LibreChat keeps its run bookkeeping in memory (no Redis): one replica, never two
+  # during a rollout.
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "loom.assistantSelectorLabels" $ | nindent 6 }}
@@ -71,6 +32,9 @@ spec:
       labels:
         {{- include "loom.assistantSelectorLabels" $ | nindent 8 }}
         app.kubernetes.io/component: assistant
+      annotations:
+        # LibreChat reads its configuration at start: a changed one restarts it.
+        checksum/config: {{ include (print $.Template.BasePath "/assistant-config.yaml") $ | sha256sum }}
     spec:
       automountServiceAccountToken: false
       enableServiceLinks: false

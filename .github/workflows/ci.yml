@@ -448,6 +448,9 @@ jobs:
       # No Loom pod reaches the instance metadata service, with the policy on or off.
       - name: metadata egress
         run: python3 scripts/gates/helm_metadata_egress.py
+      # What LibreChat and its MongoDB can be reached by and reach, read off the render.
+      - name: assistant isolation
+        run: python3 scripts/gates/helm_assistant_isolation.py
 
   agent-plugins:
     name: coding-agent plugins (node --test)

@@ -525,7 +525,6 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "dashboard",
     ),
     "mentor.brief": ("dashboard",),
-    "mentor.guide": ("plugin_hook",),
     "namespace.audit": (
         "plugin_hook",
         "dashboard",

@@ -42,6 +42,24 @@ from server.settings._env import (
 )
 from server.settings._live import LIVE
 
+# ===== Assistant ==============================================================
+
+
+class AssistantSettings(BaseModel):
+    """The assistant: LibreChat run headless beside Loom, and the agent Loom seeds in it."""
+
+    # LibreChat's internal address (http://librechat:3080), reachable only from Loom. ""
+    # = no assistant: no service setup at boot.
+    assistant_librechat_url: str = ""
+    # Email of the LibreChat service user that owns the agent; LibreChat sends it no mail.
+    assistant_service_email: str = "loom-assistant@loom.invalid"
+    # Seconds before the service setup is tried again after its first failure
+    # (LibreChat still starting, its database restored from elsewhere); each next
+    # failure doubles the wait, up to 16 times this. A try signs in at most once, and
+    # LibreChat allows 7 sign-ins per address in 5 minutes, hence the floor of 60.
+    assistant_setup_retry_s: float = Field(default=60.0, ge=60, le=3600)
+
+
 # ===== Auth ===================================================================
 
 
@@ -2217,17 +2235,6 @@ class KnowledgeSettings(BaseModel):
 
 class McpSettings(BaseModel):
     """The MCP transport: tool listing, lean results, session runs."""
-
-    # --- the assistant (LibreChat beside Loom) ---
-    # LibreChat's internal address (http://librechat:3080), reachable only from Loom. ""
-    # = no assistant: no service setup at boot.
-    assistant_librechat_url: str = ""
-    # Email of the LibreChat service user that owns the agent; LibreChat sends it no mail.
-    assistant_service_email: str = "loom-assistant@loom.invalid"
-    # Seconds between two tries of the service setup while it fails (LibreChat still
-    # starting, its database restored from elsewhere). Each try signs in once, and
-    # LibreChat allows 7 sign-ins per address in 5 minutes, hence the floor of 60.
-    assistant_setup_retry_s: float = Field(default=60.0, ge=60, le=3600)
 
     # loom_search drops knowledge hits below this cosine similarity (the
     # conversation leg's floor, applied to the knowledge leg).

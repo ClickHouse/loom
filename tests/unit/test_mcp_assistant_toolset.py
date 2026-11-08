@@ -619,3 +619,38 @@ def test_an_assistant_call_reads_the_namespace_its_token_names(
     monkeypatch.setattr(mcp_identity, "readable_named_claims", _claims)
     defaults = asyncio.run(mcp_identity._caller_defaults(object(), assistant=assistant))
     assert defaults is not None and defaults["namespace"] == namespace
+
+
+def test_an_assistant_call_reads_its_first_claim_the_gate_admits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Through the call's own connection (no `assistant=`), with the real claim filter: a
+    # claim the gate refuses is skipped, and a token never reads past what it names.
+    from server.auth import authz
+    from server.auth.jwt import AuthInfo
+    from server.operations.base import Role
+    from server.transport import mcp_identity
+    from server.transport.assistant_call import set_assistant_call
+
+    async def _home(*_: Any) -> tuple[str, list[str]]:
+        return "personal-alice", []
+
+    async def _admits(self: Any, namespace: str, role: Role) -> bool:
+        return namespace != "revoked-ns"
+
+    monkeypatch.setattr(mcp_identity, "default_and_readable", _home)
+    monkeypatch.setattr(authz.CachedGate, "admits", _admits)
+    auth = AuthInfo(
+        subject="alice",
+        org="acme",
+        namespaces=("revoked-ns", "acme-handbook"),
+        roles=(Role.VIEWER,),
+        is_service_account=True,
+    )
+
+    async def _run() -> dict[str, Any] | None:
+        set_assistant_call(True)
+        return await mcp_identity._caller_defaults(auth)
+
+    defaults = asyncio.run(_run())
+    assert defaults is not None and defaults["namespace"] == "acme-handbook"

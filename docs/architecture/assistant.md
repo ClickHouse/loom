@@ -160,12 +160,15 @@ LibreChat:
 4. A stored definition older than this build's, or of the same version with another
    model: write it and store its version and model on the row.
 
-A boot that stopped halfway leaves the row at a step the next one finishes. Answers run
-on the stored key whatever a sign-in does. A row whose sealed value opens with neither
-`LOOM_JWT_SECRET` nor `LOOM_JWT_SECRET_PREVIOUS`, and a sign-in that fails (LibreChat's
-database restored from another deployment, say), are `loom doctor` problems with one
-fix: empty LibreChat's database and drop the row, which the next boot recreates. Until
-the row has its key and agent id, the assistant answers `ASSISTANT_UNAVAILABLE`.
+A boot that stopped halfway leaves the row at a step the next one finishes, and a boot
+over a complete row checks with the stored key that LibreChat still holds the key and
+the agent, making either again when it does not ([Deployment](#deployment)). Answers run
+on the stored key whatever a sign-in does. Two failures need an operator, and
+`/v1/health` names each as `assistant_service_failing`: a row whose sealed value opens
+with neither `LOOM_JWT_SECRET` nor `LOOM_JWT_SECRET_PREVIOUS` (set the previous secret and
+run `loom secrets reseal`), and a refused sign-in (LibreChat's database restored from
+another deployment, say: empty it and drop the row, which the next boot recreates).
+Until the row has its key and agent id, the assistant answers `ASSISTANT_UNAVAILABLE`.
 
 **Conversations live with the caller.** LibreChat's agents API (the OpenAI-compatible
 `/api/agents/v1/chat/completions`) saves no messages: it runs the agent over the
@@ -732,29 +735,38 @@ LibreChat runs beside Loom with its MongoDB in every deployment shape, reachable
 from Loom, and both run its v0.8.8 configuration,
 `integrations/librechat/assistant.librechat.yaml`:
 
-- **Compose:** the `assistant` profile starts `librechat` and `librechat-mongo` on the
-  internal `assistant` network, shared with the `loom` service; neither publishes a port.
-  LibreChat alone is also on `assistant-egress`, a network of its own with a route out,
-  for its model provider. Its secrets (`CREDS_KEY`, `CREDS_IV`, `JWT_SECRET`,
+- **Compose:** the `assistant` profile starts `librechat` and `librechat-mongo`; neither
+  publishes a port. LibreChat shares the internal `assistant` network with the `loom`
+  service and the internal `assistant-db` network with MongoDB alone, so the `loom`
+  container, which builds repository code, cannot reach the database. LibreChat alone is
+  also on `assistant-egress`, a network of its own with a route out, for its model
+  provider. Its secrets (`CREDS_KEY`, `CREDS_IV`, `JWT_SECRET`,
   `JWT_REFRESH_SECRET`) and model key come from `librechat.env`.
 - **Helm:** `assistant.enabled` adds LibreChat's Deployment and Service and a MongoDB
   StatefulSet (`templates/assistant.yaml`), with the same configuration in a ConfigMap
   naming the release's Loom Service, and the secrets from `assistant.existingSecret`.
   LibreChat's NetworkPolicy admits only Loom's pods and lets it reach DNS, its MongoDB,
-  Loom's pods and TCP 443; MongoDB's admits only LibreChat and reaches nothing. Both run
+  Loom's pods and TCP 443; MongoDB's admits only LibreChat and reaches nothing, and
+  Loom's own policy admits LibreChat when it names its peers. LibreChat runs one pod,
+  replaced rather than rolled, and restarts when its configuration changes. Both run
   non-root on a read-only root filesystem; LibreChat writes its logs and uploads to
-  `emptyDir` volumes.
+  `emptyDir` volumes (`scripts/gates/helm_assistant_isolation.py` checks the render).
 - **Settings:** `LOOM_ASSISTANT_LIBRECHAT_URL` names LibreChat's internal address; unset,
   Loom sets up nothing. `LOOM_ASSISTANT_MODEL` replaces the definition's model.
 
-Each replica sets the service up in its background at boot and again every
-`LOOM_ASSISTANT_SETUP_RETRY_S` while it fails (LibreChat still starting, say); until it
-succeeds `/v1/health` and `loom doctor` show `assistant_service_failing`, with the
-failure's kind and the text in the log only. Each try signs in at most once, and
-LibreChat allows seven sign-ins per address in five minutes, so the interval is at least
-60 seconds; a refused sign-in for that limit is named as such. LibreChat's signed-in
-routes refuse a client that is not a browser (they answer status 200 with an `Illegal
-request` event), so the setup sends a browser user agent.
+Each replica sets the service up in its background at boot. Over a row that has its key
+and agent, a boot asks LibreChat, with the stored key and no sign-in, whether the agent
+is still there (`GET /api/agents/v1/models/<id>`): a key LibreChat no longer knows
+(`401`, its database replaced) makes the key step again, and a missing agent (`404`) the
+agent step, so the next boot repairs either. A failed try is tried again after
+`LOOM_ASSISTANT_SETUP_RETRY_S`, the wait doubling after each next failure up to 16 times
+as long; from the first failed try until one succeeds `/v1/health` shows
+`assistant_service_failing`, with the failure's kind and the text in the log only. Each
+try signs in at most once, every process of a replica counts toward LibreChat's limit of
+seven sign-ins per address in five minutes, and a sign-in refused for that limit is named
+as such. LibreChat's signed-in routes refuse a client that is not a browser (they answer
+status 200 with an `Illegal request` event), so the setup sends a browser user agent,
+and its service user is named `loom-assistant` (LibreChat wants three characters).
 
 LibreChat's configuration keeps the integration's memory off and search index out, and
 gives the agents endpoint no capability but tools (no actions, which call any URL, and

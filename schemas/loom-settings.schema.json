@@ -66,7 +66,7 @@
           "maximum": 3600,
           "minimum": 60,
           "type": "number",
-          "description": "Seconds between two tries of the service setup while it fails (LibreChat still starting, its database restored from elsewhere). Each try signs in once, and LibreChat allows 7 sign-ins per address in 5 minutes, hence the floor of 60."
+          "description": "Seconds before the service setup is tried again after its first failure (LibreChat still starting, its database restored from elsewhere); each next failure doubles the wait, up to 16 times this. A try signs in at most once, and LibreChat allows 7 sign-ins per address in 5 minutes, hence the floor of 60."
         },
         "audit_checkpoint_grace_seconds": {
           "default": 600,

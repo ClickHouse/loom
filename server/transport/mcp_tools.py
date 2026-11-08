@@ -21,8 +21,8 @@ from server.operations.toolsets import (
     _MCP_HIDDEN_OPS,
     ASSISTANT_FORCED_ARGS,
     ASSISTANT_NAMED_AGENT_OPS,
-    MCP_ASSISTANT_OPS,
     SYNTHETIC_TOOL_OPS,
+    assistant_ops,
     canonical_toolset,
     curated_roster,
     is_assistant,
@@ -382,8 +382,7 @@ def listed_ops(toolset: str | None) -> list[Operation]:
     # security boundary.
     readonly = toolset == "readonly"
     if is_assistant(toolset):
-        # A fixed set of reads, listed whatever their maturity or the code tools flag.
-        return [op for op in ALL_OPERATIONS if op.name in MCP_ASSISTANT_OPS and op.read_only]
+        return assistant_ops()
     code_tools = bool(settings.mcp_code_tools)
     core_ops = curated_roster(toolset, code_tools=code_tools) or frozenset()
     # The code tools are the coding tier's point: listed there regardless of

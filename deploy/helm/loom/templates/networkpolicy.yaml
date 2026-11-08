@@ -33,6 +33,12 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "loom.selectorLabels" $ | nindent 14 }}
+        {{- if $.Values.assistant.enabled }}
+        # The assistant's agent calls Loom's MCP server.
+        - podSelector:
+            matchLabels:
+              {{- include "loom.assistantSelectorLabels" $ | nindent 14 }}
+        {{- end }}
       {{- end }}
   egress:
     - to:

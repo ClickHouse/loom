@@ -19,14 +19,14 @@ mint the fixture's tokens. It is not a test and never runs in CI.
     python integrations/librechat/qualification/qualify.py run
     python integrations/librechat/qualification/qualify.py rescore
 
-`--deployed` runs the same cases through the assistant as Loom deploys it instead: the
-one agent Loom seeds under its LibreChat service user (`integrations/librechat/
-agent.yaml`), run with the service user's key, and each person's own Loom token sent
-as the request's `parent_message_id`, which the agent's MCP server sends back to Loom
-(`assistant.librechat.yaml`). `setup-deployed` reads the agent id and key from
+`setup-deployed`, in place of `setup`, runs the same cases through the assistant as Loom
+deploys it: the one agent Loom seeds under its LibreChat service user
+(`integrations/librechat/agent.yaml`), run with that user's key, with each person's
+answer token sent as the request's `parent_message_id`, which the agent's MCP server
+sends back to Loom (`assistant.librechat.yaml`). It reads the agent id and key from
 `loom.assistant_service`, so it runs from a checkout with the server's LOOM_CH_* and
-LOOM_JWT_SECRET, and mints each person's answer token as the bridge does (viewer on
-their namespace alone); it registers nobody. Run it before `revoke`.
+LOOM_JWT_SECRET, and mints each answer token as the bridge does (viewer on the person's
+namespace alone); it registers nobody. Run it before `revoke`.
 """
 
 from __future__ import annotations
@@ -316,7 +316,7 @@ def cmd_setup_deployed(args: argparse.Namespace) -> None:
     import asyncio
 
     sys.path.insert(0, str(HERE.parents[2]))
-    from server.assistant.app.service import _opened
+    from server.assistant.app.service import opened as open_sealed
     from server.assistant.store import service
     from server.core.ch import get_client
 
@@ -328,7 +328,7 @@ def cmd_setup_deployed(args: argparse.Namespace) -> None:
             await get_client().disconnect()
 
     row = asyncio.run(_read())
-    opened = _opened(row.sealed) if row else None
+    opened = open_sealed(row.sealed) if row else None
     if not row or not row.agent_id or not opened or not opened.get("api_key"):
         sys.exit("loom.assistant_service has no agent yet: start Loom with LibreChat beside it")
     st = state()
@@ -674,8 +674,9 @@ def native_score(case: dict[str, Any], code: int, out: dict[str, Any]) -> dict[s
         if spec.get("count"):
             value = len(value)
         text = json.dumps(value)
-        if "matches" in spec:
-            correct = re.search(spec["matches"], str(value), re.IGNORECASE) is not None
+        if "min_chars" in spec:
+            # A row the guide calls a document: past ~2 KB of text.
+            correct = len(str(value)) >= spec["min_chars"]
         else:
             correct = value == spec["equals"]
     return {

@@ -141,9 +141,11 @@ services:
 
   # The assistant (`--profile assistant`): LibreChat runs the agent Loom seeds, headless.
   # Neither it nor its MongoDB publishes a port. The internal `assistant` network
-  # joins them to the loom service alone; LibreChat also has `assistant-egress`, a
-  # network of its own, to reach its model provider, so it reaches neither ClickHouse
-  # nor the extractor (docs/architecture/assistant.md#deployment).
+  # joins LibreChat to the loom service alone, and `assistant-db` to its MongoDB
+  # alone, so the loom container (which builds repository code) cannot reach that
+  # database; LibreChat also has `assistant-egress`, a network of its own, to reach
+  # its model provider, so it reaches neither ClickHouse nor the extractor
+  # (docs/architecture/assistant.md#deployment).
   librechat:
     profiles: [assistant]
     image: registry.librechat.ai/librechat-ai/librechat:v0.8.8@sha256:5b706bcee1ca154a1e2987303aaeca0eb27f97919cccee4bb604226c2f8abf61
@@ -165,7 +167,7 @@ services:
       BAN_VIOLATIONS: "false"
     volumes:
       - ./integrations/librechat/assistant.librechat.yaml:/app/librechat.yaml:ro
-    networks: [assistant, assistant-egress]
+    networks: [assistant, assistant-db, assistant-egress]
 
   librechat-mongo:
     profiles: [assistant]
@@ -174,12 +176,14 @@ services:
     command: mongod --noauth --quiet
     volumes:
       - librechat-mongo:/data/db
-    networks: [assistant]
+    networks: [assistant-db]
 
 networks:
   extractor:
     internal: true
   assistant:
+    internal: true
+  assistant-db:
     internal: true
   assistant-egress: {}
 

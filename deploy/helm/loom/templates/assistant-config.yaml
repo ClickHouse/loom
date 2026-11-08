@@ -1,0 +1,49 @@
+{{- /* The assistant's LibreChat configuration, apart from assistant.yaml so the
+Deployment's checksum/config annotation can hash it. */}}
+{{- with .Values.assistant }}
+{{- if .enabled }}
+{{- $name := include "loom.assistantName" $ }}
+{{- $loom := include "loom.fullname" $ }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "loom.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: assistant
+data:
+  # integrations/librechat/assistant.librechat.yaml, with the release's Loom Service
+  # as the MCP server (tests/unit/test_assistant_deployment.py keeps them equal).
+  librechat.yaml: |
+    version: 1.3.17
+    cache: true
+    interface:
+      agents: { use: true, create: true, share: false, public: false }
+      remoteAgents: { use: true, create: true, share: false, public: false }
+      mcpServers: { use: true, create: false, share: false, public: false }
+      sharedLinks: { share: false, public: false }
+    memory:
+      disabled: true
+    registration:
+      socialLogins: []
+    endpoints:
+      anthropic:
+        titleConvo: false
+      agents:
+        capabilities: ["tools"]
+    mcpSettings:
+      allowedAddresses:
+        - {{ $loom }}:7777
+    mcpServers:
+      loom:
+        type: streamable-http
+        url: http://{{ $loom }}:7777/mcp?toolset=assistant
+        requiresOAuth: false
+        startup: false
+        timeout: 60000
+        serverInstructions: false
+        headers:
+          Authorization: "Bearer {{ "{{" }}LIBRECHAT_BODY_PARENTMESSAGEID{{ "}}" }}"
+          X-Loom-Run-Id: "{{ "{{" }}LIBRECHAT_BODY_MESSAGEID{{ "}}" }}"
+{{- end }}
+{{- end }}

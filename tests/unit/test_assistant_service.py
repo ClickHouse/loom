@@ -74,7 +74,7 @@ def test_a_version_names_one_definition() -> None:
     assert {defn.version: digest} == {1: DEFINITION_DIGEST}
 
 
-DEFINITION_DIGEST = "1b4d1aaaa44d1345"
+DEFINITION_DIGEST = "7facd469a60a403e"
 
 
 class _Row:
@@ -102,12 +102,30 @@ class _LibreChat:
         self.calls: list[str] = []
         self.fail_on = ""
         self.fail_status = 500
+        self.made = 0  # ids LibreChat has handed out, so none repeats
+
+    def forget_everything(self) -> None:
+        """LibreChat's MongoDB replaced: no user, key or agent."""
+        self.users, self.keys, self.agents = {}, [], []
+
+    def _new_id(self) -> int:
+        self.made += 1
+        return self.made
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         call = f"{request.method} {request.url.path}"
         self.calls.append(call)
         if call == self.fail_on:
             return httpx.Response(self.fail_status, json={"error": "boom"})
+        if request.url.path.startswith("/api/agents/v1/models/"):
+            # The agents API, authenticated by an API key: no browser check.
+            bearer = request.headers.get("authorization", "").removeprefix("Bearer ")
+            if bearer not in {k["key"] for k in self.keys}:
+                return httpx.Response(401, json={"message": "Invalid API key"})
+            agent_id = request.url.path.rsplit("/", 1)[1]
+            if agent_id not in {a["id"] for a in self.agents}:
+                return httpx.Response(404, json={"error": {"code": "model_not_found"}})
+            return httpx.Response(200, json={"id": agent_id, "object": "model"})
         if "Chrome/" not in request.headers.get("user-agent", "") and call not in (
             "POST /api/auth/login",
             "POST /api/auth/register",
@@ -127,7 +145,8 @@ class _LibreChat:
         if call == "GET /api/api-keys":
             return httpx.Response(200, json={"keys": self.keys})
         if call == "POST /api/api-keys":
-            key = {"id": f"k{len(self.keys)}", "name": body["name"], "key": f"sk-{len(self.keys)}"}
+            n = self._new_id()
+            key = {"id": f"k{n}", "name": body["name"], "key": f"sk-{n}"}
             self.keys.append(key)
             return httpx.Response(201, json=key)
         if request.method == "DELETE" and request.url.path.startswith("/api/api-keys/"):
@@ -136,7 +155,8 @@ class _LibreChat:
         if call == "GET /api/agents":
             return httpx.Response(200, json={"object": "list", "data": self.agents})
         if call == "POST /api/agents":
-            agent = {"id": f"agent_{len(self.agents)}", "createdAt": str(len(self.agents)), **body}
+            n = self._new_id()
+            agent = {"id": f"agent_{n}", "createdAt": f"{n:04d}", **body}
             self.agents.append(agent)
             return httpx.Response(201, json=agent)
         if request.method == "PATCH" and request.url.path.startswith("/api/agents/"):
@@ -146,6 +166,13 @@ class _LibreChat:
             self.agents = [a for a in self.agents if a["id"] != agent_id]
             return httpx.Response(204)
         return httpx.Response(404)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Each test starts as a process that has not tried the setup.
+    monkeypatch.setattr(service, "_ready", None)
+    monkeypatch.setattr(service, "_problem", "")
 
 
 @pytest.fixture
@@ -173,8 +200,8 @@ def test_a_first_boot_registers_the_user_and_seeds_the_agent(
     setup: tuple[_Row, _LibreChat],
 ) -> None:
     row, lc = setup
-    assert asyncio.run(service.ensure_service()) is True
-    assert row.row is not None and row.row.agent_id == "agent_0"
+    asyncio.run(service.ensure_service())
+    assert row.row is not None and row.row.agent_id == "agent_2"
     assert row.row.email == settings.assistant_service_email
     assert row.row.definition_version == service.current_definition().version
     assert len(lc.users) == 1 and len(lc.keys) == 1 and len(lc.agents) == 1
@@ -186,13 +213,61 @@ def test_a_first_boot_registers_the_user_and_seeds_the_agent(
     ]
 
 
-def test_a_boot_over_a_set_up_service_calls_nothing(setup: tuple[_Row, _LibreChat]) -> None:
+def test_a_boot_over_a_set_up_service_checks_it_and_writes_nothing(
+    setup: tuple[_Row, _LibreChat],
+) -> None:
     row, lc = setup
     asyncio.run(service.ensure_service())
     lc.calls.clear()
     writes = row.writes
     asyncio.run(service.ensure_service())
-    assert lc.calls == [] and row.writes == writes
+    # One call with the stored key, no sign-in.
+    assert lc.calls == [f"GET /api/agents/v1/models/{row.row.agent_id}"]  # type: ignore[union-attr]
+    assert row.writes == writes
+
+
+def test_an_agent_deleted_in_librechat_is_made_again(setup: tuple[_Row, _LibreChat]) -> None:
+    row, lc = setup
+    asyncio.run(service.ensure_service())
+    lc.agents.clear()
+    asyncio.run(service.ensure_service())
+    assert row.row is not None and [a["id"] for a in lc.agents] == [row.row.agent_id]
+    assert row.row.definition_version == service.current_definition().version
+    assert len(lc.keys) == 1
+
+
+def test_a_librechat_that_lost_its_database_is_set_up_again(
+    setup: tuple[_Row, _LibreChat],
+) -> None:
+    row, lc = setup
+    asyncio.run(service.ensure_service())
+    lc.forget_everything()
+    asyncio.run(service.ensure_service())
+    assert row.row is not None and len(lc.users) == 1
+    assert [a["id"] for a in lc.agents] == [row.row.agent_id]
+    stored = service.opened(row.row.sealed)
+    assert stored is not None and [k["key"] for k in lc.keys] == [stored["api_key"]]
+
+
+def test_a_key_made_but_not_stored_is_replaced_by_the_next_boot(
+    setup: tuple[_Row, _LibreChat], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    row, lc = setup
+    real_write = row.write
+
+    async def write_then_fail(new: store.ServiceRow, **kw: Any) -> None:
+        if row.row is not None:  # the row exists: this write would store the key
+            raise RuntimeError("ClickHouse went away")
+        await real_write(new, **kw)
+
+    monkeypatch.setattr(service.store, "write", write_then_fail)
+    with pytest.raises(RuntimeError):
+        asyncio.run(service.ensure_service())
+    assert len(lc.keys) == 1  # LibreChat made a key the row does not hold
+    monkeypatch.setattr(service.store, "write", real_write)
+    asyncio.run(service.ensure_service())
+    stored = service.opened(row.row.sealed)  # type: ignore[union-attr]
+    assert stored is not None and [k["key"] for k in lc.keys] == [stored["api_key"]]
 
 
 def test_a_boot_cut_short_is_finished_by_the_next(setup: tuple[_Row, _LibreChat]) -> None:
@@ -214,9 +289,9 @@ def test_the_oldest_agent_of_the_name_is_kept_and_the_rest_deleted(
 ) -> None:
     row, lc = setup
     lc.agents = [
-        {"id": "a_new", "name": "Loom assistant", "createdAt": "2"},
-        {"id": "a_old", "name": "Loom assistant", "createdAt": "1"},
-        {"id": "a_other", "name": "Someone else", "createdAt": "0"},
+        {"id": "a_new", "name": "Loom assistant", "createdAt": "0002"},
+        {"id": "a_old", "name": "Loom assistant", "createdAt": "0001"},
+        {"id": "a_other", "name": "Someone else", "createdAt": "0000"},
     ]
     asyncio.run(service.ensure_service())
     assert row.row is not None and row.row.agent_id == "a_old"
@@ -228,7 +303,7 @@ def test_a_row_that_does_not_open_is_refused_as_loom_words_it(
 ) -> None:
     row, _ = setup
     row.row = store.ServiceRow(email="e@x", sealed="sealed-under-another-secret", version=1)
-    monkeypatch.setattr(service, "_opened", lambda _: None)
+    monkeypatch.setattr(service, "opened", lambda _: None)
     assert asyncio.run(service._setup_once()) is False
     ready, problem = service.assistant_state()
     assert ready is False and "does not open with LOOM_JWT_SECRET" in problem
@@ -291,4 +366,5 @@ def test_a_failed_setup_is_tried_again_after_the_interval(
         await task
 
     asyncio.run(_run())
-    assert waits == [90.0, 90.0] and outcomes == []
+    # The wait doubles after each failure.
+    assert waits == [90.0, 180.0] and outcomes == []

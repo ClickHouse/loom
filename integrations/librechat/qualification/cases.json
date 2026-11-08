@@ -427,10 +427,13 @@
     "expect": ["\\bdocument"],
     "forbid": ["\\b(should|can) stay (a|as a) memory\\b"],
     "baseline": {
-      "op": "mentor.guide",
-      "args": {},
-      "path": ["text"],
-      "matches": "document"
+      "op": "memory.get",
+      "args": {
+        "agent": "notes-bot",
+        "memory_key": "notes/runbook/deploy"
+      },
+      "path": ["value"],
+      "min_chars": 2048
     }
   }
 ]

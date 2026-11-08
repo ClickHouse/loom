@@ -48,6 +48,16 @@ Every change to a setting's default, from `server/settings/_history.py`. A deplo
 | 1.2.0 | `LOOM_CLICKSTACK_USER_ID_KEYS` | `'user_id,user.id,enduser.id'` | `'user_id,user.id,enduser.id,loom.user_id,langfuse.user.id'` | A user-scoped ClickStack erasure also matches the user-id keys Loom's own child spans carry, so they are erased with the request span. A deployment that sets the variable keeps its own list and should add both keys. |
 | 1.0.0 | `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` | `3` | `8` | A failed replay now waits 15 s, 1, 5, then 30 minutes before the next attempt, and an unreachable provider spends none: eight attempts span about two hours instead of three back to back. |
 
+## Assistant
+
+The assistant: LibreChat run headless beside Loom, and the agent Loom seeds in it.
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_ASSISTANT_LIBRECHAT_URL` | `str` | `''` |  | LibreChat's internal address (http://librechat:3080), reachable only from Loom. "" = no assistant: no service setup at boot. |
+| `LOOM_ASSISTANT_SERVICE_EMAIL` | `str` | `'loom-assistant@loom.invalid'` |  | Email of the LibreChat service user that owns the agent; LibreChat sends it no mail. |
+| `LOOM_ASSISTANT_SETUP_RETRY_S` | `float` | `60.0` |  | Seconds before the service setup is tried again after its first failure (LibreChat still starting, its database restored from elsewhere); each next failure doubles the wait, up to 16 times this. A try signs in at most once, and LibreChat allows 7 sign-ins per address in 5 minutes, hence the floor of 60. |
+
 ## Auth
 
 Authentication, tokens and identity providers.
@@ -905,14 +915,8 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 
 The MCP transport: tool listing, lean results, session runs.
 
-
-### The assistant (LibreChat beside Loom)
-
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_ASSISTANT_LIBRECHAT_URL` | `str` | `''` |  | LibreChat's internal address (http://librechat:3080), reachable only from Loom. "" = no assistant: no service setup at boot. |
-| `LOOM_ASSISTANT_SERVICE_EMAIL` | `str` | `'loom-assistant@loom.invalid'` |  | Email of the LibreChat service user that owns the agent; LibreChat sends it no mail. |
-| `LOOM_ASSISTANT_SETUP_RETRY_S` | `float` | `60.0` |  | Seconds between two tries of the service setup while it fails (LibreChat still starting, its database restored from elsewhere). Each try signs in once, and LibreChat allows 7 sign-ins per address in 5 minutes, hence the floor of 60. |
 | `LOOM_MCP_LOOM_SEARCH_KNOWLEDGE_MIN_SIMILARITY` | `float` | `0.3` |  | loom_search drops knowledge hits below this cosine similarity (the conversation leg's floor, applied to the knowledge leg). |
 | `LOOM_MCP_LOOM_SEARCH_PROFILE_MIN_SIMILARITY` | `float` | `0.38` |  | loom_search's profile leg: sections the words missed pass by cosine against `label\nvalue` at this hard floor. 0 = lexical only. |
 | `LOOM_MCP_LOOM_SEARCH_PROFILE_SOFT_SIMILARITY` | `float` | `0.3` |  | Cosine floor of loom_search's profile leg for a question about the user only (the soft tier). |

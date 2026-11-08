@@ -224,44 +224,57 @@ LOOM_ASSISTANT_LIBRECHAT_URL=http://librechat:3080 docker compose --profile assi
 
 At boot Loom registers its service user, creates the agents API key and the agent from
 `integrations/librechat/agent.yaml`, and stores them sealed in `loom.assistant_service`;
-`/v1/health` shows `assistant_service_failing` until that has succeeded. The chart's
-`assistant.enabled` does the same on Kubernetes.
+a boot over a set-up row checks with the stored key that LibreChat still holds them.
+From a failed try until one succeeds, `/v1/health` shows `assistant_service_failing`.
+The chart's `assistant.enabled` does the same on Kubernetes.
 
-The qualification runs the same cases through that agent with `--deployed`'s two
-commands: `setup-deployed` reads the agent and its key from `loom.assistant_service`
-and mints each person's answer token (`viewer` on their namespace alone), and `run`
-then sends each case to the agent with that token. It adds three analysis cases
-(`insights.query` over the namespace, one asking for every org's counts, whose answer
-must name no other tenant's rows), two recommendation cases over `acme-notes`, a
-namespace written badly on purpose (hash-named keys, a JSON value encoded twice, a
-6.5 KB runbook stored as a memory), and keeps every earlier case:
+The qualification runs the same cases through that agent. `setup-deployed` reads the
+agent and its key from `loom.assistant_service`, so it runs from a Loom checkout with
+the server's `LOOM_CH_*` and `LOOM_JWT_SECRET` in its environment, and mints each
+person's answer token (`viewer` on their namespace alone); `run` then sends each case to
+the agent with that token as `parent_message_id`. LibreChat publishes no port, so
+publish one for the run with an override file and pass it as `--librechat-url`:
 
-```bash
-python integrations/librechat/qualification/qualify.py seed
-python integrations/librechat/qualification/qualify.py setup-deployed
-python integrations/librechat/qualification/qualify.py revoke
-python integrations/librechat/qualification/qualify.py run --cancel-probe
+```yaml
+# compose.qualify.yaml, beside compose.yaml
+services:
+  librechat:
+    ports: ["127.0.0.1:3080:3080"]
 ```
 
-| Measured on v0.8.8, 28 cases, `claude-haiku-4-5`, fake embedder   | The deployed agent                                                      |
-| ----------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| Correct answers                                                   | 28 of 28 on the last of four runs; 23, 26 and 25 on the three before it |
-| Analysis cases / recommendation cases                             | 3 of 3 / 2 of 2                                                         |
-| Cross-tenant, revoked and other-org SQL cases, no leak            | 3 of 3                                                                  |
-| Should-abstain cases that abstain                                 | 4 of 4, no false abstention                                             |
-| Memory citations valid                                            | 13 of 16                                                                |
-| Document citations valid                                          | 8 of 9                                                                  |
-| End-to-end latency p50 / p95                                      | 3.4 s / 10.7 s; the recommendation cases 10.7 s and 14.5 s              |
-| Tool calls per question                                           | at most 6 (a recommendation reads the audit, mentor and guides)         |
-| Model cost per answer, every prompt token at list price           | mean $0.033, max $0.048                                                 |
-| Loom calls after a client disconnects mid-answer                  | 0                                                                       |
-| Answer tokens or service password in LibreChat's logs or database | none                                                                    |
-| What LibreChat stored                                             | `transactions` only: no messages, conversations or tool calls           |
+```bash
+docker compose -f compose.yaml -f compose.qualify.yaml --profile assistant up -d
+Q=integrations/librechat/qualification/qualify.py
+python $Q seed
+python $Q --librechat-url http://localhost:3080 setup-deployed
+python $Q revoke
+python $Q run --cancel-probe
+```
 
-The runs before the last were taken while the agent's instructions were tightened: the
-model asked which namespace to read, wrote SQL without running it, or answered without
-a tool call. The invalid memory citations of the last run are two hash keys the answer
-shortened and one key it proposed as a replacement; the invalid document citation names
-a section the contract does not have. The fake embedder ranks by character overlap, so
+Beside every earlier case it runs three analysis cases (`insights.query` over the
+namespace, one asking for every org's counts, whose answer must name no other tenant's
+rows) and two recommendation cases over `acme-notes`, a namespace written badly on
+purpose (hash-named keys, a JSON value encoded twice, a 6.5 KB runbook stored as a
+memory).
+
+| Measured on v0.8.8, 28 cases, `claude-haiku-4-5`, fake embedder   | The deployed agent                                              |
+| ----------------------------------------------------------------- | --------------------------------------------------------------- |
+| Correct answers                                                   | 28 of 28, in one run                                            |
+| Analysis cases / recommendation cases                             | 3 of 3 / 2 of 2                                                 |
+| Cross-tenant, revoked and other-org SQL cases, no leak            | 3 of 3                                                          |
+| Should-abstain cases that abstain                                 | 4 of 4, no false abstention                                     |
+| Memory citations valid                                            | 13 of 16                                                        |
+| Document citations valid                                          | 8 of 9                                                          |
+| End-to-end latency p50 / p95                                      | 3.4 s / 10.7 s; the recommendation cases 10.7 s and 14.5 s      |
+| Tool calls per question                                           | at most 6 (a recommendation reads the audit, mentor and guides) |
+| Model cost per answer, every prompt token at list price           | mean $0.033, max $0.048                                         |
+| Loom calls after a client disconnects mid-answer                  | 0                                                               |
+| Answer tokens or service password in LibreChat's logs or database | none                                                            |
+| What LibreChat stored                                             | `transactions` only: no messages, conversations or tool calls   |
+
+A model's answers vary from run to run, so one run of 28 cases is a sample, not a
+bound. The invalid memory citations are two hash keys the answer shortened and one key
+it proposed as a replacement; the invalid document citation names a section the
+contract does not have. The fake embedder ranks by character overlap, so
 these numbers say the deployed path, its tokens and its instructions work, not how
 retrieval ranks.
