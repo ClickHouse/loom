@@ -338,13 +338,13 @@ owner set `proposal_policy.mode` to `auto` (`min_passes`, `max_fails`,
 A writer accepts or rejects a proposal with `memory.proposal_decide`, or on the
 **Proposals** tab of the **Review queue** at `/admin/review_queue`. `memory.proposal_decide`
 needs only the writer role, so the proposing agent's own token can decide too, under either
-policy mode. A waiting proposal does not add the Review queue to the admin drawer, which
-lists it only while a conflict waits or Loom retired a memory in the last 30 days
-([dashboard](../dashboard.md#the-admin-drawer)); open `/admin/review_queue` directly. A
-decision names a key and decides its newest row, so the tab offers no decision for a key
-that more than one listed proposal holds. Accepting a proposal that recorded a contradiction
-while on trial stores it `conflicted`, and it waits on the **Conflicts** tab. Learnings have
-a review of their own:
+policy mode. Only a namespace admin gets the admin drawer, and it lists the Review queue
+only while a conflict waits or Loom retired a memory in the last 30 days, never for a
+proposal ([dashboard](../dashboard.md#the-admin-drawer)); anyone else, and an admin while
+the entry is hidden, opens `/admin/review_queue` directly. A decision names a key and
+decides its newest row, so the tab offers no decision for a key that more than one listed
+proposal holds. Accepting a proposal that recorded a contradiction while on trial stores it
+`conflicted`, and it waits on the **Conflicts** tab. Learnings have a review of their own:
 [learnings review queue](./procedures-and-learnings.md#learnings-review-queue).
 
 ## Typed records
