@@ -507,14 +507,22 @@ def test_an_unavailable_answer_names_no_cause(monkeypatch: pytest.MonkeyPatch, r
 
 
 @pytest.mark.parametrize(
-    ("answer", "expected"),
+    ("answer", "expected", "repairable"),
     [
-        (None, "may read memory.value: its grants are too wide"),
-        ("Code: 159. DB::Exception: Timeout exceeded", "was not refused memory.value"),
+        (None, f"{boundary.ANALYST_USER} may read memory.value: its grants are too wide", True),
+        (
+            "Code: 159. DB::Exception: Timeout exceeded",
+            f"{boundary.ANALYST_USER} was not refused memory.value (RuntimeError)",
+            False,
+        ),
     ],
 )
-def test_a_probe_that_was_not_refused_is_named_by_what_it_read(
-    monkeypatch: pytest.MonkeyPatch, ready: None, answer: str | None, expected: str
+def test_an_unrefused_probe_is_named_by_the_column_not_the_sql(
+    monkeypatch: pytest.MonkeyPatch,
+    ready: None,
+    answer: str | None,
+    expected: str,
+    repairable: bool,
 ) -> None:
     # /v1/health shows this text: no SQL, and no database name.
     async def run(sql: str, **_: Any) -> Any:
@@ -527,6 +535,4 @@ def test_a_probe_that_was_not_refused_is_named_by_what_it_read(
         return [], [], [("leaked",)]
 
     monkeypatch.setattr(app.store, "run_statement", run)
-    problem, _, _ = asyncio.run(app._probe())
-    assert expected in problem
-    assert "SELECT" not in problem and "`loom`" not in problem
+    assert asyncio.run(app._probe()) == (expected, repairable, "")
