@@ -209,9 +209,11 @@ Each op declares `required_role`.
   typing that name would take. A namespace admin can therefore reserve names by granting
   them, a self-signup account on its own namespace included, so the names one account
   holds back are bounded by the op rate limit on its grant and inbox writes, not by the
-  sign-up rate; each row names its `granted_by`, and revoking the grant frees the name.
-  The reservation covers the grants that exist when the sign-up reads them; a grant
-  written to a name while its sign-up runs lands on the new account.
+  sign-up rate; each row names its `granted_by`, and revoking the grant frees the name, as
+  removing an inbox poster or a poster rule does; a task's poster stays reserved. Any
+  other row that names a subject reserves nothing, so name an email subject in it. The
+  reservation covers the rows that exist when the sign-up reads them; one written to a
+  name while its sign-up runs lands on the new account.
 - `platform_admin` is written into the token at login for entries of
   `LOOM_PLATFORM_ADMINS` (`platform_roles` in `server/auth/login.py`). A handle matches a
   password account; an email matches only an OIDC-verified sign-in. Self-signup emails are

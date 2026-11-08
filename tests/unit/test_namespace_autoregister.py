@@ -193,7 +193,7 @@ async def test_a_first_write_into_a_name_in_use_records_no_owner() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_memory_only_postgres_holds_makes_the_name_in_use(
+async def test_a_name_postgres_holds_memory_of_records_no_owner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.erasure.app import ledger_reads
@@ -213,16 +213,24 @@ async def test_rows_a_read_left_do_not_take_the_name_from_its_first_writer() -> 
     from server.erasure.app import ledger_reads
 
     class _TracedCH(_RecordingCH):
+        """In use when the statement reads any of `held`."""
+
+        def __init__(self, held: set[str]) -> None:
+            super().__init__()
+            self.held = held
+
         async def query_one(self, sql: str, params: dict[str, Any] | None = None):
             self.statements.append(("query_one", sql, params))
-            traced = any(f"FROM {t} WHERE" in sql for t in ar.READ_TRACES)
-            return {"in_use": 1} if "AS in_use" in sql and traced else None
+            found = any(f"FROM {t} WHERE" in sql for t in self.held)
+            return {"in_use": 1} if "AS in_use" in sql and found else None
 
     assert ar.READ_TRACES <= set(ledger_reads.namespace_tables())
-    ch = _TracedCH()
-    assert await ar.ensure_registered("o", "fresh", subject="w", op_name="memory.set", ch=ch)
-    [(_, [row])] = ch.inserts
-    assert row["owner_email"] == "w"
+    for held, owner in ((set(ar.READ_TRACES), "w"), ({"loom.memory"}, "")):
+        ar.forget_all()
+        ch = _TracedCH(held)
+        assert await ar.ensure_registered("o", "n", subject="w", op_name="memory.set", ch=ch)
+        [(_, [row])] = ch.inserts
+        assert row["owner_email"] == owner
 
 
 @pytest.mark.asyncio
