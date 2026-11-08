@@ -552,6 +552,9 @@ def test_repro_names_template_sections_and_hashes_never_become_patterns() -> Non
         assert kept in pats
     # a template section ends at the blank line before prose, not at the end of the body
     assert "getExtremes" in bi.report_text("### Bisect\n- outcome: CONVERGED\n\nProse getExtremes.")
+    # a named pair ends at the first closer of its own name
+    blocks = "<!-- a --> x <!-- b --> y <!-- /a --> keep <!-- b --> z <!-- /b -->"
+    assert bi.report_text(blocks).split() == ["keep"]
 
 
 def test_a_pr_merged_after_the_report_is_not_a_candidate() -> None:

@@ -50,8 +50,7 @@ _LOC_RE = re.compile(
     r"(?![\w/])"
 )
 # github.com/<owner>/<repo>/blob/<rev>/<path>#L12-L20 — the rev rides along. The rev
-# is one segment: a path after any longer one is a path after the first, so a
-# longer rev was never chosen, and trying each re-read the path after it.
+# is one segment: the path after a longer one also follows the first.
 _BLOB_URL_RE = re.compile(
     r"https?://github\.com/[\w.\-]+/[\w.\-]+/blob/(?P<rev>[\w.\-]+)/"
     rf"(?P<path>{_PATH})(?:#L(?P<start>\d+)(?:-L?(?P<end>\d+))?)?"
