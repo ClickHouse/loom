@@ -10,6 +10,7 @@ import os
 import pathlib
 import sys
 import time
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
 from server.cli.code_maintenance import _compact_after_bulk
@@ -29,7 +30,9 @@ def _count_record(counters: dict[str, int], recorded: FileIngestStats | Literal[
     counters[key] = counters.get(key, 0) + 1
 
 
-def _edge_source(git_dir: str, head: str, sem: asyncio.Semaphore) -> Any:
+def _edge_source(
+    git_dir: str, head: str, sem: asyncio.Semaphore
+) -> Callable[[str], Awaitable[tuple[str, bytes | None]]]:
     """The edges-only pass's reader: a file over `code_ingest_max_file_bytes` reads as
     absent, its row left as the index phase (this run's or an earlier one's) wrote it."""
     from server.code.app.index import gitrepo
@@ -37,9 +40,9 @@ def _edge_source(git_dir: str, head: str, sem: asyncio.Semaphore) -> Any:
     from server.settings import settings
 
     async def _source(path: str) -> tuple[str, bytes | None]:
+        cap = int(settings.code_ingest_max_file_bytes)
         async with sem:
             try:
-                cap = int(settings.code_ingest_max_file_bytes)
                 return path, await gitrepo.show_file(git_dir, head, path, max_bytes=cap)
             except BlobTooLarge:
                 return path, None
