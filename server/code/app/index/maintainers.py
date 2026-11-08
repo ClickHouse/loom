@@ -852,15 +852,14 @@ async def holds_own_admin(client: Any, org: str, namespace: str, subject: str) -
     sources = _branches(org, repo) if repo is not None else {}
     config = [b for b, source in sources.items() if source == "config"]
     spellings = lowered(await subject_aliases(org, subject))
-    # The live admin rows, as the gate counts them; checked again below.
+    # The live admin rows, as the gate counts them.
     rows = await client.query_all(
-        "SELECT subject, role, ifNull(toString(status), 'active') AS status, revoked_at,"
-        " granted_by FROM loom.namespace_grants FINAL WHERE org = {org:String}"
+        "SELECT subject, granted_by FROM loom.namespace_grants FINAL WHERE org = {org:String}"
         " AND namespace = {ns:String} AND lower(subject) IN {subs:Array(String)}"
         " AND role = 'admin' AND " + LIVE_GRANT,
         params={"org": org, "ns": namespace, "subs": spellings},
     )
-    return any(_live_admin(r) and not _foreign(r, config) for r in rows)
+    return any(not _foreign(r, config) for r in rows)
 
 
 async def sync_quietly(org: str, namespace: str, *, ch: Any | None = None) -> None:
