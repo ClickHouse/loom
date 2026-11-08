@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import math
 import re
-from bisect import bisect_left
+from bisect import bisect_left  # the standard library's, not this module
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import lru_cache
