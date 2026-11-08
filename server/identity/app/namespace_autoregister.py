@@ -24,7 +24,8 @@ treats "no row" and the register defaults alike.
 
 Runs from both transports after authorization, before the handler.
 Best-effort: a registry failure never fails the write, and the process
-cache is filled only on success so the next write retries. One point read
+cache is filled only on success so the next write retries; a retry that finds
+the earlier write's data records no owner. One point read
 per (org, namespace) per process; the hot path is a set lookup.
 """
 
@@ -34,6 +35,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any, Final
 
+from server.auth.directory import directory
 from server.core.naming import reserved_for_sso
 from server.identity.api.models import NamespaceRegisterInput
 from server.operations.base import Operation, Role
@@ -48,6 +50,9 @@ AUTO_REGISTER_TAG = "auto-registered"
 # `updated_at`, the table's version column, of an auto-registered row. Aware: the
 # driver encodes a naive datetime as host-local time.
 AUTO_ROW_VERSION = datetime(1970, 1, 1, 0, 0, 1, tzinfo=UTC)
+# An ownerless auto row's, lower still: a racing first write that found the name free
+# (its owned row) wins over one that already saw that write's data.
+OWNERLESS_ROW_VERSION = datetime(1970, 1, 1, tzinfo=UTC)
 _MISSING = ("", "-", "*")
 
 
@@ -131,7 +136,6 @@ async def ensure_registered(
             _remember(org, namespace)
             return False
         import server.operations  # noqa: F401 — wires handlers before importing one
-        from server.auth.directory import directory
         from server.identity.app.namespace import registry_row
 
         # A name that already holds state (data written with auth off, a grant) is not its
@@ -155,7 +159,7 @@ async def ensure_registered(
         # The lowest version: under FINAL any explicit row (a register, a restriction)
         # wins over this one, even one written a moment earlier on another replica
         # that this read could not see yet.
-        row["updated_at"] = AUTO_ROW_VERSION
+        row["updated_at"] = OWNERLESS_ROW_VERSION if in_use else AUTO_ROW_VERSION
         await ch.insert("loom.namespaces", [row])
         _remember(org, namespace)
         from server.identity.app.traffic_class_registry import note_registered

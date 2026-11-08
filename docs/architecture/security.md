@@ -202,8 +202,8 @@ Each op declares `required_role`.
   never assigns it.
 - Self-signup and agent sign-up make the name the account's subject, so they refuse a
   trusted caller's subject, a platform-admin handle and any subject holding an unrevoked
-  grant (a pending join request included), a namespace, an unrevoked token or a task
-  inbox's owner, poster or poster rule in the org, answering as for a taken name, and their
+  grant (a pending join request included), a namespace, an unrevoked token, a task
+  inbox's owner, poster or poster rule, or a task's poster in the org, answering as for a taken name, and their
   tokens carry `writer` only. Other rows that name a subject reserve nothing: name an email
   subject there. A grant reserves its subject's name whoever wrote it, since a grant to someone
   who has not signed up yet is the power a stranger typing that name would take. A

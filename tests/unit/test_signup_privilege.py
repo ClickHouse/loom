@@ -139,6 +139,7 @@ def test_only_an_unrevoked_grant_reserves_a_name() -> None:
         " version) VALUES ('dev', 'old', 'sa:old-abc', 'hal', '2026-01-01 00:00:00', 1)",
         ddl("task_inboxes"),
         ddl("task_poster_policies"),
+        ddl("tasks"),
     ]
 
     class _Local:
@@ -161,8 +162,8 @@ def test_only_an_unrevoked_grant_reserves_a_name() -> None:
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 def test_a_task_inbox_row_naming_a_subject_reserves_its_name() -> None:
-    """An inbox's owner and posters, and a poster rule, act as the subject they name, so
-    each reserves it; a deleted row frees it."""
+    """An inbox's owner and posters, a poster rule and a task's poster act as the subject
+    they name, so each reserves it; a deleted inbox frees a poster with no task."""
     setup = [
         ddl("namespace_grants"),
         ddl("namespaces"),
@@ -175,6 +176,9 @@ def test_a_task_inbox_row_naming_a_subject_reserves_its_name() -> None:
         ddl("task_poster_policies"),
         "INSERT INTO loom.task_poster_policies (org, inbox, poster, kind, mode, version)"
         " VALUES ('dev', 'ops', 'Lee', '*', 'auto', 1)",
+        ddl("tasks"),
+        "INSERT INTO loom.tasks (org, inbox, task_id, from_subject, version)"
+        " VALUES ('dev', 'gone', generateUUIDv4(), 'Max', 1)",
     ]
 
     class _Local:
@@ -182,7 +186,7 @@ def test_a_task_inbox_row_naming_a_subject_reserves_its_name() -> None:
             rows = run(setup, sql, params)
             return rows[0] if rows else None
 
-    for name in ("ivy", "jo", "lee"):
+    for name in ("ivy", "jo", "lee", "max"):
         with pytest.raises(HTTPException):
             asyncio.run(ss._refuse_empowered(_Local(), "dev", name))
     asyncio.run(ss._refuse_empowered(_Local(), "dev", "kim"))

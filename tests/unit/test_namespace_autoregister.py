@@ -1,5 +1,6 @@
 """The first write into an unregistered namespace inserts the
-registry row `namespace.register` would have written — owner = subject,
+registry row `namespace.register` would have written — owner = subject (none on a
+name in use),
 kind by prefix, retention_days 0 — and nothing else: no ALTER, no TTL."""
 
 from __future__ import annotations
@@ -188,6 +189,8 @@ async def test_a_first_write_into_a_name_in_use_records_no_owner() -> None:
     [(_, [row])] = ch.inserts
     assert row["owner_email"] == ""
     assert not _is_auto_registered_owner(row, "w")
+    # A racing first write that found the name free wins under FINAL.
+    assert row["updated_at"] < ar.AUTO_ROW_VERSION
 
 
 @pytest.mark.asyncio

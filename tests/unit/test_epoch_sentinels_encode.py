@@ -14,7 +14,7 @@ import pytest
 from clickhouse_connect.datatypes.registry import get_from_name
 from clickhouse_connect.driver.insert import InsertContext
 
-from server.identity.app.namespace_autoregister import AUTO_ROW_VERSION
+from server.identity.app.namespace_autoregister import AUTO_ROW_VERSION, OWNERLESS_ROW_VERSION
 from server.memory.store.conflict_resolver import JUDGED_MARK, OWED_MARK
 
 
@@ -47,6 +47,7 @@ def _encoded(type_name: str, value: datetime) -> int:
         ("Nullable(DateTime)", OWED_MARK, 1),  # memory_embeddings.conflict_checked_at
         ("Nullable(DateTime)", JUDGED_MARK, 2),
         ("DateTime", AUTO_ROW_VERSION, 1),  # namespaces.updated_at
+        ("DateTime", OWNERLESS_ROW_VERSION, 0),
     ],
 )
 def test_a_sentinel_is_the_epoch_east_of_utc(type_name: str, value: datetime, seconds: int) -> None:
