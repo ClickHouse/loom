@@ -12,9 +12,9 @@ floor, not a proof of range).
 
 from __future__ import annotations
 
-import bisect
 import math
 import re
+from bisect import bisect_left
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import lru_cache
@@ -394,7 +394,7 @@ def _without_blocks(text: str, opener: re.Pattern[str], closer: re.Pattern[str])
         if m.start() < pos:
             continue
         spans = closers.get(m.group(1), [])
-        i = bisect.bisect_left(spans, (m.end(), -1))
+        i = bisect_left(spans, (m.end(), -1))
         if i < len(spans):
             parts += [text[pos : m.start()], " "]
             pos = spans[i][1]

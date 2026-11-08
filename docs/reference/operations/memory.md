@@ -2163,7 +2163,7 @@ Run LLM extraction on `messages` and write the extracted facts.
 | `forgotten_keys` | `list[str]` | The keys of the memories those forget requests retired. |
 | `forget_requests` | `int` | Requests to forget read from the user's own sentences and resolved by content (a window's latest 50); with `forgotten` it says how many found a row to retire. |
 | `about_other` | `int` | Rows written as another person's (`about:other`), whether the extractor said so or the sentence's subject did. |
-| `premise_facts` | `int` | The user's facts read from the assistant's premises ("since you enjoy X…"), added to the batch. |
+| `premise_facts` | `int` | The user's facts read from the assistant's premises ("since you enjoy X…"), added to the batch (at most 50 a window). |
 | `learning_candidates` | `int` | Rules the assistant stated about itself that wrote to the learnings queue: a new candidate or this session's support of one (a session restating a rule it already backs counts 0). |
 | `ignored_args` | `list[str]` | Request fields the server did not apply: unknown keys, and `agent_learnings=true` while the deployment setting memory_extract_agent_learnings is off. |
 | `segmenter` | `str` | Which planner cut them: whole \| size. |

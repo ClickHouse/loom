@@ -266,7 +266,7 @@ class MemorySetFromMessagesOutput(BaseModel):
     # said so or the sentence's subject did.
     about_other: int = 0
     # The user's facts read from the assistant's premises ("since you enjoy
-    # X…"), added to the batch.
+    # X…"), added to the batch (at most 50 a window).
     premise_facts: int = 0
     # Rules the assistant stated about itself that wrote to the learnings queue: a
     # new candidate or this session's support of one (a session restating a rule it
