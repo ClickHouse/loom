@@ -244,6 +244,9 @@ USER_STEPS: tuple[UserStep, ...] = (
     ("pg_memory.delete", pg_steps.delete_pg_memory_by_user),
     ("memory.tombstone", memory_steps.tombstone_memory_by_user),
     ("memory_embeddings.tombstone", memory_steps.tombstone_embeddings_by_user),
+    # The summaries built from the user's memories, under another identity: retired
+    # with the user's rows, before the steps that remove what was derived from either.
+    ("consolidated.tombstone", graph_steps.tombstone_consolidated_dependents_by_user),
     ("code_links.delete", _step_delete_code_links_by_user),
     ("working_memory.tombstone", memory_steps.tombstone_working_memory_by_user),
     ("shared.tombstone", memory_steps.tombstone_shared_by_user),
@@ -254,14 +257,13 @@ USER_STEPS: tuple[UserStep, ...] = (
     ("raw_evidence.delete", memory_steps.delete_raw_evidence_by_user),
     ("memory_chunks.tombstone", memory_steps.tombstone_memory_chunks_by_user),
     ("source_links.tombstone", graph_steps.tombstone_source_links_by_user),
-    # The triples, edges and community rows only this user's memories carried
-    # leave with them. Ownership is read from the link tables, so these run
-    # before graph_links.delete removes them.
+    # The triples, edges and community rows only this user's memories (or summaries of
+    # them) carried leave with them. Ownership is read from the link tables, so these
+    # run before graph_links.delete removes them (which runs them again first).
     ("entity_graph.delete", graph_steps.delete_entity_graph_by_user),
     ("entity_communities.delete", graph_steps.delete_entity_communities_by_user),
     ("entity_vectors.delete", graph_steps.delete_entity_vectors_by_user),
     ("graph_links.delete", graph_steps.delete_graph_links_by_user),
-    ("consolidated.tombstone", graph_steps.tombstone_consolidated_dependents_by_user),
     # The answer text that quoted the user's memories or a summary of them: the
     # exact-prompt cache, the precedents and code.ask's answer cache, by the keys each
     # row was shown. After the summaries' tombstone, so no new answer can quote one.

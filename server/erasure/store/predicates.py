@@ -84,11 +84,11 @@ USER_KEY_LIST = (
 # Summaries synthesised FROM an erased user's rows. A consolidated topic
 # memory (or merged canonical row) lives under the identity that ran the
 # consolidation — often `user_id='-'` — and carries its sources' content
-# verbatim by design, tagged `src:<key>`. The per-user steps never reach it. A `src:`
+# verbatim by design, tagged `src:<key>`. A user_id match never reaches it. A `src:`
 # tag names a key of the summary's own namespace, as consolidation writes it (a copy
 # into another namespace keeps the tags, and is not the user's there); the next dense
-# pass rebuilds a retired summary from the surviving sources. The user's tags let the
-# skip index prune; their (namespace, tag) pairs decide, on each version.
+# pass rebuilds a retired summary from the surviving sources. The user's tags let a
+# tags skip index prune; their (namespace, tag) pairs decide, on each version.
 # `scope_reads.summary_slices` binds them; `USER_SUMMARIES` is the same match as a read.
 CONSOLIDATED_IN = (
     "has(tags, 'consolidated') AND hasAny(tags, {src:Array(String)}) "
@@ -113,15 +113,22 @@ USER_SUMMARY_KEY_LIST = (
     f"WHERE org = {{org:String}} AND {USER_SUMMARIES}))"
 )
 USER_QUOTED_KEY_LIST = f"arrayConcat({USER_KEY_LIST}, {USER_SUMMARY_KEY_LIST})"
-# What was chunked or extracted from such a summary is the user's too: its chunks (the
-# summary writer's, by `user_id`), its graph links and entity vectors (by its key) and
-# its row links (by its id). `USER_GRAPH_KEYS` is the user's keys and the summaries'.
+# What was chunked or extracted from such a summary is the user's too: its chunks and
+# entity vectors (by the summary's agent, user and key), its row links (by its id) and
+# its graph key links (by its key alone: those tables carry no identity, so another
+# memory at the same key loses its links, as for the user's own keys). A summary any of
+# whose versions matched counts, so a summary rebuilt without the user loses these
+# re-derivable rows too, until its old version merges away. `USER_GRAPH_KEYS` is the
+# user's keys and the summaries'.
 _USER_SUMMARY_ROWS = f"FROM loom.memory WHERE org = {{org:String}} AND {USER_SUMMARIES}"
 USER_SUMMARY_KEYS_SUBQ = f"(SELECT toString(namespace), memory_key {_USER_SUMMARY_ROWS})"
-USER_SUMMARY_CHUNKS = (
-    "(namespace, user_id, parent_memory_key) IN "
-    f"(SELECT toString(namespace), user_id, memory_key {_USER_SUMMARY_ROWS})"
+_USER_SUMMARY_IDENTITIES = (
+    f"(SELECT toString(namespace), agent, user_id, memory_key {_USER_SUMMARY_ROWS})"
 )
+USER_SUMMARY_CHUNKS = (
+    f"(namespace, agent, user_id, parent_memory_key) IN {_USER_SUMMARY_IDENTITIES}"
+)
+USER_SUMMARY_VECTORS = f"(namespace, agent, user_id, memory_key) IN {_USER_SUMMARY_IDENTITIES}"
 USER_SUMMARY_IDS = f"memory_id IN (SELECT memory_id {_USER_SUMMARY_ROWS})"
 USER_GRAPH_KEYS = (
     f"((namespace, memory_key) IN {USER_KEYS_SUBQ} "

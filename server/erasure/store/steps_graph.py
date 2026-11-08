@@ -278,10 +278,9 @@ async def delete_entity_vectors_by_user(
     """The rows carry the memory's `user_id` (written from the same input),
     and the parent-key match reaches a row whose memory carried it under a
     different one — both sides of the (namespace, memory_key) identity. A summary of
-    the user's memories is matched by its key."""
+    the user's memories is matched by its agent, user and key."""
     ch = ch or _default_client()
-    summaries = (await user_summary_rows(org, user_id, ch=ch)).keys
-    keys = await user_key_pairs(org, user_id, ch=ch) + summaries
+    keys = await user_key_pairs(org, user_id, ch=ch)
     total = 0
     for part in slices_or_one_empty(keys):
         total += await delete_scoped(
@@ -289,6 +288,16 @@ async def delete_entity_vectors_by_user(
             org=org,
             scope_where=f"(user_id = {{uid:String}} OR {PARENT_KEYS_IN})",
             params={"uid": user_id, "keys": part},
+            lightweight=True,
+            ch=ch,
+        )
+    for rows in chunks((await user_summary_rows(org, user_id, ch=ch)).identities):
+        total += await delete_scoped(
+            "loom.entity_vectors",
+            org=org,
+            scope_where="(namespace, agent, user_id, memory_key) IN "
+            "{rows:Array(Tuple(String, String, String, String))}",
+            params={"rows": rows},
             lightweight=True,
             ch=ch,
         )
@@ -339,19 +348,19 @@ async def delete_entity_graph_by_user(
 
 async def delete_graph_links_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
     """The user's links, and those of the summaries of the user's memories: by key, and
-    by the summary's id for a row link, which carries the summary writer's user."""
+    by the summary's id for a row link, which carries the summary writer's user. First
+    the graph rows and communities those links alone hold, again: a run reopened by the
+    census would otherwise leave them with no link that names them."""
     ch = ch or _default_client()
+    total = await delete_entity_graph_by_user(org, user_id, ch=ch)
+    total += await delete_entity_communities_by_user(org, user_id, ch=ch)
     summaries = await user_summary_rows(org, user_id, ch=ch)
     keys = await user_key_pairs(org, user_id, ch=ch) + summaries.keys
-    total = 0
     for t in ROW_LINK_TABLES:
-        for ids in slices_or_one_empty(summaries.ids):
+        total += await delete_scoped(t, org=org, scope_where=UID, params={"uid": user_id}, ch=ch)
+        for ids in chunks(summaries.ids):
             total += await delete_scoped(
-                t,
-                org=org,
-                scope_where="(user_id = {uid:String} OR memory_id IN {ids:Array(UUID)})",
-                params={"uid": user_id, "ids": ids},
-                ch=ch,
+                t, org=org, scope_where="memory_id IN {ids:Array(UUID)}", params={"ids": ids}, ch=ch
             )
     for t in _KEY_LINK_TABLES:
         for part in chunks(keys):

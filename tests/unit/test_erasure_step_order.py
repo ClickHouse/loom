@@ -47,6 +47,10 @@ _CODE_LINKS = (
 USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("memory.tombstone", ((U, "loom.memory"),)),
     ("memory_embeddings.tombstone", ((U, "loom.memory_embeddings"),)),
+    (
+        "consolidated.tombstone",
+        ((U, "loom.memory_embeddings"), (U, "loom.memory"), (D, "loom.memory_code_links")),
+    ),
     ("code_links.delete", _CODE_LINKS),
     ("working_memory.tombstone", ((U, "loom.working_memory"),)),
     ("shared.tombstone", ((U, "loom.shared"),)),
@@ -62,19 +66,22 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ),
     ("entity_graph.delete", ((D, "loom.entity_triples"), (D, "loom.entity_edges"))),
     ("entity_communities.delete", ((D, "loom.entity_communities"),)),
-    ("entity_vectors.delete", ((L, "loom.entity_vectors"),)),
+    ("entity_vectors.delete", ((L, "loom.entity_vectors"), (L, "loom.entity_vectors"))),
     (
         "graph_links.delete",
         (
+            # the graph rows the links alone hold, again
+            (D, "loom.entity_triples"),
+            (D, "loom.entity_edges"),
+            (D, "loom.entity_communities"),
+            # the user's row links, then the summaries'
             (D, "loom.entity_triple_rows"),
+            (D, "loom.entity_triple_rows"),
+            (D, "loom.entity_edge_rows"),
             (D, "loom.entity_edge_rows"),
             (D, "loom.entity_triple_memories"),
             (D, "loom.entity_edge_memories"),
         ),
-    ),
-    (
-        "consolidated.tombstone",
-        ((U, "loom.memory_embeddings"), (U, "loom.memory"), (D, "loom.memory_code_links")),
     ),
     ("llm_response_cache.delete", ((D, "loom.llm_response_cache"),)),
     ("ask_precedents.delete", ((D, "loom.memory_ask_precedents"),)),
@@ -359,6 +366,14 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
 USER_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("memory.tombstone", ((U, "loom.memory"),)),
     ("memory_embeddings.tombstone", ((L, "loom.memory_embeddings"),)),
+    (
+        "consolidated.tombstone",
+        (
+            (L, "loom.memory_embeddings"),
+            (U, "loom.memory"),
+            (D, "loom.memory_code_links"),
+        ),
+    ),
     ("code_links.delete", _CODE_LINKS),
     ("working_memory.tombstone", ((D, "loom.working_memory"),)),
     ("shared.tombstone", ((D, "loom.shared"),)),
@@ -389,22 +404,21 @@ USER_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
         ),
     ),
     ("entity_communities.delete", ((D, "loom.entity_communities"),)),
-    ("entity_vectors.delete", ((L, "loom.entity_vectors"),)),
+    ("entity_vectors.delete", ((L, "loom.entity_vectors"), (L, "loom.entity_vectors"))),
     (
         "graph_links.delete",
         (
+            # the graph rows the links alone hold, again
+            (D, "loom.entity_triples"),
+            (D, "loom.entity_edges"),
+            (D, "loom.entity_communities"),
+            # the user's row links, then the summaries'
             (D, "loom.entity_triple_rows"),
+            (D, "loom.entity_triple_rows"),
+            (D, "loom.entity_edge_rows"),
             (D, "loom.entity_edge_rows"),
             (D, "loom.entity_triple_memories"),
             (D, "loom.entity_edge_memories"),
-        ),
-    ),
-    (
-        "consolidated.tombstone",
-        (
-            (L, "loom.memory_embeddings"),
-            (U, "loom.memory"),
-            (D, "loom.memory_code_links"),
         ),
     ),
     ("llm_response_cache.delete", ((D, "loom.llm_response_cache"),)),

@@ -37,6 +37,7 @@ from server.erasure.store.predicates import (
     USER_SUMMARIES,
     USER_SUMMARY_CHUNKS,
     USER_SUMMARY_IDS,
+    USER_SUMMARY_VECTORS,
     USER_WINDOW_KEYS,
 )
 from server.erasure.store.provider_copies import copy_residue
@@ -236,8 +237,8 @@ _CENSUS: tuple[Substrate, ...] = (
         "code_answers.delete",
         ns_pred=f"{MEMORY_NS_EQ} AND {_HOLDS_TEXT}",
     ),
-    # User scope deletes the triples/edges only the user's
-    # memories carried, through the link tables — but the census cannot count
+    # User scope deletes the triples/edges only the user's memories (or summaries of
+    # them) carried, through the link tables — but the census cannot count
     # them by user (no user axis), so they are namespace-only rows here.
     Substrate("loom.entity_edges", "1", None, "entity_graph.delete", None),
     Substrate("loom.entity_triples", "1", None, "entity_graph.delete", None),
@@ -245,7 +246,7 @@ _CENSUS: tuple[Substrate, ...] = (
     Substrate(
         "loom.entity_vectors",
         LIVE,
-        f"(user_id = {{uid:String}} OR {USER_GRAPH_KEYS})",
+        f"(user_id = {{uid:String}} OR {USER_PARENT_KEYS} OR {USER_SUMMARY_VECTORS})",
         "entity_vectors.delete",
         "entity_vectors.delete",
     ),

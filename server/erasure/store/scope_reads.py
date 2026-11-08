@@ -48,21 +48,24 @@ class SummaryRows(NamedTuple):
     columns their derived rows name them by."""
 
     keys: list[tuple[str, str]]  # (namespace, memory_key)
-    chunk_keys: list[tuple[str, str, str]]  # (namespace, user_id, memory_key)
+    identities: list[tuple[str, str, str, str]]  # (namespace, agent, user_id, memory_key)
     ids: list[str]  # memory_id
 
 
 async def user_summary_rows(org: str, user_id: str, *, ch: _CHClient) -> SummaryRows:
     rows = await ch.query_all(
-        "SELECT DISTINCT toString(namespace) AS ns, user_id, memory_key, "
+        "SELECT DISTINCT toString(namespace) AS ns, agent, user_id, memory_key, "
         "toString(memory_id) AS id FROM loom.memory "
         f"WHERE org = {{org:String}} AND {USER_SUMMARIES}",
         params={"org": org, "uid": user_id},
     )
-    found = [(str(r["ns"]), str(r["user_id"]), str(r["memory_key"]), str(r["id"])) for r in rows]
+    found = [
+        (str(r["ns"]), str(r["agent"]), str(r["user_id"]), str(r["memory_key"]), str(r["id"]))
+        for r in rows
+    ]
     return SummaryRows(
-        keys=sorted({(ns, key) for ns, _, key, _ in found}),
-        chunk_keys=sorted({(ns, uid, key) for ns, uid, key, _ in found}),
+        keys=sorted({(ns, key) for ns, _, _, key, _ in found}),
+        identities=sorted({(ns, a, u, key) for ns, a, u, key, _ in found}),
         ids=sorted({i for *_, i in found}),
     )
 

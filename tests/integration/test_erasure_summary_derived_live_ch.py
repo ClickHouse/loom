@@ -1,9 +1,11 @@
 """A user erasure removes what was derived from a consolidated summary of the user's
-memories along with the summary: its version history, its verbatim chunks, and the
-graph rows extracted from it, tombstoning or purging; the residue census counts the
-same rows. A summary that folded none of the user's memories keeps all of them, and so
-does a triple another user's memory also carries. In-process against a live
-ClickHouse; skips without LOOM_CH_HOST."""
+memories along with the summary: its version history, its verbatim chunks and entity
+vectors, and the graph rows extracted from it, tombstoning or purging; the residue
+census counts the same rows. A summary that folded none of the user's memories keeps
+all of them, a rebuilt summary keeps the versions that no longer name the user, and so
+do a triple or an edge another user's memory also carries and another identity's rows
+at the summary's key. In-process against a live ClickHouse; skips without
+LOOM_CH_HOST."""
 
 from __future__ import annotations
 
@@ -27,24 +29,29 @@ _MEMORY_COLS += ["memory_type", "value", "version", "tags", "memory_id"]
 _SUMMARY_ID = "00000000-0000-4000-8000-000000000001"
 _BOB_SUMMARY_ID = "00000000-0000-4000-8000-000000000002"
 _VECTOR = [0.0] * 3072
-_COUNTED = (
-    "loom.memory_versions",
-    "loom.memory_chunks",
-    "loom.entity_triple_memories",
-    "loom.entity_triple_rows",
-    "loom.entity_vectors",
-)
+_COUNTED = {
+    "loom.memory_versions": 3,  # alice's row, the summary's, the rebuilt one's first
+    "loom.memory_chunks": 1,
+    "loom.entity_triple_memories": 4,  # alice's link and the summary's three
+    "loom.entity_triple_rows": 1,
+    "loom.entity_edge_memories": 3,  # alice's link and the summary's two
+    "loom.entity_edge_rows": 1,
+    "loom.entity_communities": 1,
+    "loom.entity_vectors": 1,
+}
 # The user saga's steps this covers, in saga order.
 _STEPS = (
     ("memory.tombstone", memory_steps.tombstone_memory_by_user),
+    ("consolidated.tombstone", graph_steps.tombstone_consolidated_dependents_by_user),
     ("memory_chunks.tombstone", memory_steps.tombstone_memory_chunks_by_user),
     ("entity_graph.delete", graph_steps.delete_entity_graph_by_user),
+    ("entity_communities.delete", graph_steps.delete_entity_communities_by_user),
     ("entity_vectors.delete", graph_steps.delete_entity_vectors_by_user),
     ("graph_links.delete", graph_steps.delete_graph_links_by_user),
-    ("consolidated.tombstone", graph_steps.tombstone_consolidated_dependents_by_user),
     ("memory_versions.delete", memory_steps.delete_memory_versions_by_user),
     ("memory.retire", graph_steps.retire_memory_by_user),
 )
+_WHERE = " WHERE org = {org:String}"
 
 
 @pytest.fixture
@@ -55,45 +62,39 @@ async def ch() -> AsyncIterator[Any]:
     await client.disconnect()
 
 
+def _insert(ch_client: Any, table: str, columns: list[str], rows: list[list[Any]]) -> None:
+    ch_client.insert(table, rows, column_names=columns)
+
+
 def _seed(ch_client: Any, org: str) -> None:
-    def memory(user_id: str, key: str, value: str, tags: list[str], memory_id: str) -> None:
-        row = [org, "ns", "a", user_id, "-", key, "fact", value, 1, tags, memory_id]
-        ch_client.insert("loom.memory", [row], column_names=_MEMORY_COLS)
+    def memory(user: str, key: str, value: str, tags: list[str], mid: str, v: int = 1) -> None:
+        row = [org, "ns", "a", user, "-", key, "fact", value, v, tags, mid]
+        _insert(ch_client, "loom.memory", _MEMORY_COLS, [row])
 
     memory("alice", "user_diet", "alice is vegetarian", [], "00000000-0000-4000-8000-00000000000a")
     memory("bob", "bob-diet", "bob eats fish", [], "00000000-0000-4000-8000-00000000000b")
+    # another identity's memory at the summary's key: not the summary
+    memory("carol", "topic-diets", "carol is vegan", [], "00000000-0000-4000-8000-00000000000c")
     # under '-', as consolidation writes them; the view copies each into the history
-    memory(
-        "-",
-        "topic-diets",
-        "alice is vegetarian; bob eats fish",
-        ["consolidated", "src:user_diet", "src:bob-diet"],
-        _SUMMARY_ID,
-    )
+    tags = ["consolidated", "src:user_diet", "src:bob-diet"]
+    memory("-", "topic-diets", "alice is vegetarian; bob eats fish", tags, _SUMMARY_ID)
     memory("-", "topic-bob", "bob eats fish", ["consolidated", "src:bob-diet"], _BOB_SUMMARY_ID)
-    chunk_cols = ["org", "namespace", "agent", "user_id", "session_id", "chunk_index"]
-    chunk_cols += ["content", "content_sha256", "parent_memory_key", "embedding"]
-    ch_client.insert(
+    # rebuilt under the same key from bob's fact alone: the newer version stays
+    rebuilt = "00000000-0000-4000-8000-000000000003"
+    memory("-", "topic-rebuilt", "alice is vegetarian", ["consolidated", "src:user_diet"], rebuilt)
+    memory("-", "topic-rebuilt", "bob eats fish", ["consolidated", "src:bob-diet"], rebuilt, v=2)
+    chunks = [("-", "alice is vegetarian", "topic-diets"), ("-", "bob eats fish", "topic-bob")]
+    chunks.append(("carol", "carol is vegan", "topic-diets"))
+    _insert(
+        ch_client,
         "loom.memory_chunks",
+        ["org", "namespace", "agent", "user_id", "session_id", "chunk_index", "content"]
+        + ["content_sha256", "parent_memory_key", "embedding"],
         [
-            [
-                org,
-                "ns",
-                "a",
-                "-",
-                "-",
-                0,
-                text,
-                hashlib.sha256(text.encode()).hexdigest(),
-                key,
-                _VECTOR,
-            ]
-            for text, key in (
-                ("alice is vegetarian", "topic-diets"),
-                ("bob eats fish", "topic-bob"),
-            )
+            [org, "ns", "a", user, "-", 0, text, hashlib.sha256(text.encode()).hexdigest()]
+            + [key, _VECTOR]
+            for user, text, key in chunks
         ],
-        column_names=chunk_cols,
     )
     triples = [
         ("alice", "eats", "vegetables", "user_diet"),
@@ -102,39 +103,83 @@ def _seed(ch_client: Any, org: str) -> None:
         ("bob", "eats", "fish", "bob-diet"),
         ("bob", "eats", "fish", "topic-diets"),
     ]
-    ch_client.insert(
+    triple_cols = ["org", "namespace", "subject", "relation", "object"]
+    _insert(
+        ch_client,
         "loom.entity_triples",
-        [[org, "ns", s, r, o] for s, r, o in sorted({t[:3] for t in triples})],
-        column_names=["org", "namespace", "subject", "relation", "object"],
+        triple_cols,
+        [[org, "ns", *t] for t in sorted({t[:3] for t in triples})],
     )
-    ch_client.insert(
+    _insert(
+        ch_client,
         "loom.entity_triple_memories",
+        [*triple_cols, "memory_key"],
         [[org, "ns", *t] for t in triples],
-        column_names=["org", "namespace", "subject", "relation", "object", "memory_key"],
     )
-    ch_client.insert(
+    _insert(
+        ch_client,
         "loom.entity_triple_rows",
+        ["org", "namespace", "memory_id", "user_id", "subject", "relation", "object"],
         [
             [org, "ns", _SUMMARY_ID, "-", "diets", "differ", "by person"],
             [org, "ns", _BOB_SUMMARY_ID, "-", "bob", "eats", "fish"],
         ],
-        column_names=["org", "namespace", "memory_id", "user_id", "subject", "relation"]
-        + ["object"],
     )
-    ch_client.insert(
+    edges = [
+        ("alice", "vegetables", "user_diet"),
+        ("alice", "vegetables", "topic-diets"),
+        ("bob", "fish", "bob-diet"),
+        ("bob", "fish", "topic-diets"),
+    ]
+    edge_cols = ["org", "namespace", "entity_a", "entity_b"]
+    _insert(
+        ch_client,
+        "loom.entity_edges",
+        edge_cols,
+        [[org, "ns", *e] for e in sorted({e[:2] for e in edges})],
+    )
+    _insert(
+        ch_client,
+        "loom.entity_edge_memories",
+        [*edge_cols, "memory_key"],
+        [[org, "ns", *e] for e in edges],
+    )
+    _insert(
+        ch_client,
+        "loom.entity_edge_rows",
+        ["org", "namespace", "memory_id", "user_id", "entity_a", "entity_b"],
+        [
+            [org, "ns", _SUMMARY_ID, "-", "alice", "vegetables"],
+            [org, "ns", _BOB_SUMMARY_ID, "-", "bob", "fish"],
+        ],
+    )
+    _insert(
+        ch_client,
+        "loom.entity_communities",
+        ["org", "namespace", "entity", "community_id", "label"],
+        [[org, "ns", "vegetables", 1, "vegetables"], [org, "ns", "fish", 2, "fish"]],
+    )
+    _insert(
+        ch_client,
         "loom.entity_vectors",
+        ["org", "namespace", "agent", "user_id", "entity_text", "memory_key", "entity_embedding"],
         [
             [org, "ns", "a", "-", "vegetarian", "topic-diets", _VECTOR],
             [org, "ns", "a", "-", "fish", "topic-bob", _VECTOR],
+            [org, "ns", "a", "carol", "vegan", "topic-diets", _VECTOR],
         ],
-        column_names=["org", "namespace", "agent", "user_id", "entity_text", "memory_key"]
-        + ["entity_embedding"],
     )
 
 
 def _column(ch_client: Any, org: str, sql: str) -> list[str]:
     rows = ch_client.query(sql, parameters={"org": org}).result_rows
     return sorted(str(r[0]) for r in rows)
+
+
+async def _run(steps: Any, org: str, ch: Any) -> None:
+    for name, step in steps:
+        with erasure_mutations.step_scope(name):
+            await step(org, "alice", ch=ch)
 
 
 @pytest.mark.parametrize("purge", [False, True])
@@ -145,29 +190,49 @@ async def test_what_a_summary_of_the_users_memories_fed_leaves_with_it(
     _seed(ch_client, org)
     with erasure_mutations.purge_scope(purge), erasure_mutations.saga_scope(f"erasure-{org}"):
         before = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
-        assert {t: before[t] for t in _COUNTED} == {
-            "loom.memory_versions": 2,  # alice's row and the summary's
-            "loom.memory_chunks": 1,
-            "loom.entity_triple_memories": 4,  # alice's link and the summary's three
-            "loom.entity_triple_rows": 1,
-            "loom.entity_vectors": 1,
-        }
-        for name, step in _STEPS:
-            with erasure_mutations.step_scope(name):
-                await step(org, "alice", ch=ch)
+        assert {t: before[t] for t in _COUNTED} == _COUNTED
+        await _run(_STEPS, org, ch)
         after = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
     assert {t: after[t] for t in _COUNTED} == dict.fromkeys(_COUNTED, 0)
 
-    where = " WHERE org = {org:String}"
-    history = _column(ch_client, org, "SELECT memory_key FROM loom.memory_versions" + where)
-    assert history == ["bob-diet", "topic-bob"]
-    chunks = "SELECT parent_memory_key FROM loom.memory_chunks FINAL" + where
-    assert _column(ch_client, org, chunks + " AND tombstoned_at IS NULL") == ["topic-bob"]
-    triples = "SELECT subject FROM loom.entity_triples" + where
-    assert _column(ch_client, org, triples) == ["bob"]
-    links = "SELECT memory_key FROM loom.entity_triple_memories" + where
+    history = "SELECT concat(user_id, ':', memory_key, ':', toString(version))"
+    assert _column(ch_client, org, f"{history} FROM loom.memory_versions{_WHERE}") == [
+        "-:topic-bob:1",
+        "-:topic-rebuilt:2",
+        "bob:bob-diet:1",
+        "carol:topic-diets:1",
+    ]
+    chunks = f"SELECT concat(user_id, ':', parent_memory_key) FROM loom.memory_chunks FINAL{_WHERE}"
+    live = _column(ch_client, org, chunks + " AND tombstoned_at IS NULL")
+    assert live == ["-:topic-bob", "carol:topic-diets"]
+    assert _column(ch_client, org, f"SELECT subject FROM loom.entity_triples{_WHERE}") == ["bob"]
+    links = f"SELECT memory_key FROM loom.entity_triple_memories{_WHERE}"
     assert _column(ch_client, org, links) == ["bob-diet"]
-    rows = "SELECT toString(memory_id) FROM loom.entity_triple_rows" + where
+    rows = f"SELECT toString(memory_id) FROM loom.entity_triple_rows{_WHERE}"
     assert _column(ch_client, org, rows) == [_BOB_SUMMARY_ID]
-    vectors = "SELECT memory_key FROM loom.entity_vectors" + where
-    assert _column(ch_client, org, vectors) == ["topic-bob"]
+    assert _column(ch_client, org, f"SELECT entity_a FROM loom.entity_edges{_WHERE}") == ["bob"]
+    links = f"SELECT memory_key FROM loom.entity_edge_memories{_WHERE}"
+    assert _column(ch_client, org, links) == ["bob-diet"]
+    rows = f"SELECT toString(memory_id) FROM loom.entity_edge_rows{_WHERE}"
+    assert _column(ch_client, org, rows) == [_BOB_SUMMARY_ID]
+    communities = f"SELECT entity FROM loom.entity_communities FINAL{_WHERE}"
+    assert _column(ch_client, org, communities) == ["fish"]
+    vectors = f"SELECT concat(user_id, ':', memory_key) FROM loom.entity_vectors{_WHERE}"
+    assert _column(ch_client, org, vectors) == ["-:topic-bob", "carol:topic-diets"]
+
+
+async def test_a_reopened_link_delete_takes_the_triples_its_links_alone_held(ch_client, ch) -> None:
+    """The saga ran `entity_graph.delete` and `graph_links.delete` without the
+    summary's links (a build without this change, or a summary linked since): the
+    census reopens only `graph_links.delete`, which must not leave the triple unlinked."""
+    org = unique_org("ersumre")
+    _seed(ch_client, org)
+    ch_client.command(
+        "DELETE FROM loom.entity_triple_memories WHERE org = {org:String} "
+        "AND memory_key = 'user_diet'",
+        parameters={"org": org},
+    )
+    with erasure_mutations.saga_scope(f"erasure-{org}"):
+        await _run(_STEPS[:1] + _STEPS[6:7], org, ch)
+    triples = f"SELECT subject FROM loom.entity_triples{_WHERE}"
+    assert _column(ch_client, org, triples) == ["bob"]

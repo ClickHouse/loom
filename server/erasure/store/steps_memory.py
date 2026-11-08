@@ -576,7 +576,7 @@ async def tombstone_memory_chunks_by_user(
     the user's, read from loom.memory (tombstoned rows included — the memory
     step runs first and the chunks must follow it, not escape it). Another
     user's chunks of a shared key stay (`CHUNK_KEYS_IN`). The chunks of a summary of
-    the user's memories go too, by the summary writer they are stamped with."""
+    the user's memories go too, by the summary's agent, user and key."""
     ch = ch or _default_client()
     total = 0
     for part in slices_or_one_empty(await user_key_pairs(org, user_id, ch=ch)):
@@ -587,12 +587,12 @@ async def tombstone_memory_chunks_by_user(
             params={"uid": user_id, "keys": part},
             ch=ch,
         )
-    for rows in chunks((await user_summary_rows(org, user_id, ch=ch)).chunk_keys):
+    for rows in chunks((await user_summary_rows(org, user_id, ch=ch)).identities):
         total += await tombstone_scoped(
             "loom.memory_chunks",
             org=org,
-            scope_where="(namespace, user_id, parent_memory_key) IN "
-            "{rows:Array(Tuple(String, String, String))}",
+            scope_where="(namespace, agent, user_id, parent_memory_key) IN "
+            "{rows:Array(Tuple(String, String, String, String))}",
             params={"rows": rows},
             ch=ch,
         )
@@ -621,14 +621,8 @@ async def delete_memory_versions_by_namespace(
     The history exists so a rollback can re-insert an old
     head; after erasure that would resurrect erased content, so the rows go,
     not a tombstone."""
-    return await count_then_mutate(
-        "loom.memory_versions",
-        count_where="org = {org:String} AND namespace = {ns:String}",
-        mutation="DELETE",
-        mutation_where="org = {org:String} AND namespace = {ns:String}",
-        params={"org": org, "ns": namespace},
-        final=False,
-        ch=ch,
+    return await delete_scoped(
+        "loom.memory_versions", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
     )
 
 
