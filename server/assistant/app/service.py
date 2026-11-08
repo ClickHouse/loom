@@ -65,10 +65,6 @@ def assistant_state() -> tuple[bool | None, str]:
     return _ready, _problem
 
 
-def configured() -> bool:
-    return bool(settings.assistant_librechat_url)
-
-
 def current_definition() -> agent_definition.Definition:
     """This build's definition: agent.yaml, the tools the assistant connection lists,
     and LOOM_ASSISTANT_MODEL in place of the file's model when set."""
@@ -298,7 +294,7 @@ def start_setup_loop() -> asyncio.Task[None] | None:
     next, up to 16 times as long; None when no LibreChat is configured. Every process of
     a replica shares one address in LibreChat's sign-in limit (seven in five minutes),
     so the waits grow."""
-    if not configured():
+    if not settings.assistant_librechat_url:
         return None
 
     async def _run() -> None:
@@ -313,7 +309,6 @@ def start_setup_loop() -> asyncio.Task[None] | None:
 
 __all__ = [
     "assistant_state",
-    "configured",
     "current_definition",
     "ensure_service",
     "opened",

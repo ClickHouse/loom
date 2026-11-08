@@ -243,7 +243,8 @@ services:
 ```
 
 ```bash
-docker compose -f compose.yaml -f compose.qualify.yaml --profile assistant up -d
+LOOM_ASSISTANT_LIBRECHAT_URL=http://librechat:3080 \
+  docker compose -f compose.yaml -f compose.qualify.yaml --profile assistant up -d
 Q=integrations/librechat/qualification/qualify.py
 python $Q seed
 python $Q --librechat-url http://localhost:3080 setup-deployed
