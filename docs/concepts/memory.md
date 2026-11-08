@@ -244,6 +244,7 @@ stateDiagram-v2
     conflicted --> active: conflicts.resolve (revise, allow)
     conflicted --> tombstoned: conflicts.resolve (contract, or peer revised)
     proposed --> active: memory.proposal_decide (accept)
+    proposed --> conflicted: memory.proposal_decide (accept, contradicted on trial)
     proposed --> rejected: memory.proposal_decide (reject)
     active --> rejected: memory.reject
     active --> superseded: newer write (newest_wins, refines, conflict resolver)
