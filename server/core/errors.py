@@ -358,6 +358,7 @@ def stored_caller_text(text: str) -> str:
         return kind
     return ""
 
+
 class AnalysisUnavailableError(LoomServerError):
     """`insights.query` cannot run on this replica: the analyst ClickHouse
     user is missing, wider than the allowlist, or failed the probe each process
