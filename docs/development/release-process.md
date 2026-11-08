@@ -213,12 +213,9 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    all four have passed (a failure there can leave one tagged, and re-running it tags both);
    `sign` then signs, by digest, the index `docker-tag` made for each image, with a keyless
    signature (cosign, with the run's GitHub identity, so the certificate names `release.yml`
-   and the tag). A run on a tag whose images are out signs nothing: it verifies those
-   signatures, so an image tag moved since, or a run that tagged without signing, fails before
-   anything publishes (re-running the failed jobs of the run that tagged signs what it
-   tagged). The images are tagged before `sign`, so with Sigstore down they are out unsigned
-   until that re-run;
-   the GitHub Release, PyPI, npm and the MCP Registry wait for `sign`;
+   and the tag); a run on a tag whose images are out signs nothing. Every run then verifies
+   both images' signatures as users do, so the GitHub Release, PyPI, npm and the MCP Registry
+   wait for a signature that checks ([a failed tag or signature](#a-failed-tag-or-signature));
 7. `docker-smoke` installs the bundle with those images, on the ClickHouse release it
    names, on amd64 and arm64, then runs the release's own `install.sh` and bundle as the
    one-liner in clean Debian, Ubuntu and Alpine containers (install, round trip, re-run, a
@@ -245,8 +242,8 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    `gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=clickhouse/clickhouse-server:A.B.C.D`;
    or accepting the downgrade:
    `gh workflow run release.yml --ref vX.Y.Z -f allow_clickhouse_downgrade=true`.
-   When neither is taken, move `:latest` back to the previous release by hand, on both
-   `ghcr.io/clickhouse/loom` and `ghcr.io/clickhouse/loom-extractor`;
+   When neither is taken, move `:latest` back to the previous release on both images, as in
+   [a failed tag or signature](#a-failed-tag-or-signature);
 9. `release-check` (on a tag push) runs `.github/workflows/release-check.yml` against what
    was just published, signed in to nothing: the one-liner from github.com in the same clean
    containers, pulling both images anonymously, and verifies both images' signatures, which
@@ -281,17 +278,26 @@ version builds and tags none (`scripts/release/published_images.sh`), smoke-test
 ones, and goes on to the registries. Release images build without the cache, so a rebuild would
 move the version's tags onto other bytes.
 
+### A failed tag or signature
+
 A failed `docker-tag` (one image tagged, not the other) or a failed `sign` (Sigstore down, say)
 is recovered by "Re-run failed jobs" on the run that tagged the images (the tag push, or the
 dispatch that built and tagged them), within 30 days of it: that attempt keeps its `preflight`
-result and `docker-tag`'s digests, so it tags the same build and signs what it tagged. Never
-re-run a run that did not tag: it rebuilds and would move the published tags. Another run on the
+result and `docker-tag`'s digests, so it tags the same build and signs what it tagged. Never re-run
+a run that failed before tagging once another run has tagged: its `preflight` saw no images, so it
+rebuilds and would move the published tags. Another run on the
 tag (a dispatch, a second push) is a run of its own and leaves the tagging run re-runnable; re-run
 its failed jobs, or dispatch the tag again, once the tagging run has signed. Once "Re-run all jobs"
 has replaced the tagging run's attempt, or the 30 days have passed, no run can tag or sign that
 build (a run on a half-tagged version fails its `preflight`, and a run on a published tag only
-verifies signatures that only the tagging run can make): release a new version, and move `:latest`
-back by hand if it moved.
+verifies signatures that only the tagging run can make): release a new version, and if `:latest`
+moved, point it back at the previous release for both images:
+
+```bash
+docker buildx imagetools create -t ghcr.io/clickhouse/<image>:latest ghcr.io/clickhouse/<image>:<previous X.Y.Z>
+```
+
+The previous release's index keeps its signature, which belongs to its digest.
 
 Never move a tag whose images are published: `published_images.sh` fails when a published image
 was built from another commit than the run's, and a fix needs a new version.

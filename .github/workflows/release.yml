@@ -609,9 +609,9 @@ jobs:
           done
           echo "digests=${digests[*]}" >> "$GITHUB_OUTPUT"
 
-  # The run that tags signs the indexes it made, by digest; a later run on the
-  # tag verifies those signatures instead, so an image tag moved since is
-  # refused. The GitHub Release and the registries wait for this job.
+  # The run that tags signs the indexes it made, by digest; every run then
+  # verifies the signature users check, so a wrong identity, or an image tag
+  # moved since, is refused. The GitHub Release and the registries wait for it.
   sign:
     name: Sign both images, or verify their signatures
     if: ${{ !cancelled() && !inputs.dry_run && (needs.docker-tag.result == 'success' || needs.preflight.outputs.images_published == 'true') }}
@@ -640,10 +640,9 @@ jobs:
         run: |
           [ -n "$DIGESTS" ] || { echo "::error::docker-tag named no digests"; exit 1; }
           for ref in $DIGESTS; do cosign sign --yes "$ref"; done
-      # A run that tagged but did not sign is repaired by re-running its failed jobs.
-      - name: Verify the published images' signatures
+      # After signing, and on a published tag: what users and release-check verify.
+      - name: Verify both images' signatures
         id: verify
-        if: ${{ needs.preflight.outputs.images_published == 'true' }}
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |

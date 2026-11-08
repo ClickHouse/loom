@@ -6,6 +6,7 @@ calls them."""
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -438,22 +439,21 @@ def test_only_sign_and_the_registries_get_an_oidc_token() -> None:
     assert set(oidc) == {"sign", "pypi", "npm", "mcp-registry"}
 
 
-def test_the_tag_run_signs_the_digests_it_made_and_a_later_run_verifies_them() -> None:
+def _verify_args(run: str) -> list[str]:
+    """The identity and issuer a step's `cosign verify` checks."""
+    return re.findall(r"--certificate-(?:identity|oidc-issuer) \S+", run)
+
+
+def test_the_tag_run_signs_the_digests_it_made_and_every_run_verifies_them() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
     tag = jobs["docker-tag"]
     assert tag["outputs"]["digests"] == "${{ steps.tag.outputs.digests }}"
-    (tagging,) = [s for s in tag["steps"] if s.get("id") == "tag"]
-    assert 'digests+=("$image@$digest")' in tagging["run"]
     steps = {s.get("id"): s for s in jobs["sign"]["steps"]}
-    sign = steps["sign"]
-    assert sign["if"] == "${{ needs.docker-tag.result == 'success' }}"
-    assert sign["env"]["DIGESTS"] == "${{ needs.docker-tag.outputs.digests }}"
-    assert 'cosign sign --yes "$ref"' in sign["run"]
-    verify = steps["verify"]
-    assert verify["if"] == "${{ needs.preflight.outputs.images_published == 'true' }}"
-    assert "cosign sign" not in verify["run"]
-    identity = (
-        "https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v$VERSION"
-    )
-    assert f'--certificate-identity "{identity}"' in verify["run"]
-    assert "--certificate-oidc-issuer https://token.actions.githubusercontent.com" in verify["run"]
+    assert steps["sign"]["if"] == "${{ needs.docker-tag.result == 'success' }}"
+    assert steps["sign"]["env"]["DIGESTS"] == "${{ needs.docker-tag.outputs.digests }}"
+    assert "if" not in steps["verify"]  # after signing too, before anything publishes
+    # The same identity and issuer release-check verifies, which its own test pins.
+    check = yaml.safe_load((ROOT / ".github/workflows/release-check.yml").read_text())
+    (user,) = [s for s in check["jobs"]["signatures"]["steps"] if "run" in s]
+    args = _verify_args(steps["verify"]["run"])
+    assert len(args) == 2 and args == _verify_args(user["run"])
