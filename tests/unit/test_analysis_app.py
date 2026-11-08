@@ -132,6 +132,7 @@ def test_a_foreign_permissive_policy_stops_the_repair(
 
     monkeypatch.setattr(app, "_probe", probe)
     monkeypatch.setattr(app, "lease", _NoLease)
+    monkeypatch.setattr(app.store, "secrets_table_exists", _returns(True))
     monkeypatch.setattr(app.store, "sealed_secrets", none)
     monkeypatch.setattr(app.store, "can_manage_access", yes)
     monkeypatch.setattr(app.store, "foreign_policies", foreign)
@@ -154,6 +155,7 @@ def test_ch_setup_refuses_a_new_key_beside_a_live_analyst_user(
         return False
 
     monkeypatch.setattr(app, "lease", _NoLease)
+    monkeypatch.setattr(app.store, "secrets_table_exists", _returns(True))
     monkeypatch.setattr(app.store, "sealed_secrets", none)
     monkeypatch.setattr(app.store, "analyst_user_absent", no)
     with pytest.raises(RuntimeError, match=f"DROP USER {boundary.ANALYST_USER}"):
@@ -165,6 +167,7 @@ def test_ch_setup_refuses_over_a_newer_builds_entities(
 ) -> None:
     written: list[Any] = []
     monkeypatch.setattr(app, "lease", _NoLease)
+    monkeypatch.setattr(app.store, "secrets_table_exists", _returns(True))
     monkeypatch.setattr(app.store, "sealed_secrets", _returns("sealed"))
     monkeypatch.setattr(app, "_opened", lambda _: SECRETS)
     newer = boundary.Stored(boundary.ENTITY_VERSION + 1, "theirs")
@@ -348,6 +351,7 @@ def test_print_sql_refuses_a_new_key_beside_a_live_analyst_user(
 ) -> None:
     drew: list[bool] = []
     monkeypatch.setattr(app, "lease", _NoLease)
+    monkeypatch.setattr(app.store, "secrets_table_exists", _returns(True))
     monkeypatch.setattr(app.store, "sealed_secrets", _returns(None))
     monkeypatch.setattr(app.store, "can_manage_access", _returns(True))
     monkeypatch.setattr(app.store, "analyst_user_absent", _returns(False))
@@ -370,6 +374,7 @@ def test_print_sql_draws_where_it_cannot_see_the_users(
         drew.append(may_draw)
 
     monkeypatch.setattr(app, "lease", _NoLease)
+    monkeypatch.setattr(app.store, "secrets_table_exists", _returns(True))
     monkeypatch.setattr(app.store, "sealed_secrets", _returns(None))
     monkeypatch.setattr(app.store, "can_manage_access", _returns(False))
     monkeypatch.setattr(app, "load_secrets", load)
@@ -409,3 +414,40 @@ def test_print_sql_is_not_gated_on_the_reader_users_settings(
     args = argparse.Namespace(print_analyst_sql=True, print_sql=False)
     assert ch_setup._cmd_ch_setup(args) == 0
     assert capsys.readouterr().out.rstrip().endswith("SELECT 1;")
+
+
+@pytest.mark.parametrize("path", ["rewrite", "load_for_print"])
+def test_before_the_first_boot_migrates_both_paths_say_to_run_again(
+    monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    monkeypatch.setattr(app.store, "secrets_table_exists", _returns(False))
+    with pytest.raises(RuntimeError, match="first boot has applied its migrations"):
+        asyncio.run(getattr(app, path)())
+
+
+def test_ch_setup_prints_a_clickhouse_error_as_one_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import argparse
+
+    from server.cli import ch_setup
+
+    def fail() -> list[str]:
+        raise RuntimeError("Code: 60. DB::Exception: Unknown table\nStack trace:\n0. frame")
+
+    monkeypatch.setattr(ch_setup, "_analyst_sql", fail)
+    args = argparse.Namespace(print_analyst_sql=True, print_sql=False)
+    assert ch_setup._cmd_ch_setup(args) == 2
+    out = capsys.readouterr()
+    assert out.out == ""
+    assert len(out.err.strip().splitlines()) == 1
+
+
+def test_a_standing_problem_is_logged_once(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(app, "_ready", None)
+    monkeypatch.setattr(app, "_problem", "")
+    for _ in range(3):
+        app._set_problem("the analyst user is missing")
+    assert sum("is unavailable" in r.message for r in caplog.records) == 1

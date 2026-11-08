@@ -436,15 +436,19 @@ def _write_analyst() -> None:
     deployment whose server user cannot (one with access management writes it
     at boot)."""
     from server.cli._ch import run_connected
-    from server.insights.app.analysis import rewrite
+    from server.insights.app.analysis import NOT_MIGRATED, rewrite
 
     try:
         run_connected(lambda _ch: rewrite())
     except Exception as e:  # noqa: BLE001 — insights.query is optional; the rest of setup stands
-        print(
-            f"· loom_analyst (insights.query): not written ({error_line(e)}); have an admin "
-            "run the SQL `loom ch-setup --print-analyst-sql` prints"
+        line = error_line(e)
+        # Before the first boot has migrated, the printed SQL cannot help either.
+        advice = (
+            ""
+            if line == NOT_MIGRATED
+            else "; have an admin run the SQL `loom ch-setup --print-analyst-sql` prints"
         )
+        print(f"· loom_analyst (insights.query): not written ({line}){advice}")
         return
     print("· loom_analyst (insights.query): written")
 
@@ -457,17 +461,13 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
     # Unset (a checkout without it) means the default reader.
     opted_out = "LOOM_CH_READER_USER" in os.environ and not settings.ch_reader_user
     reader = None if opted_out else settings.ch_reader_user or DEFAULT_READER
-    # The analyst SQL depends on the Loom user alone, not on the reader's settings.
-    if not _NAME.match(user):
-        print(f"✗ cannot use user name {user!r} in SQL", file=sys.stderr)
-        return 2
     if args.print_analyst_sql:
         from server.insights.app import analysis
 
         try:
             statements = _analyst_sql()
-        except RuntimeError as e:
-            print(f"✗ {e}", file=sys.stderr)
+        except Exception as e:  # noqa: BLE001 — every refusal is one line, not a traceback
+            print(f"✗ {error_line(e)}", file=sys.stderr)
             return 2
         print(
             "-- Holds the analyst password and scope key: save it to a file and run it in one "
@@ -482,6 +482,10 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
         for stmt in statements:
             print(f"{stmt};")
         return 0
+    # The reader and admin SQL name these users.
+    if not _NAME.match(user):
+        print(f"✗ cannot use user name {user!r} in SQL", file=sys.stderr)
+        return 2
     if reader is not None and not _NAME.match(reader):
         print(f"✗ cannot use user name {reader!r} in SQL", file=sys.stderr)
         return 2

@@ -284,6 +284,10 @@ async def _write_under_lease() -> str:
     return ""
 
 
+NOT_MIGRATED = (
+    "loom.analysis_secrets does not exist yet: run `loom ch-setup` again once Loom's first "
+    "boot has applied its migrations"
+)
 _LOST_ROW = (
     "loom.analysis_secrets has no row while the analyst user exists, so the key the replicas "
     f"hold is lost: drop the user (`DROP USER {boundary.ANALYST_USER}`) and run `loom ch-setup` "
@@ -296,6 +300,8 @@ async def load_for_print() -> None:
     when there are none. Where Loom's user can see that the analyst user
     exists, a lost row is refused as `rewrite` refuses it; where it cannot, a
     missing row is drawn again, which moves the key."""
+    if not await store.secrets_table_exists():
+        raise RuntimeError(NOT_MIGRATED)
     async with lease():
         if (
             await store.sealed_secrets() is None
@@ -310,6 +316,8 @@ async def rewrite() -> None:
     """Write the analyst user whatever is stored (`loom ch-setup`). It draws
     the secrets only while no analyst user exists, so a lost row never puts
     a new key beside replicas that still hold the old one."""
+    if not await store.secrets_table_exists():
+        raise RuntimeError(NOT_MIGRATED)
     async with lease():
         if await store.sealed_secrets() is None and not await store.analyst_user_absent():
             raise RuntimeError(_LOST_ROW)
@@ -387,9 +395,11 @@ async def _canary_reads(secrets_: tuple[bytes, str]) -> bool:
 
 def _set_problem(problem: str) -> None:
     global _ready, _problem
+    changed = _scrubbed(problem) != _problem or _ready is None
     _problem = _scrubbed(problem)
     _ready = not _problem
-    if _problem:
+    if _problem and changed:
+        # Once per change: health and `loom doctor` carry the standing state.
         log.warning("insights.query is unavailable: %s", _problem)
 
 
@@ -577,8 +587,6 @@ async def _run(input: InsightsQueryInput) -> InsightsQueryOutput:
         if refusal is None:
             raise
         raise refusal from None
-    # A policy that refuses this replica's signature reads no rows, and an
-    # aggregate over no rows still answers: the scope column says which it was.
     truncated = len(rows) > limit
     rows = rows[:limit]
     return InsightsQueryOutput(

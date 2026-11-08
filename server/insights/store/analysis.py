@@ -152,6 +152,17 @@ async def other_deployments(*, ch: _CHClient | None = None) -> list[str]:
     return [str(r["database"]) for r in rows]
 
 
+async def secrets_table_exists(*, ch: _CHClient | None = None) -> bool:
+    """Whether the analysis migration has run: `loom ch-setup` can run before
+    Loom's first boot has migrated."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        "SELECT count() AS n FROM system.tables "
+        "WHERE database = currentDatabase() AND name = 'analysis_secrets'"
+    )
+    return row is not None and int(row["n"]) > 0
+
+
 async def analyst_user_absent(*, ch: _CHClient | None = None) -> bool:
     """True only when Loom's user can see that no analyst user exists; False
     when it exists or Loom's user cannot list users."""
