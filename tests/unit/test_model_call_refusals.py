@@ -282,7 +282,7 @@ def test_a_wait_answer_is_deferred_for_its_retry_after(wire, agent, status, wait
     assert deferred.value.status_code == 503 and deferred.value.code == "MODEL_CALL_DEFERRED"
     detail = deferred.value.to_detail()
     assert (detail["gateway_status"], detail["retry_after_s"]) == (status, wait)
-    wait_message = "the inference gateway asked this call to wait (429 agent_request_limit)"
+    wait_message = f"the inference gateway asked this call to wait ({status} agent_request_limit)"
     assert detail["message"] == wait_message
     assert deferred.value.headers() == {"Retry-After": str(wait)}
     # a wait of two seconds or less is waited out once here, then deferred; longer, at once
