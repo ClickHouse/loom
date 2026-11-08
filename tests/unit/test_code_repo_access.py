@@ -615,6 +615,8 @@ _STRAY = {
         ([], False),  # the copy revoked since the gate passed: no live admin row left
         ([_STRAY, {**_STRAY, "subject": "mallory", "granted_by": "alice"}], True),
         ([{**_STRAY, "granted_by": "repo-maintainers:code-weave"}], True),  # an operator copy
+        ([{**_STRAY, "granted_by": "alice", "status": "pending"}], False),  # asked, not given
+        ([{**_STRAY, "granted_by": "alice", "role": "viewer"}], False),  # lowered
     ],
 )
 @pytest.mark.asyncio

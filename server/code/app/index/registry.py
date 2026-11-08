@@ -153,7 +153,13 @@ async def _write_row(cfg: Any, client: Any) -> bool:
     classification = str(row.get("classification") or "standard")
     opening = public and classification == "standard" and str(row.get("join_policy")) != "open"
     narrowing = restricted and classification != "restricted"
-    widening = not restricted and cfg.access_source == "registry" and classification == "restricted"
+    # An operator entry only: a branch added from the page is widened by set_access alone.
+    widening = (
+        not restricted
+        and cfg.source == "config"
+        and cfg.access_source == "registry"
+        and classification == "restricted"
+    )
     if not (opening or narrowing or widening):
         return False
     # Each follows the registry row read now: this process's snapshot of it may

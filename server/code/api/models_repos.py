@@ -262,7 +262,9 @@ class CodeRepoSetAccessInput(BaseModel):
     classification: str
     # `open`, `approval` or `closed` (case-insensitive); `open` with `restricted` is refused.
     join_policy: str
-    # Must equal `namespace` when the call widens `restricted` to `standard`; else unused.
+    # Must equal `namespace` when the call widens `restricted` to `standard`, which also
+    # needs an admin grant of the caller's own there (a copy from a branch added from the
+    # page does not count); else unused.
     confirm: str = ""
 
 

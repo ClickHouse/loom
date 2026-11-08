@@ -1244,7 +1244,7 @@ A maintainer sets a repository's access — its classification (`standard` | `re
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `classification` | `str` | required | `standard` or `restricted` (case-insensitive); anything else is BAD_CLASSIFICATION. |
 | `join_policy` | `str` | required | `open`, `approval` or `closed` (case-insensitive); `open` with `restricted` is refused. |
-| `confirm` | `str` | `''` | Must equal `namespace` when the call widens `restricted` to `standard`; else unused. |
+| `confirm` | `str` | `''` | Must equal `namespace` when the call widens `restricted` to `standard`, which also needs an admin grant of the caller's own there (a copy from a branch added from the page does not count); else unused. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
