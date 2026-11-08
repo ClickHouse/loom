@@ -209,11 +209,12 @@ def default_git_dir() -> str:
     namespace added from the page skips it). The fallback of a read whose namespace has
     no entry."""
     base = _scalar_repo()
-    listed = any(
-        c.source == "config" and (c.org, c.namespace) == (base.org, base.namespace)
+    listed = (
+        c
         for c in configured_repos()
+        if c.source == "config" and (c.org, c.namespace) == (base.org, base.namespace)
     )
-    return base.git_dir if listed else ""
+    return next((c.git_dir for c in listed), "")
 
 
 def checkout_for(cfg: RepoConfig, producer: str) -> str:
@@ -353,9 +354,14 @@ def configured_repos() -> list[RepoConfig]:
     would be listed and its repository read, fetched or indexed there. Invalid JSON
     degrades to the scalar single-repo config with a loud log (a typo must not
     silently stop all indexing) — loud once, then a gauge."""
+    require_registry_read()
+    return _with_registry(_configured_from_env())
+
+
+def require_registry_read() -> None:
+    """RegistryUnread while self-service is on and the registry has never been read."""
     if settings.code_self_service_enabled and not _registry_loaded:
         raise RegistryUnread("the self-service repository registry is not read yet; retry")
-    return _with_registry(_configured_from_env())
 
 
 def config_entries() -> list[RepoConfig]:
@@ -370,7 +376,9 @@ def config_entries() -> list[RepoConfig]:
 
 
 def config_entry(org: str, namespace: str) -> RepoConfig | None:
-    """`config_entries()`' entry for (org, namespace), with the same limits."""
+    """`config_entries()`' entry for (org, namespace), with the same limits: once the
+    registry is read, `repo_for_namespace` itself, as `config_entries()` is then
+    `configured_repos()`."""
     if settings.code_self_service_enabled and not _registry_loaded:
         return next((c for c in config_entries() if (c.org, c.namespace) == (org, namespace)), None)
     return repo_for_namespace(org, namespace)

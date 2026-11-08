@@ -307,8 +307,12 @@ async def _mirrors_block() -> dict[str, object]:
     """This host's git mirrors (ClickHouse's bootstrap_stage is deployment-wide).
     Walks every mirror's directory, so it is opt-in."""
     from server.code.app.index.mirrors import mirror_status
+    from server.code.domain.index.repos import RegistryUnread
 
-    return await asyncio.to_thread(mirror_status)
+    try:
+        return await asyncio.to_thread(mirror_status)
+    except RegistryUnread:  # the state an operator reads this block to diagnose
+        return {"registry": "unread"}
 
 
 @health_router.get("/v1/health/live")

@@ -18,7 +18,6 @@ SERVER = Path(__file__).resolve().parents[2] / "server"
 # What decides access: a namespace's kind and classification, whether it is a code entry.
 CONFIG_ENTRY_READERS = {
     "identity/app/directory.py",
-    "identity/app/namespace.py",
     "identity/app/namespace_classification.py",
     "identity/app/namespace_kinds.py",
     "identity/app/token_grants.py",
@@ -101,3 +100,25 @@ def test_the_accessors_refuse_until_the_registry_is_read(monkeypatch) -> None:
     monkeypatch.setattr(settings, "code_self_service_enabled", False)
     monkeypatch.setattr(repos, "_registry_loaded", False)
     assert repos.configured_repos() == [entry]  # no registry to wait for
+
+
+@pytest.mark.asyncio
+async def test_a_memory_read_answers_without_links_while_the_registry_is_unread(
+    monkeypatch,
+) -> None:
+    from server.memory.app import code_link_reads
+
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    memory = {"namespace": "n", "mid": "m", "tags": []}
+    assert await code_link_reads.links_of("o", memory) == []
+
+
+@pytest.mark.asyncio
+async def test_the_mirrors_health_block_names_an_unread_registry(monkeypatch) -> None:
+    from server import health
+
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    monkeypatch.setattr("server.code.app.index.mirrors.history_enabled", lambda: True)
+    assert await health._mirrors_block() == {"registry": "unread"}

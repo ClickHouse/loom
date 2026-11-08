@@ -154,12 +154,12 @@ def head_of(row: Any) -> dict[str, Any]:
 async def links_of(org: str, memory: dict[str, Any]) -> list[CodeLink]:
     """The code `memory` (a head) is linked to, in repositories the caller may read, for
     a read's `code` field; [] when the links cannot be read."""
-    if not code.code_namespaces():
-        return []
-    tags = [str(t) for t in memory.get("tags") or []]
-    if not code_namespace_for(org, str(memory["namespace"]), tags):
-        return []  # no link is made from a memory that names no repository
     try:
+        if not code.code_namespaces():
+            return []
+        tags = [str(t) for t in memory.get("tags") or []]
+        if not code_namespace_for(org, str(memory["namespace"]), tags):
+            return []  # no link is made from a memory that names no repository
         rows = current(org, memory, await store.for_memories(org, [str(memory["mid"])]))
         seen = await readable_namespaces(org, {a["code_namespace"] for a in rows})
     except Exception as e:  # noqa: BLE001 — the links are additive to the read

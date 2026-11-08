@@ -42,6 +42,7 @@ def _repo_cfg(args: argparse.Namespace) -> Any:
     parse, configured_repos() degrades to the scalar entry, and falling back
     would index one branch's tree under another branch's namespace."""
     from server.code.domain.index.repos import (
+        RegistryUnread,
         config_errors_for,
         configured_repos,
         page_namespaces,
@@ -49,7 +50,10 @@ def _repo_cfg(args: argparse.Namespace) -> Any:
     )
 
     org, ns = _identity(args)
-    cfg = repo_for_namespace(org, ns)
+    try:
+        cfg = repo_for_namespace(org, ns)
+    except RegistryUnread:
+        raise SystemExit("the self-service repository registry could not be read; retry") from None
     if cfg is not None:
         return cfg
     if (org, ns) in page_namespaces():
