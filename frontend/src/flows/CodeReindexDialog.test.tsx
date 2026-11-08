@@ -17,15 +17,22 @@ afterEach(() => {
 });
 
 describe("CodeReindexDialog", () => {
-  it("moves the branch's watermark to the commit typed", async () => {
+  it("moves the branch's watermark only to a full commit id, then re-reads the card", async () => {
     const onClose = vi.fn();
+    const onDone = vi.fn();
     const branch = { org: "acme", namespace: "code-x", repo: "acme/x", branch: "main" } as CodeRepoSummary;
-    render(<CodeReindexDialog branch={branch} onClose={onClose} />);
+    render(<CodeReindexDialog branch={branch} onDone={onDone} onClose={onClose} />);
     const go = screen.getByRole("button", { name: "Re-walk" });
+    const field = screen.getByLabelText("Commit");
+    await userEvent.type(field, "aaa111");
     expect(go).toBeDisabled();
-    await userEvent.type(screen.getByLabelText("Commit"), "aaa111");
+    expect(screen.getByText("A full 40-character commit id")).toBeInTheDocument();
+    const sha = "a".repeat(40);
+    await userEvent.clear(field);
+    await userEvent.type(field, sha);
     await userEvent.click(go);
-    await waitFor(() => expect(api.codeReindex).toHaveBeenCalledWith({ org: "acme", namespace: "code-x" }, "aaa111"));
+    await waitFor(() => expect(api.codeReindex).toHaveBeenCalledWith({ org: "acme", namespace: "code-x" }, sha));
+    expect(onDone).toHaveBeenCalled();
     expect(onClose).toHaveBeenCalled();
   });
 });

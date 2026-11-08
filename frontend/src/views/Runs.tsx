@@ -532,12 +532,9 @@ interface Shown {
 
 export function Runs() {
   const identity = useIdentity();
-  // A closed run's grade is WRITER.
-  const canGrade = canCall(
-    "run.grade",
-    useNamespaceRole(identity.namespace),
-    useStore((s) => s.whoami),
-  );
+  const roleHere = useNamespaceRole(identity.namespace);
+  const whoami = useStore((s) => s.whoami);
+  const canGrade = canCall("run.grade", roleHere, whoami);
   // Below Tailwind's sm breakpoint the toolbar holds the search alone; below Click UI's
   // table breakpoint the runs are list rows.
   const phone = useMedia(PHONE_QUERY);
@@ -1146,7 +1143,7 @@ export function Runs() {
           )}
           {open && open.status !== "active" && canGrade && (
             <Section title="Did it hold up?">
-              <RunGrade key={open.run_id} identity={identity} runId={open.run_id} />
+              <RunGrade key={open.run_id} identity={identity} run={open} />
             </Section>
           )}
           {open && Object.keys(open.metadata || {}).length > 0 && (

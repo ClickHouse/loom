@@ -19,15 +19,26 @@ export async function getAgentSpend(
   id: Pick<Identity, "org" | "namespace">,
   days: number,
   opts: RequestOpts = {},
-): Promise<{ rows: AgentSpendRow[]; total_cost_usd: number; total_turns: number; unpriced_turns: number }> {
-  const day = (d: Date) => d.toISOString().slice(0, 10);
-  const to = new Date();
-  const from = new Date(to.getTime() - days * 86_400_000);
+): Promise<AgentSpendSummary> {
   return post(
     "/v1/cost.agent_summary",
-    { org: id.org, namespace: id.namespace, from_date: day(from), to_date: day(to), group_by: ["model"] },
+    { org: id.org, namespace: id.namespace, ...lastDays(days), group_by: ["model"] },
     opts.signal,
   );
+}
+
+export interface AgentSpendSummary {
+  rows: AgentSpendRow[];
+  total_cost_usd: number;
+  total_turns: number;
+  unpriced_turns: number;
+}
+
+/** The last `days` days, today included, as the inclusive UTC dates the cost ops take. */
+function lastDays(days: number): { from_date: string; to_date: string } {
+  const day = (d: Date) => d.toISOString().slice(0, 10);
+  const today = new Date();
+  return { from_date: day(new Date(today.getTime() - (days - 1) * 86_400_000)), to_date: day(today) };
 }
 
 // ===== Namespace usage audit =====
@@ -945,14 +956,9 @@ export async function listCostRollup(
   // Backend cost.summary requires explicit from_date / to_date (YYYY-MM-DD).
   // Translate the simpler "last N days" UI knob into a date range here so
   // the view code stays unaware of the date plumbing.
-  const days = opts.days ?? 7;
-  const today = new Date();
-  const from = new Date(today.getTime() - days * 24 * 60 * 60 * 1000);
-  const fmt = (d: Date) => d.toISOString().slice(0, 10);
   const body: Record<string, unknown> = {
     org: id.org,
-    from_date: fmt(from),
-    to_date: fmt(today),
+    ...lastDays(opts.days ?? 7),
     // Always group by the dimensions we render: without group_by the
     // backend collapses to a single row with day=null / agent=null.
     group_by: opts.groupBy ?? ["day", "agent", "operation"],

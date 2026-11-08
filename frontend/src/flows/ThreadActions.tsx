@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TextField } from "@clickhouse/click-ui/TextField";
-import { deleteThread, renameThread, type Identity } from "../api";
+import { createThreadRow, deleteThread, getConversationThread, renameThread, type Identity } from "../api";
 import { humanizeError } from "../lib/format";
 import { confirmAction } from "../components/ConfirmDialog";
 import { toast } from "../components/Toast";
@@ -23,14 +23,12 @@ export function ThreadActions({
   canRename,
   canDelete,
   onChanged,
-  tabIndex,
 }: {
   identity: Pick<Identity, "org" | "namespace">;
   thread: Thread;
   canRename: boolean;
   canDelete: boolean;
   onChanged: () => void;
-  tabIndex?: number;
 }) {
   const [renaming, setRenaming] = useState(false);
   const name = thread.title || thread.thread_id;
@@ -38,18 +36,18 @@ export function ThreadActions({
   const remove = async () => {
     const ok = await confirmAction({
       title: `Delete "${name}"?`,
-      message: "Its messages leave search and the replay; they can be restored for 14 days.",
+      message: "Its messages leave search and the replay, and the dashboard cannot bring them back.",
       confirmLabel: "Delete",
       danger: true,
     });
     if (!ok) return;
     try {
-      await deleteThread(identity, thread.agent, thread.thread_id);
-      toast(`Deleted "${name}"`, "ok");
-      onChanged();
+      const left = await deleteEveryAgent(identity, thread);
+      toast(left ? `Deleted part of "${name}"; ${left} messages are left` : `Deleted "${name}"`, left ? "info" : "ok");
     } catch (e) {
       toast(`Delete failed: ${humanizeError(e)}`, "error");
     }
+    onChanged();
   };
 
   const items: RowMenuItem[] = [
@@ -59,7 +57,7 @@ export function ThreadActions({
   if (items.length === 0) return null;
   return (
     <>
-      <RowMenu name={name} items={items} tabIndex={tabIndex} />
+      <RowMenu name={name} items={items} />
       {renaming && (
         <RenameDialog
           identity={identity}
@@ -89,7 +87,9 @@ function RenameDialog({
   const submit = async () => {
     setBusy(true);
     try {
-      await renameThread(identity, thread.agent, thread.thread_id, title.trim());
+      const r = await renameThread(identity, thread.agent, thread.thread_id, title.trim());
+      // A thread built by appends has no row to update yet: write one with the title.
+      if (!r.updated) await createThreadRow(identity, thread.agent, thread.thread_id, title.trim());
       toast("Renamed", "ok");
       onClose(true);
     } catch (e) {
@@ -118,4 +118,24 @@ function RenameDialog({
       </form>
     </Modal>
   );
+}
+
+// A thread's turns are deleted per agent; one thread is unlikely to hold more agents.
+const MAX_AGENTS = 20;
+
+/** Delete each agent's part of the thread, the last writer first, until no turn is left.
+ *  Answers how many messages are left when it stopped early. */
+async function deleteEveryAgent(id: Pick<Identity, "org" | "namespace">, thread: Thread): Promise<number> {
+  let agent = thread.agent;
+  let left = 0;
+  for (let i = 0; i < MAX_AGENTS; i++) {
+    await deleteThread(id, agent, thread.thread_id);
+    const rest = await getConversationThread(id, "*", thread.thread_id, { limit: 1 });
+    if (!rest.found || rest.msg_count === 0) return 0;
+    left = rest.msg_count;
+    // The next agent is the latest writer of what is left; the same one again means nothing moved.
+    if (!rest.agent || rest.agent === agent) return left;
+    agent = rest.agent;
+  }
+  return left;
 }

@@ -161,6 +161,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "conversation.create": (
         "sdk_method",
         "sdk_example",
+        "dashboard",
     ),
     "conversation.delete": ("sdk_method",),
     "conversation.get": (

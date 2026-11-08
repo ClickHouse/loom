@@ -53,6 +53,10 @@ const run = (run_id: string, goal: string, session_id: string, over: Partial<Run
   metadata: {},
   budget_usd: 0,
   budget_seconds: 0,
+  grade: "",
+  grade_source: "",
+  grade_reason: "",
+  graded_at: "",
   ...over,
 });
 

@@ -32,6 +32,11 @@ export interface RunRow {
   metadata: Record<string, unknown>;
   budget_usd: number; // 0 = none
   budget_seconds: number;
+  /** `pass`, `fail`, or "" when not graded; the source, reason and time come with it. */
+  grade: string;
+  grade_source: string;
+  grade_reason: string;
+  graded_at: string;
 }
 
 export interface RunGetResponse {
@@ -126,7 +131,7 @@ export async function gradeRun(
   runId: string,
   grade: "pass" | "fail",
   reason: string,
-): Promise<{ graded: number; skipped_active: number }> {
+): Promise<{ graded: number; skipped_active: number; unchanged: number }> {
   return post("/v1/run.grade", {
     org: id.org,
     namespace: id.namespace,

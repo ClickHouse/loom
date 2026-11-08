@@ -21,11 +21,9 @@ import { SessionBriefPanel } from "./SessionBriefPanel";
 export function SessionBriefsSection({ org, namespace }: { org: string; namespace: string }) {
   const [briefs, setBriefs] = useState<BriefSummary[]>([]);
   const [shown, toggleShown] = useFold("session-briefs");
-  const canDelete = canCall(
-    "session.brief_delete",
-    useNamespaceRole(namespace),
-    useStore((s) => s.whoami),
-  );
+  const roleHere = useNamespaceRole(namespace);
+  const whoami = useStore((s) => s.whoami);
+  const canDelete = canCall("session.brief_delete", roleHere, whoami);
   const remove = async (b: BriefSummary) => {
     const ok = await confirmAction({
       title: `Forget the brief "${b.goal || b.brief_key}"?`,

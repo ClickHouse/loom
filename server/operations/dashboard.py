@@ -104,7 +104,6 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
             "context.pack",
             "conversation.append",
             "conversation.compact",
-            "conversation.create",
             "decision.chain",
             "decision.outcome",
             "decision.precedents",

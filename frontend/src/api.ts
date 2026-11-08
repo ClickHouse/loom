@@ -1186,7 +1186,7 @@ export interface MyNamespaceEntry {
 
 /** POST /v1/namespace.mark_seen: the caller opened `namespace`, so list_mine stops
  *  calling it new. */
-export async function markNamespaceSeen(org: string, namespace: string): Promise<unknown> {
+export async function markNamespaceSeen(org: string, namespace: string): Promise<void> {
   return post("/v1/namespace.mark_seen", { org, namespace });
 }
 
@@ -1420,9 +1420,21 @@ export interface GuideRevision {
   updated_at: string;
 }
 
-export async function guideHistory(org: string, namespace: string, opts: RequestOpts = {}): Promise<GuideRevision[]> {
-  const r = await post<{ revisions: GuideRevision[] }>("/v1/namespace.guide_history", { org, namespace }, opts.signal);
-  return r.revisions ?? [];
+export const GUIDE_HISTORY_LIMIT = 50;
+
+/** The guide's revisions, newest first, the current one among them. */
+export async function guideHistory(
+  org: string,
+  namespace: string,
+  limit: number,
+  opts: RequestOpts = {},
+): Promise<GuideRevision[]> {
+  const r = await post<{ revisions: GuideRevision[] }>(
+    "/v1/namespace.guide_history",
+    { org, namespace, limit },
+    opts.signal,
+  );
+  return r.revisions;
 }
 
 /** A namespace's guide (`namespace.guide_get`); `revision` 0 when it never had one. */

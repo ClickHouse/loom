@@ -221,6 +221,17 @@ export async function reviewLearning(
   });
 }
 
+/** POST /v1/conversation.create: a thread row for a thread built by appends only, which
+ *  conversation.update cannot title (it answers `updated: false`). */
+export async function createThreadRow(
+  id: Pick<Identity, "org" | "namespace">,
+  agent: string,
+  threadId: string,
+  title: string,
+): Promise<{ thread_id: string }> {
+  return post("/v1/conversation.create", { org: id.org, namespace: id.namespace, agent, thread_id: threadId, title });
+}
+
 /** POST /v1/conversation.update: a thread's new title. */
 export async function renameThread(
   id: Pick<Identity, "org" | "namespace">,

@@ -2,7 +2,14 @@ import { useEffect, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
-import { getNamespaceGuide, guideHistory, saveNamespaceGuide, type GuideRevision, type NamespaceGuide } from "../api";
+import {
+  GUIDE_HISTORY_LIMIT,
+  getNamespaceGuide,
+  guideHistory,
+  saveNamespaceGuide,
+  type GuideRevision,
+  type NamespaceGuide,
+} from "../api";
 import { toast } from "../components/Toast";
 import { Alert, Loading, Unavailable } from "../components/ui";
 import { Modal, ModalFooter } from "../components/ui/Modal";
@@ -133,7 +140,7 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
               <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap break-words rounded border border-border p-3 font-mono text-xs text-text">
                 {guide.content}
               </pre>
-              {guide.revision > 1 && <GuideHistory org={org} namespace={namespace} />}
+              {guide.revision > 1 && <GuideHistory org={org} namespace={namespace} current={guide.revision} />}
             </>
           ) : (
             <p className="text-sm text-text-muted">
@@ -209,21 +216,25 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
   );
 }
 
-/** The guide's earlier revisions, read when opened: who changed it, when and why. */
-function GuideHistory({ org, namespace }: { org: string; namespace: string }) {
+/** The guide's earlier revisions, read when opened: who changed it, when and why. The
+ *  newest one is the guide shown above, so the list starts below it. */
+function GuideHistory({ org, namespace, current }: { org: string; namespace: string; current: number }) {
   const [open, setOpen] = useState(false);
   const [revisions, setRevisions] = useState<GuideRevision[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [reads, setReads] = useState(0);
   useEffect(() => {
-    if (!open || revisions !== null) return;
+    if (!open) return;
     let live = true;
-    guideHistory(org, namespace)
+    setError(null);
+    guideHistory(org, namespace, GUIDE_HISTORY_LIMIT)
       .then((r) => live && setRevisions(r))
       .catch((e) => live && setError(humanizeError(e)));
     return () => {
       live = false;
     };
-  }, [open, revisions, org, namespace]);
+  }, [open, reads, org, namespace]);
+  const earlier = revisions?.filter((r) => r.revision !== current) ?? null;
   return (
     <section>
       <Button
@@ -238,19 +249,31 @@ function GuideHistory({ org, namespace }: { org: string; namespace: string }) {
       </Button>
       {open && (
         <div id="guide-history" className="mt-1">
-          {error && <Alert role="alert" state="danger" text={error} />}
-          {!error && revisions === null && <Loading label="Loading the history" />}
-          <ul className="space-y-1 text-xs">
-            {revisions?.map((r) => (
-              <li key={r.revision}>
-                <span className="text-text-muted">
-                  Revision {r.revision}
-                  {r.updated_by ? ` by ${r.updated_by}` : ""}, {relativeTime(r.updated_at)}
-                </span>
-                {(r.note || r.summary) && <span className="text-text"> — {r.note || r.summary}</span>}
-              </li>
-            ))}
-          </ul>
+          {error && (
+            <div className="flex items-center gap-2">
+              <Alert role="alert" state="danger" text={error} />
+              <Button type="secondary" htmlType="button" onClick={() => setReads((n) => n + 1)}>
+                Retry
+              </Button>
+            </div>
+          )}
+          {!error && earlier === null && <Loading label="Loading the history" />}
+          {!error && earlier && (
+            <ul className="space-y-1 text-xs">
+              {earlier.map((r) => (
+                <li key={r.revision}>
+                  <span className="text-text-muted">
+                    Revision {r.revision}
+                    {r.updated_by ? ` by ${r.updated_by}` : ""}, {relativeTime(r.updated_at)}
+                  </span>
+                  {(r.note || r.summary) && <span className="text-text"> — {r.note || r.summary}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+          {!error && revisions?.length === GUIDE_HISTORY_LIMIT && (
+            <p className="mt-1 text-xs text-text-muted">The newest {GUIDE_HISTORY_LIMIT} revisions.</p>
+          )}
         </div>
       )}
     </section>

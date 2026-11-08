@@ -63,6 +63,10 @@ const row = (over: Partial<RunRow> = {}): RunRow => ({
   metadata: { work_type: "ISSUE_TRIAGE" },
   budget_usd: 0,
   budget_seconds: 0,
+  grade: "",
+  grade_source: "",
+  grade_reason: "",
+  graded_at: "",
   ...over,
 });
 const full = row({

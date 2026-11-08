@@ -764,7 +764,7 @@ function RepositoriesHome({
         />
       )}
 
-      {reindexing && <CodeReindexDialog branch={reindexing} onClose={() => setReindexing(null)} />}
+      {reindexing && <CodeReindexDialog branch={reindexing} onDone={onChanged} onClose={() => setReindexing(null)} />}
       <JoinDialog
         target={requesting}
         onOpenChange={(v) => {

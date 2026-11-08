@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Table } from "@clickhouse/click-ui/Table";
-import { getAgentSpend, type AgentSpendRow } from "../../api";
+import { getAgentSpend, type AgentSpendSummary } from "../../api";
 import { useIdentity } from "../../lib/state";
 import { useAbortableEffect } from "../../lib/hooks";
 import { ListState } from "../../components/ui/ListState";
@@ -9,16 +9,10 @@ import { SectionHeading } from "../../components/ui";
 
 const DAYS = 7;
 
-interface Spend {
-  rows: AgentSpendRow[];
-  total_cost_usd: number;
-  unpriced_turns: number;
-}
-
 /** The coding agents' own model spend in this namespace (cost.agent_summary), by model. */
 export function AgentSpend() {
   const identity = useIdentity();
-  const [data, setData] = useState<Spend | null>(null);
+  const [data, setData] = useState<AgentSpendSummary | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [reload, setReload] = useState(0);
   useAbortableEffect(

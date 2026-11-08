@@ -46,6 +46,10 @@ const run = (run_id: string, goal: string, session_id: string): RunRow => ({
   metadata: {},
   budget_usd: 0,
   budget_seconds: 0,
+  grade: "",
+  grade_source: "",
+  grade_reason: "",
+  graded_at: "",
 });
 
 const LONG = "migrate every namespace's vector tables to the new width and re-embed what is stored";
