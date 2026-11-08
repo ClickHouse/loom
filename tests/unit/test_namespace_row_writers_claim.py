@@ -5,14 +5,19 @@ another's change."""
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from types import SimpleNamespace
 
 import pytest
 
+import server.boot as boot
 import server.code.app.index.registry as code_registry
 import server.tracker.app.registry as tracker_registry
+import server.tracker.app.registry_sources as sources
 from server.auth import grant_claims
+from server.tracker.store.source import qa_intel
+from server.workers import leader
 from tests.unit.claims_fake import MemoryClaims
 from tests.unit.code_fixtures import repo_config
 
@@ -71,8 +76,6 @@ async def test_a_caller_holding_the_account_claim_registers_under_it(
 async def test_the_tracker_registrar_writes_under_the_account_claim(
     claims: MemoryClaims, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from server.tracker.store.source import qa_intel
-
     client = _Client(claims)
     monkeypatch.setattr(qa_intel, "configured", lambda: True)
     monkeypatch.setattr(
@@ -89,13 +92,6 @@ async def test_a_namespace_skipped_at_boot_is_registered_on_a_later_try(
 ) -> None:
     """Its account claim busy at boot, then a failed pass: the narrowing must not wait for
     the next boot, and the retry ends once this process no longer leads."""
-    import asyncio
-
-    import server.boot as boot
-    import server.tracker.app.registry_sources as sources
-    from server.tracker.store.source import qa_intel
-    from server.workers import leader
-
     refreshes: list[int] = []
 
     async def _refresh(**_):
