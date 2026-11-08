@@ -130,10 +130,14 @@ def test_a_package_json_is_parsed_once_per_text(monkeypatch) -> None:
 
 def test_the_parsed_manifests_are_bounded_by_their_texts_length() -> None:
     views = ingest_resolve._MANIFEST_VIEWS
-    pad = "x" * (ingest_resolve.MANIFEST_VIEWS_CHARS // 4)
+    pad = "x" * (ingest_resolve.MANIFEST_VIEWS_BYTES // 4)
     for i in range(10):
         ingest_resolve._manifest_view(json.dumps({"main": f"m{i}.js", "pad": pad}))
-    assert views.weight <= ingest_resolve.MANIFEST_VIEWS_CHARS
+    assert views.weight <= ingest_resolve.MANIFEST_VIEWS_BYTES
+    views.clear()
+    wide = json.dumps({"main": "\U0001f600" * 10}, ensure_ascii=False)
+    ingest_resolve._manifest_view(wide)
+    assert views.weight == len(wide.encode())  # its UTF-8 bytes, not its characters
     assert 1 <= len(views) <= 4
 
 

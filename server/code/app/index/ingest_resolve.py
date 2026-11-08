@@ -332,26 +332,26 @@ async def _go_module_index(repo: CodeRepo, org: str, ns: str) -> list[tuple[str,
 
 
 # The manifest texts a pass reads, by path; a repository chooses their sizes, so the
-# cache is bounded by the characters it holds as well as by count.
+# cache is bounded by their UTF-8 bytes (never fewer than a str holds) and by count.
 # not a setting: a memory bound on texts the TTL keeps; a miss only re-reads the mirror
-PACKAGE_JSON_CACHE_CHARS = 64 * 1024 * 1024
+PACKAGE_JSON_CACHE_BYTES = 64 * 1024 * 1024
 _PACKAGE_JSON_CACHE: TtlCache[tuple[str, str, str, int], str] = TtlCache(
     lambda: settings.code_ingest_sibling_text_ttl_s,
     maxsize=50_000,
-    weigh=len,
-    maxweight=PACKAGE_JSON_CACHE_CHARS,
+    weigh=lambda text: len(text.encode()),
+    maxweight=PACKAGE_JSON_CACHE_BYTES,
 )
 
 # Parsed package.json views, by text: every importer of a package asks again. A view
 # holds up to about 7 times its text's size, so the cache is bounded by the texts'
-# characters as well as by count.
+# UTF-8 bytes as well as by count.
 # not a setting: a memory bound on a parse cache; a miss only parses again
-MANIFEST_VIEWS_CHARS = 4 * 1024 * 1024
+MANIFEST_VIEWS_BYTES = 4 * 1024 * 1024
 _MANIFEST_VIEWS: TtlCache[bytes, tuple[Manifest | None, int]] = TtlCache(
     lambda: settings.code_ingest_sibling_text_ttl_s,
     maxsize=256,
     weigh=lambda hit: hit[1],
-    maxweight=MANIFEST_VIEWS_CHARS,
+    maxweight=MANIFEST_VIEWS_BYTES,
 )
 
 
@@ -359,10 +359,11 @@ def _manifest_view(text: str) -> Manifest | None:
     """`manifest_view(text)`, parsed once per text."""
     from server.code.domain.extract.lang_typescript_imports import manifest_view
 
-    key = hashlib.blake2b(text.encode(), digest_size=16).digest()
+    raw = text.encode()
+    key = hashlib.blake2b(raw, digest_size=16).digest()
     hit = _MANIFEST_VIEWS.get(key)
     if hit is None:
-        hit = (manifest_view(text), len(text))
+        hit = (manifest_view(text), len(raw))
         _MANIFEST_VIEWS.put(key, hit)
     return hit[0]
 

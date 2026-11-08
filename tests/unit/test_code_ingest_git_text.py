@@ -199,7 +199,9 @@ def test_the_manifest_cache_is_bounded_by_the_characters_it_holds() -> None:
     cache.pop("big")
     assert cache.weight == 0
     bounded = ingest_resolve._PACKAGE_JSON_CACHE
-    assert bounded.maxweight == ingest_resolve.PACKAGE_JSON_CACHE_CHARS
+    assert bounded.maxweight == ingest_resolve.PACKAGE_JSON_CACHE_BYTES
+    bounded.put(("o", "n", "package.json", 1), "\U0001f600" * 10)  # its UTF-8 bytes count
+    assert bounded.weight == 40
 
 
 def test_go_mods_are_read_capped_and_counted(tmp_path, monkeypatch) -> None:
