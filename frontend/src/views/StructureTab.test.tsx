@@ -404,6 +404,8 @@ describe("StructureTab", () => {
     expect(api.getProfileSchema).toHaveBeenCalledTimes(1);
     await userEvent.click(screen.getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Remove" })).toBeNull());
+    expect(api.clearProfileSchema).toHaveBeenCalledWith(expect.objectContaining(scope));
+    expect(api.getProfileSchema).toHaveBeenCalledTimes(1);
     expect((field as HTMLTextAreaElement).value).toBe("");
     expect(screen.queryByText(/Set by/)).toBeNull();
   });
