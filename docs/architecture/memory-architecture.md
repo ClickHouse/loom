@@ -1301,21 +1301,28 @@ after a crash re-reads its slices and waits for any of its own still pending.
 The user-scope steps read the user's memory keys from `loom.memory`, so a user purge
 tombstones those rows in `memory.tombstone` and deletes them in `memory.retire`, after the
 last step that reads them; the consolidated summaries built from them are deleted there
-too, after their vectors and code links. Those summaries are tombstoned right after the
-user's rows (`consolidated.tombstone`), and the steps that reach the user's chunks, graph
-rows and version history treat them as the user's rows; the census counts them the same
-way; a purge's `memory.retire` runs those steps again before it deletes the rows that
-name a summary written since. `graph_links.delete` deletes the graph rows its links
-alone hold first, so a run the census reopens leaves none unlinked.
-`memory_versions.delete` runs after the cache steps, which find an answer that quoted a
-summary by its history. A `src:` tag names a key, not its writer: where two users of a
-namespace hold the same key, erasing one also takes a summary built from the other's
-row, with its history, chunks, entity vectors and graph links and the graph rows only
-those links held. The erasure takes every summary that may quote the user; the
-summary's current row is only tombstoned outside a purge, and consolidation rebuilds it
-from the rows that remain. Under the Postgres authority the journal's revisions of a
-summary go with it when its current head names the user; a summary rebuilt without the
-user keeps its older revisions there.
+too, after their vectors and code links.
+
+The steps that reach the user's chunks, entity vectors, graph rows and version history
+treat those summaries as the user's rows, and the census counts them the same way:
+
+- `consolidated.tombstone` runs right after the user's rows are tombstoned.
+- `graph_links.delete` deletes the graph rows its links alone hold before the links, so a
+  run the census reopens leaves none unlinked.
+- `memory_versions.delete` runs after the cache steps, which find an answer that quoted a
+  summary by its history.
+- A purge's `memory.retire` runs those steps again before it deletes the rows that name a
+  summary written since.
+
+A `src:` tag names a key, not its writer: where two users of a namespace hold the same
+key, erasing one also takes a summary built from the other's row, with its history,
+chunks, entity vectors and graph links and the graph rows only those links held. The
+erasure takes every summary that may quote the user; the summary's current row is only
+tombstoned outside a purge, and consolidation rebuilds it from the rows that remain.
+
+Under the Postgres authority the journal's revisions of a summary go with it when its
+current head names the user; a summary rebuilt without the user keeps its older
+revisions there.
 
 An erasure in an org, at any scope, deletes the whole org's cached query vectors in
 `loom.embedding_cache`, not only the erased scope's: the rows carry the org but no

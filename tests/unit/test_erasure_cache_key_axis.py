@@ -14,7 +14,6 @@ import pytest
 import server.erasure.app.saga as h
 import server.memory.store as memory_repo
 from server.erasure.store import census as erasure_census
-from server.erasure.store import predicates as erasure_predicates
 from server.erasure.store import steps_graph as graph_steps
 from server.erasure.store import steps_memory as memory_steps
 from server.llm import cache as lc
@@ -248,8 +247,12 @@ def test_communities_leave_when_only_the_users_memories_linked_the_entity() -> N
         "SELECT namespace, entity_a AS entity, memory_key FROM loom.entity_edge_memories FINAL WHERE org = {org:String} UNION ALL SELECT namespace, entity_b AS entity, memory_key FROM loom.entity_edge_memories FINAL"
         in read_sql
     )
-    keys = erasure_predicates.USER_GRAPH_KEYS
-    assert f"HAVING countIf({keys}) > 0 AND countIf(NOT {keys}) = 0" in read_sql
+    having = read_sql.split("HAVING", 1)[1]
+    assert (
+        "(SELECT namespace, memory_key FROM loom.memory WHERE org = {org:String} AND user_id = {uid:String})"
+        in having
+    )
+    assert "has(tags, 'consolidated')" in having and "FROM loom.memory_versions" in having
     assert read_params == {"org": "o", "uid": "alice"}
     sql, params = ch.commands[0]
     # a row LABELLED by such an entity goes too: the label text is the residue

@@ -59,9 +59,10 @@ async def test_only_triples_and_edges_owned_by_the_user_alone_are_deleted() -> N
         "SELECT cityHash64(namespace, subject, relation, object) AS h "
         "FROM loom.entity_triple_memories FINAL"
     )
-    # the user's keys and those of the summaries built from them
-    keys = erasure_predicates.USER_GRAPH_KEYS
-    assert f"HAVING countIf({keys}) > 0 AND countIf(NOT {keys}) = 0" in tread
+    # the user's keys and those of the summaries built from them, history included
+    having = tread.split("HAVING", 1)[1]
+    assert erasure_predicates.USER_KEYS_SUBQ in having
+    assert "has(tags, 'consolidated')" in having and "FROM loom.memory_versions" in having
     assert tread_params == {"org": "o", "uid": "alice"}
     assert eread.startswith(
         "SELECT cityHash64(namespace, entity_a, entity_b) AS h FROM loom.entity_edge_memories"

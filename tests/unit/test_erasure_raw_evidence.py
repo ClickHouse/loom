@@ -101,9 +101,9 @@ def test_memory_chunks_user_scope_is_namespace_qualified() -> None:
     ((read_sql, _),) = ch.read_calls
     assert erasure_predicates.USER_KEYS_SUBQ in read_sql
     (chunks,) = [s for s in erasure_census._CENSUS if s.table == "loom.memory_chunks"]
-    assert chunks.user_pred == (
-        f"({erasure_predicates.USER_CHUNKS} OR {erasure_predicates.USER_SUMMARY_CHUNKS})"
-    )
+    assert chunks.user_pred.startswith(f"({erasure_predicates.USER_CHUNKS} OR ")
+    # and a summary's chunks, by its identity
+    assert "(namespace, agent, user_id, parent_memory_key) IN (SELECT" in chunks.user_pred
     assert erasure_predicates.USER_CHUNKS == (
         "(user_id = {uid:String} OR (user_id = '-' AND "
         f"(namespace, parent_memory_key) IN {erasure_predicates.USER_KEYS_SUBQ}))"

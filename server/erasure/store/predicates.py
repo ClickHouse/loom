@@ -114,7 +114,8 @@ USER_SUMMARY_KEY_LIST = (
 )
 USER_QUOTED_KEY_LIST = f"arrayConcat({USER_KEY_LIST}, {USER_SUMMARY_KEY_LIST})"
 # What was chunked or extracted from such a summary is the user's too: its chunks and
-# entity vectors (by the summary's agent, user and key), its row links (by its id) and
+# entity vectors (by the summary's agent, user and key; neither carries the memory's
+# session), its row links (by namespace and id) and
 # its graph key links (by its key alone: those tables carry no identity, so another
 # memory at the same key loses its links, as for the user's own keys). A summary any of
 # whose versions matched counts, read from the rows and the history: a summary rebuilt
