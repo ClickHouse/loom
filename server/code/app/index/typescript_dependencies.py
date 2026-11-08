@@ -196,8 +196,6 @@ async def prepare_dependencies(
             # Whole lines: a cut mid-line could split a URL credential from its scheme,
             # which the record's redaction needs.
             room = ERROR_CHARS - len(error_text(ToolOutputError(head))) - 1
-            tail = output[-room:]
-            if len(output) > room:
-                tail = tail.partition("\n")[2]
+            tail = output[-room - 1 :].partition("\n")[2] if len(output) > room else output
             raise ToolOutputError(f"{head}\n{tail}")
     await asyncio.to_thread(marker.write_text, fingerprint)
