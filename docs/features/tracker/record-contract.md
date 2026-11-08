@@ -300,6 +300,7 @@ alias with no columns of its own is a **default** (`defaulted`): every row reads
 | `github_prs`                                     | `has_test`                                                                                   | `toUInt8(metadata.has_test.:Bool)`, else `toUInt8(tests_added > 0)`        |
 | `github_prs`                                     | `upstream_pr_number`                                                                         | `ifNull(toUInt32(metadata.original_pr_number.:Int64), 0)`, else `0`        |
 | `github_prs`                                     | `review_requests_test`                                                                       | `NULL`                                                                     |
+| `github_prs`                                     | `test_types`, `src_components`                                                               | `[]`                                                                       |
 | `github_prs`, `core_incidents`                   | `severity_level`                                                                             | `''`                                                                       |
 | `qa_bugs` (the answer route's cross-source view) | `severity_level`, `has_test`                                                                 | `severity`; `toUInt8(metadata.has_test.:Bool)`, else `NULL`                |
 
