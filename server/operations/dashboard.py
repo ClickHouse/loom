@@ -243,6 +243,7 @@ DASHBOARD_PENDING: frozenset[str] = frozenset(
         "webhook.list",
         "webhook.register",
         "webhook.remove",
+        # health and maintenance
         "blacklist.sweep",
         "code.calibrate",
         "code.reindex",
