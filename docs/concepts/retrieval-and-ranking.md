@@ -132,6 +132,14 @@ endpoint the operator configured in `LOOM_RERANK_ENDPOINTS_JSON`; a URL is refus
 because a reranker only reorders what the first stage surfaced. It fails open and never
 drops a candidate.
 
+Pass `rerank` when the order of the pool matters more than one more call per search. To
+measure that on your own queries, run each query with `rerank` and with `rerank="none"`
+(which also turns off a namespace's `rerank_endpoint`), both with `explain=true` and on
+the budget you serve (a `fast` or LLM-free read makes no `builtin:openai` call), and
+compare the two windows, reading each hit's `score_components` as [Why did this rank
+here](#why-did-this-rank-here) explains. No committed run compares the same searches with
+and without a reranker ([results](../benchmarks/results.md#longmemeval-s)).
+
 After ranking, the served window is shaped: `duplicate` and `superseded` rows are hidden
 unless asked for, at most `LOOM_MEMORY_SEARCH_PER_KEY_CAP` rows per key are kept, and
 `exclude_keys` removes rows the caller already holds.

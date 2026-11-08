@@ -161,6 +161,11 @@ Extraction used about 1.5 M tokens per question; each question has its own histo
 - **Models:** the server's above (`memory.ask` strong `claude-opus-5-5`, cheap
   `gpt-6-luna`); external reader `gpt-5`; judge `gpt-4o-2024-08-06` with the official
   prompt, re-graded by `gpt-6.1-sol` and `claude-opus-5-5`.
+- **Retrieval:** the `bench/longmemeval.py` searches (Recall@30 and the reader's hits)
+  ran with `rerank` `builtin:openai` and `include_top_n_unmatched` 120, the harness
+  defaults (the CSVs' `rerank` and `pool_unmatched` columns, which record the harness's own
+  search on every row, the `ask` arm's included); `memory.ask` and the latency pass ran
+  with no reranker.
 - **Artifacts:** `bench/results/longmemeval_s.csv` (every verdict above),
   `longmemeval_s_ingest.csv` (the ingesting run: recall, token use, its own answers),
   `longmemeval_s_judges.json` (the three judges and their agreement) and
