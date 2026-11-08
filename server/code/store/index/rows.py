@@ -281,6 +281,10 @@ CODE_ANSWER_COLS: dict[str, Any] = {
     "cost_usd": 0.0,
     "latency_ms": 0,
     "reused_from": "",
+    # The memory the answer quoted, for the erasure saga: its namespace (in the row's
+    # org) and the keys of its excerpts.
+    "memory_namespace": "",
+    "memory_keys": [],
     "tombstoned_at": None,
     "created_at": None,
     "version": 0,

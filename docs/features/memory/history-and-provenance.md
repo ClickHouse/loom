@@ -148,8 +148,8 @@ the lineage tables (ids and hashes only), `loom.shared` and the entity graph.
   first. A scrubbed live profile is left out of renders, packs and profile search until the
   worker rebuilds it.
 - Both lock modes refuse it, on the memory's own key and on any profile key it reaches.
-- It deletes cached `memory.ask` answers and precedents that quoted the key
-  (`cache_rows_deleted`, `precedent_rows_deleted`). For a profile key it reaches, the
+- It deletes cached `memory.ask` and `code.ask` answers and precedents that quoted the
+  key (`cache_rows_deleted`, `precedent_rows_deleted`). For a profile key it reaches, the
   deletion is org-wide: every user's profile has the same key, so it clears every cached
   answer and precedent in the org whose window held that key, in every namespace.
 - The namespace is checked after the fetch; a refusal answers `redacted=false`, not 403.

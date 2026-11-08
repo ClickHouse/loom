@@ -266,7 +266,7 @@ whether it is refreshable. `make lint` fails when the page is stale.
 | `memory_term_freq` | `AggregatingMergeTree` | `(org, namespace, term)` | `toYYYYMM(df_added_at)` |  |  |
 | `memory_usage_events` | `MergeTree` | `(org, namespace, memory_id, ts)` | `toYYYYMM(ts)` |  |  |
 | `memory_usage_totals` | `SummingMergeTree` | `(org, namespace, memory_id)` |  |  |  |
-| `memory_versions` | `ReplacingMergeTree` | `(org, namespace, agent, user_id, session_id, memory_key, version)` | `toYYYYMM(created_at)` |  | 1 skip index (bloom_filter) |
+| `memory_versions` | `ReplacingMergeTree` | `(org, namespace, agent, user_id, session_id, memory_key, version)` | `toYYYYMM(created_at)` |  | 2 skip index (bloom_filter) |
 | `memory_webhook_attempts` | `MergeTree` | `(event_id, version)` | `toDate(recorded_at)` | `toDateTime(recorded_at) + toIntervalDay(3)` |  |
 | `memory_webhook_outbox` | `MergeTree` | `(org, namespace, webhook_id, occurred_at, event_id)` | `toDate(occurred_at)` | `toDateTime(occurred_at) + toIntervalDay(3)` |  |
 | `memory_webhooks` | `ReplacingMergeTree(version)` | `(org, namespace, webhook_id)` |  |  |  |

@@ -48,3 +48,22 @@ async def test_unknown_copy_or_missing_count_is_not_zero():
     ch.query_all.return_value = [{"table": name, "columns": ["org", "user_id"]}]
     with pytest.raises(ValueError, match="Cannot establish"):
         await copy_residue("o", "user_id", "u", ch=ch)
+
+
+@pytest.mark.asyncio
+async def test_a_code_answer_copy_counts_the_answers_that_quoted_the_namespace():
+    name = f"_provider_rebuild_{uuid4().hex}_code_answers_source"
+    ch = SimpleNamespace(
+        query_all=AsyncMock(
+            return_value=[{"table": name, "columns": ["org", "namespace", "memory_namespace"]}]
+        ),
+        query_one=AsyncMock(return_value={"n": 1}),
+    )
+    assert await copy_residue("o", "namespace", "decisions", ch=ch) == {f"loom.{name}": 1}
+    sql, params = ch.query_one.call_args.args
+    assert sql == (
+        f"SELECT count() AS n FROM loom.`{name}` WHERE org = {{org:String}} AND "
+        "(namespace IN {namespaces:Array(String)} "
+        "OR memory_namespace IN {namespaces:Array(String)})"
+    )
+    assert params == {"org": "o", "namespaces": ["decisions"]}

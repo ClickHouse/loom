@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -66,6 +67,8 @@ from server.observability import audit as _audit
 from server.observability.budget_shape import note_budget_shape
 
 _CURATED_KEY_SLUG = re.compile(r"[^a-z0-9]+")
+
+log = logging.getLogger(__name__)
 
 
 def _slugify_for_memory_key(heading: str) -> str:
@@ -675,15 +678,16 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
     )
     await memory_repo.run_scrubs(scrubs, apply=True)
     await _scrub_profile_derivatives(input.org, target, profiles, through=through)
-    # A redacted value may already be quoted in a cached answer (7-day TTL) or a precedent
-    # (30 days); both carry the keys of the window they rendered, so the text leaves with the
-    # row it quoted. A failure here is reported, not swallowed: an ADMIN scrub that left the
-    # quote in place is not a completed redaction.
+    # A redacted value may already be quoted in a cached answer (7-day TTL), a precedent
+    # (30 days) or a cached code.ask answer; each carries the keys of the memory it was
+    # shown, so the text leaves with the row it quoted. A failure here is reported, not
+    # swallowed: an ADMIN scrub that left the quote in place is not a completed redaction.
     # A scrubbed profile key may be the only row of a window that quoted the text. Windows
     # hold bare keys and every user's profile shares its key, so this reach is org-wide.
     cache_rows = precedent_rows = 0
     for key in [target.memory_key, *sorted({p.memory_key for p in profiles})]:
         cache_rows += await memory_repo.delete_llm_response_cache_by_key(input.org, key)
+        cache_rows += await memory_repo.delete_code_answers_by_key(input.org, key)
         precedent_rows += await memory_repo.delete_ask_precedents_by_key(input.org, key)
     # Receivers hear of each version scrubbed, the later copies on the key included,
     # and of the newest one of each profile key built from the memory.
@@ -697,6 +701,25 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
         cache_rows_deleted=cache_rows,
         precedent_rows_deleted=precedent_rows,
     )
+
+
+async def quotes_a_redacted_key(org: str, namespace: str, keys: list[str]) -> bool:
+    """For code.ask: whether any of `keys` of `namespace` has a redacted version. An
+    unreadable stamp counts as one."""
+    import server.memory.store as memory_repo
+
+    try:
+        return await memory_repo.keys_redacted(org, namespace, keys)
+    except Exception as e:  # noqa: BLE001 — unknown: the answer is not cached
+        log.debug("code.ask redaction read failed: %s", e)
+        return True
+
+
+async def delete_code_answers_quoting(org: str, keys: list[str]) -> None:
+    """Every cached code.ask answer whose memory excerpts held any of `keys`."""
+    import server.memory.store as memory_repo
+
+    await memory_repo.delete_code_answers_quoting(org, keys)
 
 
 @dataclass

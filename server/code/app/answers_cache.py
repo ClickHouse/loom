@@ -22,6 +22,7 @@ from server.code.app.answers_entry import (
     normalize_question,
 )
 from server.code.store.index import CodeRepo, build_row
+from server.core.shielded import shielded
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,8 @@ logger = logging.getLogger(__name__)
 _CANDIDATES = 5
 # Files the synthesis was shown (beyond the cited ones) an entry records.
 _MAX_RETRIEVAL_PATHS = 12
+# not a setting: a bound on the skew between this host's clock and ClickHouse's
+_CLOCK_MARGIN_S = 60
 
 
 # ---- the identifier guard -------------------------------------------------
@@ -253,21 +256,29 @@ async def _reuse_from_trunk(ctx: _AskCtx) -> _Lookup | None:
     if row is None:
         return None
     label = f"reused_from:{trunk}"
-    await _store(
+    memory_ns = str(row.get("memory_namespace") or "")
+    memory_keys = [str(k) for k in row.get("memory_keys") or []]
+    # a copy stored as an erasure or a redact passes would outlive it: synthesize instead
+    if memory_keys and await _memory_may_be_gone(ctx, memory_ns, memory_keys):
+        return None
+    copy = _entry_row(
         ctx,
-        _entry_row(
-            ctx,
-            answer=str(row.get("answer") or ""),
-            citations=str(row.get("citations") or "[]"),
-            cited=_paths_hashes(row, "cited"),
-            shown=_paths_hashes(row, "retrieval"),
-            llm_model=str(row.get("llm_model") or ""),
-            confidence=float(row.get("retrieval_confidence") or 0.0),
-            cost_usd=float(row.get("cost_usd") or 0.0),
-            latency_ms=int(row.get("latency_ms") or 0),
-            reused_from=trunk,
-        ),
+        answer=str(row.get("answer") or ""),
+        citations=str(row.get("citations") or "[]"),
+        cited=_paths_hashes(row, "cited"),
+        shown=_paths_hashes(row, "retrieval"),
+        llm_model=str(row.get("llm_model") or ""),
+        confidence=float(row.get("retrieval_confidence") or 0.0),
+        cost_usd=float(row.get("cost_usd") or 0.0),
+        latency_ms=int(row.get("latency_ms") or 0),
+        reused_from=trunk,
+        memory_namespace=memory_ns,
+        memory_keys=memory_keys,
     )
+    try:
+        await shielded(_store_then_check(ctx, copy), name="code-ask-answer-store")
+    except Exception as e:  # noqa: BLE001 — a cache write never sinks the ask
+        logger.warning("code.ask branch copy write failed: %s", e)
     served = _served(row, sim, label, ctx.ns)
     served.cache_entry = {
         "namespace": ctx.ns,
@@ -333,25 +344,93 @@ async def _remember(ctx: _AskCtx, res: AskResult, llm: Any) -> None:
             return
         if res.source != "synthesized" or not res.memoize or not res.answer:
             return
+        if res.memory_keys and await _memory_may_be_gone(
+            ctx, res.memory_namespace, res.memory_keys
+        ):
+            return
         cited = sorted({str(c["path"]) for c in res.citations})
         shown = [p for p in res.shown_paths if p not in cited][:_MAX_RETRIEVAL_PATHS]
         hashes = await _current_hashes(ctx.repo, ctx.org, ctx.ns, cited + shown)
-        await _store(
+        row = _entry_row(
             ctx,
-            _entry_row(
-                ctx,
-                answer=res.answer,
-                citations=json.dumps(res.citations),
-                cited=(cited, [hashes.get(p, "") for p in cited]),
-                shown=(shown, [hashes.get(p, "") for p in shown]),
-                llm_model=str(getattr(llm, "model", "") or ""),
-                confidence=res.retrieval.retrieval_confidence if res.retrieval else 0.0,
-                cost_usd=max(0.0, _request_cost() - ctx.cost_at_start),
-                latency_ms=int((time.monotonic() - ctx.started) * 1000),
-            ),
+            answer=res.answer,
+            citations=json.dumps(res.citations),
+            cited=(cited, [hashes.get(p, "") for p in cited]),
+            shown=(shown, [hashes.get(p, "") for p in shown]),
+            llm_model=str(getattr(llm, "model", "") or ""),
+            confidence=res.retrieval.retrieval_confidence if res.retrieval else 0.0,
+            cost_usd=max(0.0, _request_cost() - ctx.cost_at_start),
+            latency_ms=int((time.monotonic() - ctx.started) * 1000),
+            memory_namespace=res.memory_namespace,
+            memory_keys=res.memory_keys,
         )
+        await shielded(_store_then_check(ctx, row), name="code-ask-answer-store")
     except Exception as e:  # noqa: BLE001 — the answer is served whether or not it is memoized
         logger.warning("code.ask cache write failed: %s", e)
+
+
+async def _erasure_may_have_passed(ctx: _AskCtx) -> bool:
+    """Whether an erasure of the ask's org had not completed when the ask began, or
+    completed since (`ledger_reads.unfinished_since`; a failed one counts until it
+    completes): its `code_answers.delete` step may already have passed, so an answer
+    quoting memory stored now could hold erased text after the census. An unreadable
+    ledger counts as one."""
+    from server.erasure.app import ledger_reads
+
+    since_s = int(time.time() - (time.monotonic() - ctx.started))
+    try:
+        return bool(await ledger_reads.unfinished_since(ctx.org, since_s, _CLOCK_MARGIN_S, limit=1))
+    except Exception as e:  # noqa: BLE001 — unknown: the answer is served, not cached
+        logger.debug("code.ask erasure ledger read failed: %s", e)
+        return True
+
+
+async def _memory_may_be_gone(ctx: _AskCtx, memory_namespace: str, memory_keys: list[str]) -> bool:
+    """Whether an answer quoting `memory_keys` must not be cached: an erasure may have
+    passed it, or one of the keys has a redacted version."""
+    from server.memory.app.curation import quotes_a_redacted_key
+
+    return await _erasure_may_have_passed(ctx) or await quotes_a_redacted_key(
+        ctx.org, memory_namespace, memory_keys
+    )
+
+
+async def _store_then_check(ctx: _AskCtx, row: dict[str, Any]) -> None:
+    """Store `row` and, for an answer that quoted memory, read the check before the store
+    again: an erasure registered, or a redact stamped, between the two may have deleted
+    the cached answers before this one landed. Both write their mark before they delete,
+    so either their delete sees this answer or this read sees the mark; then the row is
+    tombstoned, so no read serves it, and the answers quoting the keys are deleted. A
+    store that raised is checked too, since its insert may still have landed. Run
+    `shielded`: a request the shutdown cancels still checks what it stored."""
+    try:
+        await _store(ctx, row)
+    finally:
+        await _check_stored(ctx, row)
+
+
+async def _check_stored(ctx: _AskCtx, row: dict[str, Any]) -> None:
+    memory_ns, memory_keys = str(row["memory_namespace"]), list(row["memory_keys"])
+    if not memory_keys or not await _memory_may_be_gone(ctx, memory_ns, memory_keys):
+        return
+    from server.memory.app.curation import delete_code_answers_quoting
+
+    tombstoned = await _tombstone_entry(ctx.repo, row)
+    try:
+        await delete_code_answers_quoting(ctx.org, memory_keys)
+    except Exception as e:  # noqa: BLE001 — the answer is served either way
+        # a tombstone hides the row; its text stays in the part until a merge
+        logger.error(
+            "code.ask could not delete a cached answer quoting %d keys of %s after an "
+            "erasure or a redact, %s (org %s, namespace %s, question_id %s): %s",
+            len(memory_keys),
+            memory_ns,
+            "tombstoned it" if tombstoned else "nor tombstone it: it is still served",
+            row.get("org"),
+            row.get("namespace"),
+            row.get("question_id"),
+            e,
+        )
 
 
 def _entry_row(
@@ -368,6 +447,8 @@ def _entry_row(
     latency_ms: int = 0,
     reused_from: str = "",
     abstain_reason: str = "",
+    memory_namespace: str = "",
+    memory_keys: list[str] | None = None,
 ) -> dict[str, Any]:
     digest = ctx.key.digest()
     return build_row(
@@ -394,6 +475,8 @@ def _entry_row(
         cost_usd=cost_usd,
         latency_ms=max(0, min(latency_ms, 4_294_967_295)),
         reused_from=reused_from,
+        memory_namespace=memory_namespace,
+        memory_keys=memory_keys or [],
     )
 
 
@@ -434,18 +517,20 @@ async def _current_hashes(repo: CodeRepo, org: str, ns: str, paths: list[str]) -
     return {str(r["path"]): _fixed(r["content_hash"]) for r in rows}
 
 
-async def _tombstone_entry(repo: CodeRepo, entry: dict[str, Any]) -> None:
-    """Tombstone one cached entry. The row must carry its own org and namespace: a
-    partial projection would mirror into ('', ''), writing phantom rows while the stale
-    entry itself stayed live."""
+async def _tombstone_entry(repo: CodeRepo, entry: dict[str, Any]) -> bool:
+    """Tombstone one cached entry; whether the tombstone was written. The row must carry
+    its own org and namespace: a partial projection would mirror into ('', ''), writing
+    phantom rows while the stale entry itself stayed live."""
     try:
         if not entry.get("org") or not cache_namespace_ok(str(entry.get("namespace") or "")):
             logger.warning("code.ask refused to tombstone an entry with no namespace")
-            return
+            return False
         row = CodeRepo.tombstone_of("code_answers", entry)
         await repo.insert_rows("code_answers", [row])
+        return True
     except Exception as e:  # noqa: BLE001 — invalidation is best-effort
         logger.debug("code answer tombstone failed: %s", e)
+        return False
 
 
 async def tombstone_served_entry(repo: CodeRepo, org: str, entry: dict[str, Any]) -> int:

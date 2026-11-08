@@ -135,7 +135,7 @@ def test_census_covers_every_substrate_and_uses_final_on_soft_deleted_tables() -
     out = asyncio.run(erasure_census.residue_census("o", "namespace", "ns", ch=ch))
     assert set(out) == set(erasure_census.census_tables("namespace"))
     # every namespace-scoped substrate, entity, cache, chunk-link and code table
-    assert len(out) == 67 and sum(out.values()) == 0
+    assert len(out) == 68 and sum(out.values()) == 0
     by_table = {sql.split("FROM ")[1].split()[0]: sql for sql, _ in ch.query_one_calls}
     assert (
         " FINAL" in by_table["loom.memory"] and "tombstoned_at IS NULL" in by_table["loom.memory"]
@@ -199,17 +199,19 @@ def test_census_does_not_count_the_sagas_own_erasure_announcements() -> None:
 def test_census_user_scope_skips_namespace_only_tables() -> None:
     ch = _StubCH([0] * 40)
     out = asyncio.run(erasure_census.residue_census("o", "user_id", "alice", ch=ch))
-    # the user scope reaches entity_communities, memory_ask_precedents and
-    # llm_response_cache through the window keys / the owned entities
+    # the user scope reaches entity_communities, memory_ask_precedents,
+    # llm_response_cache and code_answers through the window or memory keys / the owned
+    # entities
     assert "loom.entity_edges" not in out and "loom.entity_triples" not in out
     assert "loom.search_trace_log" not in out
     assert {
         "loom.entity_communities",
         "loom.memory_ask_precedents",
         "loom.llm_response_cache",
+        "loom.code_answers",
     } <= set(out)
     assert "loom.memory_answers" not in out
-    assert len(out) == 52
+    assert len(out) == 53
     assert "loom.blob_uploads" in out  # who uploaded what: the user's go
     # the user's supporter rows, and any bot-rule candidate left with no supporter
     assert {"loom.learnings_queue", "loom.learnings_supporters"} <= set(out)

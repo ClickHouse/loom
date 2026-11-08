@@ -1182,9 +1182,10 @@ class MemoryRedactOutput(BaseModel):
     refused_head: bool = False  # True when the target was the live head
     # UTC time of the scrub; None when nothing was redacted.
     redacted_at: datetime | None = None
-    # The cached answers whose window held the redacted key or a profile key the redact
-    # reached, deleted with it: the stored text that quoted the value. A profile key is
-    # shared by every user's profile, so its rows are deleted across the org.
+    # The cached answers (the model response cache and code.ask's) whose window or quoted
+    # memory keys held the redacted key or a profile key the redact reached, deleted with
+    # it: the stored text that quoted the value. A profile key is shared by every user's
+    # profile, so its rows are deleted across the org.
     cache_rows_deleted: int = 0
     # Stored `memory.ask` precedents that quoted the redacted key or a profile key the
     # redact reached, deleted with it, across the org for a profile key.

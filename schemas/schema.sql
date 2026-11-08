@@ -412,7 +412,9 @@ CREATE TABLE IF NOT EXISTS loom.code_answers
     `reused_from` LowCardinality(String) DEFAULT '',
     `tombstoned_at` Nullable(DateTime) DEFAULT NULL,
     `created_at` DateTime DEFAULT now(),
-    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9)))
+    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9))),
+    `memory_namespace` LowCardinality(String) DEFAULT '',
+    `memory_keys` Array(String) DEFAULT []
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, embedding_model, question_id)
@@ -2981,7 +2983,8 @@ CREATE TABLE IF NOT EXISTS loom.memory_versions
     `sensitivity` LowCardinality(String) DEFAULT '',
     `value_preview` String MATERIALIZED substring(value, 1, 2048),
     `value_len` UInt32 MATERIALIZED length(value),
-    INDEX memory_id_skip memory_id TYPE bloom_filter(0.01) GRANULARITY 4
+    INDEX memory_id_skip memory_id TYPE bloom_filter(0.01) GRANULARITY 4,
+    INDEX memory_key_bloom_idx memory_key TYPE bloom_filter(0.01) GRANULARITY 4
 )
 ENGINE = ReplacingMergeTree
 PARTITION BY toYYYYMM(created_at)

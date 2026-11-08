@@ -195,20 +195,28 @@ async def _fill_optional_hit_fields(
     is set; the returned counters land on `retrieval_work`."""
     work: dict[str, int] = {}
     if getattr(input, "include_tags", False):
-        work["tags_filled"] = await _fill_hit_tags(hits, input, namespaces)
+        work["tags_filled"] = await _fill_hit_tags(hits, input, namespaces, work=work)
     if getattr(input, "include_usage", False):
         work["usage_filled"] = await _fill_hit_usage(hits, input, namespaces)
     return work
 
 
-async def _fill_hit_tags(hits: list[Any], input: Any, namespaces: list[str] | None = None) -> int:
+async def _fill_hit_tags(
+    hits: list[Any],
+    input: Any,
+    namespaces: list[str] | None = None,
+    *,
+    work: dict[str, int] | None = None,
+) -> int:
     """Under `include_tags`, every served hit carries `tags`.
     Fact hits from the dense leg already have them (the leg selects `e.tags`);
     the hits another leg produced (lexical, key-match, anchor) are point-read
     here in one statement over the served keys only, and chunk / digest /
     derived hits read as []. Off (the default) this touches nothing, so a
     client that never asked sees its payload unchanged. Fail-open: a failed
-    read leaves [] on the gaps rather than failing the search."""
+    read leaves [] on the gaps rather than failing the search; `work["tags_unread"]`
+    counts the fact hits whose tags were not read (a failed read, or a key it missed);
+    a parked page, which reports no work, passes no `work`."""
     if not bool(getattr(input, "include_tags", False)) or not hits:
         return 0
     # A hit whose leg read the row's tags (`_row_tags`) needs no
@@ -232,6 +240,12 @@ async def _fill_hit_tags(hits: list[Any], input: Any, namespaces: list[str] | No
         except Exception as e:  # noqa: BLE001 — tags are additive, never a failure
             log.warning("memory.search: include_tags read failed: %s", e)
             by_key = {}
+        if work is not None:
+            work["tags_unread"] = sum(
+                (str(getattr(h, "namespace", "") or input.namespace), str(h.memory_key))
+                not in by_key
+                for h in gaps
+            )
     filled = 0
     for h in hits:
         if getattr(h, "tags", None) is not None:

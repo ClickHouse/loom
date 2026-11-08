@@ -24,6 +24,8 @@ from server.code.domain.units import CodeUnit
 from server.code.store.index import CodeRepo
 from server.settings import settings
 
+_REAL_INJECT = ca._inject_memory_context
+
 ORG = "clickhouse"
 NS = "code-clickhouse"
 BRANCH = "code-clickhouse-26-8"
@@ -191,11 +193,19 @@ def env(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             retrieval_confidence=0.5,
         )
 
-    async def _mem(q: str) -> list[str]:
+    async def _mem(q: str) -> ca.MemoryContext:
+        return ca.MemoryContext()
+
+    async def _no_erasure(org: str, since_s: int, margin_s: int, **kw: Any) -> list[dict[str, Any]]:
         return []
+
+    async def _not_redacted(*a: Any, **k: Any) -> bool:
+        return False
 
     monkeypatch.setattr(cs, "search", _search)
     monkeypatch.setattr(ca, "_inject_memory_context", _mem)
+    monkeypatch.setattr("server.erasure.app.ledger_reads.unfinished_since", _no_erasure)
+    monkeypatch.setattr("server.memory.store.keys_redacted", _not_redacted)
     monkeypatch.setattr(settings, "code_ask_memory_namespace", "")
     monkeypatch.setattr(settings, "code_ask_cache_threshold", 0.0)
     monkeypatch.setattr(settings, "code_ask_cache_max_age_days", 14)
@@ -311,10 +321,10 @@ def test_a_narrowed_memory_reader_neither_reads_nor_writes_the_cache(
 
     canary = "CANARY-u2-memory"
 
-    async def _mem(q: str) -> list[str]:
-        return [f"[u2/decision] {canary}"]
+    async def _mem(q: str) -> ca.MemoryContext:
+        return _memory(("u2/decision", canary))
 
-    async def _public() -> bool:
+    async def _public(org: str, memory: ca.MemoryContext) -> bool:
         return True  # a public memory namespace does not lift the token's ceiling
 
     monkeypatch.setattr(settings, "code_ask_memory_namespace", "decisions")
@@ -344,6 +354,373 @@ def test_a_narrowed_memory_reader_neither_reads_nor_writes_the_cache(
     assert out.source == "synthesized" and out.cache == "bypassed"
     assert canary not in out.answer
     assert len(repo.inserts) == 1  # nothing written for the narrowed caller either
+
+
+def _memory(*items: tuple[str, str], org: str = ORG) -> ca.MemoryContext:
+    """Excerpts of the bound memory namespace `decisions`."""
+    return ca.MemoryContext(
+        org=org,
+        namespace="decisions",
+        items=tuple(ca.MemoryExcerpt(key, text, key) for key, text in items),
+    )
+
+
+@pytest.fixture
+def quoted(env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """The ask quotes two excerpts of the public memory namespace `decisions`."""
+
+    async def _mem(q: str) -> ca.MemoryContext:
+        return _memory(("alice/decision", "chose B"), ("bob/decision", "kept the guard"))
+
+    async def _public(org: str, namespaces: list[str]) -> dict[str, str]:
+        return {n: "public" for n in namespaces}
+
+    monkeypatch.setattr(settings, "code_ask_memory_namespace", "decisions")
+    monkeypatch.setattr(ca, "_inject_memory_context", _mem)
+    monkeypatch.setattr("server.identity.app.namespace_visibility.visibility_map", _public)
+    return env
+
+
+def test_an_entry_that_quoted_memory_names_its_namespace_and_keys(quoted: dict[str, Any]) -> None:
+    repo = quoted["repo"]
+    _ask(repo, "why is the guard there?")
+    row = repo.inserts[-1]
+    assert row["entry_kind"] == "answer"
+    assert row["memory_namespace"] == "decisions"
+    assert row["memory_keys"] == ["alice/decision", "bob/decision"]
+
+
+def test_an_entry_drawn_from_the_code_index_names_no_memory(env: dict[str, Any]) -> None:
+    repo = env["repo"]
+    _ask(repo, "how does TTL drop old parts?")
+    assert repo.inserts[-1]["memory_namespace"] == ""
+    assert repo.inserts[-1]["memory_keys"] == []
+
+
+def test_an_excerpt_with_no_key_is_never_memoized(
+    quoted: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _mem(q: str) -> ca.MemoryContext:
+        return _memory(("alice/decision", "chose B"), ("", "an excerpt no erasure can find"))
+
+    monkeypatch.setattr(ca, "_inject_memory_context", _mem)
+    out = _ask(quoted["repo"], "why is the guard there?")
+    assert out.source == "synthesized" and not quoted["repo"].inserts
+
+
+def test_memory_of_another_org_is_never_memoized(
+    quoted: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _mem(q: str) -> ca.MemoryContext:
+        return _memory(("alice/decision", "chose B"), org="other-org")
+
+    monkeypatch.setattr(ca, "_inject_memory_context", _mem)
+    out = _ask(quoted["repo"], "why is the guard there?")
+    assert out.source == "synthesized" and not quoted["repo"].inserts
+
+
+@pytest.mark.parametrize(
+    ("hit", "stamped"),
+    [
+        # a chunk is stamped with its parent fact's key, which a user erasure reads
+        (
+            {"memory_key": "chunk:s1:0", "source": "chunk", "parent_memory_key": "alice/why"},
+            ["alice/why"],
+        ),
+        # a session summary names no loom.memory key: served once, never cached
+        ({"memory_key": "summary:s1", "source": "summary"}, None),
+        ({"memory_key": "alice/why", "source": "fact", "tags": []}, ["alice/why"]),
+        # a consolidated row is written from other memories: a redact of a source misses it
+        (
+            {"memory_key": "merged", "source": "fact", "tags": ["consolidated", "src:alice/why"]},
+            None,
+        ),
+    ],
+)
+def test_an_answer_quoting_a_hit_is_cached_only_under_a_memory_key(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch, hit: dict[str, str], stamped: Any
+) -> None:
+    import server.auth.authz as authz
+
+    async def _search(inp: Any) -> Any:
+        return SimpleNamespace(
+            abstain=False, results=[SimpleNamespace(content_excerpt="chose B", **hit)]
+        )
+
+    async def _allowed(*a: Any, **k: Any) -> bool:
+        return True
+
+    async def _public(org: str, namespaces: list[str]) -> dict[str, str]:
+        return {n: "public" for n in namespaces}
+
+    monkeypatch.setattr(settings, "code_ask_memory_namespace", "decisions")
+    monkeypatch.setattr(settings, "code_ask_memory_org", ORG)
+    monkeypatch.setattr(ca, "_inject_memory_context", _REAL_INJECT)
+    monkeypatch.setattr(authz, "row_in_scope", _allowed)
+    monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search)
+    monkeypatch.setattr("server.identity.app.namespace_visibility.visibility_map", _public)
+    repo = env["repo"]
+    out = _ask(repo, "why is the guard there?")
+    assert out.source == "synthesized"
+    if stamped is None:
+        assert not repo.inserts
+    else:
+        assert repo.inserts[-1]["memory_keys"] == stamped
+
+
+@pytest.mark.parametrize("pending", [True, None])
+def test_an_answer_is_not_cached_while_an_erasure_may_have_missed_it(
+    quoted: dict[str, Any], monkeypatch: pytest.MonkeyPatch, pending: Any
+) -> None:
+    # an erasure requested since the ask began (or still running) may have passed the
+    # cache before this answer lands; an unreadable ledger counts as one (None)
+    seen: list[tuple[str, Any]] = []
+
+    async def _unfinished(org: str, since_s: int, margin_s: int, **kw: Any) -> list[dict[str, Any]]:
+        assert kw == {"limit": 1}  # an existence check
+        seen.append((org, since_s))
+        if pending is None:
+            raise RuntimeError("ledger unreadable")
+        return [{"erasure_id": "e1", "scope_type": "user_id", "scope_value": "alice"}]
+
+    repo = quoted["repo"]
+    monkeypatch.setattr("server.erasure.app.ledger_reads.unfinished_since", _unfinished)
+    out = _ask(repo, "why is the guard there?")
+    assert out.source == "synthesized" and not repo.inserts
+    assert seen and seen[0][0] == ORG
+
+
+def test_an_answer_with_no_memory_reads_no_erasure_ledger(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _unfinished(*a: Any, **kw: Any) -> list[dict[str, Any]]:
+        raise AssertionError("only an answer that quoted memory waits on erasure")
+
+    repo = env["repo"]
+    monkeypatch.setattr("server.erasure.app.ledger_reads.unfinished_since", _unfinished)
+    _ask(repo, "how does TTL drop old parts?")
+    assert len(repo.inserts) == 1
+
+
+@pytest.mark.parametrize("redacted", [True, None])
+def test_an_answer_quoting_a_redacted_key_is_not_cached(
+    quoted: dict[str, Any], monkeypatch: pytest.MonkeyPatch, redacted: Any
+) -> None:
+    # a key with a redacted version may still be read from a row the redact has not
+    # scrubbed yet; an unreadable stamp counts as one (None)
+    seen: list[tuple[str, str, list[str]]] = []
+
+    async def _redacted(org: str, ns: str, keys: list[str]) -> bool:
+        seen.append((org, ns, keys))
+        if redacted is None:
+            raise RuntimeError("replica away")
+        return redacted
+
+    monkeypatch.setattr("server.memory.store.keys_redacted", _redacted)
+    repo = quoted["repo"]
+    assert _ask(repo, "why is the guard there?").source == "synthesized"
+    assert not repo.inserts
+    assert seen[0] == (ORG, "decisions", ["alice/decision", "bob/decision"])
+
+
+@pytest.mark.parametrize("mark", ["redact", "erasure"])
+def test_a_redact_or_erasure_landing_during_the_store_deletes_the_answer(
+    quoted: dict[str, Any], monkeypatch: pytest.MonkeyPatch, mark: str
+) -> None:
+    # read clean before the store and marked after it: the redact or erasure may have
+    # deleted the cached answers before this one landed, so they go again
+    import server.memory.store as memory_repo
+
+    repo = quoted["repo"]
+    deleted: list[tuple[str, str]] = []
+
+    async def _redacted(org: str, ns: str, keys: list[str]) -> bool:
+        return mark == "redact" and bool(repo.inserts)
+
+    async def _unfinished(org: str, since_s: int, margin_s: int, **kw: Any) -> list[dict[str, Any]]:
+        return [{"erasure_id": "e1"}] if mark == "erasure" and repo.inserts else []
+
+    async def _delete(org: str, keys: list[str]) -> None:
+        deleted.extend((org, key) for key in keys)
+
+    monkeypatch.setattr(memory_repo, "keys_redacted", _redacted)
+    monkeypatch.setattr("server.erasure.app.ledger_reads.unfinished_since", _unfinished)
+    monkeypatch.setattr(memory_repo, "delete_code_answers_quoting", _delete)
+    _ask(repo, "why is the guard there?")
+    stored, tomb = repo.inserts  # tombstoned at once, before the delete lands
+    assert tomb["question_id"] == stored["question_id"] and tomb["answer"] == ""
+    assert deleted == [(ORG, "alice/decision"), (ORG, "bob/decision")]
+
+
+def test_a_failed_delete_after_the_store_still_serves_the_answer(
+    quoted: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import server.memory.store as memory_repo
+
+    repo = quoted["repo"]
+
+    async def _redacted(*a: Any) -> bool:
+        return bool(repo.inserts)
+
+    async def _delete(org: str, keys: list[str]) -> None:
+        raise RuntimeError("replica away")
+
+    monkeypatch.setattr(memory_repo, "keys_redacted", _redacted)
+    monkeypatch.setattr(memory_repo, "delete_code_answers_quoting", _delete)
+    assert _ask(repo, "why is the guard there?").source == "synthesized"
+    # the stored answer is tombstoned instead, and the tombstone keeps no text
+    stored, tomb = repo.inserts
+    assert tomb["question_id"] == stored["question_id"] and tomb["tombstoned_at"] is not None
+    assert tomb["answer"] == "" and tomb["version"] > stored["version"]
+
+
+def test_an_ask_cancelled_after_its_store_still_checks_what_it_stored(
+    quoted: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the shutdown cancels a request still running at its deadline: the stored answer
+    # is checked again all the same
+    import server.memory.store as memory_repo
+    from server.core import shielded
+
+    repo = quoted["repo"]
+    insert = repo.insert_rows
+    landed = asyncio.Event()
+
+    async def _slow_insert(table: str, rows: list[dict[str, Any]]) -> None:
+        await insert(table, rows)
+        landed.set()
+        await asyncio.sleep(0.2)  # the cancel lands here, after the store
+
+    async def _redacted(*a: Any) -> bool:
+        return bool(repo.inserts)
+
+    async def _delete(org: str, keys: list[str]) -> None:
+        return None
+
+    monkeypatch.setattr(repo, "insert_rows", _slow_insert)
+    monkeypatch.setattr(memory_repo, "keys_redacted", _redacted)
+    monkeypatch.setattr(memory_repo, "delete_code_answers_quoting", _delete)
+
+    async def main() -> None:
+        ask = asyncio.ensure_future(
+            ca.ask(
+                repo,
+                ORG,
+                NS,
+                question="why is the guard there?",
+                embedder=_Embedder(),  # type: ignore[arg-type]
+                llm=_LLM(),
+                search_kwargs={"top_k": 10, "token_budget": 4000},
+                no_cache=False,
+                index_head=HEAD,
+            )
+        )
+        await landed.wait()
+        ask.cancel()
+        await shielded.drain(timeout_s=5.0)
+
+    asyncio.run(main())
+    stored, tomb = repo.inserts
+    assert tomb["question_id"] == stored["question_id"] and tomb["tombstoned_at"] is not None
+
+
+def test_a_store_that_raised_but_landed_is_checked_too(
+    quoted: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # an insert cut off by the client's timeout raises, yet ClickHouse may commit it
+    import server.memory.store as memory_repo
+
+    repo = quoted["repo"]
+    insert = repo.insert_rows
+
+    async def _cut_off(table: str, rows: list[dict[str, Any]]) -> None:
+        await insert(table, rows)
+        if len(repo.inserts) == 1:
+            raise TimeoutError("insert timed out")
+
+    async def _redacted(*a: Any) -> bool:
+        return bool(repo.inserts)
+
+    async def _delete(org: str, keys: list[str]) -> None:
+        return None
+
+    monkeypatch.setattr(repo, "insert_rows", _cut_off)
+    monkeypatch.setattr(memory_repo, "keys_redacted", _redacted)
+    monkeypatch.setattr(memory_repo, "delete_code_answers_quoting", _delete)
+    assert _ask(repo, "why is the guard there?").source == "synthesized"
+    stored, tomb = repo.inserts
+    assert tomb["question_id"] == stored["question_id"] and tomb["tombstoned_at"] is not None
+
+
+def test_an_answer_with_no_memory_reads_no_redaction(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _redacted(*a: Any) -> bool:
+        raise AssertionError("only an answer that quoted memory reads the stamps")
+
+    monkeypatch.setattr("server.memory.store.keys_redacted", _redacted)
+    _ask(env["repo"], "how does TTL drop old parts?")
+    assert len(env["repo"].inserts) == 1
+
+
+def test_a_stale_stamped_entry_is_tombstoned_with_its_memory(quoted: dict[str, Any]) -> None:
+    from server.code.store.index import answers as answer_statements
+
+    repo, q = quoted["repo"], "why is the guard there?"
+    _ask(repo, q)
+    repo._ch.files[(NS, "src/a.cpp")] = "ha2"
+    assert _ask(repo, q).cache == "stale"
+    tomb = next(r for r in repo.inserts if r["tombstoned_at"] is not None)
+    assert tomb["memory_namespace"] == "decisions"
+    assert tomb["memory_keys"] == ["alice/decision", "bob/decision"]
+    # it hides the entry and holds none of its text: a tombstone landing after an erasure
+    # or a redact deleted the entry brings back nothing
+    assert tomb["answer"] == "" and tomb["citations"] == ""
+    # the candidate read the tombstone mirrors selects both columns
+    assert "memory_namespace, memory_keys" in answer_statements._candidate_sql()
+
+
+def test_answers_purge_tombstones_keep_the_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    import argparse
+
+    from server.cli import code_maintenance
+    from server.code.store.index.rows import build_row
+
+    stamped = build_row(
+        "code_answers",
+        org="o",
+        namespace="n",
+        question_id="00000000-0000-0000-0000-000000000001",
+        answer="chose B",
+        memory_namespace="decisions",
+        memory_keys=["alice/decision"],
+    )
+    written: list[dict[str, Any]] = []
+
+    class _CH:
+        async def connect(self) -> None: ...
+
+        async def query_all(self, sql: str, params: object = None) -> list[dict[str, Any]]:
+            assert "SELECT * FROM loom.code_answers" in sql
+            return [dict(stamped)]
+
+    class _Repo(CodeRepo):
+        def __init__(self) -> None:
+            super().__init__(_CH())  # type: ignore[arg-type]
+
+        async def insert_rows(self, table: str, rows: list[dict[str, Any]]) -> None:
+            written.extend(rows)
+
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
+    monkeypatch.setattr("server.code.store.index.CodeRepo", _Repo)
+    args = argparse.Namespace(org="o", namespace="n", all=True, llm_model=None, dry_run=False)
+    assert asyncio.run(code_maintenance._answers_purge(args)) == 0
+    assert len(written) == 1 and written[0]["tombstoned_at"] is not None
+    assert written[0]["answer"] == "" and written[0]["citations"] == ""  # no text kept
+    assert (written[0]["memory_namespace"], written[0]["memory_keys"]) == (
+        "decisions",
+        ["alice/decision"],
+    )
 
 
 # ---- 2. the identifier guard ---------------------------------------------------
@@ -582,6 +959,85 @@ def test_a_branch_miss_reuses_the_trunk_entry_when_its_files_agree(branch: dict[
     assert copy["namespace"] == BRANCH and copy["reused_from"] == NS
     assert copy["cited_hashes"] == ["ha"] and copy["retrieval_hashes"] == ["hb"]
     assert _ask(repo, "how does TTL drop old parts?", ns=BRANCH).cache == "hit"
+
+
+def test_a_branch_copy_names_the_memory_its_trunk_entry_quoted(
+    branch: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _mem(q: str) -> ca.MemoryContext:
+        return _memory(("alice/decision", "chose B"))
+
+    monkeypatch.setattr(settings, "code_ask_memory_namespace", "decisions")
+    monkeypatch.setattr(ca, "_inject_memory_context", _mem)
+    branch["vis"]["decisions"] = "public"
+    repo = branch["repo"]
+    _ask(repo, "why is the guard there?")  # the trunk entry
+    out = _ask(repo, "why is the guard there?", ns=BRANCH)
+    assert out.cache == f"reused_from:{NS}"
+    copy = repo.inserts[-1]
+    assert copy["namespace"] == BRANCH
+    assert (copy["memory_namespace"], copy["memory_keys"]) == ("decisions", ["alice/decision"])
+
+
+def test_a_branch_copy_stored_as_a_redact_ran_is_deleted_again(
+    branch: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import server.memory.store as memory_repo
+
+    async def _mem(q: str) -> ca.MemoryContext:
+        return _memory(("alice/decision", "chose B"))
+
+    monkeypatch.setattr(settings, "code_ask_memory_namespace", "decisions")
+    monkeypatch.setattr(ca, "_inject_memory_context", _mem)
+    branch["vis"]["decisions"] = "public"
+    repo = branch["repo"]
+    _ask(repo, "why is the guard there?")  # the trunk entry
+    deleted: list[str] = []
+    stored = len(repo.inserts)
+
+    async def _redacted(*a: Any) -> bool:
+        return len(repo.inserts) > stored  # marked once the copy is stored
+
+    async def _delete(org: str, keys: list[str]) -> None:
+        deleted.extend(keys)
+
+    monkeypatch.setattr(memory_repo, "keys_redacted", _redacted)
+    monkeypatch.setattr(memory_repo, "delete_code_answers_quoting", _delete)
+    assert _ask(repo, "why is the guard there?", ns=BRANCH).cache == f"reused_from:{NS}"
+    assert deleted == ["alice/decision"]
+
+
+def test_a_failed_branch_copy_write_still_serves_the_trunk_entry(
+    branch: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = branch["repo"]
+
+    async def _down(table: str, rows: list[dict[str, Any]]) -> None:
+        raise RuntimeError("too many parts")
+
+    monkeypatch.setattr(repo, "insert_rows", _down)
+    assert _ask(repo, "how does TTL drop old parts?", ns=BRANCH).cache == f"reused_from:{NS}"
+
+
+def test_a_branch_copy_of_an_entry_quoting_a_redacted_key_is_not_made(
+    branch: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _mem(q: str) -> ca.MemoryContext:
+        return _memory(("alice/decision", "chose B"))
+
+    monkeypatch.setattr(settings, "code_ask_memory_namespace", "decisions")
+    monkeypatch.setattr(ca, "_inject_memory_context", _mem)
+    branch["vis"]["decisions"] = "public"
+    repo = branch["repo"]
+    _ask(repo, "why is the guard there?")  # the trunk entry
+    stored = len(repo.inserts)
+
+    async def _redacted(*a: Any) -> bool:
+        return True
+
+    monkeypatch.setattr("server.memory.store.keys_redacted", _redacted)
+    out = _ask(repo, "why is the guard there?", ns=BRANCH)
+    assert out.source == "synthesized" and len(repo.inserts) == stored
 
 
 def test_a_branch_whose_files_differ_does_not_reuse(branch: dict[str, Any]) -> None:

@@ -165,14 +165,17 @@ async def test_fill_point_reads_only_the_gaps_and_blanks_the_rest(
     lex = _wire("lex")  # lexical-leg hit: the leg does not select tags
     chunk = _wire("chunk:abc", source="chunk")
     digest = _wire("digest_1", source="summary")
-    hits = [dense, lex, chunk, digest]
-    filled = await mod._fill_hit_tags(hits, _inp(include_tags=True), ["n"])
+    missed = _wire("gone")  # a fact the read did not find
+    hits = [dense, lex, chunk, digest, missed]
+    work: dict[str, int] = {}
+    filled = await mod._fill_hit_tags(hits, _inp(include_tags=True), ["n"], work=work)
     assert filled == 1
+    assert work == {"tags_unread": 1}  # `gone`: its [] is unknown, not empty
     assert len(ch.calls) == 1
     sql, params = ch.calls[0]
     assert "FROM loom.memory_embeddings FINAL" in sql
     assert "PREWHERE" not in sql
-    assert params["keys"] == ["lex"]  # only the gap, not the whole window
+    assert params["keys"] == ["gone", "lex"]  # only the gaps, not the whole window
     assert params["nss"] == ["n"]
     assert dense.tags == ["subsystem:Backups"]
     assert lex.tags == ["kind:lesson", "source:pin"]
@@ -192,5 +195,7 @@ async def test_fill_fails_open(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(tag_belt, "get_client", lambda: _Boom())
     hits = [_wire("k")]
-    assert await mod._fill_hit_tags(hits, _inp(include_tags=True)) == 0
+    work: dict[str, int] = {}
+    assert await mod._fill_hit_tags(hits, _inp(include_tags=True), work=work) == 0
     assert hits[0].tags == []  # asked, unreadable: present and empty, never a failed search
+    assert work == {"tags_unread": 1}  # ... and counted as not read

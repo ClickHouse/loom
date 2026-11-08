@@ -18,17 +18,18 @@ from typing import Any
 
 from server.core import object_store, pg
 from server.core.repo_base import _CHClient, _default_client
-from server.erasure.store.mutations import namespaces_of, purge_mode
+from server.erasure.store.mutations import namespaces_of, ns_list_predicate, purge_mode
 from server.erasure.store.predicates import (
     LIVE,
+    MEMORY_NS_EQ,
     NS_EQ,
-    NS_IN,
     ORPHAN_LEARNINGS,
     PAYLOAD_UID,
     UID,
     USER_CHUNKS,
     USER_COMMUNITY_ROWS,
     USER_CONFLICT_RECORD_IDS,
+    USER_MEMORY_KEYS,
     USER_PARENT_KEYS,
     USER_PRECEDENT_KEYS,
     USER_RECORD_IDS,
@@ -61,8 +62,9 @@ class Substrate:
     # illegal there (loom.conversations). Tables whose live predicate is "1"
     # never read FINAL whatever this says.
     final: bool = True
-    # The namespace-scope predicate for a table with no namespace column,
-    # counted org-wide ("1"); None → the namespace predicate.
+    # The namespace-scope predicate for a table whose `namespace` column is not the
+    # scope's: "1" counts org-wide (no namespace column), MEMORY_NS_EQ the memory a
+    # code answer quoted; None → the namespace predicate.
     ns_pred: str | None = None
 
     def counted_in(self, scope_type: str) -> bool:
@@ -71,6 +73,8 @@ class Substrate:
     def owner(self, scope_type: str) -> str | None:
         return self.ns_step if scope_type == "namespace" else self.user_step
 
+
+_HOLDS_TEXT = "(answer != '' OR citations != '')"
 
 _CENSUS: tuple[Substrate, ...] = (
     # In the user scope `memory.tombstone` only stamps these rows, which the later steps
@@ -215,6 +219,17 @@ _CENSUS: tuple[Substrate, ...] = (
         USER_WINDOW_KEYS,
         "llm_response_cache.delete",
         "llm_response_cache.delete",
+    ),
+    # code.ask's answer cache: an answer that quoted memory excerpts names their
+    # namespace and keys. Every version holding text counts, a tombstone an older build
+    # wrote among them; this build's tombstones hold none.
+    Substrate(
+        "loom.code_answers",
+        "1",
+        f"{USER_MEMORY_KEYS} AND {_HOLDS_TEXT}",
+        "code_answers.delete",
+        "code_answers.delete",
+        ns_pred=f"{MEMORY_NS_EQ} AND {_HOLDS_TEXT}",
     ),
     # User scope deletes the triples/edges only the user's
     # memories carried, through the link tables — but the census cannot count
@@ -679,9 +694,6 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "profile built from one is a loom.memory row."
     ),
     "loom.blacklist": "consent patterns authored by admins; policy, not subject data.",
-    # -- code plane: the indexed tables are `code_index.purge`'s; what stays
-    # here is configuration (`code_repos`) and a per-question answer cache
-    # keyed by namespace but not the repository's content.
     # -- tracker plane: org-shared reference data mirrored from CI, not anyone's
     # memory; rebuilt from the source, never read into a memory answer.
     "loom.qa_test_daily": (
@@ -691,7 +703,6 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     ),
     "loom.qa_fail_hours": ("tracker plane: failing tests and PR heads per CI hour; counts only."),
     "loom.qa_rollup_days": ("tracker plane: the roll-up worker's ledger per day; counts only."),
-    "loom.code_answers": "code plane: cached code.ask answers per question over the repository",
 }
 
 
@@ -804,7 +815,9 @@ async def table_residue(
         if scope_type != "namespace":
             pred = sub.user_pred
         else:
-            pred = sub.ns_pred or (NS_IN if ns_list else NS_EQ)
+            pred = sub.ns_pred or NS_EQ
+            if ns_list:  # the rewrite the steps' count_then_mutate applies
+                pred = ns_list_predicate(pred)
         if pred is None:
             continue
         if purge:

@@ -21,7 +21,8 @@ def _candidate_sql() -> str:
                citations, cited_paths, cited_hashes, llm_model,
                retrieval_confidence, indexed_commit, cache_key, prompt_version,
                entry_kind, abstain_reason, retrieval_paths, retrieval_hashes,
-               cost_usd, latency_ms, reused_from, created_at,
+               cost_usd, latency_ms, reused_from, memory_namespace, memory_keys,
+               created_at,
                dateDiff('second', created_at, now()) AS age_s,
                cosineDistance(question_embedding, {q:Array(Float32)}) AS distance
         FROM loom.code_answers FINAL

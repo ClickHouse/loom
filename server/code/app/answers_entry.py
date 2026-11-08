@@ -120,6 +120,10 @@ class AskResult:
     # memoized, and the files its synthesis was shown
     memoize: bool = False
     shown_paths: list[str] = dc_field(default_factory=list)
+    # the memory namespace and keys of the excerpts the synthesis quoted, stored with
+    # the entry so an erasure of that memory finds it
+    memory_namespace: str = ""
+    memory_keys: list[str] = dc_field(default_factory=list)
 
 
 def question_id(question: str) -> str:
@@ -180,7 +184,10 @@ def cache_hit_threshold(model: str) -> float:
 
 # Bump when the cache gate or the answer policy changes in a way the prompt
 # text does not show (what is memoized, what is cited).
-_ANSWER_POLICY = "policy-1: coverage-none and non-public memory context are never memoized"
+_ANSWER_POLICY = (
+    "policy-2: coverage-none and non-public memory context are never memoized; memory "
+    "excerpts come from the bound namespace alone and are stamped on the entry"
+)
 
 
 # The token budgets an entry is keyed on: a budget within a bucket retrieves

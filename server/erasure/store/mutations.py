@@ -205,6 +205,7 @@ LIGHTWEIGHT_PURGE_TABLES: frozenset[str] = frozenset(
     {
         "loom.memory_embeddings",
         "loom.memory_chunks",
+        "loom.code_answers",
         "loom.entity_vectors",
         "loom.chunks",
         "loom.code_chunks",
@@ -336,8 +337,9 @@ def _strip_live_predicate(where: str) -> str:
     return _LIVE_PRED_RE.sub("", where)
 
 
-def _ns_list_predicate(where: str) -> str:
-    """`namespace = {ns:String}` → `namespace IN {ns:Array(String)}`."""
+def ns_list_predicate(where: str) -> str:
+    """`namespace = {ns:String}` → `namespace IN {ns:Array(String)}`, inside a longer
+    column name too (`memory_namespace`)."""
     return where.replace(NS_EQ, NS_IN)
 
 
@@ -371,8 +373,8 @@ async def count_then_mutate(
     # namespace of the scope — one mutation per table for the whole list
     # instead of one saga per namespace.
     if isinstance(params.get("ns"), (list, tuple)):
-        count_where = _ns_list_predicate(count_where)
-        mutation_where = _ns_list_predicate(mutation_where)
+        count_where = ns_list_predicate(count_where)
+        mutation_where = ns_list_predicate(mutation_where)
         params = {**params, "ns": [str(x) for x in params["ns"]]}
     # Purge: a throwaway namespace's rows leave the parts, not just the
     # readable set — a tombstone keeps the bytes in every FINAL read and

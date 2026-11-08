@@ -98,6 +98,19 @@ checkout.
    ([rolling upgrades](../architecture/rolling-upgrades.md), rule 23); and
    `LOOM_DOCUMENT_OBJECT_STORE=s3`, since the previous build reads a bucket row's empty
    `data` and answers its download `410 BLOB_GONE` (rule 9).
+9. A deployment with `LOOM_CODE_ASK_MEMORY_NAMESPACE` set, now or at any time before,
+   that moves from a build whose cached `code.ask` answers do not name the memory they
+   quoted (one before `086_code_answer_memory_scope.sql`) to one that does, a roll
+   forward after a rollback included: once the newer build serves alone, with no
+   provider rebuild running, clear the answer cache with
+   `TRUNCATE TABLE <LOOM_CH_DATABASE>.code_answers` (`loom.code_answers` by default). The
+   old build's answers and tombstones name no memory, and an erasure or redact it ran
+   during the rollout did not know the table
+   ([rolling upgrades](../architecture/rolling-upgrades.md), rule 36), so no saga can find
+   what they hold. A rebuild publishes its copy of the table over it, so one running
+   across the truncate brings the rows back. A truncate drops the parts at once, on every
+   replica of a replicated table, with no mutation to wait for, and the loom user holds
+   the grant. Each cleared question costs one synthesis on its next ask.
 
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in
@@ -124,6 +137,10 @@ Do not roll back past the build that adds the document bucket while any catalog 
 names an object in it: an older build answers those downloads `410 BLOB_GONE`, its
 erasure deletes the rows and cannot reach their objects, and its sweep never walks the
 bucket ([where originals are stored](../features/knowledge.md#where-originals-are-stored)).
+After a rollback to a build before `086_code_answer_memory_scope.sql` with a memory
+namespace bound to `code.ask`, clear the answer cache as in step 9 twice: once the older
+build serves alone, and again once the newer build serves again. The migration is already
+in the ledger, so the roll forward applies nothing that would prompt the second.
 There is no migration to undo: the previous build reads and writes the newer schema.
 Its version writes to `loom.memory` and the other `ReplacingMergeTree` memory tables
 keep the columns it does not know

@@ -66,6 +66,7 @@ from typing import Any
 from uuid import UUID
 
 from server.core import pg
+from server.core.ch import sequential_reads
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.domain.redaction_lineage import (
     REDACTED_VALUE,
@@ -169,6 +170,52 @@ async def delete_llm_response_cache_by_key(
         {"org": org, "key": memory_key},
         ch=ch,
     )
+
+
+async def delete_code_answers_by_key(
+    org: str, memory_key: str, *, ch: _CHClient | None = None
+) -> int:
+    """`memory.redact`: every cached code.ask answer whose memory excerpts held the
+    redacted key, its tombstone versions included. The count that decides whether to
+    delete reads sequentially, so it sees an answer another replica just stored. A
+    lightweight delete, gone from every replica's reads when this returns: the table
+    carries a vector column a mutation would rewrite."""
+    where = "org = {org:String} AND has(memory_keys, {key:String})"
+    scrub = Scrub(
+        "loom.code_answers", "DELETE FROM loom.code_answers", where, {"org": org, "key": memory_key}
+    )
+    with sequential_reads():
+        counts = await run_scrubs([scrub], apply=True, ch=ch)
+    return counts["loom.code_answers"]
+
+
+async def delete_code_answers_quoting(
+    org: str, keys: list[str], *, ch: _CHClient | None = None
+) -> None:
+    """Every cached code.ask answer whose memory excerpts held any of `keys`: one
+    lightweight delete, which the asking request does not wait on."""
+    await (ch or _default_client()).execute(
+        "DELETE FROM loom.code_answers "
+        "WHERE org = {org:String} AND hasAny(memory_keys, {keys:Array(String)}) "
+        "SETTINGS lightweight_deletes_sync = 0",
+        params={"org": org, "keys": keys},
+    )
+
+
+async def keys_redacted(
+    org: str, namespace: str, keys: list[str], *, ch: _CHClient | None = None
+) -> bool:
+    """Whether any of `keys` in `namespace` has a redacted version. Read sequentially:
+    a stamp another replica just wrote must be seen."""
+    ch = ch or _default_client()
+    with sequential_reads():
+        row = await ch.query_one(
+            "SELECT 1 AS hit FROM loom.memory_versions "
+            "WHERE org = {org:String} AND namespace = {ns:String} "
+            "AND memory_key IN {keys:Array(String)} AND redacted_at IS NOT NULL LIMIT 1",
+            params={"org": org, "ns": namespace, "keys": keys},
+        )
+    return row is not None
 
 
 async def delete_ask_precedents_by_key(

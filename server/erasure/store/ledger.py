@@ -239,22 +239,30 @@ async def list_requests(
 
 
 async def unfinished_since(
-    org: str, since_s: int, margin_s: int, *, ch: _CHClient | None = None
+    org: str,
+    since_s: int,
+    margin_s: int,
+    *,
+    limit: int | None = None,
+    ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """The org's erasures that had not finished by `since_s` (ClickHouse clock, seconds):
-    in progress, failed, or completed after `since_s - margin_s`. Each row has
-    `erasure_id`, `scope_type`, `scope_value` and `state`. Read with sequential
-    consistency: a fence on it must see an erasure another replica just registered."""
+    in progress, failed, or completed after `since_s - margin_s`, at most `limit` of
+    them. Each row has `erasure_id`, `scope_type`, `scope_value` and `state`. Read with
+    sequential consistency: a fence on it must see an erasure another replica just
+    registered."""
     ch = ch or _default_client()
+    limit_clause = f"LIMIT {int(limit)}" if limit is not None else ""
     with sequential_reads():
         return await ch.query_all(
-            """
+            f"""
             SELECT toString(id) AS erasure_id, scope_type, scope_value, toString(status) AS state
             FROM loom.erasure_requests FINAL
-            WHERE org = {org:String}
+            WHERE org = {{org:String}}
               AND (status != 'completed'
                    OR completed_at
-                      >= fromUnixTimestamp({since:Int64}) - INTERVAL {margin:UInt32} SECOND)
+                      >= fromUnixTimestamp({{since:Int64}}) - INTERVAL {{margin:UInt32}} SECOND)
+            {limit_clause}
             """,
             params={"org": org, "since": int(since_s), "margin": int(margin_s)},
         )

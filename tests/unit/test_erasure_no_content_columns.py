@@ -29,10 +29,6 @@ _REVIEWED: dict[str, dict[str, str]] = {
     "loom.runtime_overrides": {"value": "a rate limit or latency budget as JSON numbers"},
     "loom.frontend_assets": {"body": "the dashboard's own built JS, CSS and fonts"},
     "loom.categories": {"summary": "operator-authored taxonomy text"},
-    "loom.code_answers": {
-        "question": "a question about the public code record",
-        "answer": "an answer synthesized from the code index only",
-    },
     "loom.code_backport_gaps": {"reason": "a backport verdict over public PRs"},
     "loom.deployment_config": {
         "value": "the root-secret fingerprint and MUST_MATCH values; no secrets"
