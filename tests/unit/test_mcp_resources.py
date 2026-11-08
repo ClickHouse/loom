@@ -19,7 +19,6 @@ from server.transport.mcp_config import _LOOM_PRIMER_RESOURCE_URI
 
 @pytest.fixture(autouse=True)
 def _fake_primer(monkeypatch):
-    # Accepts the include_profile kwarg the initialize path passes.
     async def _primer(auth, **kwargs):
         return "PRIMER-TEXT"
 

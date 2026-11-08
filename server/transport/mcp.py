@@ -160,9 +160,9 @@ async def _handle_request(
             # latest it serves — the lifecycle spec's negotiation rule.
             "protocolVersion": negotiate_protocol_version(params.get("protocolVersion")),
             "serverInfo": SERVER_INFO,
-            # Four surfaces for the same primer (clients differ in what they
-            # support), all resolving to _loom_primer_text(): `instructions`
-            # here (zero-action session-start channel), the `loom://primer`
+            # Four surfaces for the primer (clients differ in what they
+            # support): `instructions` here (zero-action session-start
+            # channel, `_initialize_instructions`), the `loom://primer`
             # resource, the `loom` prompt, and the `loom_activate` tool.
             "capabilities": {"tools": {}, "prompts": {}, "resources": {}},
         }

@@ -126,11 +126,14 @@ async def test_descriptions_do_not_repeat_workspace_preamble() -> None:
 
 
 def test_initialize_instructions_gate_profile_on_auth(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen: dict[str, Any] = {}
+    seen: list[Any] = []
 
-    async def _primer(auth: Any, *, include_profile: bool = True, **_k: Any) -> str:
-        seen["include_profile"] = include_profile
+    def _rules(toolset: Any, defaults: Any) -> str:
         return "PRIMER"
+
+    async def _profile(auth: Any, defaults: Any) -> str:
+        seen.append(auth)
+        return "\n\nPROFILE"
 
     async def _ctx(auth: Any, defaults: Any = None) -> str:
         return "\n\nWORKSPACE-CTX"
@@ -138,18 +141,19 @@ def test_initialize_instructions_gate_profile_on_auth(monkeypatch: pytest.Monkey
     async def _no_defaults(*a: Any, **k: Any) -> None:
         return None
 
-    monkeypatch.setattr(mcp_primer, "_loom_primer_text", _primer)
+    monkeypatch.setattr(mcp_primer, "_loom_rules", _rules)
+    monkeypatch.setattr(mcp_primer, "_profile_section", _profile)
     monkeypatch.setattr(mcp_primer, "_caller_default_context", _ctx)
     monkeypatch.setattr(mcp_primer, "_caller_defaults", _no_defaults)
 
-    out = asyncio.run(mcp._initialize_instructions(None))
-    assert out == "PRIMER\n\nWORKSPACE-CTX"
-    # Anonymous initialize (discovery_only/open modes) must not inline
-    # profile content.
-    assert seen["include_profile"] is False
+    # Anonymous initialize (discovery_only/open modes) must not inline profile content.
+    assert asyncio.run(mcp._initialize_instructions(None)) == "PRIMER\n\nWORKSPACE-CTX"
+    assert seen == []
 
-    asyncio.run(mcp._initialize_instructions(object()))
-    assert seen["include_profile"] is True
+    token = object()
+    out = asyncio.run(mcp._initialize_instructions(token))
+    assert out == "PRIMER\n\nWORKSPACE-CTX\n\nPROFILE"
+    assert seen == [token]
 
 
 def test_initialize_result_carries_instructions(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -362,7 +366,7 @@ async def test_primer_never_asks_the_agent_to_log_the_conversation(
 
     monkeypatch.setattr(mcp_call, "_caller_defaults", _defaults)
     monkeypatch.setattr(mcp_primer, "_caller_defaults", _defaults)
-    primer = await mcp_primer._loom_primer_text(object(), include_profile=False)
+    primer = mcp_primer._loom_rules(None, await mcp_primer._caller_defaults(object()))
     assert "loom_conversation_append" not in primer
 
 
@@ -399,10 +403,8 @@ def test_the_initialize_primer_names_only_tools_its_listing_carries(
 
 
 def test_the_coding_primer_sends_documents_through_loom_op() -> None:
-    coding = asyncio.run(
-        mcp_primer._loom_primer_text(None, include_profile=False, toolset="coding")
-    )
-    core = asyncio.run(mcp_primer._loom_primer_text(None, include_profile=False, toolset="core"))
+    coding = mcp_primer._loom_rules("coding", None)
+    core = mcp_primer._loom_rules("core", None)
     assert "`loom_knowledge_add`" not in coding
     assert "`loom_op` (op `knowledge.add`)" in coding
     assert "`loom_knowledge_add`" in core and "(op `knowledge.add`)" not in core
@@ -417,7 +419,7 @@ def test_the_guide_is_named_at_initialize_except_on_the_compact_coding_form() ->
     # A coding agent re-reads its instructions every turn and its plugin carries the
     # same guidance; the full primer (loom_activate, the prompt) still names the guide.
     assert guide not in asyncio.run(mcp._initialize_instructions(None, "coding"))
-    full = asyncio.run(mcp_primer._loom_primer_text(None, include_profile=False, toolset="coding"))
+    full = mcp_primer._loom_rules("coding", None)
     assert guide in full
 
 
@@ -429,7 +431,7 @@ def test_the_primer_offers_saving_only_where_a_write_is_reachable(
     routes reads only gets no save rule; one that reaches memory.set does."""
     from server.transport import mcp_op
 
-    primer = asyncio.run(mcp_primer._loom_primer_text(None, include_profile=False, toolset=toolset))
+    primer = mcp_primer._loom_rules(toolset, None)
     listed_write = any(not op.read_only for op in mcp_tools.listed_ops(toolset))
     assert (listed_write or mcp_op.routes_writes(toolset)) is writes
     assert ("**3. Save.**" in primer) is writes
