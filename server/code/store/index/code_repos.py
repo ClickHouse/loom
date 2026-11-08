@@ -32,7 +32,9 @@ class CodeReposMixin(CodeRepoBase):
 
     async def active_code_repo_count(self, org: str) -> int:
         row = await self._ch.query_one(
-            "SELECT count() AS n FROM loom.code_repos FINAL WHERE org = {org:String} AND active",
+            # An operator entry's access row is not a repository the org added.
+            "SELECT count() AS n FROM loom.code_repos FINAL"
+            " WHERE org = {org:String} AND active AND row_kind != 'access'",
             params={"org": org},
         )
         return int((row or {}).get("n") or 0)

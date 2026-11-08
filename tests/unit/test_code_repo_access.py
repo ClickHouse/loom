@@ -104,9 +104,16 @@ def test_a_row_that_is_not_an_access_row_only_narrows_the_entry(monkeypatch, kin
 def test_an_entry_whose_namespace_a_member_added_is_skipped(monkeypatch) -> None:
     row = dataclasses.replace(_cfg("code-weave", source="registry"), row_kind="page")
     monkeypatch.setattr(repos, "registry_repos", lambda: [row])
-    monkeypatch.setattr(repos, "_configured_from_env", lambda: [_cfg("code-weave")])
+    def env() -> list[Any]:
+        repos._publish_config_errors({})  # as a clean LOOM_CODE_REPOS_JSON parse does
+        return [_cfg("code-weave")]
+
+    monkeypatch.setattr(repos, "_configured_from_env", env)
     assert repos.configured_repos() == [row]  # the member's branch, as it was
     assert repos.config_errors_for("code-weave")
+    monkeypatch.setattr(repos, "registry_repos", lambda: [])
+    assert repos.configured_repos() == [_cfg("code-weave")]
+    assert repos.config_errors_for("code-weave") == []
 
 
 def test_an_access_row_whose_entry_is_gone_is_not_a_branch(monkeypatch) -> None:
@@ -117,8 +124,10 @@ def test_an_access_row_whose_entry_is_gone_is_not_a_branch(monkeypatch) -> None:
 
 
 class _CH:
-    def __init__(self, row: dict[str, Any] | None) -> None:
-        self.row = row
+    """`row` answers the directory read, `registry` the loom.code_repos one."""
+
+    def __init__(self, row: dict[str, Any] | None, registry: dict[str, Any] | None = None) -> None:
+        self.row, self.registry = row, registry
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
         self.queries: list[str] = []
 
@@ -126,7 +135,8 @@ class _CH:
         self, sql: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any] | None:
         self.queries.append(sql)
-        return dict(self.row) if self.row else None
+        found = self.registry if "loom.code_repos" in sql else self.row
+        return dict(found) if found else None
 
     async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         # The caller holds an admin grant given there, unless a test says otherwise.
@@ -225,6 +235,13 @@ async def test_set_access_writes_registry_and_directory_and_needs_confirm_to_wid
             )
         )
     assert e.value.to_detail()["code"] == "RESTRICTED_NOT_OPEN"
+    # An entry's namespace holding a row that is not its access row: only a restriction.
+    ch.registry = {"active": True, "row_kind": ""}
+    ch.inserts.clear()
+    with pytest.raises(ValidationError) as e:
+        await h.handle_code_repo_set_access(inp)
+    assert e.value.to_detail()["code"] == "ACCESS_FROM_CONFIG" and ch.inserts == []
+    ch.registry = None
     with pytest.raises(ValidationError) as e:
         await h.handle_code_repo_set_access(
             SimpleNamespace(
@@ -349,7 +366,8 @@ async def test_upsert_access_copies_an_existing_registry_row_and_builds_one_for_
     none gets one from the repository as configured."""
 
     class _CH2(_CH):
-        pass
+        def __init__(self, row: dict[str, Any] | None) -> None:
+            super().__init__(row, registry=row)
 
     existing = {
         "org": ORG,
@@ -405,6 +423,13 @@ async def test_upsert_access_copies_an_existing_registry_row_and_builds_one_for_
     assert row["classification"] == "standard" and row["active"] is True and "created_at" in row
     # A member's add stays one; an entry's new row is its access row.
     assert ch.inserts[0][1][0]["row_kind"] == "page" and row["row_kind"] == "access"
+    # A removed member's branch is not brought back: the entry gets its own access row.
+    ch3 = _CH2(existing | {"active": False})
+    await reg.upsert_access(
+        _cfg("code-x"), classification="restricted", join_policy="approval", created_by="a", ch=ch3
+    )
+    row = ch3.inserts[0][1][0]
+    assert row["row_kind"] == "access" and row["repo"] == "ClickHouse/weave"
 
 
 @pytest.mark.asyncio

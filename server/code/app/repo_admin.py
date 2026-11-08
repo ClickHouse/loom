@@ -525,7 +525,6 @@ async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepo
     _require_self_service()
     await _require_sandbox()
     _require_same_org(input.org)
-    from server.code.app.index import maintainers
     from server.code.domain.index.repos import repo_for_namespace
     from server.code.store.index import CodeRepo
 
@@ -601,11 +600,26 @@ async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepo
         remote_head=head,
         exclude_generated=bool(getattr(src, "exclude_generated", True)),
         scip_producer=str(getattr(src, "scip_producer", "") or ""),
-        # A branch of an operator entry, added by its admin, keeps the operator's admins.
-        row_kind="operator" if maintainers.admins_source(src) == "config" else "page",
+        row_kind="operator" if await _added_by_operator(src) else "page",
     )
     await _inherit_tracker_links(input.org, input.namespace, namespace)
     return out
+
+
+async def _added_by_operator(src: Any) -> bool:
+    """A branch added from `src` keeps the operator's admins: `src` is on the operator
+    side and the caller holds an admin grant of their own there, not a copy from a
+    branch added from the page (`maintainers.holds_own_admin`)."""
+    from server.auth.context import current_auth
+    from server.code.app.index import maintainers
+    from server.core.ch import get_client
+
+    if maintainers.admins_source(src) != "config":
+        return False
+    if current_auth() is None:
+        return True  # auth off: no principal to hold a grant
+    subject = current_caller()[0]
+    return await maintainers.holds_own_admin(get_client(), src.org, src.namespace, subject)
 
 
 async def _empty_tracker_links(org: str, namespace: str, *, detail: str) -> None:
@@ -705,6 +719,22 @@ async def _require_widening(input: Any, subject: str, ch: Any) -> None:
         )
 
 
+async def _require_own_access_row(input: Any, ch: Any) -> None:
+    """Only an operator entry's own access row widens it (`repos._with_registry`): an
+    entry whose namespace holds another active registry row can only be restricted
+    from the page, so the directory row is not widened past what the snapshot says."""
+    from server.code.store.index import CodeRepo
+
+    with sequential_reads():
+        row = await CodeRepo(ch).code_repo_row(input.org, input.namespace)
+    if row and row.get("active") is not False and row.get("row_kind") != "access":
+        raise ValidationError(
+            f"the access of {input.namespace} is set in the deployment's "
+            "LOOM_CODE_REPOS_JSON; from the page it can only be restricted",
+            code="ACCESS_FROM_CONFIG",
+        )
+
+
 async def handle_code_repo_set_access(input: Any) -> Any:
     """The repository's maintainer (the transport's ADMIN gate
     on the namespace) sets its classification and join policy. The decision
@@ -763,6 +793,8 @@ async def handle_code_repo_set_access(input: Any) -> Any:
         )
         if was_restricted and cls == "standard":
             await _require_widening(input, subject, ch)
+        if cfg.source == "config" and cls != "restricted":
+            await _require_own_access_row(input, ch)
         previous_policy = str(
             (row or {}).get("join_policy") or ("open" if cfg.public else "approval")
         )

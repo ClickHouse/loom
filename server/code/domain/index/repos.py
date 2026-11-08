@@ -308,29 +308,30 @@ def configured_repos() -> list[RepoConfig]:
     self-service registry's (the operator wins on a namespace collision). Invalid JSON
     degrades to the scalar single-repo config with a loud log (a typo must not silently
     stop all indexing) — loud once, then a gauge."""
-    env = _configured_from_env()
-    out = _with_registry(env)
-    listed = {(c.org, c.namespace) for c in out if c.source == "config"}
-    refused = {
-        f"added_from_page:{c.namespace}": (
-            f"code repo {c.namespace} skipped: a member added that namespace from the "
-            "Repositories page first; list the entry under another namespace"
-        )
-        for c in env
-        if (c.org, c.namespace) not in listed
-    }
-    if refused:
+    skipped: list[str] = []
+    out = _with_registry(_configured_from_env(), skipped)
+    if skipped:
+        refused = {
+            f"added_from_page:{ns}": (
+                f"code repo {ns} skipped: a member added that namespace from the "
+                "Repositories page first; list the entry under another namespace"
+            )
+            for ns in skipped
+        }
         _publish_config_errors({**_config_errors, **refused})
     return out
 
 
-def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:
+def _with_registry(
+    env_repos: list[RepoConfig], skipped: list[str] | None = None
+) -> list[RepoConfig]:
     """The operator's entries first, then the registry's. An entry's ACCESS row
     (`code.repo.set_access`) wins with its classification and join policy (the entry
     keeps every other field), so the maintainer's decision survives every boot. An entry
-    whose namespace a member added from the page is skipped, and the member's branch
-    listed instead; any other registry row for an entry's namespace (one from before
-    `row_kind`) only narrows the entry. An access row whose entry is gone is dropped."""
+    whose namespace a member added from the page is skipped (its namespace appended to
+    `skipped`), and the member's branch listed instead; any other registry row for an
+    entry's namespace (an operator admin's branch, or a row with no `row_kind`) only
+    narrows the entry. An access row whose entry is gone is dropped."""
     import dataclasses
 
     rows = {(c.org, c.namespace): c for c in registry_repos()}
@@ -341,6 +342,8 @@ def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:
             out.append(c)
             continue
         if row.row_kind == "page":
+            if skipped is not None:
+                skipped.append(c.namespace)
             continue
         if row.row_kind == "access":
             restricted = row.classification == "restricted"

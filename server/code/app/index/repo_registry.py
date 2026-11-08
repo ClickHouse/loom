@@ -272,7 +272,7 @@ async def upsert_access(
     row carrying the chosen classification and join policy. An existing registry row is
     copied whole (every column, including ones added by later migrations) with only
     those two fields, `created_by` and the stamps changed, so a member's add stays one;
-    an entry that had no row gets an access row (`row_kind = 'access'`) built from the
+    an entry that had no active row gets an access row (`row_kind = 'access'`) built from the
     repository as configured, so `refresh_db_repos` reads one row per namespace and
     `_with_registry` lets it win over the entry."""
     from datetime import UTC, datetime
@@ -282,7 +282,8 @@ async def upsert_access(
     repo = CodeRepo(ch)
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
     current = await repo.code_repo_row(cfg.org, cfg.namespace)
-    if current:
+    # A removed branch's inactive row is no row: copying it would bring that branch back.
+    if current and current.get("active") is not False:
         row = dict(current)
     else:
         row = {
@@ -295,7 +296,7 @@ async def upsert_access(
             "exclude": list(cfg.exclude),
             "github_token_enc": encrypt_token(cfg.github_token),
             "created_at": now,
-            "row_kind": "access",
+            "row_kind": "access" if cfg.source == "config" else "page",
         }
     row.update(
         {
