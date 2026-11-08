@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -45,9 +47,8 @@ def test_release_stack_bundle_is_complete_and_checksummed(tmp_path: Path) -> Non
 
 
 def test_standalone_compose_uses_release_image_and_embeds_no_secret() -> None:
-    root = ROOT
-    compose = (root / "compose.yaml").read_text(encoding="utf-8")
-    env = (root / "deploy" / "standalone" / "env.example").read_text(encoding="utf-8")
+    compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+    env = (ROOT / "deploy" / "standalone" / "env.example").read_text(encoding="utf-8")
     assert "${LOOM_IMAGE_REPOSITORY:-ghcr.io/clickhouse/loom}:${LOOM_VERSION:-latest}" in compose
     assert "build:" not in compose
     assert "127.0.0.1" in env
@@ -185,11 +186,6 @@ DOWNGRADES = pytest.mark.parametrize(
 def _run_step(tmp_path: Path, script: str, **env: str):
     """Run a release step's script in a checkout (a git repository with one
     commit and no tags) whose `gh` is STUB_GH."""
-    import os
-    import shutil
-    import subprocess
-    import sys
-
     work = tmp_path / "work"
     work.mkdir(exist_ok=True)
     # A copy, not a link: through a link, the script's ../../dev would be the
@@ -337,6 +333,18 @@ def _truncated_bundle(tmp_path: Path) -> Path:
     return cut
 
 
+def _corrupted_bundle(tmp_path: Path) -> Path:
+    whole, _ = build_stack_bundle.build(
+        "1.2.3", tmp_path / "whole", "clickhouse/clickhouse-server:26.9.18.11"
+    )
+    data = bytearray(whole.read_bytes())
+    for i in range(20, 28):  # the compressed stream, past gzip's 10-byte header
+        data[i] ^= 0xFF
+    corrupted = tmp_path / "corrupted.tar.gz"
+    corrupted.write_bytes(bytes(data))
+    return corrupted
+
+
 def _empty_bundle(tmp_path: Path) -> Path:
     empty = tmp_path / "empty.tar.gz"
     with tarfile.open(empty, "w:gz"):
@@ -350,9 +358,10 @@ def _empty_bundle(tmp_path: Path) -> Path:
     [
         (lambda tmp: tmp / "missing.tar.gz", "is not a readable release bundle"),
         (_truncated_bundle, "is not a readable release bundle"),
+        (_corrupted_bundle, "is not a readable release bundle"),
         (_empty_bundle, "has no loom-stack/compose.yaml"),
     ],
-    ids=["missing", "cut short", "no compose.yaml"],
+    ids=["missing", "cut short", "corrupted", "no compose.yaml"],
 )
 def test_a_bundle_that_cannot_be_read_is_one_error_line(
     tmp_path: Path, command: str, bundle: Callable[[Path], Path], error: str
@@ -381,8 +390,16 @@ def test_a_bundle_takes_the_versions_the_release_takes(tmp_path: Path, version: 
     (parse,) = [
         s for s in _release_workflow()["jobs"]["version"]["steps"] if s.get("id") == "parse"
     ]
+    output = tmp_path / "output"
     env = {"PATH": "/usr/bin:/bin", "REF": f"refs/tags/v{version}", "DRY_RUN": "false"}
-    env["GITHUB_OUTPUT"] = str(tmp_path / "output")
-    released = subprocess.run(["bash", "-e", "-c", parse["run"]], env=env, capture_output=True)
-    taken = build_stack_bundle.VERSION_PATTERN.fullmatch(version) is not None
-    assert (released.returncode == 0) is taken
+    run = subprocess.run(
+        ["bash", "-e", "-c", parse["run"]],
+        env={**env, "GITHUB_OUTPUT": str(output)},
+        capture_output=True,
+        text=True,
+    )
+    if build_stack_bundle.VERSION_PATTERN.fullmatch(version):
+        assert run.returncode == 0, run.stdout + run.stderr
+        assert f"version={version}" in output.read_text().splitlines()
+    else:
+        assert run.returncode == 1 and "is not X.Y.Z or X.Y.Z-rc.N" in run.stdout, run.stdout

@@ -142,10 +142,10 @@ ghcr.io, without the provenance and SBOM attestations that only a registry keeps
 `docker-smoke` loads them from there. The `preflight` job reports each missing
 [prerequisite](#before-the-first-release) as a warning instead of failing. What only a published
 release exercises, a dry run does not: `docker-tag` (joining each image's two digests, the Latest
-decision, `:latest`), the GitHub Release, the registry publishes, `release-check`, the published-images check
-(`scripts/release/published_images.sh`) with the skipped-build path it selects, the
-candidate-order check (`prepare.py check-tag`, which a dry run of a branch skips with a notice),
-and the chart check when the version is already tagged on another commit.
+decision, `:latest`), the GitHub Release, the registry publishes, `release-check`, the
+published-images check (`scripts/release/published_images.sh`) with the skipped-build path it
+selects, the candidate-order check (`prepare.py check-tag`, which a dry run of a branch skips with
+a notice), and the chart check when the version is already tagged on another commit.
 
 ## Before the first release
 

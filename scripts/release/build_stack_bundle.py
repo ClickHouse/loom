@@ -61,7 +61,8 @@ def read_member(archive: Path, name: str) -> str:
             return member.read().decode()
     except KeyError:
         raise ValueError(f"{archive} has no {name}") from None
-    except (OSError, EOFError, tarfile.TarError) as e:  # missing, cut short or not a tar
+    # Missing, cut short, corrupted (tarfile reports a zlib error as ReadError), or not text.
+    except (OSError, EOFError, tarfile.TarError, UnicodeDecodeError) as e:
         reason = getattr(e, "strerror", None) or e
         raise ValueError(f"{archive} is not a readable release bundle: {reason}") from e
 

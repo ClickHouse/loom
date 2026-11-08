@@ -48,11 +48,15 @@ from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, NamedTuple
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from scripts.release.build_stack_bundle import VERSION_PATTERN, pinned_image, read_member
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from scripts.release.build_stack_bundle import (  # noqa: E402
+    VERSION_PATTERN,
+    pinned_image,
+    read_member,
+)
 
 RELEASES_PATH = "/ClickHouse/loom/releases"
-ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "scripts" / "gates"
 GITHUB_RELEASES = f"https://github.com{RELEASES_PATH}"
 # Each distribution's packages for curl and its packaged Docker CLI.
@@ -561,7 +565,7 @@ class Rehearsal:
 
 
 def release_order(version: str) -> tuple[int, ...]:
-    """A release_version's place in release order: a candidate below its final,
+    """A version's place in release order: a candidate below its final,
     and candidates by their number, as install.sh's version_below orders them."""
     final, _, candidate = version.partition("-rc.")
     major, minor, patch = (int(part) for part in final.split("."))
@@ -645,7 +649,7 @@ def main() -> None:
             try:
                 release = serve_local_release(args, cleanup, work, run_id)
             except ValueError as e:  # a release bundle that cannot be read
-                raise SystemExit(str(e)) from None
+                raise SystemExit(f"FAIL {e}") from None
         rehearsal = Rehearsal(release, cleanup, work, run_id, docker)
         for index, distro in enumerate(dict.fromkeys(args.distro or DISTROS)):
             with ExitStack() as stacks:

@@ -20,11 +20,10 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from scripts.release.build_stack_bundle import build
-from server import __version__
-
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from scripts.release.build_stack_bundle import build  # noqa: E402
+from server import __version__  # noqa: E402
 
 
 def request(base: str, path: str, body: dict | None = None) -> dict:

@@ -19,6 +19,7 @@ import yaml
 
 from scripts.gates import installer_rehearsal as rehearsal
 from scripts.release import build_stack_bundle
+from tests.unit import git_repo
 from tests.unit.install_versions import GUARD_CASES
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -102,17 +103,8 @@ WRITES_ITS_VERSION = (
 )
 
 
-def _git(repo: Path, *args: str) -> None:
-    """git in `repo`, signing nothing whatever the host's config says."""
-    subprocess.run(
-        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
-         "-c", "tag.gpgSign=false", *args],
-        cwd=repo, check=True,
-    )  # fmt: skip
-
-
 def _commit(repo: Path, message: str) -> None:
-    _git(repo, "commit", "-q", "--allow-empty", "-m", message)
+    git_repo.git(repo, "commit", "-q", "--allow-empty", "-m", message)
 
 
 def _previous(repo: Path, out: Path, version: str = "1.2.0") -> subprocess.CompletedProcess[str]:
@@ -130,11 +122,11 @@ def _repo_with_releases(tmp_path: Path, tags: list[str], builder: str = WRITES_I
     (repo / "scripts/release/build_stack_bundle.py").write_text(builder)
     (repo / "install.sh").write_text("#!/bin/sh\n")
 
-    _git(repo, "init", "-q")
-    _git(repo, "add", ".")
+    git_repo.git(repo, "init", "-q")
+    git_repo.git(repo, "add", ".")
     _commit(repo, "x")
     for tag in tags:
-        _git(repo, "tag", tag)
+        git_repo.git(repo, "tag", tag)
     return repo
 
 
@@ -211,10 +203,12 @@ def test_the_published_previous_release_is_installed_by_its_own_copy(
     """No LOOM_VERSION: the release's install.sh installs its own release."""
     release = rehearsal.Release("1.2.0", "1.1.0", "unused", env={})
     docker = rehearsal.HostDocker("/compose", 0)
-    run = rehearsal.Rehearsal(release, ExitStack(), tmp_path, "id", docker)
+    rehearsing = rehearsal.Rehearsal(release, ExitStack(), tmp_path, "id", docker)
     scripts: list[str] = []
-    monkeypatch.setattr(run, "container", lambda image, home, port, script: scripts.append(script))
-    run.install_previous("image", tmp_path, 1)
+    monkeypatch.setattr(
+        rehearsing, "container", lambda image, home, port, script: scripts.append(script)
+    )
+    rehearsing.install_previous("image", tmp_path, 1)
     assert scripts == [f'curl -fsSL "{rehearsal.GITHUB_RELEASES}/download/v1.1.0/install.sh" | sh']
 
 
