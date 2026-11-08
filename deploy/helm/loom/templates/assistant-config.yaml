@@ -12,7 +12,7 @@ metadata:
     {{- include "loom.labels" $ | nindent 4 }}
     app.kubernetes.io/component: assistant
 data:
-  # integrations/librechat/assistant.librechat.yaml, with the release's Loom Service
+  # deploy/librechat/assistant.librechat.yaml, with the release's Loom Service
   # as the MCP server (tests/unit/test_assistant_deployment.py keeps them equal).
   librechat.yaml: |
     version: 1.3.17

@@ -738,15 +738,17 @@ pins refused `send_logs_level = 'trace'`, `use_query_condition_cache = 1` and a
 
 LibreChat runs beside Loom with its MongoDB in every deployment shape, reachable only
 from Loom, and both run its v0.8.8 configuration,
-`integrations/librechat/assistant.librechat.yaml`:
+`deploy/librechat/assistant.librechat.yaml`:
 
 - **Compose:** the `assistant` profile starts `librechat` and `librechat-mongo`; neither
   publishes a port. LibreChat shares the internal `assistant` network with the `loom`
   service and the internal `assistant-db` network with MongoDB alone, so the `loom`
   container, which builds repository code, cannot reach the database. LibreChat alone is
   also on `assistant-egress`, a network of its own with a route out, for its model
-  provider. Its secrets (`CREDS_KEY`, `CREDS_IV`, `JWT_SECRET`,
-  `JWT_REFRESH_SECRET`) and model key come from `librechat.env`.
+  provider. Its secrets and model key come from `.env` beside `compose.yaml`
+  (`LIBRECHAT_CREDS_KEY`, `LIBRECHAT_CREDS_IV`, `LIBRECHAT_JWT_SECRET`,
+  `LIBRECHAT_JWT_REFRESH_SECRET`, `ANTHROPIC_API_KEY`), and its configuration from
+  `deploy/librechat/assistant.librechat.yaml`, which the release's stack bundle ships.
 - **Helm:** `assistant.enabled` adds LibreChat's Deployment and Service and a MongoDB
   StatefulSet (`templates/assistant.yaml`), with the same configuration in a ConfigMap
   naming the release's Loom Service, and the secrets from `assistant.existingSecret`.

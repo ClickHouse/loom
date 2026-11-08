@@ -13,7 +13,6 @@ qualification targets and results) is
 | ---------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `librechat.yaml`             | the LibreChat configuration: the Loom MCP entry, per-user token, memory off, retention, no sharing             |
 | `agent.yaml`                 | the agent Loom seeds into the LibreChat it runs beside it: name, model, instructions, version                  |
-| `assistant.librechat.yaml`   | that LibreChat's configuration: tools only, memory off, each answer's own token on the MCP entry               |
 | `docker-compose.yml`         | LibreChat v0.8.8 and MongoDB, pinned by digest; no search index, no RAG service                                |
 | `.env.example`               | LibreChat's settings, and the compose file's own `LIBRECHAT_PORT`, `LIBRECHAT_ENV_FILE` and `LIBRECHAT_CONFIG` |
 | `qualification/qualify.py`   | the qualification harness: seeds a fixture, runs `cases.json` through LibreChat and through Loom               |

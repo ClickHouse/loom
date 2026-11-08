@@ -212,14 +212,20 @@ Loom can also run LibreChat itself, headless, with one agent it seeds: the shape
 [assistant design](../../architecture/assistant.md#deployment) describes. Nobody signs in
 to that LibreChat; each answer's tools read under a token Loom mints for that answer and
 sends as the request's `parent_message_id`, which the agent's MCP server sends back to
-Loom as its `Authorization` header (`integrations/librechat/assistant.librechat.yaml`).
+Loom as its `Authorization` header (`deploy/librechat/assistant.librechat.yaml`).
 
-With Compose, put LibreChat's secrets and model key in `librechat.env` beside
-`compose.yaml` (`CREDS_KEY`, `CREDS_IV`, `JWT_SECRET`, `JWT_REFRESH_SECRET`,
-`ANTHROPIC_API_KEY`) and start the `assistant` profile with Loom pointed at it:
+With Compose, in a repository checkout or an installed stack, add LibreChat's secrets,
+its model key and Loom's pointer at it to the `.env` beside `compose.yaml`, then start
+the `assistant` profile:
 
 ```bash
-LOOM_ASSISTANT_LIBRECHAT_URL=http://librechat:3080 docker compose --profile assistant up -d
+echo "LIBRECHAT_CREDS_KEY=$(openssl rand -hex 32)" >> .env
+echo "LIBRECHAT_CREDS_IV=$(openssl rand -hex 16)" >> .env
+echo "LIBRECHAT_JWT_SECRET=$(openssl rand -hex 32)" >> .env
+echo "LIBRECHAT_JWT_REFRESH_SECRET=$(openssl rand -hex 32)" >> .env
+echo "ANTHROPIC_API_KEY=<your key>" >> .env
+echo "LOOM_ASSISTANT_LIBRECHAT_URL=http://librechat:3080" >> .env
+docker compose --profile assistant up -d
 ```
 
 At boot Loom registers its service user, creates the agents API key and the agent from
@@ -243,8 +249,7 @@ services:
 ```
 
 ```bash
-LOOM_ASSISTANT_LIBRECHAT_URL=http://librechat:3080 \
-  docker compose -f compose.yaml -f compose.qualify.yaml --profile assistant up -d
+docker compose -f compose.yaml -f compose.qualify.yaml --profile assistant up -d
 Q=integrations/librechat/qualification/qualify.py
 python $Q seed
 python $Q --librechat-url http://localhost:3080 setup-deployed

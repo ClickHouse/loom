@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 # The bundle keeps the repository's layout, so compose.yaml's paths hold in both.
 CONFIG = "deploy/clickhouse-config"
-LIBRECHAT = "integrations/librechat/assistant.librechat.yaml"
+LIBRECHAT = "deploy/librechat/assistant.librechat.yaml"
 FILES = {
     "LICENSE": "LICENSE",
     "NOTICE": "NOTICE",

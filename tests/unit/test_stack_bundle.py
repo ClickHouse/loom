@@ -38,7 +38,7 @@ def test_release_stack_bundle_is_complete_and_checksummed(tmp_path: Path) -> Non
             "loom-stack/deploy/lemmagen3/LICENSE",
             "loom-stack/deploy/lemmagen3/README.md",
             "loom-stack/deploy/clickhouse-config/named_collections.xml",
-            "loom-stack/integrations/librechat/assistant.librechat.yaml",
+            "loom-stack/deploy/librechat/assistant.librechat.yaml",
         } <= names
         assert bundle.extractfile("loom-stack/VERSION").read() == b"1.2.3\n"
         compose = bundle.extractfile("loom-stack/compose.yaml").read().decode()
@@ -426,17 +426,24 @@ def test_the_installer_env_names_the_default_local_model_at_its_width() -> None:
     )
 
 
-def test_every_host_path_compose_mounts_is_in_the_bundle(tmp_path: Path) -> None:
-    # A bind mount whose path the bundle lacks becomes an empty directory in the container.
+def test_every_host_path_compose_mounts_reaches_an_installed_stack(tmp_path: Path) -> None:
+    # A bind mount whose path is missing becomes an empty directory in the container. The
+    # bundle must carry each path, and install.sh copies compose.yaml and deploy/ alone.
     import yaml
 
     compose = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))
-    mounted = {
-        volume.split(":", 1)[0].removeprefix("./")
-        for service in compose["services"].values()
-        for volume in service.get("volumes", [])
-        if isinstance(volume, str) and volume.startswith("./")
-    }
+    mounted: set[str] = set()
+    for service in compose["services"].values():
+        for volume in service.get("volumes", []):
+            if isinstance(volume, dict):  # the long form: `type: bind` and its `source`
+                source = str(volume.get("source", "")) if volume.get("type") == "bind" else ""
+            else:
+                source = str(volume).split(":", 1)[0]
+            if source.startswith("./"):
+                mounted.add(source.removeprefix("./"))
+    assert mounted and all(p.startswith("deploy/") for p in mounted), mounted
+    installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+    assert 'cp -R "$bundle/deploy" "$INSTALL_DIR/deploy"' in installer
     archive, _ = build_stack_bundle.build(
         "1.2.3", tmp_path, "clickhouse/clickhouse-server:26.9.18.11"
     )

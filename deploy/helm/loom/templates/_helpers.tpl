@@ -58,7 +58,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{- define "loom.assistantMongoName" -}}
-{{- include "loom.suffixed" (dict "root" . "suffix" "librechat-mongo") }}
+{{- include "loom.suffixed" (dict "root" . "suffix" "librechat-mongo" "max" 52) }}
 {{- end }}
 
 {{- define "loom.assistantMongoSelectorLabels" -}}

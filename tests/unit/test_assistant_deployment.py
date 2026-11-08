@@ -1,5 +1,5 @@
 """The assistant's LibreChat is configured the same in Compose and in the chart: the
-chart's ConfigMap is integrations/librechat/assistant.librechat.yaml with the release's
+chart's ConfigMap is deploy/librechat/assistant.librechat.yaml with the release's
 Loom Service in place of the compose service. CH-free."""
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-COMPOSE_CONFIG = ROOT / "integrations" / "librechat" / "assistant.librechat.yaml"
+COMPOSE_CONFIG = ROOT / "deploy" / "librechat" / "assistant.librechat.yaml"
 CHART = ROOT / "deploy" / "helm" / "loom" / "templates" / "assistant-config.yaml"
 
 
