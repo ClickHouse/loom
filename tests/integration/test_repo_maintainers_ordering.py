@@ -1,8 +1,12 @@
-"""Maintainer sync on ClickHouse orders grant changes by row version.
+"""Maintainer sync on ClickHouse: grant changes ordered by row version, and the
+statements the restricted-branch fan-out runs.
 
 `granted_at` keeps whole seconds, so a lowering on one branch and a promotion
 on another within the same second compare equal by time; the row version
-tells which came last. Written in order, as two admins would.
+tells which came last. Written in order, as two admins would. A restricted
+branch added from the page drops its page copies, restricted by the snapshot or
+by its directory row alone, and the own-grant and refused-rewrite statements
+count only live admin grants.
 """
 
 from __future__ import annotations
@@ -218,13 +222,14 @@ async def test_a_page_branch_restricted_by_its_directory_row_alone_drops_a_page_
 
 
 @pytest.mark.parametrize(
-    ("role", "status", "granted_by", "holds"),
+    ("role", "status", "granted_by", "revoked", "holds"),
     [
-        ("admin", "active", "alice", True),
-        ("admin", "pending", "alice", False),  # asked, not given
-        ("viewer", "active", "alice", False),  # lowered
-        ("admin", "active", "repo-maintainers:code-ord-dev", False),  # a page copy
-        ("admin", "active", "repo-maintainers:code-ord", True),  # an operator copy
+        ("admin", "active", "alice", False, True),
+        ("admin", "pending", "alice", False, False),  # asked, not given
+        ("admin", "active", "alice", True, False),  # revoked since the gate passed
+        ("viewer", "active", "alice", False, False),  # lowered
+        ("admin", "active", "repo-maintainers:code-ord-dev", False, False),  # a page copy
+        ("admin", "active", "repo-maintainers:code-ord", False, True),  # an operator copy
     ],
 )
 async def test_only_a_live_admin_grant_not_from_a_page_branch_counts_as_the_caller_s_own(
@@ -233,10 +238,11 @@ async def test_only_a_live_admin_grant_not_from_a_page_branch_counts_as_the_call
     role: str,
     status: str,
     granted_by: str,
+    revoked: bool,
     holds: bool,
 ) -> None:
-    """On ClickHouse: the statement `holds_own_admin` runs refuses a pending or lowered
-    grant, and the label check refuses a copy from a page branch."""
+    """On ClickHouse: the statement `holds_own_admin` runs refuses a pending, revoked
+    or lowered grant, and the label check refuses a copy from a page branch."""
     client, org = ch
     entries = [
         _Entry(org, "code-ord"),
@@ -254,6 +260,7 @@ async def test_only_a_live_admin_grant_not_from_a_page_branch_counts_as_the_call
         status=status,
         subject="mallory",
         granted_by=granted_by,
+        revoked_at=at if revoked else None,
     )
     assert await maintainers.holds_own_admin(client, org, "code-ord-rc", "mallory") is holds
 
