@@ -1,8 +1,9 @@
 # Adding repositories
 
 A fresh install indexes no repository. Entries come from two sources, merged: the
-repositories people add themselves and the operator's configuration. When both name the
-same namespace, the operator's entry wins. One code namespace is one branch
+repositories people add themselves and the operator's configuration. An operator entry
+for a namespace a member added here is skipped (see the rules below). One code namespace
+is one branch
 ([overview](overview.md#one-namespace-is-one-branch)).
 
 | Path                | How                                                                                                  | Built by                               | Tiers                                              |

@@ -97,6 +97,10 @@ def test_an_entry_whose_namespace_a_member_added_is_skipped(monkeypatch, caplog)
     assert repos._with_registry([_cfg("code-weave")]) == []
     monkeypatch.setattr(repos, "_page_namespaces", frozenset())
     assert repos._with_registry([_cfg("code-weave")]) == [_cfg("code-weave")]
+    # A row that is not a member's add is no skip, and logs nothing.
+    monkeypatch.setattr(repos, "registry_repos", lambda: [dataclasses.replace(row, row_kind="")])
+    assert repos._with_registry([_cfg("code-weave")])[0].source == "config"
+    assert len([r for r in caplog.records if "code-weave" in r.getMessage()]) == 1
     # Listed in between: a later skip is logged again.
     monkeypatch.setattr(repos, "_page_namespaces", frozenset({(ORG, "code-weave")}))
     repos._with_registry([_cfg("code-weave")])
@@ -433,7 +437,7 @@ async def test_upsert_access_copies_an_existing_registry_row_and_builds_one_for_
     )
     ch2 = _CH2(None)
     await reg.upsert_access(
-        _cfg("code-weave", classification="restricted"),
+        dataclasses.replace(_cfg("code-weave", classification="restricted"), github_token="tok"),
         classification="standard",
         join_policy="open",
         created_by="alice",
@@ -447,6 +451,7 @@ async def test_upsert_access_copies_an_existing_registry_row_and_builds_one_for_
         and row["path_prefixes"] == ["src/"]
     )
     assert row["classification"] == "standard" and row["active"] is True and "created_at" in row
+    assert row["github_token_enc"] == ""  # the entry fetches with its own configured token
     # A member's add stays one; an entry's new row is its access row.
     assert ch.inserts[0][1][0]["row_kind"] == "page" and row["row_kind"] == "access"
     # An inactive access row is not copied back: the entry gets a fresh one.
