@@ -33,14 +33,14 @@ before ClickHouse applies it; watch `system.mutations`.
   turn too; search still holds it back
   ([sensitivity](../architecture/security.md#sensitivity)).
   - Before each page's insert the Python path reads the page's rows again by key: a row
-    deleted, tombstoned or given other text since the page was read is skipped, and for an
-    old-model row given other text `--delete-old` keeps its org's old-model rows for a later
-    run; the rest are written with their other columns as that second read found them. A
-    deletion, redaction or erasure that lands between that read and the insert, or whose
-    mutation has not reached the row yet, can leave the row live with its new vector: run
-    such a redaction or deletion again after the run (an erasure's verify step finds the
-    row and retries). `--in-database` reads each table once, as its
-    statement starts, so run it while nothing redacts or erases.
+    deleted, tombstoned, or given other text or another agent or user since the page was
+    read is skipped, and for such an old-model row still stored `--delete-old` keeps its
+    org's old-model rows for a later run; the rest are written with their other columns as
+    that second read found them. A deletion, redaction or erasure that lands between that
+    read and the insert, or whose mutation has not reached the row yet, can leave the row
+    live with its new vector: run such a redaction or deletion again after the run (an
+    erasure's verify step finds the row and retries). `--in-database` reads each table
+    once, as its statement starts, so run it while nothing redacts or erases.
 - **A model of another width.** On ClickHouse 26.8 or later a fresh install codes its
   vector columns (`Quantized`) where `enable_quantized_codec` can be on
   ([ClickHouse](../architecture/clickhouse.md#gated-clickhouse-settings)), and a coded

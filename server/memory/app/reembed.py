@@ -288,7 +288,8 @@ async def reembed_table(
     Pages of `batch` rows in sort-key order; `start_after` (a resume token's
     key) continues after that row. `left_orgs` collects the orgs whose rows were
     left unwritten: switched off during the run, or with an off-model row still stored
-    with other text when its page was read again (`--delete-old` keeps their old vectors).
+    with other text or identity when its page was read again (`--delete-old` keeps their
+    old vectors).
     `key_only`: every live row of the scope but an import key with no key
     vector gets its key-axis vector rebuilt from `key_axis_text` (the value
     vector is kept); tables without a key axis are skipped."""
@@ -320,7 +321,7 @@ async def reembed_table(
     keys = _KEYS[table]
     order = ", ".join(keys)
     after = list(start_after) if start_after else None
-    # changed: rows skipped since read; page_changed: this page's share
+    # The rows the re-read skipped, in all pages and in this page.
     written = held = changed = page_changed = 0
 
     async def read_again(read: dict[int, dict[str, Any]]) -> dict[int, dict[str, Any]]:
@@ -544,8 +545,9 @@ async def delete_off_model(
     namespace: str | None = None,
     keep_orgs: frozenset[str] = frozenset(),
 ) -> None:
-    """Delete the off-model rows a run replaced. `keep_orgs`: orgs whose rows
-    the run left unwritten (switched off); their old vectors are all they have."""
+    """Delete the off-model rows a run replaced. `keep_orgs`: orgs whose old-model rows
+    have no new-model copy yet (switched off, or rewritten while the run read them);
+    their old vectors are all they have."""
     where = [f"embedding_model != '{model}'"]
     params: dict[str, Any] = {}
     if org:
@@ -665,7 +667,8 @@ async def reembed_all(
         # during the run or by now, or with a row the re-read found with other text.
         keep = frozenset(off | left_orgs | await customer.switched_off_orgs())
         if keep:
-            log(f"old-model rows kept for a later run in: {', '.join(sorted(keep))}")
+            named = ", ".join(sorted(keep)[:20]) + (", ..." if len(keep) > 20 else "")
+            log(f"old-model rows kept for a later run in {len(keep)} org(s): {named}")
         for table in _TABLES:
             await delete_off_model(
                 ch, table, embedder.model_name, org=org, namespace=namespace, keep_orgs=keep
