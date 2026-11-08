@@ -59,7 +59,9 @@ export interface AgentsConnectedOutput {
 }
 
 export interface AssistantMessage {
+  /** Who said it: the caller (`user`) or the assistant. */
   role: "user" | "assistant";
+  /** What was said, as text, at most 20,000 characters. */
   content: string;
 }
 
@@ -68,7 +70,7 @@ export interface AssistantAskInput {
   namespace: string;
   /** The question about this namespace, answered as the caller. */
   question: string;
-  /** Earlier turns of the conversation, oldest first; Loom stores none. */
+  /** Earlier turns of the conversation, oldest first, at most 50; empty by default. Loom stores none. */
   history?: AssistantMessage[];
 }
 

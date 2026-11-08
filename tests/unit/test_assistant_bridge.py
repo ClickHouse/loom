@@ -544,7 +544,7 @@ def test_a_key_librechat_no_longer_takes_is_set_up_again(
     assert forgotten and "401" in forgotten[0]
     # Another answer already replaced the key this one carried: it forgets nothing new.
     monkeypatch.setattr(service, "_answering", ("agent_1", "sk-new"))
-    with pytest.raises(AssistantUpstreamError):
+    with pytest.raises(AssistantUpstreamError, match="already replaced"):
         asyncio.run(run(refreshed_meanwhile))
     assert len(forgotten) == 1
 
@@ -753,3 +753,13 @@ def test_a_chunk_librechat_sends_malformed_is_skipped(world: _World) -> None:
     assert "".join(answer.text) == "Seven." and answer.usage_seen is False
     # Unreadable usage counts as none: the ceiling is charged.
     assert acc.cost_usd == pytest.approx(settings.assistant_answer_ceiling_usd)
+
+
+def test_the_ops_own_row_carries_the_answers_id(world: _World) -> None:
+    # assistant.ask runs in the handler's task: the run id the stream sets reaches the row
+    # the op transport writes after it.
+    async def run() -> str:
+        await bridge.ask(_caller(), ORG, NS, QUESTION)
+        return current_ledger_run()
+
+    assert asyncio.run(run()) == "chatcmpl-1"

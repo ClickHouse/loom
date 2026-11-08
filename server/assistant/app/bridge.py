@@ -21,6 +21,7 @@ from typing import Any, NoReturn
 
 import httpx
 
+from server.assistant.api.models import MAX_HISTORY, MAX_MESSAGE_CHARS
 from server.assistant.app import service
 from server.auth.authz import check_authorized
 from server.auth.delegation import delegate
@@ -46,9 +47,9 @@ from server.settings import settings
 log = logging.getLogger(__name__)
 
 ASSISTANT_OP = "assistant.ask"
-# What a request may carry, as assistant.ask's input model bounds it.
-_MAX_MESSAGES = 51  # not a setting: the op's 50 turns of history and the question
-_MAX_MESSAGE_CHARS = 20_000  # not a setting: the op's bound on one message
+# What a request may carry, as assistant.ask's input model bounds it: its history and
+# the question.
+_MAX_MESSAGES = MAX_HISTORY + 1
 # A refused share check (the cap is spent) is retried after this: the cap is a rolling day.
 _CAP_RETRY_S = 3600  # not a setting: a hint; the cap's own window is the setting
 # Seconds to reach LibreChat; an answer then runs up to LOOM_ASSISTANT_ANSWER_TTL_S.
@@ -109,8 +110,8 @@ def admitted_messages(messages: Any) -> list[dict[str, str]]:
                 if isinstance(p, dict) and p.get("type") == "text"
             )
         if isinstance(content, str) and content.strip():
-            if len(content) > _MAX_MESSAGE_CHARS:
-                raise ValidationError(f"a message is at most {_MAX_MESSAGE_CHARS} characters")
+            if len(content) > MAX_MESSAGE_CHARS:
+                raise ValidationError(f"a message is at most {MAX_MESSAGE_CHARS} characters")
             kept.append({"role": str(m["role"]), "content": content})
     if not kept or kept[-1]["role"] != "user":
         raise ValidationError("the last message must be the caller's question")
@@ -295,9 +296,13 @@ def _refused(ticket: Ticket, status: int, text: bytes) -> NoReturn:
     if status in (401, 403, 404):
         if service.answering() == (ticket.agent_id, ticket.api_key):
             service.forget_answering(f"LibreChat refused the stored key or agent ({status})")
+            raise AssistantUpstreamError(
+                f"LibreChat refused the stored key or agent ({status}); this replica is "
+                "setting the assistant up again: ask again shortly"
+            )
         raise AssistantUpstreamError(
-            f"LibreChat refused the stored key or agent ({status}); this replica is "
-            "setting the assistant up again"
+            f"LibreChat refused the key this answer carried ({status}), which this replica "
+            "has already replaced: ask again"
         )
     raise AssistantUpstreamError(f"LibreChat refused the answer ({status})")
 

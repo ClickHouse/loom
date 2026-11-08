@@ -19,7 +19,7 @@ Ask the Loom assistant one question about this namespace and get one cited answe
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `question` | `str` | required | The question about this namespace, answered as the caller. |
-| `history` | `list[AssistantMessage]` | *(computed)* | Earlier turns of the conversation, oldest first; Loom stores none. |
+| `history` | `list[AssistantMessage]` | *(computed)* | Earlier turns of the conversation, oldest first, at most 50; empty by default. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
