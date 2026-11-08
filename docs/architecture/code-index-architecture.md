@@ -189,8 +189,8 @@ the extractor stamp:
 The parser comes from `ingest_parse._PARSERS`. A failure of that parse, including a missing
 grammar or a tree-sitter parse past `code_parse_timeout_seconds` (`bounded_parse`, one parse
 per grammar at a time), degrades to a chunk-only file with `code_files.index_error` set;
-`code.index_errors` reports it. A timeout in a helper parse (the shell detector, the TLA+
-grammar reader, a header, an imported module) takes that helper's fallback instead.
+`code.index_errors` reports it. A timeout in any other parse takes its caller's fallback
+instead, and records no error.
 Tree-sitter modules import lazily, so a server with the code workers off boots without the
 `code` extras.
 
