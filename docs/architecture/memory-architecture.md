@@ -1217,9 +1217,10 @@ its `memory_embeddings` rows. The next pass never selects a key it wrote, so a f
 mirror is recorded as a `memory_expiry_mirror` projection failure, which
 `projection_repair` replays. A replayed retire is bare, so no late copy of the text
 lands after a redaction's purge: a tombstone retires at its recorded version, and an
-anonymize whose head is still the anonymized shell retires every vector up to that head.
-A replayed demote copies the live head's expiry and confidence. A pass cut off between
-its insert and that record records nothing, as with any fail-open projection.
+anonymize whose head is still the anonymized shell retires every vector through one
+above that head. A replayed demote copies the live head's expiry and confidence. A pass
+cut off between its insert and that record records nothing, as with any fail-open
+projection.
 
 Table-level retention and tiering are operator TTLs, off by default
 ([ClickHouse](clickhouse.md#partitioning-and-ttl)).

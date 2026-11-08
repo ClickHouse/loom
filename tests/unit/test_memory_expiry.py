@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 
+from server.core.ch import sequential_reads_active
 from server.memory.api.models_crud import MemoryUpdateByIdInput
 from server.memory.app import expiry as X
 from server.memory.app import handlers as mem_handlers
@@ -614,8 +615,6 @@ async def test_a_failed_mirror_is_recorded_per_writer_and_the_repair_applies_it(
     _DEMOTE_REEMITS.clear()
     clients: list[Any] = []
 
-    from server.core.ch import sequential_reads_active
-
     async def _retire_ok(items, *, ch=None, bare=False) -> int:
         assert bare  # a late copy of the text could land after a redaction's purge
         assert sequential_reads_active()  # sees a copy that landed on another replica
@@ -627,7 +626,7 @@ async def test_a_failed_mirror_is_recorded_per_writer_and_the_repair_applies_it(
     monkeypatch.setattr("server.memory.store.retire_vectors_for_keys", _retire_ok)
     heads = {r["memory_key"]: r for r in ch.inserts[0][1]}
 
-    async def _heads(keys, *, ch=None, sequential=False) -> dict[Any, Any]:
+    async def _heads(keys, *, ch=None) -> dict[Any, Any]:
         return {k: SimpleNamespace(**heads[k[5]]) for k in keys}
 
     monkeypatch.setattr("server.memory.store.memory_rows_by_identity_keys", _heads)
@@ -671,7 +670,7 @@ async def test_a_late_mirror_leaves_a_later_writes_vectors_alone(
         _emb("gone", 100),
         _emb("kept", 300),
         _emb("deleted", 100),
-        _emb("superseded", 350),  # a supersede's copy of the old text, above 200
+        _emb("superseded", 351),  # an entity heal's copy of a supersede's copy, head + 1
     ]
 
     async def _live(ch, keys, **_: Any) -> list[dict[str, Any]]:
@@ -704,18 +703,19 @@ async def test_a_late_mirror_leaves_a_later_writes_vectors_alone(
     demote = {"expires_at": None, "confidence": 0.4}
     await X.apply_mirror(
         [
-            (key("old"), 200, "demote", demote),
-            (key("new"), 200, "demote", demote),
-            (key("gone"), 200, "anonymize", None),
-            (key("kept"), 200, "anonymize", None),
-            (key("deleted"), 200, "tombstone", None),
-            (key("superseded"), 351, "anonymize", None),  # a shell's replay pin
-        ]
+            (key("old"), 200, "demote"),
+            (key("new"), 200, "demote"),
+            (key("gone"), 200, "anonymize"),
+            (key("kept"), 200, "anonymize"),
+            (key("deleted"), 200, "tombstone"),
+            (key("superseded"), 352, "anonymize"),  # a shell's replay pin
+        ],
+        {key("old"): demote, key("new"): demote},
     )
 
     got = {r["memory_key"]: r for r in inserted}
     assert set(got) == {"old", "gone", "deleted", "superseded"}
-    assert got["superseded"]["version"] == 351 and not got["superseded"]["content_excerpt"]
+    assert got["superseded"]["version"] == 352 and not got["superseded"]["content_excerpt"]
     assert got["old"]["version"] == 200 and got["old"]["confidence"] == 0.4
     assert got["old"]["expires_at"] is None and got["old"]["tombstoned_at"] is None
     assert got["gone"]["version"] == 200 and got["gone"]["tombstoned_at"] is not None
@@ -732,7 +732,7 @@ async def test_a_late_mirror_leaves_a_later_writes_vectors_alone(
         {
             key("gone"): second,
             key("kept"): second,
-            key("superseded"): embeddings.version_second(351),
+            key("superseded"): embeddings.version_second(352),
         },
     ]
 
@@ -823,8 +823,8 @@ async def test_a_replay_mirrors_the_heads_as_they_are_now(
         marker: head(370, sha=X._ANONYMIZED_SHA),
     }
 
-    async def _heads(keys, *, ch=None, sequential=False) -> dict[Any, Any]:
-        assert sequential
+    async def _heads(keys, *, ch=None) -> dict[Any, Any]:
+        assert sequential_reads_active()
         return {k: live[k] for k in keys if k in live}
 
     monkeypatch.setattr("server.memory.store.retire_vectors_for_keys", _retire)
@@ -835,9 +835,10 @@ async def test_a_replay_mirrors_the_heads_as_they_are_now(
         + [(k, 200, "anonymize") for k in (shell, rewritten, marker)]
         + [(gone, 200, "tombstone")]
     )
-    # The shell's vectors are retired up to its head (a supersede may have copied the
-    # old text above 200); the rewritten key's only below the recorded version.
-    assert applied == [[(shell, 351), (rewritten, 200), (marker, 200), (gone, 200)]]
+    # The shell's vectors are retired through head + 1 (a supersede may have copied the
+    # old text above 200, and an entity heal that copy one above the head); the
+    # rewritten key's only below the recorded version.
+    assert applied == [[(shell, 352), (rewritten, 200), (marker, 200), (gone, 200)]]
     assert copied == [
         [
             (touched, {"expires_at": later, "confidence": 0.4}),
