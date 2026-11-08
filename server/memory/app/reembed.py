@@ -129,11 +129,8 @@ def rewrite_row(
         out[cfg["key_vec"]] = key_vec
         out[cfg["key_dim"]] = dim if key_vec else 0
     if cfg["version"] == "version":
-        # One above the row it was read from: a key-only rewrite, which shares its sort
-        # key, replaces that row and loses to any version a live writer stamped since
-        # (wall-clock ns). A new model's row has its own sort key: the re-read before the
-        # insert (`_still_stored`) skips a row removed by then, not one whose delete is
-        # still running or lands after it.
+        # One above the stored row's version: a key-only rewrite replaces it and loses to
+        # any later write's wall-clock stamp.
         out["version"] = int(row.get("version") or 0) + 1
     elif cfg["version"] == "created_at":
         # newer created_at wins the ReplacingMergeTree(created_at) merge
@@ -649,8 +646,8 @@ async def reembed_all(
         # Every org whose rows wait keeps its old vectors: off at the start, off
         # during the run or by now, or with a row the re-read found with other text.
         keep = frozenset(off | left_orgs | await customer.switched_off_orgs())
-        if keep:
-            log(f"old-model rows kept for a later run in: {', '.join(sorted(keep))}")
+        if kept := sorted(keep & {org} if org else keep):
+            log(f"old-model rows kept for a later run in: {', '.join(kept)}")
         for table in _TABLES:
             await delete_off_model(
                 ch, table, embedder.model_name, org=org, namespace=namespace, keep_orgs=keep
