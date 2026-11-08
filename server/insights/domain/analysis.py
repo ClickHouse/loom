@@ -64,9 +64,8 @@ CAPS_DIGEST_SETTING = "SQL_loom_analyst_caps_digest"
 # byte, which ClickHouse logs as only the number of characters it removed.
 # Loom cannot turn query logging off everywhere (ClickHouse Cloud pins
 # `log_queries` for its users), but Cloud leaves this setting unconstrained.
-LOG_CUT_SETTING = "log_queries_cut_to_length"
-LOG_CUT_BYTES = 1
-TEXT_CUT_FROM_LOG = {LOG_CUT_SETTING: LOG_CUT_BYTES}
+TEXT_CUT_FROM_LOG = {"log_queries_cut_to_length": 1}
+TEXT_CUT_SQL = ", ".join(f"{name} = {value}" for name, value in TEXT_CUT_FROM_LOG.items())
 
 _BLOCK = 64  # SHA-256 block size, for HMAC's inner and outer pads
 
@@ -340,7 +339,7 @@ def profile_settings() -> list[str]:
         "final = 1 CONST",
         "apply_row_policy_after_final = 1 CONST",
         # A statement that runs is logged without its text; the ledger keeps its digest.
-        f"{LOG_CUT_SETTING} = {LOG_CUT_BYTES} CONST",
+        f"{TEXT_CUT_SQL} CONST",
         "read_overflow_mode = 'throw' CONST",
         "result_overflow_mode = 'throw' CONST",
         "timeout_overflow_mode = 'throw' CONST",

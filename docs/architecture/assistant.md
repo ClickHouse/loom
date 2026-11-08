@@ -851,17 +851,20 @@ token.
 | LibreChat users, API keys, agents, sessions | the service user, its key, the agent definition and the sign-in sessions of each boot that signs in  | kept; no memory content                                   |
 | LibreChat `transactions`                    | token counts per answer and its message id, no content                                               | kept, a few hundred bytes per answer                      |
 | LibreChat logs                              | the service user's id and email and request ids, no message text, token or password                  | LibreChat's default: one file per day, kept 14 days       |
-| ClickHouse's `system.query_log` and log     | each analyst statement without its text; a refused one's error, which can quote an allowlisted value | ClickHouse's own log retention; erasure does not reach it |
+| ClickHouse's `system.query_log` and log     | each analyst statement without its text; a refused one's error, which can quote an allowlisted value | the logs' TTL, none by default; erasure does not reach it |
 | the dashboard                               | the current chat, in the tab's memory                                                                | gone when the tab closes                                  |
 
 An error ClickHouse raises on a statement can quote the value it failed on: a
 `toUInt64(title)` refused on a title quotes the title. That value is one of the caller's
 own allowlisted metadata columns (a key, a title, a user id), never a memory value or
-document text, and it is kept in `system.query_log`'s `exception` column and in the
-server log for as long as ClickHouse keeps them. Erasure does not reach either one: the
-server log records every error whatever `log_queries` says, and ClickHouse Cloud pins
-`log_queries_min_type`, so the error rows cannot be left out of `system.query_log`. Both
-are read only by whoever administers ClickHouse and by Loom's own user.
+document text. It is kept in `system.query_log`'s `exception` column and in the server
+log (`system.text_log` included), which records every error whatever `log_queries` says,
+on every install. ClickHouse Cloud pins `log_queries_min_type`, so the error rows cannot
+be left out of `system.query_log` there, and Loom writes one profile for every install.
+Erasure does not reach either log. ClickHouse's default configuration, which the bundled
+ClickHouse uses, sets no TTL on either one, so the rows stay until an operator bounds
+them with a `<ttl>` on `query_log` and `text_log` in the server configuration. Both are
+read only by whoever administers ClickHouse and by Loom's own user.
 
 The agents API stores no questions, answers or tool outputs, so LibreChat holds nothing
 an erasure must reach. An answer is computed from the rows the answer's token reads at
