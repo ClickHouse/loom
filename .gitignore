@@ -177,6 +177,8 @@ var/
 !.agents/skills/loom-investigate-ci
 !.claude/skills/loom-pre-push/
 !.agents/skills/loom-pre-push
+!.claude/skills/loom-release/
+!.agents/skills/loom-release
 !.claude/skills/loom-review/
 !.agents/skills/loom-review
 !.claude/skills/loom-ship-pr/

@@ -65,6 +65,7 @@ Each line is a rule; the skill named after it is the procedure (`.claude/skills/
 - **Shared machine**: stop every server, container and background run you started before you report, and remove only what you created, by exact name, never by a prefix filter.
 - **Every gate the diff touches passes before the push**, fixed at the source, never by loosening the gate (`loom-pre-push`; what else a change must touch: `loom-change`).
 - **A pull request** is one concern with a title that says what is now true, a public body from the template, signed-off commits, a fresh review at every push and a squash merge on green (`loom-ship-pr`, `loom-review`, `loom-address-review`). Issues: `loom-file-issue`.
+- **A release** is cut, soaked as a release candidate and checked from outside, and every step others see is the owner's to start (`loom-release`).
 - **Benchmarks run only on request**: they spend provider money and hours (`loom-bench`).
 - **Committed and posted text** is plain technical English: the fact first, short comments that say why, no history, dates, people, hosts, internal namespaces or other products' names (`loom-writing`; `tests/unit/test_public_copy.py`).
 

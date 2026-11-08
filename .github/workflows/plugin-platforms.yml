@@ -6,9 +6,10 @@ name: plugin platforms
 # the plugin suite, then one real session per agent with the plugin
 # installed from this checkout (tests/e2e/agent-session.mjs: a local fake
 # answers the model API and Loom, so no provider is called).
+# release/** too: a supported line's patches get the same checks.
 on:
   push:
-    branches: [main]
+    branches: [main, "release/**"]
     paths:
       - "integrations/**"
       - ".claude-plugin/**"
@@ -16,7 +17,7 @@ on:
       - ".gitattributes"
       - ".github/workflows/plugin-platforms.yml"
   pull_request:
-    branches: [main]
+    branches: [main, "release/**"]
     paths:
       - "integrations/**"
       - ".claude-plugin/**"

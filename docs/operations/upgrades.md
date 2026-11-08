@@ -5,7 +5,8 @@ applies the migrations the new build carries. No other state moves: everything d
 is in ClickHouse (and in the document bucket, for originals written with
 `LOOM_DOCUMENT_OBJECT_STORE=s3`), and the code mirrors are mounted unchanged. This page
 is the operator side. How a client sees unknown and removed fields is in the [HTTP API
-reference](../reference/http-api.md#unknown-and-removed-fields).
+reference](../reference/http-api.md#unknown-and-removed-fields). Which releases get fixes, and which
+SDK works with which server: [supported versions](./supported-versions.md).
 
 ## How migrations run
 

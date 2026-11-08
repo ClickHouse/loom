@@ -28,6 +28,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [Running N replicas](docs/operations/replicas.md): Every Loom process is a full replica.
 - [Runtime settings](docs/operations/runtime-settings.md): Every setting is an environment variable `LOOM_<FIELD>` read at startup, and can also go in the YAML settings file (configuration reference).
 - [Single sign-on (OIDC)](docs/operations/sso.md): Loom can hand the human sign-in to an OpenID Connect identity provider.
+- [Supported versions](docs/operations/supported-versions.md): Releases N and N−1 get fixes, and an SDK at `X.Y` works with a server at `X.Y` or `X.(Y−1)`.
 - [Troubleshooting](docs/operations/troubleshooting.md): Each entry gives a symptom, the check that confirms its cause, and the fix.
 - [Upgrades](docs/operations/upgrades.md): An upgrade replaces the image (and the document extractor's, which holds no state) and applies the migrations the new build carries.
 
