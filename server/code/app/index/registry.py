@@ -69,7 +69,7 @@ async def ensure_registered(
         return False
     client = ch or get_client()
     try:
-        # Account claim: every writer of the directory row holds it.
+        # Account claim: every writer that rewrites the directory row holds it.
         # Admins claim: a maintainer copy onto this branch holds it, so it lands before a
         # narrowing or sees it.
         account = nullcontext() if account_held else account_change(cfg.org, cfg.namespace)

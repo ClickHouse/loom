@@ -743,7 +743,7 @@ async def handle_code_repo_set_access(input: Any) -> Any:
     subject, _org = current_caller()
     from server.code.app.index import maintainers
 
-    # The account claim every writer of the directory row holds; a fan-out write onto
+    # The account claim every writer that rewrites the directory row holds; a fan-out write onto
     # this branch holds the admins claims: it lands before the sync below, or sees both rows.
     async with (
         account_change(input.org, input.namespace),

@@ -102,7 +102,8 @@ async def ensure_configured_tracker_namespaces(*, ch: Any | None = None) -> list
             continue
         classification = "restricted" if cfg.restricted else "standard"
         try:
-            # The claim every writer of the directory row holds, as `tracker.source.add` does.
+            # The claim every writer that rewrites the directory row holds, as
+            # `tracker.source.add` does.
             async with account_change(cfg.org, ns):
                 if await ensure_tracker_registered(
                     cfg.org, ns, classification=classification, ch=ch
