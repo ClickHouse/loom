@@ -425,7 +425,7 @@ async def _read_again(
     now = {key(r): r for r in stored}
     text = cfg["text"]
     present = {i: now[key(r)] for i, r in read.items() if key(r) in now}
-    # The text the vector is made from, and the identity the model call was made for.
+    # The text the vector is made from, and the row's agent and user.
     same = [text, "agent", "user_id"]
     kept = {
         i: read[i] | row for i, row in present.items() if all(row[c] == read[i][c] for c in same)
@@ -668,9 +668,10 @@ async def reembed_all(
         # during the run or by now, with a row the re-read found with other text or
         # identity, or named by the resume token.
         keep = frozenset(left_orgs | await customer.switched_off_orgs())
-        if keep:
-            named = ", ".join(sorted(keep)[:20]) + (", ..." if len(keep) > 20 else "")
-            log(f"old-model rows kept for a later run in {len(keep)} org(s): {named}")
+        shown = sorted(keep & {org} if org else keep)  # the delete is scoped to --org
+        if shown:
+            named = ", ".join(shown[:20]) + (", ..." if len(shown) > 20 else "")
+            log(f"old-model rows kept for a later run in {len(shown)} org(s): {named}")
         for table in _TABLES:
             await delete_off_model(
                 ch, table, embedder.model_name, org=org, namespace=namespace, keep_orgs=keep

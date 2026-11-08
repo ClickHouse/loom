@@ -32,15 +32,16 @@ before ClickHouse applies it; watch `system.mutations`.
   follows its sensitivity label. `--in-database` cannot check the text and re-embeds such a
   turn too; search still holds it back
   ([sensitivity](../architecture/security.md#sensitivity)).
-  - Before each page's insert the Python path reads the page's rows again by key: a row
+  - Before each page's insert the Python path reads the page's rows again by key. A row
     deleted, tombstoned, or given other text or another agent or user since the page was
-    read is skipped; when a skipped row is an old-model row still stored with other text
-    or identity, `--delete-old` keeps its org's old-model rows for a later run; the
-    `resume:` token carries the orgs kept so far, and the run names them before it
-    deletes. Every other row is written with its other columns as that second read found
-    them. A deletion, redaction or erasure that lands between that read and the insert, or
-    whose mutation has not reached the row yet, can leave the row live with its new
-    vector: run such a redaction again after the run; the orphan-vector sweep tombstones a
+    read is skipped. Every other row is written with its other columns as that second read
+    found them.
+  - When a skipped row is an old-model row still stored with other text or identity,
+    `--delete-old` keeps its org's old-model rows for a later run. The `resume:` token
+    carries the orgs kept so far, and the run names them before it deletes.
+  - A deletion, redaction or erasure that lands between that read and the insert, or whose
+    mutation has not reached the row yet, can leave the row live with its new vector. Run
+    such a redaction again after `--delete-old`; the orphan-vector sweep tombstones a
     deleted memory's leftover vector, and an erasure's verify step finds the row and
     retries. `--in-database` reads each table once, as its statement starts, so run it
     while nothing redacts or erases.
