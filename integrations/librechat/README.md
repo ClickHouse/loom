@@ -20,7 +20,7 @@ qualification targets and results) is
 | `qualification/fixture.json` | the memories, orgs and people the cases are labeled against                                                    |
 
 Loom can also run LibreChat itself, headless, with the agent in `agent.yaml`
-(`docker compose --profile assistant`, or the chart's `assistant.enabled`); the guide's
+(`assistant` in `COMPOSE_PROFILES`, or the chart's `assistant.enabled`); the guide's
 [deployed assistant](../../docs/features/integrations/librechat.md#the-deployed-assistant)
 section covers it and its qualification. The steps below run LibreChat's own UI with a
 token per person instead.

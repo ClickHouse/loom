@@ -216,10 +216,10 @@ Loom as its `Authorization` header (`deploy/librechat/assistant.librechat.yaml`)
 
 With Compose, in a repository checkout or an installed stack, add LibreChat's secrets,
 its model key and Loom's pointer at it to the `.env` beside `compose.yaml`, add
-`assistant` to its `COMPOSE_PROFILES` (an installed stack's is `bundled`, so
-`bundled,assistant`; a checkout has none, so `assistant`), and start the stack. A
-`--profile` flag would replace `COMPOSE_PROFILES` and leave the installed stack's
-bundled ClickHouse out of the project.
+`assistant` to its `COMPOSE_PROFILES` (`bundled,assistant` with the bundled ClickHouse,
+the default; `assistant` alone with your own), and start the stack. A `--profile` flag
+would replace `COMPOSE_PROFILES` and leave the bundled ClickHouse out of the project, so
+`make dev` and `loom up`, which pass `--profile bundled`, do not start the assistant.
 
 ```bash
 echo "LIBRECHAT_CREDS_KEY=$(openssl rand -hex 32)" >> .env
@@ -228,7 +228,8 @@ echo "LIBRECHAT_JWT_SECRET=$(openssl rand -hex 32)" >> .env
 echo "LIBRECHAT_JWT_REFRESH_SECRET=$(openssl rand -hex 32)" >> .env
 echo "LIBRECHAT_ANTHROPIC_API_KEY=<your key>" >> .env
 echo "LOOM_ASSISTANT_LIBRECHAT_URL=http://librechat:3080" >> .env
-# then add assistant to COMPOSE_PROFILES in .env, as above
+# with your own ClickHouse, write COMPOSE_PROFILES=assistant instead
+sed -i.bak 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=bundled,assistant/' .env
 docker compose up -d
 ```
 

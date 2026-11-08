@@ -3,6 +3,7 @@
 #   COMPOSE_PROFILES=bundled   start the clickhouse service below (the default)
 #   COMPOSE_PROFILES=          use the ClickHouse that LOOM_CH_* in .env names:
 #                              a self-managed server or ClickHouse Cloud
+#   ...,assistant              also run the assistant's LibreChat (librechat below)
 #
 # install.sh writes .env for either choice, and docs/operations/deployment.md
 # covers both. The release bundle ships this file with the repository's layout,
@@ -139,7 +140,8 @@ services:
     cpus: 1
     pids_limit: 64
 
-  # The assistant (`--profile assistant`): LibreChat runs the agent Loom seeds, headless.
+  # The assistant (`assistant` in COMPOSE_PROFILES): LibreChat runs the agent Loom seeds,
+  # headless.
   # Neither it nor its MongoDB publishes a port. The internal `assistant` network
   # joins LibreChat to the loom service alone, and `assistant-db` to its MongoDB
   # alone, so the loom container (which builds repository code) cannot reach that

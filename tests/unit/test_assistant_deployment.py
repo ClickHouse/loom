@@ -75,3 +75,12 @@ def test_librechats_compose_variables_are_names_loom_does_not_read() -> None:
     values = compose["services"]["librechat"]["environment"].values()
     named = {m for v in values for m in re.findall(r"\$\{([A-Z0-9_]+)", str(v))}
     assert named and all(n.startswith("LIBRECHAT_") for n in named), named
+
+
+def test_the_guide_keeps_the_bundled_clickhouse_when_it_adds_the_assistant() -> None:
+    # .env.example (a checkout's .env) and the installed stack's both run `bundled`.
+    guide = (ROOT / "docs" / "features" / "integrations" / "librechat.md").read_text()
+    for env in (ROOT / ".env.example", ROOT / "deploy" / "standalone" / "env.example"):
+        assert "COMPOSE_PROFILES=bundled\n" in env.read_text(), env
+    assert "COMPOSE_PROFILES=bundled,assistant/' .env" in guide
+    assert "--profile assistant" not in guide
