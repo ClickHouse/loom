@@ -206,5 +206,6 @@ def test_a_dbt_file_of_many_tags_reads_in_linear_time(unit: str) -> None:
 
 
 def test_an_unclosed_statement_tag_names_no_macro_call() -> None:
-    text = "{{ dollars(x) }}\nselect a from t where b like '{%'\nand coalesce(c, 0) > 0\n"
-    assert lj._calls(text, set(), lj._newlines(text)) == {"dollars": 1}
+    for tail in ("> 0\n", "> {{ var('n') }}"):  # the second ends the file in `}}`
+        text = "{{ dollars(x) }}\nselect a from t where b like '{%'\nand coalesce(c, 0) " + tail
+        assert lj._calls(text, set(), lj._newlines(text)) == {"dollars": 1}, tail
