@@ -320,6 +320,8 @@ def test_the_printed_sql_revokes_what_show_grants_lists_before_granting(
     printed = app.printed_statements(revokes)
     first_grant = next(i for i, s in enumerate(printed) if s.startswith("GRANT "))
     assert printed[first_grant - len(revokes) : first_grant] == revokes
+    # The file is run in one session, whose first statement cuts the rest from the log.
+    assert printed[0] == "SET log_queries_cut_to_length = 1"
 
 
 def test_a_column_grant_in_another_database_is_outside_the_allowlist(
@@ -429,21 +431,6 @@ def test_print_sql_is_not_gated_on_the_reader_users_settings(
     args = argparse.Namespace(print_analyst_sql=True, print_sql=False)
     assert ch_setup._cmd_ch_setup(args) == 0
     assert capsys.readouterr().out.rstrip().endswith("SELECT 1;")
-
-
-def test_printed_analyst_sql_cuts_its_own_text_from_the_log_first(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    import argparse
-
-    from server.cli import ch_setup
-
-    monkeypatch.setattr(ch_setup, "_analyst_sql", lambda: ["CREATE USER x", "SELECT 1"])
-    monkeypatch.setattr(app.store, "database", lambda: "loom")
-    args = argparse.Namespace(print_analyst_sql=True, print_sql=False)
-    assert ch_setup._cmd_ch_setup(args) == 0
-    lines = [ln for ln in capsys.readouterr().out.splitlines() if not ln.startswith("--")]
-    assert lines == ["SET log_queries_cut_to_length = 1;", "CREATE USER x;", "SELECT 1;"]
 
 
 @pytest.mark.parametrize("path", ["rewrite", "load_for_print"])

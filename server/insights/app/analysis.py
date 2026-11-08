@@ -223,10 +223,12 @@ async def own_grant_revokes() -> list[str]:
 
 
 def printed_statements(revokes: list[str]) -> list[str]:
-    """The entity statements with `revokes` before the first grant."""
+    """The entity statements with `revokes` before the first grant, after a
+    `SET` that cuts the text of the rest from the log."""
     statements = entity_statements()
     first = next(i for i, s in enumerate(statements) if s.startswith("GRANT "))
-    return [*statements[:first], *revokes, *statements[first:]]
+    cut = [f"SET {name} = {value}" for name, value in boundary.TEXT_CUT_FROM_LOG.items()]
+    return [*cut, *statements[:first], *revokes, *statements[first:]]
 
 
 def _scope_extra(org: str, namespaces: list[str], key: bytes | None = None) -> dict[str, Any]:

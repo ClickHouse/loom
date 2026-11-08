@@ -341,7 +341,7 @@ or on `loom.analysis_secrets`, and it cannot run `EXPLAIN`.
 changes it. It keeps the secrets out of what is logged instead:
 
 - Every statement that carries the key or the password runs with
-  `log_queries_cut_to_length = 1` (`UNLOGGED_SETTINGS` in
+  `log_queries_cut_to_length = 1` (`TEXT_CUT_FROM_LOG` in
   `server/insights/domain/analysis.py`), which any user may set. ClickHouse then logs
   the statement, in `system.query_log` and in its server log, as only the number of
   characters it removed. The printed SQL sets it first, for the session it runs in.
@@ -624,9 +624,12 @@ as `sql_digest`, an identifier key, which the citation check reads. The profile 
 each statement the analyst runs without its text: its user, timing, rows read and
 settings, the scope and its signature among them. A signature reads rows only with the
 analyst's password, for its own query id, until its expiry. A statement ClickHouse
-refuses logs its error message, which can quote part of the caller's statement. The
-deploy delta leaves the analyst's statements out of its shapes. The rows are stored
-nowhere.
+refuses is logged with its error message, which can quote the whole statement (an
+unknown column quotes the scope it was looked up in, the caller's statement inside the
+wrapper), also for a restricted namespace whose ledger drops the text; ClickHouse Cloud
+pins `log_queries_min_type`, so the error rows cannot be left out. The probe's own
+refused reads add a few error rows from the analyst at every probe. The deploy delta
+leaves the analyst's statements out of its shapes. The rows are stored nowhere.
 
 ## Isolation proof
 

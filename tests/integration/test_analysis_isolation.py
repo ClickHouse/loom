@@ -22,6 +22,7 @@ from dataclasses import dataclass
 import httpx
 import pytest
 
+from server.insights.domain.analysis import TEXT_CUT_FROM_LOG
 from tests.integration._eventually import wait_until
 from tests.integration._resources import unique_org
 
@@ -386,7 +387,7 @@ def test_a_statement_during_a_policy_rewrite_reads_the_right_rows(
         try:
             while not done.is_set():
                 for stmt in policies:
-                    ch_client.command(stmt, settings=boundary.UNLOGGED_SETTINGS)
+                    ch_client.command(stmt, settings=TEXT_CUT_FROM_LOG)
                 rewrites.append(1)
         except BaseException as e:  # noqa: BLE001 — reported to the test below
             failures.append(e)
@@ -472,6 +473,7 @@ def test_the_scope_key_stays_out_of_the_query_log(ch_client) -> None:
     refused, logged = ch_client.query(
         "SELECT countIf(user = 'loom_analyst' AND exception LIKE '%UNKNOWN_SETTING%'), "
         "countIf(multiSearchAny(query, {k:Array(String)}) "
+        "OR multiSearchAny(formatted_query, {k:Array(String)}) "
         "OR multiSearchAny(exception, {k:Array(String)})) FROM system.query_log",
         parameters={"k": literals},
         settings={"log_queries_cut_to_length": 1},
@@ -486,8 +488,6 @@ def test_the_scope_key_stays_out_of_the_query_log(ch_client) -> None:
 # entities back and waits for every process to answer again.
 _PROBE_INTERVAL_S = float(os.environ.get("LOOM_CH_ANALYSIS_PROBE_INTERVAL_S") or 60)
 _PROBE_WAIT_S = 2 * _PROBE_INTERVAL_S + 30
-# A policy statement holds the key: it stays out of system.query_log.
-_UNLOGGED = {"log_queries_cut_to_length": 1}
 
 
 def _probed_until(base: str, s: _Seed, done, description: str) -> None:
@@ -590,7 +590,7 @@ def test_a_dropped_policy_reads_nothing_and_is_written_again(
             "the probe to write the policy again",
         )
     except BaseException:
-        ch_client.command(statement, settings=_UNLOGGED)
+        ch_client.command(statement, settings=TEXT_CUT_FROM_LOG)
         raise
     _answers_again(control_plane_url, seed)
 
@@ -608,7 +608,7 @@ def test_a_canary_under_another_key_is_written_again(
         boundary.policy_filter(os.urandom(32)),
         f"`{boundary.ANALYST_USER}`",
     )
-    ch_client.command(other_key, settings=_UNLOGGED)
+    ch_client.command(other_key, settings=TEXT_CUT_FROM_LOG)
     try:
         _probed_until(
             control_plane_url,
@@ -617,7 +617,7 @@ def test_a_canary_under_another_key_is_written_again(
             "the probe to write the canary's policy again",
         )
     except BaseException:
-        ch_client.command(statement, settings=_UNLOGGED)
+        ch_client.command(statement, settings=TEXT_CUT_FROM_LOG)
         raise
     _answers_again(control_plane_url, seed)
 

@@ -463,7 +463,6 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
     reader = None if opted_out else settings.ch_reader_user or DEFAULT_READER
     if args.print_analyst_sql:
         from server.insights.app import analysis
-        from server.insights.domain import analysis as boundary
 
         try:
             statements = _analyst_sql()
@@ -480,8 +479,6 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
             "Loom databases on this server\n-- writing the same analyst user: analysis needs "
             "one Loom per ClickHouse service.\n-- " + "\n-- ".join(analysis.printed_checks())
         )
-        for name, value in boundary.UNLOGGED_SETTINGS.items():
-            print(f"SET {name} = {value};")
         for stmt in statements:
             print(f"{stmt};")
         return 0

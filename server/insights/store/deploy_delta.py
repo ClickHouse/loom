@@ -167,7 +167,7 @@ _QL_WINDOW = (
     " AND event_time >= {swap:DateTime} - INTERVAL {window:UInt32} MINUTE"
     " AND event_time < {swap:DateTime} + INTERVAL {window:UInt32} MINUTE"
     " AND http_user_agent LIKE {ua:String}"
-    # insights.query statements are callers' SQL, logged without their text.
+    # insights.query runs callers' SQL, not the deployment's own workload.
     f" AND user != {sql_string(ANALYST_USER)}"
 )
 

@@ -1,5 +1,5 @@
 <!--
-  CI only: Loom's user may not change log_queries, as on ClickHouse Cloud,
+  CI only: no user on this server may change log_queries, as on ClickHouse Cloud,
   so a statement or settings profile that turns query logging off fails here
   as it does there.
 -->

@@ -61,7 +61,7 @@ CAPS_DIGEST_SETTING = "SQL_loom_analyst_caps_digest"
 # many bytes, and a text cut that short is logged as only its length. Loom
 # cannot turn query logging off everywhere (ClickHouse Cloud pins
 # `log_queries` for its users), but any user may set this one.
-UNLOGGED_SETTINGS = {"log_queries_cut_to_length": 1}
+TEXT_CUT_FROM_LOG = {"log_queries_cut_to_length": 1}
 
 _BLOCK = 64  # SHA-256 block size, for HMAC's inner and outer pads
 
@@ -276,11 +276,13 @@ def _setting(name: str) -> str:
 
 def _hidden(key: bytes, data: bytes) -> str:
     """`data` as a `decrypt` expression, whose arguments ClickHouse prints as [HIDDEN]."""
+    # pyjwt[crypto] guarantees it
     from cryptography.hazmat.primitives import padding
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
     padder = padding.PKCS7(128).padder()
-    # ECB: one fixed value under one key, hidden from the log, not a message to keep secret.
+    # The key sits beside the ciphertext: this masks the pads in ClickHouse's
+    # printing, it does not keep them secret.
     encryptor = Cipher(algorithms.AES(key), modes.ECB()).encryptor()
     sealed = encryptor.update(padder.update(data) + padder.finalize()) + encryptor.finalize()
     return f"decrypt('aes-256-ecb', unhex('{sealed.hex()}'), unhex('{key.hex()}'))"
@@ -335,8 +337,8 @@ def profile_settings() -> list[str]:
         # One live row per key: ClickHouse applies the row policy after FINAL.
         "final = 1 CONST",
         "apply_row_policy_after_final = 1 CONST",
-        # The statement text stays out of system.query_log; the ledger keeps its digest.
-        *(f"{name} = {value} CONST" for name, value in UNLOGGED_SETTINGS.items()),
+        # A statement that runs is logged without its text; the ledger keeps its digest.
+        *(f"{name} = {value} CONST" for name, value in TEXT_CUT_FROM_LOG.items()),
         "read_overflow_mode = 'throw' CONST",
         "result_overflow_mode = 'throw' CONST",
         "timeout_overflow_mode = 'throw' CONST",
