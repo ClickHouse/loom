@@ -320,7 +320,7 @@ async def reembed_table(
     keys = _KEYS[table]
     order = ", ".join(keys)
     after = list(start_after) if start_after else None
-    # changed: rows removed or given other text since their page was read (this page's)
+    # changed: rows skipped since read; page_changed: this page's share
     written = held = changed = page_changed = 0
 
     async def read_again(read: dict[int, dict[str, Any]]) -> dict[int, dict[str, Any]]:
@@ -398,12 +398,9 @@ async def _read_again(
     *,
     key_only: bool,
 ) -> tuple[dict[int, dict[str, Any]], list[int]]:
-    """The rows of `read` as stored now, read FINAL by their keys under the run's filter,
-    each with the vectors being rebuilt as it was read (with `key_only` the key vector
-    alone: the value vector kept is the stored one), and the positions of the rows still
-    stored with other text. A row a redaction deleted, an erasure tombstoned or a write
-    gave other text while the page was embedded is left out; any other change (a save, a
-    status, a hand-off) is written forward, not over."""
+    """The rows of `read` as stored now (FINAL, by key, under the run's filter), each
+    with the vectors being rebuilt as read, and the positions of those stored with other
+    text. A row deleted, tombstoned or given other text since its read is left out."""
     cfg, keys = _TABLES[table], _KEY_COLUMNS[table]
     rebuilt = {cfg.get("key_vec")} if key_only else {cfg["vec"], cfg.get("key_vec")}
     vectors = rebuilt - {None}  # no key axis on two of the tables
@@ -523,7 +520,7 @@ def decode_resume(token: str) -> tuple[str, list[str], list[str]]:
     try:
         data = json.loads(base64.urlsafe_b64decode(token.encode("ascii")).decode("utf-8"))
         table, key = str(data["table"]), [str(x) for x in data["key"]]
-        keep = data.get("keep") or []
+        keep = data.get("keep", [])
     except (ValueError, KeyError, TypeError) as e:
         raise ValueError(f"not a reembed resume token: {e}") from None
     if not isinstance(keep, list) or not all(isinstance(x, str) for x in keep):
@@ -660,8 +657,8 @@ async def reembed_all(
         # Every org whose rows wait keeps its old vectors: off at the start, off
         # during the run or by now, or with a row the re-read found with other text.
         keep = frozenset(off | left_orgs | await customer.switched_off_orgs())
-        if off | left_orgs:
-            log(f"old-model rows kept for a later run in: {', '.join(sorted(off | left_orgs))}")
+        if keep:
+            log(f"old-model rows kept for a later run in: {', '.join(sorted(keep))}")
         for table in _TABLES:
             await delete_off_model(
                 ch, table, embedder.model_name, org=org, namespace=namespace, keep_orgs=keep
