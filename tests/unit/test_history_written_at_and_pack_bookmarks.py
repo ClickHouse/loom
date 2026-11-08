@@ -30,6 +30,18 @@ def test_history_rows_carry_written_at() -> None:
     assert "written_at=_version_time(" in src
 
 
+def test_history_rows_carry_their_version_exactly_as_text() -> None:
+    # A version is above 2^53, where a JavaScript caller's JSON.parse rounds the number;
+    # memory.redact takes the string back.
+    from server.memory.api.models_temporal import _MemoryHistoryRow
+
+    version = 2**60 + 1
+    row = _MemoryHistoryRow(
+        memory_id="m", version=version, confidence=1.0, created_at=datetime(2000, 1, 1)
+    )
+    assert row.version_text == str(version)
+
+
 def test_written_now_is_utc_naive_now() -> None:
     from server.memory.store import written_now
 

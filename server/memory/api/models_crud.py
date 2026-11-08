@@ -483,6 +483,16 @@ class MemoryDeleteInput(_Identity):
     memory_key: str
 
 
+def _version_number(v: int | str) -> int:
+    if isinstance(v, str):
+        if not (v.isascii() and v.isdigit()):
+            raise ValueError("`version` is a version number")
+        v = int(v)
+    if not 0 <= v < 2**64:
+        raise ValueError("`version` is a version number")
+    return v
+
+
 class MemoryDeleteVersionInput(_Identity):
     # The key to delete, under this exact identity: another agent's row of it is never read.
     # `agent` must be concrete, not "*".
@@ -495,13 +505,7 @@ class MemoryDeleteVersionInput(_Identity):
     @field_validator("version")
     @classmethod
     def _decimal(cls, v: int | str) -> int:
-        if isinstance(v, str):
-            if not (v.isascii() and v.isdigit()):
-                raise ValueError("`version` is a version number")
-            v = int(v)
-        if not 0 <= v < 2**64:
-            raise ValueError("`version` is a version number")
-        return v
+        return _version_number(v)
 
 
 class MemoryUnpinInput(_Identity):
@@ -1159,20 +1163,25 @@ class MemoryRedactInput(BaseModel):
     left alone), so a restore of the deleted key brings no text back (it answers
     `redacted: true`).
 
-    Best-effort: loom.memory is ReplacingMergeTree(version) keyed by
-    identity+memory_key (version is NOT in the sort key), so a background merge
-    collapses non-head versions into the head — a targeted historical row may
-    already be gone. Non-head versions are also never served (reads use FINAL),
-    so this matters only for the audit trail. For a durable scrub of live data,
-    delete + re-set the head.
+    The version is looked up in loom.memory_versions, the history mirror, which
+    keeps every version (a merge of loom.memory folds non-head versions into the
+    head, but not the mirror). For a durable scrub of live data, delete and
+    re-set the head.
     """
 
     org: str
     # The id every version of the memory shares; `version` picks the historical row.
     memory_id: str
-    version: int  # target row's version (from memory.set / memory.history)
+    # The target row's version, from memory.set or memory.history. A decimal string is
+    # accepted: a nanosecond version is above 2^53, which a JavaScript number rounds.
+    version: int | str
     reason: str = ""  # short justification; the audit row keeps its SHA-256 and length
     redacted_by: str = ""  # actor for the audit row (caller-supplied)
+
+    @field_validator("version")
+    @classmethod
+    def _decimal(cls, v: int | str) -> int:
+        return _version_number(v)
 
 
 class MemoryRedactOutput(BaseModel):

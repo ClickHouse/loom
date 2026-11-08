@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "../test/rtl";
+import { act, cleanup, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryDetail, MemoryMoveResult, MyNamespaceEntry, WhoAmI } from "../api";
@@ -45,12 +45,16 @@ const MOVED: MemoryMoveResult = {
 
 // The toast store has no viewport in this render; assert the call.
 vi.mock("./Toast", () => ({ toast: vi.fn(), toastError: vi.fn(), ToastViewport: () => null }));
+vi.mock("./ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true), ConfirmViewport: () => null }));
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
     ...actual,
     getMemory: vi.fn(async () => LIVE),
+    setMemory: vi.fn(),
+    deleteMemory: vi.fn(),
+    pinMemory: vi.fn(),
     moveMemory: vi.fn(
       async (_id: unknown, fromKey: string, toKey: string, opts: { dryRun?: boolean; keepRedirect?: boolean } = {}) =>
         opts.dryRun
@@ -77,7 +81,7 @@ vi.mock("../api", async (importOriginal) => {
     listMine: vi.fn(async () => []),
   };
 });
-import { getMemory, moveMemory } from "../api";
+import { deleteMemory, getMemory, moveMemory, pinMemory, setMemory } from "../api";
 import { toast } from "./Toast";
 
 const row = (namespace: string, role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
@@ -185,6 +189,80 @@ describe("MemoryInspector rename with redirect", () => {
     const badge = await screen.findByTestId("redirect-badge");
     expect(badge).toHaveTextContent("redirects to prefs/coffee");
     expect(toast).toHaveBeenCalledWith("Renamed to prefs/coffee — the old key redirects to it", "ok");
+  });
+
+  it("holds the redirect on a no_delete row, which a rename without one would delete", async () => {
+    seed("writer");
+    vi.mocked(getMemory).mockResolvedValue({ ...LIVE, lock_mode: "no_delete" });
+    await open();
+    await openRename();
+    const form = screen.getByTestId("rename-form");
+    const redirect = within(form).getByRole("checkbox", { name: "Keep old key readable (redirect)" });
+    expect(redirect).toBeChecked();
+    expect(redirect).toBeDisabled();
+    const input = within(form).getByLabelText("New key");
+    await userEvent.clear(input);
+    await userEvent.type(input, "prefs/coffee");
+    await userEvent.click(within(form).getByRole("button", { name: "Rename" }));
+    await waitFor(() => expect(moveMemory).toHaveBeenCalled());
+    expect(vi.mocked(moveMemory).mock.calls[0][3]).toEqual({ keepRedirect: true, dryRun: false });
+  });
+
+  it("a rename that answers after the drawer moved leaves the new key's drawer, and says where the old key went", async () => {
+    seed("writer");
+    let finish: (r: MemoryMoveResult) => void = () => {};
+    vi.mocked(moveMemory).mockImplementationOnce(() => new Promise((r) => (finish = r)));
+    const view = render(
+      <MemoryInspector identity={identity} memoryKey="coffee_pref" onClose={() => {}} onChanged={() => {}} />,
+    );
+    await screen.findByText("oat milk, no sugar");
+    await openRename();
+    const form = screen.getByTestId("rename-form");
+    const input = within(form).getByLabelText("New key");
+    await userEvent.clear(input);
+    await userEvent.type(input, "prefs/coffee");
+    await userEvent.click(within(form).getByRole("button", { name: "Rename" }));
+    vi.mocked(getMemory).mockResolvedValue({ ...LIVE, value: "black" });
+    view.rerender(
+      <MemoryInspector identity={identity} memoryKey="morning_routine" onClose={() => {}} onChanged={() => {}} />,
+    );
+    await screen.findByText("black");
+    await act(async () => finish({ ...MOVED, redirected: false }));
+    // The drawer still shows morning_routine, and followMoved did not run: the store still
+    // holds the key seed() opened.
+    expect(screen.getByText("black")).toBeInTheDocument();
+    expect(useStore.getState().inspectedMemoryKey).toBe("coffee_pref");
+    expect(toast).toHaveBeenCalledWith("Renamed coffee_pref to prefs/coffee — the old key was deleted", "ok");
+  });
+
+  it("a rename cancelled while it runs reads the key again when it answers, under a new Edit", async () => {
+    seed("writer");
+    let finish: (r: MemoryMoveResult) => void = () => {};
+    vi.mocked(moveMemory).mockImplementationOnce(() => new Promise((r) => (finish = r)));
+    const onClose = vi.fn();
+    render(<MemoryInspector identity={identity} memoryKey="coffee_pref" onClose={onClose} onChanged={() => {}} />);
+    await screen.findByText("oat milk, no sugar");
+    await openRename();
+    const form = screen.getByTestId("rename-form");
+    const input = within(form).getByLabelText("New key");
+    await userEvent.clear(input);
+    await userEvent.type(input, "prefs/coffee");
+    await userEvent.click(within(form).getByRole("button", { name: "Rename" }));
+    await userEvent.click(within(form).getByRole("button", { name: "Cancel" }));
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    vi.mocked(getMemory).mockResolvedValue({ found: false } as never);
+    await act(async () => finish({ ...MOVED, redirected: false }));
+    // The key was deleted: the drawer reads it again and shows it gone, with no form left
+    // open behind it, so one Escape closes the drawer.
+    expect(await screen.findByText(/not found/i)).toBeInTheDocument();
+    expect(toast).toHaveBeenCalledWith("Renamed coffee_pref to prefs/coffee — the old key was deleted", "ok");
+    // The shortcuts have no row to act on, so none of them writes the deleted key back.
+    await userEvent.keyboard("edp{Meta>}{Enter}{/Meta}");
+    expect(setMemory).not.toHaveBeenCalled();
+    expect(deleteMemory).not.toHaveBeenCalled();
+    expect(pinMemory).not.toHaveBeenCalled();
+    await userEvent.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalled();
   });
 
   it("unticking the redirect sends keep_redirect false and follows the new key", async () => {

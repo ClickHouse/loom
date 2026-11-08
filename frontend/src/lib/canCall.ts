@@ -88,6 +88,14 @@ export const OP_MIN_ROLE = {
   // The inspector's Restore on a superseded row and the Review queue's Auto-resolved Undo.
   "memory.restore": WRITER,
   "memory.unpin": ADMIN,
+  // The inspector's lifecycle actions.
+  "memory.lock": WRITER,
+  "memory.unlock": ADMIN,
+  "memory.reject": WRITER,
+  "memory.promote": ADMIN,
+  "memory.demote": ADMIN,
+  "memory.redact": ADMIN,
+  "memory.outcome": WRITER,
   // Conversations' recording toggle: a namespace setting, ADMIN on the namespace.
   "conversation.set_logging": ADMIN,
   // A repository card's Docs and Sources facets (`canCallOn`): Add a document and Remove,

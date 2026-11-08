@@ -947,6 +947,8 @@ export interface MemoryHistoryEntry {
   // A namespace-wide history interleaves several writers' rows of the key.
   memory_id?: string;
   version: number;
+  /** The version exactly, as a decimal string: the number is past 2^53. */
+  version_text?: string;
   value: unknown;
   created_at: string;
   // When this version was written; `created_at` is the key's first write on every version.

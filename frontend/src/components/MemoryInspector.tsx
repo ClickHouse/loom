@@ -20,6 +20,17 @@ import type {
   MemoryProvenance,
   MemoryMoveResult,
 } from "../api";
+import {
+  memoryBacklinks,
+  memoryEvidence,
+  recordMemoryOutcome,
+  redactMemoryVersion,
+  shareMemory,
+  unlockMemory,
+  unshareMemory,
+  type MemoryBacklinkEdge,
+  type MemoryEvidenceItem,
+} from "../api/memoryLifecycle";
 import { sharedTagVocabulary } from "../lib/sharedReads";
 import { readSession, writeSession } from "../lib/afterPaint";
 import {
@@ -39,6 +50,7 @@ import {
   restoreMemory,
   relatedFacts,
 } from "../api";
+import { LockMemoryDialog, RedactVersionDialog, RejectMemoryDialog } from "../flows/MemoryReasonDialogs";
 import { navigationHref, useStore } from "../lib/state";
 import { graphSeedHref, isModifiedClick, openGraphAt } from "../lib/graphLink";
 import { AgentBadge } from "./AgentBadge";
@@ -52,7 +64,7 @@ import { CHIP_OUTLINE_CLASS } from "./ui/Chip";
 import { confirmAction } from "./ConfirmDialog";
 import { CopyToNamespaceDialog } from "../flows/CopyToNamespaceDialog";
 import { ThreadReplayDialog, type ReplayThread } from "./ThreadReplayDialog";
-import { relativeTime, formatValue, humanizeError, parseChTime, SENTINEL_AGENTS } from "../lib/format";
+import { absoluteTime, relativeTime, formatValue, humanizeError, parseChTime, SENTINEL_AGENTS } from "../lib/format";
 import { detectEncodedValue } from "../lib/encoded";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
@@ -60,9 +72,16 @@ import { historyChange, previousVersion } from "../lib/historyChange";
 import { MenuTrigger } from "./ui/Menu";
 import { shortcutOff } from "../lib/shortcuts";
 
-type SectionId = "history" | "related" | "provenance" | "lineage";
+type SectionId = "history" | "related" | "provenance" | "lineage" | "evidence" | "links";
 const SECTIONS_KEY = "loom_inspector_sections_v1";
-const CLOSED: Record<SectionId, boolean> = { history: false, related: false, provenance: false, lineage: false };
+const CLOSED: Record<SectionId, boolean> = {
+  history: false,
+  related: false,
+  provenance: false,
+  lineage: false,
+  evidence: false,
+  links: false,
+};
 
 /** A secondary section of the drawer: a heading that opens, and reads, on demand. */
 function Disclosure({
@@ -120,7 +139,7 @@ interface InspectorProps {
 /**
  * Right-edge drawer showing one memory: value, metadata, tags, provenance,
  * related rows, history and lineage. The footer is one row: Edit and Delete, and a More
- * menu with Pin, Verify, Copy to…, Rename and Copy.
+ * menu with the rest of the row's actions.
  *
  * The shell is a Radix `Dialog`: portal, overlay, focus trap, Escape, body scroll lock;
  * focus returns to the card that opened it on close (captured here — a triggerless Radix
@@ -145,6 +164,15 @@ export function MemoryInspector({
   const [related, setRelated] = useState<RelatedMemoryRow[] | null>(null);
   const [lineage, setLineage] = useState<LineageStep[] | null>(null);
   const [provenance, setProvenance] = useState<MemoryProvenance | null>(null);
+  const [evidence, setEvidence] = useState<MemoryEvidenceItem[] | null>(null);
+  const [evidenceCut, setEvidenceCut] = useState(false);
+  // The inspection whose row `detail` holds: the section reads keyed to the row (Evidence)
+  // wait for it, since a key change leaves the previous row on screen for a render.
+  const detailOf = useRef(-1);
+  const [links, setLinks] = useState<{ in: MemoryBacklinkEdge[]; out: MemoryBacklinkEdge[] } | null>(null);
+  // The Lock or Mark-as-wrong dialog, over the drawer.
+  const [reasonDialog, setReasonDialog] = useState<"lock" | "reject" | null>(null);
+  const [redacting, setRedacting] = useState<{ entry: MemoryHistoryEntry; label: string } | null>(null);
   const [conflictCount, setConflictCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   // A Restore in flight for the memory on screen; reset when the drawer moves on.
@@ -162,8 +190,8 @@ export function MemoryInspector({
   const [renaming, setRenaming] = useState(false);
   const [namespaceTags, setNamespaceTags] = useState<string[]>([]);
   const [tagDraft, setTagDraft] = useState("");
-  // The drawer reads what is open. History, related, provenance and lineage are
-  // disclosures, closed by default; a section reads once when it is opened, and which
+  // The drawer reads what is open. History, related, provenance, lineage, evidence and
+  // links are disclosures, closed by default; a section reads once when it is opened, and which
   // ones a person keeps open is remembered for the session so their next card opens the
   // same way.
   const [sections, setSections] = useState<Record<SectionId, boolean>>(
@@ -173,9 +201,14 @@ export function MemoryInspector({
   const requested = useRef<Set<SectionId>>(new Set());
   // Bumped whenever the drawer moves to another memory or identity, or closes.
   const inspection = useRef(0);
-  // The memory the drawer has open, so a restore that answers late can tell
-  // whether the drawer came back to it. Compared by value: parents rebuild identity.
+  // The memory the drawer has open, compared by value (parents rebuild identity): a write
+  // that answers late checks it before touching the drawer.
   const shown = useRef<string | null>(null);
+  // Bumped by each Edit and each Rename, so a save or a move that answers late closes only
+  // the form it came from. `renameSession` is the count when Rename opened: `onRenamed`
+  // runs in the closure of that render.
+  const formSession = useRef(0);
+  const [renameSession, setRenameSession] = useState(0);
   const toggleSection = (id: SectionId) =>
     setSections((cur) => {
       const next = { ...cur, [id]: !cur[id] };
@@ -203,9 +236,8 @@ export function MemoryInspector({
       inspect(key, { agent: identity.agent, userId: identity.user_id, sessionId: identity.session_id }));
   const searchByTag = useStore((s) => s.searchByTag);
   const openConversationThread = useStore((s) => s.openConversationThread);
-  // A dialog over the drawer (Copy to…, the source conversation) owns the keys and the
-  // outside clicks while it is open.
-  const dialogOver = copyOpen || sourceThread !== null;
+  // A dialog over the drawer owns the keys and the outside clicks while it is open.
+  const dialogOver = copyOpen || sourceThread !== null || reasonDialog !== null || redacting !== null;
   // An entity popover's memory link swaps the drawer in place; the focus goes to the
   // drawer, as on any open, since the chip that had it is about to go.
   const inspectInPlace = (key: string) => {
@@ -233,13 +265,12 @@ export function MemoryInspector({
 
   // Escape: cancels an active edit first; while a field has focus it is
   // left to the field; otherwise it closes the drawer. Radix only delivers
-  // this when the drawer is the topmost layer, so the Copy-to dialog's own
-  // Escape never reaches here.
+  // this when the drawer is the topmost layer, so a dialog over the drawer
+  // keeps its own Escape.
   const onEscapeKeyDown = (e: KeyboardEvent) => {
     if (editing) {
       e.preventDefault();
       setEditing(false);
-      setDraft("");
       return;
     }
     if (renaming) {
@@ -254,7 +285,7 @@ export function MemoryInspector({
 
   // Outside pointer-down: a click on a toast (dismissing an error raised
   // from here) is not a dismissal; the expanded backdrop collapses back to
-  // the drawer; an active edit or the Copy-to dialog keep the drawer open;
+  // the drawer; an active edit or a dialog over the drawer keep it open;
   // otherwise it closes.
   const onPointerDownOutside = (e: Event) => {
     if (keepOpenOnToasts(e)) return;
@@ -268,10 +299,10 @@ export function MemoryInspector({
 
   // e/d/p drive edit/delete/pin, ⌘/Ctrl+Enter saves an edit. Bound to the
   // dialog content, so they fire only while the drawer holds focus. Radix
-  // portals bubble React events through the tree, so the Copy-to dialog's
-  // keystrokes are skipped explicitly.
+  // portals bubble React events through the tree, so keystrokes from a dialog
+  // over the drawer are skipped explicitly. A key that is not found has nothing to act on.
   const onContentKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (dialogOver) return;
+    if (dialogOver || !detail?.found) return;
     const t = e.target;
     const typing =
       t instanceof HTMLElement && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable);
@@ -281,10 +312,10 @@ export function MemoryInspector({
       return;
     }
     if (typing || e.metaKey || e.ctrlKey || e.altKey || shortcutOff(e.nativeEvent)) return;
-    if (e.key === "e" && !editing) {
+    if (e.key === "e" && !editing && !renaming && !valueLocked) {
       e.preventDefault();
       onStartEdit();
-    } else if (e.key === "d") {
+    } else if (e.key === "d" && !deleteLocked) {
       e.preventDefault();
       onDelete();
     } else if (e.key === "p") {
@@ -295,13 +326,20 @@ export function MemoryInspector({
 
   useEffect(() => {
     setLoading(true);
+    // Another key: an edit, a rename or a dialog of the one left does not carry over.
+    setEditing(false);
     setRenaming(false);
+    setReasonDialog(null);
+    setRedacting(null);
     setRestoring(false);
     setDetail(null);
     setHistory(null);
     setRelated(null);
     setLineage(null);
     setProvenance(null);
+    setEvidence(null);
+    setEvidenceCut(false);
+    setLinks(null);
     inspection.current += 1;
     shown.current = shownAs(identity, memoryKey);
     requested.current = new Set();
@@ -312,6 +350,7 @@ export function MemoryInspector({
     getMemory(identity, memoryKey, { include_recall_breakdown: true })
       .then((res) => {
         if (!live) return;
+        detailOf.current = inspection.current;
         setDetail(res);
         setLoading(false);
       })
@@ -320,7 +359,7 @@ export function MemoryInspector({
         toast(`Load failed: ${humanizeError(e)}`, "error");
         setLoading(false);
       });
-    // Nothing else is read on open. The four secondary sections read when opened (below);
+    // Nothing else is read on open. The secondary sections read when opened (below);
     // the tag vocabulary when the add-tag input is focused. Reading every section on open
     // costs seven reads and about 118 MB of ClickHouse for six kilobytes on the screen.
     return () => {
@@ -331,6 +370,7 @@ export function MemoryInspector({
     };
   }, [identity, memoryKey]);
 
+  const loadHistory = (key: string) => memoryHistory(identity, key, 8).then((r) => r.rows || []);
   useEffect(() => {
     const k = memoryKey;
     const mine = inspection.current;
@@ -348,9 +388,9 @@ export function MemoryInspector({
         .finally(() => finish(id));
     };
     want("history", () =>
-      memoryHistory(identity, k, 8)
-        .then((r) => {
-          if (fresh()) setHistory(r.rows || []);
+      loadHistory(k)
+        .then((rows) => {
+          if (fresh()) setHistory(rows);
         })
         .catch(() => {
           if (fresh()) setHistory([]);
@@ -374,6 +414,30 @@ export function MemoryInspector({
           if (fresh()) setLineage([]);
         }),
     );
+    // Evidence is looked up under the row's own identity (an extracted row carries its
+    // session), so it waits for the row.
+    if (detail && detailOf.current === mine)
+      want("evidence", () =>
+        memoryEvidence(rowIdentity(identity, detail), k)
+          .then((r) => {
+            if (fresh()) {
+              setEvidence(r.items ?? []);
+              setEvidenceCut(r.truncated);
+            }
+          })
+          .catch(() => {
+            if (fresh()) setEvidence([]);
+          }),
+      );
+    want("links", () =>
+      memoryBacklinks(identity, k)
+        .then((r) => {
+          if (fresh()) setLinks({ in: r.links_in ?? [], out: r.links_out ?? [] });
+        })
+        .catch(() => {
+          if (fresh()) setLinks({ in: [], out: [] });
+        }),
+    );
     want("provenance", () =>
       getProvenance(identity, k)
         .then((r) => {
@@ -383,7 +447,7 @@ export function MemoryInspector({
           if (fresh()) setProvenance(null);
         }),
     );
-  }, [identity, memoryKey, sections]);
+  }, [identity, memoryKey, sections, detail]);
 
   // The conflict count is its own effect so a role that resolves after the
   // drawer opened does not re-read the memory. Only when the role here is
@@ -397,6 +461,29 @@ export function MemoryInspector({
   const canMove = canCall("memory.move", role, whoami);
   const canTogglePin = canCall(detail?.pinned ? "memory.unpin" : "memory.pin", role, whoami);
   const canRestore = canCall("memory.restore", role, whoami);
+  const canLock = canCall("memory.lock", role, whoami);
+  const canUnlock = canCall("memory.unlock", role, whoami);
+  const canReject = canCall("memory.reject", role, whoami);
+  const canShare = canCall("memory.promote", role, whoami);
+  const canUnshare = canCall("memory.demote", role, whoami);
+  // memory.promote refuses a profile row and a high one.
+  const shareable = detail?.memory_type !== "profile" && detail?.sensitivity !== "high";
+  const canRedact = canCall("memory.redact", role, whoami);
+  const canJudge = canCall("memory.outcome", role, whoami);
+  // Both lock modes refuse a delete; read_only also refuses a value or expiry change. No
+  // lock gates tags (server/memory/domain/lock.py).
+  const valueLocked = detail?.lock_mode === "read_only";
+  // A read_only lock that lands while an edit or a rename is open closes it, and says so:
+  // both would answer 423.
+  const formOpen = editing || renaming;
+  useEffect(() => {
+    if (!valueLocked || !formOpen) return;
+    toast(`Locked read only: the open ${editing ? "edit" : "rename"} was closed`, "info");
+    setEditing(false);
+    setRenaming(false);
+  }, [valueLocked, formOpen]);
+  const deleteLocked = !!detail?.lock_mode;
+  const linkCount = links ? links.in.length + links.out.length : 0;
   const verified = detail?.verification === "human" || detail?.verification === "process";
   useEffect(() => {
     setConflictCount(0);
@@ -458,6 +545,116 @@ export function MemoryInspector({
     }
   };
 
+  // A person's verdict on the fact: it helped, or relying on it went badly.
+  const onOutcome = async (outcome: "positive" | "negative") => {
+    if (!detail?.memory_id) return;
+    try {
+      // By id: the op resolves a key in the `-` session only, and an extracted row has its own.
+      const r = await recordMemoryOutcome(identity, detail.memory_id, outcome);
+      if (!r.recorded) {
+        toast("Couldn't record that", "error");
+        return;
+      }
+      if (r.quarantined) {
+        // Enough bad outcomes retire the memory: it leaves search.
+        toast("Recorded as unhelpful; the memory is now rejected", "ok");
+        await reread();
+        return;
+      }
+      toast(outcome === "positive" ? "Recorded as helpful" : "Recorded as unhelpful", "ok");
+    } catch (e) {
+      toast(`Couldn't record that: ${humanizeError(e)}`, "error");
+    }
+  };
+
+  // A past version's value is scrubbed in place, with the reason (for a leaked secret or
+  // personal data): `memory.redact`, through RedactVersionDialog.
+  const redact = async (h: MemoryHistoryEntry, label: string, reason: string) => {
+    if (!h.memory_id || !h.version_text) throw new Error(`${label} has no exact version to redact.`);
+    const r = await redactMemoryVersion(identity.org, h.memory_id, h.version_text, reason);
+    if (r.refused_head) throw new Error(`${label} is a live version; edit or delete the memory instead.`);
+    if (!r.redacted) throw new Error(`${label} is no longer recorded.`);
+    toast(`Redacted ${label}`, "ok");
+    const mine = inspection.current;
+    loadHistory(memoryKey)
+      .then((rows) => {
+        if (inspection.current === mine) setHistory(rows);
+      })
+      .catch(() => {});
+  };
+
+  // A write changes the row: read it again, unless the drawer moved off the key this
+  // closure was made for; a failed re-read leaves the drawer as it was.
+  const showing = () => shown.current === shownAs(identity, memoryKey);
+  const reread = async () => {
+    onChanged();
+    if (!showing()) return;
+    try {
+      const row = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
+      if (!showing()) return;
+      setDetail(row);
+      // A row the write took away leaves no form open behind "not found".
+      if (!row.found) {
+        setEditing(false);
+        setRenaming(false);
+      }
+    } catch (e) {
+      if (showing()) toast(`Couldn't read the memory again: ${humanizeError(e)}`, "error");
+    }
+  };
+
+  const onUnlock = async () => {
+    if (!detail) return;
+    try {
+      const r = await unlockMemory(rowIdentity(identity, detail), memoryKey);
+      if (!r.unlocked) {
+        toast(r.reason === "not_found" ? "This memory is no longer live" : "This memory carried no lock", "info");
+        return;
+      }
+      toast("Unlocked", "ok");
+    } catch (e) {
+      toast(`Unlock failed: ${humanizeError(e)}`, "error");
+      return;
+    }
+    await reread();
+  };
+
+  // Promote copies the row to the namespace's shared layer, read by every agent there;
+  // demote removes that copy and leaves this row as it is.
+  const onShare = async () => {
+    if (!detail) return;
+    const ok = await confirmAction({
+      title: `Share ${memoryKey} with every agent in ${identity.namespace}?`,
+      message: "This value becomes the namespace's shared memory under the key, replacing any shared there now.",
+      confirmLabel: "Share",
+    });
+    if (!ok) return;
+    try {
+      const r = await shareMemory(rowIdentity(identity, detail), memoryKey);
+      toast(`Shared as ${r.shared_memory_key}`, "ok");
+      onChanged();
+    } catch (e) {
+      toast(`Share failed: ${humanizeError(e)}`, "error");
+    }
+  };
+
+  const onUnshare = async () => {
+    const ok = await confirmAction({
+      title: `Stop sharing ${memoryKey} in ${identity.namespace}?`,
+      message:
+        "The namespace's shared memory under the key goes, whichever agent shared it, if there is one. This memory stays.",
+      confirmLabel: "Stop sharing",
+    });
+    if (!ok) return;
+    try {
+      const r = await unshareMemory(identity, memoryKey);
+      toast(r.demoted ? "No longer shared" : "This memory was not shared", "ok");
+      onChanged();
+    } catch (e) {
+      toast(`Stop sharing failed: ${humanizeError(e)}`, "error");
+    }
+  };
+
   // Copy the whole memory — key, value, and every metadata field + tags —
   // as a readable text block, matching what the panel shows.
   const onCopyAll = () => {
@@ -486,6 +683,7 @@ export function MemoryInspector({
 
   const onStartEdit = () => {
     if (!detail) return;
+    formSession.current += 1;
     setDraft(formatValue(detail.value));
     setEditing(true);
   };
@@ -496,7 +694,7 @@ export function MemoryInspector({
     const prev = detail.tags || [];
     setDetail({ ...detail, tags: nextTags });
     try {
-      await setMemory(identity, memoryKey, detail.value, {
+      await setMemory(rowIdentity(identity, detail), memoryKey, detail.value, {
         memoryType: detail.memory_type || "semantic",
         tags: nextTags,
         charLimit: detail.char_limit ?? undefined,
@@ -525,7 +723,7 @@ export function MemoryInspector({
   const onChangeExpiry = async (ttlSeconds: number | null) => {
     if (!detail) return;
     try {
-      await setMemory(identity, memoryKey, detail.value, {
+      await setMemory(rowIdentity(identity, detail), memoryKey, detail.value, {
         memoryType: detail.memory_type || "semantic",
         tags: detail.tags,
         // ttlSeconds=null is "Never expire" — clearExpiry overrides any
@@ -535,16 +733,16 @@ export function MemoryInspector({
         charLimit: detail.char_limit ?? undefined,
       });
       toast(ttlSeconds === null ? "Expiry cleared — never expires" : "Expiry updated", "ok");
-      const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
-      setDetail(fresh);
-      onChanged();
     } catch (e) {
       toast(`Expiry update failed: ${humanizeError(e)}`, "error");
+      return;
     }
+    await reread();
   };
 
   const onSaveEdit = async () => {
     if (!detail) return;
+    const session = formSession.current;
     try {
       // Parse JSON if it looks like an object/array; else keep the string.
       let nextValue: unknown = draft;
@@ -556,41 +754,39 @@ export function MemoryInspector({
           /* keep raw string */
         }
       }
-      await setMemory(identity, memoryKey, nextValue, {
+      await setMemory(rowIdentity(identity, detail), memoryKey, nextValue, {
         memoryType: detail.memory_type || "semantic",
         tags: detail.tags,
         charLimit: detail.char_limit ?? undefined,
       });
       toast("Saved", "ok");
-      setEditing(false);
-      const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
-      setDetail(fresh);
-      onChanged();
+      // A save that answers after another Edit leaves that editor open.
+      if (formSession.current === session) setEditing(false);
     } catch (e) {
       toast(`Save failed: ${humanizeError(e)}`, "error");
+      return;
     }
+    await reread();
   };
 
   // After a move: with a redirect the old key still answers (now carrying
   // `canonical_key`), so the row is re-read and the badge appears; without
   // one the old key is tombstoned and the drawer follows the new key.
   const onRenamed = async (r: MemoryMoveResult) => {
+    const left = r.redirected ? "the old key redirects to it" : "the old key was deleted";
+    // A move that answers after the drawer moved, or after another Edit or Rename, only
+    // reports and reads the row again.
+    if (!showing() || formSession.current !== renameSession) {
+      toast(`Renamed ${memoryKey} to ${r.to_key} — ${left}`, "ok");
+      await reread();
+      return;
+    }
     setRenaming(false);
-    toast(
-      r.redirected
-        ? `Renamed to ${r.to_key} — the old key redirects to it`
-        : `Renamed to ${r.to_key} — the old key was deleted`,
-      "ok",
-    );
-    onChanged();
+    toast(`Renamed to ${r.to_key} — ${left}`, "ok");
     if (r.redirected) {
-      try {
-        const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
-        setDetail(fresh);
-      } catch (e) {
-        toast(`Reload failed: ${humanizeError(e)}`, "error");
-      }
+      await reread();
     } else {
+      onChanged();
       followMoved(r.to_key);
     }
   };
@@ -618,7 +814,7 @@ export function MemoryInspector({
         toast(r.restored ? `Restored ${memoryKey}` : `Nothing to restore for ${memoryKey}`, r.restored ? "ok" : "info");
         // Back on this memory (A, B, A): its load read may have shown the row before the
         // restore, so read it again.
-        if (r.restored && shown.current === shownAs(identity, memoryKey)) {
+        if (r.restored && showing()) {
           const now = inspection.current;
           getMemory(identity, memoryKey, { include_recall_breakdown: true })
             .then((fresh) => {
@@ -647,6 +843,7 @@ export function MemoryInspector({
   };
 
   const onDelete = async () => {
+    if (!detail) return;
     if (
       !(await confirmAction({
         title: `Delete ${memoryKey}?`,
@@ -657,7 +854,11 @@ export function MemoryInspector({
     )
       return;
     try {
-      await deleteMemory(identity, memoryKey);
+      const r = await deleteMemory(rowIdentity(identity, detail), memoryKey);
+      if (!r.tombstoned) {
+        toast("This memory is no longer live", "info");
+        return;
+      }
       toast("Deleted", "ok");
       onChanged();
       onClose();
@@ -742,6 +943,7 @@ export function MemoryInspector({
                   <RenameForm
                     identity={identity}
                     fromKey={memoryKey}
+                    mustRedirect={deleteLocked}
                     onCancel={() => setRenaming(false)}
                     onRenamed={onRenamed}
                   />
@@ -812,7 +1014,15 @@ export function MemoryInspector({
                     )}
                     <dt className="text-text-muted">Expires</dt>
                     <dd>
-                      <ExpiryEditor expiresAt={detail.expires_at ?? null} onChange={onChangeExpiry} />
+                      {valueLocked ? (
+                        detail.expires_at ? (
+                          relativeTime(detail.expires_at)
+                        ) : (
+                          "Never expires"
+                        )
+                      ) : (
+                        <ExpiryEditor expiresAt={detail.expires_at ?? null} onChange={onChangeExpiry} />
+                      )}
                     </dd>
                     <TipRow label="Last recalled" tip={RECALLED_TIP} value={recalledLabel(detail)} />
                     <TipRow label="Recall credit" tip={CREDIT_TIP} value={creditLabel(detail.recall_count)} />
@@ -948,6 +1158,30 @@ export function MemoryInspector({
                 </Disclosure>
 
                 <Disclosure
+                  id="evidence"
+                  title="Evidence"
+                  icon="chat"
+                  open={sections.evidence}
+                  onToggle={toggleSection}
+                  count={evidence?.length || undefined}
+                >
+                  {!done.has("evidence") || evidence === null ? (
+                    <LoadingSkeleton label="Loading evidence">
+                      <SkeletonText lines={2} />
+                    </LoadingSkeleton>
+                  ) : evidence.length === 0 ? (
+                    <SectionEmpty>No source turn is linked to this memory.</SectionEmpty>
+                  ) : (
+                    <>
+                      <EvidenceList items={evidence} />
+                      {evidenceCut && (
+                        <p className="mt-2 text-xs text-text-muted">The first {evidence.length} turns.</p>
+                      )}
+                    </>
+                  )}
+                </Disclosure>
+
+                <Disclosure
                   id="related"
                   title="Related"
                   icon="url"
@@ -992,6 +1226,25 @@ export function MemoryInspector({
                         </div>
                       ))}
                     </div>
+                  )}
+                </Disclosure>
+
+                <Disclosure
+                  id="links"
+                  title="Links"
+                  icon="url"
+                  open={sections.links}
+                  onToggle={toggleSection}
+                  count={linkCount || undefined}
+                >
+                  {!done.has("links") || links === null ? (
+                    <LoadingSkeleton label="Loading links">
+                      <SkeletonText lines={2} />
+                    </LoadingSkeleton>
+                  ) : linkCount === 0 ? (
+                    <SectionEmpty>No typed link points to or from this memory.</SectionEmpty>
+                  ) : (
+                    <LinkList links={links} onOpen={openMemory} />
                   )}
                 </Disclosure>
 
@@ -1066,6 +1319,16 @@ export function MemoryInspector({
                                   prevLabel={`${label} (${writtenAt})`}
                                   nextLabel={`v${history.length} (current)`}
                                 />
+                                {canRedact && !detail?.lock_mode && !h.redacted_at && h.memory_id && h.version_text && (
+                                  <Button
+                                    type="danger"
+                                    htmlType="button"
+                                    className="mt-2"
+                                    onClick={() => setRedacting({ entry: h, label })}
+                                  >
+                                    Redact {label}
+                                  </Button>
+                                )}
                               </div>
                             )}
                           </div>
@@ -1112,7 +1375,7 @@ export function MemoryInspector({
               they wrap to two rows on a narrow drawer. */}
           {detail && detail.found && (
             <footer className="px-5 py-3 border-t border-border bg-surface flex items-center gap-2 shrink-0">
-              {!editing && (
+              {!editing && !renaming && !valueLocked && (
                 <Button type="secondary" htmlType="button" iconLeft="pencil" onClick={onStartEdit}>
                   Edit
                 </Button>
@@ -1154,10 +1417,38 @@ export function MemoryInspector({
                   >
                     <MenuLabel icon="folder-open">Copy to…</MenuLabel>
                   </Dropdown.Item>
-                  {canMove && !editing && (
+                  {detail.lock_mode
+                    ? canUnlock && (
+                        <Dropdown.Item onSelect={onUnlock}>
+                          <MenuLabel icon="lock">Unlock</MenuLabel>
+                        </Dropdown.Item>
+                      )
+                    : canLock && (
+                        <Dropdown.Item
+                          onSelect={() => {
+                            menuHandsOff.current = true;
+                            setReasonDialog("lock");
+                          }}
+                        >
+                          <MenuLabel icon="lock">Lock…</MenuLabel>
+                        </Dropdown.Item>
+                      )}
+                  {canShare && shareable && (
+                    <Dropdown.Item onSelect={() => void onShare()}>
+                      <MenuLabel icon="users">Share with every agent</MenuLabel>
+                    </Dropdown.Item>
+                  )}
+                  {canUnshare && (
+                    <Dropdown.Item onSelect={() => void onUnshare()}>
+                      <MenuLabel icon="user">Stop sharing</MenuLabel>
+                    </Dropdown.Item>
+                  )}
+                  {canMove && !editing && !valueLocked && (
                     <Dropdown.Item
                       onSelect={() => {
                         menuHandsOff.current = true;
+                        formSession.current += 1;
+                        setRenameSession(formSession.current);
                         setRenaming(true);
                       }}
                     >
@@ -1167,6 +1458,27 @@ export function MemoryInspector({
                   <Dropdown.Item onSelect={onCopyAll}>
                     <MenuLabel icon="copy">Copy</MenuLabel>
                   </Dropdown.Item>
+                  {canJudge && (
+                    <>
+                      <Dropdown.Item onSelect={() => void onOutcome("positive")}>
+                        <MenuLabel icon="check">This helped</MenuLabel>
+                      </Dropdown.Item>
+                      <Dropdown.Item onSelect={() => void onOutcome("negative")}>
+                        <MenuLabel icon="warning">This misled</MenuLabel>
+                      </Dropdown.Item>
+                    </>
+                  )}
+                  {canReject && !detail.lock_mode && (
+                    <Dropdown.Item
+                      type="danger"
+                      onSelect={() => {
+                        menuHandsOff.current = true;
+                        setReasonDialog("reject");
+                      }}
+                    >
+                      <MenuLabel icon="cross">Mark as wrong…</MenuLabel>
+                    </Dropdown.Item>
+                  )}
                 </Dropdown.Content>
               </Dropdown>
               {/* Verify sits in More; who attested stays in view. */}
@@ -1178,13 +1490,47 @@ export function MemoryInspector({
                   </span>
                 </span>
               )}
+              {detail.lock_mode && (
+                <Tip content={lockTip(detail)}>
+                  <span className="min-w-0 inline-flex items-center gap-1 text-xs text-text-muted">
+                    <Icon name="lock" size="sm" aria-hidden="true" />
+                    <span className="truncate">{detail.lock_mode === "read_only" ? "Read only" : "No delete"}</span>
+                  </span>
+                </Tip>
+              )}
               <div className="flex-1" />
-              <Button type="danger" htmlType="button" iconLeft="trash" onClick={onDelete}>
-                Delete
-              </Button>
+              {!deleteLocked && (
+                <Button type="danger" htmlType="button" iconLeft="trash" onClick={onDelete}>
+                  Delete
+                </Button>
+              )}
             </footer>
           )}
           <CopyToNamespaceDialog open={copyOpen} onOpenChange={setCopyOpen} source={identity} memoryKey={memoryKey} />
+          {redacting && (
+            <RedactVersionDialog
+              memoryKey={memoryKey}
+              label={redacting.label}
+              onSubmit={(reason) => redact(redacting.entry, redacting.label, reason)}
+              onClose={() => setRedacting(null)}
+            />
+          )}
+          {reasonDialog === "lock" && detail && (
+            <LockMemoryDialog
+              row={rowIdentity(identity, detail)}
+              memoryKey={memoryKey}
+              onDone={() => void reread()}
+              onClose={() => setReasonDialog(null)}
+            />
+          )}
+          {reasonDialog === "reject" && detail && (
+            <RejectMemoryDialog
+              row={rowIdentity(identity, detail)}
+              memoryKey={memoryKey}
+              onDone={() => void reread()}
+              onClose={() => setReasonDialog(null)}
+            />
+          )}
           {/* Reading the source conversation keeps the drawer: the replay opens over it, and
               Conversations is one link away. */}
           <ThreadReplayDialog
@@ -1564,6 +1910,66 @@ function CodeLinks({ links }: { links: CodeLink[] }) {
   );
 }
 
+/** What the lock badge's tip says: why, by whom, and until when. */
+function lockTip(detail: MemoryDetail): string {
+  const parts = [detail.lock_reason || "Locked"];
+  if (detail.locked_by) parts.push(`by ${detail.locked_by}`);
+  if (detail.lock_until) parts.push(`until ${absoluteTime(detail.lock_until)}`);
+  return parts.join(" · ");
+}
+
+const EVIDENCE_SCOPE: Record<MemoryEvidenceItem["scope"], string> = {
+  cited: "Cited",
+  lexical: "Matched",
+  window: "Window",
+  derived: "Derived",
+  other: "Other",
+};
+
+/** The source turns behind a memory (memory.evidence): who said it, when, and the span. */
+function EvidenceList({ items }: { items: MemoryEvidenceItem[] }) {
+  return (
+    <ul className="space-y-2">
+      {items.map((e) => (
+        <li key={e.evidence_id} className="rounded-md bg-surface-2 px-2 py-1.5 text-xs">
+          <div className="flex items-center gap-2 text-text-muted">
+            <Badge text={EVIDENCE_SCOPE[e.scope] ?? e.scope} state="neutral" size="sm" />
+            <span>{e.role}</span>
+            {e.observed_at && <span className="ml-auto tabular">{relativeTime(e.observed_at)}</span>}
+          </div>
+          <p className="mt-1 text-text line-clamp-3 [overflow-wrap:anywhere]">{e.span || e.content}</p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Typed links into and out of a memory (memory.backlinks). */
+function LinkList({
+  links,
+  onOpen,
+}: {
+  links: { in: MemoryBacklinkEdge[]; out: MemoryBacklinkEdge[] };
+  onOpen: (key: string) => void;
+}) {
+  const rows = [
+    ...links.out.map((l) => ({ ...l, dir: "out" as const })),
+    ...links.in.map((l) => ({ ...l, dir: "in" as const })),
+  ];
+  return (
+    <ul className="space-y-1">
+      {rows.map((l) => (
+        <li key={`${l.dir}-${l.relation}-${l.memory_key}`} className="flex items-center gap-2 text-xs">
+          <span className="text-text-muted shrink-0">{l.dir === "out" ? l.relation : `${l.relation} from`}</span>
+          <Link component="button" size="sm" onClick={() => onOpen(l.memory_key)} className="font-mono truncate">
+            {l.memory_key}
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 const EXPIRY_PRESETS: Array<{ label: string; ttl: number | null }> = [
   { label: "Never", ttl: null },
   { label: "1 hour", ttl: 60 * 60 },
@@ -1633,16 +2039,21 @@ function RedirectBadge({ canonicalKey, onFollow }: { canonicalKey: string; onFol
 function RenameForm({
   identity,
   fromKey,
+  mustRedirect,
   onCancel,
   onRenamed,
 }: {
   identity: Identity;
   fromKey: string;
+  /** A locked row keeps its old key: a rename without the redirect deletes it. */
+  mustRedirect: boolean;
   onCancel: () => void;
   onRenamed: (r: MemoryMoveResult) => void;
 }) {
   const [toKey, setToKey] = useState(fromKey);
   const [keepRedirect, setKeepRedirect] = useState(true);
+  // A lock that lands while the form is open holds the redirect on.
+  const redirect = keepRedirect || mustRedirect;
   const [preview, setPreview] = useState<MemoryMoveResult | null>(null);
   const [busy, setBusy] = useState<"preview" | "rename" | null>(null);
   const target = toKey.trim();
@@ -1651,7 +2062,7 @@ function RenameForm({
   const call = async (dryRun: boolean) => {
     setBusy(dryRun ? "preview" : "rename");
     try {
-      const r = await moveMemory(identity, fromKey, target, { keepRedirect, dryRun });
+      const r = await moveMemory(identity, fromKey, target, { keepRedirect: redirect, dryRun });
       if (dryRun) setPreview(r);
       else onRenamed(r);
     } catch (e) {
@@ -1688,14 +2099,15 @@ function RenameForm({
       />
       <Checkbox
         label="Keep old key readable (redirect)"
-        checked={keepRedirect}
+        checked={redirect}
+        disabled={mustRedirect}
         onCheckedChange={(c) => {
           setKeepRedirect(c === true);
           setPreview(null);
         }}
       />
       <p className="text-xs text-text-muted leading-relaxed">
-        {keepRedirect
+        {redirect
           ? "A reader of the old key keeps getting the old value, with the new key named; nothing changes under an agent that still reads it."
           : "The old key is deleted (restorable for 14 days). An agent that still reads it will get “not found”."}
       </p>
@@ -1714,7 +2126,7 @@ function RenameForm({
                 as <span className="font-mono">{preview.memory_type}</span>
               </>
             )}
-            {preview.redirected || keepRedirect ? (
+            {preview.redirected || redirect ? (
               <>
                 {" "}
                 and leave <span className="font-mono">{preview.from_key}</span> redirecting to it.

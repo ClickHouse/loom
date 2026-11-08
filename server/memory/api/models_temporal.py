@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from server.memory.api.models_common import MemoryType, _Identity
 
@@ -165,6 +165,10 @@ class MemoryHistoryInput(_Identity):
 class _MemoryHistoryRow(BaseModel):
     memory_id: str
     version: int
+    # The same version as a decimal string, exact for a JavaScript caller (the number is
+    # above 2^53, which JSON.parse rounds): send this one to memory.redact. Set from
+    # `version`.
+    version_text: str = ""
     value: dict[str, Any] | list[Any] | str | int | float | bool | None = None
     confidence: float
     source_trace: str = ""
@@ -197,6 +201,11 @@ class _MemoryHistoryRow(BaseModel):
     lock_mode: str = ""
     lock_reason: str = ""
     lock_until: datetime | None = None
+
+    @model_validator(mode="after")
+    def _version_text(self) -> _MemoryHistoryRow:
+        self.version_text = str(self.version)
+        return self
 
 
 class MemoryHistoryOutput(BaseModel):

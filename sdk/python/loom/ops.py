@@ -13125,6 +13125,7 @@ class MemoryHistoryOutput(TypedDict, total=False):
 class MemoryHistoryRow(TypedDict, total=False):
     memory_id: Required[str]
     version: Required[int]
+    version_text: NotRequired[str]
     value: NotRequired[Union[dict[str, Any], list[Any], str, int, float, bool, None]]
     confidence: Required[float]
     source_trace: NotRequired[str]
@@ -14412,7 +14413,7 @@ class MemoryRedactInput(TypedDict, total=False):
 
     org: Required[str]
     memory_id: Required[str]
-    version: Required[int]
+    version: Required[Union[int, str]]
     reason: NotRequired[str]
     redacted_by: NotRequired[str]
 
@@ -14422,7 +14423,7 @@ class MemoryRedactBody(TypedDict, total=False):
 
     org: NotRequired[str]
     memory_id: Required[str]
-    version: Required[int]
+    version: Required[Union[int, str]]
     reason: NotRequired[str]
     redacted_by: NotRequired[str]
 

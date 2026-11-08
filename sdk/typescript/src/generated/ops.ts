@@ -5471,6 +5471,7 @@ export interface MemoryHistoryInput {
 export interface MemoryHistoryRow {
   memory_id: string;
   version: number;
+  version_text?: string;
   value?: Record<string, unknown> | unknown[] | string | number | boolean | null;
   confidence: number;
   source_trace?: string;
@@ -6352,7 +6353,7 @@ export interface MemoryRecordWriteOutput {
 export interface MemoryRedactInput {
   org: string;
   memory_id: string;
-  version: number;
+  version: number | string;
   reason?: string;
   redacted_by?: string;
 }

@@ -361,7 +361,7 @@ describe("the drawer footer is one row", () => {
   });
   afterEach(() => cleanup());
 
-  it("keeps Edit and Delete, and folds Pin, Verify, Copy to, Rename and Copy into More", async () => {
+  it("keeps Edit and Delete, and folds a writer's other actions into More", async () => {
     await open();
     const footer = screen.getByRole("contentinfo");
     expect(
@@ -376,6 +376,16 @@ describe("the drawer footer is one row", () => {
       within(menu)
         .getAllByRole("menuitem")
         .map((i) => i.textContent),
-    ).toEqual(["Pin", "Remove verification", "Copy to…", "Rename", "Copy"]);
+    ).toEqual([
+      "Pin",
+      "Remove verification",
+      "Copy to…",
+      "Lock…",
+      "Rename",
+      "Copy",
+      "This helped",
+      "This misled",
+      "Mark as wrong…",
+    ]);
   });
 });

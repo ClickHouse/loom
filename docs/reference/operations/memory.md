@@ -1690,7 +1690,7 @@ Scrub the value of a historical memory row, preserving its audit entry.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `memory_id` | `str` | required | The id every version of the memory shares; `version` picks the historical row. |
-| `version` | `int` | required | target row's version (from memory.set / memory.history) |
+| `version` | `int \| str` | required | The target row's version, from memory.set or memory.history. |
 | `reason` | `str` | `''` | short justification; the audit row keeps its SHA-256 and length |
 | `redacted_by` | `str` | `''` | actor for the audit row (caller-supplied) |
 
