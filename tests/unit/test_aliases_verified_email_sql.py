@@ -171,6 +171,31 @@ async def test_the_gate_admits_a_grant_under_a_verified_email_only(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("subject", "held", "unheld"),
+    [
+        ("mallory", {"mallory"}, {"bob@corp.example"}),  # its own email, unverified
+        ("bob@corp.example", {"bob@corp.example"}, {"mallory"}),  # typed by a squatter
+        # Verified as u-carol's, and typed by mallory3 too.
+        ("carol@corp.example", {"carol@corp.example", "u-carol"}, {"mallory3"}),
+        ("u-carol", {"u-carol", "carol@corp.example"}, set()),
+        ("dave", {"dave", "dave@corp.example"}, set()),  # linked
+        ("erin", {"erin"}, {"erin@corp.example"}),  # unlinked
+        ("u-frank", {"u-frank"}, {"frank@corp.example"}),  # deactivated
+    ],
+)
+async def test_the_grant_read_holds_the_subject_first_and_verified_pairs_only(
+    ch: _CH, subject: str, held: set[str], unheld: set[str]
+) -> None:
+    """What the acted-for check reads: `held` starts with the subject and carries only
+    verified, active pairs; an unverified one is only in `spellings`."""
+    got = await grant_cache._read(ORG, subject)
+    assert got.held[0] == subject
+    assert set(got.held) == held
+    assert unheld <= got.spellings and not unheld & set(got.held)
+
+
+@pytest.mark.asyncio
 async def test_a_link_or_an_unlink_drops_the_cached_ties(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

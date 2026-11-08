@@ -6,8 +6,8 @@ choose. The token carries:
     sub        = the namespace name (caller's identity going forward)
     org        = settings.self_signup_org (a request naming another is refused)
     namespaces = [<the namespace>]
-    roles      = ['writer'], or ['platform_admin'] for a handle in
-                 LOOM_PLATFORM_ADMINS — never for the unverified email
+    roles      = ['writer']: a name a setting or a grant empowers cannot
+                 be claimed (`_refuse_empowered`)
     sa         = false  (user token, not service account)
 
 For trusted-network deployments where reachability is the access
@@ -35,7 +35,6 @@ from pydantic import BaseModel, Field
 from server.auth.attempts import Attempts, client_address
 from server.auth.claim_codes import hash_claim_code_off_loop
 from server.auth.jwt import mint_token
-from server.auth.login import platform_roles
 from server.auth.passwords import (
     PASSWORD_MAX_LENGTH,
     PASSWORD_MIN_LENGTH,
@@ -183,8 +182,7 @@ async def _claim_account(input: SelfSignupInput, org: str, namespace: str) -> Se
 
     # First-claim-wins. If the namespace already exists, refuse — without
     # this, a second caller typing the same name receives a JWT with the
-    # same `sub`, effectively impersonating the original claimer. The
-    # operator can release a stuck claim via `loom claim-release`.
+    # same `sub`, effectively impersonating the original claimer.
     ch = get_client()
     with sequential_reads():  # an account another replica just provisioned
         return await _claim_checked(input, org, namespace, subject, ch)
@@ -203,18 +201,8 @@ async def _claim_checked(
         params={"org": org, "ns": namespace},
     )
     if existing is not None:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "NAMESPACE_CLAIMED",
-                "message": (
-                    f"namespace {namespace!r} is already claimed. "
-                    "Pick a different name; if you're the original claimer "
-                    "and lost your token, ask the operator to run "
-                    "`loom claim-release` for this namespace."
-                ),
-            },
-        )
+        raise _name_claimed(namespace)
+    await _refuse_empowered(ch, org, namespace)
 
     contact_email = (input.email or "").strip().lower()
     if "@" not in contact_email or "." not in contact_email.split("@", 1)[1]:
@@ -251,12 +239,13 @@ async def _claim_checked(
             },
         )
     ttl_seconds = int(input.ttl_days) * 86400
-    # The email is unverified, so it never confers a role (platform_roles).
+    # Sign-up confers no role: the email is unverified and a platform-admin
+    # handle cannot be claimed here (`_refuse_empowered`).
     token = mint_token(
         subject=subject,
         org=org,
         namespaces=[namespace],
-        roles=platform_roles(subject),
+        roles=["writer"],
         ttl_seconds=ttl_seconds,
         is_service_account=False,
     )
@@ -281,6 +270,18 @@ async def _claim_checked(
         org=org,
         subject=subject,
         expires_at=expires_at,
+    )
+
+
+def _name_claimed(namespace: str) -> HTTPException:
+    """409 for a name that is taken; a reserved name answers the same, so the
+    refusal names no setting."""
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "NAMESPACE_CLAIMED",
+            "message": f"namespace {namespace!r} is already claimed. Pick a different name.",
+        },
     )
 
 
@@ -323,6 +324,36 @@ def _claimable_namespace(name: str) -> str:
             },
         )
     return namespace
+
+
+async def _refuse_empowered(ch: Any, org: str, name: str) -> None:
+    """Refuse, as a taken name, a name a setting empowers, or one holding an unrevoked
+    grant, a namespace or an unrevoked token in the org, read case-folded as grants
+    are; docs/architecture/security.md has why."""
+    trusted = {s.lower() for s in settings.trusted_callers_set}
+    if name in trusted or name in settings.platform_admins_set:
+        raise _name_claimed(name)
+    reserved = await ch.query_one(
+        """
+        SELECT 1 AS held
+        FROM loom.namespace_grants FINAL
+        WHERE org = {org:String} AND lower(subject) = {name:String} AND revoked_at IS NULL
+        LIMIT 1
+        UNION ALL
+        SELECT 1 AS held
+        FROM loom.namespaces FINAL
+        WHERE org = {org:String} AND lower(owner_email) = {name:String}
+        LIMIT 1
+        UNION ALL
+        SELECT 1 AS held
+        FROM loom.service_accounts FINAL
+        WHERE org = {org:String} AND lower(created_by) = {name:String} AND revoked_at IS NULL
+        LIMIT 1
+        """,
+        params={"org": org, "name": name},
+    )
+    if reserved is not None:
+        raise _name_claimed(name)
 
 
 # ============================================================
@@ -507,17 +538,9 @@ async def _provision_agent(
         params={"org": org, "ns": namespace},
     )
     if existing is not None:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "NAMESPACE_CLAIMED",
-                "message": (
-                    f"namespace {namespace!r} already exists. Pick a different name; "
-                    "if it is yours and the token is lost, ask the operator to run "
-                    "`loom claim-release` for it."
-                ),
-            },
-        )
+        raise _name_claimed(namespace)
+    # A person claims the account later under the name, as its subject.
+    await _refuse_empowered(ch, org, namespace)
 
     claim_code = secrets.token_urlsafe(18)
     sa_hash = hashlib.sha256(f"agent:{org}:{namespace}:{time.time_ns()}".encode()).hexdigest()[:6]

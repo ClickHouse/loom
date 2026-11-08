@@ -128,6 +128,17 @@ async def get(name: str, *, active_only: bool = True, ch: Any = None) -> Machine
     return _machine(row) if row is not None else None
 
 
+async def disabled(name: str, *, ch: Any = None) -> bool:
+    """Whether bot `name` exists and is disabled; a subject with no bot (a minted
+    service account) is not. Read as of every write that landed."""
+    with own_write_reads():
+        row = await (ch or get_client()).query_one(
+            f"SELECT active FROM {TABLE} FINAL WHERE name = {{name:String}}",
+            params={"name": name},
+        )
+    return row is not None and not row["active"]
+
+
 def _machine(row: dict[str, Any]) -> Machine:
     return {
         "name": row["name"],
@@ -229,23 +240,28 @@ async def listed() -> list[dict[str, Any]]:
 
 
 async def save(m: Machine, *, by: str, active: bool = True, ch: Any = None) -> None:
+    from server.auth.authz import forget_ended
+
     # Past the name's newest row, whichever replica's clock wrote it: under
     # FINAL a later change with a lower version would be lost.
     ch = ch or get_client()
     version = await next_version(ch, TABLE, {"name": m["name"]})
-    await ch.insert(
-        TABLE,
-        [
-            {
-                **m,
-                "platform_admin": int(m.get("platform_admin", False)),
-                "active": int(active),
-                "updated_by": by,
-                "updated_at": datetime.now(UTC),
-                "version": version,
-            }
-        ],
-    )
+    try:
+        await ch.insert(
+            TABLE,
+            [
+                {
+                    **m,
+                    "platform_admin": int(m.get("platform_admin", False)),
+                    "active": int(active),
+                    "updated_by": by,
+                    "updated_at": datetime.now(UTC),
+                    "version": version,
+                }
+            ],
+        )
+    finally:  # a write that raised may have landed
+        forget_ended("bot", m["name"])
 
 
 async def verify_assertion(

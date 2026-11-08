@@ -374,7 +374,7 @@ def _cmd_set_host(args: argparse.Namespace) -> int:
     else:
         if lines and lines[-1].strip():
             lines.append("")
-        lines.append("# Operators of this Loom — promoted to platform_admin on login/signup.")
+        lines.append("# Operators of this Loom — promoted to platform_admin at their next login.")
         lines.append(new_line)
 
     text = "\n".join(lines)

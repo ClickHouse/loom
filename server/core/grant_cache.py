@@ -53,10 +53,13 @@ GRANTS, GROUPS, COLLECTIONS = "grants", "groups", "collections"
 class GrantMap:
     """One subject's grants on one org: every namespace it has a row on, of
     any status, and the highest live grant rank there (0 when none is live);
-    and the spellings the read covered."""
+    the spellings the read covered; and of those, the ones the subject holds:
+    itself first, then the handle and email of each active account of it whose
+    email is verified."""
 
     ranks: dict[str, int]
     spellings: frozenset[str] = frozenset()
+    held: tuple[str, ...] = ()
 
     def rank(self, namespace: str) -> int | None:
         return self.ranks.get(namespace)
@@ -404,7 +407,8 @@ async def _read(org: str, subject: str) -> GrantMap:
             arrayPushFront(ties.1, {sub:String}) AS held,
             ties.2 AS capping
             SELECT groupArray((namespace, rank)) AS grants,
-                   arrayConcat(held, capping) AS spellings
+                   arrayConcat(held, capping) AS spellings,
+                   held
             FROM (
                 SELECT namespace,
                        max(if({live} AND has(held, lower(subject)), {rank}, 0)) AS rank
@@ -422,4 +426,5 @@ async def _read(org: str, subject: str) -> GrantMap:
     return GrantMap(
         ranks={str(ns): int(rank) for ns, rank in row.get("grants") or []},
         spellings=frozenset(str(s) for s in row.get("spellings") or [subject]),
+        held=tuple(str(s) for s in row.get("held") or [subject]),
     )

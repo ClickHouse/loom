@@ -17,7 +17,8 @@ BOTH a token that names the namespace AND a live direct grant.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+import time
+from collections.abc import Awaitable, Callable, Iterable
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -69,6 +70,98 @@ def may_act_in_org(auth: AuthInfo, org: str) -> bool:
     transports and every handler's same-org check ask this; a restricted
     namespace still refuses every other org (`_check_restricted`)."""
     return auth.org in ("*", org) or auth.has_role(Role.PLATFORM_ADMIN)
+
+
+_ACTED_FOR_REVOKED = "the subject this request acts for is revoked, deprovisioned or disabled"
+
+
+class ActedForRevoked(PermissionError):
+    """The subject a trusted caller acts for is revoked: a refusal of the subject, not
+    of the caller's access to an index, so a transport adds no index reason to it."""
+
+
+async def check_acted_for(auth: AuthInfo | None, org: str | None) -> None:
+    """Refuse a trusted caller acting for a revoked, SCIM-deactivated or disabled-bot
+    subject under any spelling it holds; docs/architecture/security.md, Impersonation."""
+    from server.auth import machines, revocation
+    from server.auth.gateway import is_end_user
+    from server.core import grant_cache
+
+    # An end user's token names the user, whose revocation verify checked.
+    if auth is None or not auth.impersonated_by or is_end_user(auth):
+        return
+    spellings: set[str] = {auth.subject}
+    for scope_org in {org or auth.org, auth.org} - {"", "*"}:
+        if may_act_in_org(auth, scope_org):  # an org it cannot act in is refused after this
+            spellings.update((await grant_cache.grant_map(scope_org, auth.subject)).held)
+    folded = auth.subject.lower()  # bot names are lower-case; grants are read case-folded
+    bot = folded.removeprefix("sa:").partition(":")[0] if folded.startswith("sa:") else ""
+    if bot:
+        spellings.add(machines.subject(bot))  # a revoked bot refuses its agents, as their mint does
+    if any(revocation.revoked_outright_any_case(s) for s in spellings):
+        raise ActedForRevoked(_ACTED_FOR_REVOKED)
+    for email in {s.lower() for s in spellings if "@" in s}:
+        if await _remembered(("scim", email), _scim_deactivated):
+            raise ActedForRevoked(_ACTED_FOR_REVOKED)
+    if bot and await _remembered(("bot", bot), _bot_disabled):
+        raise ActedForRevoked(_ACTED_FOR_REVOKED)
+
+
+# (kind, key) -> (read at, ended), kept grant_cache_ttl_seconds: a SCIM deactivation or a
+# bot disable written by another process reaches this one within that, and one written
+# here drops its entry (`forget_ended`); emptied past _ENDED_MAX.
+_ENDED: dict[tuple[str, str], tuple[float, bool]] = {}
+_forgets = 0  # forgets so far: a read that one overtook is not kept
+_ENDED_MAX = 10_000  # not a setting: a memory bound on a memo the TTL already ages
+
+
+def forget_ended(kind: str, key: str) -> None:
+    """Drop the memo of a SCIM user ("scim", email) or bot ("bot", name) this process
+    just wrote, so its own write takes effect here at once."""
+    global _forgets
+    _ENDED.pop((kind, key.lower()), None)
+    _forgets += 1
+
+
+async def _remembered(key: tuple[str, str], read: Callable[[str], Awaitable[bool]]) -> bool:
+    from server.settings import settings
+
+    now = time.monotonic()
+    hit = _ENDED.get(key)
+    if hit is not None and now - hit[0] < settings.grant_cache_ttl_seconds:
+        return hit[1]
+    forgets = _forgets
+    ended = await read(key[1])
+    if _forgets != forgets:
+        return ended  # a write here overtook the read: the next check reads afresh
+    if len(_ENDED) >= _ENDED_MAX:
+        _ENDED.clear()
+    _ENDED[key] = (now, ended)
+    return ended
+
+
+async def _scim_deactivated(email: str) -> bool:
+    from server.auth import login, scim
+    from server.core.errors import BackendUnavailableError, LoomServerError
+
+    try:
+        return await scim.deactivated(email)
+    except login.SignInUnavailable as e:
+        if isinstance(e.__cause__, LoomServerError):
+            raise e.__cause__ from None  # its own code and Retry-After, as _bot_disabled does
+        raise BackendUnavailableError("cannot read whether SCIM deactivated the subject") from e
+
+
+async def _bot_disabled(name: str) -> bool:
+    from server.auth import machines
+    from server.core.errors import BackendUnavailableError, LoomServerError
+
+    try:
+        return await machines.disabled(name)
+    except LoomServerError:
+        raise
+    except Exception as e:  # an unread bot row refuses, as the grant read does
+        raise BackendUnavailableError("cannot read whether the bot is disabled") from e
 
 
 @marks_unverified

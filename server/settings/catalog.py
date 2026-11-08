@@ -333,7 +333,8 @@ class AuthSettings(BaseModel):
     # caps a token's claim at the grant it holds there. The backstop: a grant
     # change reaches other processes through the per-org grant watermark
     # (acl_watermark_poll_seconds), and this bounds one whose watermark row was
-    # never written.
+    # never written. It also bounds how long a SCIM deactivation of an email, or a
+    # bot disable, takes to stop a trusted caller acting for it on another process.
     grant_cache_ttl_seconds: float = 10.0
     # Seconds between each process's reads of the per-org grant watermark
     # (loom.acl_versions): a revoke on one replica is enforced on every other
@@ -376,6 +377,11 @@ class AuthSettings(BaseModel):
     # aggregator passing each end-user's identity under one service token).
     # Empty disables the header.
     trusted_callers: str = ""
+
+    @property
+    def trusted_callers_set(self) -> set[str]:
+        return {s.strip() for s in self.trusted_callers.split(",") if s.strip()}
+
     # The services that sign a short-lived token per end user (a chat app in
     # front of Loom): JSON (or base64 JSON) {issuer: {"orgs": [...], "jwks_url":
     # "https://…", "keys": {kid: RS256 public PEM}}}. `orgs` lists the orgs its
