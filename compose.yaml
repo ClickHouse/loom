@@ -158,7 +158,9 @@ services:
       CREDS_IV: "${LIBRECHAT_CREDS_IV:-}"
       JWT_SECRET: "${LIBRECHAT_JWT_SECRET:-}"
       JWT_REFRESH_SECRET: "${LIBRECHAT_JWT_REFRESH_SECRET:-}"
-      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      # A name of its own: the loom service loads all of .env, and an ANTHROPIC_API_KEY
+      # there would become Loom's own model key.
+      ANTHROPIC_API_KEY: "${LIBRECHAT_ANTHROPIC_API_KEY:-}"
       HOST: 0.0.0.0
       PORT: "3080"
       MONGO_URI: mongodb://librechat-mongo:27017/LibreChat

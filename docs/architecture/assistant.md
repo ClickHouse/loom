@@ -747,7 +747,9 @@ from Loom, and both run its v0.8.8 configuration,
   also on `assistant-egress`, a network of its own with a route out, for its model
   provider. Its secrets and model key come from `.env` beside `compose.yaml`
   (`LIBRECHAT_CREDS_KEY`, `LIBRECHAT_CREDS_IV`, `LIBRECHAT_JWT_SECRET`,
-  `LIBRECHAT_JWT_REFRESH_SECRET`, `ANTHROPIC_API_KEY`), and its configuration from
+  `LIBRECHAT_JWT_REFRESH_SECRET`, `LIBRECHAT_ANTHROPIC_API_KEY`, each named apart from
+  anything Loom reads, since the `loom` service loads the same `.env`), and its
+  configuration from
   `deploy/librechat/assistant.librechat.yaml`, which the release's stack bundle ships.
 - **Helm:** `assistant.enabled` adds LibreChat's Deployment and Service and a MongoDB
   StatefulSet (`templates/assistant.yaml`), with the same configuration in a ConfigMap
@@ -907,8 +909,9 @@ built.
   toward.
 - `server/assistant/app/service.py`: the service user and agent set up at boot;
   `server/assistant/store/service.py`: `loom.assistant_service`.
-- `integrations/librechat/`: the agent definition (`agent.yaml`), the deployed
-  configuration (`assistant.librechat.yaml`) and the qualification harness.
+- `integrations/librechat/`: the agent definition (`agent.yaml`) and the qualification
+  harness.
+- `deploy/librechat/assistant.librechat.yaml`: the deployed LibreChat's configuration.
 
 ## Invariants
 

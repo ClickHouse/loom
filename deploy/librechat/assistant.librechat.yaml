@@ -1,7 +1,7 @@
 # LibreChat v0.8.8 configuration for the Loom assistant: LibreChat runs headless
 # beside Loom, reachable only from it, and hosts the one agent Loom seeds
-# (agent.yaml) under its own service user. People never sign in here: the dashboard
-# chat, the API, the SDKs and MCP reach the agent through Loom
+# (integrations/librechat/agent.yaml) under its own service user. People never sign
+# in here: the dashboard chat, the API, the SDKs and MCP reach the agent through Loom
 # (docs/architecture/assistant.md).
 version: 1.3.17
 cache: true
@@ -54,7 +54,8 @@ mcpServers:
     startup: false
     timeout: 60000
     # LibreChat reads server instructions once, at its own start, with no answer's
-    # token; the agent's instructions (agent.yaml) carry the rules instead.
+    # token; the agent's instructions (integrations/librechat/agent.yaml) carry the
+    # rules instead.
     serverInstructions: false
     # Each answer's own Loom token, which Loom sends as the request's
     # parent_message_id, and its message id for the ledger. Under `headers`, not

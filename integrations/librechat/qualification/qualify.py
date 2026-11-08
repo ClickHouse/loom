@@ -23,7 +23,7 @@ mint the fixture's tokens. It is not a test and never runs in CI.
 deploys it: the one agent Loom seeds under its LibreChat service user
 (`integrations/librechat/agent.yaml`), run with that user's key, with each person's
 answer token sent as the request's `parent_message_id`, which the agent's MCP server
-sends back to Loom (`assistant.librechat.yaml`). It reads the agent id and key from
+sends back to Loom (`deploy/librechat/assistant.librechat.yaml`). It reads the agent id and key from
 `loom.assistant_service`, so it runs from a checkout with the server's LOOM_CH_* and
 LOOM_JWT_SECRET, and mints each answer token as the bridge will (viewer on the person's
 namespace alone); it registers nobody. Run it before `revoke`.

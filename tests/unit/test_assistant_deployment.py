@@ -66,3 +66,12 @@ def test_the_charts_assistant_is_reached_only_from_loom_and_reaches_loom() -> No
     from scripts.gates import helm_assistant_isolation
 
     helm_assistant_isolation.main()
+
+
+def test_librechats_compose_variables_are_names_loom_does_not_read() -> None:
+    # The loom service loads all of .env: a LibreChat secret or key named as Loom names
+    # one (ANTHROPIC_API_KEY, LOOM_*) would become Loom's own.
+    compose = yaml.safe_load((ROOT / "compose.yaml").read_text())
+    values = compose["services"]["librechat"]["environment"].values()
+    named = {m for v in values for m in re.findall(r"\$\{([A-Z0-9_]+)", str(v))}
+    assert named and all(n.startswith("LIBRECHAT_") for n in named), named

@@ -215,17 +215,21 @@ sends as the request's `parent_message_id`, which the agent's MCP server sends b
 Loom as its `Authorization` header (`deploy/librechat/assistant.librechat.yaml`).
 
 With Compose, in a repository checkout or an installed stack, add LibreChat's secrets,
-its model key and Loom's pointer at it to the `.env` beside `compose.yaml`, then start
-the `assistant` profile:
+its model key and Loom's pointer at it to the `.env` beside `compose.yaml`, add
+`assistant` to its `COMPOSE_PROFILES` (an installed stack's is `bundled`, so
+`bundled,assistant`; a checkout has none, so `assistant`), and start the stack. A
+`--profile` flag would replace `COMPOSE_PROFILES` and leave the installed stack's
+bundled ClickHouse out of the project.
 
 ```bash
 echo "LIBRECHAT_CREDS_KEY=$(openssl rand -hex 32)" >> .env
 echo "LIBRECHAT_CREDS_IV=$(openssl rand -hex 16)" >> .env
 echo "LIBRECHAT_JWT_SECRET=$(openssl rand -hex 32)" >> .env
 echo "LIBRECHAT_JWT_REFRESH_SECRET=$(openssl rand -hex 32)" >> .env
-echo "ANTHROPIC_API_KEY=<your key>" >> .env
+echo "LIBRECHAT_ANTHROPIC_API_KEY=<your key>" >> .env
 echo "LOOM_ASSISTANT_LIBRECHAT_URL=http://librechat:3080" >> .env
-docker compose --profile assistant up -d
+# then add assistant to COMPOSE_PROFILES in .env, as above
+docker compose up -d
 ```
 
 At boot Loom registers its service user, creates the agents API key and the agent from
@@ -249,7 +253,7 @@ services:
 ```
 
 ```bash
-docker compose -f compose.yaml -f compose.qualify.yaml --profile assistant up -d
+docker compose -f compose.yaml -f compose.qualify.yaml up -d
 Q=integrations/librechat/qualification/qualify.py
 python $Q seed
 python $Q --librechat-url http://localhost:3080 setup-deployed
