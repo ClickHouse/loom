@@ -28,8 +28,9 @@ npm install --global --prefix "$toolchain_prefix/yarn-modern" --no-fund --no-aud
 ln -sf ../yarn-modern/bin/yarn "$toolchain_prefix/bin/yarn-modern"
 
 # The TypeScript tier installs with this pnpm and never fetches the one a repository
-# pins: it must load a workspace that sets lockfile options (12.3 refused to).
+# pins: it must load a workspace that sets lockfile options.
 probe=$(mktemp -d)
+trap 'rm -rf "$probe"' EXIT
 printf 'packages: []\nlockfile:\n  includeResolutionSettings: true\n' >"$probe/pnpm-workspace.yaml"
 printf '{"name":"probe","private":true}\n' >"$probe/package.json"
 (cd "$probe" && "$toolchain_prefix/bin/pnpm" config list \
@@ -37,7 +38,6 @@ printf '{"name":"probe","private":true}\n' >"$probe/package.json"
   echo 'The installed pnpm cannot load a pnpm-workspace.yaml that sets lockfile options.' >&2
   exit 1
 }
-rm -rf "$probe"
 
 printf '\nCompiler indexers installed. Set PATH in the shell that starts Loom:\n'
 printf 'export PATH="%s/bin:$PATH"\n' "$toolchain_prefix"
