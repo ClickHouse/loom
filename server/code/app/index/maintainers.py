@@ -31,10 +31,10 @@ gives no grant on the operator's namespaces.
   only a mirror, and none from a standard one while the subject holds an admin
   grant given on one. On a restricted branch added from the page it takes only
   copies: one whose source is not an operator entry (``_foreign``) without the
-  guard (a page revoke leaves an operator admin's for the sync to rewrite); an
-  operator copy only on an operator revoke, under
-  the guard, a copy it keeps going at a later sync once it no longer traces to
-  an operator grant.
+  guard, unless the subject keeps an operator admin grant, which the next sync
+  copies over it; an operator copy only on an operator revoke, under the guard.
+  The next sync takes a copy the guard keeps once it no longer traces to an
+  operator grant.
 
 Readers stay per branch: the approval fan-out already turns a person's branch requests
 into one decision. Restricted branches also need the token to name them — a person's
@@ -697,9 +697,9 @@ async def revoke_repo_maintainer(
     only a mirror, and none from a standard one while the subject holds an admin
     grant given on a branch added from the page. On a restricted branch added from
     the page, a revoke takes a copy whose source is not an operator entry
-    (`_foreign`), even as that branch's last admin (a page revoke leaves an operator
-    admin's for the sync to rewrite); a revoke from an operator entry
-    also takes an operator copy, under the guard.
+    (`_foreign`), even as that branch's last admin, unless the subject keeps an
+    admin grant given on another operator entry, which the next sync copies over
+    it; a revoke from an operator entry also takes an operator copy, under the guard.
 
     The registry is read again under the claims: a branch added after
     `read_repo` read it, and given a copy by a sync that held the claims
@@ -729,8 +729,12 @@ async def revoke_repo_maintainer(
         if _live_admin(r) and r["namespace"] in admins:
             admins[str(r["namespace"])][str(r["subject"])] = r
     # An operator admin's stray copy is the sync's to rewrite as a copy of that grant.
-    operator_admin = own == "registry" and any(
-        r["subject"] == subject and r["namespace"] in config and _live_admin(r) and not _is_copy(r)
+    operator_admin = any(
+        r["subject"] == subject
+        and r["namespace"] in config
+        and r["namespace"] != namespace
+        and _live_admin(r)
+        and not _is_copy(r)
         for r in rows
     )
     now = naive_utc_now()
@@ -756,21 +760,22 @@ async def revoke_repo_maintainer(
                 continue  # an operator copy, which a page revoke never reaches
         elif keeps_added and sources[ns] == "registry":
             continue
-        planned = _row(
-            org,
-            ns,
-            subject,
-            granted_by=str(mine.get("granted_by") or ""),
-            now=now,
-            revoked=lowered_to is None,
-            role=lowered_to or "admin",
-        )
         if len(admins[ns]) <= 1:
             log.warning(
                 "repo maintainers: %s/%s keeps %r — only admin of that branch", org, ns, subject
             )
-        else:
-            out.append(planned)
+            continue
+        out.append(
+            _row(
+                org,
+                ns,
+                subject,
+                granted_by=str(mine.get("granted_by") or ""),
+                now=now,
+                revoked=lowered_to is None,
+                role=lowered_to or "admin",
+            )
+        )
     written = await _write_revokes(client, org, strays, out, rows)
     if written:
         log.info(

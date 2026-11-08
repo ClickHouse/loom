@@ -591,6 +591,24 @@ async def test_a_page_revoke_takes_off_a_restricted_page_branch_only_a_stray_cop
     ]
 
 
+async def test_an_operator_revoke_leaves_a_stray_of_an_admin_of_another_entry_for_the_sync(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """alice stays admin of code-z-ops: the next sync copies that grant over her stray,
+    which a revoke now would end for good."""
+    two = [_Cfg("clickhouse", "code-z-ops", "Org/z"), *PRIVATE]
+    monkeypatch.setattr(repos, "configured_repos", lambda: two)
+    rows = [
+        _admin("code-z", "alice"),
+        _admin("code-z", "x"),
+        _admin("code-z-ops", "alice"),
+        _copy("code-z-26-5", "alice", "code-z-dev"),
+    ]
+    ch = _FakeCH(rows)
+    await _revoke("code-z", "alice", ch=ch)
+    assert "code-z-26-5" not in {r["namespace"] for r in ch.inserted}
+
+
 async def test_an_operator_admin_s_copy_from_a_page_branch_becomes_a_copy_of_the_operator_grant(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
