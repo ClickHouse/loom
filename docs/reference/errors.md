@@ -618,7 +618,7 @@ Raised in `server/knowledge/app/sources.py`.
 
 #### `NOT_A_REPO`
 
-Raised in `server/code/app/repo_admin.py`.
+Raised in `server/code/app/index/repo_registry.py`, `server/code/app/repo_admin.py`.
 
 #### `NOT_A_SOURCE`
 

@@ -1,6 +1,6 @@
-"""Statements over loom.code_repos, the self-service repository registry: the active
-entries, a namespace's row, the count an org's cap is checked against, a new version
-row, and the deactivation that mirrors a row with `active = false`.
+"""Statements over loom.code_repos, the self-service repository registry: the rows the
+snapshot is read from, a namespace's row, the count an org's cap is checked against, a
+new version row, and the deactivation that mirrors a row with `active = false`.
 """
 
 from __future__ import annotations
@@ -13,21 +13,6 @@ from server.code.store.index.base import CodeRepoBase
 
 class CodeReposMixin(CodeRepoBase):
     """The self-service repository registry."""
-
-    async def active_code_repos(self) -> list[dict[str, Any]]:
-        """Every active registry row, the columns a `RepoConfig` is built from."""
-        rows: list[dict[str, Any]] = await self._ch.query_all(
-            """
-            SELECT org, namespace, repo, git_remote, git_branch, path_prefixes, exclude,
-                   toString(classification) AS classification,
-                   toString(join_policy) AS join_policy, github_token_enc,
-                   exclude_generated, toString(scip_producer) AS scip_producer
-            FROM loom.code_repos FINAL
-            WHERE active
-            ORDER BY org, namespace
-            """
-        )
-        return rows
 
     async def registry_rows(self) -> list[dict[str, Any]]:
         """The rows the registry snapshot is read from, in one statement: every active

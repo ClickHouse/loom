@@ -100,9 +100,10 @@ Rules:
   A registry row that records no kind is read as the entry's access row, and while
   self-service is off the registry is not read: review a namespace's grants before
   listing it in either case.
-- The access row `code.repo.set_access` writes for an operator entry is dropped once
-  the entry leaves the configuration, so the namespace is no longer indexed; it does
-  not count against the org's repository quota. A registry row that records no kind
+- The access row `code.repo.set_access` writes for an operator entry is no longer
+  listed once the entry leaves the configuration, so the namespace is not indexed; it
+  applies again if the entry returns, and it does not count against the org's
+  repository quota. A registry row that records no kind
   is listed as a branch added here once its entry is gone.
 - A copy on an operator namespace whose `granted_by` is `repo-maintainers:<namespace>`
   naming a branch added here, or a namespace no longer configured, stays until revoked:
@@ -190,7 +191,7 @@ and survives restarts. `code.refresh` (writer) and the admin ops always need a g
 
 | Symptom                                           | Cause and fix                                                                                                                                                                                                                                                          |
 | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A configured entry never indexes                  | no `git_head` watermark: run `loom code init` and `loom code backfill`                                                                                                                                                                                                 |
+| A configured entry never indexes                  | no `git_head` watermark: run `loom code init` and `loom code backfill`; or a member added that namespace from the page, and the log says the entry is skipped: list it under another namespace                                                                         |
 | Adding a repository answers `SANDBOX_UNAVAILABLE` | this deployment cannot run the sandbox: list the repository in `LOOM_CODE_REPOS_JSON` instead (unless `LOOM_CODE_SANDBOX_REQUIRED` is set, which skips those too), or see the [sandbox requirements](../../operations/code-index-operations.md#repository-job-sandbox) |
 | A self-service card stays at `error`              | read `stage_detail` in `code.repos`; a failed clone retries next pass (timeout `LOOM_CODE_BOOTSTRAP_CLONE_TIMEOUT_S`)                                                                                                                                                  |
 | A private self-service repository stops fetching  | `LOOM_JWT_SECRET` was rotated; re-enter the token                                                                                                                                                                                                                      |

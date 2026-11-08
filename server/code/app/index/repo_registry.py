@@ -23,7 +23,12 @@ import time
 from typing import Any
 
 from server.code.domain.index.remote import parse_remote
-from server.code.domain.index.repos import RepoConfig, registry_repos, set_registry_repos
+from server.code.domain.index.repos import (
+    RepoConfig,
+    registry_repos,
+    reset_skipped_for_tests,
+    set_registry_repos,
+)
 from server.core.secrets_at_rest import seal, unseal
 from server.settings import settings
 
@@ -197,6 +202,7 @@ async def start_refresher(ch: Any | None = None) -> asyncio.Task[None]:
 def reset_for_tests() -> None:
     global _LOADED_AT, _EVER_LOADED
     set_registry_repos([], frozenset())
+    reset_skipped_for_tests()
     _LOADED_AT = -1e12
     _EVER_LOADED = False
 
@@ -232,7 +238,6 @@ async def insert_entry(
     git_remote: str = "",
     exclude_generated: bool = True,
     scip_producer: str = "",
-    row_kind: str = "page",
     ch: Any | None = None,
 ) -> None:
     from datetime import UTC, datetime
@@ -251,7 +256,7 @@ async def insert_entry(
             "exclude": list(exclude),
             "exclude_generated": bool(exclude_generated),
             "scip_producer": str(scip_producer or ""),
-            "row_kind": row_kind,
+            "row_kind": "page",
             "classification": classification,
             "join_policy": join_policy,
             "github_token_enc": encrypt_token(github_token),
@@ -275,10 +280,9 @@ async def upsert_access(
     """A maintainer's access row for `cfg`'s namespace — a new version of the registry
     row carrying the chosen classification and join policy. An existing registry row is
     copied whole (every column, including ones added by later migrations) with only
-    those two fields, `created_by` and the stamps changed, so a member's add stays one;
-    an operator entry with no active row gets an access row (`row_kind = 'access'`)
-    built from the repository as configured, so `refresh_db_repos` reads one row per namespace and
-    `_with_registry` lets it win over the entry."""
+    those two fields, `created_by` and the stamps changed, so a member's add stays one.
+    An operator entry with no active row gets an access row built from the repository
+    as configured, which `_with_registry` lets win over the entry."""
     from datetime import UTC, datetime
 
     from server.code.store.index import CodeRepo

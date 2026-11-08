@@ -124,9 +124,8 @@ class RepoConfig:
     # "registry" (a maintainer's access row in loom.code_repos, which wins over the
     # entry).
     access_source: str = "config"
-    # The `row_kind` of the namespace's loom.code_repos row (migration 089): "page" a
-    # branch added from the page, "access" an operator entry's access row, "" a row
-    # from before the column or no row.
+    # A registry entry's `row_kind` (migration 089): "page" a branch added from the
+    # page, "access" an operator entry's access row, "" a row from before the column.
     row_kind: str = ""
 
     @property
@@ -313,6 +312,11 @@ _page_namespaces: frozenset[tuple[str, str]] = frozenset()
 _skipped_logged: set[str] = set()
 
 
+def reset_skipped_for_tests() -> None:
+    """Log each skipped entry again."""
+    _skipped_logged.clear()
+
+
 def configured_repos() -> list[RepoConfig]:
     """The repo list every code worker iterates: the operator's entries, then the
     self-service registry's. Invalid JSON degrades to the scalar single-repo config
@@ -354,7 +358,6 @@ def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:
                 public=access.public and not restricted,
                 org_readable=c.org_readable and not restricted,
                 access_source="registry",
-                row_kind=access.row_kind,
             )
         )
     seen = {(c.org, c.namespace) for c in out}

@@ -503,6 +503,8 @@ async def test_restricting_a_page_branch_revokes_the_copy_a_sibling_gave_it(monk
     async def upsert(*a, **k):
         # The directory row first: a restriction cut short after it still stops copies.
         assert ch.inserts[-1][0] == "loom.namespaces"
+        # Under the account claim an add from the page holds: no add lands in between.
+        assert grant_claims._account(ORG, "code-weave-rc")[0] in claims.held
 
     monkeypatch.setattr(reg, "refresh_db_repos", refresh)
     monkeypatch.setattr(reg, "upsert_access", upsert)
