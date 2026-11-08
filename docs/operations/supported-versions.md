@@ -52,7 +52,7 @@ server their hooks support (`minServerVersion`). A session against an older serv
 
 A removal is announced, by hand in the release pull request, in the release notes of the minor
 release before the one that removes it, under "What changed for clients". Until the removal, the
-server serves the old field or flag; after it, a removed request field is still accepted and named
+server serves the old field or op; after it, a removed request field is still accepted and named
 in `ignored_args`, so a client sending it learns of the change without failing, and a removed op
 answers `404` (`NotFound`), which `ops.capabilities` tells apart from a missing row.
 
