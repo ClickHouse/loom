@@ -346,7 +346,7 @@ async def test_a_format_the_routed_service_declares_now_is_not_drafted(docs: Doc
     assert not _target(out, "settings.document_extractors_json")
     # A note tells the reader to act: its exact names follow in parentheses.
     assert any(
-        "declares it now" in s and "(format_unavailable)" in s and "knowledge.ingest)" in s
+        "declares pdf now" in s and "(format_unavailable)" in s and "knowledge.ingest)" in s
         for s in skipped
     )
 
@@ -636,7 +636,7 @@ async def test_a_media_type_route_is_the_service_a_source_goes_to(
     # The source the default service takes now is ingested again, not rerouted.
     assert any(
         s.startswith("extractor.pdf: 1 source failed because no extractor took the format")
-        and "declares it now" in s
+        and "declares pdf now" in s
         for s in skipped
     ), skipped
 
@@ -719,7 +719,7 @@ async def test_a_format_whose_failed_sources_work_now_is_still_judged_on_its_ext
     docs.unavailable = [_pdf_job("files/a.pdf")]
     docs.coverage = [_lossy_pdf()]
     out, skipped = await _drafts()
-    assert any("declares it now" in s for s in skipped)
+    assert any("declares pdf now" in s for s in skipped)
     (p,) = _target(out, "settings.document_extractors_json")
     assert p.evidence.finding_codes == ["extraction_incomplete"]
     assert p.evidence.supporting_count == 3

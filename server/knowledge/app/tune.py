@@ -269,9 +269,8 @@ async def _load(org: str, namespace: str, rows: list[dict[str, Any]]) -> tuple[l
 
 
 def _setting_apply(env: str, value: int, current: int) -> TuneApply:
-    """settings.set of the LIVE field `env` names, guarded by its current value. The caller
-    passes LOOM_<FIELD>, since tests/unit/test_live_settings.py refuses a LIVE field's bare
-    name as a string literal."""
+    """settings.set of the LIVE field `env` (LOOM_<FIELD>) names, guarded by its current
+    value. The field's name is the op's argument here, not a read of the setting."""
     return TuneApply(
         op="settings.set",
         via="admin_route",
@@ -564,7 +563,7 @@ def _judge_format(
         them, each = ("it goes", "its original") if n == 1 else ("they go", "each original")
         skipped.append(
             f"extractor.{fmt}: {_sources(n)} (format_unavailable), and the service {them} to "
-            f"declares it now: upload {each} again and ingest it "
+            f"declares {fmt} now: upload {each} again and ingest it "
             "(POST /v1/knowledge.upload, knowledge.ingest)"
         )
     stuck = {u: v for u, v in by_url.items() if u not in declared}

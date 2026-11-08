@@ -229,7 +229,8 @@ _INGEST_CHECKS: dict[str, tuple[RuleContract, str, str, list[str]]] = {
             "waiting to retry runs again by itself.",
         ),
         "Sources whose job failed, or waits to retry, because no extractor could take its "
-        "format: none is configured or routed for it, the one routed to it is unreachable, "
+        "format: none is configured or routed for it, the one routed to it does not take "
+        "the format, is unreachable, "
         "slower than the server's extractor timeout or failing, or it answered with an "
         "artifact the extractor contract does not allow.",
         "Configure an extractor for the format (a default extractor for every format without "
