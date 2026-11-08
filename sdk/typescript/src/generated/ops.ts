@@ -58,6 +58,26 @@ export interface AgentsConnectedOutput {
   new_count?: number | null;
 }
 
+export interface AssistantMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface AssistantAskInput {
+  org: string;
+  namespace: string;
+  /** The question, about what this namespace holds and how it is used. The answer reads only what the caller may read, writes nothing, and spends from the namespace' */
+  question: string;
+  /** Earlier turns of the conversation, oldest first; Loom stores none. */
+  history?: AssistantMessage[];
+}
+
+export interface AssistantAskOutput {
+  answer?: string;
+  run_id?: string;
+  model?: string;
+}
+
 export interface AuditListInput {
   org: string;
   namespace?: string | null;
@@ -10016,6 +10036,7 @@ export interface OpSpec {
 export type OpName =
   | "admin.users"
   | "agents.connected"
+  | "assistant.ask"
   | "audit.list"
   | "blacklist.add"
   | "blacklist.list"
@@ -10377,6 +10398,7 @@ export type OpName =
 export interface OpMap {
   "admin.users": { input: AdminUsersInput; output: AdminUsersOutput };
   "agents.connected": { input: AgentsConnectedInput; output: AgentsConnectedOutput };
+  "assistant.ask": { input: AssistantAskInput; output: AssistantAskOutput };
   "audit.list": { input: AuditListInput; output: AuditListOutput };
   "blacklist.add": { input: BlacklistAddInput; output: BlacklistAddOutput };
   "blacklist.list": { input: BlacklistListInput; output: BlacklistListOutput };
@@ -10738,6 +10760,7 @@ export interface OpMap {
 export const OPS: readonly OpSpec[] = [
   { name: "admin.users", group: "admin", method: "users", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: false },
   { name: "agents.connected", group: "agents", method: "connected", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 120, audit: false, readOnly: true },
+  { name: "assistant.ask", group: "assistant", method: "ask", idempotent: false, role: "viewer", maturity: "experimental", budgetP99Ms: 30000, audit: false, readOnly: false },
   { name: "audit.list", group: "audit", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 200, audit: false, readOnly: true },
   { name: "blacklist.add", group: "blacklist", method: "add", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 50, audit: true, readOnly: false },
   { name: "blacklist.list", group: "blacklist", method: "list", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 80, audit: false, readOnly: true },
@@ -11100,4 +11123,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 358;
+export const GENERATED_OP_COUNT = 359;

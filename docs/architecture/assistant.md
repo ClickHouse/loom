@@ -4,9 +4,9 @@ This page is the design of Loom's assistant, which will answer questions about w
 namespace holds and how it is used, with a citation for every claim. It names the
 surfaces, how each caller's identity will reach the agent's tools, the analysis op and
 its isolation, the deployment, what will be stored and erased, and the cost. The
-analysis op and its analyst user, and LibreChat deployed headless with the agent Loom
-seeds, are built; the rest is design, and [the build order](#build-order) lists the
-parts.
+analysis op and its analyst user, LibreChat deployed headless with the agent Loom seeds,
+and the bridge's chat route and `assistant.ask` are built; the rest is design, and
+[the build order](#build-order) lists the parts.
 
 LibreChat will be the assistant: it will host the agent (its model, instructions and
 tools) and run it headless beside Loom, reachable only from Loom. Loom will supply the
@@ -39,7 +39,9 @@ flowchart LR
 
 Each request names its namespace: the `X-Loom-Namespace` header on the chat route (the
 token's default namespace when absent), the `namespace` field on `assistant.ask`. The
-caller needs `viewer` there, and the answer's model spend is charged there.
+caller needs `viewer` there, and the answer's model spend is charged there. The chat
+route, `assistant.ask` and its MCP tool and generated SDK methods are built; the SDKs'
+streaming clients and the dashboard's chat are not yet.
 
 `loom_assistant_ask` is in no curated MCP roster and, while `experimental`, not in the
 `all` listing either: each call spends model budget, so an agent calls it by name on
@@ -88,7 +90,8 @@ They go under `headers`, not LibreChat's chat-only `requestHeaders`: those are l
 the connection that lists the tools, whose `tools/list` would then go out without the
 token and leave the agent with no tools.
 
-The bridge (`server/assistant/`) will serve a request in three steps:
+The bridge (`server/assistant/app/bridge.py`, `routes.py`) serves a request in three
+steps:
 
 1. Verify the caller's Loom token or dashboard session as on any op, and its `viewer`
    role on the request's namespace. The chat route takes the same `Origin` and CSRF
@@ -103,11 +106,11 @@ The bridge (`server/assistant/`) will serve a request in three steps:
 2. Delegate the answer's token from the caller's (`server/auth/delegation.py`
    `delegate`): `viewer` on the request's namespace alone, minted for the caller's own
    subject with consumer `loom-assistant`, as a service-account token when the caller's
-   is one, and expiring when an answer may run no longer (a catalog setting, default ten
-   minutes). Delegation applies every rule a minted child follows: the creator's live
+   is one, and expiring when an answer may run no longer (`LOOM_ASSISTANT_ANSWER_TTL_S`,
+   default ten minutes). Delegation applies every rule a minted child follows: the creator's live
    grant, the end user, the ancestor subjects and their issue times, the chain depth
    limit, and the caller's token id among the child's `parents`. The bridge also asks
-   for the caller's sign-in session among the `parents` (a new `delegate` option), so a
+   for the caller's sign-in session among the `parents` (`delegate`'s `ends_with_session`), so a
    dashboard or `loom login` caller's answer token ends at sign-out, as a third-party
    client's already does. The token is not listed in `loom.service_accounts`: it lives
    for one answer.
@@ -831,19 +834,20 @@ spend to the same budget as its own model calls:
 - Before calling LibreChat, the bridge checks the namespace's daily model cost cap
   (`server/observability/budget.py`, `daily_cost_cap_usd`, default
   `LOOM_DEFAULT_DAILY_COST_CAP_USD`) with `fail_open=False`, so a failed budget read
-  refuses, and with the assistant held to its own share of the cap (a catalog setting,
-  default half), so questions cannot spend what extraction and the conflict resolver
+  refuses, and with the assistant held to its own share of the cap
+  (`LOOM_ASSISTANT_BUDGET_SHARE`, default half), so questions cannot spend what extraction and the conflict resolver
   need. Both surfaces record their spend under one operation, `assistant.ask`, which the
   share check sums.
 - The check reads spend already recorded, so answers running at once could each pass it;
-  each replica runs at most a set number of answers per namespace at once (a catalog
-  setting, default 2), which bounds the overshoot to that many answers per replica, each
+  each replica runs at most a set number of answers per namespace at once
+  (`LOOM_ASSISTANT_CONCURRENT_ANSWERS`, default 2), which bounds the overshoot to that many answers per replica, each
   at most the per-answer ceiling.
 - When the answer ends, the bridge prices the token usage of the agents API's final
   chunk with the model's rate and records it as `upstream_cost_usd` on the answer's
   `agent_events` row, where every model spend is counted. An answer cut before its final
   chunk (a disconnect, the stop button, a timeout), or on a model Loom has no rate for,
-  is charged a per-answer ceiling (a catalog setting) instead, so no answer spends for
+  is charged a per-answer ceiling (`LOOM_ASSISTANT_ANSWER_CEILING_USD`, default $0.10)
+  instead, so no answer spends for
   free.
 
 At the default cap of $1 a day, half of it buys about 15 answers at the mean of $0.033
@@ -862,7 +866,7 @@ token never reads more than the caller's own.
 ## Rolling upgrades
 
 `insights.query` and `insights.catalog` are new ops, and `assistant.ask` and
-`/v1/assistant/chat/completions` will be a new op and route: a build that does not know
+`/v1/assistant/chat/completions` are a new op and route: a build that does not know
 them answers
 `UNKNOWN_OP` or 404, so a client points at them once every replica serves them. The
 analyst user, its grants and policies, `loom.analysis_secrets`, `loom.analysis_canary`
@@ -889,7 +893,10 @@ by an older build.
    and recommendation questions
    ([the deployed assistant](../features/integrations/librechat.md#the-deployed-assistant)).
    Built.
-4. The bridge: the chat route, `assistant.ask`, the SDK clients.
+4. The bridge: the chat route and `assistant.ask`, with the answer's token, the refusals,
+   the budget share, the per-replica limit, the spend on the answer's ledger row and
+   the answer's id on its tool calls' rows (built); then the citation check; then the
+   SDKs' streaming clients.
 5. The chat on the dashboard's Assistant page.
 
 Each part moves its section of this page from design to the description of what is

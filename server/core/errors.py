@@ -374,6 +374,15 @@ class AnalysisUnavailableError(LoomServerError):
     status_code = 503
 
 
+class AssistantUnavailableError(LoomServerError):
+    """The assistant cannot answer on this replica: no LibreChat is configured
+    (`LOOM_ASSISTANT_LIBRECHAT_URL`), or the boot has not set up its service user
+    and agent yet. `loom doctor` names the cause (`assistant_service_failing`)."""
+
+    code = "ASSISTANT_UNAVAILABLE"
+    status_code = 503
+
+
 # How a caller acts on an error without knowing its code: `category` says whose move it
 # is, `retryable` whether resending the same request unchanged can succeed later (after
 # `retry_after_s` when the error names one). The status decides unless the code is listed;
@@ -400,6 +409,7 @@ CLASS_BY_CODE: dict[str, tuple[ErrorCategory, bool]] = {
     "OVERRIDE_NOT_STORED": ("configuration", False),
     "CODED_WIDTH_MISMATCH": ("configuration", False),
     "ANALYSIS_UNAVAILABLE": ("configuration", False),
+    "ASSISTANT_UNAVAILABLE": ("configuration", False),
     "GATEWAY_REQUIRED": ("configuration", False),
     "INTEGRATION_NOT_CONFIGURED": ("configuration", False),
     "MODEL_CALLS_DISABLED": ("configuration", False),

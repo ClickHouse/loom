@@ -40,8 +40,10 @@ from fastapi import APIRouter, FastAPI, Request, Response
 from server.core.errors import classified
 from server.identity.app.caller_home import caller_org
 from server.observability.consumer import ASSISTANT_CONSUMER
+from server.observability.run_context import clean_run_id
 from server.transport import gates
 from server.transport import mcp_runs as _mcp_runs
+from server.transport.assistant_call import set_answer_run
 from server.transport.mcp_auth import (
     _echo_request_id,
     _effective_auth_mode,
@@ -406,6 +408,9 @@ def attach(app: FastAPI) -> None:
             client_name = _resolve_client_name(req, session_id)
             # One read of the selectors, so routing, the screen and the call agree.
             listing = _listing_params(request)
+            if assistant_connection(listing["toolset"]):
+                # The assistant's tool calls are ledgered under the answer they serve.
+                set_answer_run(clean_run_id(request.headers.get("X-Loom-Run-Id")))
             req, early = route_loom_op(req, toolset=listing["toolset"], auth=auth)
             if early is not None:
                 return early  # classified where its text is rendered (mcp_op._result)

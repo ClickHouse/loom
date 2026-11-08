@@ -237,6 +237,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "grants.approve": ("dashboard",),
     "grants.create": (
         "sdk_method",
+        "plugin_hook",
         "dashboard",
     ),
     "grants.list": (

@@ -91,6 +91,7 @@ export class LoomError extends Error {
  */
 export const NEVER_RETRIED: ReadonlyMap<string, ErrorCategory> = new Map<string, ErrorCategory>([
   ["ANALYSIS_UNAVAILABLE", "configuration"],
+  ["ASSISTANT_UNAVAILABLE", "configuration"],
   ["CODED_WIDTH_MISMATCH", "configuration"],
   ["GATEWAY_REQUIRED", "configuration"],
   ["MODEL_CALL_UNATTRIBUTED", "internal"],

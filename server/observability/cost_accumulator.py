@@ -318,6 +318,20 @@ def report_embed(model: str, tokens: int) -> None:
     acc.add_embed(model, tokens)
 
 
+def report_charge(model: str, cost_usd: float) -> None:
+    """Charge one model call at a set price, for a call whose tokens were never
+    reported (the assistant's answer cut before its usage arrived): it counts as one
+    call of `model` costing `cost_usd`, with no tokens."""
+    acc = _current.get()
+    if acc is None:
+        return
+    acc.cost_usd += cost_usd
+    acc.llm_calls += 1
+    tally = acc.by_model.setdefault(model or "", [0, 0, 0, 0.0, 0, 0])
+    tally[0] += 1
+    tally[3] += cost_usd
+
+
 def report_llm(
     model: str,
     input_tokens: int,

@@ -19,14 +19,11 @@ mint the fixture's tokens. It is not a test and never runs in CI.
     python integrations/librechat/qualification/qualify.py run
     python integrations/librechat/qualification/qualify.py rescore
 
-`setup-deployed`, in place of `setup`, runs the same cases through the assistant as Loom
-deploys it: the one agent Loom seeds under its LibreChat service user
-(`integrations/librechat/agent.yaml`), run with that user's key, with each person's
-answer token sent as the request's `parent_message_id`, which the agent's MCP server
-sends back to Loom (`deploy/librechat/assistant.librechat.yaml`). It reads the agent id
-and key from `loom.assistant_service`, so it runs from a checkout with the server's
-LOOM_CH_* and LOOM_JWT_SECRET, and mints each answer token as the bridge will (viewer on
-the person's namespace alone); it registers nobody. Run it before `revoke`.
+`setup-bridge`, in place of `setup`, runs the same cases through the assistant as Loom
+serves it: each person's own token asks `POST /v1/assistant/chat/completions`, Loom
+delegates the answer's token from it and runs the agent it seeded in the LibreChat
+beside it. It grants each person `viewer` on their namespace, as a deployment's people
+hold it, since an answer's token is delegated from a live grant.
 """
 
 from __future__ import annotations
@@ -101,10 +98,18 @@ def save_state(data: dict[str, Any]) -> None:
 
 
 def mint(
-    loom_bin: str, *, subject: str, org: str, namespace: str, role: str, person: bool = False
+    loom_bin: str,
+    *,
+    subject: str,
+    org: str,
+    namespace: str,
+    role: str,
+    person: bool = False,
+    extra_namespaces: list[str] | None = None,
 ) -> dict[str, Any]:
+    namespaces = [namespace, *(extra_namespaces or [])]
     out = subprocess.run(
-        [loom_bin, "mint-token", "--subject", subject, "--org", org, "--namespaces", namespace]
+        [loom_bin, "mint-token", "--subject", subject, "--org", org, "--namespaces", *namespaces]
         + ["--roles", role, "--ttl-days", "1", "--json"]
         + (["--user-token"] if person else []),
         check=True,
@@ -209,13 +214,12 @@ def cmd_revoke(args: argparse.Namespace) -> None:
         if not person["revoked"]:
             continue
         name = person["name"]
-        for jti in (st["tokens"][f"{name}:jti"], st["tokens"].get(f"answer:{name}:jti")):
-            if jti:
-                subprocess.run(
-                    [args.loom_bin, "revoke-token", "--jti", jti, "--reason", "qualify"],
-                    check=True,
-                    capture_output=True,
-                )
+        subprocess.run(
+            [args.loom_bin, "revoke-token", "--jti", st["tokens"][f"{name}:jti"]]
+            + ["--reason", "qualify"],
+            check=True,
+            capture_output=True,
+        )
         print(f"revoked {name}")
     # A server rereads the revocation list every LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS.
     print(f"waiting {args.settle:.0f} s for the revocation to reach the server")
@@ -311,45 +315,36 @@ def cmd_setup(args: argparse.Namespace) -> None:
     save_state(st)
 
 
-def cmd_setup_deployed(args: argparse.Namespace) -> None:
-    """Read the agent Loom seeded and its key from loom.assistant_service."""
-    import asyncio
-
-    sys.path.insert(0, str(HERE.parents[2]))
-    from server.assistant.app.service import opened as open_sealed
-    from server.assistant.store import service
-    from server.core.ch import get_client
-
-    async def _read() -> Any:
-        await get_client().connect()
-        try:
-            return await service.read()
-        finally:
-            await get_client().disconnect()
-
-    row = asyncio.run(_read())
-    opened = open_sealed(row.sealed) if row else None
-    if not row or not row.agent_id or not opened or not opened.get("api_key"):
-        sys.exit("loom.assistant_service has no agent yet: start Loom with LibreChat beside it")
+def cmd_setup_bridge(args: argparse.Namespace) -> None:
+    """Grant each person `viewer` on their namespace, as a deployment's people hold it:
+    the bridge delegates each answer's token from the person's, which needs a live
+    grant. The cases then go to Loom's assistant route with each person's own token."""
     st = state()
-    st["deployed"] = {"agent_id": row.agent_id, "api_key": opened["api_key"]}
-    # Each answer's token, as the bridge's will be: viewer on the person's namespace alone, so
-    # a call that names no namespace reads that one. `revoke` revokes it with the person's.
-    for person in load("fixture.json")["people"]:
-        name = person["name"]
-        minted = mint(
+    people = load("fixture.json")["people"]
+    for org in sorted({p["org"] for p in people}):
+        namespaces = sorted({p["namespace"] for p in people if p["org"] == org})
+        admin = mint(
             args.loom_bin,
-            subject=name,
-            org=person["org"],
-            namespace=person["namespace"],
-            role="viewer",
-        )
-        st["tokens"][f"answer:{name}"] = minted["token"]
-        st["tokens"][f"answer:{name}:jti"] = minted["jti"]
-    st["librechat_url"] = args.librechat_url
-    st["model"] = row.definition_model
+            subject=f"qualify-admin-{org}",
+            org=org,
+            namespace=namespaces[0],
+            role="admin",
+            extra_namespaces=namespaces[1:],
+        )["token"]
+        for person in (p for p in people if p["org"] == org):
+            body = {
+                "org": org,
+                "namespace": person["namespace"],
+                "subject": person["name"],
+                "role": "viewer",
+            }
+            code, out, _ = loom_call(st["loom_url"], admin, "grants.create", body)
+            if code != 200:
+                sys.exit(f"grants.create {person['name']}: {code} {out}")
+    st["bridge"] = True
+    st["model"] = args.model
     save_state(st)
-    print(f"deployed agent {row.agent_id}, definition v{row.definition_version}")
+    print(f"granted {len(people)} people; the cases go through {st['loom_url']}")
 
 
 # ---------------------------------------------------------------- one answer
@@ -363,13 +358,16 @@ def ask_librechat(
         "stream_options": {"include_usage": True},
         "messages": [{"role": "user", "content": question}],
     }
-    if "deployed" in st:
-        # The deployed shape: one agent and key, and the person's token as the answer's.
-        lc = st["deployed"]
-        body["parent_message_id"] = st["tokens"][f"answer:{person}"]
+    if st.get("bridge"):
+        # Loom's assistant route, as the person: Loom runs its seeded agent.
+        ns = next(p["namespace"] for p in load("fixture.json")["people"] if p["name"] == person)
+        url = f"{st['loom_url']}/v1/assistant/chat/completions"
+        auth = {"Authorization": f"Bearer {st['tokens'][person]}", "X-Loom-Namespace": ns}
     else:
         lc = st["librechat"][person]
-    body["model"] = lc["agent_id"]
+        body["model"] = lc["agent_id"]
+        url = f"{st['librechat_url']}/api/agents/v1/chat/completions"
+        auth = {"Authorization": f"Bearer {lc['api_key']}"}
     started = time.perf_counter()
     first_delta = first_text = None
     text: list[str] = []
@@ -377,11 +375,7 @@ def ask_librechat(
     error = ""
     # A compressed stream reaches the client only once the answer is complete.
     with httpx.stream(
-        "POST",
-        f"{st['librechat_url']}/api/agents/v1/chat/completions",
-        json=body,
-        headers={"Authorization": f"Bearer {lc['api_key']}", "Accept-Encoding": "identity"},
-        timeout=180,
+        "POST", url, json=body, headers={**auth, "Accept-Encoding": "identity"}, timeout=180
     ) as r:
         if r.status_code != 200:
             error = f"HTTP {r.status_code}: {r.read().decode()[:300]}"
@@ -1002,8 +996,9 @@ def main() -> None:
         "setup", help="register the fixture's people in LibreChat with their own Loom tokens"
     )
     sub.add_parser(
-        "setup-deployed",
-        help="run the cases through the agent Loom seeded instead (reads loom.assistant_service)",
+        "setup-bridge",
+        help="grant the fixture's people their namespaces; the cases then go through Loom's "
+        "assistant route",
     )
     revoke = sub.add_parser("revoke", help="revoke the tokens the fixture marks revoked")
     revoke.add_argument(
@@ -1035,7 +1030,7 @@ def main() -> None:
     commands = {
         "seed": cmd_seed,
         "setup": cmd_setup,
-        "setup-deployed": cmd_setup_deployed,
+        "setup-bridge": cmd_setup_bridge,
         "revoke": cmd_revoke,
         "run": cmd_run,
         "rescore": cmd_rescore,

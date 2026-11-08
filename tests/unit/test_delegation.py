@@ -403,6 +403,28 @@ async def test_ending_a_third_party_clients_session_kills_what_it_minted(
 
 
 @pytest.mark.asyncio
+async def test_a_child_asked_to_end_with_the_session_ends_at_sign_out(
+    world, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The assistant's per-answer token: a dashboard session's child that a sign-out ends.
+    parent = _login(session_id="fam-ui", first_party=True, expires_at=int(time.time()) + 3600)
+    d = await delegate(
+        parent,
+        org=ORG,
+        requested={"a": "viewer"},
+        scoped=True,
+        ttl_seconds=600,
+        is_service_account=False,
+        ends_with_session=True,
+    )
+    raw = d.mint("alice", consumer="loom-assistant")
+    assert verify_token(raw).parents == ("login-1", "fam-ui")
+    monkeypatch.setattr(revocation, "_revoked_jtis", frozenset({"fam-ui"}))
+    with pytest.raises(TokenError, match="parent"):
+        verify_token(raw)
+
+
+@pytest.mark.asyncio
 async def test_a_third_party_session_counts_toward_the_chain_limit(world) -> None:
     exp = int(time.time()) + 3600
     seven = tuple(f"t{i}" for i in range(7))  # with the parent's own id: 8 ancestors

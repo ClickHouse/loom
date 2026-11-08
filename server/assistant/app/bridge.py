@@ -1,0 +1,299 @@
+"""The assistant bridge: one answer from the agent Loom seeded in LibreChat, as its caller.
+
+A request is admitted only when the caller may read the namespace, the org makes model
+calls, the namespace's assistant share of its daily model cost cap is not spent, and this
+replica runs fewer than its limit of answers there. The answer runs under a token
+delegated from the caller's for that answer alone (`viewer` on the namespace, consumer
+`loom-assistant`, ended with the caller's token, subject or sign-in session), which
+LibreChat sends back to Loom on every tool call (docs/architecture/assistant.md).
+"""
+
+from __future__ import annotations
+
+import contextlib
+import json
+import logging
+import time
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
+from typing import Any
+
+import httpx
+
+from server.assistant.app import service
+from server.auth.authz import check_authorized
+from server.auth.delegation import delegate
+from server.auth.jwt import AuthInfo
+from server.core.errors import (
+    AssistantUnavailableError,
+    AuthInsufficientError,
+    LoomServerError,
+    OverloadedError,
+    RateLimitedError,
+    ValidationError,
+)
+from server.llm.customer import ModelCallsDisabled, switched_off
+from server.observability import cost_accumulator
+from server.observability.budget import namespace_over_cap
+from server.observability.consumer import ASSISTANT_CONSUMER
+from server.observability.run_context import clean_run_id, set_ledger_run
+from server.operations.base import Role
+from server.settings import settings
+
+log = logging.getLogger(__name__)
+
+ASSISTANT_OP = "assistant.ask"
+# A refused share check (the cap is spent) is retried after this: the cap is a rolling day.
+_CAP_RETRY_S = 3600  # not a setting: a hint; the cap's own window is the setting
+# Seconds to reach LibreChat; an answer then runs up to LOOM_ASSISTANT_ANSWER_TTL_S.
+_CONNECT_S = 10.0  # not a setting: LibreChat is on the same network
+
+# Answers this replica runs per (org, namespace).
+_running: dict[tuple[str, str], int] = {}
+
+
+@dataclass(frozen=True)
+class Ticket:
+    """An admitted answer: where it runs and the token it reads under."""
+
+    org: str
+    namespace: str
+    agent_id: str
+    api_key: str
+    token: str
+
+
+@dataclass
+class Answer:
+    """What one answer produced, filled while it streams."""
+
+    run_id: str = ""
+    text: list[str] = field(default_factory=list)
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    usage_seen: bool = False
+    error: str = ""
+
+
+def admitted_messages(messages: Any) -> list[dict[str, str]]:
+    """The caller's `user` and `assistant` messages as text, in order. A `system`
+    message would override the agent's instructions and a tool message is LibreChat's
+    own, so both are dropped, as are files and images; the last message is the
+    question."""
+    if not isinstance(messages, list):
+        raise ValidationError("messages must be a list")
+    kept: list[dict[str, str]] = []
+    for m in messages:
+        if not isinstance(m, dict) or m.get("role") not in ("user", "assistant"):
+            continue
+        content = m.get("content")
+        if isinstance(content, list):  # OpenAI content parts: keep the text ones
+            content = "\n".join(
+                str(p.get("text", ""))
+                for p in content
+                if isinstance(p, dict) and p.get("type") == "text"
+            )
+        if isinstance(content, str) and content.strip():
+            kept.append({"role": str(m["role"]), "content": content})
+    if not kept or kept[-1]["role"] != "user":
+        raise ValidationError("the last message must be the caller's question")
+    return kept
+
+
+async def admit(auth: AuthInfo, org: str, namespace: str) -> tuple[str, str]:
+    """Refuse a request the assistant must not answer, before LibreChat is called;
+    (agent id, API key) when admitted."""
+    if not settings.assistant_librechat_url:
+        raise AssistantUnavailableError(
+            "no LibreChat is configured for the assistant (LOOM_ASSISTANT_LIBRECHAT_URL)"
+        )
+    answering = service.answering()
+    if answering is None:
+        raise AssistantUnavailableError(
+            "the assistant is not set up on this replica yet: /v1/health names why"
+        )
+    if auth.org == "*":
+        raise AuthInsufficientError(
+            "an org-wide token cannot ask the assistant: an answer reads one org"
+        )
+    if auth.read_scope in ("own_user", "own_session"):
+        raise AuthInsufficientError(
+            "a token whose reads are narrower than its namespace cannot ask the assistant"
+        )
+    if auth.expires_at is not None and not (auth.session_id and auth.first_party):
+        left = auth.expires_at - int(time.time())
+        if left < int(settings.assistant_answer_ttl_s):
+            raise AuthInsufficientError(
+                f"the token expires in {max(left, 0)} s, sooner than an answer may run "
+                f"({int(settings.assistant_answer_ttl_s)} s)"
+            )
+    try:
+        await check_authorized(auth, Role.VIEWER, org, namespace)
+    except PermissionError as e:
+        if isinstance(e, LoomServerError):
+            raise
+        log.debug("assistant refused: %s", e)
+        raise AuthInsufficientError(f"the caller cannot read {namespace!r} in {org!r}") from e
+    if await switched_off(org):
+        raise ModelCallsDisabled(f"model calls are switched off for org {org!r}")
+    share = float(settings.assistant_budget_share)
+    if await namespace_over_cap(
+        org, namespace, operation=ASSISTANT_OP, share=share, fail_open=False
+    ):
+        raise RateLimitedError(
+            f"the assistant's share of {namespace!r}'s daily model cost cap is spent",
+            retry_after_s=_CAP_RETRY_S,
+        )
+    return answering
+
+
+async def answer_token(auth: AuthInfo, org: str, namespace: str) -> str:
+    """The token one answer's tool calls read under: delegated from the caller's,
+    `viewer` on the namespace alone, no longer-lived than an answer may run, and ended
+    with the caller's token, subject or sign-in session."""
+    delegated = await delegate(
+        auth,
+        org=org,
+        requested={namespace: "viewer"},
+        scoped=True,
+        ttl_seconds=int(settings.assistant_answer_ttl_s),
+        is_service_account=auth.is_service_account,
+        ends_with_session=True,
+    )
+    return delegated.mint(auth.subject, consumer=ASSISTANT_CONSUMER)
+
+
+def _refuse_when_busy(org: str, namespace: str) -> None:
+    running = _running.get((org, namespace), 0)
+    if running >= int(settings.assistant_concurrent_answers):
+        raise OverloadedError(
+            f"the assistant is already answering {running} questions in {namespace!r}",
+            retry_after_s=5,
+        )
+
+
+async def open_answer(auth: AuthInfo, org: str, namespace: str) -> Ticket:
+    """Every refusal, then the answer's token: run before anything streams, so a
+    refused request is an HTTP error."""
+    agent_id, api_key = await admit(auth, org, namespace)
+    _refuse_when_busy(org, namespace)
+    token = await answer_token(auth, org, namespace)
+    return Ticket(org, namespace, agent_id, api_key, token)
+
+
+@contextlib.contextmanager
+def _slot(org: str, namespace: str) -> Any:
+    """One of this replica's answers in the namespace, or OVERLOADED."""
+    _refuse_when_busy(org, namespace)
+    key = (org, namespace)
+    _running[key] = _running.get(key, 0) + 1
+    try:
+        yield
+    finally:
+        _running[key] -= 1
+        if not _running[key]:
+            del _running[key]
+
+
+async def stream(
+    ticket: Ticket, messages: list[dict[str, str]], answer: Answer
+) -> AsyncIterator[bytes]:
+    """The admitted answer as LibreChat's agents API streams it (OpenAI chat-completion
+    chunks as server-sent events), with `answer` filled as it goes. Its spend is charged
+    to the request's cost accumulator when the stream ends, however it ends."""
+    with _slot(ticket.org, ticket.namespace):
+        body = {
+            "model": ticket.agent_id,
+            "messages": messages,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+            # The answer's token: the agent's MCP server sends it back as its bearer.
+            "parent_message_id": ticket.token,
+        }
+        headers = {"Authorization": f"Bearer {ticket.api_key}", "Accept-Encoding": "identity"}
+        timeout = httpx.Timeout(float(settings.assistant_answer_ttl_s), connect=_CONNECT_S)
+        try:
+            async with httpx.AsyncClient(
+                base_url=str(settings.assistant_librechat_url), timeout=timeout
+            ) as client:
+                async with client.stream(
+                    "POST", "/api/agents/v1/chat/completions", json=body, headers=headers
+                ) as r:
+                    if r.status_code != 200:
+                        log.warning(
+                            "LibreChat refused an answer (%s): %s",
+                            r.status_code,
+                            (await r.aread())[:300],
+                        )
+                        raise AssistantUnavailableError(
+                            f"LibreChat refused the answer ({r.status_code})"
+                        )
+                    async for line in r.aiter_lines():
+                        if not line.startswith("data: ") or line == "data: [DONE]":
+                            continue
+                        _note(answer, line[6:])
+                        yield (line + "\n\n").encode()
+        finally:
+            _charge(answer)
+    yield b"data: [DONE]\n\n"
+
+
+def _note(answer: Answer, data: str) -> None:
+    """What one chunk tells: the answer's id (its ledger run), text, usage, an error."""
+    try:
+        chunk = json.loads(data)
+    except ValueError:
+        return
+    if not answer.run_id and chunk.get("id"):
+        answer.run_id = clean_run_id(chunk["id"])
+        set_ledger_run(answer.run_id)
+    if chunk.get("error"):
+        answer.error = json.dumps(chunk["error"])[:300]
+    usage = chunk.get("usage")
+    if isinstance(usage, dict):
+        answer.prompt_tokens = int(usage.get("prompt_tokens") or 0)
+        answer.completion_tokens = int(usage.get("completion_tokens") or 0)
+        answer.usage_seen = True
+    for choice in chunk.get("choices") or []:
+        content = (choice.get("delta") or {}).get("content")
+        if isinstance(content, str):
+            answer.text.append(content)
+
+
+def _charge(answer: Answer) -> None:
+    """The answer's spend: its usage at the model's price, or the per-answer ceiling
+    when the usage never arrived or the model has no price, so no answer is free."""
+    model = str(service.current_definition().model)
+    if answer.usage_seen and cost_accumulator.is_priced(model):
+        cost_accumulator.report_llm(model, answer.prompt_tokens, answer.completion_tokens)
+    else:
+        cost_accumulator.report_charge(model, float(settings.assistant_answer_ceiling_usd))
+
+
+def error_event(e: LoomServerError) -> bytes:
+    """A refusal once the stream has begun, as the error event OpenAI's streams send."""
+    return f"data: {json.dumps({'error': e.to_detail()})}\n\n".encode()
+
+
+async def ask(auth: AuthInfo, org: str, namespace: str, messages: Any) -> Answer:
+    """One whole answer, for `assistant.ask`."""
+    kept = admitted_messages(messages)
+    ticket = await open_answer(auth, org, namespace)
+    answer = Answer()
+    async for _ in stream(ticket, kept, answer):
+        pass
+    return answer
+
+
+__all__ = [
+    "ASSISTANT_OP",
+    "Answer",
+    "Ticket",
+    "admit",
+    "admitted_messages",
+    "answer_token",
+    "ask",
+    "error_event",
+    "open_answer",
+    "stream",
+]

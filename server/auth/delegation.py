@@ -147,6 +147,7 @@ async def delegate(
     scoped: bool,
     ttl_seconds: int | None,
     is_service_account: bool,
+    ends_with_session: bool = False,
 ) -> Delegated:
     """The child `parent` may mint in `org`. `requested` maps each namespace,
     in read-priority order, to the role asked for there; None asks for the
@@ -155,13 +156,15 @@ async def delegate(
     otherwise a flat token whose one role is the lowest role allowed on any
     requested namespace, a role-less name beside `*` counting at the parent's
     ceiling (`_flat_role`). The caller lists the child where its owner can revoke
-    it (`loom.service_accounts`). Raises 403 AUTH_INSUFFICIENT naming what was
-    refused."""
+    it (`loom.service_accounts`). `ends_with_session` also names a first-party
+    sign-in session among the child's `parents`, so the child ends at sign-out as
+    a third-party client's always does (the assistant's per-answer token). Raises
+    403 AUTH_INSUFFICIENT naming what was refused."""
     child_org = _child_org(parent, org)
     if parent.is_service_account and not is_service_account:
         raise _refuse("a service-account token can only mint service-account tokens")
     parents = [*parent.parents, parent.token_id] if parent.token_id else list(parent.parents)
-    if parent.session_id and not parent.first_party:
+    if parent.session_id and (ends_with_session or not parent.first_party):
         # A third-party client's session: what it mints ends when the session
         # is revoked, not when the parent's access token runs out.
         parents.append(parent.session_id)
