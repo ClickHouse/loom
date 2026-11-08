@@ -194,8 +194,10 @@ async def analyst_user_absent(*, ch: _CHClient | None = None) -> bool:
             "SELECT count() AS n FROM system.users WHERE name = {user:String}",
             {"user": boundary.ANALYST_USER},
         )
-    except Exception:  # noqa: BLE001 — a user without access management cannot tell
-        return False
+    except Exception as e:
+        if error_code(e) == _ACCESS_DENIED:
+            return False  # a user without access management cannot tell
+        raise  # no answer: the caller must not draw on a guess
     return row is not None and int(row["n"]) == 0
 
 

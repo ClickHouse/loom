@@ -774,7 +774,8 @@ def _analysis_problems(settings: Any, state: HealthState) -> list[Problem]:
     """insights.query runs as the analyst user; while it is missing or wider
     than the allowlist every analysis call answers ANALYSIS_UNAVAILABLE."""
     del settings
-    if state.analysis_ok is not False:
+    # False: a finding. None with a problem: the probe has had no answer for a while.
+    if state.analysis_ok is True or not state.analysis_error:
         return []
     return [
         Problem(

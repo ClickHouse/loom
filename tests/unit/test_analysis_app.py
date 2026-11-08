@@ -754,9 +754,11 @@ def test_a_probe_with_no_answer_stops_serving_but_is_resent(
         asyncio.run(app.handle_insights_query(_query()))
 
 
-def test_no_answer_for_three_probes_is_a_finding(
+def test_no_answer_for_three_intervals_is_named_but_still_resent(
     monkeypatch: pytest.MonkeyPatch, ready: None
 ) -> None:
+    # An outage or a busy analyst user is no operator's fix: the replica keeps
+    # answering OVERLOADED, and health names it once it lasts.
     from server.settings import settings
 
     _clean_ran(monkeypatch)
@@ -772,7 +774,59 @@ def test_no_answer_for_three_probes_is_a_finding(
     for _ in range(3):
         asyncio.run(app.reprobe())
     ready_now, problem = app.analysis_state()
-    assert ready_now is False and "no answer for three probes" in problem
+    assert ready_now is None and "no answer for three intervals" in problem
+    with pytest.raises(OverloadedError):
+        asyncio.run(app.handle_insights_query(_query()))
+
+
+def test_a_proxys_own_status_is_no_answer(monkeypatch: pytest.MonkeyPatch, ready: None) -> None:
+    # A balancer's 503 carries no ClickHouse code: it says nothing about the analyst.
+    from clickhouse_connect.driver.exceptions import OperationalError
+
+    _clean_ran(monkeypatch)
+
+    async def run(*_: Any, **__: Any) -> Any:
+        raise OperationalError("HTTP driver received HTTP status 503, server response: busy")
+
+    monkeypatch.setattr(app.store, "run_statement", run)
+    asyncio.run(app.reprobe())
+    assert app.analysis_state() == (None, "")
+
+
+def test_a_refusal_loom_wrote_during_a_repair_is_the_problem(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    _clean_ran(monkeypatch)
+    monkeypatch.setattr(
+        app, "_probe", _returns(("this replica holds no analyst secrets", True, ""))
+    )
+    monkeypatch.setattr(app.store, "can_manage_access", _returns(True))
+
+    async def write() -> tuple[str, str]:
+        raise app.SetupRefused("loom.analysis_secrets does not open with LOOM_JWT_SECRET")
+
+    monkeypatch.setattr(app, "_write_under_lease", write)
+    asyncio.run(app.reprobe())
+    ready_now, problem = app.analysis_state()
+    assert ready_now is False and "does not open with LOOM_JWT_SECRET" in problem
+
+
+def test_a_first_boot_with_no_answer_about_the_user_is_no_finding(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    # Declining to draw on a guess is right; calling it a finding is not.
+    monkeypatch.setattr(app, "_ready", None)
+    monkeypatch.setattr(app, "_unreached_kind", "")
+    monkeypatch.setattr(app, "_unreached_since", 0.0)
+    monkeypatch.setattr(app, "lease", _NoLease)
+
+    class _Ch:
+        async def query_one(self, *_: Any, **__: Any) -> Any:
+            raise TimeoutError("read timed out")
+
+    monkeypatch.setattr(app.store, "_default_client", lambda: _Ch())
+    asyncio.run(app.provision())
+    assert app.analysis_state() == (None, "")
 
 
 @pytest.mark.parametrize(

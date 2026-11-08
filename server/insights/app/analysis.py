@@ -27,12 +27,17 @@ from uuid import UUID
 
 from server.core import leases
 from server.core.ch import query_tag_var, statement_timeout
-from server.core.ch_errors import error_code, error_line, is_transient_network_error
+from server.core.ch_errors import (
+    error_code,
+    error_line,
+    is_connection_failure,
+    is_passing_state,
+    is_transient_network_error,
+)
 from server.core.ch_request_cost import request_query_id
 from server.core.errors import (
     AnalysisUnavailableError,
     BackendTimeoutError,
-    BackendUnavailableError,
     OverloadedError,
     RateLimitedError,
     ValidationError,
@@ -403,7 +408,10 @@ async def reprobe() -> None:
         if not problem:
             _probe_failed(f"checking for row policies {_LOOM_DID_NOT_WRITE} failed", e)
             return
-        detail = f"{detail}; the repair or its re-check did not finish: {error_line(e)}"
+        if isinstance(e, SetupRefused):
+            problem = f"{problem}: {e}"  # Loom's own text, which names the fix
+        else:
+            detail = f"{detail}; the repair or its re-check did not finish: {error_line(e)}"
     _set_problem(problem, detail.lstrip("; "))
 
 
@@ -413,22 +421,19 @@ _NETWORK_CODES = frozenset({209, 210})
 
 
 def _no_answer(e: BaseException) -> bool:
-    """An error that carries no answer about the analyst user: no connection,
-    a client-side wait that ran out, the pool or a lease held elsewhere, the
-    analyst user's own concurrency cap, or a server short of memory. Every
-    other ClickHouse answer, a statement's own cap included, is a finding."""
+    """An error that carries no answer about the analyst user: no answer from
+    ClickHouse at all (a dropped connection, a client-side wait that ran out,
+    a proxy's own status), a server state that clears by itself (too many
+    queries, a server short of memory, Keeper lost, a read-only replica), or
+    the pool or a lease held elsewhere. Every other ClickHouse answer, a
+    statement's own cap included, is a finding."""
     if isinstance(
-        e,
-        TimeoutError
-        | leases.LeaseBusy
-        | leases.LeaseUnavailable
-        | BackendUnavailableError
-        | BackendTimeoutError
-        | OverloadedError,
+        e, TimeoutError | leases.LeaseBusy | leases.LeaseUnavailable | BackendTimeoutError
     ):
         return True
-    if is_transient_network_error(e):
+    if is_connection_failure(e) or is_passing_state(e) or is_transient_network_error(e):
         return True
+    # The same answers as text, from a client that keeps no exception type.
     code = error_code(e)
     if code in _NETWORK_CODES or code == _TOO_MANY_SIMULTANEOUS_QUERIES:
         return True
@@ -443,8 +448,8 @@ def _probe_failed(what: str, e: BaseException) -> None:
     """Record a probe or setup that raised. A ClickHouse answer, or a refusal
     Loom wrote, is a finding. No answer at all keeps a finding, and leaves a
     replica that was serving or starting unknown, so it answers OVERLOADED,
-    which a client resends, until a probe runs; no answer for three probe
-    intervals becomes a finding of its own."""
+    which a client resends, until a probe runs; past three probe intervals the
+    problem is named for health and `loom doctor`, still as OVERLOADED."""
     global _ready, _problem, _unreached_kind, _unreached_since
     if isinstance(e, SetupRefused):
         _set_problem(f"{what}: {e}")
@@ -461,10 +466,11 @@ def _probe_failed(what: str, e: BaseException) -> None:
     now = time.monotonic()
     if _ready is True or not _unreached_since:
         _unreached_since = now
-    if now - _unreached_since > 3 * float(settings.ch_analysis_probe_interval_s):
-        _set_problem(f"the analysis probe has had no answer for three probes: {kind}")
-        return
-    _ready, _problem = None, ""
+    # Still unknown, still refused with OVERLOADED; past three intervals the
+    # problem is named, so health and `loom doctor` show it.
+    stale = now - _unreached_since >= 3 * float(settings.ch_analysis_probe_interval_s)
+    _ready = None
+    _problem = f"the analysis probe has had no answer for three intervals: {kind}" if stale else ""
 
 
 def start_probe_loop() -> asyncio.Task[None]:
