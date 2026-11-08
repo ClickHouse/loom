@@ -51,17 +51,24 @@ class IdentityDirectory:
         visibility = await namespace_visibility.visibility_map(org, namespaces)
         return {ns for ns, vis in visibility.items() if vis == "public"}
 
-    async def in_use(self, org: str, namespace: str, *, ch: _CHClient | None = None) -> bool:
+    async def in_use(
+        self,
+        org: str,
+        namespace: str,
+        *,
+        ch: _CHClient | None = None,
+        skip: frozenset[str] = frozenset(),
+    ) -> bool:
         """A configured code-plane entry or tracker namespace is in use before its
         registry row or first row lands; any other name when Postgres holds a memory of it
-        or `namespace_census.in_use` finds a row, read sequentially: one another replica
-        wrote a moment ago counts."""
+        or `namespace_census.in_use` finds a row (in the census tables not in `skip`), read
+        sequentially: one another replica wrote a moment ago counts."""
         if self.code_entry(org, namespace) is not None:
             return True
         if tracker_namespace(org, namespace) is not None:
             return True
         if await ledger_reads.pg_holds_namespace(org, namespace):
             return True
-        tables = ledger_reads.namespace_tables()
+        tables = [t for t in ledger_reads.namespace_tables() if t not in skip]
         with sequential_reads():
             return await namespace_census.in_use(org, namespace, tables, ch=ch)

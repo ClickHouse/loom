@@ -12,7 +12,9 @@ the upload row holds it from the originals sweep until it expires.
 
 The route bounds its own body (the request-body cap passes it through) and is
 admitted as an op is: after authorization it draws `knowledge.add`'s rate-limit
-buckets and holds one of the org's in-flight slots while it reads and stores.
+buckets, registers the namespace as `knowledge.ingest`'s transport would
+(`maybe_autoregister`), and holds one of the org's in-flight slots while it reads and
+stores.
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ from server.auth.gateway import effective_auth, personal_namespace
 from server.core import fail_open, tenant_slots
 from server.core.document_formats import format_of
 from server.core.errors import RateLimitedError
+from server.identity.app.namespace_autoregister import maybe_autoregister
 from server.identity.app.restricted_access import note_restricted_access
 from server.operations.base import Role
 from server.settings import settings
@@ -129,6 +132,10 @@ async def knowledge_upload(
         auth, op="knowledge.upload", org=org, namespace=namespace, transport="http"
     )
     _admit(auth, org, namespace)
+    # Register before the upload's own rows can make a fresh name read as in use.
+    from server.knowledge.api.ops_knowledge import knowledge_ingest
+
+    await maybe_autoregister(knowledge_ingest, org=org, namespace=namespace, auth=auth)
     with tenant_slots.hold(_bucket_org(auth, org)):
         return await _store(request, org, namespace, name, fmt, content_type, sha256)
 

@@ -203,7 +203,8 @@ class InboxListInput(_Caller):
     """Inboxes the caller may see: those owned by ``namespace`` (the
     authorized namespace) plus, with ``mine_everywhere``, every inbox in the
     org the caller may post to: one whose owner namespace the caller can write,
-    or that lists the caller (subject or agent) as a poster."""
+    or that lists the caller as a poster (its subject, or its agent label without a
+    token)."""
 
     # Also list every org inbox the caller may post to (write on its owner namespace,
     # or listed as a poster); false lists only inboxes owned by `namespace`.

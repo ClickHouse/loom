@@ -6,25 +6,28 @@ retention policy and no kind.
 
 The first write a principal makes into an unregistered namespace inserts the registry row
 `namespace.register` would have written for it, with that op's defaults: owner = the token
-subject, `kind = 'bench'` when the name is under one of `namespace_bench_prefixes` (else
-`memory`), `retention_days = 0`. The row is the only write: no TTL clause is touched (a
-per-namespace retention is a clause in eight tables' TTL expressions, and setting one
-re-issues `MODIFY TTL` on all of them), no ALTER is issued, and no grant is written. An
-owner row is not elevation: the register op's admin grant for its caller would have made a
-writer an admin of every namespace it touched (`memory.unlock` open to writers;
-`grants.revoke` refusing to remove "the only admin"), and `resolve_my_namespaces` unions a
-wildcard token's grants, so a subject's searches fanned out across every namespace it had
-ever written to. The owner named on an auto-registered row may complete its registration
-with `namespace.register` while nobody else holds a live grant on it; nothing
-else changes for the writer.
+subject, or none when the name is already in use (`IdentityDirectory.in_use`), `kind =
+'bench'` when the name is under one of `namespace_bench_prefixes` (else `memory`),
+`retention_days = 0`. The row is the only write: no TTL clause is touched (a per-namespace
+retention is a clause in eight tables' TTL expressions, and setting one re-issues `MODIFY
+TTL` on all of them), no ALTER is issued, and no grant is written. An owner row is not
+elevation: the register op's admin grant for its caller would have made a writer an admin
+of every namespace it touched (`memory.unlock` open to writers; `grants.revoke` refusing
+to remove "the only admin"), and `resolve_my_namespaces` unions a wildcard token's grants,
+so a subject's searches fanned out across every namespace it had ever written to. The
+owner named on an auto-registered row may complete its registration with
+`namespace.register` while nobody else holds a live grant on it; nothing else changes for
+the writer.
 
 The row also opts into nothing an absent row did not: every column reader
 treats "no row" and the register defaults alike.
 
 Runs from both transports after authorization, before the handler.
 Best-effort: a registry failure never fails the write, and the process
-cache is filled only on success so the next write retries. One point read
-per (org, namespace) per process; the hot path is a set lookup.
+cache is filled only on success so the next write retries; a retry that finds
+the earlier write's data records no owner. One point read per (org, namespace) per
+process, plus the in-use check when no row exists (one ClickHouse statement, and a
+Postgres read under the Postgres authority); the hot path is a set lookup.
 """
 
 from __future__ import annotations
@@ -35,6 +38,7 @@ from typing import Any, Final
 
 from server.core.naming import reserved_for_sso
 from server.identity.api.models import NamespaceRegisterInput
+from server.identity.app.directory import IdentityDirectory
 from server.operations.base import Operation, Role
 from server.settings import settings
 
@@ -47,7 +51,23 @@ AUTO_REGISTER_TAG = "auto-registered"
 # `updated_at`, the table's version column, of an auto-registered row. Aware: the
 # driver encodes a naive datetime as host-local time.
 AUTO_ROW_VERSION = datetime(1970, 1, 1, 0, 0, 1, tzinfo=UTC)
+# `updated_at` of an ownerless auto row, below `AUTO_ROW_VERSION`: when two first writes
+# race, the owned row of the one that found the name free wins.
+OWNERLESS_ROW_VERSION = datetime(1970, 1, 1, tzinfo=UTC)
 _MISSING = ("", "-", "*")
+# The census tables a read or a run writes under a name (telemetry, a query, a run's
+# ledger row with its request and response), so a writer who searched first still owns
+# the name; a name holding only these rows goes to its first writer.
+READ_TRACES: Final = frozenset(
+    {
+        "loom.agent_runs",
+        "loom.events",
+        "loom.memory_exposures",
+        "loom.search_trace_log",
+        "loom.code_search_trace",
+        "loom.code_search_outcome",
+    }
+)
 
 
 def _csv(value: str) -> tuple[str, ...]:
@@ -132,13 +152,17 @@ async def ensure_registered(
         import server.operations  # noqa: F401 — wires handlers before importing one
         from server.identity.app.namespace import registry_row
 
+        # A name that already holds state (data written with auth off, a grant) is not its
+        # first writer's to own: the row names no owner, so only an admin completes it.
+        # Identity's own directory: the gate's seam takes no `skip`.
+        in_use = await IdentityDirectory().in_use(org, namespace, ch=ch, skip=READ_TRACES)
         kind = classify_kind(namespace)
         now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
         row = registry_row(
             NamespaceRegisterInput(
                 org=org,
                 namespace=namespace,
-                owner_email=subject,
+                owner_email="" if in_use else subject,
                 description=f"Auto-registered on first write ({op_name}) by {subject}.",
                 kind=None,  # classified by name (`classify_kind`), as `kind` above
                 tags=[AUTO_REGISTER_TAG] + (["bench"] if kind == "bench" else []),
@@ -147,10 +171,9 @@ async def ensure_registered(
             None,
             now,
         )
-        # The lowest version: under FINAL any explicit row (a register, a restriction)
-        # wins over this one, even one written a moment earlier on another replica
-        # that this read could not see yet.
-        row["updated_at"] = AUTO_ROW_VERSION
+        # Both versions sit below any explicit row's (a register, a restriction), so an
+        # explicit row wins under FINAL, even one another replica wrote a moment ago.
+        row["updated_at"] = OWNERLESS_ROW_VERSION if in_use else AUTO_ROW_VERSION
         await ch.insert("loom.namespaces", [row])
         _remember(org, namespace)
         from server.identity.app.traffic_class_registry import note_registered
@@ -161,7 +184,7 @@ async def ensure_registered(
             org,
             namespace,
             kind,
-            subject,
+            row["owner_email"] or "-",
             op_name,
         )
         return True

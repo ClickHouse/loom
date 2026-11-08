@@ -1,5 +1,5 @@
-"""The first write into an unregistered namespace inserts the
-registry row `namespace.register` would have written — owner = subject,
+"""The first write into an unregistered namespace inserts the registry row
+`namespace.register` would have written — owner = subject (none on a name in use),
 kind by prefix, retention_days 0 — and nothing else: no ALTER, no TTL."""
 
 from __future__ import annotations
@@ -81,12 +81,13 @@ async def test_first_write_inserts_the_register_row_with_no_ttl_side_effect() ->
     assert row["active"] is True and row["visibility"] == "private"
     assert row["conversation_logging_enabled"] is False
     assert ar.AUTO_REGISTER_TAG in row["tags"] and "bench" in row["tags"]
-    # The gate of the record: zero DDL from this path, of any shape.
-    text = _texts(ch).upper()
+    # The gate of the record: zero DDL from this path, of any shape. The in-use read
+    # names the grants table; nothing else may.
+    text = "\n".join(sql for _, sql, _ in ch.statements if "AS in_use" not in sql).upper()
     for forbidden in ("ALTER", "MODIFY TTL", "MATERIALIZE TTL", "TTL ", "NAMESPACE_GRANTS"):
         assert forbidden not in text, f"auto-register emitted {forbidden!r}"
     kinds = [k for k, _, _ in ch.statements]
-    assert kinds == ["query_one", "insert"]
+    assert kinds == ["query_one", "query_one", "insert"]
 
 
 @pytest.mark.asyncio
@@ -168,6 +169,69 @@ def test_owner_of_an_auto_registered_row_may_complete_its_registration() -> None
     assert not _is_auto_registered_owner(auto_row, "")
     # a row registered through the form keeps the admin-grant rule
     assert not _is_auto_registered_owner({"owner_email": "bob@x", "tags": []}, "bob@x")
+
+
+class _InUseCH(_RecordingCH):
+    """No registry row, but the name already holds state."""
+
+    async def query_one(self, sql: str, params: dict[str, Any] | None = None):
+        self.statements.append(("query_one", sql, params))
+        return {"in_use": 1} if "AS in_use" in sql else None
+
+
+@pytest.mark.asyncio
+async def test_a_first_write_into_a_name_in_use_records_no_owner() -> None:
+    from server.identity.app.namespace import _is_auto_registered_owner
+
+    ch = _InUseCH()
+    assert await ar.ensure_registered("o", "legacy", subject="w", op_name="memory.set", ch=ch)
+    [(_, [row])] = ch.inserts
+    assert row["owner_email"] == ""
+    assert not _is_auto_registered_owner(row, "w")
+    # A racing first write that found the name free wins under FINAL.
+    assert row["updated_at"] < ar.AUTO_ROW_VERSION
+
+
+@pytest.mark.asyncio
+async def test_a_name_postgres_holds_memory_of_records_no_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.erasure.app import ledger_reads
+
+    async def held(org: str, namespace: str) -> bool:
+        return True
+
+    monkeypatch.setattr(ledger_reads, "pg_holds_namespace", held)
+    ch = _RecordingCH()
+    assert await ar.ensure_registered("o", "legacy", subject="w", op_name="memory.set", ch=ch)
+    [(_, [row])] = ch.inserts
+    assert row["owner_email"] == ""
+
+
+@pytest.mark.asyncio
+async def test_rows_a_read_left_do_not_take_the_name_from_its_first_writer() -> None:
+    from server.erasure.app import ledger_reads
+
+    class _TracedCH(_RecordingCH):
+        """In use when the statement reads any of `held`."""
+
+        def __init__(self, held: set[str]) -> None:
+            super().__init__()
+            self.held = held
+
+        async def query_one(self, sql: str, params: dict[str, Any] | None = None):
+            self.statements.append(("query_one", sql, params))
+            found = any(f"FROM {t} " in sql for t in self.held)
+            return {"in_use": 1} if "AS in_use" in sql and found else None
+
+    assert ar.READ_TRACES <= set(ledger_reads.namespace_tables())
+    cases = ((set(ar.READ_TRACES), "w"), ({"loom.memory"}, ""), ({"loom.namespace_grants"}, ""))
+    for held, owner in cases:
+        ar.forget_all()
+        ch = _TracedCH(held)
+        assert await ar.ensure_registered("o", "n", subject="w", op_name="memory.set", ch=ch)
+        [(_, [row])] = ch.inserts
+        assert row["owner_email"] == owner
 
 
 @pytest.mark.asyncio

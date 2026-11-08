@@ -320,8 +320,9 @@ async def require_admin_of_existing(
             raise AuthInsufficientError(
                 f"{org}/{namespace} is restricted and cannot be made public"
             )
-    # A first write's row names its writer owner, who may complete the form while nobody
-    # else holds a live grant there (the form sets who may join); anyone else needs admin.
+    # A first write's row names its writer owner (none on a name in use), who may complete
+    # the form while nobody else holds a live grant there (the form sets who may join);
+    # anyone else needs admin.
     owner_completes = (
         owner_may_complete
         and _is_auto_registered_owner(existing, caller)

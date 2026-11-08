@@ -16,6 +16,7 @@ from fastapi import HTTPException
 import server.auth.self_signup as ss
 from server.auth import login, revocation
 from server.auth.jwt import verify_token
+from server.memory.domain.trust import HUMAN_PREFIX, PROCESS_PREFIX
 from server.operations.base import Role
 from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
@@ -108,6 +109,17 @@ def test_a_subject_granted_elsewhere_in_the_org_cannot_be_claimed(
     assert _signup(namespace="carol", email="carol@x.io").subject == "carol"
 
 
+class _Local:
+    """The sign-up reservation read, run on clickhouse-local over `setup`."""
+
+    def __init__(self, setup: list[str]) -> None:
+        self.setup = setup
+
+    async def query_one(self, sql: str, params: Any = None) -> Any:
+        rows = run(self.setup, sql, params)
+        return rows[0] if rows else None
+
+
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 def test_only_an_unrevoked_grant_reserves_a_name() -> None:
     """A revoked grant carries no power to inherit, so it frees its name; a pending
@@ -137,24 +149,55 @@ def test_only_an_unrevoked_grant_reserves_a_name() -> None:
         " VALUES ('dev', 'ci', 'sa:ci-abc', 'Gail', 1)",
         "INSERT INTO loom.service_accounts (org, name, sa_subject, created_by, revoked_at,"
         " version) VALUES ('dev', 'old', 'sa:old-abc', 'hal', '2026-01-01 00:00:00', 1)",
+        ddl("task_inboxes"),
+        ddl("task_poster_policies"),
+        ddl("tasks"),
     ]
 
-    class _Local:
-        async def query_one(self, sql: str, params: Any = None) -> Any:
-            rows = run(setup, sql, params)
-            return rows[0] if rows else None
-
-    asyncio.run(ss._refuse_empowered(_Local(), "dev", "carol"))
+    asyncio.run(ss._refuse_empowered(_Local(setup), "dev", "carol"))
     with pytest.raises(HTTPException) as ei:
-        asyncio.run(ss._refuse_empowered(_Local(), "dev", "dave"))
+        asyncio.run(ss._refuse_empowered(_Local(setup), "dev", "dave"))
     assert ei.value.status_code == 409
     with pytest.raises(HTTPException):
-        asyncio.run(ss._refuse_empowered(_Local(), "dev", "erin"))
+        asyncio.run(ss._refuse_empowered(_Local(setup), "dev", "erin"))
     with pytest.raises(HTTPException):  # a namespace's owner may rewrite it
-        asyncio.run(ss._refuse_empowered(_Local(), "dev", "frank"))
+        asyncio.run(ss._refuse_empowered(_Local(setup), "dev", "frank"))
     with pytest.raises(HTTPException):
-        asyncio.run(ss._refuse_empowered(_Local(), "dev", "gail"))
-    asyncio.run(ss._refuse_empowered(_Local(), "dev", "hal"))  # its token was revoked
+        asyncio.run(ss._refuse_empowered(_Local(setup), "dev", "gail"))
+    asyncio.run(ss._refuse_empowered(_Local(setup), "dev", "hal"))  # its token was revoked
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_a_task_inbox_row_naming_a_subject_reserves_its_name() -> None:
+    """An inbox's owner and posters, a poster rule and a task's poster act as the subject
+    they name, so each reserves it; a deleted inbox frees a poster with no task, a deleted
+    task does not."""
+    setup = [
+        ddl("namespace_grants"),
+        ddl("namespaces"),
+        ddl("service_accounts"),
+        ddl("task_inboxes"),
+        "INSERT INTO loom.task_inboxes (org, inbox, owner_agent, owner_namespace, posters,"
+        f" created_by, version) VALUES ('dev', 'ops', 'a', 'team', ['Ivy'], '{HUMAN_PREFIX}Jo', 1)",
+        "INSERT INTO loom.task_inboxes (org, inbox, owner_agent, owner_namespace, posters,"
+        " version, is_deleted) VALUES ('dev', 'old', 'a', 'team', ['kim'], 1, 1)",
+        "INSERT INTO loom.task_inboxes (org, inbox, owner_agent, owner_namespace, created_by,"
+        f" version) VALUES ('dev', 'bots', 'a', 'team', '{PROCESS_PREFIX}Pat', 1)",
+        ddl("task_poster_policies"),
+        "INSERT INTO loom.task_poster_policies (org, inbox, poster, kind, mode, version)"
+        " VALUES ('dev', 'ops', 'Lee', '*', 'auto', 1)",
+        "INSERT INTO loom.task_poster_policies (org, inbox, poster, kind, mode, version,"
+        " is_deleted) VALUES ('dev', 'ops', 'Ned', '*', 'auto', 1, 1)",
+        ddl("tasks"),
+        "INSERT INTO loom.tasks (org, inbox, task_id, from_subject, version, is_deleted)"
+        " VALUES ('dev', 'gone', generateUUIDv4(), 'Max', 1, 1)",
+    ]
+
+    for name in ("ivy", "jo", "pat", "lee", "max"):
+        with pytest.raises(HTTPException):
+            asyncio.run(ss._refuse_empowered(_Local(setup), "dev", name))
+    for name in ("kim", "ned"):
+        asyncio.run(ss._refuse_empowered(_Local(setup), "dev", name))
 
 
 @pytest.mark.parametrize("org", ["eve-org", "clickhouse"])

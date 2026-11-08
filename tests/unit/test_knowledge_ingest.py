@@ -894,6 +894,32 @@ def test_an_upload_stores_the_bytes_and_answers_a_scoped_id(client: Any, world: 
     assert row["expires_at"] > row["created_at"]
 
 
+def test_an_upload_registers_its_namespace_before_it_writes(
+    client: Any, world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.identity.app.namespace_autoregister import should_autoregister
+    from server.knowledge.api.ops_knowledge import knowledge_ingest
+    from server.knowledge.app import upload_routes
+    from server.knowledge.store import blobs
+
+    assert should_autoregister(knowledge_ingest, "o", "ns")
+
+    order: list[str] = []
+
+    async def autoregister(op: Any, *, org: str, namespace: str, auth: Any) -> bool:
+        order.append(f"register {op.name} {org}/{namespace}")
+        return False
+
+    async def write(*_: Any, **__: Any) -> None:
+        order.append("write")
+
+    monkeypatch.setattr(upload_routes, "maybe_autoregister", autoregister)
+    monkeypatch.setattr(blobs, "put", write)
+    monkeypatch.setattr(ingestions, "insert_upload", write)
+    assert _post(client, SQL).status_code == 201
+    assert order == ["register knowledge.ingest o/ns", "write", "write"]
+
+
 def test_an_upload_expires_after_knowledge_upload_ttl_seconds(
     client: Any, world: World, settings_override: Any
 ) -> None:

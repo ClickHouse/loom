@@ -18,6 +18,7 @@ from server.identity.app import policy_witness
 from server.identity.domain import policy_rules as R
 from server.observability.events import AgentEvent
 from server.settings import settings
+from tests.unit import clickhouse_local
 from tests.unit.cross_replica_fake import FakeCluster, in_request
 
 
@@ -58,7 +59,7 @@ def test_an_explicit_row_written_on_another_replica_is_never_overridden() -> Non
     assert asyncio.run(run()) is False
 
 
-def test_an_auto_row_carries_the_lowest_version() -> None:
+def test_an_owned_auto_row_carries_the_auto_row_version() -> None:
     ch = _Recorder()
     autoreg.forget_all()
     assert asyncio.run(
@@ -66,7 +67,22 @@ def test_an_auto_row_carries_the_lowest_version() -> None:
     )
     ((table, rows, _),) = ch.inserts
     assert table == "loom.namespaces" and rows[0]["updated_at"] == autoreg.AUTO_ROW_VERSION
-    assert ch.sequential == [True]
+    assert ch.sequential == [True, True]  # the registry read, the in-use read
+
+
+@pytest.mark.skipif(clickhouse_local.CLICKHOUSE is None, reason="clickhouse not installed")
+@pytest.mark.parametrize("owned_first", [True, False])
+def test_an_owned_auto_row_beats_an_ownerless_one_whatever_lands_last(owned_first: bool) -> None:
+    def row(owner: str, version: datetime) -> str:
+        return (
+            "INSERT INTO loom.namespaces (org, namespace, owner_email, updated_at) VALUES"
+            f" ('o', 'n', '{owner}', toDateTime({int(version.timestamp())}, 'UTC'))"
+        )
+
+    inserts = [row("w", autoreg.AUTO_ROW_VERSION), row("", autoreg.OWNERLESS_ROW_VERSION)]
+    setup = [clickhouse_local.ddl("namespaces"), *(inserts if owned_first else inserts[::-1])]
+    rows = clickhouse_local.run(setup, "SELECT owner_email FROM loom.namespaces FINAL")
+    assert rows == [{"owner_email": "w"}]
 
 
 # ---- history-policy witnesses land before the answer ------------------------

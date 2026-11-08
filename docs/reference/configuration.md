@@ -1496,7 +1496,7 @@ Namespace registration, write marks and bench-namespace GC.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_NAMESPACE_AUTOREGISTER_ENABLED` | `bool` | `True` |  | A principal's first write into a namespace with no loom.namespaces row inserts one: owner = token subject, `kind = 'bench'` under a bench prefix, `retention_days = 0` (never a TTL). No ALTER. |
+| `LOOM_NAMESPACE_AUTOREGISTER_ENABLED` | `bool` | `True` |  | A principal's first write into a namespace with no loom.namespaces row inserts one: owner = token subject (none on a name already in use), `kind = 'bench'` under a bench prefix, `retention_days = 0` (never a TTL). No ALTER. |
 | `LOOM_NAMESPACE_AUTOREGISTER_SKIP_PREFIXES` | `str` | `'namespace.,code.,admin.,ops.,grants.,policy.,blacklist.,…` |  | Op-name prefixes the auto-register hook ignores: ops on a namespace rather than into it, the code plane (registers `kind = 'code'` itself), and the operator planes. |
 | `LOOM_NAMESPACE_BENCH_PREFIXES` | `str` | `'lme-,mb-,td-,locomo-,kcurve-,wpath-,bench-,ma-verbatim-,…` |  | Comma-separated name prefixes of throwaway harness namespaces: stamped `kind = 'bench'` by `namespace.register` (when no kind is given) and auto-register, and scanned by `namespaces-gc`. |
 | `LOOM_NAMESPACE_GC_WORKER_ENABLED` | `bool` | `True` |  | namespace_gc: `kind = 'bench'` namespaces with live memory and no write for `namespace_gc_idle_hours` are purged by one list-scoped erasure saga per batch, at most `namespace_gc_sagas_per_pass` a pass, kept to loom tables. |

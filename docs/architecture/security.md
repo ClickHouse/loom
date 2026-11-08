@@ -202,17 +202,19 @@ Each op declares `required_role`.
   never assigns it.
 - Self-signup and agent sign-up make the name the account's subject, so they refuse a
   trusted caller's subject, a platform-admin handle and any subject holding an unrevoked
-  grant (a pending join request included), a namespace or an unrevoked token in the org,
-  answering as for a taken name, and their tokens carry `writer` only. Other rows that
-  name a subject, such as a task inbox's posters, reserve nothing: name an email subject
-  there. A grant reserves its subject's name whoever wrote it, since a grant to someone
-  who has not signed up yet is the power a stranger typing that name would take. A
-  namespace admin can therefore reserve names by granting them, a self-signup account on
-  its own namespace included, so the names one account holds back are bounded by the op
-  rate limit on its grant writes, not by the sign-up rate; each row names its
-  `granted_by`, and revoking the grant frees the name. The reservation covers the grants
-  that exist when the sign-up reads them; a grant written to a name while its sign-up runs
-  lands on the new account.
+  grant (a pending join request included), a namespace, an unrevoked token, a task inbox's
+  owner or poster, a poster rule or a task's poster in the org, answering as for a taken
+  name, and their tokens carry `writer` only. A grant reserves its subject's name whoever
+  wrote it, since a grant to someone who has not signed up yet is the power a stranger
+  typing that name would take. A namespace admin can therefore reserve names by granting
+  them, a self-signup account on its own namespace included, so the names one account
+  holds back are bounded by the op rate limit on its grant and inbox writes (an inbox
+  lists up to 200 posters), not by the sign-up rate; each row names its `granted_by`, and
+  revoking the grant frees the name, as removing an inbox poster or a poster rule does; a
+  task's poster stays reserved while the task row exists, a deleted one included. Any
+  other row that names a subject reserves nothing, so name an email subject in it. The
+  reservation covers the rows that exist when the sign-up reads them; one written to a
+  name while its sign-up runs lands on the new account.
 - `platform_admin` is written into the token at login for entries of
   `LOOM_PLATFORM_ADMINS` (`platform_roles` in `server/auth/login.py`). A handle matches a
   password account; an email matches only an OIDC-verified sign-in. Self-signup emails are
@@ -760,8 +762,11 @@ one statement that stops at the first row in each table
 the account's (`account_change`, which `namespace.register` and `namespace.restore` hold
 too) with sequential consistency; when it cannot be read the sign-up fails and nothing is
 provisioned. The personal-namespace auto-claim passes over a name in use to its fallback
-name, and a workload trust's exchange refuses an agent name in use. Every other path that
-registers a name as new and makes its caller admin (`namespace.register`,
+name, a workload trust's exchange refuses an agent name in use, and a first write's
+auto-registration names no owner on a name in use (rows a read or a run leaves aside,
+`namespace_autoregister.READ_TRACES`, which a fresh `namespace.register` still counts), so
+only an admin of the name completes the registration, a writer that is one included. Every
+other path that registers a name as new and makes its caller admin (`namespace.register`,
 `namespace.restore` into a fresh target, `collection.create`, a self-service code
 repository or tracker source, which checks again under the account's claim after its
 remote probe) refuses a name in use unless the caller passes the gate's ADMIN check on it,
@@ -770,7 +775,11 @@ name outside the tree, a platform admin). The refusal is the one a registered na
 non-admin gets; the time it takes may still differ, as a registered name is answered
 before the in-use read. With auth off nobody is refused. An operator gives such a
 namespace an owner: `loom namespaces-adopt` registers the ones holding live memory, and an
-admin grant covers the rest.
+admin grant covers the rest, an ownerless auto-registered row (`owner_email = ''`, tagged
+`auto-registered`) included. An auto-registered row written before first writes checked
+for use may name an owner of a name that held another identity's data; an operator reviews
+rows tagged `auto-registered` and not `adopted`, with an owner, and re-registers one as
+its admin.
 
 Two kinds of use leave nothing to find. A flat token minted for a name
 (`loom mint-token --namespaces <name>`) authorizes it without a row until its first

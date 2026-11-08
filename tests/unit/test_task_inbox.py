@@ -26,6 +26,7 @@ from server.tasks.api import ops_task
 from server.tasks.app import common, inboxes, reads, sweep, transitions, trust
 from server.tasks.store import repo as repo
 from server.tasks.store.repo import ClaimResult, KeeperLeases, resolve_policy
+from tests.unit import clickhouse_local
 from tests.unit.claims_fake import memory_claims
 
 ORG = "acme"
@@ -195,6 +196,7 @@ class FakeRepo:
         namespace=None,
         statuses=None,
         kinds=None,
+        posted_by=None,
         from_subject=None,
         owner=None,
         limit=100,
@@ -208,6 +210,8 @@ class FakeRepo:
             rows = [r for r in rows if r["status"] in statuses]
         if kinds:
             rows = [r for r in rows if r["kind"] in kinds]
+        if posted_by:
+            rows = [r for r in rows if posted_by in (r["from_subject"], r.get("from_agent"))]
         if from_subject:
             rows = [r for r in rows if r["from_subject"] == from_subject]
         if owner:
@@ -1492,3 +1496,54 @@ async def test_a_stranger_posting_to_an_inbox_is_told_it_does_not_exist(
     with pytest.raises(HTTPException) as absent:
         await _post(fake, inbox="no-such-inbox", from_subject="sa:stranger")
     assert stranger.value.status_code == 404 == absent.value.status_code
+
+
+@pytest.mark.asyncio
+async def test_the_poster_listing_matches_the_token_subject_never_an_agent_label(
+    fake: FakeRepo,
+) -> None:
+    """`posted_by_me` reads across the org, so a subject that spells another poster's
+    agent label does not get that poster's tasks."""
+    from server.auth import context
+    from server.auth.jwt import AuthInfo
+    from server.operations.base import Role
+
+    await _register(fake)
+    await _post(fake)  # from_subject sa:public-bot, agent label public-bot
+
+    async def mine(subject: str) -> list[str]:
+        auth = AuthInfo(
+            subject=subject,
+            org=ORG,
+            namespaces=("public",),
+            roles=(Role.WRITER,),
+            is_service_account=False,
+        )
+        context.set_current_auth(auth)
+        try:
+            out = await reads.handle_task_list(
+                wire.TaskListInput(**_caller("public"), posted_by_me=True)
+            )
+        finally:
+            context.set_current_auth(None)
+        return [t["from_subject"] for t in out.tasks]
+
+    assert await mine("public-bot") == []
+    assert await mine("sa:public-bot") == ["sa:public-bot"]
+
+
+@pytest.mark.skipif(clickhouse_local.CLICKHOUSE is None, reason="clickhouse not installed")
+@pytest.mark.asyncio
+async def test_the_subject_filter_never_matches_an_agent_label_on_clickhouse() -> None:
+    setup = [
+        clickhouse_local.ddl("tasks"),
+        "INSERT INTO loom.tasks (org, inbox, task_id, from_agent, from_subject, version)"
+        " VALUES ('o', 'ops', generateUUIDv4(), 'public-bot', 'sa:public-bot', 1)",
+    ]
+
+    class _Local:
+        async def query_all(self, sql: str, params: Any = None) -> Any:
+            return clickhouse_local.run(setup, sql, params)
+
+    assert await repo.list_tasks("o", from_subject="public-bot", ch=_Local()) == []
+    assert len(await repo.list_tasks("o", posted_by="public-bot", ch=_Local())) == 1

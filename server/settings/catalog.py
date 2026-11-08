@@ -3776,9 +3776,9 @@ class NamespaceSettings(BaseModel):
 
     # ---- namespace registration and GC ----
     # A principal's first write into a namespace with no loom.namespaces row
-    # inserts one: owner = token subject, `kind = 'bench'` under a bench
-    # prefix, `retention_days = 0` (never a TTL). No
-    # ALTER.
+    # inserts one: owner = token subject (none on a name already in use),
+    # `kind = 'bench'` under a bench prefix, `retention_days = 0` (never a
+    # TTL). No ALTER.
     namespace_autoregister_enabled: bool = True
     # Op-name prefixes the auto-register hook ignores: ops on a namespace
     # rather than into it, the code plane (registers `kind = 'code'` itself),

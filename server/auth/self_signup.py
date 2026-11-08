@@ -348,8 +348,9 @@ def _claimable_namespace(name: str) -> str:
 
 async def _refuse_empowered(ch: Any, org: str, name: str) -> None:
     """Refuse, as a taken name, a name a setting empowers, or one holding an unrevoked
-    grant, a namespace or an unrevoked token in the org, read case-folded as grants
-    are; docs/architecture/security.md has why."""
+    grant, a namespace, an unrevoked token, a task inbox's owner or poster, a poster
+    rule or a task it posted in the org, read case-folded as grants are;
+    docs/architecture/security.md has why."""
     trusted = {s.lower() for s in settings.trusted_callers_set}
     if name in trusted or name in settings.platform_admins_set:
         raise _name_claimed(name)
@@ -368,6 +369,23 @@ async def _refuse_empowered(ch: Any, org: str, name: str) -> None:
         SELECT 1 AS held
         FROM loom.service_accounts FINAL
         WHERE org = {org:String} AND lower(created_by) = {name:String} AND revoked_at IS NULL
+        LIMIT 1
+        UNION ALL
+        SELECT 1 AS held
+        FROM loom.task_inboxes FINAL
+        WHERE org = {org:String} AND is_deleted = 0
+          AND (has(arrayMap(p -> lower(p), posters), {name:String})
+               OR lower(created_by) IN ('human:' || {name:String}, 'process:' || {name:String}))
+        LIMIT 1
+        UNION ALL
+        SELECT 1 AS held
+        FROM loom.task_poster_policies FINAL
+        WHERE org = {org:String} AND is_deleted = 0 AND lower(poster) = {name:String}
+        LIMIT 1
+        UNION ALL
+        SELECT 1 AS held
+        FROM loom.tasks
+        WHERE org = {org:String} AND lower(from_subject) = {name:String}
         LIMIT 1
         """,
         params={"org": org, "name": name},
