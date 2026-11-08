@@ -480,6 +480,10 @@ async def load_posted_overlay(
 _FILE_FACTS: TtlCache[tuple[str, str], tuple[tuple[Any, ...], frozenset[str]]] = TtlCache(
     lambda: settings.code_pr_overlay_file_ttl_s, maxsize=512
 )
+# (path, content digest) -> the parse of it in progress.
+_PARSING: dict[
+    tuple[str, str], asyncio.Future[tuple[Any, tuple[tuple[Any, ...], frozenset[str]]]]
+] = {}
 # (path, content digest, digest of the name-table rows its names bind to) -> edges.
 _FILE_EDGES: TtlCache[tuple[str, str, str], tuple[OverlayEdge, ...]] = TtlCache(
     lambda: settings.code_pr_overlay_file_ttl_s, maxsize=512
@@ -514,8 +518,14 @@ async def _file_facts(
         return None, hit[0], hit[1]
     if time.monotonic() > deadline:
         return None
-    # parsing is CPU work: off the event loop
-    pf, facts = await asyncio.to_thread(_parsed_facts, path, source)
+    # Parsing is CPU work, done in a thread (the event loop runs at each of the parser's
+    # reads), once for every request that asks for the same text meanwhile
+    task = _PARSING.get((path, digest))
+    if task is None:
+        task = asyncio.ensure_future(asyncio.to_thread(_parsed_facts, path, source))
+        _PARSING[(path, digest)] = task
+        task.add_done_callback(lambda _: _PARSING.pop((path, digest), None))
+    pf, facts = await asyncio.shield(task)
     _FILE_FACTS.put((path, digest), facts)
     return pf, facts[0], facts[1]
 
@@ -580,8 +590,8 @@ async def _parse_post_image(
     # path -> (source, digest, parsed file this request already holds, symbols, names)
     files: dict[str, tuple[bytes, str, Any, tuple[Any, ...], frozenset[str]]] = {}
     names: set[str] = set()
-    # One overlay starts no parse after one parse deadline has passed, so a request
-    # parses for at most about twice `code_parse_timeout_seconds`
+    # One overlay starts no parse after `code_parse_timeout_seconds` from its first, so
+    # a request parses for a few deadlines at most
     deadline = time.monotonic() + settings.code_parse_timeout_seconds
     left_out = 0
     for p in paths:
@@ -616,7 +626,7 @@ async def _parse_post_image(
             if time.monotonic() > deadline:
                 left_out += 1
                 continue
-            # parsing and binding are CPU work: off the event loop
+            # parsing and binding are CPU work, done in a thread
             edges = await asyncio.to_thread(_file_edges, pf, p, source, table)
             _FILE_EDGES.put(key, edges)
         ov.edges.extend(edges)
@@ -625,7 +635,7 @@ async def _parse_post_image(
 
 def _note_left_out(ov: PrOverlay, left_out: int) -> None:
     if left_out:
-        ov.note = f"{left_out} changed file(s) left out: the overlay's parse time was spent"
+        ov.note = f"{left_out} changed file(s) not fully read: the overlay's parse time was spent"
 
 
 async def _name_table(

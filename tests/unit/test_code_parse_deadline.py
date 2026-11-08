@@ -66,18 +66,33 @@ def _is_parser(node: ast.expr) -> bool:
     return False
 
 
+# Receivers of `.parse(` in the tree-sitter modules that are no parser
+_NOT_A_PARSER = {"bounded_parse", "Declarations"}
+
+
 def test_every_tree_sitter_parse_goes_through_the_deadline() -> None:
-    """No `.parse(` is called on a parser but in `bounded_parse`."""
+    """Outside `bounded_parse`, no `.parse(` is called on a parser, nor at all in a
+    module that names tree-sitter but on `_NOT_A_PARSER`."""
     unbounded = []
     for f in _SERVER.rglob("*.py"):
         if f.name == "bounded_parse.py":
             continue
-        for node in ast.walk(ast.parse(f.read_text())):
+        text = f.read_text()
+        for node in ast.walk(ast.parse(text)):
             if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
                 and node.func.attr == "parse"
-                and _is_parser(node.func.value)
+                and (
+                    _is_parser(node.func.value)
+                    or (
+                        "tree_sitter" in text
+                        and not (
+                            isinstance(node.func.value, ast.Name)
+                            and node.func.value.id in _NOT_A_PARSER
+                        )
+                    )
+                )
             ):
                 unbounded.append(f"{f.relative_to(_SERVER.parent)}:{node.lineno}")
     assert unbounded == []

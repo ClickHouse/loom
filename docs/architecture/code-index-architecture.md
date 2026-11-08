@@ -189,8 +189,8 @@ the extractor stamp:
 The parser comes from `ingest_parse._PARSERS`. A parse failure, including a missing grammar
 or a tree-sitter parse past `code_parse_timeout_seconds` (`bounded_parse`, one parse per
 grammar at a time), degrades to a chunk-only file with `code_files.index_error` set;
-`code.index_errors` reports it. Tree-sitter modules import lazily, so a server with the code workers off
-boots without the `code` extras.
+`code.index_errors` reports it. Tree-sitter modules import lazily, so a server with the
+code workers off boots without the `code` extras.
 
 ### Chunks
 

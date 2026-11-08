@@ -233,7 +233,7 @@ def _chunks_for(
         try:
             hu = host_units(pf)
         except ParseTimeout:
-            return chunks, {}, []  # the parse step recorded it; the line windows stand
+            return chunks, {}, []  # its shell ran past the parse deadline: the line windows stand
         if hu is not None:
             return chunks, {}, hu.facets
     if pf.lang == "python" and _py_islands_on():

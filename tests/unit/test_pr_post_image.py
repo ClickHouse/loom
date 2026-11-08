@@ -6,6 +6,7 @@ says so."""
 from __future__ import annotations
 
 import asyncio
+import time
 import types
 from typing import Any
 
@@ -385,4 +386,24 @@ def test_an_overlay_past_its_parse_time_leaves_the_rest_out(
     monkeypatch.setattr(settings, "code_parse_timeout_seconds", 1e-9)
     ov = asyncio.run(po.load_posted_overlay(_Repo(), "acme", "code-ch", _img()))
     assert ov.ok and ov.symbols == []
-    assert ov.disclosure()["overlay_note"].startswith("1 changed file(s) left out")
+    assert ov.disclosure()["overlay_note"].startswith("1 changed file(s) not fully read")
+
+
+def test_concurrent_requests_parse_a_file_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    real = po._parsed_facts
+
+    def counted(path: str, source: bytes) -> Any:
+        calls.append(path)
+        return real(path, source)
+
+    monkeypatch.setattr(po, "_parsed_facts", counted)
+
+    async def both() -> list[Any]:
+        deadline = time.monotonic() + 60
+        src = POST.encode()
+        return await asyncio.gather(*(po._file_facts(PATH, src, "d", deadline) for _ in range(2)))
+
+    first, second = asyncio.run(both())
+    assert calls == [PATH]
+    assert first is not None and second is not None and first[1] == second[1] != ()

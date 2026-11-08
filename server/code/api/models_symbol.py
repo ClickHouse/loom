@@ -355,14 +355,14 @@ class CodeCallersOutput(BaseModel):
     # seed the PR adds has no index row); `overlay_head_sha` the head parsed;
     # `overlay_added` how many functions the PR adds in its parsed files; `overlay_note`
     # why the overlay is off (`head_not_in_mirror` | `no_merge_base` | `no_repo_entry`)
-    # or which changed files a live one left out.
+    # or how many changed files a live one did not fully read.
     overlay: bool = False
     # The PR head commit whose post-image was parsed; "" when there is no overlay.
     overlay_head_sha: str = ""
     # How many functions the PR adds in its parsed files.
     overlay_added: int = 0
     # Why the overlay is off: `head_not_in_mirror`, `no_merge_base` or `no_repo_entry`;
-    # when it is on, "" or the changed files it left out unparsed.
+    # when it is on, "" or how many changed files it did not fully read.
     overlay_note: str = ""
     # How an over-qualified name bound when the exact form missed —
     # `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a
@@ -576,7 +576,7 @@ class CodeImpactOutput(BaseModel):
     # How many functions the PR adds in its parsed files, each a `touched_symbols` seed.
     overlay_added: int = 0
     # Why the overlay is off: `head_not_in_mirror`, `no_merge_base` or `no_repo_entry`;
-    # when it is on, "" or the changed files it left out unparsed.
+    # when it is on, "" or how many changed files it did not fully read.
     overlay_note: str = ""
     # Id of this call's trace row; pass it to `code.outcome`.
     trace_run_id: str = ""

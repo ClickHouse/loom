@@ -290,7 +290,7 @@ What does this symbol call — forward call edges (depth<=3), tier-marked like l
 | `overlay` | `bool` | On the wire only when `pr_number` was given. |
 | `overlay_head_sha` | `str` | The PR head commit whose post-image was parsed; "" when there is no overlay. |
 | `overlay_added` | `int` | How many functions the PR adds in its parsed files. |
-| `overlay_note` | `str` | Why the overlay is off: `head_not_in_mirror`, `no_merge_base` or `no_repo_entry`; when it is on, "" or the changed files it left out unparsed. |
+| `overlay_note` | `str` | Why the overlay is off: `head_not_in_mirror`, `no_merge_base` or `no_repo_entry`; when it is on, "" or how many changed files it did not fully read. |
 | `resolved_by` | `str` | How an over-qualified name bound when the exact form missed — `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a namespace the definition does not carry dropped; one definition fit), or `registration` when a… |
 | `ambiguous` | `bool` | A bare short name that resolves to many unrelated definitions (setColumns on 60 classes) is not walked: `ambiguous` is set, `candidates` lists the qualified names to pick from, and edges is empty. |
 | `candidates` | `list[str]` | With `ambiguous`: up to 20 qualified names to pick from. |
@@ -340,7 +340,7 @@ Who calls this symbol — exact reverse call edges (depth<=3), compiler-resolved
 | `overlay` | `bool` | On the wire only when `pr_number` was given. |
 | `overlay_head_sha` | `str` | The PR head commit whose post-image was parsed; "" when there is no overlay. |
 | `overlay_added` | `int` | How many functions the PR adds in its parsed files. |
-| `overlay_note` | `str` | Why the overlay is off: `head_not_in_mirror`, `no_merge_base` or `no_repo_entry`; when it is on, "" or the changed files it left out unparsed. |
+| `overlay_note` | `str` | Why the overlay is off: `head_not_in_mirror`, `no_merge_base` or `no_repo_entry`; when it is on, "" or how many changed files it did not fully read. |
 | `resolved_by` | `str` | How an over-qualified name bound when the exact form missed — `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a namespace the definition does not carry dropped; one definition fit), or `registration` when a… |
 | `ambiguous` | `bool` | A bare short name that resolves to many unrelated definitions (setColumns on 60 classes) is not walked: `ambiguous` is set, `candidates` lists the qualified names to pick from, and edges is empty. |
 | `candidates` | `list[str]` | With `ambiguous`: up to 20 qualified names to pick from. |
@@ -821,7 +821,7 @@ Symbol-shaped (name/symbol_id) or diff-shaped (files/diff) blast radius.
 | `overlay` | `bool` | On the wire only when `pr_number` was given — see CodeCallersOutput. |
 | `overlay_head_sha` | `str` | The PR head commit whose post-image was parsed; "" when there is no overlay. |
 | `overlay_added` | `int` | How many functions the PR adds in its parsed files, each a `touched_symbols` seed. |
-| `overlay_note` | `str` | Why the overlay is off: `head_not_in_mirror`, `no_merge_base` or `no_repo_entry`; when it is on, "" or the changed files it left out unparsed. |
+| `overlay_note` | `str` | Why the overlay is off: `head_not_in_mirror`, `no_merge_base` or `no_repo_entry`; when it is on, "" or how many changed files it did not fully read. |
 | `trace_run_id` | `str` | Id of this call's trace row; pass it to `code.outcome`. |
 
 ## `code.index_errors`

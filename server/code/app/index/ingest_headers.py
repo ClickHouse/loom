@@ -19,6 +19,7 @@ import re
 from typing import Any
 
 from server.code.app.index.ingest_stats import FileIngestStats
+from server.code.domain.extract.bounded_parse import ParseTimeout
 from server.code.domain.extract.edges_treesitter import HeaderDecls, remainder_ctor_sites
 from server.code.domain.extract.treesitter import _INCLUDE_RE, ParsedFile
 
@@ -192,7 +193,11 @@ async def header_context(
         stats.headers_read += int(from_db)
         if text is None:
             continue
-        hd.add_source(hp, text.encode("utf-8", "replace"))
+        try:
+            hd.add_source(hp, text.encode("utf-8", "replace"))
+        except ParseTimeout:
+            _header_cache[(org, ns, hp)] = None  # read as not indexed, not parsed again
+            continue
         if hp in sibling_set:
             _sibling_includes[(org, ns, hp)] = tuple(_INCLUDE_RE.findall(text))
         if not _needs_header(pf, hd):
