@@ -360,10 +360,12 @@ def stored_caller_text(text: str) -> str:
 
 
 class AnalysisUnavailableError(LoomServerError):
-    """`insights.query` cannot run on this replica: the analyst ClickHouse
-    user is missing, wider than the allowlist, or failed the probe each
-    process runs on an interval. Run `loom doctor`, which names the cause and
-    the fix; the call can be retried once it is fixed."""
+    """`insights.query` cannot run on this replica: the probe each process
+    runs on an interval found the analyst ClickHouse user missing, wider than
+    the allowlist, or refusing this replica's key. Only an operator's fix ends
+    it, so it is not retried: `loom doctor` names the cause and the fix. A
+    replica whose first probe has not run, or a ClickHouse short of memory,
+    answers OVERLOADED instead."""
 
     code = "ANALYSIS_UNAVAILABLE"
     status_code = 503

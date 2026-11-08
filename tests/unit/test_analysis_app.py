@@ -8,7 +8,13 @@ from typing import Any
 
 import pytest
 
-from server.core.errors import AnalysisUnavailableError, RateLimitedError, ValidationError
+from server.core.errors import (
+    AnalysisUnavailableError,
+    OverloadedError,
+    RateLimitedError,
+    ValidationError,
+    error_class,
+)
 from server.core.ratelimit import op_class_for
 from server.insights.api.models_analysis import InsightsQueryInput
 from server.insights.app import analysis as app
@@ -68,7 +74,7 @@ def _named_in_the_log_only(caplog: pytest.LogCaptureFixture, problem: str, name:
         ("Code: 516. DB::Exception: loom_analyst: Authentication failed", AnalysisUnavailableError),
         (
             "Code: 241. DB::Exception: (total) memory limit exceeded: would use 9 GiB",
-            AnalysisUnavailableError,
+            OverloadedError,
         ),
         ("Code: 241. DB::Exception: Memory limit (for query) exceeded", ValidationError),
         ("Code: 62. DB::Exception: Syntax error", ValidationError),
@@ -674,3 +680,33 @@ def test_a_statement_and_its_retries_carry_the_requests_query_id(ready: None) ->
     assert len(ids) == 1 and next(iter(ids)).startswith("rid-1:")
     assert all(a["replace_running_query"] == 1 for a in attempts)
     assert next_id not in ids  # the next statement gets its own
+
+
+@pytest.mark.parametrize(
+    ("state", "category", "retryable"),
+    [(None, "capacity", True), (False, "configuration", False)],
+)
+def test_a_replica_still_starting_is_retried_and_a_failed_probe_is_not(
+    monkeypatch: pytest.MonkeyPatch,
+    ready: None,
+    state: bool | None,
+    category: str,
+    retryable: bool,
+) -> None:
+    # A first probe still to run passes; only an operator ends a failed one.
+    monkeypatch.setattr(app, "_ready", state)
+    with pytest.raises(Exception) as caught:
+        asyncio.run(app.handle_insights_query(_query()))
+    err = caught.value
+    assert error_class(err.code, err.status_code) == (category, retryable)  # type: ignore[attr-defined]
+
+
+def test_clickhouse_short_of_memory_is_retried(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    monkeypatch.setattr(
+        app.store, "run_statement", _failing("Code: 241. DB::Exception: (total) memory limit")
+    )
+    with pytest.raises(OverloadedError) as caught:
+        asyncio.run(app.handle_insights_query(_query()))
+    assert error_class(caught.value.code, caught.value.status_code) == ("capacity", True)

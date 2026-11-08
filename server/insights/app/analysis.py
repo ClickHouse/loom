@@ -31,6 +31,7 @@ from server.core.ch_errors import error_code, error_line
 from server.core.ch_request_cost import request_query_id
 from server.core.errors import (
     AnalysisUnavailableError,
+    OverloadedError,
     RateLimitedError,
     ValidationError,
     error_kind,
@@ -579,6 +580,13 @@ async def handle_insights_query(input: InsightsQueryInput) -> InsightsQueryOutpu
         raise ValidationError("the empty org and namespace are reserved for the analysis probe")
     if "," in input.namespace:
         raise ValidationError("a namespace name cannot hold a comma")
+    if _ready is None:
+        # The first probe runs beside the start and can wait on the lease: a
+        # passing state, which a resend after the wait outlives.
+        raise OverloadedError(
+            "insights.query is starting on this replica: its first probe has not run yet",
+            retry_after_s=5,
+        )
     if _ready is not True:
         raise AnalysisUnavailableError(
             "the analyst ClickHouse user is not ready on this replica; `loom doctor` names "
@@ -619,8 +627,9 @@ async def _run(input: InsightsQueryInput) -> InsightsQueryOutput:
             ) from None
         refusal = _refusal(e)
         if code == _MEMORY_LIMIT_EXCEEDED and refusal is None:
-            raise AnalysisUnavailableError(
-                "ClickHouse is short of memory for analysis statements; retry later"
+            raise OverloadedError(
+                "ClickHouse is short of memory for analysis statements; retry later",
+                retry_after_s=5,
             ) from None
         if refusal is None:
             raise
