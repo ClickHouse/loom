@@ -299,6 +299,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "plugin_hook",
     ),
     "knowledge.reads": ("dashboard",),
+    "knowledge.restore": (
+        "sdk_method",
+        "dashboard",
+    ),
     "knowledge.search": (
         "sdk_method",
         "sdk_example",

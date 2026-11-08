@@ -33,7 +33,6 @@ from server.erasure.store.predicates import (
 )
 from server.erasure.store.scope_reads import hashes, slices_or_one_empty, user_key_pairs
 from server.knowledge.domain.ingest_states import OPEN_STATES
-from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
 from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY
 from server.settings import settings
 
@@ -297,7 +296,8 @@ async def tombstone_entity_canonical_map_by_namespace(
     )
 
 
-# The rows erasure's mutation stamps; liveness itself is LIVE_CHUNK_SQL.
+# The chunks an erasure stamps: every one not stamped yet, a retired one too, since the
+# stamp is what tells knowledge.restore an erasure reached the rows a delete retired.
 _UNSUPERSEDED = "doc_superseded_at IS NULL"
 
 
@@ -322,10 +322,9 @@ async def supersede_chunks_by_namespace(
         )
     return await count_then_mutate(
         "loom.chunks",
-        # Live = no `doc_superseded_at` and no supersession row.
-        count_where="org = {org:String} AND namespace = {ns:String} AND " + LIVE_CHUNK_SQL,
+        count_where=ORG_NS + " AND " + _UNSUPERSEDED,
         mutation="UPDATE doc_superseded_at = {now:DateTime}",
-        mutation_where=("org = {org:String} AND namespace = {ns:String} AND " + _UNSUPERSEDED),
+        mutation_where=ORG_NS + " AND " + _UNSUPERSEDED,
         params={"org": org, "ns": namespace},
         final=False,
         ch=ch,
@@ -352,7 +351,7 @@ async def supersede_chunks_by_user(
         )
     return await count_then_mutate(
         "loom.chunks",
-        count_where=ORG_UID + " AND " + LIVE_CHUNK_SQL,
+        count_where=ORG_UID + " AND " + _UNSUPERSEDED,
         mutation="UPDATE doc_superseded_at = {now:DateTime}",
         mutation_where=ORG_UID + " AND " + _UNSUPERSEDED,
         params={"org": org, "uid": user_id},

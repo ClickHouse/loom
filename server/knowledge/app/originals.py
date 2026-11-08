@@ -18,7 +18,7 @@ from server.core.ch import sequential_reads, set_query_tag
 from server.core.errors import ValidationError
 from server.core.repo_base import _CHClient
 from server.erasure.app import ledger_reads
-from server.erasure.domain.scopes import parse_namespace_list
+from server.erasure.domain.scopes import may_cover, names_namespace
 from server.knowledge.store import blobs
 from server.settings import DOCUMENT_UPLOAD_BUDGET_S
 
@@ -51,9 +51,6 @@ class SwitchUnconfirmed(Exception):
         self.moved = moved
 
 
-# How far an erasure's own timestamps (the server's clock, whole seconds) may sit
-# from the ClickHouse clock a move reads, and still count as overlapping it.
-_CLOCK_MARGIN_S = 60  # not a setting: a bound on clock skew, answered conservatively
 # How long a move waits for an erasure that started while it moved, and how often it
 # reads the ledger meanwhile.
 _ERASURE_WAIT_S = 600  # not a setting: a one-off operator command's patience
@@ -71,7 +68,7 @@ class _Erasure:
         """Whether this erasure deletes every original of `namespace` for certain: its
         namespace's, or a list that names it. A scope it cannot read is not taken for
         one (it fences a move, but a take-back on it would be a guess)."""
-        return _names_namespace(self.scope_type, self.scope_value, namespace) is True
+        return names_namespace(self.scope_type, self.scope_value, namespace) is True
 
     @property
     def done(self) -> bool:
@@ -79,29 +76,6 @@ class _Erasure:
 
     def __str__(self) -> str:
         return f"erasure {self.id} ({self.scope_type}, {self.status})"
-
-
-def _names_namespace(scope_type: str, scope_value: str, namespace: str) -> bool | None:
-    """Whether a namespace scope names `namespace`: None for a scope that is not a
-    namespace's, or a list it cannot read."""
-    if scope_type == "namespace":
-        return scope_value == namespace
-    if scope_type == "namespace_list":
-        try:
-            return namespace in parse_namespace_list(scope_value)
-        except ValueError:
-            return None
-    return None
-
-
-def _covers(scope_type: str, scope_value: str, namespace: str) -> bool:
-    """Whether an erasure of this scope may erase an original of `namespace`: its
-    namespace's, a list naming it, and any user's. A user's erasure finds the user's
-    originals through their upload records and their documents, which a write can add
-    to at any moment, so the move does not guess whose an original is. A list it cannot
-    read, or a scope it does not know, counts as covering."""
-    named = _names_namespace(scope_type, scope_value, namespace)
-    return named is not False
 
 
 def _fence_advice(erasures: list[_Erasure], what: str) -> str:
@@ -123,11 +97,11 @@ def _fence_advice(erasures: list[_Erasure], what: str) -> str:
 async def _erasures_since(org: str, namespace: str, since_s: int) -> list[_Erasure]:
     """The erasures that cover the namespace's originals and had not finished at
     `since_s`."""
-    rows = await ledger_reads.unfinished_since(org, since_s, _CLOCK_MARGIN_S)
+    rows = await ledger_reads.unfinished_since(org, since_s, ledger_reads.LEDGER_CLOCK_MARGIN_S)
     return [
         _Erasure(str(r["erasure_id"]), str(r["scope_type"]), str(r["scope_value"]), str(r["state"]))
         for r in rows
-        if _covers(str(r["scope_type"]), str(r["scope_value"]), namespace)
+        if may_cover(str(r["scope_type"]), str(r["scope_value"]), namespace)
     ]
 
 

@@ -177,6 +177,7 @@ OpName = Literal[
     "knowledge.outline",
     "knowledge.query",
     "knowledge.reads",
+    "knowledge.restore",
     "knowledge.search",
     "knowledge.source.add",
     "knowledge.source.check",
@@ -535,6 +536,7 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.outline",
     "knowledge.query",
     "knowledge.reads",
+    "knowledge.restore",
     "knowledge.search",
     "knowledge.source.add",
     "knowledge.source.check",
@@ -2410,6 +2412,18 @@ OPS: dict[str, OpSpec] = {
         500,
         False,
         True,
+    ),
+    "knowledge.restore": OpSpec(
+        "knowledge.restore",
+        "KnowledgeRestoreInput",
+        "KnowledgeRestoreBody",
+        "KnowledgeRestoreOutput",
+        True,
+        "writer",
+        "experimental",
+        200,
+        True,
+        False,
     ),
     "knowledge.search": OpSpec(
         "knowledge.search",
@@ -10872,6 +10886,35 @@ class KnowledgeReadsBody(TypedDict, total=False):
 class KnowledgeReadsOutput(TypedDict, total=False):
     window_days: Required[int]
     reads: NotRequired[list[dict[str, Any]]]
+
+
+class KnowledgeRestoreInput(TypedDict, total=False):
+    "Undo a `knowledge.delete` or `knowledge.bulk_delete` of one document."
+
+    org: Required[str]
+    namespace: Required[str]
+    source_uri: Required[str]
+    if_revision: NotRequired[Optional[int]]
+
+
+class KnowledgeRestoreBody(TypedDict, total=False):
+    "Undo a `knowledge.delete` or `knowledge.bulk_delete` of one document."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    source_uri: Required[str]
+    if_revision: NotRequired[Optional[int]]
+
+
+class KnowledgeRestoreOutput(TypedDict, total=False):
+    restored: Required[bool]
+    reason: NotRequired[
+        Literal["", "not_found", "live", "revision_mismatch", "not_restorable", "expired"]
+    ]
+    doc_id: NotRequired[str]
+    revision: NotRequired[Optional[int]]
+    chunks_restored: NotRequired[int]
+    original: NotRequired[Literal["kept", "gone", "none"]]
 
 
 class KnowledgeSearchInput(TypedDict, total=False):

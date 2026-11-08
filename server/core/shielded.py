@@ -1,6 +1,5 @@
-"""Writes a cancelled request must still finish: an OAuth credential put back,
-a Keeper change undone, a 'high' row's fence. Each is held until done, and shutdown
-drains them before the ClickHouse client goes."""
+"""Writes a cancelled request must still finish, held until done; shutdown drains them
+before the ClickHouse client goes."""
 
 from __future__ import annotations
 
@@ -13,11 +12,11 @@ from server.core.background import TaskSet
 _running = TaskSet()
 
 
-async def shielded(write: Coroutine[Any, Any, None], *, name: str) -> None:
+async def shielded[T](write: Coroutine[Any, Any, T], *, name: str) -> T:
     """Run `write` to its end even when the request awaiting it is cancelled,
-    again and again (anyio repeats a cancellation): the task is held here and
-    the wait for it is shielded."""
-    await asyncio.shield(_running.spawn(write, name=name))
+    again and again (anyio repeats a cancellation), and return what it returns:
+    the task is held here and the wait for it is shielded."""
+    return await asyncio.shield(_running.spawn(write, name=name))
 
 
 async def drain(timeout_s: float = 5.0) -> list[str]:

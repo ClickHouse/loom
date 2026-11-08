@@ -97,6 +97,24 @@ export async function deleteKnowledge(id: Pick<Identity, "org" | "namespace">, s
   });
 }
 
+export type RestoreRefusal = "not_found" | "live" | "revision_mismatch" | "not_restorable" | "expired";
+
+export type KnowledgeRestoreResult = {
+  doc_id: string;
+  revision: number | null;
+  chunks_restored: number;
+  original: "kept" | "gone" | "none";
+} & ({ restored: true; reason: "" } | { restored: false; reason: RestoreRefusal });
+
+/** Undo a delete: the deleted revision and its chunks are live again, never what an
+ *  erasure reached. */
+export async function restoreKnowledge(
+  id: Pick<Identity, "org" | "namespace">,
+  sourceUri: string,
+): Promise<KnowledgeRestoreResult> {
+  return post("/v1/knowledge.restore", { org: id.org, namespace: id.namespace, source_uri: sourceUri });
+}
+
 export interface KnowledgeBulkDeleteResult {
   source_uri: string;
   tombstoned: boolean;

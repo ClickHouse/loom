@@ -113,15 +113,22 @@ async def test_scrub_events_by_user_no_final_clause() -> None:
 
 
 @pytest.mark.asyncio
-async def test_supersede_chunks_no_final() -> None:
+@pytest.mark.parametrize("by", ["namespace", "user"])
+async def test_supersede_chunks_no_final(by: str) -> None:
     """chunks is a plain MergeTree — FINAL would be wrong. The repo
     helper threads `final=False` for these cases."""
     ch = StubCH()
     ch.query_one_returns.append({"n": 2})
-    await memory_steps.supersede_chunks_by_namespace("clickhouse", "ns", ch=ch)
+    if by == "namespace":
+        await memory_steps.supersede_chunks_by_namespace("clickhouse", "ns", ch=ch)
+    else:
+        await memory_steps.supersede_chunks_by_user("clickhouse", "alice", ch=ch)
     sel_sql, _ = ch.query_one_calls[0]
     assert "FROM loom.chunks" in sel_sql
     assert "FROM loom.chunks FINAL" not in sel_sql
+    # Every unstamped chunk counts, a retired one too, so a scope whose documents were all
+    # deleted still gets its stamps.
+    assert "doc_superseded_at IS NULL" in sel_sql and "chunk_supersessions" not in sel_sql
 
 
 @pytest.mark.asyncio

@@ -1,36 +1,37 @@
-"""Which erasures fence a move of an original to the bucket (`originals._covers`): its
+"""Which erasures fence a move of an original to the bucket (`scopes.may_cover`): its
 namespace's, a namespace list naming it (an unreadable one counts), and any user's
 of the org; another namespace's does not."""
 
 from __future__ import annotations
 
-from server.knowledge.app.originals import _covers, _Erasure, _fence_advice
+from server.erasure.domain.scopes import may_cover
+from server.knowledge.app.originals import _Erasure, _fence_advice
 
 
 def test_a_namespace_erasure_covers_its_own_namespace() -> None:
-    assert _covers("namespace", "docs", "docs")
-    assert not _covers("namespace", "other", "docs")
+    assert may_cover("namespace", "docs", "docs")
+    assert not may_cover("namespace", "other", "docs")
 
 
 def test_a_namespace_list_covers_the_namespaces_it_names() -> None:
-    assert _covers("namespace_list", '{"namespaces": ["a", "docs"]}', "docs")
-    assert _covers("namespace_list", '[" docs "]', "docs")  # a bare array, names stripped
-    assert not _covers("namespace_list", '["a", "b"]', "docs")
+    assert may_cover("namespace_list", '{"namespaces": ["a", "docs"]}', "docs")
+    assert may_cover("namespace_list", '[" docs "]', "docs")  # a bare array, names stripped
+    assert not may_cover("namespace_list", '["a", "b"]', "docs")
 
 
 def test_an_unreadable_namespace_list_counts_as_covering() -> None:
-    assert _covers("namespace_list", "not json", "docs")
-    assert _covers("namespace_list", '{"namespaces": "docs"}', "docs")
+    assert may_cover("namespace_list", "not json", "docs")
+    assert may_cover("namespace_list", '{"namespaces": "docs"}', "docs")
 
 
 def test_any_user_erasure_of_the_org_covers_it() -> None:
     # Whose an original is can change with any write, so no user's erasure is ruled out.
-    assert _covers("user_id", "alice", "docs")
-    assert _covers("user_id", "carol", "docs")
+    assert may_cover("user_id", "alice", "docs")
+    assert may_cover("user_id", "carol", "docs")
 
 
 def test_a_scope_it_does_not_know_counts_as_covering() -> None:
-    assert _covers("org", "acme", "docs")
+    assert may_cover("org", "acme", "docs")
 
 
 def test_the_advice_names_the_erasure_that_holds_the_move_longest() -> None:

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Button } from "@clickhouse/click-ui/Button";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { IconButton } from "./IconButton";
 import { errorRequestId, humanizeError } from "../lib/format";
@@ -15,6 +16,10 @@ import { errorRequestId, humanizeError } from "../lib/format";
  * A toast raised with a `key` replaces the one still showing under the same
  * key (a second expand's result stands alone, it does not stack under the first), and
  * `durationMs` overrides the kind's clock.
+ *
+ * A toast with an `action` (a delete's Undo) has no clock, so a keyboard or screen-reader
+ * user has time to reach it (WCAG 2.2.1): it stays until the action runs, it is dismissed,
+ * or four later toasts push it off the stack.
  *
  * Announcement: the viewport is a persistent `aria-live="polite"` region,
  * so success and info toasts inserted into it are read; an error toast
@@ -47,12 +52,20 @@ export interface ToastItem {
   key?: string;
   /** Overrides the kind's duration. */
   durationMs?: number;
+  /** One button that runs `run` and dismisses the toast. */
+  action?: ToastAction;
+}
+
+export interface ToastAction {
+  label: string;
+  run: () => void;
 }
 
 export interface ToastOpts {
   detail?: string;
   key?: string;
   durationMs?: number;
+  action?: ToastAction;
 }
 
 let _toastSeq = 1;
@@ -67,6 +80,7 @@ export function toast(msg: string, kind: ToastKind = "ok", opts: ToastOpts = {})
     detail: opts.detail,
     key: opts.key,
     durationMs: opts.durationMs,
+    action: opts.action,
   };
   _listeners.forEach((l) => l(item));
 }
@@ -133,6 +147,7 @@ export function ToastViewport({ pinned = null }: { pinned?: ReactNode }) {
 
 function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: (id: number) => void }) {
   const icon = KIND_ICON[item.kind];
+  const action = item.action;
   const remaining = useRef(item.durationMs ?? DURATION_MS[item.kind]);
   const startedAt = useRef(0);
   const timer = useRef<number | null>(null);
@@ -147,10 +162,10 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: (id: numbe
   }, []);
 
   const resume = useCallback(() => {
-    if (timer.current != null || hovered.current || focused.current) return;
+    if (action || timer.current != null || hovered.current || focused.current) return;
     startedAt.current = Date.now();
     timer.current = window.setTimeout(() => onDismiss(item.id), remaining.current);
-  }, [item.id, onDismiss]);
+  }, [item.id, action, onDismiss]);
 
   useEffect(() => {
     resume();
@@ -187,6 +202,18 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: (id: numbe
         <span className="toast-title break-words">{item.msg}</span>
         {item.detail && <span className="toast-detail text-xs font-mono">{item.detail}</span>}
       </span>
+      {action && (
+        <Button
+          type="secondary"
+          htmlType="button"
+          onClick={() => {
+            onDismiss(item.id);
+            action.run();
+          }}
+        >
+          {action.label}
+        </Button>
+      )}
       <IconButton icon="cross" size="sm" label="Dismiss notification" onClick={() => onDismiss(item.id)} />
     </div>
   );

@@ -36,6 +36,8 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeOutlineOutput,
     KnowledgeReadsInput,
     KnowledgeReadsOutput,
+    KnowledgeRestoreInput,
+    KnowledgeRestoreOutput,
     KnowledgeSearchInput,
     KnowledgeSearchOutput,
     KnowledgeSynthesizeInput,
@@ -66,6 +68,7 @@ from server.knowledge.app.inspect import handle_knowledge_inspect
 from server.knowledge.app.knowledge_search import handle_knowledge_search
 from server.knowledge.app.query import handle_knowledge_query
 from server.knowledge.app.reads import handle_knowledge_reads
+from server.knowledge.app.restore import handle_knowledge_restore
 from server.knowledge.app.synthesize import handle_knowledge_synthesize
 from server.knowledge.app.writes import (
     handle_knowledge_add,
@@ -115,6 +118,17 @@ knowledge_delete = Operation(
     output_model=KnowledgeDeleteOutput,
     handler=handle_knowledge_delete,
     idempotent=True,  # re-deleting an already-deleted doc is a no-op
+    required_role=Role.WRITER,
+    audit=True,
+)
+
+knowledge_restore = Operation(
+    name="knowledge.restore",
+    maturity="experimental",
+    input_model=KnowledgeRestoreInput,
+    output_model=KnowledgeRestoreOutput,
+    handler=handle_knowledge_restore,
+    idempotent=True,  # a second call finds the document live and restores nothing
     required_role=Role.WRITER,
     audit=True,
 )
@@ -326,6 +340,7 @@ OPERATIONS: list[Operation] = [
     knowledge_upsert,
     knowledge_search,
     knowledge_delete,
+    knowledge_restore,
     knowledge_update_metadata,
     knowledge_list,
     knowledge_get,
