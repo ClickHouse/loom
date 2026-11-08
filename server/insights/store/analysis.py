@@ -12,6 +12,7 @@ import re
 from typing import Any, Protocol
 
 from server.core.ch import as_analyst, own_write_reads, uncaptured
+from server.core.ch_errors import error_code
 from server.core.ch_names import database, quote
 from server.core.repo_base import _CHClient, _default_client
 from server.core.sql_literal import sql_string
@@ -212,8 +213,10 @@ async def own_version(
             _, _, rows = await ch.query_columns(
                 f"SELECT toString(getSetting('{boundary.VERSION_SETTING}'))"
             )
-        except Exception:  # noqa: BLE001 — no stamp yet: the setting is unknown
-            return 0
+        except Exception as e:
+            if error_code(e) == _UNKNOWN_SETTING:
+                return 0  # no stamp yet: the setting is unknown
+            raise
     try:
         return int(str(rows[0][0]).strip("'"))
     except (IndexError, ValueError):
@@ -266,6 +269,42 @@ async def write_entities(statements: list[str], *, ch: _CHClient | None = None) 
 
 def target_database() -> str:
     return quote(database())
+
+
+_UNKNOWN_SETTING = 115
+
+# Reads the analyst must be refused, each with what it reads: ClickHouse lets
+# every user read system.one and the rows of system.tables and system.columns
+# it holds grants on, so the probe asks for what it must not. LIMIT 1: a
+# LIMIT 0 statement can finish before ClickHouse checks columns.
+REFUSED_READS = {
+    "system.query_log": "SELECT count() FROM system.query_log",
+    "system.users": "SELECT count() FROM system.users",
+    "memory.value": "SELECT toString(value) FROM {db}.memory LIMIT 1",
+}
+
+
+async def count_rows(table: str, *, password: str, extra: dict[str, Any]) -> int:
+    """`count()` of one of Loom's tables as the analyst, under `extra`."""
+    _, _, rows = await run_statement(
+        f"SELECT count() FROM {target_database()}.{table}", password=password, extra=extra
+    )
+    return int(rows[0][0]) if rows else 0
+
+
+async def read_refused(name: str, *, password: str, extra: dict[str, Any]) -> None:
+    """Run the read `REFUSED_READS` names as the analyst; ClickHouse's answer
+    is raised."""
+    sql = REFUSED_READS[name].format(db=target_database())
+    await run_statement(sql, password=password, extra=extra)
+
+
+async def read_unsigned(table: str, *, password: str) -> None:
+    """Read one row of a table as the analyst with no scope settings; a table
+    under Loom's scope policy raises UNKNOWN_SETTING."""
+    await run_statement(
+        f"SELECT 1 FROM {target_database()}.{table} LIMIT 1", password=password, extra={}
+    )
 
 
 async def run_statement(

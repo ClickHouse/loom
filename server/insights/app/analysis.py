@@ -202,13 +202,7 @@ async def own_grant_revokes() -> list[str]:
         lines = await store.own_grant_lines(password=_password(), extra={})
     except Exception:  # noqa: BLE001 — no user yet, or it refuses this password: nothing to revoke
         return []
-    out = []
-    for line in lines:
-        bare = line.replace(" WITH GRANT OPTION", "").replace(" WITH ADMIN OPTION", "")
-        if bare.startswith("GRANT ") and " TO " in bare:
-            what, _, to = bare[len("GRANT ") :].rpartition(" TO ")
-            out.append(f"REVOKE {what} FROM {to}")
-    return out
+    return boundary.revokes_for(lines)
 
 
 def printed_statements(revokes: list[str]) -> list[str]:
@@ -412,14 +406,9 @@ async def _canary_reads(secrets_: tuple[bytes, str]) -> bool:
     key, password = secrets_
     extra = _scope_extra(boundary.CANARY_ORG, [boundary.CANARY_NAMESPACE], key)
     try:
-        _, _, rows = await store.run_statement(
-            f"SELECT count() FROM {store.target_database()}.{boundary.CANARY_TABLE}",
-            password=password,
-            extra=extra,
-        )
+        return await store.count_rows(boundary.CANARY_TABLE, password=password, extra=extra) == 1
     except Exception:  # noqa: BLE001 — a refused login or read means the key is not in force
         return False
-    return bool(rows) and rows[0][0] == 1
 
 
 def _set_problem(problem: str, detail: str = "") -> None:
@@ -448,15 +437,6 @@ def _scrubbed(text: str) -> str:
     return _KEY_LITERAL.sub("unhex(…)", text)
 
 
-# Statements the analyst must be refused: ClickHouse lets every user read
-# system.one and the rows of system.tables and system.columns it holds grants
-# on, so the probe asks for tables it must not.
-_PROBE_REFUSED = (
-    ("SELECT count() FROM system.query_log", "system.query_log"),
-    ("SELECT count() FROM system.users", "system.users"),
-    # LIMIT 1: a LIMIT 0 statement can finish before ClickHouse checks columns.
-    ("SELECT toString(value) FROM {db}.memory LIMIT 1", "memory.value"),
-)
 _UNKNOWN_SETTING = 115
 
 
@@ -465,7 +445,6 @@ async def _probe() -> tuple[str, bool, str]:
     why not, whether a write of the entities repairs it, and the names behind
     it for the log only (`/v1/health` shows the first). It runs as the analyst
     itself, so it needs no access management."""
-    db = store.target_database()
     if _loaded is None:
         return (
             "this replica holds no analyst secrets: loom.analysis_secrets has no row it can open",
@@ -481,14 +460,12 @@ async def _probe() -> tuple[str, bool, str]:
         # No row of a real table sits in the reserved scope: a row here means
         # a policy Loom did not write widens what the analyst reads.
         try:
-            _, _, rows = await store.run_statement(
-                f"SELECT count() FROM {db}.{t.name}", password=_password(), extra=reserved
-            )
+            admitted = await store.count_rows(t.name, password=_password(), extra=reserved)
         except Exception as e:
             if error_code(e) == _ACCESS_DENIED:
                 return f"{boundary.ANALYST_USER} lacks its grants on {t.name}", True, ""
             raise
-        if rows and rows[0][0] != 0:
+        if admitted:
             # Seen as the analyst, a missing policy (under the server default a
             # user with none reads every row) and a widening one look alike, so
             # a write is tried; what it leaves is a policy for an admin to drop.
@@ -498,19 +475,19 @@ async def _probe() -> tuple[str, bool, str]:
                 True,
                 "",
             )
-    for sql, shown in _PROBE_REFUSED:
+    for shown in store.REFUSED_READS:
         try:
-            await store.run_statement(sql.format(db=db), password=_password(), extra=reserved)
+            await store.read_refused(shown, password=_password(), extra=reserved)
         except Exception as e:  # noqa: BLE001 — a refusal is the expected answer
             if error_code(e) == _ACCESS_DENIED:
                 continue
             return f"{boundary.ANALYST_USER} was not refused {shown} ({error_kind(e)})", False, ""
         return f"{boundary.ANALYST_USER} may read {shown}: its grants are too wide", True, ""
-    if await store.own_version(password=_password(), extra={}) != boundary.ENTITY_VERSION:
-        # Another build's entities: the allowlist checks below are its to make.
+    if await store.own_version(password=_password(), extra={}) > boundary.ENTITY_VERSION:
+        # A newer build's entities: the allowlist checks below are its to make.
         return "", False, ""
     for table in [*(t.name for t in boundary.TABLES), boundary.CANARY_TABLE]:
-        if not await _signed_only(db, table):
+        if not await _signed_only(table):
             problem = f"{boundary.ANALYST_USER} reads {table} unsigned: it has no scope policy"
             return problem, True, ""
     granted = await store.own_grants(password=_password(), extra={})
@@ -524,13 +501,11 @@ async def _probe() -> tuple[str, bool, str]:
     return "", False, ""
 
 
-async def _signed_only(db: str, table: str) -> bool:
+async def _signed_only(table: str) -> bool:
     """Whether a read of the table fails without the scope settings, as one
     under Loom's scope policy does. Any other failure is raised."""
     try:
-        await store.run_statement(
-            f"SELECT 1 FROM {db}.{table} LIMIT 1", password=_password(), extra={}
-        )
+        await store.read_unsigned(table, password=_password())
     except Exception as e:
         if error_code(e) == _UNKNOWN_SETTING:
             return True

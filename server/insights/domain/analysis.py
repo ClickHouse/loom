@@ -377,6 +377,18 @@ def _revoke(g: Grant, user: str) -> str:
     return f"REVOKE {what} ON {on} FROM {user}"
 
 
+def revokes_for(grant_lines: list[str]) -> list[str]:
+    """A REVOKE for each line of SHOW GRANTS, for SQL whose writer cannot read
+    system.grants; the allowlist is granted after them."""
+    out = []
+    for line in grant_lines:
+        bare = line.replace(" WITH GRANT OPTION", "").replace(" WITH ADMIN OPTION", "")
+        if bare.startswith("GRANT ") and " TO " in bare:
+            what, _, to = bare[len("GRANT ") :].rpartition(" TO ")
+            out.append(f"REVOKE {what} FROM {to}")
+    return out
+
+
 def entity_sql(
     db: str,
     password: str,

@@ -536,3 +536,34 @@ def test_an_unrefused_probe_is_named_by_the_column_not_the_sql(
 
     monkeypatch.setattr(app.store, "run_statement", run)
     assert asyncio.run(app._probe()) == (expected, repairable, "")
+
+
+def test_a_failed_version_read_is_a_problem_not_a_pass(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    # Only an unknown stamp setting means "no stamp": any other failure must
+    # not skip the last checks, which is how a probe would pass by accident.
+    async def run(sql: str, **_: Any) -> Any:
+        if "getSetting" in sql:
+            raise RuntimeError("Code: 159. DB::Exception: Timeout exceeded")
+        if sql.startswith("SELECT count()") and "system." not in sql:
+            return [], [], [(1,)] if boundary.CANARY_TABLE in sql else [(0,)]
+        raise RuntimeError("Code: 497. DB::Exception: Not enough privileges")
+
+    class _Ch:
+        async def query_columns(self, sql: str, params: Any = None) -> Any:
+            return await run(sql)
+
+    monkeypatch.setattr(app.store, "run_statement", run)
+    monkeypatch.setattr(app.store, "_analyst_client", lambda: _Ch())
+    monkeypatch.setattr(app.store, "sealed_secrets", _returns(None))
+    monkeypatch.setattr(app.store, "can_manage_access", _returns(False))
+    asyncio.run(app.reprobe())
+    ready_now, problem = app.analysis_state()
+    assert ready_now is False and problem.endswith("RuntimeError")
+
+
+def test_revokes_for_show_grants_lines() -> None:
+    assert boundary.revokes_for(
+        ["GRANT SELECT ON loom.x TO loom_analyst WITH GRANT OPTION", "not a grant"]
+    ) == ["REVOKE SELECT ON loom.x FROM loom_analyst"]
