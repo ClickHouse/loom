@@ -48,6 +48,7 @@ log = logging.getLogger(__name__)
 ACTIONS: tuple[str, ...] = ("tombstone", "demote", "anonymize")
 DEFAULT_ACTION = "tombstone"
 ANONYMIZED_VALUE = "[EXPIRED]"
+_ANONYMIZED_SHA = _sha(ANONYMIZED_VALUE)
 
 # Which lock class each action is, for memory_lock.assert_unlocked.
 _LOCK_CLASS: dict[str, str] = {"tombstone": "delete", "demote": "value", "anonymize": "value"}
@@ -128,7 +129,7 @@ def plan(row: Any, *, now: datetime, cfg: ExpiryConfig) -> dict[str, Any]:
     return {
         "value": json.dumps(ANONYMIZED_VALUE),
         "value_json": "{}",
-        "content_sha256": _sha(ANONYMIZED_VALUE),
+        "content_sha256": _ANONYMIZED_SHA,
         "entities": [],
         "expires_at": None,
         "on_expire": "",
@@ -409,29 +410,41 @@ RecordedMirror = tuple[IdentityKey, int, str]
 
 
 async def replay_mirror(recorded: list[RecordedMirror], *, ch: Any | None = None) -> int:
-    """The mirror of a recorded failure, run after later writes may have landed. A
-    tombstone or anonymize runs as recorded (`apply_mirror`): the key's vectors below
-    the version hold the text it took out. A demote copies the key's live head as it is
-    now, its expiry and confidence, onto the key's live vectors as a metadata copy at
-    read + 1: a write since the sweep (a touch, a verify, a tag edit) keeps what it
-    set, and a row a writer that draws its own version (`memory.set`, `update_by_id`)
-    lands after the read is newer than the copy. A key with no live head, or a 'high'
-    one, has nothing to copy."""
+    """The mirror of a recorded failure, run after later writes may have landed, from
+    the keys' live heads as they are now.
+
+    A tombstone runs as recorded: the key's vectors below the version hold the text it
+    took out. An anonymize whose head is still the anonymized shell, which keeps no
+    vector, retires bare every live vector up to that head: a status write since the
+    sweep (a supersede) may have copied the old text above the recorded version. The
+    pin is the head's version + 1, the highest no write drawn from the head can tie with
+    (`version_over`). Any other head (rewritten since) takes the recorded version.
+
+    A demote copies the key's live head, its expiry and confidence, onto the key's live
+    vectors as a metadata copy at read + 1: a write since the sweep (a touch, a verify, a
+    tag edit) keeps what it set, and a row a writer that draws its own version
+    (`memory.set`, `update_by_id`) lands after the read is newer than the copy. A key
+    with no live head, or a 'high' one, has nothing to copy."""
     import server.memory.store as memory_repo
 
-    n = await apply_mirror(
-        [(key, version, action, None) for key, version, action in recorded if action != "demote"],
-        ch=ch,
+    keys = [key for key, _version, action in recorded if action != "tombstone"]
+    heads = (
+        await memory_repo.memory_rows_by_identity_keys(keys, ch=ch, sequential=True) if keys else {}
     )
-    demoted = [key for key, _version, action in recorded if action == "demote"]
-    if not demoted:
-        return n
-    heads = await memory_repo.memory_rows_by_identity_keys(demoted, ch=ch, sequential=True)
-    copies = [
-        (key, {"expires_at": head.expires_at, "confidence": head.confidence})
-        for key, head in heads.items()
-        if head.sensitivity != "high"
-    ]
+    retires: list[MirrorItem] = []
+    copies = []
+    for key, version, action in recorded:
+        head = heads.get(key)
+        if action == "tombstone":
+            retires.append((key, version, action, None))
+        elif action == "anonymize":
+            pin = version
+            if head is not None and head.content_sha256 == _ANONYMIZED_SHA:
+                pin = max(version, head.version + 1)
+            retires.append((key, pin, action, None))
+        elif head is not None and head.sensitivity != "high":
+            copies.append((key, {"expires_at": head.expires_at, "confidence": head.confidence}))
+    n = await apply_mirror(retires, ch=ch)
     if copies:
         n += await memory_repo.reemit_embedding_rows_for_keys(copies, ch=ch)
     return n

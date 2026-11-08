@@ -759,15 +759,14 @@ async def test_a_malformed_expiry_mirror_failure_is_abandoned(
 
 
 @pytest.mark.asyncio
-async def test_a_replayed_demote_copies_the_head_as_it_is_now(
+async def test_a_replay_mirrors_the_heads_as_they_are_now(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Writes since the sweep moved the heads: a touch set a new expiry, a lock changed
     # neither expiry nor confidence, and one key was deleted. Each demote copies its
     # head's expiry and confidence as a metadata copy (read + 1, no pinned version, so a
     # row a later set or update lands is newer); the deleted key, and the one relabelled
-    # 'high' (no vector), have nothing to copy.
-    # The anonymize runs as recorded.
+    # 'high' (no vector), have nothing to copy. Anonymize and tombstone retire (below).
     applied: list[Any] = []
     copied: list[Any] = []
 
@@ -780,32 +779,46 @@ async def test_a_replayed_demote_copies_the_head_as_it_is_now(
         return 0
 
     later = _REAL_NOW + timedelta(hours=1)
-    touched, locked, deleted, relabelled, anonymized = (
+    touched, locked, deleted, relabelled, shell, rewritten, gone = (
         ("o", "n", "a", "-", "-", k)
-        for k in ("touched", "locked", "deleted", "relabelled", "anonymized")
+        for k in ("touched", "locked", "deleted", "relabelled", "shell", "rewritten", "gone")
     )
+
+    def head(version: int, *, sha: str = "c" * 64, **kw: Any) -> SimpleNamespace:
+        base = {"expires_at": None, "confidence": 0.4, "sensitivity": ""}
+        return SimpleNamespace(version=version, content_sha256=sha, **(base | kw))
+
+    live = {
+        touched: head(300, expires_at=later),
+        locked: head(310),
+        relabelled: head(320, sensitivity="high"),
+        # Still the anonymized shell, its head moved by a supersede at 350.
+        shell: head(350, sha=X._ANONYMIZED_SHA),
+        # Rewritten by a memory.set since: its vectors hold the new text.
+        rewritten: head(360),
+    }
 
     async def _heads(keys, *, ch=None, sequential=False) -> dict[Any, Any]:
         assert sequential
-        live = {
-            touched: SimpleNamespace(expires_at=later, confidence=0.4),
-            locked: SimpleNamespace(expires_at=None, confidence=0.4),
-            relabelled: SimpleNamespace(expires_at=None, confidence=0.4),
-        }
-        return {
-            k: SimpleNamespace(**vars(live[k]), sensitivity="high" if k == relabelled else "")
-            for k in keys
-            if k in live
-        }
+        return {k: live[k] for k in keys if k in live}
 
     monkeypatch.setattr(X, "apply_mirror", _apply)
     monkeypatch.setattr("server.memory.store.reemit_embedding_rows_for_keys", _reemit)
     monkeypatch.setattr("server.memory.store.memory_rows_by_identity_keys", _heads)
     await X.replay_mirror(
         [(k, 200, "demote") for k in (touched, locked, deleted, relabelled)]
-        + [(anonymized, 200, "anonymize")]
+        + [(k, 200, "anonymize") for k in (shell, rewritten)]
+        + [(gone, 200, "tombstone")]
     )
-    assert applied == [[(anonymized, 200, "anonymize", None)]]
+    # The shell's vectors are retired up to its head (a supersede may have copied the
+    # old text above 200); the rewritten key's only below the recorded version.
+    assert applied == [
+        [
+            (shell, 351, "anonymize", None),
+            (rewritten, 200, "anonymize", None),
+            (gone, 200, "tombstone", None),
+        ]
+    ]
     assert copied == [
         [
             (touched, {"expires_at": later, "confidence": 0.4}),
