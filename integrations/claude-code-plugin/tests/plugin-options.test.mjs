@@ -197,6 +197,9 @@ test("the manifest declares the options and the MCP url takes the server and too
   assert.equal(m.userConfig.toolset.default, "coding");
   assert.match(m.userConfig.toolset.description, /coding\+tracker/);
   const mcp = JSON.parse(fs.readFileSync(new URL("../.mcp.json", import.meta.url), "utf8"));
-  assert.equal(mcp.mcpServers.loom.url, "${user_config.server_url}/mcp?toolset=${user_config.toolset}");
+  assert.equal(
+    mcp.mcpServers.loom.url,
+    "${user_config.server_url}/mcp?toolset=${user_config.toolset}#${CLAUDE_PROJECT_DIR}",
+  );
   assert.match(mcp.mcpServers.loom.headersHelper, /loom-mcp-headers\.mjs/);
 });

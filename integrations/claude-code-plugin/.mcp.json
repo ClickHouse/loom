@@ -2,7 +2,7 @@
   "mcpServers": {
     "loom": {
       "type": "http",
-      "url": "${user_config.server_url}/mcp?toolset=${user_config.toolset}",
+      "url": "${user_config.server_url}/mcp?toolset=${user_config.toolset}#${CLAUDE_PROJECT_DIR}",
       "headersHelper": "sh \"$CLAUDE_PLUGIN_ROOT/bin/loom-node\" \"$CLAUDE_PLUGIN_ROOT/bin/loom-mcp-headers.mjs\" || node -e \"if(process.versions.node.split('.')[0]<18)process.exit(1);const p=require('path').join(process.env.CLAUDE_PLUGIN_ROOT,'bin','loom-mcp-headers.mjs');import(require('url').pathToFileURL(p).href)\""
     }
   }
