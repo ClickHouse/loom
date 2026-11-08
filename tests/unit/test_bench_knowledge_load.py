@@ -333,3 +333,66 @@ def test_a_run_whose_small_ingests_are_not_queued_exits_1_and_names_them(
     out = json.loads(capsys.readouterr().out)
     assert out["small_ingests"].get("not queued", 0) > 0
     assert any(p.startswith(f"{load.INGEST_SMALL}: ended") for p in out["past_level"])
+
+
+def test_a_rejected_dataset_read_is_tried_again_until_it_answers(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The CSV's one dataset read shares the namespace's read limit with the status
+    polls: a 429 is tried again, so the run's queries still run."""
+    import json
+
+    import httpx
+
+    ready = _server("ready")
+    reads: list[int] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("knowledge.dataset_get"):
+            reads.append(1)
+            if len(reads) < 3:
+                return httpx.Response(429, json={"error": "rate limited"})
+            return httpx.Response(200, json={"datasets": [{"dataset_id": "ds"}]})
+        if request.url.path.endswith("knowledge.query"):
+            return httpx.Response(200, json={"rows": []})
+        return ready(request)
+
+    monkeypatch.setattr(load, "POLL_S", 0.05)
+    _main_against(answer, monkeypatch, "--json", "--duration", "2", "--query-rate", "10")
+    out = json.loads(capsys.readouterr().out)
+    assert len(reads) == 3
+    assert out["measures"]["knowledge.query"]["ok"] > 0
+
+
+def test_a_rejected_status_poll_waits_longer_before_the_next(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    import httpx
+
+    polls: list[float] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("knowledge.upload"):
+            return httpx.Response(201, json={"upload_id": "u"})
+        if path.endswith("knowledge.ingest"):
+            return httpx.Response(200, json={"ingestion_id": "j"})
+        polls.append(asyncio.get_event_loop().time())
+        if len(polls) < 4:
+            return httpx.Response(429, json={"error": "rate limited"})
+        return httpx.Response(200, json={"state": "ready"})
+
+    async def go() -> str:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(answer), base_url="http://x"
+        ) as c:
+            run = load.Run(c, "o", "ns", 0.0, load._fresh_tallies(), load.Counter())
+            state, _ = await run.ingest(b"x", "a.md", "repo://a.md", wait_s=5.0)
+            return state
+
+    monkeypatch.setattr(load, "POLL_S", 0.05)
+    assert asyncio.run(go()) == "ready"
+    gaps = [b - a for a, b in zip(polls, polls[1:], strict=False)]
+    assert gaps[1] > gaps[0] * 1.5 and gaps[2] > gaps[1] * 1.5  # 0.1 s, 0.2 s, 0.4 s

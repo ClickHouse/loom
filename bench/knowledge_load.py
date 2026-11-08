@@ -79,6 +79,7 @@ OPEN = ("pending", "processing")
 # Between one job's knowledge.ingest_status reads: every open job polls from the
 # namespace's knowledge.read rate limit.
 POLL_S = 1.0
+POLL_MAX_S = 8.0  # the longest wait between one job's polls after rejections
 CANARY_S = 60.0  # a deployment that takes no job in this long runs no worker
 INGEST_WAIT_S = 600  # past it a job counts as still open: the run reports it, not hangs
 
@@ -234,12 +235,17 @@ class Run:
         status, job = await self.op("knowledge.ingest", {"upload_id": upload_id, "source_uri": uri})
         if status != 200 or not job.get("ingestion_id"):
             return "not queued", 0.0
-        polled = time.perf_counter()
+        polled, pause = time.perf_counter(), POLL_S
         while time.perf_counter() - polled < wait_s:
-            await asyncio.sleep(POLL_S)
-            _, st = await self.op("knowledge.ingest_status", {"ingestion_id": job["ingestion_id"]})
+            await asyncio.sleep(pause)
+            status, st = await self.op(
+                "knowledge.ingest_status", {"ingestion_id": job["ingestion_id"]}
+            )
             if st.get("state") and st["state"] not in OPEN:
                 return str(st["state"]), _job_seconds(st, time.perf_counter() - polled)
+            # Every open job polls from the namespace's read limit: a rejected poll waits
+            # longer, so a long queue does not crowd out the run's other reads.
+            pause = min(pause * 2, POLL_MAX_S) if status in REJECTED else POLL_S
         return "still open", time.perf_counter() - polled
 
     async def small_ingest(self, n: int) -> None:
@@ -253,11 +259,21 @@ class Run:
         state, seconds = await self.ingest(data, filename, uri)
         self.ingests[label] = {"state": state, "seconds": round(seconds, 2), "bytes": len(data)}
         if label == "csv" and state == "ready":
-            _, got = await self.op("knowledge.dataset_get", {"source_uri": uri})
+            got = await self.read_until_answered("knowledge.dataset_get", {"source_uri": uri})
             sets = got.get("datasets")
             first = sets[0] if isinstance(sets, list) and sets else None
             if isinstance(first, dict) and isinstance(first.get("dataset_id"), str):
                 self.dataset = {"source_uri": uri, "dataset_id": first["dataset_id"]}
+
+    async def read_until_answered(self, name: str, body: dict[str, Any]) -> dict[str, Any]:
+        """A read the run cannot go on without, tried again every POLL_S while it is
+        rejected (it shares the namespace's read limit with the status polls), until it
+        answers or the run ends: its body, or {} when it never did."""
+        while True:
+            status, got = await self.op(name, body)
+            if status not in REJECTED or not self.live():
+                return got
+            await asyncio.sleep(POLL_S)
 
     async def search(self, n: int) -> None:
         words = ("replica", "request batch", "order", "region owner", "invoice total")
