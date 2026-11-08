@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import time
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -64,15 +65,29 @@ class _FakeCH:
         return [r for r in self.rows if r["namespace"] in wanted]
 
     async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
+        if "startsWith(granted_by" in sql:  # a subject's given operator admin grants
+            given = [
+                r
+                for r in self.rows
+                if r["namespace"] in params["ns"]
+                and r["subject"] == params["sub"]
+                and not r["granted_by"].startswith(params["prefix"])
+            ]
+            return {"n": sum(_live_admin_row(r) for r in given)}
         if "count()" in sql:  # a branch's live admins
-            live = [r for r in self.rows if r["namespace"] == params["ns"] and r["role"] == "admin"]
-            return {"n": sum(r["revoked_at"] is None and r["status"] == "active" for r in live)}
+            return {
+                "n": sum(_live_admin_row(r) for r in self.rows if r["namespace"] == params["ns"])
+            }
         key = (params["ns"], params["sub"])
         return next((r for r in self.rows if (r["namespace"], r["subject"]) == key), None)
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
         assert table == "loom.namespace_grants"
         self.inserted.extend(rows)
+
+
+def _live_admin_row(r: dict[str, Any]) -> bool:
+    return r["role"] == "admin" and r["revoked_at"] is None and r["status"] == "active"
 
 
 T0 = datetime(2026, 9, 17, 10, 0, 0)
@@ -400,8 +415,6 @@ async def test_a_stray_whose_rewrite_is_refused_is_revoked(
     """ops's operator grant is revoked after the plan: the stray is not rewritten from
     it, and does not stay either. Its revoke is versioned at the plan's read, so an
     operator grant made after that read stays newer and the next sync copies it."""
-    import time
-
     monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
     revoked = _admin("code-z", "ops", revoked_at=T0 + timedelta(hours=1))
     after_plan: list[int] = []
@@ -421,6 +434,39 @@ async def test_a_stray_whose_rewrite_is_refused_is_revoked(
         ("repo-maintainers:code-z-dev", True)
     ]
     assert ch.inserted[0]["version"] < after_plan[0]
+
+
+async def test_a_refused_rewrite_leaves_the_stray_to_another_operator_grant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ops is admin on two operator entries. The one the rewrite copies is revoked after
+    the plan: the stray is left, and the next sync rewrites it from the other one."""
+    entries = [
+        _Cfg("clickhouse", "code-z", "Org/z"),
+        _Cfg("clickhouse", "code-z-26-4", "Org/z"),
+        _Cfg("clickhouse", "code-z-dev", "Org/z", source="registry"),
+        _Cfg("clickhouse", "code-z-26-5", "Org/z", source="registry", classification="restricted"),
+    ]
+    monkeypatch.setattr(repos, "configured_repos", lambda: entries)
+    older = _admin("code-z-26-4", "ops")
+    newer = _admin("code-z", "ops")
+    revoked = newer | {"revoked_at": T0 + timedelta(hours=1), "version": newer["version"] + 10}
+
+    class _RevokedMeanwhile(_FakeCH):
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            planned = await super().query_all(sql, params)
+            if "loom.namespaces" not in sql and newer in self.rows:
+                self.rows = [revoked if r is newer else r for r in self.rows]
+            return planned
+
+    stray = _copy("code-z-26-5", "ops", "code-z-dev")
+    ch = _RevokedMeanwhile([newer, older, stray])
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    assert ch.inserted == []
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    assert [
+        (r["granted_by"], r["revoked_at"]) for r in ch.inserted if r["namespace"] == "code-z-26-5"
+    ] == [("repo-maintainers:code-z-26-4", None)]
 
 
 async def test_a_sync_plans_from_sequentially_consistent_reads(
@@ -452,8 +498,6 @@ async def test_a_stray_s_revoke_is_older_than_an_operator_grant_made_after_the_r
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The next sync then copies that grant onto the branch: the revoke does not end it."""
-    import time
-
     monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
     granted: list[dict[str, Any]] = []
 

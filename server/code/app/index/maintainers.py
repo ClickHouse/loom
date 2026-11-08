@@ -269,6 +269,20 @@ _ADMINS_SQL = (
 )
 
 
+async def _holds_operator_admin(client: Any, org: str, subject: str, config: list[str]) -> bool:
+    """`subject` holds a live admin grant given (not copied) on one of the operator
+    entries in `config`, read now."""
+    if not config:
+        return False
+    row = await client.query_one(
+        "SELECT count() AS n FROM loom.namespace_grants FINAL WHERE org = {org:String}"
+        " AND namespace IN {ns:Array(String)} AND subject = {sub:String}"
+        " AND NOT startsWith(granted_by, {prefix:String}) AND role = 'admin' AND " + LIVE_GRANT,
+        params={"org": org, "ns": config, "sub": subject, "prefix": GRANTED_BY_PREFIX},
+    )
+    return int((row or {}).get("n") or 0) > 0
+
+
 def _version(row: dict[str, Any] | None) -> int | None:
     """The grant row's version: a new one on every change, where `granted_at`
     keeps whole seconds and two changes within one compare equal."""
@@ -361,16 +375,20 @@ async def _rewrite_wanted(
     seen: _Seen,
     *,
     read_at: int,
+    config: list[str],
 ) -> dict[str, Any] | None:
     """A stray copy planned to become a copy of the operator grant. When that grant is
     no longer a live admin grant, the stray's revoke is written instead, versioned at
     the plan's read like the other strays' revokes: the restricted branch must not keep
     it, and an operator grant made since stays newer. One that only changed since the
-    plan (given again, say) leaves the stray to the next sync."""
+    plan (given again, say), or a subject still holding an admin grant given on
+    another operator entry, leaves the stray to the next sync, which rewrites it."""
     source = await _source_row(client, org, row)
     if await _copy_wanted(client, org, row, now, seen, source):
         return row
     if now is None or _live_admin(source) or not await _copy_unchanged(client, org, row, now, seen):
+        return None
+    if await _holds_operator_admin(client, org, str(row["subject"]), config):
         return None
     _log_stray(org, now)
     return _revoke_row(org, now, read_at=read_at)
@@ -593,7 +611,7 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
     rewrites = [r for r in inserts if (r["namespace"], r["subject"]) in strays]
     inserts = [r for r in inserts if (r["namespace"], r["subject"]) not in strays]
     written, busy = 0, None
-    rewrite = functools.partial(_rewrite_wanted, read_at=read_at)
+    rewrite = functools.partial(_rewrite_wanted, read_at=read_at, config=config)
     stages = ((revokes, _copy_unchanged), (rewrites, rewrite), (inserts, _mirror_wanted))
     for planned_rows, still_wanted in stages:
         if not planned_rows:

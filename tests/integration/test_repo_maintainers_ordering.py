@@ -281,3 +281,36 @@ async def test_only_a_live_admin_grant_not_from_a_page_branch_counts_as_the_call
         "loom.namespace_grants", [row], settings={"async_insert": 0, "wait_for_async_insert": 1}
     )
     assert await maintainers.holds_own_admin(client, org, "code-ord-rc", "mallory") is holds
+
+
+@pytest.mark.parametrize(
+    ("namespace", "status", "granted_by", "holds"),
+    [
+        ("code-ord", "active", "alice", True),
+        ("code-ord", "pending", "alice", False),
+        ("code-ord", "active", "repo-maintainers:code-ord-26-5", False),  # a copy
+        ("code-ord-dev", "active", "alice", False),  # not an operator entry
+    ],
+)
+async def test_a_refused_rewrite_reads_the_subject_s_given_operator_admin_grants(
+    ch: tuple[Any, str], namespace: str, status: str, granted_by: str, holds: bool
+) -> None:
+    """On ClickHouse: the statement behind a refused rewrite counts only live admin
+    grants given on the operator entries it is passed."""
+    client, org = ch
+    row = {
+        "org": org,
+        "namespace": namespace,
+        "subject": "ops",
+        "role": "admin",
+        "status": status,
+        "granted_at": datetime.now(UTC).replace(microsecond=0, tzinfo=None),
+        "granted_by": granted_by,
+        "revoked_at": None,
+        "version": time.time_ns(),
+    }
+    await client.insert(
+        "loom.namespace_grants", [row], settings={"async_insert": 0, "wait_for_async_insert": 1}
+    )
+    config = ["code-ord", "code-ord-26-5"]
+    assert await maintainers._holds_operator_admin(client, org, "ops", config) is holds
