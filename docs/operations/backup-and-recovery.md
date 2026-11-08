@@ -164,7 +164,8 @@ checkpoints are chained separately ([audit](../features/observability/audit.md))
 These operations undo a bad write, a misbehaving agent or a wrong import without a
 ClickHouse restore. Each is scoped to one namespace. `namespace.snapshot`,
 `namespace.restore` and `namespace.rollback` are not on the MCP `all` listing; call them
-by name or over HTTP.
+by name or over HTTP, or use the [dashboard](../features/dashboard.md)'s Health →
+Repairs tab, where a namespace admin downloads a snapshot, restores one and rolls back.
 
 | Operation            | Role                                                   | Does                                                                                                                                                                                                                                                                                                                                                                      |
 | -------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

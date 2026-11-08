@@ -316,6 +316,23 @@ describe("Health tabs", () => {
     expect(screen.getByRole("tab", { name: /Workers/ })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /Operation mix/ })).toBeInTheDocument();
   });
+
+  it("falls back to Extraction quality when a switch hides the open Repairs tab", async () => {
+    as(["VIEWER"]);
+    useStore.setState({
+      myNamespaces: [
+        { namespace: "team-a", role: "admin", visibility: "private", description: "", joined_at: "", is_new: false },
+        { namespace: "team-b", role: "viewer", visibility: "private", description: "", joined_at: "", is_new: false },
+      ],
+    });
+    render(<Health />);
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /Repairs/ }));
+    expect(screen.getByRole("tab", { name: /Repairs/ })).toHaveAttribute("aria-selected", "true");
+    act(() => useStore.setState({ identity: { org: "dev", namespace: "team-b", agent: "loom-ui" } }));
+    expect(screen.queryByRole("tab", { name: /Repairs/ })).toBeNull();
+    expect(screen.getByRole("tab", { name: /Extraction quality/ })).toHaveAttribute("aria-selected", "true");
+    useStore.setState({ myNamespaces: null });
+  });
 });
 
 describe("parseOpMix", () => {

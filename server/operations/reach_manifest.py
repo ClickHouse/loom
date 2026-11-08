@@ -26,7 +26,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "calibration.get": ("sdk_method",),
+    "calibration.get": (
+        "sdk_method",
+        "dashboard",
+    ),
     "code.backport_gap": ("sdk_method",),
     "code.backport_gaps": ("sdk_method",),
     "code.blame_range": ("sdk_method",),
@@ -200,6 +203,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
+    "facts.expire_by_adapter": ("dashboard",),
     "facts.list": (
         "sdk_method",
         "dashboard",
@@ -353,7 +357,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "memory.demonstrate": ("sdk_method",),
     "memory.demote": ("sdk_method",),
     "memory.exposure_summary": ("dashboard",),
-    "memory.extraction_status": ("sdk_method",),
+    "memory.extraction_status": (
+        "sdk_method",
+        "dashboard",
+    ),
     "memory.for_file": ("plugin_hook",),
     "memory.get": (
         "sdk_method",
@@ -365,6 +372,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
+    "memory.health": ("dashboard",),
     "memory.history": (
         "sdk_method",
         "dashboard",
@@ -405,6 +413,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "memory.record.query": ("sdk_method",),
     "memory.record.write": ("sdk_method",),
     "memory.redact": ("sdk_method",),
+    "memory.reindex": ("dashboard",),
     "memory.related": (
         "sdk_method",
         "dashboard",
@@ -437,6 +446,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "plugin_hook",
     ),
     "memory.statuses": ("dashboard",),
+    "memory.sweep_expired": ("dashboard",),
     "memory.timeline": ("sdk_method",),
     "memory.touch": ("sdk_method",),
     "memory.unlock": ("sdk_method",),
@@ -487,7 +497,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "dashboard",
     ),
     "namespace.register_category": ("sdk_method",),
+    "namespace.restore": ("dashboard",),
+    "namespace.rollback": ("dashboard",),
     "namespace.search_categories": ("sdk_method",),
+    "namespace.snapshot": ("dashboard",),
     "namespace.taxonomy": (
         "sdk_method",
         "dashboard",
@@ -507,6 +520,9 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     ),
     "ops.capabilities": ("sdk_method",),
     "ops.health": ("dashboard",),
+    "ops.projection_failures.list": ("dashboard",),
+    "ops.projection_failures.resolve": ("dashboard",),
+    "ops.projection_failures.retry": ("dashboard",),
     "policy.check": (
         "sdk_method",
         "dashboard",

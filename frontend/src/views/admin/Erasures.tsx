@@ -29,6 +29,7 @@ import { TableSkeleton } from "../../components/Skeleton";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { toast } from "../../components/Toast";
 import { Alert, ChoiceGroup, Loading, MetaList, MetaRow, TipTarget, fieldError } from "../../components/ui";
+import { saveJson } from "../../lib/download";
 
 const ERASURE_STATE: Record<string, BadgeState> = { completed: "success", failed: "danger" };
 
@@ -339,17 +340,6 @@ const SECTIONS = ["memory", "knowledge", "conversations", "conversation_threads"
 /** The sections the export cut at their limit. */
 function truncatedSections(data: ErasureExport): string[] {
   return SECTIONS.filter((s) => data[s].truncated).map((s) => s.replaceAll("_", " "));
-}
-
-function saveJson(data: unknown, filename: string) {
-  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /** One saga's state from erasure.status: where it stands and what the final census found. */
