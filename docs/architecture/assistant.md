@@ -35,7 +35,7 @@ flowchart LR
 | HTTP            | `POST /v1/assistant/chat/completions`: LibreChat's agents API request and response, OpenAI-compatible, streaming or not |
 | SDKs            | a thin `assistant` client in Python and TypeScript over that route, with streaming; it holds no agent logic             |
 | MCP             | the `loom_assistant_ask` tool (op `assistant.ask`), which forwards one question and returns the whole answer            |
-| HTTP, op shaped | `POST /v1/assistant.ask` and the generated `assistant_ask` / `assistantAsk` SDK methods, from the same op               |
+| HTTP, op shaped | `POST /v1/assistant.ask` and the generated `ops.assistant.ask` / `loom.assistant.ask` SDK methods, from the same op     |
 
 Each request names its namespace: the `X-Loom-Namespace` header on the chat route (the
 token's default namespace when absent), the `namespace` field on `assistant.ask`. The

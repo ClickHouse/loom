@@ -145,10 +145,14 @@ SDK has no class for raises the class its HTTP status maps to (a 409
 | `INTERNAL_ERROR`            | 500    | An idempotent op, once. Report the `request_id` if it repeats.                                                                                                                                                                                                                                                                                                                                   |
 | 4xx other than 429          | 4xx    | No, unless `detail.retryable` says so: a 408 and an access refusal whose check could not run. A `LOCKED` (423) is not retryable: the user lifts the lock, and `lock_until` says when one with an end lapses. Otherwise the same request gets the same answer; fix the request, the token or the data first.                                                                                      |
 
-`SCHEMA_PENDING`, `ANALYSIS_UNAVAILABLE`, `ASSISTANT_UNAVAILABLE`, `CODED_WIDTH_MISMATCH` and
-`GATEWAY_REQUIRED` are 503s because the server cannot serve the request in its current state, not because
+`SCHEMA_PENDING`, `ANALYSIS_UNAVAILABLE`, `CODED_WIDTH_MISMATCH` and `GATEWAY_REQUIRED`
+are 503s because the server cannot serve the request in its current state, not because
 the request is wrong; they send no `Retry-After` since only an operator's fix ends them,
 and the SDKs never resend an answer the server classes `configuration`.
+`ASSISTANT_UNAVAILABLE` is classed the same and sends no `Retry-After`, but a replica
+whose setup has not finished yet, or is setting the assistant up again after LibreChat
+refused its stored key, ends it on its own once `/v1/health` no longer names
+`assistant_service_failing`; only a missing LibreChat needs an operator.
 
 The SDKs' default policy is under [Python SDK](./python-sdk.md#retries-and-logging) and
 [TypeScript SDK](./typescript-sdk.md#retries-pacing-and-logging); the codes they never

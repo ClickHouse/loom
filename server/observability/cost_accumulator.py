@@ -247,6 +247,14 @@ class _Accumulator:
         self.embed_tokens += tokens
         self.cost_usd += embed_cost_usd(model, tokens)
 
+    def add_charge(self, model: str, cost_usd: float) -> None:
+        """One call of `model` at a set price, with no tokens (`report_charge`)."""
+        self.cost_usd += cost_usd
+        self.llm_calls += 1
+        tally = self.by_model.setdefault(model or "", [0, 0, 0, 0.0, 0, 0])
+        tally[0] += 1
+        tally[3] += cost_usd
+
     def add_llm(
         self,
         model: str,
@@ -325,11 +333,7 @@ def report_charge(model: str, cost_usd: float) -> None:
     acc = _current.get()
     if acc is None:
         return
-    acc.cost_usd += cost_usd
-    acc.llm_calls += 1
-    tally = acc.by_model.setdefault(model or "", [0, 0, 0, 0.0, 0, 0])
-    tally[0] += 1
-    tally[3] += cost_usd
+    acc.add_charge(model, cost_usd)
 
 
 def report_llm(

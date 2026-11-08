@@ -271,8 +271,8 @@ curl -N "$LOOM_URL/v1/assistant/chat/completions" \
 ```
 
 An agent asks one question with `loom_assistant_ask` over MCP (called by name: no toolset
-lists it), or `assistant.ask` over HTTP and the SDKs' generated `assistant_ask` /
-`assistantAsk`, which answer whole. Each answer is ledgered as `assistant.ask` with its
+lists it), or `assistant.ask` over HTTP and the SDKs' generated `ops.assistant.ask` /
+`loom.assistant.ask`, which answer whole. Each answer is ledgered as `assistant.ask` with its
 model spend, and its tool calls carry the answer's id as `run_id`.
 
 The qualification runs the same cases through Loom's assistant route

@@ -29,7 +29,9 @@ class AssistantAskInput(BaseModel):
         ...,
         min_length=1,
         max_length=MAX_MESSAGE_CHARS,
-        description="The question about this namespace, answered as the caller.",
+        description=(
+            "The question about this namespace, answered as the caller, at most 20,000 characters."
+        ),
     )
     history: list[AssistantMessage] = Field(
         default_factory=list,

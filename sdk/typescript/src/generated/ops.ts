@@ -68,7 +68,7 @@ export interface AssistantMessage {
 export interface AssistantAskInput {
   org: string;
   namespace: string;
-  /** The question about this namespace, answered as the caller. */
+  /** The question about this namespace, answered as the caller, at most 20,000 characters. */
   question: string;
   /** Earlier turns of the conversation, oldest first, at most 50; empty by default. Loom stores none. */
   history?: AssistantMessage[];

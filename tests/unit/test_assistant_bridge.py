@@ -763,3 +763,30 @@ def test_the_ops_own_row_carries_the_answers_id(world: _World) -> None:
         return current_ledger_run()
 
     assert asyncio.run(run()) == "chatcmpl-1"
+
+
+@pytest.mark.parametrize("usage", [{}, {"prompt_tokens": 0, "completion_tokens": 0}])
+def test_an_answer_reporting_empty_usage_is_charged_the_ceiling(
+    world: _World, usage: dict[str, Any]
+) -> None:
+    world.stream_body = _sse(
+        {"id": "chatcmpl-9", "choices": [{"delta": {"content": "Seven."}}]},
+        {"id": "chatcmpl-9", "choices": [], "usage": usage},
+    )
+    _, _, (acc, _) = _answer(_caller(), QUESTION)
+    assert acc.cost_usd == pytest.approx(settings.assistant_answer_ceiling_usd)
+
+
+def test_an_org_wide_token_is_refused_with_a_row_naming_no_org(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.assistant.app import routes
+
+    http, rows = client
+    monkeypatch.setattr(
+        routes, "verify_bearer_header", lambda *_a, **_k: _caller(org="*", namespaces=("*",))
+    )
+    r = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "AUTH_INSUFFICIENT"
+    (row,) = rows
+    assert row["identity"]["org"] == "-"

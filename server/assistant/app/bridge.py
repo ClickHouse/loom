@@ -325,9 +325,11 @@ def _note(answer: Answer, data: str) -> None:
         try:
             answer.prompt_tokens = int(usage.get("prompt_tokens") or 0)
             answer.completion_tokens = int(usage.get("completion_tokens") or 0)
-            answer.usage_seen = True
         except (TypeError, ValueError):
             pass  # unreadable usage counts as none: the answer is charged the ceiling
+        else:
+            # Empty usage counts as none too: a begun answer is never free.
+            answer.usage_seen = answer.prompt_tokens + answer.completion_tokens > 0
     choices = chunk.get("choices")
     for choice in choices if isinstance(choices, list) else []:
         delta = choice.get("delta") if isinstance(choice, dict) else None
