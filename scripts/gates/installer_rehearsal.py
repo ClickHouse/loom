@@ -443,11 +443,11 @@ class Rehearsal:
         port: int,
         script: str,
         mounts: tuple[str, ...] = (),
-        env: dict[str, str] | None = None,
+        extra_env: dict[str, str] | None = None,
     ) -> str:
         """`script` in a fresh container of `image`, as this host's user."""
         # A fresh HOME: the Docker client inside is signed in to nothing.
-        env = {**self.release.env, **(env or {}), "HOME": str(home), "LOOM_PORT": str(port)}
+        env = {**self.release.env, **(extra_env or {}), "HOME": str(home), "LOOM_PORT": str(port)}
         # Named, so a container that outlives its `docker run` (a timeout) is removed.
         self.container_count += 1
         name = f"loom-rehearsal-{self.run_id}-{self.container_count}"
@@ -479,9 +479,9 @@ class Rehearsal:
         return result.stdout
 
     def one_liner(
-        self, image: str, home: Path, port: int, url: str, env: dict[str, str] | None = None
+        self, image: str, home: Path, port: int, url: str, extra_env: dict[str, str] | None = None
     ) -> str:
-        return self.container(image, home, port, f'curl -fsSL "{url}" | sh', env=env)
+        return self.container(image, home, port, f'curl -fsSL "{url}" | sh', extra_env=extra_env)
 
     def install_previous(self, image: str, home: Path, port: int) -> None:
         """The previous release by its own install.sh: published, with LOOM_VERSION
@@ -491,7 +491,7 @@ class Rehearsal:
         files = release.previous_files
         if files is None:
             url = f"{GITHUB_RELEASES}/download/v{release.previous}/install.sh"
-            self.one_liner(image, home, port, url, env={"LOOM_VERSION": release.previous})
+            self.one_liner(image, home, port, url, extra_env={"LOOM_VERSION": release.previous})
             return
         bundle = {
             "LOOM_INSTALL_BUNDLE": "/previous/loom-stack.tar.gz",
@@ -503,7 +503,7 @@ class Rehearsal:
             port,
             "sh /previous/install.sh",
             mounts=(f"{files}:/previous:ro",),
-            env=bundle,
+            extra_env=bundle,
         )
 
     def rehearse(self, distro: str, stacks: ExitStack) -> None:
