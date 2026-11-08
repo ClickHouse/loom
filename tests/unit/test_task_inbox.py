@@ -195,8 +195,8 @@ class FakeRepo:
         namespace=None,
         statuses=None,
         kinds=None,
+        posted_by=None,
         from_subject=None,
-        poster=None,
         owner=None,
         limit=100,
         fields=None,
@@ -209,10 +209,10 @@ class FakeRepo:
             rows = [r for r in rows if r["status"] in statuses]
         if kinds:
             rows = [r for r in rows if r["kind"] in kinds]
+        if posted_by:
+            rows = [r for r in rows if posted_by in (r["from_subject"], r.get("from_agent"))]
         if from_subject:
-            rows = [r for r in rows if from_subject in (r["from_subject"], r.get("from_agent"))]
-        if poster:
-            rows = [r for r in rows if r["from_subject"] == poster]
+            rows = [r for r in rows if r["from_subject"] == from_subject]
         if owner:
             rows = [r for r in rows if r["owner"] == owner]
         if newest_first:

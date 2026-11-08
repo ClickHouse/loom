@@ -394,17 +394,16 @@ async def list_tasks(
     namespace: str | None = None,
     statuses: list[str] | None = None,
     kinds: list[str] | None = None,
+    posted_by: str | None = None,
     from_subject: str | None = None,
-    poster: str | None = None,
     owner: str | None = None,
     limit: int = 100,
     fields: list[str] | None = None,
     newest_first: bool = False,
     ch: _CHClient | None = None,
 ) -> list[TaskRow]:
-    """`from_subject` matches a poster's subject or agent label, inside an inbox the
-    caller may read; `poster` matches the token subject alone, across the org: a label is
-    no identity, so it never answers for one."""
+    """`posted_by` matches a task's poster subject or its agent label; `from_subject`
+    matches the poster subject alone."""
     ch = ch or _default_client()
     where = ["org = {org:String}", "is_deleted = 0"]
     params: dict[str, Any] = {"org": org, "limit": int(limit)}
@@ -420,12 +419,12 @@ async def list_tasks(
     if kinds:
         where.append("kind IN {kinds:Array(String)}")
         params["kinds"] = list(kinds)
+    if posted_by:
+        where.append("(from_subject = {by:String} OR from_agent = {by:String})")
+        params["by"] = posted_by
     if from_subject:
-        where.append("(from_subject = {subj:String} OR from_agent = {subj:String})")
+        where.append("from_subject = {subj:String}")
         params["subj"] = from_subject
-    if poster:
-        where.append("from_subject = {poster:String}")
-        params["poster"] = poster
     if owner:
         where.append("owner = {owner:String}")
         params["owner"] = owner

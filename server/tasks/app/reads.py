@@ -45,7 +45,7 @@ async def handle_task_list(input: TaskListInput) -> TaskListOutput:
             return TaskListOutput(tasks=[], truncated=False)
         rows = await repo.list_tasks(
             input.org,
-            poster=subject,
+            from_subject=subject,
             statuses=list(input.statuses) or None,
             kinds=input.kinds or None,
             limit=input.limit + 1,
@@ -61,7 +61,7 @@ async def handle_task_list(input: TaskListInput) -> TaskListOutput:
             inbox=input.inbox,
             statuses=list(input.statuses) or None,
             kinds=input.kinds or None,
-            from_subject=input.posted_by,
+            posted_by=input.posted_by,
             owner=input.owner,
             limit=input.limit + 1,
             fields=input.fields or None,
