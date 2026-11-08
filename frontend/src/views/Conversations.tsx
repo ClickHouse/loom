@@ -401,7 +401,20 @@ export function Conversations() {
           {threads.map((t) => {
             const title = listedTitle(t);
             return (
-              <ListRow key={t.thread_id} data-thread-row="" data-focus-key={`thread:${t.thread_id}`}>
+              <ListRow
+                key={t.thread_id}
+                data-thread-row=""
+                data-focus-key={`thread:${t.thread_id}`}
+                trailing={
+                  <ThreadActions
+                    identity={identity}
+                    thread={{ thread_id: t.thread_id, agent: t.agent, title }}
+                    canRename={canRenameThread}
+                    canDelete={canDeleteThread}
+                    onChanged={() => setThreadsRetry((n) => n + 1)}
+                  />
+                }
+              >
                 <button
                   type="button"
                   data-row-open=""
@@ -437,13 +450,6 @@ export function Conversations() {
                     </span>
                   </span>
                 </button>
-                <ThreadActions
-                  identity={identity}
-                  thread={{ thread_id: t.thread_id, agent: t.agent, title }}
-                  canRename={canRenameThread}
-                  canDelete={canDeleteThread}
-                  onChanged={() => setThreadsRetry((n) => n + 1)}
-                />
               </ListRow>
             );
           })}

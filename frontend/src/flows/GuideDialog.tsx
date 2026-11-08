@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
@@ -118,9 +118,6 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
   const close = (v: boolean) => {
     if (!busy) onOpenChange(v);
   };
-  const byline = (g: NamespaceGuide) =>
-    `Revision ${g.revision}${g.updated_by ? ` by ${g.updated_by}` : ""}${g.updated_at ? `, ${relativeTime(g.updated_at)}` : ""}`;
-
   return (
     <Modal
       open={open}
@@ -216,6 +213,12 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
   );
 }
 
+/** "Revision 3 by …, 2 days ago": who wrote a revision and when, each part when known. */
+function byline(g: { revision: number; updated_by: string; updated_at: string | null }): string {
+  const by = g.updated_by ? ` by ${g.updated_by}` : "";
+  return `Revision ${g.revision}${by}${g.updated_at ? `, ${relativeTime(g.updated_at)}` : ""}`;
+}
+
 /** The guide's earlier revisions, read when opened: who changed it, when and why. The
  *  newest one is the guide shown above, so the list starts below it. */
 function GuideHistory({ org, namespace, current }: { org: string; namespace: string; current: number }) {
@@ -223,17 +226,16 @@ function GuideHistory({ org, namespace, current }: { org: string; namespace: str
   const [revisions, setRevisions] = useState<GuideRevision[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reads, setReads] = useState(0);
-  useEffect(() => {
-    if (!open) return;
-    let live = true;
-    setError(null);
-    guideHistory(org, namespace, GUIDE_HISTORY_LIMIT)
-      .then((r) => live && setRevisions(r))
-      .catch((e) => live && setError(humanizeError(e)));
-    return () => {
-      live = false;
-    };
-  }, [open, reads, org, namespace]);
+  useAbortableEffect(
+    (signal, live) => {
+      if (!open) return;
+      setError(null);
+      guideHistory(org, namespace, GUIDE_HISTORY_LIMIT, { signal })
+        .then((r) => live() && setRevisions(r))
+        .catch((e) => live() && setError(humanizeError(e)));
+    },
+    [open, reads, org, namespace],
+  );
   const earlier = revisions?.filter((r) => r.revision !== current) ?? null;
   return (
     <section>
@@ -262,10 +264,7 @@ function GuideHistory({ org, namespace, current }: { org: string; namespace: str
             <ul className="space-y-1 text-xs">
               {earlier.map((r) => (
                 <li key={r.revision}>
-                  <span className="text-text-muted">
-                    Revision {r.revision}
-                    {r.updated_by ? ` by ${r.updated_by}` : ""}, {relativeTime(r.updated_at)}
-                  </span>
+                  <span className="text-text-muted">{byline(r)}</span>
                   {(r.note || r.summary) && <span className="text-text"> — {r.note || r.summary}</span>}
                 </li>
               ))}

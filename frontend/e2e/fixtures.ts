@@ -1028,6 +1028,8 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
         });
       case "/v1/admin.users":
         return json({ users: [], platform_admins_configured: [] });
+      case "/v1/cost.agent_summary":
+        return json({ rows: [], total_cost_usd: 0, total_turns: 0, unpriced_turns: 0 });
       case "/v1/cost.budget_status":
         return json({
           namespace: "team-alerts",

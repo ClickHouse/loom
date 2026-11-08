@@ -48,15 +48,18 @@ export function AgentSpend() {
           noDataMessage={data === null ? <TableSkeleton label="Loading coding agent spend" /> : undefined}
           size="sm"
           headers={[{ label: "Model" }, { label: "Turns" }, { label: "Sessions" }, { label: "Cost" }]}
-          rows={(data?.rows ?? []).map((r) => ({
-            id: r.model ?? "-",
-            items: [
-              { label: <span className="font-mono text-xs">{r.model || "—"}</span> },
-              { label: <span className="tabular">{r.turns.toLocaleString()}</span> },
-              { label: <span className="tabular">{r.sessions.toLocaleString()}</span> },
-              { label: <span className="tabular">${r.cost_usd.toFixed(2)}</span> },
-            ],
-          }))}
+          rows={(data?.rows ?? []).map((r) => {
+            const model = r.model || "—";
+            return {
+              id: model,
+              items: [
+                { label: <span className="font-mono text-xs">{model}</span> },
+                { label: <span className="tabular">{r.turns.toLocaleString()}</span> },
+                { label: <span className="tabular">{r.sessions.toLocaleString()}</span> },
+                { label: <span className="tabular">${r.cost_usd.toFixed(2)}</span> },
+              ],
+            };
+          })}
         />
       )}
     </section>

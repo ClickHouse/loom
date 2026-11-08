@@ -119,7 +119,7 @@ function RenameDialog({
   );
 }
 
-/** What of a thread is left across every agent: `agent` is its row's owner while a row is
+/** The thread's first turn across every agent; `agent` is the row's owner while a row is
  *  left, else the oldest remaining turn's writer. */
 const readHead = (id: Pick<Identity, "org" | "namespace">, threadId: string) =>
   getConversationThread(id, "*", threadId, { limit: 1 });
@@ -146,7 +146,6 @@ async function deleteEveryAgent(
       const rest = await readHead(id, thread.thread_id);
       if (!rest.found) return { parts, left: 0 };
       left = rest.msg_count;
-      // Next: the row's owner while a row is left, else the oldest remaining turn's writer.
       // The same agent again means its delete took nothing more.
       if (!rest.agent || rest.agent === agent) break;
       agent = rest.agent;
