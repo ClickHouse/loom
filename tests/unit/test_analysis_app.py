@@ -394,3 +394,18 @@ def test_ch_setup_prints_a_refusal_as_one_line_and_nothing_to_stdout(
     out = capsys.readouterr()
     assert out.out == ""
     assert out.err.strip() == "✗ the key the replicas hold is lost"
+
+
+def test_print_sql_is_not_gated_on_the_reader_users_settings(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import argparse
+
+    from server.cli import ch_setup
+
+    monkeypatch.setattr(ch_setup, "_analyst_sql", lambda: ["SELECT 1"])
+    monkeypatch.setattr(app.store, "database", lambda: "loom")
+    monkeypatch.setattr(ch_setup, "caps_problem", lambda: "a caller-shaped cap is below its floor")
+    args = argparse.Namespace(print_analyst_sql=True, print_sql=False)
+    assert ch_setup._cmd_ch_setup(args) == 0
+    assert capsys.readouterr().out.rstrip().endswith("SELECT 1;")

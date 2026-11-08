@@ -442,8 +442,8 @@ def _write_analyst() -> None:
         run_connected(lambda _ch: rewrite())
     except Exception as e:  # noqa: BLE001 — insights.query is optional; the rest of setup stands
         print(
-            f"· loom_analyst (insights.query): not written ({e}); have an admin run the SQL "
-            "`loom ch-setup --print-analyst-sql` prints"
+            f"· loom_analyst (insights.query): not written ({error_line(e)}); have an admin "
+            "run the SQL `loom ch-setup --print-analyst-sql` prints"
         )
         return
     print("· loom_analyst (insights.query): written")
@@ -457,14 +457,9 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
     # Unset (a checkout without it) means the default reader.
     opted_out = "LOOM_CH_READER_USER" in os.environ and not settings.ch_reader_user
     reader = None if opted_out else settings.ch_reader_user or DEFAULT_READER
-    if not (_NAME.match(user) and (reader is None or _NAME.match(reader))):
-        print(f"✗ cannot use user names {user!r} / {reader!r} in SQL", file=sys.stderr)
-        return 2
-    if reader == user:
-        print("✗ LOOM_CH_READER_USER must differ from LOOM_CH_USER", file=sys.stderr)
-        return 2
-    if reader and (problem := caps_problem()):
-        print(f"✗ {problem}", file=sys.stderr)
+    # The analyst SQL depends on the Loom user alone, not on the reader's settings.
+    if not _NAME.match(user):
+        print(f"✗ cannot use user name {user!r} in SQL", file=sys.stderr)
         return 2
     if args.print_analyst_sql:
         from server.insights.app import analysis
@@ -487,6 +482,15 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
         for stmt in statements:
             print(f"{stmt};")
         return 0
+    if reader is not None and not _NAME.match(reader):
+        print(f"✗ cannot use user name {reader!r} in SQL", file=sys.stderr)
+        return 2
+    if reader == user:
+        print("✗ LOOM_CH_READER_USER must differ from LOOM_CH_USER", file=sys.stderr)
+        return 2
+    if reader and (problem := caps_problem()):
+        print(f"✗ {problem}", file=sys.stderr)
+        return 2
     if args.print_sql:
         for stmt in admin_sql(user, reader):
             print(stmt if stmt.startswith("--") else f"{stmt};")
