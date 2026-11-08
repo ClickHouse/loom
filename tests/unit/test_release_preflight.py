@@ -446,7 +446,9 @@ def test_the_tag_run_signs_the_digests_it_made_and_every_run_verifies_them() -> 
     tag = jobs["docker-tag"]
     assert tag["outputs"]["digests"] == "${{ steps.tag.outputs.digests }}"
     (tagging,) = [s for s in tag["steps"] if s.get("id") == "tag"]
-    assert 'digests+=("$image@$digest")' in tagging["run"]  # the form cosign sign takes
+    # docker-tag needs a registry, so the line that builds its output is read, not run:
+    # each image as image@digest, the form cosign sign takes.
+    assert 'digests+=("$image@$digest")' in tagging["run"]
     steps = {s["id"]: s for s in jobs["sign"]["steps"] if "id" in s}
     assert steps["sign"]["if"] == "${{ needs.docker-tag.result == 'success' }}"
     assert steps["sign"]["env"]["DIGESTS"] == "${{ needs.docker-tag.outputs.digests }}"
