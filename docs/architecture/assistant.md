@@ -712,8 +712,8 @@ the MCP endpoint) show that:
 
 - an answer's token is never wider than the caller's token, never outlives it (under a
   sign-in session, the answer's limit instead), and ends with the caller's token,
-  subject, creator or sign-out; a dashboard caller in the last minutes of its access token is
-  answered;
+  subject, creator or sign-out; a dashboard caller in the last minutes of its access
+  token is answered;
 - a request to LibreChat without a token reads nothing, and one with a token reads as
   it;
 - a revoked caller, an org-wide token, a narrowed `read_scope`, a caller about to expire
