@@ -56,7 +56,11 @@ from server.code.domain.extract.lang_sql_objects import (
     references,
     split_schema,
 )
-from server.code.domain.extract.lang_sql_split import comment_spans, without_spans
+from server.code.domain.extract.lang_sql_split import (
+    comment_spans,
+    split_statements,
+    without_spans,
+)
 from server.code.domain.extract.treesitter import Symbol
 
 KIND_COLUMN = "column"
@@ -502,7 +506,6 @@ def _body_columns(
     where the source binds through the body's own aliases, its one known table, or an
     earlier CTE it selects from (the columns then carry that CTE's sources); everything
     else is unmapped."""
-    from server.code.domain.extract.lang_sql_split import split_statements
 
     sts = split_statements(select_body)
     if not sts:

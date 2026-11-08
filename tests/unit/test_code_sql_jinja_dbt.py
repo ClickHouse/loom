@@ -203,3 +203,8 @@ def test_a_dbt_file_of_many_tags_reads_in_linear_time(unit: str) -> None:
         lj.jinja_edges("models/x.sql", units, {})
 
     grows_linearly(run, 2_000, 8_000)
+
+
+def test_an_unclosed_statement_tag_names_no_macro_call() -> None:
+    text = "{{ dollars(x) }}\nselect a from t where b like '{%'\nand coalesce(c, 0) > 0\n"
+    assert lj._calls(text, set(), lj._newlines(text)) == {"dollars": 1}

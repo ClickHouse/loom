@@ -366,6 +366,8 @@ def _calls(text: str, own: set[str], nl: list[int]) -> dict[str, int]:
     dbt's builtins and the file's own macros."""
     out: dict[str, int] = {}
     for tag in [*_EXPR_RE.finditer(text), *_STATEMENT_RE.finditer(text)]:
+        if not tag.group(0).endswith("}"):
+            continue  # a `{%` that never closes: the text after it is SQL, not Jinja
         for m in _CALL_RE.finditer(tag.group(0)):
             name = m.group("name")
             if name in _JINJA_BUILTINS or name in own or name in out:

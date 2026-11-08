@@ -55,7 +55,7 @@ _INTERP_RE = re.compile(r"\{\{(?:(?!\{\{)[^}])*?(?<![\w$])([A-Za-z_$][\w$]*+)\s*
 # `*ngIf="check(x)"`, `[items]="rows()"`, `@if (loaded())` (control flow)
 _BOUND_CALL_RE = re.compile(
     r"""(?:\*[A-Za-z_]\w*|\[[\w.]+\]|@(?:if|for|switch|else if))\s*[=(]\s*+["'(]?"""
-    r"""(?:(?!\*\w+\s*=|\[[\w.]+\]\s*[=(]|@(?:if|for|switch|else if)\b)[^"')])*?"""
+    r"""(?:(?!\*[A-Za-z_]\w*\s*=|\[[\w.]+\]\s*[=(]|@(?:if|for|switch|else if)\b)[^"')])*?"""
     r"""(?<![\w$])([A-Za-z_$][\w$]*+)\s*\("""
 )
 

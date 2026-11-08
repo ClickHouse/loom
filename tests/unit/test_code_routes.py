@@ -113,3 +113,9 @@ def test_route_decorators_in_one_unclosed_controller_cost_linear_time() -> None:
         route_facets(ParsedFile(path="a.ts", lang="typescript", tree=None, source=source))
 
     grows_linearly(run, 5_000, 20_000)
+
+
+def test_a_route_handler_after_a_blank_line_is_on_its_export_line() -> None:
+    src = b"import { NextResponse } from 'next/server'\n\nexport async function GET() {}\n"
+    pf = parse_file("app/api/x/route.ts", src)
+    assert [(f.name, f.line) for f in route_facets(pf)] == [("GET /api/x", 3)]
