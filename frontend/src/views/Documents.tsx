@@ -1032,7 +1032,7 @@ export function Documents() {
         className="max-w-[900px] w-full"
         initialFocus="dialog"
       >
-        <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
+        <div className="flex flex-wrap sm:flex-nowrap items-start justify-between gap-4 mb-4">
           <div className="min-w-0 text-xs text-text-muted flex items-center gap-2 flex-wrap">
             {previewEntry?.ingested_at && (
               <span>
@@ -1054,8 +1054,8 @@ export function Documents() {
             <TagList tags={previewEntry?.tags || []} max={4} />
           </div>
           {previewEntry && (
-            // Wraps on a narrow screen: three buttons do not fit a phone's width.
-            <div className="flex flex-wrap items-center gap-2">
+            // On a phone the buttons wrap under the details; wider, they stay at the right.
+            <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
               {previewEntry.has_blob && (
                 <Button
                   type="secondary"
