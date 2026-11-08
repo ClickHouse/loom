@@ -377,10 +377,7 @@ def test_a_statement_during_a_policy_rewrite_reads_the_right_rows(
 
     from server.insights.domain import analysis as boundary
 
-    policies = [
-        _policy(ch_client, t.name).replace("CREATE ROW POLICY", "CREATE ROW POLICY OR REPLACE", 1)
-        for t in boundary.TABLES
-    ]
+    policies = [_policy(ch_client, t.name) for t in boundary.TABLES]
     done = threading.Event()
     rewrites: list[int] = []
     failures: list[BaseException] = []
@@ -389,7 +386,7 @@ def test_a_statement_during_a_policy_rewrite_reads_the_right_rows(
         try:
             while not done.is_set():
                 for stmt in policies:
-                    ch_client.command(stmt, settings=boundary.UNLOGGED_TEXT)
+                    ch_client.command(stmt, settings=boundary.UNLOGGED_SETTINGS)
                 rewrites.append(1)
         except BaseException as e:  # noqa: BLE001 — reported to the test below
             failures.append(e)
@@ -436,18 +433,24 @@ def test_the_statement_text_stays_out_of_the_query_log(
     control_plane_url: str, seed: _Seed, ch_client
 ) -> None:
     marker = f"probe_{seed.nonce}"
-    r = _query(control_plane_url, seed, f"SELECT '{marker}' AS m, count() FROM loom.memory")
+    request_id = f"text-{seed.nonce}"
+    r = httpx.post(
+        f"{control_plane_url}/v1/insights.query",
+        json={"org": seed.org_a, "namespace": seed.ns_a, "sql": f"SELECT '{marker}' AS m"},
+        headers={"Authorization": f"Bearer {seed.viewer_a}", "X-Request-Id": request_id},
+        timeout=60,
+    )
     assert r.status_code == 200, r.text
     ch_client.command("SYSTEM FLUSH LOGS")
-    # The analyst's statements are logged, as on a server that pins log_queries,
-    # but never their text; this read cuts its own, which holds the marker.
-    analyst, quoted = ch_client.query(
-        "SELECT countIf(user = 'loom_analyst'), countIf(query LIKE {m:String}) "
-        "FROM system.query_log",
-        parameters={"m": f"%{marker}%"},
+    # The statement is logged, as on a server that pins log_queries, but not its
+    # text; this read cuts its own, which holds the marker.
+    own, quoted = ch_client.query(
+        "SELECT countIf(user = 'loom_analyst' AND startsWith(query_id, {rid:String})), "
+        "countIf(query LIKE {m:String}) FROM system.query_log",
+        parameters={"rid": f"{request_id}:", "m": f"%{marker}%"},
         settings={"log_queries_cut_to_length": 1},
     ).result_rows[0]
-    assert analyst > 0
+    assert own > 0
     assert quoted == 0
 
 
@@ -455,7 +458,6 @@ def test_the_scope_key_stays_out_of_the_query_log(ch_client) -> None:
     """Every policy holds the key as hex literals, which the server's boot
     wrote and the probe's refused reads quote: no logged statement text or
     error carries one."""
-    import re
 
     from server.insights.domain import analysis as boundary
 
@@ -467,12 +469,14 @@ def test_the_scope_key_stays_out_of_the_query_log(ch_client) -> None:
     literals = re.findall(r"unhex\('([0-9a-f]+)'\)", policy)
     assert literals
     ch_client.command("SYSTEM FLUSH LOGS")
-    logged = ch_client.query(
-        "SELECT count() FROM system.query_log "
-        "WHERE multiSearchAny(query, {k:Array(String)}) OR multiSearchAny(exception, {k:Array(String)})",
+    refused, logged = ch_client.query(
+        "SELECT countIf(user = 'loom_analyst' AND exception LIKE '%UNKNOWN_SETTING%'), "
+        "countIf(multiSearchAny(query, {k:Array(String)}) "
+        "OR multiSearchAny(exception, {k:Array(String)})) FROM system.query_log",
         parameters={"k": literals},
         settings={"log_queries_cut_to_length": 1},
-    ).result_rows[0][0]
+    ).result_rows[0]
+    assert refused > 0, "no refused read quoted a policy, so the errors were not checked"
     assert logged == 0
 
 
@@ -537,10 +541,8 @@ def _policy(ch_client, table: str) -> str:
         "AND database = currentDatabase() AND table = {t:String}",
         parameters={"p": boundary.POLICY_NAME, "t": table},
     ).result_rows[0][0]
-    return (
-        f"CREATE ROW POLICY `{boundary.POLICY_NAME}` ON loom.{table} AS permissive "
-        f"FOR SELECT USING {using} TO `{boundary.ANALYST_USER}`"
-    )
+    analyst = f"`{boundary.ANALYST_USER}`"
+    return boundary.policy_sql("loom", boundary.POLICY_NAME, table, using, analyst)
 
 
 def test_an_extra_grant_is_revoked_by_the_probe(
@@ -572,9 +574,7 @@ def test_a_dropped_policy_reads_nothing_and_is_written_again(
 
     hidden = _rows_hidden_without_a_policy(ch_client, seed.nonce)
 
-    statement = _policy(ch_client, table).replace(
-        "CREATE ROW POLICY", "CREATE ROW POLICY OR REPLACE", 1
-    )
+    statement = _policy(ch_client, table)
     ch_client.command(f"DROP ROW POLICY `{boundary.POLICY_NAME}` ON loom.{table}")
     try:
         r = _query(control_plane_url, seed, "SELECT DISTINCT org FROM loom.agent_events")
@@ -601,28 +601,23 @@ def test_a_canary_under_another_key_is_written_again(
     from server.insights.domain import analysis as boundary
 
     statement = _policy(ch_client, boundary.CANARY_TABLE)
-    # The key's hex forms are the policy's only hex literals.
-    keyed = re.compile(r"unhex\('([0-9A-Fa-f]+)'\)")
-    padded = keyed.findall(statement)
-    assert padded, "the canary policy names no key"
-    ch_client.command(
-        keyed.sub(lambda m: "unhex('" + "0" * len(m.group(1)) + "')", statement).replace(
-            "CREATE ROW POLICY", "CREATE ROW POLICY OR REPLACE", 1
-        ),
-        settings=_UNLOGGED,
+    other_key = boundary.policy_sql(
+        "loom",
+        boundary.POLICY_NAME,
+        boundary.CANARY_TABLE,
+        boundary.policy_filter(os.urandom(32)),
+        f"`{boundary.ANALYST_USER}`",
     )
+    ch_client.command(other_key, settings=_UNLOGGED)
     try:
         _probed_until(
             control_plane_url,
             seed,
-            lambda: keyed.findall(_policy(ch_client, boundary.CANARY_TABLE)) == padded,
+            lambda: _policy(ch_client, boundary.CANARY_TABLE) == statement,
             "the probe to write the canary's policy again",
         )
     except BaseException:
-        ch_client.command(
-            statement.replace("CREATE ROW POLICY", "CREATE ROW POLICY OR REPLACE", 1),
-            settings=_UNLOGGED,
-        )
+        ch_client.command(statement, settings=_UNLOGGED)
         raise
     _answers_again(control_plane_url, seed)
 

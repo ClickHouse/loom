@@ -50,8 +50,7 @@ docker run -d --pull "$PULL" --name "$NAME" \
   "$IMAGE"
 # named_collections.xml is intentionally omitted: it's gitignored (built from a
 # template against an operator secret) and only powers CH SQL ai* functions,
-# which the test suite doesn't exercise. log_queries_readonly.xml is CI's
-# own: it pins log_queries as ClickHouse Cloud does.
+# which the test suite doesn't exercise.
 
 echo "Waiting for ClickHouse to accept connections…"
 for _ in $(seq 1 40); do

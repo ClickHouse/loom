@@ -480,8 +480,9 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
             "Loom databases on this server\n-- writing the same analyst user: analysis needs "
             "one Loom per ClickHouse service.\n-- " + "\n-- ".join(analysis.printed_checks())
         )
-        unlogged = boundary.UNLOGGED_TEXT.items()
-        for stmt in [*(f"SET {name} = {value}" for name, value in unlogged), *statements]:
+        for name, value in boundary.UNLOGGED_SETTINGS.items():
+            print(f"SET {name} = {value};")
+        for stmt in statements:
             print(f"{stmt};")
         return 0
     # The reader and admin SQL name these users.

@@ -186,7 +186,6 @@ def test_no_entity_statement_changes_log_queries() -> None:
     # ClickHouse Cloud pins log_queries for its users and refuses a profile or
     # a statement that changes it; the text is cut from the log instead.
     assert not any(re.search(r"\blog_queries\s*=", stmt) for stmt in SQL)
-    assert "log_queries" not in boundary.UNLOGGED_TEXT
 
 
 def test_entity_statements_are_sent_with_their_text_cut_from_the_log() -> None:
@@ -301,6 +300,7 @@ def test_an_error_that_quotes_the_policy_quotes_no_key() -> None:
     for secret in (KEY, bytes(b ^ 0x36 for b in padded), bytes(b ^ 0x5C for b in padded)):
         assert secret.hex() not in error.lower()
     assert "unhex(" not in error
+    assert "\\x" not in error
 
 
 def test_policy_reads_every_setting_as_a_string() -> None:

@@ -61,7 +61,7 @@ CAPS_DIGEST_SETTING = "SQL_loom_analyst_caps_digest"
 # many bytes, and a text cut that short is logged as only its length. Loom
 # cannot turn query logging off everywhere (ClickHouse Cloud pins
 # `log_queries` for its users), but any user may set this one.
-UNLOGGED_TEXT = {"log_queries_cut_to_length": 1}
+UNLOGGED_SETTINGS = {"log_queries_cut_to_length": 1}
 
 _BLOCK = 64  # SHA-256 block size, for HMAC's inner and outer pads
 
@@ -275,11 +275,7 @@ def _setting(name: str) -> str:
 
 
 def _hidden(key: bytes, data: bytes) -> str:
-    """`data` as a ClickHouse expression that writes neither it nor `key`
-    out: ClickHouse prints `decrypt`'s arguments as [HIDDEN] in an error
-    message and in SHOW CREATE. A read the policy refuses (the probe's
-    unsigned read) quotes the policy in its error, which ClickHouse logs in
-    system.query_log wherever it logs queries."""
+    """`data` as a `decrypt` expression, whose arguments ClickHouse prints as [HIDDEN]."""
     from cryptography.hazmat.primitives import padding
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
@@ -340,13 +336,13 @@ def profile_settings() -> list[str]:
         "final = 1 CONST",
         "apply_row_policy_after_final = 1 CONST",
         # The statement text stays out of system.query_log; the ledger keeps its digest.
-        *(f"{name} = {value} CONST" for name, value in UNLOGGED_TEXT.items()),
+        *(f"{name} = {value} CONST" for name, value in UNLOGGED_SETTINGS.items()),
         "read_overflow_mode = 'throw' CONST",
         "result_overflow_mode = 'throw' CONST",
         "timeout_overflow_mode = 'throw' CONST",
         "use_query_cache = 0 CONST",
         "allow_introspection_functions = 0 CONST",
-        # The server log at debug quotes the policies, key included.
+        # Server log lines sent back with a statement can quote the policies.
         "send_logs_level = 'none' CONST",
         "use_query_condition_cache = 0 CONST",
     ]
@@ -425,6 +421,14 @@ def revokes_for(grant_lines: list[str]) -> list[str]:
     return out
 
 
+def policy_sql(db: str, name: str, table: str, using: str, to: str) -> str:
+    """One row policy, replaced in place; `db` is already quoted."""
+    return (
+        f"CREATE ROW POLICY OR REPLACE `{name}` ON {db}.{table} "
+        f"AS permissive FOR SELECT USING {using} TO {to}"
+    )
+
+
 def entity_sql(
     db: str,
     password: str,
@@ -448,12 +452,6 @@ def entity_sql(
     condition = policy_filter(key)
     profile = profile_settings()
 
-    def policy(name: str, table: str, using: str, to: str) -> str:
-        return (
-            f"CREATE ROW POLICY OR REPLACE `{name}` ON {db}.{table} "
-            f"AS permissive FOR SELECT USING {using} TO {to}"
-        )
-
     out = [
         f"CREATE SETTINGS PROFILE IF NOT EXISTS {user} SETTINGS " + ", ".join(profile),
         f"ALTER SETTINGS PROFILE {user} SETTINGS " + ", ".join(profile),
@@ -462,10 +460,10 @@ def entity_sql(
         f"ALTER USER {user} {identified} SETTINGS PROFILE '{CAPS_PROFILE}'",
     ]
     for t in TABLES:
-        out.append(policy(OTHERS_POLICY_NAME, t.name, "1", f"ALL EXCEPT {user}"))
-        out.append(policy(POLICY_NAME, t.name, f"({t.live}) AND {condition}", user))
+        out.append(policy_sql(db, OTHERS_POLICY_NAME, t.name, "1", f"ALL EXCEPT {user}"))
+        out.append(policy_sql(db, POLICY_NAME, t.name, f"({t.live}) AND {condition}", user))
     for name in RETIRED_TABLES:
-        out.append(policy(POLICY_NAME, name, "0", user))
+        out.append(policy_sql(db, POLICY_NAME, name, "0", user))
     out += [_revoke(g, user) for g in sorted(granted) if not _allowed(g)]
     out += [f"REVOKE `{role}` FROM {user}" for role in sorted(roles)]
     out += [
@@ -475,7 +473,7 @@ def entity_sql(
     out.append(f"GRANT SELECT(id) ON {db}.{CANARY_TABLE} TO {user}")
     out.append(f"INSERT INTO {db}.{CANARY_TABLE} (id) VALUES (0)")
     # Last of the policies: a canary that reads under the key means all of them do.
-    out.append(policy(POLICY_NAME, CANARY_TABLE, condition, user))
+    out.append(policy_sql(db, POLICY_NAME, CANARY_TABLE, condition, user))
     stamp = [
         *profile,
         # A string, as ClickHouse stores a number setting as `UInt64_1`.
