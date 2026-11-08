@@ -365,7 +365,7 @@ def cmd_setup_bridge(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------- one answer
 
 
-def ask_librechat(
+def ask_assistant(
     st: dict[str, Any], person: str, question: str, *, cancel_after_first: bool = False
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
@@ -746,7 +746,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         person = people[case["person"]]
         native = baseline(st, case, person)
         t0 = time.time()
-        got = ask_librechat(st, case["person"], case["question"])
+        got = ask_assistant(st, case["person"], case["question"])
         t1 = time.time() + 2
         time.sleep(2)  # the ledger write is asynchronous
         calls = loom_calls(args.ch_url, case["person"], t0, t1)
@@ -845,7 +845,7 @@ def cmd_rescore(args: argparse.Namespace) -> None:
 def cancel_probe(st: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     """Disconnect after the first streamed token and count the Loom calls that still arrive."""
     t0 = time.time()
-    got = ask_librechat(
+    got = ask_assistant(
         st, "alice", "List every memory in the namespace with its version.", cancel_after_first=True
     )
     disconnected = time.time()

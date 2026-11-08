@@ -232,7 +232,7 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
         ),
         "assistant.ask": (
             "the assistant for agents and scripts, one whole answer; the Assistant page's "
-            "chat streams from /v1/assistant/chat/completions instead"
+            "chat will stream from /v1/assistant/chat/completions instead"
         ),
         "insights.catalog": (
             "the assistant agent's tool, read before it writes SQL; no dashboard page calls "

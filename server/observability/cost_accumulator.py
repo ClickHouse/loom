@@ -327,9 +327,9 @@ def report_embed(model: str, tokens: int) -> None:
 
 
 def report_charge(model: str, cost_usd: float) -> None:
-    """Charge one model call at a set price, for a call whose tokens were never
-    reported (the assistant's answer cut before its usage arrived): it counts as one
-    call of `model` costing `cost_usd`, with no tokens."""
+    """Charge one model call at a set price, for a call that cannot be priced from its
+    tokens (the assistant's answer cut before its usage arrived, or on a model with no
+    price): it counts as one call of `model` costing `cost_usd`, with no tokens."""
     acc = _current.get()
     if acc is None:
         return
