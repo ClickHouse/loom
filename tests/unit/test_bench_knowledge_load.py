@@ -368,13 +368,14 @@ def test_a_rejected_status_poll_waits_longer_before_the_next(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Only lower bounds: a sleep can run long under load, never short. Rejected three
-    times, each wait is at least twice the last (at a 0.05 s base)."""
-    answers, least_gaps = ["429", "429", "429", "ready"], [0.1, 0.2, 0.4]
+    times, each gap is at least the doubled pause (0.1, 0.2, 0.4 s at a 0.05 s base)."""
     import asyncio
     import itertools
     import time
 
     import httpx
+
+    answers, least_gaps = ["429", "429", "429", "ready"], [0.1, 0.2, 0.4]
 
     polls: list[float] = []
 

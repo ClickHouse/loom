@@ -18,8 +18,8 @@ namespaces, each in an org of its own (`<org>-0` …, so a token must reach them
 all: auth off, or an org-wide token), so the server carries K times the load
 while each tenant stays within its own rate limits (`server/core/ratelimit.py`).
 Calls arrive at their rate whether or not earlier ones have answered (open
-loop), so a slow server meets the same load, and a rejected call is not retried (but
-the CSV's one dataset read, which the queries need).
+loop), so a slow server meets the same load, and a rejected call is not retried, except
+the CSV's one dataset read, which the queries need.
 It reports, per op, the calls, p50 / p95 / p99 latency of the successful ones,
 errors by status and the rejected ones (429 and 503); per ingest, the time from
 its job's creation to its end (the server's timestamps, else the time polled);
