@@ -437,9 +437,18 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "dashboard",
     ),
     "memory.recall": ("sdk_method",),
-    "memory.record.conflicts": ("sdk_method",),
-    "memory.record.history": ("sdk_method",),
-    "memory.record.query": ("sdk_method",),
+    "memory.record.conflicts": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "memory.record.history": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "memory.record.query": (
+        "sdk_method",
+        "dashboard",
+    ),
     "memory.record.write": ("sdk_method",),
     "memory.redact": (
         "sdk_method",
@@ -496,8 +505,15 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "memory_schema.list": ("sdk_method",),
-    "memory_schema.register": ("sdk_method",),
+    "memory_schema.approve": ("dashboard",),
+    "memory_schema.list": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "memory_schema.register": (
+        "sdk_method",
+        "dashboard",
+    ),
     "mentor.brief": ("dashboard",),
     "namespace.audit": (
         "plugin_hook",
@@ -523,16 +539,24 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "namespace.join": ("dashboard",),
     "namespace.leave": ("dashboard",),
     "namespace.list": ("sdk_method",),
-    "namespace.list_categories": ("sdk_method",),
+    "namespace.list_categories": (
+        "sdk_method",
+        "dashboard",
+    ),
     "namespace.list_mine": (
         "plugin_hook",
         "dashboard",
     ),
+    "namespace.list_ontology": ("dashboard",),
     "namespace.register": (
         "sdk_method",
         "dashboard",
     ),
-    "namespace.register_category": ("sdk_method",),
+    "namespace.register_category": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "namespace.register_ontology": ("dashboard",),
     "namespace.restore": ("dashboard",),
     "namespace.rollback": ("dashboard",),
     "namespace.search_categories": ("sdk_method",),
@@ -597,6 +621,9 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
+    "profile_schema.clear": ("dashboard",),
+    "profile_schema.get": ("dashboard",),
+    "profile_schema.set": ("dashboard",),
     "run.begin": (
         "sdk_method",
         "sdk_example",

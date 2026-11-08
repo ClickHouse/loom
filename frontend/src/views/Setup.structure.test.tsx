@@ -1,7 +1,7 @@
 import { act, cleanup, render, screen, waitFor } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MyNamespaceEntry, ServiceAccountEntry, WhoAmI } from "../api";
+import type { MyNamespaceEntry, TokenEntry, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { Setup } from "./Setup";
@@ -12,7 +12,7 @@ import { Setup } from "./Setup";
 
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
-  listServiceAccounts: vi.fn(async (): Promise<ServiceAccountEntry[]> => []),
+  listTokens: vi.fn(async (): Promise<TokenEntry[]> => []),
   listMine: vi.fn(async (): Promise<MyNamespaceEntry[]> => []),
   countMemories: vi.fn(async () => 0),
   listCodeRepos: vi.fn(async () => []),
