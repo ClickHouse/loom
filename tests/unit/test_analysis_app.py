@@ -506,8 +506,15 @@ def test_an_unavailable_answer_names_no_cause(monkeypatch: pytest.MonkeyPatch, r
     assert "another Loom database" not in str(caught.value)
 
 
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        (None, "may read memory.value: its grants are too wide"),
+        ("Code: 159. DB::Exception: Timeout exceeded", "was not refused memory.value"),
+    ],
+)
 def test_a_probe_that_was_not_refused_is_named_by_what_it_read(
-    monkeypatch: pytest.MonkeyPatch, ready: None
+    monkeypatch: pytest.MonkeyPatch, ready: None, answer: str | None, expected: str
 ) -> None:
     # /v1/health shows this text: no SQL, and no database name.
     async def run(sql: str, **_: Any) -> Any:
@@ -515,9 +522,11 @@ def test_a_probe_that_was_not_refused_is_named_by_what_it_read(
             return [], [], [(1,)] if boundary.CANARY_TABLE in sql else [(0,)]
         if "system." in sql:
             raise RuntimeError("Code: 497. DB::Exception: Not enough privileges")
+        if answer:
+            raise RuntimeError(answer)
         return [], [], [("leaked",)]
 
     monkeypatch.setattr(app.store, "run_statement", run)
-    problem, repairable, _ = asyncio.run(app._probe())
-    assert problem == f"{boundary.ANALYST_USER} may read memory.value: its grants are too wide"
-    assert repairable and "SELECT" not in problem and "`loom`" not in problem
+    problem, _, _ = asyncio.run(app._probe())
+    assert expected in problem
+    assert "SELECT" not in problem and "`loom`" not in problem

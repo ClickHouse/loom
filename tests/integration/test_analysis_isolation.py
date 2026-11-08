@@ -577,14 +577,14 @@ def test_a_widening_policy_makes_analysis_unavailable(
         # The policy's name goes to the server log, never to a caller or to
         # /v1/health, which answers without a token.
         assert "widen_test" not in r.text, r.text
+
         # Each web process probes on its own clock: wait for one that reports it.
+        def failing_health() -> str | None:
+            text = httpx.get(f"{control_plane_url}/v1/health", timeout=30).text
+            return text if "analysis_user_failing" in text else None
+
         health = wait_until(
-            lambda: (
-                (h := httpx.get(f"{control_plane_url}/v1/health", timeout=30).text).count(
-                    "analysis_user_failing"
-                )
-                and h
-            ),
+            failing_health,
             max_wait=_PROBE_WAIT_S,
             interval=2,
             description="/v1/health to report the analysis problem",

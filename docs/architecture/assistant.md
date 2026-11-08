@@ -478,7 +478,7 @@ background, as the analyst itself, so the probe needs no access management:
   extra policy widens what the analyst reads (under the server default a table with no
   analyst policy counts rows too, which a write repairs; a write is never made over a
   permissive policy Loom did not write, which is named instead);
-- a `system` table must be refused;
+- a `system` table, and a column outside the allowlist (`memory.value`), must be refused;
 - when the stored version is this build's: an unsigned read of each allowlisted table
   and of the canary must fail for want of the scope settings (the table has a policy
   that reads them), and the analyst's own `SHOW GRANTS` must name nothing but the
