@@ -213,11 +213,11 @@ async def ingest_file(
     run_edge = (scope is None or "edge" in scope) and not is_reference
     run_guard = (scope is None or "guard" in scope) and not (is_reference or is_sql)
 
+    # chunking can parse a host file's shell again: off the event loop
     try:  # A declared-only file has no chunks (the reconcile retires any)
         chunks, structural_prefixes, facets = (
             ([], {}, [])
             if declared_only
-            # a host file's shell may be parsed again
             else await asyncio.to_thread(
                 _chunks_for, pf, path, source, max_chunk_chars, (org, ns), stats.error
             )

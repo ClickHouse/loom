@@ -101,7 +101,7 @@ async def _plans(
         if pf is None or path not in sources or pf.lang == REFERENCE_LANG:
             continue
         try:
-            # a host file's shell may be parsed again
+            # chunking can parse a host file's shell again: off the event loop
             chunks, prefixes, _facets = await asyncio.to_thread(
                 _chunks_for, pf, path, sources[path], max_chars, (org, ns), got[1]
             )

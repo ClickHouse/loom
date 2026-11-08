@@ -679,3 +679,46 @@ def test_a_started_parse_that_ends_within_one_deadline_is_returned(
         return await po._file_facts(scope, "a.go", b"", "a", time.monotonic() - 0.01)
 
     assert asyncio.run(late()) is not None
+
+
+def test_a_mirrored_overlay_with_unreached_files_is_not_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def head(git_dir: str, pr: int) -> str:
+        return "cd" * 20
+
+    async def base(git_dir: str, head: str, ref: str) -> str:
+        return "ef" * 20
+
+    async def run(git_dir: str, *args: str) -> str:
+        return DIFF
+
+    async def names(git_dir: str, base: str, head: str) -> list[str]:
+        return [PATH]
+
+    async def show(git_dir: str, head: str, path: str) -> bytes:
+        return POST.encode()
+
+    for name, fake in (
+        ("pull_head_sha", head),
+        ("merge_base", base),
+        ("run", run),
+        ("diff_name_only", names),
+        ("show_file", show),
+    ):
+        monkeypatch.setattr(gitrepo, name, fake)
+
+    def load() -> po.PrOverlay:
+        return asyncio.run(
+            po.load_pr_overlay(
+                _Repo(), "acme", "code-ch", git_dir="/m", pr_number=7, branch="master"
+            )
+        )
+
+    monkeypatch.setattr(settings, "code_pr_overlay_parse_window_seconds", 1e-9)
+    partial = load()
+    assert partial.unreached == 1
+    monkeypatch.setattr(settings, "code_pr_overlay_parse_window_seconds", 60.0)
+    later = load()
+    assert later is not partial and later.symbols and later.unreached == 0
+    assert load() is later  # a complete overlay is cached
