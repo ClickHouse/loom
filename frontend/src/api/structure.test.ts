@@ -24,7 +24,7 @@ describe("structure client", () => {
     expect(entries.map((e) => e.name)).toEqual(["works_at", "Customer"]);
   });
 
-  it("sends only the four fields a registration takes, even from a listed entry", async () => {
+  it("sends a listed entry as accepted, without the fields only the list returns", async () => {
     post.mockResolvedValueOnce({ registered: true });
     const listed = {
       kind: "relation_verb",
@@ -34,7 +34,7 @@ describe("structure client", () => {
       status: "pending",
       created_by: "agent",
       updated_at: "2000-01-01 00:00:00",
-    } as OntologyEntry;
+    } satisfies OntologyEntry;
     await registerOntologyTerm(id, listed);
     expect(post).toHaveBeenCalledWith("/v1/namespace.register_ontology", {
       ...id,
@@ -52,7 +52,7 @@ describe("structure client", () => {
     await queryRecords(id, "invoice");
     await recordConflicts(id, "invoice");
     expect(post.mock.calls.map((c) => [c[0], c[1]])).toEqual([
-      ["/v1/memory_schema.list", { ...id, include_proposed: true }],
+      ["/v1/memory_schema.list", { ...id, include_proposed: true, limit: 500 }],
       ["/v1/memory.record.query", { ...id, schema_name: "invoice", limit: 100 }],
       ["/v1/memory.record.conflicts", { ...id, schema_name: "invoice", limit: 100 }],
     ]);

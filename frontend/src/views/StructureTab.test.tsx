@@ -9,6 +9,7 @@ import { StructureTab } from "./StructureTab";
 
 vi.mock("../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
 import { confirmAction } from "../components/ConfirmDialog";
+import { toast } from "../components/Toast";
 vi.mock("../components/Toast", () => ({ toast: vi.fn(), toastError: vi.fn(), ToastViewport: () => null }));
 vi.mock("../api/structure", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/structure")>();
@@ -51,7 +52,7 @@ vi.mock("../api/structure", async (importOriginal) => {
     ]),
     registerOntologyTerm: vi.fn(async () => ({ registered: true })),
     listCategories: vi.fn(async () => [{ category_id: "c1", name: "Billing", description: "", item_count: 4 }]),
-    registerCategory: vi.fn(async () => ({ category_id: "c2" })),
+    registerCategory: vi.fn(async () => ({ category_id: "c2", embedded: true })),
   };
 });
 
@@ -285,8 +286,23 @@ describe("StructureTab", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Records" }));
     const dialog = await screen.findByRole("dialog", { name: "Records of invoice" });
     expect(await within(dialog).findByText("A-1")).toBeInTheDocument();
+    vi.mocked(api.recordConflicts).mockResolvedValueOnce({
+      truncated: false,
+      rows: [
+        {
+          memory_key: "inv/A-1",
+          field_name: "amount",
+          prior_value: 1,
+          incoming_value: 2,
+          prior_record_id: "r-a",
+          incoming_record_id: "r-a2",
+          detected_at: null,
+        },
+      ],
+    });
     await userEvent.click(await within(dialog).findByRole("button", { name: "Retry" }));
-    await waitFor(() => expect(api.recordConflicts).toHaveBeenCalledTimes(2));
+    expect(await within(dialog).findByText("inv/A-1")).toBeInTheDocument();
+    expect(within(dialog).getByText("A-1")).toBeInTheDocument();
   });
 
   it("lists records by key in the schema's field order, then keys an older field set left", async () => {
@@ -339,7 +355,21 @@ describe("StructureTab", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Records" }));
     const dialog = await screen.findByRole("dialog", { name: "Records of invoice" });
     await userEvent.click(await within(dialog).findByRole("button", { name: "Prior record of inv/A-1" }));
-    await userEvent.click(within(dialog).getAllByRole("button", { name: "Close" }).at(-1) as HTMLElement);
+    await userEvent.keyboard("{Escape}");
     await waitFor(() => expect(signal?.aborted).toBe(true));
+  });
+
+  it("says when a category was stored but not embedded", async () => {
+    signIn("writer");
+    vi.mocked(api.registerCategory).mockResolvedValueOnce({ category_id: "c3", embedded: false });
+    render(<StructureTab />);
+    await userEvent.type(await screen.findByLabelText("Name", { selector: "#category-name" }), "Legal");
+    await userEvent.click(screen.getByRole("button", { name: "Add category" }));
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(
+        "Added Legal, but agents cannot find it by meaning yet: add it again later",
+        "info",
+      ),
+    );
   });
 });

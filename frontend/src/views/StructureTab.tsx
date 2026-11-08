@@ -78,7 +78,7 @@ function useSection<T>(read: (signal: AbortSignal) => Promise<T>) {
     },
     [reload],
   );
-  return { data, error, refresh: () => setReload((n) => n + 1) };
+  return { data, setData, error, refresh: () => setReload((n) => n + 1) };
 }
 
 /** What a section shows before its rows: the failure with Retry, or that it is loading. */
@@ -363,7 +363,9 @@ function RecordsDialog({ schema, onClose }: { schema: RecordSchema; onClose: () 
               ],
             }))}
           />
-          {rows.truncated && <p className="mt-1 text-xs text-text-muted">The first {RECORD_LIMIT} records.</p>}
+          {rows.truncated && (
+            <p className="mt-1 text-xs text-text-muted">The {RECORD_LIMIT} most recently updated records.</p>
+          )}
         </>
       )}
       <div className="mt-4">
@@ -398,7 +400,7 @@ function RecordsDialog({ schema, onClose }: { schema: RecordSchema; onClose: () 
             ))}
           </ul>
           {conflicts.data.truncated && (
-            <p className="mt-1 text-xs text-text-muted">The first {RECORD_LIMIT} disagreements.</p>
+            <p className="mt-1 text-xs text-text-muted">The {RECORD_LIMIT} newest disagreements.</p>
           )}
         </section>
       )}
@@ -434,7 +436,9 @@ const PROFILE_EXAMPLE = JSON.stringify(
 
 function ProfileSchemaPanel({ canSet, canClear }: { canSet: boolean; canClear: boolean }) {
   const identity = useIdentity();
-  const { data, error, refresh } = useSection<ProfileSchema>((signal) => getProfileSchema(identity, { signal }));
+  const { data, setData, error, refresh } = useSection<ProfileSchema>((signal) =>
+    getProfileSchema(identity, { signal }),
+  );
   const [draft, setDraft] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const shown = draft ?? (data?.found ? JSON.stringify(data.json_schema, null, 2) : "");
@@ -462,11 +466,10 @@ function ProfileSchemaPanel({ canSet, canClear }: { canSet: boolean; canClear: b
       return;
     setBusy(true);
     try {
-      if (clear) await clearProfileSchema(identity);
-      else await setProfileSchema(identity, JSON.parse(shown));
+      // Each answers the schema as it now stands, so the panel shows it at once.
+      setData(clear ? await clearProfileSchema(identity) : await setProfileSchema(identity, JSON.parse(shown)));
       toast(clear ? "Profile schema removed" : "Profile schema saved", "ok");
       setDraft(null);
-      refresh();
     } catch (e) {
       toast(`Failed: ${humanizeError(e)}`, "error");
     } finally {
@@ -636,8 +639,9 @@ function Categories({ canAdd }: { canAdd: boolean }) {
   const add = async () => {
     setBusy(true);
     try {
-      await registerCategory(identity, name.trim(), description.trim());
-      toast(`Added ${name.trim()}`, "ok");
+      const r = await registerCategory(identity, name.trim(), description.trim());
+      if (r.embedded) toast(`Added ${name.trim()}`, "ok");
+      else toast(`Added ${name.trim()}, but agents cannot find it by meaning yet: add it again later`, "info");
       setName("");
       setDescription("");
       refresh();
@@ -659,7 +663,9 @@ function Categories({ canAdd }: { canAdd: boolean }) {
               <div className="text-sm truncate">{c.name}</div>
               {c.description && <div className="text-xs text-text-muted truncate">{c.description}</div>}
             </div>
-            <span className="text-xs text-text-muted tabular">{c.item_count} memories</span>
+            <span className="text-xs text-text-muted tabular">
+              {c.item_count} {c.item_count === 1 ? "memory" : "memories"}
+            </span>
           </li>
         ))}
       </ul>

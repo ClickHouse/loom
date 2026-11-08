@@ -29,7 +29,8 @@ export interface RecordSchema {
 }
 
 export async function listRecordSchemas(id: Scope, opts: RequestOpts = {}): Promise<{ schemas: RecordSchema[] }> {
-  return post("/v1/memory_schema.list", { ...scope(id), include_proposed: true }, opts.signal);
+  // The server's most; the list says nothing when it holds more.
+  return post("/v1/memory_schema.list", { ...scope(id), include_proposed: true, limit: 500 }, opts.signal);
 }
 
 export async function registerRecordSchema(
@@ -136,6 +137,8 @@ export interface OntologyEntry {
   description: string;
   /** A relation's or attribute's `one` or `many`; "" lets the seed list decide. */
   cardinality: string;
+  created_by: string;
+  updated_at: string;
 }
 
 /** The accepted and pending terms, pending first. */
@@ -150,8 +153,8 @@ export async function listOntology(id: Scope, opts: RequestOpts = {}): Promise<O
 }
 
 /** POST /v1/namespace.register_ontology: a new term, or a pending one accepted. A
- *  registration replaces the whole entry, so an accepted term keeps its own fields; only
- *  the four fields the server takes are sent. */
+ *  registration replaces the whole entry, so it sends the term's kind, name, description
+ *  and cardinality as accepted; fields only the list returns are dropped. */
 export async function registerOntologyTerm(
   id: Scope,
   term: Pick<OntologyEntry, "kind" | "name" | "description" | "cardinality">,
@@ -181,6 +184,12 @@ export async function listCategories(id: Scope, opts: RequestOpts = {}): Promise
   return r.categories;
 }
 
-export async function registerCategory(id: Scope, name: string, description: string): Promise<{ category_id: string }> {
+/** `embedded: false` when the embedder failed: the category is stored, but category
+ *  search cannot find it until it is registered again. */
+export async function registerCategory(
+  id: Scope,
+  name: string,
+  description: string,
+): Promise<{ category_id: string; embedded: boolean }> {
   return post("/v1/namespace.register_category", { ...scope(id), name, description });
 }
