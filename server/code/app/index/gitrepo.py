@@ -1074,15 +1074,36 @@ async def show_file(git_dir: str, sha: str, path: str, max_bytes: int = 0) -> by
     return out
 
 
+async def _rev_parse(git_dir: str, spec: str) -> str | None:
+    """The object `spec` names, or None when there is none; a timeout is an error."""
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        "--git-dir",
+        git_dir,
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        spec,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+        env=auth_env(),
+    )
+    try:
+        out, _err = await communicate_or_kill(proc, timeout_s=settings.code_git_timeout_s)
+    except TimeoutError:
+        raise GitError("git rev-parse timed out") from None
+    return out.decode("utf-8", "replace").strip() if proc.returncode == 0 else None
+
+
 async def _capped_blob(git_dir: str, sha: str, path: str, max_bytes: int) -> bytes | None:
     """`show_file` under a cap: one `git cat-file --batch` names the object's type and
     size before its bytes, and the read stops at the cap's verdict."""
     spec = f"{sha}:{path}"
     if "\n" in spec or spec.endswith("\r"):  # --batch reads lines, a CR before LF dropped
-        try:
-            spec = (await _git(git_dir, "rev-parse", "--verify", "--quiet", spec)).strip()
-        except GitError:
+        oid = await _rev_parse(git_dir, spec)
+        if oid is None:
             return None
+        spec = oid
     proc = await asyncio.create_subprocess_exec(
         "git",
         *UNQUOTED_PATHS,

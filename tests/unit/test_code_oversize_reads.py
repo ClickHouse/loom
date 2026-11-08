@@ -102,6 +102,18 @@ def test_a_capped_read_names_a_path_holding_a_newline(tmp_path: Path) -> None:
         asyncio.run(show_file(git_dir, sha, "a\nb.py", max_bytes=3))
 
 
+def test_a_timed_out_lookup_of_a_newline_path_is_an_error(tmp_path, monkeypatch) -> None:
+    git_dir, sha = _commit(tmp_path, {"a\nb.py": b"y = 2\n"})
+
+    async def timed_out(proc: Any, *a: Any, **kw: Any) -> Any:
+        await gitrepo.kill_and_reap(proc)  # as the real one does before it raises
+        raise TimeoutError
+
+    monkeypatch.setattr(gitrepo, "communicate_or_kill", timed_out)
+    with pytest.raises(gitrepo.GitError, match="timed out"):
+        asyncio.run(show_file(git_dir, sha, "a\nb.py", max_bytes=100))
+
+
 # --- the ingest's verdict from the size ---
 
 
