@@ -263,9 +263,9 @@ _BLOCK_OPENER_RE = re.compile(r"/\*")
 
 
 def comment_spans(sql: str, line_comments: bool = False) -> list[tuple[int, int]]:
-    """The spans `/\*.*?\*/` (with `--[^\n]*` first when `line_comments`) finds, in one
-    pass: a `/*` that never closes is no comment, and no later one closes either, so it
-    is not searched to the end again from each."""
+    """The comment spans, left to right, in one pass: each `/* … */`, and each `--` line
+    when `line_comments` (whichever starts first wins). A `/*` that never closes is no
+    comment, and no later one closes either, so it is not searched to the end from each."""
     opener = _OPENER_RE if line_comments else _BLOCK_OPENER_RE
     spans: list[tuple[int, int]] = []
     pos = 0
