@@ -33,10 +33,9 @@ class _Cfg:
         repo: str,
         source: str = "config",
         classification: str = "standard",
-        row_kind: str = "",
     ) -> None:
         self.org, self.namespace, self.repo, self.source = org, namespace, repo, source
-        self.classification, self.row_kind = classification, row_kind
+        self.classification = classification
 
 
 REPOS = [
@@ -237,18 +236,6 @@ async def test_a_self_service_branch_admin_is_never_mirrored_onto_an_operator_en
         ("code-z-26-5", "ops"),
         ("code-z-dev", "ops"),
     ]
-
-
-async def test_a_branch_an_operator_admin_added_is_an_operator_branch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    added = [*MIXED, _Cfg("clickhouse", "code-z-26-6", "Org/z", "registry", row_kind="operator")]
-    monkeypatch.setattr(repos, "configured_repos", lambda: added)
-    ch = _FakeCH([_admin("code-z-dev", "mallory"), _admin("code-z-26-6", "ops")])
-    await maintainers.sync_repo_maintainers("clickhouse", "code-z-26-6", ch=ch)
-    written = {(r["namespace"], r["subject"]) for r in ch.inserted}
-    # Its admin reaches the operator entry; a member's admin does not reach it.
-    assert ("code-z", "ops") in written and ("code-z-26-6", "mallory") not in written
 
 
 async def test_a_mirror_on_a_self_service_branch_never_stands_in_for_an_operator_entry(
@@ -1111,14 +1098,13 @@ async def test_the_ingest_pass_syncs_each_repository_with_a_restricted_page_bran
 
     monkeypatch.setattr(maintainers, "sync_quietly", _sync)
 
-    def entry(ns: str, classification: str, row_kind: str = "page") -> Any:
+    def entry(ns: str, classification: str) -> Any:
         return SimpleNamespace(
             org="clickhouse",
             namespace=ns,
             repo="Org/z",
             source="registry",
             classification=classification,
-            row_kind=row_kind,
         )
 
     ch = _FakeCH([])
@@ -1129,12 +1115,6 @@ async def test_the_ingest_pass_syncs_each_repository_with_a_restricted_page_bran
     def going() -> bool:
         return False
 
-    # A restricted branch an operator admin added is the operator's side: not synced.
-    standard.append(entry("code-z-4", "restricted", row_kind="operator"))
-    await maintainers.sync_restricted_page_branches(standard, exhausted=going)
-    assert synced == ["code-z-2"]
-    synced.clear()
-    standard.pop()
     await maintainers.sync_restricted_page_branches(standard, exhausted=going)
     snapshot = [entry("code-z-1", "restricted"), *standard]
     monkeypatch.setattr(repos, "configured_repos", lambda: snapshot)

@@ -676,8 +676,6 @@ _STRAY = {
         ([], False),  # the copy revoked since the gate passed: no live admin row left
         ([_STRAY, {**_STRAY, "subject": "mallory", "granted_by": "alice"}], True),
         ([{**_STRAY, "granted_by": "repo-maintainers:code-weave"}], True),  # an operator copy
-        # a copy from a branch an operator admin added
-        ([{**_STRAY, "granted_by": "repo-maintainers:code-weave-26-1"}], True),
     ],
 )
 @pytest.mark.asyncio
@@ -698,10 +696,9 @@ async def test_only_an_own_admin_grant_widens_a_restricted_branch(
     mine = _cfg("code-weave-rc", classification="restricted", source="registry")
     sibling = dataclasses.replace(mine, namespace="code-weave-dev", classification="standard")
     operator = dataclasses.replace(mine, namespace="code-weave", source="config")
-    added = dataclasses.replace(sibling, namespace="code-weave-26-1", row_kind="operator")
     monkeypatch.setattr(reg, "refresh_db_repos", refresh)
     monkeypatch.setattr(reg, "upsert_access", quiet)
-    monkeypatch.setattr(repos, "configured_repos", lambda: [operator, added, sibling, mine])
+    monkeypatch.setattr(repos, "configured_repos", lambda: [operator, sibling, mine])
     monkeypatch.setattr("server.code.domain.index.repos.repo_for_namespace", lambda org, ns: mine)
     from server.code.app.index import maintainers
 

@@ -125,8 +125,8 @@ class RepoConfig:
     # entry).
     access_source: str = "config"
     # The `row_kind` of the namespace's loom.code_repos row (migration 089): "page" a
-    # member's add, "operator" a branch an operator entry's admin added, "access" an
-    # operator entry's access row, "" a row from before the column or no row.
+    # branch added from the page, "access" an operator entry's access row, "" a row
+    # from before the column or no row.
     row_kind: str = ""
 
     @property
@@ -325,10 +325,9 @@ def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:
     """The operator's entries first, then the registry's. An entry whose namespace a
     member added from the page, even one removed since, is skipped: that member's
     grants there must not become an operator entry's. A registry row for an entry's
-    own namespace is a maintainer's ACCESS row (or a branch an operator entry's admin
-    added): its classification and join policy win over the entry's (the entry keeps
-    every other field), so the maintainer's decision survives every boot. An access
-    row whose entry is gone is dropped."""
+    own namespace is a maintainer's ACCESS row: its classification and join policy win
+    over the entry's (the entry keeps every other field), so the maintainer's decision
+    survives every boot. An access row whose entry is gone is dropped."""
     import dataclasses
 
     rows = {(c.org, c.namespace): c for c in registry_repos()}

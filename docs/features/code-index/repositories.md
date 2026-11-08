@@ -74,9 +74,7 @@ Rules:
   with no first index yet is refused with `REPO_NOT_INDEXED` until `loom code backfill`
   has run for it.
 - Admin grants flow between a repository's branches in one direction. The operator's
-  entries, and a branch `code.repo.add_branch` adds from one for an admin whose grant
-  there is their own (not a copy from a branch added here), on a namespace never
-  added before, pass their admins to every branch of the repository, and a branch added here
+  entries pass their admins to every branch of the repository, and a branch added here
   passes its admins only to other standard branches added here. A restricted branch
   added here takes the operator's admins only. Every sync revokes the other copies it
   holds, or makes an operator admin's one a copy of the operator grant; a copy whose
@@ -87,9 +85,8 @@ Rules:
   such a copy may have granted or approved others there, themselves included: review
   its grants. Widening the branch again does not bring back a copy a restriction
   revoked; grant that admin on a sibling again. Only an admin with a grant given there,
-  or a copy of one from the operator's side (an operator entry, or a branch added from
-  one by its admin as above), can widen it; a copy from a branch added here does not
-  count.
+  or a copy of one from an operator entry, can widen it; a copy from a branch added here
+  does not count.
 - A revoke follows the same path. One made on an operator entry removes from a branch
   added here only a copied grant, and none from a standard one while the subject holds
   an admin grant given on a branch added here. A copy that is a branch's only admin

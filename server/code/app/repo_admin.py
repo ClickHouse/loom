@@ -121,25 +121,16 @@ async def _register(
     remote_head: str,
     exclude_generated: bool = True,
     scip_producer: str = "",
-    operator_source: Any = None,
 ) -> CodeRepoAddOutput:
     from server.auth.default_namespace import auth_off_subject
-    from server.code.app.index import maintainers
     from server.code.app.index.bootstrap import set_stage
     from server.code.app.index.registry import ensure_registered, sync_maintainers
     from server.code.store.index import CodeRepo
     from server.core.ch import get_client
 
     subject = current_caller()[0] or auth_off_subject()
-    # A branch of an operator entry (`operator_source`) holds the caller's maintainer
-    # grants on the repository, which a revoke of them holds too, from the check of their
-    # admin there to the row and grant written here.
-    source_repo = operator_source.repo if operator_source is not None else None
     # Checked again under the account claim sign-up and register hold: the probe took time.
-    async with account_change(org, namespace), maintainers.repo_change(org, source_repo, subject):
-        row_kind = "page"
-        if operator_source is not None and await _added_by_operator(operator_source, namespace):
-            row_kind = "operator"
+    async with account_change(org, namespace):
         if await _namespace_taken(org, namespace):
             raise ValidationError(
                 f"{repo} @ {branch} is {namespace}, already in use here (join it if it is indexed)",
@@ -167,7 +158,6 @@ async def _register(
             created_by=subject,
             exclude_generated=exclude_generated,
             scip_producer=scip_producer,
-            row_kind=row_kind,
         )
         await reg.refresh_db_repos(force=True)
         cfg = next(
@@ -608,32 +598,9 @@ async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepo
         remote_head=head,
         exclude_generated=bool(getattr(src, "exclude_generated", True)),
         scip_producer=str(getattr(src, "scip_producer", "") or ""),
-        operator_source=src,
     )
     await _inherit_tracker_links(input.org, input.namespace, namespace)
     return out
-
-
-async def _added_by_operator(src: Any, namespace: str) -> bool:
-    """`namespace`, added from `src`, keeps the operator's admins: `src` is on the
-    operator side, the caller holds an admin grant of their own there, not a copy from
-    a branch added from the page (`maintainers.holds_own_admin`), and `namespace` never
-    had a registry row: the grants of a removed branch stay, and a member's must not
-    reach the operator's entries."""
-    from server.auth.context import current_auth
-    from server.code.app.index import maintainers
-    from server.code.store.index import CodeRepo
-    from server.core.ch import get_client
-
-    if maintainers.admins_source(src) != "config":
-        return False
-    with sequential_reads():
-        if await CodeRepo().code_repo_row(src.org, namespace) is not None:
-            return False
-        if current_auth() is None:
-            return True  # auth off: no principal to hold a grant
-        subject = current_caller()[0]
-        return await maintainers.holds_own_admin(get_client(), src.org, src.namespace, subject)
 
 
 async def _empty_tracker_links(org: str, namespace: str, *, detail: str) -> None:

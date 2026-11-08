@@ -715,15 +715,10 @@ def test_code_ingest_runs_no_repository_of_a_switched_off_org(monkeypatch) -> No
         synced.append(ns)
 
     # acme's restricted page branch: its maintainers are synced though its org is off.
-    page = {
-        "source": "registry",
-        "row_kind": "page",
-        "classification": "restricted",
-        "repo": "Org/a",
-    }
+    page = {"source": "registry", "classification": "restricted", "repo": "Org/a"}
     repos = [
         SimpleNamespace(org="acme", namespace="code-a", label="a", **page),
-        SimpleNamespace(org="beta", namespace="code-b", label="b", source="config", row_kind=""),
+        SimpleNamespace(org="beta", namespace="code-b", label="b", source="config"),
     ]
     monkeypatch.setattr("server.code.app.index.maintainers.sync_quietly", sync)
 

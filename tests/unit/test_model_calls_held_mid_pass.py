@@ -357,9 +357,7 @@ def test_code_ingest_records_no_error_for_a_held_repository_or_leg(monkeypatch, 
     async def nothing(*a: Any, **k: Any) -> Any:
         return set()
 
-    repos = [
-        SimpleNamespace(org="acme", namespace="code-a", label="a", source="config", row_kind="")
-    ]
+    repos = [SimpleNamespace(org="acme", namespace="code-a", label="a", source="config")]
     monkeypatch.setattr("server.code.app.index.repo_registry.refresh_db_repos", nothing)
     monkeypatch.setattr(ip, "_inactive_namespaces", nothing)
     monkeypatch.setattr(ip, "selected_repos", lambda org, ns: repos)
