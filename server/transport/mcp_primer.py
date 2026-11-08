@@ -308,9 +308,9 @@ async def _loom_primer_text(auth: Any, *, toolset: str | None = None) -> str:
     """The Loom-first-mode primer for the `loom` prompt, the `loom://primer`
     resource and the `loom_activate` tool: the rules, then the caller's profile.
     ``toolset`` is the connection's ``?toolset=``."""
-    defaults = await _caller_defaults(auth)
     if assistant_connection(toolset):
-        return _assistant_primer(defaults)
+        return _assistant_primer(await _caller_defaults(auth, assistant=True))
+    defaults = await _caller_defaults(auth)
     return _loom_rules(toolset, defaults) + await _profile_section(auth, defaults)
 
 
@@ -458,9 +458,9 @@ async def _initialize_instructions(auth: Any, toolset: str | None = None) -> str
     bearer: an anonymous probe (discovery_only / open modes) must not read
     profile content.
     """
-    defaults = await _caller_defaults(auth)
     if assistant_connection(toolset):
-        return _assistant_primer(defaults)
+        return _assistant_primer(await _caller_defaults(auth, assistant=True))
+    defaults = await _caller_defaults(auth)
     coding = _is_coding_toolset(toolset)
     rules = _coding_instructions(toolset) if coding else _loom_rules(toolset, defaults)
     scope = current_code_scope()

@@ -2218,6 +2218,17 @@ class KnowledgeSettings(BaseModel):
 class McpSettings(BaseModel):
     """The MCP transport: tool listing, lean results, session runs."""
 
+    # --- the assistant (LibreChat beside Loom) ---
+    # LibreChat's internal address (http://librechat:3080), reachable only from Loom. ""
+    # = no assistant: no service setup at boot.
+    assistant_librechat_url: str = ""
+    # Email of the LibreChat service user that owns the agent; LibreChat sends it no mail.
+    assistant_service_email: str = "loom-assistant@loom.invalid"
+    # Seconds between two tries of the service setup while it fails (LibreChat still
+    # starting, its database restored from elsewhere). Each try signs in once, and
+    # LibreChat allows 7 sign-ins per address in 5 minutes, hence the floor of 60.
+    assistant_setup_retry_s: float = Field(default=60.0, ge=60, le=3600)
+
     # loom_search drops knowledge hits below this cosine similarity (the
     # conversation leg's floor, applied to the knowledge leg).
     mcp_loom_search_knowledge_min_similarity: float = 0.30
@@ -3663,6 +3674,10 @@ class ModelSettings(BaseModel):
     # setting (the other *_model settings) is left "". Empty takes the resolved
     # provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1).
     llm_model: str = ""
+    # The assistant agent's model, which LibreChat runs on its own Anthropic key and Loom
+    # writes into the agent definition at boot. "" = the definition's own
+    # (integrations/librechat/agent.yaml), not llm_model.
+    assistant_model: str = ""
     # Model to answer with when a client's provider is still unavailable after
     # its retries (429 / 5xx / transport / timeout) or rejected the request
     # (400 / 413 / 422). Counted in `loom.llm.fallback`. 401 / 403 / 404 are

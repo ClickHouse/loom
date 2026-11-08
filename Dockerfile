@@ -180,6 +180,8 @@ COPY sdk ./sdk
 # at runtime to compute expected-vs-present table drift. Without them
 # the endpoint flags every existing table as "extra".
 COPY schemas ./schemas
+# The assistant's agent definition, which a boot seeds into the LibreChat beside it.
+COPY integrations/librechat/agent.yaml ./integrations/librechat/agent.yaml
 # The compiler-tier workers (code_scip_delta, code_scip_go_delta,
 # code_scip_ts_delta, code_scip_py_delta) shell out to scripts/scip_harness/run_*.sh resolved
 # relative to server/ — without this COPY every in-container pass reports the

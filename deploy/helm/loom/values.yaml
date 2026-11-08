@@ -340,6 +340,38 @@ extractor:
   nodeSelector: {}
   tolerations: []
 
+# The assistant: LibreChat runs, headless, the agent Loom seeds
+# (integrations/librechat/agent.yaml), with a MongoDB of its own. Neither is exposed:
+# their NetworkPolicies admit only the release's Loom pods (and LibreChat to its
+# MongoDB), and LibreChat's egress is DNS, the Loom pods and TCP 443 anywhere but
+# `networkPolicy.egressExcept`, for its model provider.
+assistant:
+  enabled: false
+  # A Secret in the release namespace with CREDS_KEY (64 hex), CREDS_IV (32 hex),
+  # JWT_SECRET, JWT_REFRESH_SECRET and ANTHROPIC_API_KEY; required when enabled.
+  existingSecret: ""
+  image:
+    repository: registry.librechat.ai/librechat-ai/librechat
+    tag: v0.8.8
+    digest: sha256:5b706bcee1ca154a1e2987303aaeca0eb27f97919cccee4bb604226c2f8abf61
+    pullPolicy: IfNotPresent
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1Gi }
+  mongo:
+    image:
+      repository: mongo
+      tag: 8.0.20
+      digest: sha256:098862b1339f031900ca66cf8fef799e616d6324fa41b9a263f2ec899552c1ef
+      pullPolicy: IfNotPresent
+    storage: 2Gi
+    storageClassName: ""
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: 500m, memory: 512Mi }
+  nodeSelector: {}
+  tolerations: []
+
 # Ingress to the Loom port from `ingressFrom` only. Egress to DNS, the
 # release's web pods, the extractor's pods (with extractor.enabled), the dev
 # ClickHouse (with devClickhouse.enabled), the EKS Pod Identity agent, and TCP

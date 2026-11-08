@@ -18,3 +18,5 @@ SCHEMA_SQL = REPO_ROOT / "schemas" / "schema.sql"
 FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
 SCIP_HARNESS_DIR = REPO_ROOT / "scripts" / "scip_harness"
 AGENT_GUIDE_DIR = REPO_ROOT / "skills" / "loom"
+# The assistant's agent definition, which a boot seeds into LibreChat.
+ASSISTANT_AGENT = REPO_ROOT / "integrations" / "librechat" / "agent.yaml"

@@ -37,13 +37,16 @@ def test_stored_ciphertexts_still_open(
 
 @pytest.fixture(autouse=True)
 def _no_analysis_lease(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The reseal holds the analysis lease over loom.analysis_secrets; these
+    """The reseal holds the analysis and assistant leases over their rows; these
     fakes model the sealed tables, not the lease store."""
     import contextlib
 
     from server.insights.app import analysis
 
     monkeypatch.setattr(analysis, "lease", lambda ch=None: contextlib.nullcontext())
+    from server.assistant.app import service
+
+    monkeypatch.setattr(service, "lease", lambda ch=None: contextlib.nullcontext())
 
 
 def test_purposes_do_not_open_each_other_and_empty_stays_empty(

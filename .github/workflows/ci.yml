@@ -387,7 +387,8 @@ jobs:
           # Every optional object on, so each template renders at least once.
           on=(--set analyticsExport.enabled=true --set analyticsExport.bucket=ci --set analyticsExport.nameKeySecret.name=ci)
           extractor=(--set extractor.enabled=true --set secrets.extractorToken="$(openssl rand -hex 24)")
-          all=(--set workers.enabled=true --set workers.replicaCount=2 --set autoscaling.enabled=true --set networkPolicy.enabled=true --set alerts.prometheusRule.enabled=true --set mustMatchChange.publish=ci --set settingsFile.memory_ask_recency_weight=0.3 "${on[@]}" "${extractor[@]}")
+          assistant=(--set assistant.enabled=true --set assistant.existingSecret=ci)
+          all=(--set workers.enabled=true --set workers.replicaCount=2 --set autoscaling.enabled=true --set networkPolicy.enabled=true --set alerts.prometheusRule.enabled=true --set mustMatchChange.publish=ci --set settingsFile.memory_ask_recency_weight=0.3 "${on[@]}" "${extractor[@]}" "${assistant[@]}")
           # The PrometheusRule's schema: the CRD catalog at a pinned commit.
           crd='https://raw.githubusercontent.com/datreeio/CRDs-catalog/c86448cbf1a840ca62d119259864863897c8748a/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
 
@@ -418,6 +419,7 @@ jobs:
           refused "needs analyticsExport.bucket" "${on[@]}" --set analyticsExport.bucket=
           refused "needs analyticsExport.nameKeySecret.name" "${on[@]}" --set analyticsExport.nameKeySecret.name=
           refused "expectedBucketOwner must be a quoted string" "${on[@]}" --set analyticsExport.expectedBucketOwner=123456789012
+          refused "assistant.existingSecret is required" --set assistant.enabled=true
           # The release Secret (named after the release here) and envFrom Secrets reach every pod.
           shared="is a Secret every web and workers pod loads"
           refused "$shared" "${on[@]}" --set analyticsExport.nameKeySecret.name=loom

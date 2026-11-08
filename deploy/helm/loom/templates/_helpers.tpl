@@ -48,6 +48,24 @@ app.kubernetes.io/name: {{ include "loom.name" . | trunc 53 | trimSuffix "-" }}-
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
+{{- define "loom.assistantName" -}}
+{{- include "loom.suffixed" (dict "root" . "suffix" "librechat") }}
+{{- end }}
+
+{{- define "loom.assistantSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "loom.name" . | trunc 53 | trimSuffix "-" }}-librechat
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{- define "loom.assistantMongoName" -}}
+{{- include "loom.suffixed" (dict "root" . "suffix" "librechat-mongo") }}
+{{- end }}
+
+{{- define "loom.assistantMongoSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "loom.name" . | trunc 47 | trimSuffix "-" }}-librechat-mongo
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
 {{- define "loom.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
 {{- default (include "loom.fullname" .) .Values.serviceAccount.name }}
@@ -152,6 +170,10 @@ LOOM_KEEP_ALIVE_S: {{ .Values.keepAliveSeconds | quote }}
 {{- if and .Values.extractor.enabled (not $ownUrl) }}
 # The release's extractor (extractor.yaml); its token is in the release Secret.
 LOOM_DOCUMENT_EXTRACTOR_URL: {{ printf "http://%s:8790" (include "loom.extractorName" .) | quote }}
+{{- end }}
+{{- if and .Values.assistant.enabled (not (hasKey .Values.env "LOOM_ASSISTANT_LIBRECHAT_URL")) }}
+# The release's LibreChat (assistant.yaml), which runs the agent Loom seeds.
+LOOM_ASSISTANT_LIBRECHAT_URL: {{ printf "http://%s:3080" (include "loom.assistantName" .) | quote }}
 {{- end }}
 # The web processes' shared files: serve.sh makes $XDG_RUNTIME_DIR/loom, 0700
 # and owned by the pod's user (an emptyDir itself is neither).

@@ -34,6 +34,7 @@ SEALED: tuple[tuple[str, str, tuple[str, ...], str, str], ...] = (
         "",
     ),
     ("loom.analysis_secrets", "sealed", (), "analysis.secrets", ""),
+    ("loom.assistant_service", "sealed", (), "assistant.service", ""),
     # A live session's identity-provider refresh token. Keeper's sealed copies
     # (a code, a device grant, an approval or link in flight) are not rewritten
     # here, see `in_flight`; a `family:<id>` key holds only "<generation>:<rid>".
@@ -54,7 +55,24 @@ _KEYS = {
     "loom.provider_configuration": ("config_id",),
     "loom.oauth_state": ("record_type", "id"),
     "loom.analysis_secrets": ("id",),
+    "loom.assistant_service": ("id",),
 }
+
+
+def _analysis_lease(ch: Any) -> Any:
+    from server.insights.app.analysis import lease
+
+    return lease(ch)
+
+
+def _assistant_lease(ch: Any) -> Any:
+    from server.assistant.app.service import lease
+
+    return lease(ch)
+
+
+# The rows a boot writes under a cluster lease, which the reseal takes too.
+_LEASED = {"loom.analysis_secrets": _analysis_lease, "loom.assistant_service": _assistant_lease}
 # A rebuild in these states rewrites its configuration row from one it read
 # earlier, which would put back what the reseal replaced.
 _REBUILDING = ("queued", "rebuilding", "validating")
@@ -126,12 +144,11 @@ async def reseal_all(
     lost: dict[str, list[str]] = {}
     for table, column, path, purpose, where in SEALED:
         async with contextlib.AsyncExitStack() as held:
-            if table == "loom.analysis_secrets":
-                # One writer of the analysis row at a time, reading the newest copy.
+            if table in _LEASED:
+                # One writer of the row at a time, reading the newest copy.
                 from server.core.ch import own_write_reads
-                from server.insights.app.analysis import lease
 
-                await held.enter_async_context(lease(ch))
+                await held.enter_async_context(_LEASED[table](ch))
                 held.enter_context(own_write_reads())
             rows = await ch.query_all(
                 f"SELECT * FROM {table} FINAL WHERE {column} != ''"

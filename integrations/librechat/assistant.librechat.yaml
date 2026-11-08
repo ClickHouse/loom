@@ -1,0 +1,64 @@
+# LibreChat v0.8.8 configuration for the Loom assistant: LibreChat runs headless
+# beside Loom, reachable only from it, and hosts the one agent Loom seeds
+# (agent.yaml) under its own service user. People never sign in here: the dashboard
+# chat, the API, the SDKs and MCP reach the agent through Loom
+# (docs/architecture/assistant.md).
+version: 1.3.17
+cache: true
+
+interface:
+  # The agents API (/api/agents/v1), which Loom calls with its service user's key.
+  agents:
+    use: true
+    create: true
+    share: false
+    public: false
+  remoteAgents:
+    use: true
+    create: true
+    share: false
+    public: false
+  mcpServers:
+    use: true
+    create: false
+    share: false
+    public: false
+  sharedLinks:
+    share: false
+    public: false
+
+# LibreChat's own memory would keep a second copy of what a caller asks.
+memory:
+  disabled: true
+
+registration:
+  socialLogins: []
+
+endpoints:
+  anthropic:
+    titleConvo: false
+  agents:
+    # Tools only: no actions (which call any URL), code execution, file search, web
+    # search, skills or subagents, so the agent's only way out is Loom's tools.
+    capabilities: ["tools"]
+
+mcpSettings:
+  allowedAddresses:
+    - loom:7777
+
+mcpServers:
+  loom:
+    type: streamable-http
+    url: http://loom:7777/mcp?toolset=assistant
+    requiresOAuth: false
+    startup: false
+    timeout: 60000
+    # LibreChat reads server instructions once, at its own start, with no answer's
+    # token; the agent's instructions (agent.yaml) carry the rules instead.
+    serverInstructions: false
+    # Each answer's own Loom token, which Loom sends as the request's
+    # parent_message_id, and its message id for the ledger. Under `headers`, not
+    # `requestHeaders`: those are left off the connection that lists the tools.
+    headers:
+      Authorization: "Bearer {{LIBRECHAT_BODY_PARENTMESSAGEID}}"
+      X-Loom-Run-Id: "{{LIBRECHAT_BODY_MESSAGEID}}"

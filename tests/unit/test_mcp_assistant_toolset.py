@@ -591,3 +591,31 @@ def test_every_roster_read_of_one_writer_is_named() -> None:
         exact = field is not None and field.is_required()
         exempt = name in mcp_call._MCP_CROSS_AGENT_READS or name == "memory.get"
         assert (exact and not exempt) == (name in ASSISTANT_NAMED_AGENT_OPS), name
+
+
+@pytest.mark.parametrize(
+    ("assistant", "claimed", "namespace"),
+    [
+        (True, ["acme-handbook"], "acme-handbook"),  # the answer token's one namespace
+        (True, [], "personal-alice"),  # a token naming none keeps the home pick
+        (False, ["acme-handbook"], "personal-alice"),  # every other toolset: unchanged
+    ],
+)
+def test_an_assistant_call_reads_the_namespace_its_token_names(
+    monkeypatch: pytest.MonkeyPatch, assistant: bool, claimed: list[str], namespace: str
+) -> None:
+    # The home pick prefers a namespace the token may write: its subject's personal one,
+    # never where a viewer token minted for one namespace reads.
+    from server.transport import mcp_identity
+
+    async def _home(*_: Any) -> tuple[str, list[str]]:
+        return "personal-alice", []
+
+    async def _claims(*_: Any) -> list[str]:
+        return claimed
+
+    monkeypatch.setattr(mcp_identity, "caller_org", lambda _: "acme")
+    monkeypatch.setattr(mcp_identity, "default_and_readable", _home)
+    monkeypatch.setattr(mcp_identity, "readable_named_claims", _claims)
+    defaults = asyncio.run(mcp_identity._caller_defaults(object(), assistant=assistant))
+    assert defaults is not None and defaults["namespace"] == namespace

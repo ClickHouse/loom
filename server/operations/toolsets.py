@@ -361,6 +361,8 @@ MCP_ASSISTANT_OPS: frozenset[str] = frozenset(
         "namespace.guide_history",
         "namespace.list_categories",
         "mentor.brief",
+        # Loom's own guide to writing memory, which recommendations cite.
+        "mentor.guide",
         "grants.list",
         # Cited questions over memory, documents and code.
         "memory.search",

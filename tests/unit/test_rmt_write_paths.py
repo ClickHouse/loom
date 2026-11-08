@@ -64,6 +64,11 @@ WRITE_PATHS: dict[str, tuple[str, str]] = {
         "one row written by the first boot under the analysis lease; a reseal re-inserts it "
         "whole at a higher version",
     ),
+    "assistant_service": (
+        "insert_once",
+        "one row (id 0) the boot writes under the assistant.service lease, each step "
+        "re-inserting it whole at the next version",
+    ),
     "categories": ("gap", "platform"),
     "chunk_supersessions": ("gap", "platform"),
     "code_answers": ("gap", "code"),

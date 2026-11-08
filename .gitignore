@@ -198,3 +198,4 @@ skills-lock.json
 
 # scripts/release/prepare.py's notes, pasted into the release pull request.
 /release-notes.md
+librechat.env

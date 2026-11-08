@@ -905,8 +905,14 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 
 The MCP transport: tool listing, lean results, session runs.
 
+
+### The assistant (LibreChat beside Loom)
+
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
+| `LOOM_ASSISTANT_LIBRECHAT_URL` | `str` | `''` |  | LibreChat's internal address (http://librechat:3080), reachable only from Loom. "" = no assistant: no service setup at boot. |
+| `LOOM_ASSISTANT_SERVICE_EMAIL` | `str` | `'loom-assistant@loom.invalid'` |  | Email of the LibreChat service user that owns the agent; LibreChat sends it no mail. |
+| `LOOM_ASSISTANT_SETUP_RETRY_S` | `float` | `60.0` |  | Seconds between two tries of the service setup while it fails (LibreChat still starting, its database restored from elsewhere). Each try signs in once, and LibreChat allows 7 sign-ins per address in 5 minutes, hence the floor of 60. |
 | `LOOM_MCP_LOOM_SEARCH_KNOWLEDGE_MIN_SIMILARITY` | `float` | `0.3` |  | loom_search drops knowledge hits below this cosine similarity (the conversation leg's floor, applied to the knowledge leg). |
 | `LOOM_MCP_LOOM_SEARCH_PROFILE_MIN_SIMILARITY` | `float` | `0.38` |  | loom_search's profile leg: sections the words missed pass by cosine against `label\nvalue` at this hard floor. 0 = lexical only. |
 | `LOOM_MCP_LOOM_SEARCH_PROFILE_SOFT_SIMILARITY` | `float` | `0.3` |  | Cosine floor of loom_search's profile leg for a question about the user only (the soft tier). |
@@ -1427,6 +1433,7 @@ Models: which model does each job.
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_LLM_MODEL` | `str` | `''` |  | The deployment's LLM: memory extraction, rerank and every job whose own model setting (the other *_model settings) is left "". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1). |
+| `LOOM_ASSISTANT_MODEL` | `str` | `''` |  | The assistant agent's model, which LibreChat runs on its own Anthropic key and Loom writes into the agent definition at boot. "" = the definition's own (integrations/librechat/agent.yaml), not llm_model. |
 | `LOOM_LLM_FALLBACK_MODEL` | `str` | `''` |  | Model to answer with when a client's provider is still unavailable after its retries (429 / 5xx / transport / timeout) or rejected the request (400 / 413 / 422). Counted in `loom.llm.fallback`. 401 / 403 / 404 are configuration and never fall back. "" = fail the op. |
 | `LOOM_EMBEDDING_MODEL` | `str` | `'fake-ngram-3072'` |  | Embeddings for memories, queries and code chunks. fake-ngram-3072 needs no network or key; production uses text-embedding-3-* (OPENAI_API_KEY). Change it together with `embedding_dim`; a new embedding space needs a full re-embed. |
 | `LOOM_LOCAL_EMBEDDING_MODEL_DIR` | `str` | `'var/models'` |  | Where `local` models live (relative: under the working directory), one directory per alias and revision; a missing file is fetched there. The image sets it by env. |

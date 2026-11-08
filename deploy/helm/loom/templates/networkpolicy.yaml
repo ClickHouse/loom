@@ -61,6 +61,14 @@ spec:
       ports:
         - port: 8790
     {{- end }}
+    {{- if .Values.assistant.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "loom.assistantSelectorLabels" . | nindent 14 }}
+      ports:
+        - port: 3080
+    {{- end }}
     {{- if .Values.devClickhouse.enabled }}
     - to:
         - podSelector:

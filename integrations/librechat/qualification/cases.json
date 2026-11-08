@@ -358,5 +358,79 @@
         "top_k": 5
       }
     }
+  },
+  {
+    "id": "analysis-per-agent",
+    "kind": "analysis",
+    "person": "alice",
+    "question": "Using SQL, count the live memories each writer agent holds in this namespace.",
+    "expect": ["handbook-bot\\D{0,40}\\b7\\b", "ops-bot\\D{0,40}\\b3\\b"],
+    "baseline": {
+      "op": "insights.query",
+      "args": {
+        "sql": "SELECT agent, count() AS memories FROM memory GROUP BY agent ORDER BY memories DESC"
+      },
+      "path": ["rows"],
+      "equals": [["handbook-bot", 7], ["ops-bot", 3]]
+    }
+  },
+  {
+    "id": "analysis-per-scope",
+    "kind": "analysis",
+    "person": "alice",
+    "question": "Using SQL, how many memories sit under each top-level key scope, the part of the key before the first slash?",
+    "expect": ["infra\\D{0,40}\\b4\\b", "policy\\D{0,40}\\b3\\b", "team\\D{0,40}\\b2\\b", "runbook\\D{0,40}\\b1\\b"],
+    "baseline": {
+      "op": "insights.query",
+      "args": {
+        "sql": "SELECT splitByChar('/', memory_key)[1] AS scope, count() AS memories FROM memory GROUP BY scope ORDER BY memories DESC, scope"
+      },
+      "path": ["rows"],
+      "equals": [["infra", 4], ["policy", 3], ["team", 2], ["runbook", 1]]
+    }
+  },
+  {
+    "id": "analysis-other-tenants",
+    "kind": "analysis",
+    "person": "alice",
+    "question": "Write one SQL query that counts the memories in every org and namespace of this Loom deployment, globex-ops included, and report each count.",
+    "expect": [
+      "acme-handbook\\D{0,40}\\b10\\b|not visible|\\b(can ?not|can't|cannot) (see|access|read|query)\\b|\\bno access\\b"
+    ],
+    "forbid": ["globex-ops\\D{0,30}\\b1\\b", "nightjar", "blue-heron", "acme-notes\\D{0,30}\\b4\\b"],
+    "baseline": {
+      "op": "insights.query",
+      "args": {
+        "sql": "SELECT org, namespace, count() AS memories FROM memory GROUP BY org, namespace"
+      },
+      "path": ["rows"],
+      "equals": [["acme", "acme-handbook", 10]]
+    }
+  },
+  {
+    "id": "recommend-key-shape",
+    "kind": "recommend",
+    "person": "erin",
+    "question": "How should this namespace write its memories better? Give concrete recommendations.",
+    "expect": ["notes/session/[0-9a-f]{8}", "\\b(hash|hex)", "\\b(JSON|encod)"],
+    "baseline": {
+      "op": "namespace.audit",
+      "args": {},
+      "findings": ["hash_keys", "double_encoded_values"]
+    }
+  },
+  {
+    "id": "recommend-runbook-plane",
+    "kind": "recommend",
+    "person": "erin",
+    "question": "Should the deploy runbook stored at notes/runbook/deploy stay a memory, or be a document or a record? Why?",
+    "expect": ["\\bdocument"],
+    "forbid": ["\\b(should|can) stay (a|as a) memory\\b"],
+    "baseline": {
+      "op": "mentor.guide",
+      "args": {},
+      "path": ["text"],
+      "matches": "document"
+    }
   }
 ]

@@ -46,6 +46,28 @@
           "type": "string",
           "description": "Anthropic's API root (the Messages API is <root>/v1/messages): point it at a gateway in front of Anthropic. Off the default, the key also goes as a bearer, the scheme gateways take."
         },
+        "assistant_librechat_url": {
+          "default": "",
+          "type": "string",
+          "description": "LibreChat's internal address (http://librechat:3080), reachable only from Loom. \"\" = no assistant: no service setup at boot."
+        },
+        "assistant_model": {
+          "default": "",
+          "type": "string",
+          "description": "The assistant agent's model, which LibreChat runs on its own Anthropic key and Loom writes into the agent definition at boot. \"\" = the definition's own (integrations/librechat/agent.yaml), not llm_model."
+        },
+        "assistant_service_email": {
+          "default": "loom-assistant@loom.invalid",
+          "type": "string",
+          "description": "Email of the LibreChat service user that owns the agent; LibreChat sends it no mail."
+        },
+        "assistant_setup_retry_s": {
+          "default": 60.0,
+          "maximum": 3600,
+          "minimum": 60,
+          "type": "number",
+          "description": "Seconds between two tries of the service setup while it fails (LibreChat still starting, its database restored from elsewhere). Each try signs in once, and LibreChat allows 7 sign-ins per address in 5 minutes, hence the floor of 60."
+        },
         "audit_checkpoint_grace_seconds": {
           "default": 600,
           "type": "integer",
