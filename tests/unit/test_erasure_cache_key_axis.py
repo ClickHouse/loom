@@ -60,7 +60,7 @@ class _RecCH:
 # What it matches: tests/integration/test_erasure_consolidated_quotes_live_ch.py.
 _SUMMARY_COLUMNS = "namespace, agent, user_id, memory_key, memory_id, tags"
 _SUMMARY_KEYS = (
-    f"FROM (SELECT {_SUMMARY_COLUMNS} FROM loom.memory WHERE org = {{org:String}} "
+    f"FROM (SELECT {_SUMMARY_COLUMNS} FROM loom.memory FINAL WHERE org = {{org:String}} "
     f"UNION ALL SELECT {_SUMMARY_COLUMNS} FROM loom.memory_versions "
     "WHERE org = {org:String}) WHERE has(tags, 'consolidated') AND "
     "hasAny(arrayMap(t -> (toString(namespace), t), tags), "
