@@ -778,7 +778,8 @@ namespace an owner: `loom namespaces-adopt` registers the ones holding live memo
 admin grant covers the rest, an ownerless auto-registered row (`owner_email = ''`, tagged
 `auto-registered`) included. An auto-registered row written before first writes checked
 for use may name an owner of a name that held another identity's data; an operator reviews
-rows tagged `auto-registered` with an owner and re-registers one as its admin.
+rows tagged `auto-registered` and not `adopted`, with an owner, and re-registers one as
+its admin.
 
 Two kinds of use leave nothing to find. A flat token minted for a name
 (`loom mint-token --namespaces <name>`) authorizes it without a row until its first

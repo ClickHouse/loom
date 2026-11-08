@@ -154,6 +154,7 @@ async def ensure_registered(
 
         # A name that already holds state (data written with auth off, a grant) is not its
         # first writer's to own: the row names no owner, so only an admin completes it.
+        # Identity's own directory: the gate's seam takes no `skip`.
         in_use = await IdentityDirectory().in_use(org, namespace, ch=ch, skip=READ_TRACES)
         kind = classify_kind(namespace)
         now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
