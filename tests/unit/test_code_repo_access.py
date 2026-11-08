@@ -96,6 +96,10 @@ def test_an_entry_whose_namespace_a_member_added_is_skipped(monkeypatch, caplog)
     assert repos._with_registry([_cfg("code-weave")]) == []
     monkeypatch.setattr(repos, "_page_namespaces", frozenset())
     assert repos._with_registry([_cfg("code-weave")]) == [_cfg("code-weave")]
+    # Listed in between: a later skip is logged again.
+    monkeypatch.setattr(repos, "_page_namespaces", frozenset({(ORG, "code-weave")}))
+    repos._with_registry([_cfg("code-weave")])
+    assert len([r for r in caplog.records if "code-weave" in r.getMessage()]) == 2
 
 
 def test_an_access_row_whose_entry_is_gone_is_not_a_branch(monkeypatch) -> None:

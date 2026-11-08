@@ -324,7 +324,8 @@ async def upsert_access(
             "git_branch": cfg.git_branch,
             "path_prefixes": list(cfg.path_prefixes),
             "exclude": list(cfg.exclude),
-            "github_token_enc": encrypt_token(cfg.github_token),
+            # The entry fetches with its own configured token; this row is never fetched with.
+            "github_token_enc": "",
             "created_at": now,
             "row_kind": "access",
         }

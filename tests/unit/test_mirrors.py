@@ -260,6 +260,14 @@ async def test_the_sweep_removes_what_no_active_entry_names(monkeypatch, tmp_pat
                     "active": True,
                     "row_kind": "access",
                 },
+                # A removed branch's row names nothing either.
+                {
+                    "org": "o",
+                    "namespace": "code-gone",
+                    "repo": "o/removed",
+                    "active": False,
+                    "row_kind": "page",
+                },
             ]
 
     monkeypatch.setattr(store, "CodeRepo", _Repo)

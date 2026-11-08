@@ -297,15 +297,13 @@ def registry_namespaces() -> frozenset[tuple[str, str]]:
     return _registry_namespaces if settings.code_self_service_enabled else frozenset()
 
 
-def set_registry_repos(
-    entries: list[RepoConfig], page_namespaces: frozenset[tuple[str, str]]
-) -> None:
+def set_registry_repos(entries: list[RepoConfig], page: frozenset[tuple[str, str]]) -> None:
     """Replace the registry snapshot with a fresh read: the active entries, and the
     (org, namespace) of every branch a member added from the page, removed ones too."""
     global _registry_repos, _registry_namespaces, _page_namespaces
     _registry_repos = list(entries)
     _registry_namespaces = frozenset((c.org, c.namespace) for c in _registry_repos)
-    _page_namespaces = page_namespaces
+    _page_namespaces = page
 
 
 def page_namespaces() -> frozenset[tuple[str, str]]:
@@ -353,6 +351,7 @@ def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:
                     c.label,
                 )
             continue
+        _skipped_logged.discard(c.label)  # listed: a later skip is logged again
         access = rows.get((c.org, c.namespace))
         if access is None:
             out.append(c)
