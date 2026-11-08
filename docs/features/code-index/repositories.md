@@ -97,9 +97,10 @@ Rules:
 - An operator entry that names a namespace a member added here, even one removed
   since, is skipped, with a warning in the server log, since that member's grants
   there would become an operator entry's: list the entry under another namespace.
-  A registry row that records no kind is read as the entry's access row, and while
+  A registry row that records no kind is read as the entry's access row, a namespace
+  a member created with `namespace.register` has no registry row, and while
   self-service is off the registry is not read: review a namespace's grants before
-  listing it in either case.
+  listing it in each case.
 - The access row `code.repo.set_access` writes for an operator entry is not listed
   while the entry is out of the configuration, so the namespace is not indexed; it
   applies again if the entry returns, and it does not count against the org's

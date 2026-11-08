@@ -484,14 +484,17 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
     # (and is retired here) or after (and sees the repository gone). Sources first, so
     # a call that fails between the two leaves the repository registered to retry.
     ch = get_client()
-    async with sources_lease(input.org, input.namespace):
+    # The account claim is the one `code.repo.set_access` holds from its read of the
+    # registry row to its write, so it cannot write the row back to life; a busy claim
+    # refuses before anything is written.
+    async with (
+        sources_lease(input.org, input.namespace),
+        account_change(input.org, input.namespace),
+    ):
         # First, so a failed clear stops the removal while it can be retried.
         await _empty_tracker_links(input.org, input.namespace, detail="repository removed")
         sources_off = await deactivate_namespace_sources(input.org, input.namespace)
-        # Under the account claim `code.repo.set_access` holds from its read of the row
-        # to its write, so it cannot write the row back to life.
-        async with account_change(input.org, input.namespace):
-            registry_off = await retire.deactivate_registry_row(ch, input.org, input.namespace)
+        registry_off = await retire.deactivate_registry_row(ch, input.org, input.namespace)
     await reg.refresh_db_repos(force=True)
     from server.identity.app.namespace import handle_namespace_delete
 

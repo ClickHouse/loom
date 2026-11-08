@@ -302,7 +302,10 @@ def set_registry_repos(entries: list[RepoConfig], page: frozenset[tuple[str, str
     (org, namespace) of every branch a member added from the page, removed ones too."""
     global _registry_repos, _registry_namespaces, _page_namespaces
     _registry_repos = list(entries)
-    _registry_namespaces = frozenset((c.org, c.namespace) for c in _registry_repos)
+    # An access row is no branch of its own (`_with_registry`).
+    _registry_namespaces = frozenset(
+        (c.org, c.namespace) for c in _registry_repos if c.row_kind != "access"
+    )
     _page_namespaces = page
 
 

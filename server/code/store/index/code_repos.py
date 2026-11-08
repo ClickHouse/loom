@@ -21,6 +21,8 @@ class CodeReposMixin(CodeRepoBase):
         (`repos._with_registry`)."""
         rows: list[dict[str, Any]] = await self._ch.query_all(
             """
+            -- Only (org, namespace) of a removed row is used: its token and path lists
+            -- stay in the store.
             SELECT org, namespace, repo, git_remote, git_branch,
                    if(active, path_prefixes, []) AS path_prefixes,
                    if(active, exclude, []) AS exclude,

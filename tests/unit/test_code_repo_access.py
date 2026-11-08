@@ -18,6 +18,7 @@ from server.auth import grant_claims
 from server.code.app.index import repo_registry as reg
 from server.code.domain.index import repos
 from server.core.errors import GrantBusyError, ValidationError
+from server.settings import settings
 from server.tracker.app import binding
 from tests.unit.claims_fake import MemoryClaims
 
@@ -107,6 +108,12 @@ def test_an_access_row_whose_entry_is_gone_is_not_a_branch(monkeypatch) -> None:
     added = dataclasses.replace(_cfg("code-added", source="registry"), row_kind="page")
     monkeypatch.setattr(repos, "registry_repos", lambda: [access, added])
     assert [c.namespace for c in repos._with_registry([])] == ["code-added"]
+    monkeypatch.setattr(repos, "_registry_namespaces", repos._registry_namespaces)
+    monkeypatch.setattr(repos, "_registry_repos", repos._registry_repos)
+    monkeypatch.setattr(repos, "_page_namespaces", repos._page_namespaces)
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    repos.set_registry_repos([access, added], frozenset())
+    assert repos.registry_namespaces() == {(ORG, "code-added")}
 
 
 # A live registry row, as the namespace's read answers.
@@ -279,6 +286,13 @@ async def test_set_access_on_a_removed_page_branch_writes_nothing(monkeypatch) -
     inp = SimpleNamespace(
         org=ORG, namespace="code-weave-dev", classification="restricted", join_policy="approval"
     )
+    with pytest.raises(ValidationError) as e:
+        await h.handle_code_repo_set_access(inp)
+    assert e.value.to_detail()["code"] == "NOT_A_REPO" and ch.inserts == []
+    # An operator entry a stale snapshot still lists, whose namespace a member added.
+    entry = _cfg("code-weave-dev", classification="standard")
+    monkeypatch.setattr("server.code.domain.index.repos.repo_for_namespace", lambda o, n: entry)
+    ch.registry = _LIVE | {"row_kind": "page"}
     with pytest.raises(ValidationError) as e:
         await h.handle_code_repo_set_access(inp)
     assert e.value.to_detail()["code"] == "NOT_A_REPO" and ch.inserts == []

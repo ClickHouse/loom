@@ -448,6 +448,29 @@ async def test_remove_refuses_without_the_lease_and_writes_nothing(
 
 
 @pytest.mark.asyncio
+async def test_remove_refuses_on_a_busy_account_claim_and_writes_nothing(
+    plane, monkeypatch
+) -> None:
+    # A code.repo.set_access holding it: the removal refuses before any write.
+    from contextlib import asynccontextmanager
+
+    from server.core.errors import GrantBusyError
+
+    @asynccontextmanager
+    async def busy(org: str, ns: str, **k: Any) -> Any:
+        raise GrantBusyError("busy")
+        yield
+
+    monkeypatch.setattr(admin, "account_change", busy)
+    with pytest.raises(GrantBusyError):
+        await admin.handle_code_repo_remove(
+            CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+        )
+    assert plane.registry_active and plane.inserted == [] and plane.sagas == []
+    assert plane.states == []
+
+
+@pytest.mark.asyncio
 async def test_remove_empties_the_tracker_links_before_it_deactivates_or_purges(
     plane, monkeypatch
 ) -> None:
