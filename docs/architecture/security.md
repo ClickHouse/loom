@@ -875,6 +875,8 @@ refuses, none is decremented.
 | `knowledge.read`          | The other `read_only` `knowledge.*` ops, `knowledge.inspect` aside: `knowledge.get`, `knowledge.list`, …      |
 | `knowledge.add`           | Every other `knowledge.*` op, `knowledge.inspect`, `knowledge.synthesize` and `knowledge.dedup_list` included |
 | `code`                    | `code.*` (except `code.outcome`, which draws from `memory`)                                                   |
+| `insights.query`          | `insights.query`                                                                                              |
+| `assistant.ask`           | `assistant.ask` and the assistant's chat route                                                                |
 | `default`                 | Everything else                                                                                               |
 
 The org bucket comes from the verified token, never the body. A refusal is 429

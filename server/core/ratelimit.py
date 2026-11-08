@@ -55,6 +55,9 @@ _OP_CLASS_OVERRIDES: dict[str, str] = {
     # Up to a statement's time cap of ClickHouse each: its own bucket, so analysis
     # never spends the budget of the ops filed under default.
     "insights.query": "insights.query",
+    # One model-backed answer each, its tool calls a handful of reads: its own bucket,
+    # so answers never spend the budget of the ops filed under default.
+    "assistant.ask": "assistant.ask",
 }
 
 # Exact-key memory reads: one primary-key lookup each, and the shape an agent that uses loom
@@ -140,6 +143,9 @@ DEFAULT_LIMITS: dict[str, Limit] = {
     "code": Limit(capacity=60, rate=10),  # ~600/min
     # One SQL statement per call, each up to the analysis time cap.
     "insights.query": Limit(capacity=20, rate=3),  # ~180/min
+    # One answer per call, each held to the assistant's budget share and its
+    # per-replica limit; the bucket bounds a burst of asks before those apply.
+    "assistant.ask": Limit(capacity=10, rate=1),  # ~60/min
     "default": Limit(capacity=50, rate=10),
 }
 

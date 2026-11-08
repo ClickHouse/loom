@@ -817,13 +817,15 @@ def test_a_class_the_registry_cannot_give_fails_open_and_is_counted(
     from server.core import fail_open
 
     http, rows = client
-    monkeypatch.setattr(routes, "admit_route", lambda *_a, **_kw: None)
+    drawn: list[str] = []
+    monkeypatch.setattr(routes, "admit_route", lambda *_a, **kw: drawn.append(kw["traffic_class"]))
     world.traffic_class = None
     before = fail_open.counts().get("traffic_class", 0)
     r = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
     assert r.status_code == 200
     (row,) = rows
-    assert row["traffic_class"] == "interactive"
+    # Admitted, its buckets drawn in the class it fell back to, and the failure counted.
+    assert drawn == ["interactive"] and row["traffic_class"] == "interactive"
     assert fail_open.counts().get("traffic_class", 0) == before + 1
 
 
@@ -982,3 +984,9 @@ def test_an_org_wide_token_is_refused_with_a_row_naming_no_org(
     assert r.status_code == 403 and r.json()["detail"]["code"] == "AUTH_INSUFFICIENT"
     (row,) = rows
     assert row["identity"]["org"] == "-"
+
+
+def test_answers_draw_a_rate_limit_bucket_of_their_own() -> None:
+    from server.core.ratelimit import DEFAULT_LIMITS, op_class_for
+
+    assert op_class_for("assistant.ask") == "assistant.ask" in DEFAULT_LIMITS
