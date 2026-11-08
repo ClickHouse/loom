@@ -8,7 +8,7 @@ configured (a restricted tracker namespace carries private-repository issues and
 PRs; the restricted-namespace gate covers it). An existing row is narrowed to restricted
 when the config says so and never widened. The leader runs
 `ensure_configured_tracker_namespaces` at boot so the row exists before the
-first read.
+first read; `boot.register_tracker_namespaces` retries a namespace it skipped.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ async def ensure_tracker_registered(
     ch: Any | None = None,
     join_policy: str = "",
 ) -> bool:
+    """The caller holds the namespace's account claim."""
     key = (org, namespace)
     if key in _DONE:
         return False
@@ -88,8 +89,8 @@ async def ensure_tracker_registered(
 
 async def ensure_configured_tracker_namespaces(*, ch: Any | None = None) -> list[str]:
     """Directory rows for every namespace in the QA configuration.
-    Best effort per namespace; returns the ones registered
-    or narrowed this call."""
+    Best effort per namespace; returns the ones registered this call."""
+    from server.auth.grant_claims import account_change
     from server.tracker.domain.namespaces import configured_namespaces
     from server.tracker.store.source import qa_intel
 
@@ -97,14 +98,30 @@ async def ensure_configured_tracker_namespaces(*, ch: Any | None = None) -> list
         return []
     done: list[str] = []
     for ns, cfg in sorted(configured_namespaces().items()):
+        if (cfg.org, ns) in _DONE:
+            continue
+        classification = "restricted" if cfg.restricted else "standard"
         try:
-            if await ensure_tracker_registered(
-                cfg.org, ns, classification="restricted" if cfg.restricted else "standard", ch=ch
-            ):
-                done.append(ns)
+            # The claim every writer that rewrites the directory row holds, as
+            # `tracker.source.add` does.
+            async with account_change(cfg.org, ns):
+                if await ensure_tracker_registered(
+                    cfg.org, ns, classification=classification, ch=ch
+                ):
+                    done.append(ns)
         except Exception as e:  # noqa: BLE001 — the directory is a convenience at boot
             logger.warning("qa namespace registration skipped for %s: %s", ns, e)
     return done
+
+
+def configured_pending() -> bool:
+    """Whether a configured namespace is not yet registered by this process."""
+    from server.tracker.domain.namespaces import configured_namespaces
+    from server.tracker.store.source import qa_intel
+
+    return qa_intel.configured() and any(
+        (cfg.org, ns) not in _DONE for ns, cfg in configured_namespaces().items()
+    )
 
 
 def reset_for_tests() -> None:

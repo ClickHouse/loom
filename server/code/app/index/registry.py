@@ -7,7 +7,7 @@ ensure_registered() once per process per repo entry: if no directory row exists,
 one with kind='code' and visibility='private' (read access stays grant-driven — see
 docs), from the registry row read then, or the snapshot when there is none. An
 existing row is re-inserted in full in three cases only, each deciding from the registry
-row read again under the namespace's admins claim, as this process's snapshot of it may
+row read again under the namespace's claims, as this process's snapshot of it may
 predate a maintainer's change: a standard row not yet open is opened when an access row
 newer than it says open, or with no access row when the operator's entry says public; a
 row not restricted is narrowed when the entry is restricted and no access row says
@@ -21,6 +21,7 @@ mirror and checkouts to `repo_dir_mode`, not here.
 from __future__ import annotations
 
 import logging
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import Any
 
@@ -51,11 +52,14 @@ async def sync_maintainers(cfg: Any, client: Any) -> None:
         _SYNCED.add((cfg.org, cfg.namespace))
 
 
-async def ensure_registered(cfg: Any, *, ch: Any | None = None, sync: bool = True) -> bool:
+async def ensure_registered(
+    cfg: Any, *, ch: Any | None = None, sync: bool = True, account_held: bool = False
+) -> bool:
     """Idempotent. Returns True when a row was inserted this call. `sync=False` leaves the
     maintainers' fan-out, whose claims wait, to a caller that runs `sync_maintainers` once
-    its own claim is released."""
-    from server.auth.grant_claims import admins_change
+    its own claim is released. `account_held`: the caller holds the namespace's account
+    claim."""
+    from server.auth.grant_claims import account_change, admins_change
     from server.core.ch import get_client
 
     key = (cfg.org, cfg.namespace)
@@ -65,9 +69,11 @@ async def ensure_registered(cfg: Any, *, ch: Any | None = None, sync: bool = Tru
         return False
     client = ch or get_client()
     try:
-        # Under the claim `code.repo.set_access` restricts under, whose reads are
-        # sequential: a stale read must not open or widen a restricted row.
-        async with admins_change(cfg.org, cfg.namespace):
+        # Account claim: every writer that rewrites the directory row holds it.
+        # Admins claim: a maintainer copy onto this branch holds it, so it lands before a
+        # narrowing or sees it.
+        account = nullcontext() if account_held else account_change(cfg.org, cfg.namespace)
+        async with account, admins_change(cfg.org, cfg.namespace):
             inserted = await _write_row(cfg, client)
         _DONE.add(key)
         if sync:
@@ -82,7 +88,7 @@ async def ensure_registered(cfg: Any, *, ch: Any | None = None, sync: bool = Tru
 
 async def insert_first_row(cfg: Any, client: Any, *, restricted: bool, join_policy: str) -> None:
     """Write a code namespace's first directory row. The caller holds the namespace's
-    admins claim, under which it found no row."""
+    account and admins claims, under which it found no row."""
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
     row = {
         "org": cfg.org,

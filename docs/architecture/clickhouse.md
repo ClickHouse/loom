@@ -692,8 +692,8 @@ with `purge=true`, runner state, and the supersession rows `knowledge.restore` r
   `repo:<owner/name>`, then its branches' claims in namespace order, and writes the
   branches in one insert inside that bound. A change that may remove an admin first holds
   the namespace's admins claim (the key with no subject) and counts the admins under it.
-  A change that rewrites an account's registry row (a release, a password set, a
-  namespace register or delete) holds that account's claim the same way.
+  A change that rewrites an account's directory row (`loom.namespaces`), from any plane,
+  holds that account's claim the same way, before any admins claim.
   `task_claims`, `oauth_claims` and `grant_claims` exist in the schema and no code path
   writes or reads them.
 - **Graph projections and graph writes** (`loom.graph_projections`, KeeperMap where the

@@ -65,9 +65,9 @@ def admins_change(org: str, namespace: str) -> AbstractAsyncContextManager[None]
 def account_change(
     org: str, namespace: str, *, wait_s: float | None = None, statement_s: float = _STATEMENT_S
 ) -> AbstractAsyncContextManager[None]:
-    """Hold the registry row of (org, namespace) from a read to its write: a
-    release and a password set each rewrite the whole row, so one must not
-    write back what it read over the other. GrantBusyError once another change
+    """Hold the directory row of (org, namespace) from a read to its write: every
+    writer that rewrites the whole row holds it, from any plane, so none writes
+    back what it read over another's change. GrantBusyError once another change
     has held it for `wait_s` (`WAIT_S` by default, 0: at once); `statement_s` bounds each statement,
     lower for a caller inside a shorter claim of its own."""
     return _claimed(*_account(org, namespace), wait_s=wait_s, statement_s=statement_s)
