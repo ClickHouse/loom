@@ -300,9 +300,7 @@ async def lint_repo(
         except gitrepo.BlobTooLarge as e:
             logger.warning("instructions lint: %s: %s not read: %s", cfg.label, path, e)
             reports.append(
-                FileReport(
-                    path=path, tokens=0, refs=0, skipped=f"over code_ingest_max_file_bytes: {e}"
-                )
+                FileReport(path=path, tokens=0, refs=0, skipped="over code_ingest_max_file_bytes")
             )
             continue
         if raw is None:

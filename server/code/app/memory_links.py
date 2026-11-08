@@ -244,8 +244,8 @@ async def _file_at(org: str, namespace: str, commit: str, path: str) -> bytes | 
     try:
         cap = settings.code_ingest_max_file_bytes
         return await gitrepo.file_at(cfg.git_dir, commit, path, max_bytes=cap)
-    except gitrepo.BlobTooLarge as e:
-        raise ParseFailed(path, str(e)) from e
+    except gitrepo.BlobTooLarge:
+        raise ParseFailed(path, "over code_ingest_max_file_bytes") from None
 
 
 async def names_at(org: str, namespace: str, commit: str, path: str) -> set[str] | None:
