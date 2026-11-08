@@ -659,3 +659,19 @@ def test_an_edge_parse_that_times_out_is_counted(monkeypatch: pytest.MonkeyPatch
     )
     assert again.symbols and again.edges == [] and again.unreached == 0
     assert again.note == "1 changed file(s) whose parse timed out"
+
+
+def test_a_started_parse_that_ends_within_one_deadline_is_returned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 2.0)
+    monkeypatch.setattr(po, "_parsed_facts", _slow_facts(0.2))
+
+    async def late() -> Any:
+        scope = ("acme", "code-ch")
+        asyncio.ensure_future(po._file_facts(scope, "a.go", b"", "a", time.monotonic() + 60))
+        await asyncio.sleep(0.02)
+        # the window has just passed: the running parse ends within one deadline
+        return await po._file_facts(scope, "a.go", b"", "a", time.monotonic() - 0.01)
+
+    assert asyncio.run(late()) is not None

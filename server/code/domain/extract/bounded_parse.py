@@ -4,8 +4,9 @@ Some grammars take quadratic time on short repeated tokens, so a 1 MB file could
 a worker or a serving replica for hours. Every parse of repository text goes through
 `parse`, which stops reading the source after `code_parse_timeout_seconds` of the
 parsing thread's CPU time and raises `ParseTimeout`; each caller takes its parse
-failure path (an indexed file is then chunks without symbols). CPU time rather than wall-clock
-time, so a busy host does not time out a file that parses in time on an idle one.
+failure path (an indexed file is then chunks without symbols). The deadline is CPU
+time, not wall-clock time, so a busy host does not time out a file that parses in
+time on an idle one.
 
 The parser's own progress callback cannot be used: the binding builds its arguments
 with a format code Python 3.12 rejects and crashes. The parser instead reads the
@@ -50,8 +51,7 @@ def parse(parser: Any, source: bytes) -> Any:
             return b""
         return source[offset : offset + _CHUNK]
 
-    lock = _LOCKS.get(parser.language) or _LOCKS.setdefault(parser.language, threading.Lock())
-    with lock:
+    with _LOCKS.setdefault(parser.language, threading.Lock()):
         tree = parser.parse(read)
     if expired:
         raise ParseTimeout(f"parse stopped after {budget:g}s")
