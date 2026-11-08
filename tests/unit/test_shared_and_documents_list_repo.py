@@ -166,6 +166,10 @@ async def test_promote_carries_the_source_provenance_onto_the_shared_embedding(
 
     for verified_sha, want in (("a" * 64, 1), ("b" * 64, 0)):
         src = SimpleNamespace(
+            namespace="team",
+            agent="a",
+            user_id="-",
+            session_id="-",
             memory_key="k",
             value={"v": "external fact"},
             memory_type="semantic",

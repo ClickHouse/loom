@@ -78,7 +78,7 @@ async def test_only_triples_and_edges_owned_by_the_user_alone_are_deleted() -> N
     assert ch.queries[0][0].split("WHERE", 1)[1].strip() in tsql
 
 
-async def test_the_user_saga_deletes_the_graph_before_it_deletes_the_links(monkeypatch) -> None:
+async def test_the_user_saga_has_no_graph_step_and_tombstones_first(monkeypatch) -> None:
     import server.erasure.app.saga as h
 
     calls: list[str] = []
