@@ -228,7 +228,8 @@ there costs a candidate number, not a final version.
    refused downgrade under each one's own `sh` and `awk`, and an upgrade over the previous
    final release's installer, or, in a dry run of a commit after its version's release, over
    that release's own; `scripts/gates/installer_rehearsal.py`);
-8. `github-release` creates the GitHub Release only after both images exist, with notes
+8. `github-release` creates the GitHub Release only after both images exist and their signatures
+   verify, with notes
    generated from the commits since the previous final release (`prepare.py previous`, an
    output of `version`; a candidate's notes start there too), or updates it on a re-run, keeping
    its notes as they are, and attaches the verified files. A bundle the release already
@@ -276,8 +277,8 @@ version builds and tags none (`scripts/release/published_images.sh`), smoke-test
 ones, and goes on to the registries. Release images build without the cache, so a rebuild would
 move the version's tags onto other bytes.
 
-Never move a tag whose images are published: `published_images.sh` fails when a published image
-was built from another commit than the run's, and a fix needs a new version.
+Never move a published `X.Y.Z` tag: `published_images.sh` fails when a published image was built
+from another commit than the run's, and a fix needs a new version.
 
 A re-run after a partial publish is safe: each publish job skips what already exists.
 
@@ -309,15 +310,22 @@ A failed `docker-tag` (one image tagged, not the other) or a failed `sign` (Sigs
 Until that version is out, the unsigned build's moving tags still name it. Point `:latest` (if it
 moved) and, for a final, `:X.Y` back at the previous release that carried each, for both images.
 An `X.Y.0` has no earlier release carrying `:X.Y`, which names the unsigned build until `X.Y.1` is
-out. Check that release's signature first (one published before the workflow signed has none to
-check), then move the tag by digest:
+out. With `<previous>` that release's version, the tag moves only once that release's signature
+verifies:
 
 ```bash
-digest=$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:<previous release carrying that tag> --format '{{json .Manifest}}' | jq -re .digest)
+digest=$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:<previous> \
+  --format '{{json .Manifest}}' | jq -re .digest)
 cosign verify "ghcr.io/clickhouse/<image>@$digest" \
-  --certificate-identity https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v<that release> \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
-docker buildx imagetools create -t ghcr.io/clickhouse/<image>:<tag> "ghcr.io/clickhouse/<image>@$digest"
+  --certificate-identity https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v<previous> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null \
+  && docker buildx imagetools create -t ghcr.io/clickhouse/<image>:<tag> "ghcr.io/clickhouse/<image>@$digest"
+```
+
+For a `<previous>` published before the release workflow signed, which carries no signature, run
+the `imagetools create` line alone. Either way, check that the tag names the digest:
+
+```bash
 [ "$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:<tag> --format '{{json .Manifest}}' | jq -re .digest)" = "$digest" ] \
   || { echo "<tag> does not name $digest" >&2; false; }
 ```

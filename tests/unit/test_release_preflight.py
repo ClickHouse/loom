@@ -466,17 +466,19 @@ def _stub_cosign(tmp_path: Path, body: str) -> dict[str, str]:
 
 
 @pytest.mark.parametrize(
-    ("cosign", "signed"),
-    [("exit 0", ["a@sha256:1", "b@sha256:2"]), ("exit 1", ["a@sha256:1"])],
+    ("cosign", "code", "signed"),
+    [("exit 0", 0, ["a@sha256:1", "b@sha256:2"]), ("exit 1", 1, ["a@sha256:1"])],
     ids=["both", "stops at a failure"],
 )
-def test_the_sign_step_signs_each_digest(tmp_path: Path, cosign: str, signed: list[str]) -> None:
+def test_the_sign_step_signs_each_digest(
+    tmp_path: Path, cosign: str, code: int, signed: list[str]
+) -> None:
     """The sign job's signing step, run under `bash -e` with a stub cosign."""
     jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
     (step,) = [s for s in jobs["sign"]["steps"] if s.get("id") == "sign"]
     env = {**_stub_cosign(tmp_path, cosign), "DIGESTS": "a@sha256:1 b@sha256:2"}
     result = subprocess.run(["bash", "-e", "-c", step["run"]], env=env, capture_output=True)
-    assert (result.returncode == 0) is (cosign == "exit 0")
+    assert result.returncode == code
     calls = (tmp_path / "calls").read_text().splitlines()
     assert calls == [f"sign --yes {ref}" for ref in signed]
 
