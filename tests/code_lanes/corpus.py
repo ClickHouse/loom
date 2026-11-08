@@ -263,6 +263,7 @@ def _summarize() -> dict[str, Any]:
         drop_external_misses,
         exports_candidates,
         import_bindings,
+        manifest_view,
         package_dirs_for,
         resolve_imports,
         unresolved_package_specs,
@@ -409,7 +410,7 @@ def _summarize() -> dict[str, Any]:
                         (
                             c
                             for c in exports_candidates(
-                                spec, posixpath.join("ts/langfuse", d), text
+                                spec, posixpath.join("ts/langfuse", d), manifest_view(text)
                             )
                             if c in present
                         ),
