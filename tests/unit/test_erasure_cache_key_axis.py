@@ -58,17 +58,19 @@ class _RecCH:
 # The statement the census and the steps share, as ClickHouse gets it: the user's keys
 # and those of the summaries built from them (`USER_SUMMARIES`).
 # What it matches: tests/integration/test_erasure_consolidated_quotes_live_ch.py.
+_SUMMARY_COLUMNS = "namespace, agent, user_id, memory_key, memory_id, tags"
 _SUMMARY_KEYS = (
-    "WHERE org = {org:String} AND has(tags, 'consolidated') AND "
+    f"FROM (SELECT {_SUMMARY_COLUMNS} FROM loom.memory WHERE org = {{org:String}} "
+    f"UNION ALL SELECT {_SUMMARY_COLUMNS} FROM loom.memory_versions "
+    "WHERE org = {org:String}) WHERE has(tags, 'consolidated') AND "
     "hasAny(arrayMap(t -> (toString(namespace), t), tags), "
     "(SELECT groupUniqArray((toString(namespace), concat('src:', memory_key))) "
-    "FROM loom.memory WHERE org = {org:String} AND user_id = {uid:String})))"
+    "FROM loom.memory WHERE org = {org:String} AND user_id = {uid:String}))"
 )
 _QUOTED_KEYS = (
     "arrayConcat((SELECT groupUniqArray(memory_key) FROM loom.memory "
     "WHERE org = {org:String} AND user_id = {uid:String}), "
-    f"arrayConcat((SELECT groupUniqArray(memory_key) FROM loom.memory {_SUMMARY_KEYS}, "
-    f"(SELECT groupUniqArray(memory_key) FROM loom.memory_versions {_SUMMARY_KEYS}))"
+    f"(SELECT groupUniqArray(memory_key) {_SUMMARY_KEYS}))"
 )
 
 

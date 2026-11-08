@@ -30,6 +30,8 @@ from server.erasure.store.predicates import (
     PARENT_KEYS_IN,
     PRECEDENT_KEYS_IN,
     RECORD_IDS_IN,
+    SUMMARY_IDS_IN,
+    SUMMARY_VECTORS_IN,
     UID,
     USER_COMMUNITY_ENTITIES,
     USER_GRAPH_KEYS,
@@ -299,8 +301,7 @@ async def delete_entity_vectors_by_user(
         total += await delete_scoped(
             "loom.entity_vectors",
             org=org,
-            scope_where="(namespace, agent, user_id, memory_key) IN "
-            "{rows:Array(Tuple(String, String, String, String))}",
+            scope_where=SUMMARY_VECTORS_IN,
             params={"rows": rows},
             lightweight=True,
             ch=ch,
@@ -367,7 +368,7 @@ async def delete_graph_links_by_user(org: str, user_id: str, *, ch: _CHClient | 
             total += await delete_scoped(
                 t,
                 org=org,
-                scope_where="(namespace, memory_id) IN {ids:Array(Tuple(String, UUID))}",
+                scope_where=SUMMARY_IDS_IN,
                 params={"ids": ids},
                 ch=ch,
             )

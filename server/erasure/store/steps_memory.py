@@ -30,6 +30,7 @@ from server.erasure.store.predicates import (
     ORG_NS,
     ORG_UID,
     PARENT_KEYS_IN,
+    SUMMARY_CHUNKS_IN,
     UID,
 )
 from server.erasure.store.scope_reads import (
@@ -591,8 +592,7 @@ async def tombstone_memory_chunks_by_user(
         total += await tombstone_scoped(
             "loom.memory_chunks",
             org=org,
-            scope_where="(namespace, agent, user_id, parent_memory_key) IN "
-            "{rows:Array(Tuple(String, String, String, String))}",
+            scope_where=SUMMARY_CHUNKS_IN,
             params={"rows": rows},
             ch=ch,
         )

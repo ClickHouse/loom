@@ -102,44 +102,37 @@ USER_SUMMARIES = (
     "has(tags, 'consolidated') AND "
     f"hasAny(arrayMap(t -> (toString(namespace), t), tags), {_USER_SRC_PAIRS})"
 )
-# A cached answer or a precedent that quoted such a summary quoted the user. The
-# version history too: a summary rebuilt without the user can merge its older row away,
-# so an answer quoting its new version goes too, and one cached before
-# `memory_versions.delete` fails the census.
-USER_SUMMARY_KEY_LIST = (
-    "arrayConcat((SELECT groupUniqArray(memory_key) FROM loom.memory "
-    f"WHERE org = {{org:String}} AND {USER_SUMMARIES}), "
-    "(SELECT groupUniqArray(memory_key) FROM loom.memory_versions "
-    f"WHERE org = {{org:String}} AND {USER_SUMMARIES}))"
-)
-USER_QUOTED_KEY_LIST = f"arrayConcat({USER_KEY_LIST}, {USER_SUMMARY_KEY_LIST})"
-# What was chunked or extracted from such a summary is the user's too: its chunks and
-# entity vectors (by the summary's agent, user and key; neither carries the memory's
-# session), its row links (by namespace and id) and
-# its graph key links (by its key alone: those tables carry no identity, so another
-# memory at the same key loses its links, as for the user's own keys). A summary any of
-# whose versions matched counts, read from the rows and the history: a summary rebuilt
-# without the user keeps the graph links its old text gave its key, and loses these rows
-# until its next write derives them again. `USER_GRAPH_KEYS` is the user's keys and the
-# summaries'.
+# The summaries built from the user's memories, from the rows and the history: a summary
+# rebuilt without the user keeps under its key what its old text gave it.
 _SUMMARY_COLUMNS = "namespace, agent, user_id, memory_key, memory_id, tags"
 SUMMARY_ROWS_FROM = (
     f"FROM (SELECT {_SUMMARY_COLUMNS} FROM loom.memory WHERE org = {{org:String}} "
     f"UNION ALL SELECT {_SUMMARY_COLUMNS} FROM loom.memory_versions "
     f"WHERE org = {{org:String}}) WHERE {USER_SUMMARIES}"
 )
+# A cached answer or a precedent that quoted such a summary quoted the user; the cache
+# steps run while the history still names a rebuilt one.
+USER_SUMMARY_KEY_LIST = f"(SELECT groupUniqArray(memory_key) {SUMMARY_ROWS_FROM})"
+USER_QUOTED_KEY_LIST = f"arrayConcat({USER_KEY_LIST}, {USER_SUMMARY_KEY_LIST})"
+# What was chunked or extracted from a summary is the user's too: chunks and entity
+# vectors by the summary's agent, user and key (neither carries its session), row links
+# by (namespace, id), graph key links by (namespace, key), as for the user's own keys.
+# Each read form has its bound form beside it.
 USER_SUMMARY_KEYS_SUBQ = f"(SELECT toString(namespace), memory_key {SUMMARY_ROWS_FROM})"
 _USER_SUMMARY_IDENTITIES = (
     f"(SELECT toString(namespace), agent, user_id, memory_key {SUMMARY_ROWS_FROM})"
 )
+_IDENTITIES = "{rows:Array(Tuple(String, String, String, String))}"
 USER_SUMMARY_CHUNKS = (
     f"(namespace, agent, user_id, parent_memory_key) IN {_USER_SUMMARY_IDENTITIES}"
 )
+SUMMARY_CHUNKS_IN = f"(namespace, agent, user_id, parent_memory_key) IN {_IDENTITIES}"
 USER_SUMMARY_VECTORS = f"(namespace, agent, user_id, memory_key) IN {_USER_SUMMARY_IDENTITIES}"
-# by (namespace, id): a namespace restored from another keeps the ids
+SUMMARY_VECTORS_IN = f"(namespace, agent, user_id, memory_key) IN {_IDENTITIES}"
 USER_SUMMARY_IDS = (
     f"(namespace, memory_id) IN (SELECT toString(namespace), memory_id {SUMMARY_ROWS_FROM})"
 )
+SUMMARY_IDS_IN = "(namespace, memory_id) IN {ids:Array(Tuple(String, UUID))}"
 USER_GRAPH_KEYS = (
     f"((namespace, memory_key) IN {USER_KEYS_SUBQ} "
     f"OR (namespace, memory_key) IN {USER_SUMMARY_KEYS_SUBQ})"
