@@ -93,7 +93,7 @@ _GITLAB_RESERVED = frozenset(
     }
 )
 _SHELL_NAMES = frozenset({"bash", "sh", "zsh", "pwsh", "powershell", "cmd", "python", "fish"})
-_GH_EXPR_RE = re.compile(r"\$\{\{.*?\}\}")
+_GH_EXPR_RE = re.compile(r"\$\{\{(?:(?!\$\{\{).)*?\}\}")  # stops at the next `${{`: linear
 _JINJA_RE = re.compile(r"\{\{(?:(?!\{\{).)*?\}\}")  # stops at the next `{{`: linear
 
 _DOCKER_INSTR_RE = re.compile(r"^\s*(?P<instr>[A-Za-z]+)(?:\s+(?P<rest>.*))?$")
@@ -107,7 +107,7 @@ _MAKE_TARGET_RE = re.compile(r"^(?P<targets>[^\s:#=](?:[^:#=]*[^\s:#=])?)\s*+::?
 _MAKE_VAR_RE = re.compile(r"\$\((?P<name>[^()]*)\)|\$\{(?P<brace>[^{}]*)\}|\$[@<^*?+|%]")
 
 _JENKINS_SH_RE = re.compile(
-    r"""\bsh\s*\(?\s*(?:script\s*:\s*)?(?P<q>'''|\"\"\"|'|")""",
+    r"""\bsh\s*+\(?\s*+(?:script\s*+:\s*+)?(?P<q>'''|\"\"\"|'|")""",
 )
 
 

@@ -4,11 +4,14 @@ and macro → macro edges."""
 
 from __future__ import annotations
 
+import pytest
+
 from server.code.app.index.ingest_parse import parse_file
 from server.code.domain.extract import lang_sql as ls
 from server.code.domain.extract import lang_sql_facets
 from server.code.domain.extract import lang_sql_jinja as lj
 from server.code.domain.extract.lang_python import module_scope
+from tests.unit.code_fixtures import grows_linearly
 
 _J2 = """\
 -- Tags: long
@@ -180,3 +183,23 @@ def test_a_plain_sql_file_under_models_is_a_model() -> None:
     )
     assert ju.dbt and ju.present and ju.model == "x"
     assert lj.jinja_units("sql/updates/x.sql", "sql.updates.x", "select 1").dbt is False
+
+
+@pytest.mark.parametrize(
+    "unit",
+    [
+        "{% macro a() %}",
+        "{{ a<i>() }}\n{{ ref('m<i>') }}\n",
+        "{%",
+        "{#",
+        "{% raw %}",
+        "{{config(",
+    ],
+)
+def test_a_dbt_file_of_many_tags_reads_in_linear_time(unit: str) -> None:
+    def run(n: int) -> None:
+        text = "".join(unit.replace("<i>", str(i)) for i in range(n))
+        units = lj.jinja_units("models/x.sql", "m", text)
+        lj.jinja_edges("models/x.sql", units, {})
+
+    grows_linearly(run, 2_000, 8_000)

@@ -92,12 +92,47 @@ def _words(src: str) -> list[str]:
     return list(dict.fromkeys(re.findall(r"[A-Za-z_]{3,}", re.sub(r"\\.", " ", src))))
 
 
+def _openers(p: re.Pattern) -> list[str]:
+    """The literal text each of a pattern's alternatives starts with (`{%`, `${{`,
+    `@Controller(`), past its anchors and lookarounds: a unit that is not one is refused
+    at its first character, so a pattern that rescans from each opener looks linear."""
+    from re import _constants as c
+    from re import _parser as parser
+
+    def lead(items: list[tuple[object, object]]) -> list[str]:
+        text = ""
+        for op, av in items:
+            if op is c.LITERAL:
+                text += chr(av)  # type: ignore[arg-type]
+            elif op in (c.AT, c.ASSERT, c.ASSERT_NOT):
+                continue
+            elif op in (c.MAX_REPEAT, c.MIN_REPEAT, c.POSSESSIVE_REPEAT) and not text:
+                if av[0] == 0:  # type: ignore[index]
+                    continue  # an optional run before the opener (`^\s*<!--`)
+                break
+            elif op is c.SUBPATTERN and not text:
+                return lead(list(av[-1]))  # type: ignore[index]
+            elif op is c.BRANCH and not text:
+                return [t for alt in av[1] for t in lead(list(alt))]  # type: ignore[index]
+            else:
+                break
+        return [text] if text else []
+
+    src = p.pattern if isinstance(p.pattern, str) else p.pattern.decode("latin-1")
+    try:
+        return list(dict.fromkeys(lead(list(parser.parse(src, p.flags & ~re.U)))))[:8]
+    except Exception:  # noqa: BLE001 — a pattern the private parser reads differently
+        return []
+
+
 def _units(p: re.Pattern) -> list[str]:
     src = p.pattern if isinstance(p.pattern, str) else p.pattern.decode("latin-1")
     words = _words(src)
     out = list(_UNITS)
     for w in words:
         out += [w + " ", w + "\n", w + "(", w + " {", w]
+    for o in _openers(p):
+        out += [o, o + "a", o + "a(", o + "a ", o + " ", "a" + o]
     return list(dict.fromkeys(out))
 
 
@@ -163,6 +198,9 @@ def _composites(p: re.Pattern) -> list[tuple[str, str, str]]:
     shapes = [(pre, " ", end) for pre in prefixes for end in ("b", "\n", ";b")]
     units = [w + " a " for w in words] + [w + " a(" for w in words] + [",a(", ",a{"]
     units += [f"{a} {b} a(" for a, b in zip(words, words[1:], strict=False)]
+    openers = _openers(p)
+    shapes += [(o, " ", end) for o in openers for end in ("b", "\n")]
+    units += [o + "a" for o in openers]
     return shapes + [(" ".join(words) + " a ", unit, "b") for unit in units]
 
 

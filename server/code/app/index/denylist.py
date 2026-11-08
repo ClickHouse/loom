@@ -49,6 +49,8 @@ logger = logging.getLogger(__name__)
 # patterns (real ones: tens).
 # not a setting: every indexed path is matched against every pattern; a bound on that
 REPO_PATTERNS_MAX = 1000
+# not a setting: a `.loomignore` or `.gitattributes` is read up to 1 MiB
+PATTERN_FILE_MAX_BYTES = 1 << 20
 
 DEFAULT_SUFFIXES: tuple[str, ...] = (
     ".pb.cc",
@@ -276,12 +278,11 @@ GITATTRIBUTES = ".gitattributes"
 
 
 async def _show_text(cfg: Any, sha: str, show_file: Any, name: str) -> str:
-    """The file's text, read up to `PACKAGE_JSON_MAX_BYTES`; '' past it."""
+    """The file's text, read up to `PATTERN_FILE_MAX_BYTES`; '' past it."""
     from server.code.app.index.gitrepo import BlobTooLarge
-    from server.code.app.index.untrusted_files import PACKAGE_JSON_MAX_BYTES
 
     try:
-        raw = await show_file(cfg.git_dir, sha, name, max_bytes=PACKAGE_JSON_MAX_BYTES)
+        raw = await show_file(cfg.git_dir, sha, name, max_bytes=PATTERN_FILE_MAX_BYTES)
     except BlobTooLarge as e:
         logger.warning("code ingest: %s not read, no patterns from it: %s", name, e)
         raw = None

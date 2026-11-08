@@ -46,7 +46,7 @@ VENDOR_SEGMENTS: frozenset[str] = frozenset({
 MAX_MANIFESTS = 200
 MAX_ROOTS = 64  # a tree of fixture packages (pip's tests/data) must not make every probe a scan
 
-_TABLE_RE = re.compile(r"^\s*\[\s*([^\]]+?)\s*\]\s*(?:#.*)?$")
+_TABLE_RE = re.compile(r"^\s*+\[\s*+([^\]]*[^\]\s])\s*+\]\s*+(?:#.*)?$")
 _KV_RE = re.compile(
     r"""^\s*(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_.\-]+))\s*=\s*(?:"([^"]*)"|'([^']*)')"""
 )

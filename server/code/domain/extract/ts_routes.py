@@ -23,15 +23,19 @@ Pure: regexes over the source; the file's path supplies the convention.
 
 from __future__ import annotations
 
+import bisect
 import posixpath
 import re
 
 from server.code.domain.extract.lang_sql_model import Facet
-from server.code.domain.extract.treesitter import ParsedFile, line_of
+from server.code.domain.extract.treesitter import ParsedFile
 
 FACET_KIND = "http_route"
+# Each body stops at the next `@Controller(` / `.route(`: an unclosed one is not read to
+# the end of the file again from every opener before it.
 _CONTROLLER_RE = re.compile(
-    r"""@Controller\(\s*(?:['"`]([^'"`]*)['"`]|\{[^}]*?\bpath:\s*['"`]([^'"`]*)['"`][^}]*\})?[^)]*\)""",
+    r"""@Controller\(\s*+(?:['"`]([^'"`]*)['"`]|\{(?:(?!@Controller\()[^}])*?\bpath:\s*"""
+    r"""['"`]([^'"`]*)['"`][^}]*\})?(?:(?!@Controller\()[^)])*\)""",
     re.S,
 )
 _ROUTE_DECORATOR_RE = re.compile(
@@ -42,8 +46,8 @@ _REGISTRATION_RE = re.compile(
     r"""\.(get|post|put|patch|delete|head|options|all)\(\s*['"`]([^'"`]+)['"`]"""
 )
 _FASTIFY_ROUTE_RE = re.compile(
-    r"""\.route\(\s*\{[^}]*?\bmethod\s*:\s*['"`]([A-Za-z]+)['"`]"""
-    r"""[^}]*?\burl\s*:\s*['"`]([^'"`]+)['"`]""",
+    r"""\.route\(\s*\{(?:(?!\.route\()[^}])*?\bmethod\s*:\s*['"`]([A-Za-z]+)['"`]"""
+    r"""(?:(?!\.route\()[^}])*?\burl\s*:\s*['"`]([^'"`]+)['"`]""",
     re.S,
 )
 _APP_HANDLER_RE = re.compile(
@@ -81,6 +85,10 @@ def route_facets(pf: ParsedFile) -> list[Facet]:
     text = pf.source.decode("utf-8", "replace")
     out: list[Facet] = []
     seen: set[tuple[str, int]] = set()
+    newlines = [m.start() for m in re.finditer("\n", text)]
+
+    def line_of(offset: int) -> int:  # by bisection: a count from the top per route is quadratic
+        return bisect.bisect_left(newlines, offset) + 1
 
     def add(name: str, line: int, conf: float) -> None:
         if (name, line) in seen:
@@ -93,44 +101,48 @@ def route_facets(pf: ParsedFile) -> list[Facet]:
     m = _PAGES_API_RE.search(pf.path)
     if m:
         d = _DEFAULT_EXPORT_RE.search(text)
-        line = line_of(text, d.start()) if d else 1
+        line = line_of(d.start()) if d else 1
         add(f"ANY {_url_join('/api', _file_route(m.group(1)))}", line, 0.9)
     m = _APP_ROUTE_RE.search(pf.path)
     if m:
         route = _file_route(m.group(1))
         if m.group(2) == "route":
             for h in _APP_HANDLER_RE.finditer(text):
-                add(f"{h.group(1) or h.group(2)} {route}", line_of(text, h.start()), 0.9)
+                add(f"{h.group(1) or h.group(2)} {route}", line_of(h.start()), 0.9)
         else:
             d = _DEFAULT_EXPORT_RE.search(text)
-            add(f"PAGE {route}", line_of(text, d.start()) if d else 1, 0.9)
-    for c in _CONTROLLER_RE.finditer(text):
+            add(f"PAGE {route}", line_of(d.start()) if d else 1, 0.9)
+    controllers = list(_CONTROLLER_RE.finditer(text))
+    closes = _brace_closes(text) if controllers else {}
+    for k, c in enumerate(controllers):
         prefix = c.group(1) or c.group(2) or ""
-        body_start = text.find("{", c.end())
-        body_end = _class_end(text, body_start) if body_start >= 0 else len(text)
+        # a class body ends at its `}`, and no later than the next controller: an unclosed
+        # one is not read again for every controller before it
+        stop = controllers[k + 1].start() if k + 1 < len(controllers) else len(text)
+        body_start = text.find("{", c.end(), stop)
+        body_end = min(closes.get(body_start, stop), stop) if body_start >= 0 else stop
         body = text[body_start:body_end] if body_start >= 0 else ""
         for r in _ROUTE_DECORATOR_RE.finditer(body):
             method = r.group(1).upper()
-            line = line_of(text, body_start + r.start())
+            line = line_of(body_start + r.start())
             add(f"{method} {_url_join(prefix, r.group(2) or '')}", line, 1.0)
     for r in _REGISTRATION_RE.finditer(text):
-        add(f"{r.group(1).upper()} {r.group(2)}", line_of(text, r.start()), 1.0)
+        add(f"{r.group(1).upper()} {r.group(2)}", line_of(r.start()), 1.0)
     for r in _FASTIFY_ROUTE_RE.finditer(text):
-        add(f"{r.group(1).upper()} {r.group(2)}", line_of(text, r.start()), 1.0)
+        add(f"{r.group(1).upper()} {r.group(2)}", line_of(r.start()), 1.0)
     return out
 
 
-def _class_end(text: str, open_brace: int) -> int:
-    depth = 0
-    for i in range(open_brace, len(text)):
-        ch = text[i]
+def _brace_closes(text: str) -> dict[int, int]:
+    """{offset of a `{`: offset of its `}`}, in one pass."""
+    out: dict[int, int] = {}
+    opens: list[int] = []
+    for i, ch in enumerate(text):
         if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return i
-    return len(text)
+            opens.append(i)
+        elif ch == "}" and opens:
+            out[opens.pop()] = i
+    return out
 
 
 def is_route_candidate(path: str) -> bool:

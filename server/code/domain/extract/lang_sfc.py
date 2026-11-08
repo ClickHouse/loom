@@ -59,7 +59,7 @@ _EVENT_RE = re.compile(r"\bon:?[A-Za-z]+(?:\|[a-z]+)*\s*=\s*\{\s*([A-Za-z_$][\w$
 _EXPR_CALL_RE = re.compile(r"\{(?:[#:@/]\w+\s+)?[^{}\n]*?\b([A-Za-z_$][\w$]*)\s*\(")
 # a prop whose value is a bare identifier: `<Child onSave={save}>`, `formatter={fmt}`
 _PROP_RE = re.compile(r"""(?<![\w:@])([A-Za-z][\w:-]*)\s*=\s*\{\s*([A-Za-z_$][\w$]*)\s*\}""")
-_HTML_COMMENT_RE = re.compile(r"^\s*<!--\s*(.*?)\s*-->", re.S)
+_HTML_COMMENT_RE = re.compile(r"^\s*+<!--(.*?)-->", re.S)  # its text is stripped after
 _MAX_DOC = 400
 _SFC_EXTS = (".svelte", ".astro", ".vue")
 _BARREL_NAMES = ("index.ts", "index.js", "index.mts", "index.mjs")

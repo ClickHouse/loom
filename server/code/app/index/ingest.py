@@ -392,7 +392,7 @@ async def record_oversize(
         await tombstone_file(repo, org, ns, path=path, embedding_model=embedding_model)
         return stats
     cap = int(_settings.code_ingest_max_file_bytes)
-    stats.error = f"skipped: {too_large.size} bytes > code_ingest_max_file_bytes ({cap})"
+    stats.error = f"{SKIPPED}: {too_large.size} bytes > code_ingest_max_file_bytes ({cap})"
     row = _file_row(
         org,
         ns,
