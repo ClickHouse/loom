@@ -12,6 +12,7 @@ from collections.abc import Coroutine, Iterator
 from typing import Any
 
 from server.cli._proc import TERMINATED_EXIT, Terminated, cancel_on_sigterm
+from server.code.app.index.repo_modes import repo_umask
 
 log = logging.getLogger("loom.cli.code")
 
@@ -139,7 +140,10 @@ def _run(name: str, coro: asyncio.Future[int] | Coroutine[Any, Any, int]) -> int
     span = span_cm.__enter__() if span_cm is not None else None
     log.info("cli.code.%s: start", name)
     try:
-        rc = asyncio.run(cancel_on_sigterm(_then_disconnect(coro)))
+        # What a `loom code` command (a host cron job) writes under the code repos root,
+        # the containers must be able to write too.
+        with repo_umask():
+            rc = asyncio.run(cancel_on_sigterm(_then_disconnect(coro)))
         return rc
     except BaseException as e:
         rc = 130 if isinstance(e, KeyboardInterrupt) else 1

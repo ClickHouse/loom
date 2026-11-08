@@ -388,3 +388,26 @@ async def test_loom_data_inside_the_python_prefix_is_unreadable(
     )
     assert b"runtime" in done.stdout
     assert CANARY.encode() not in done.stdout and b"secret\n" not in done.stdout, done.stdout
+
+
+async def test_a_job_writes_with_the_process_umask(tmp_path: Path, monkeypatch) -> None:
+    """The code repos root is shared through its group: what a job creates there keeps
+    the server's umask 007, so the other uid can write it too."""
+    from server.code.app.index.repo_modes import repo_umask
+
+    monkeypatch.setattr("server.settings.settings.code_repos_shared_gid", os.getegid())
+
+    out = tmp_path / "out"
+    out.mkdir()
+    with repo_umask():
+        done = await _python(
+            f"""
+            import os
+            os.mkdir({str(out / "d")!r})
+            open({str(out / "f")!r}, "w").close()
+            """,
+            writable=[out],
+        )
+    assert done.returncode == 0, done.stdout
+    assert (out / "d").stat().st_mode & 0o777 == 0o770
+    assert (out / "f").stat().st_mode & 0o777 == 0o660

@@ -230,7 +230,6 @@
   "tests/unit/test_claim_release_keeps_namespace_row.py": 0.01,
   "tests/unit/test_cli_apply_default.py": 0.91,
   "tests/unit/test_cli_backfill_second_pass.py": 0.04,
-  "tests/unit/test_cli_child_stop.py": 1.89,
   "tests/unit/test_cli_client_resolution.py": 0.27,
   "tests/unit/test_cli_code_backfill_commit.py": 0.09,
   "tests/unit/test_cli_code_backfill_round_reads.py": 0.03,

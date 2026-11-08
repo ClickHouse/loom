@@ -256,6 +256,7 @@
  "code_repo_public": false,
  "code_repos_refresh_seconds": 30,
  "code_repos_root": "var/code_repos/self",
+ "code_repos_shared_gid": null,
  "code_review_brief_mirror_miss_ttl_s": 600.0,
  "code_review_brief_rationale_paths": 10,
  "code_review_brief_rationale_rows": 8,

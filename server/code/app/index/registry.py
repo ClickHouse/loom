@@ -14,8 +14,8 @@ row not restricted is narrowed when the entry is restricted and no access row sa
 otherwise; an operator entry's restricted row is widened when a standard access row is
 newer than it (the maintainer's own decision; a page branch's is widened only by
 `code.repo.set_access`). A newer access row is required because
-`code.repo.set_access` writes the directory row first. The entry's mirror and checkouts
-are tightened by the ingest pass, not here.
+`code.repo.set_access` writes the directory row first. The ingest pass sets the entry's
+mirror and checkouts to `repo_dir_mode`, not here.
 """
 
 from __future__ import annotations

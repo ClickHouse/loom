@@ -13,6 +13,8 @@ import re
 import time
 from collections.abc import AsyncIterator
 
+from server.code.app.index.repo_modes import lock_file_mode
+
 # A clone's temp tree beside its mirror: `<mirror>.partial-<pid>-<monotonic ns>`.
 _PARTIAL = re.compile(r"(.+)\.partial-\d+-\d+")
 
@@ -31,7 +33,7 @@ def partial_mirror(path: str) -> str | None:
 def try_lock(path: str) -> int | None:
     """An fd holding an exclusive lock on `path`, None when another process holds it."""
     try:
-        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, lock_file_mode(path))
     except OSError:
         return None
     try:
@@ -42,11 +44,19 @@ def try_lock(path: str) -> int | None:
     return fd
 
 
+def _prepare_lock(path: str) -> int:
+    """Make the lock's directory and return the mode to create the lock file `path` at."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    return lock_file_mode(path)
+
+
 async def lock_file(path: str) -> int:
     """An fd holding an exclusive lock on `path`, polled for, so a cancelled
     wait holds nothing."""
-    await asyncio.to_thread(os.makedirs, os.path.dirname(path) or ".", exist_ok=True)
-    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    mode = await asyncio.to_thread(_prepare_lock, path)
+    # On the loop, as entry_lock opens its own: an open in a thread a cancellation
+    # abandons would leak its fd.
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, mode)
     try:
         while True:
             try:

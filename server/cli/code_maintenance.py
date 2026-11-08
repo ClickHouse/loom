@@ -13,7 +13,6 @@ import sys
 import time
 from typing import Any
 
-from server.cli._proc import wait_or_stop
 from server.cli.code_run import _identity, _note, _repo_cfg
 
 log = logging.getLogger("loom.cli.code")
@@ -44,34 +43,21 @@ async def _init(args: argparse.Namespace) -> int:
     cfg = _repo_cfg(args)
     git_dir = cfg.git_dir
     if not await asyncio.to_thread(os.path.isdir, git_dir):
-        await asyncio.to_thread(os.makedirs, os.path.dirname(git_dir) or ".", exist_ok=True)
-        print(f"cloning {cfg.git_remote} -> {git_dir} (bare)…")
-        # A private remote authenticates through the
-        # environment (gitrepo.auth_env), never through the URL, so the
-        # token reaches neither argv nor code_index_state.repo_remote; git
-        # runs under umask 077, so only this user reads the mirror, mid-clone too.
-        from server.code.app.index.gitrepo import auth_env, upload_pack_args
+        from server.code.app.index.bootstrap import clone_mirror
+        from server.code.domain.index.state import CLONE_TIMED_OUT
+        from server.settings import settings
 
-        proc = await asyncio.create_subprocess_exec(
-            "git",
-            "clone",
-            "-c",
-            "gc.auto=0",
-            "-c",
-            "maintenance.auto=false",
-            "--bare",
-            *upload_pack_args(cfg.git_remote),
-            cfg.git_remote,
-            git_dir,
-            env=auth_env(cfg.github_token, cfg.git_remote),
-            start_new_session=True,
-            umask=0o077,
+        print(
+            f"cloning {cfg.git_remote} -> {git_dir} (bare; waits for a clone already running, "
+            f"then at most {settings.code_bootstrap_clone_timeout_s:.0f}s, "
+            "code_bootstrap_clone_timeout_s)…"
         )
-        rc = await wait_or_stop(proc)
-        if rc != 0:
-            print("clone failed", file=sys.stderr)
+        # The worker's clone (bootstrap.clone_mirror): a failed or stopped one leaves no mirror.
+        if reason := await clone_mirror(cfg):
+            if reason == CLONE_TIMED_OUT:
+                reason = "clone timed out (code_bootstrap_clone_timeout_s)"
+            print(reason, file=sys.stderr)
             return 1
-        await asyncio.to_thread(os.chmod, git_dir, 0o700)
     else:
         print(f"bare clone already at {git_dir}")
 

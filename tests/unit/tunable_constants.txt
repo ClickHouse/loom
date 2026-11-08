@@ -46,7 +46,6 @@ server/auth/service_accounts.py::_CREATORS_AT_ONCE
 server/auth/service_accounts.py::_CREATOR_CACHE_MAX
 server/boot.py::SHUTDOWN_DRAIN_BUDGET_S
 server/boot.py::_CLOSE_S
-server/cli/_proc.py::STOP_GRACE_S
 server/cli/code_scip.py::_ENTRY_STOP_GRACE_S
 server/cli/doctor.py::_PROXY_MIN_ATTEMPTS
 server/cli/doctor_client.py::EXPIRING_SOON_S
