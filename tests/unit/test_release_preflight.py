@@ -452,4 +452,8 @@ def test_the_tag_run_signs_the_digests_it_made_and_a_later_run_verifies_them() -
     verify = steps["verify"]
     assert verify["if"] == "${{ needs.preflight.outputs.images_published == 'true' }}"
     assert "cosign sign" not in verify["run"]
-    assert "release.yml@refs/tags/v$VERSION" in verify["run"]
+    identity = (
+        "https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v$VERSION"
+    )
+    assert f'--certificate-identity "{identity}"' in verify["run"]
+    assert "--certificate-oidc-issuer https://token.actions.githubusercontent.com" in verify["run"]

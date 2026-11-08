@@ -215,8 +215,9 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    signature (cosign, with the run's GitHub identity, so the certificate names `release.yml`
    and the tag). A run on a tag whose images are out signs nothing: it verifies those
    signatures, so an image tag moved since, or a run that tagged without signing, fails before
-   anything publishes (re-running the tag run's failed jobs signs what it tagged). The images
-   are tagged before `sign`, so with Sigstore down they are out unsigned until that re-run;
+   anything publishes (re-running the failed jobs of the run that tagged signs what it
+   tagged). The images are tagged before `sign`, so with Sigstore down they are out unsigned
+   until that re-run;
    the GitHub Release, PyPI, npm and the MCP Registry wait for `sign`;
 7. `docker-smoke` installs the bundle with those images, on the ClickHouse release it
    names, on amd64 and arm64, then runs the release's own `install.sh` and bundle as the
@@ -281,14 +282,16 @@ ones, and goes on to the registries. Release images build without the cache, so 
 move the version's tags onto other bytes.
 
 A failed `docker-tag` (one image tagged, not the other) or a failed `sign` (Sigstore down, say)
-is recovered by "Re-run failed jobs" on the tag-push run, within 30 days of it: that attempt keeps
-its `preflight` result and `docker-tag`'s digests, so it tags the same build and signs what it
-tagged. A dispatch or a second push of the tag starts a run of its own and leaves that one
-re-runnable; a dispatch that failed at `sign` passes once the tag-push run has signed. Once "Re-run
-all jobs" has replaced the tag-push run's attempt, or the 30 days have passed, no run can tag or
-sign that build (a run on a half-tagged version fails its `preflight`, and a run on a published
-tag only verifies signatures that only the tagging run can make): release a new version, and move
-`:latest` back by hand if it moved.
+is recovered by "Re-run failed jobs" on the run that tagged the images (the tag push, or the
+dispatch that built and tagged them), within 30 days of it: that attempt keeps its `preflight`
+result and `docker-tag`'s digests, so it tags the same build and signs what it tagged. Never
+re-run a run that did not tag: it rebuilds and would move the published tags. Another run on the
+tag (a dispatch, a second push) is a run of its own and leaves the tagging run re-runnable; re-run
+its failed jobs, or dispatch the tag again, once the tagging run has signed. Once "Re-run all jobs"
+has replaced the tagging run's attempt, or the 30 days have passed, no run can tag or sign that
+build (a run on a half-tagged version fails its `preflight`, and a run on a published tag only
+verifies signatures that only the tagging run can make): release a new version, and move `:latest`
+back by hand if it moved.
 
 Never move a tag whose images are published: `published_images.sh` fails when a published image
 was built from another commit than the run's, and a fix needs a new version.
