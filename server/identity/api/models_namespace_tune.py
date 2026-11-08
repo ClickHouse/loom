@@ -184,6 +184,8 @@ class TuneProposal(BaseModel):
     preview: ChunkingPreview | None = None
     # What the proposal does not account for.
     limits: str = ""
+    # Each exact name the text above says in words (an op, setting, command, code or field).
+    refs: list[str] = Field(default_factory=list)
 
 
 class NamespaceTuneOutput(BaseModel):

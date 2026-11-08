@@ -65,78 +65,103 @@ SOURCE_OP = "knowledge.inspect"
 MEMORY_FINDING_CODES = ("oversized_values", "episodic_blobs")
 
 DECISIONS_DEFINITION = (
-    "Live decision rows in this namespace whose source_resource_id cites a section of one "
-    "of its documents (knowledge:<namespace>/<source_uri>#<section>), as loom decisions "
-    "extract and decision.record write it, inside the caller's read scope, by stage: "
-    "decided, or proposed (tagged decision:proposed). Rows written into another "
-    "namespace (a repository's) are not counted."
+    "Live decisions in this namespace that cite a section of one of its documents, as "
+    "decision extraction and decision recording write them, within what your token reads, "
+    "by stage: decided, or proposed. Decisions written into another namespace (a "
+    "repository's) are not counted."
 )
+# The exact names DECISIONS_DEFINITION says in words, for `refs`.
+_DECISIONS_REFS = [
+    "source_resource_id",
+    "knowledge:<namespace>/<source_uri>#<section>",
+    "loom decisions extract",
+    "decision.record",
+    "decision:proposed",
+]
 
 _RECENT = (
     "A document written in the last few seconds may not have every chunk yet; "
     "re-run before acting on a count of one."
 )
-# A document knowledge.ingest published was cut from its extracted artifact: a text write
+# A document ingested from a file was cut from its extracted artifact: a text write
 # (knowledge.upsert, loom rechunk) re-cuts its rendered text and clears its format,
 # parser, coverage and ingestion, as knowledge.update_metadata refuses to.
 _INGESTED = (
-    " For a document knowledge.ingest published (`ingested`), upload its original again "
-    "(GET /v1/knowledge.download serves it) and knowledge.ingest it: a text write would "
-    "turn it into a text document."
+    " For a document ingested from a file, download its original, upload it again and "
+    "ingest it: writing its text would turn it into a text document."
 )
+_INGESTED_REFS = [
+    "ingested",
+    "GET /v1/knowledge.download",
+    "POST /v1/knowledge.upload",
+    "knowledge.ingest",
+]
+_RECHUNK = "loom rechunk --org <org> --namespace <namespace> --source-uri <uri> --apply"
 
 
-# code: (contract, health column, detail, remedy); a hit is a warning, a clean check info.
-_CHECKS: dict[str, tuple[RuleContract, str, str, str]] = {
+# code: (contract, health column, detail, remedy, refs); a hit is a warning, a clean check
+# info. `refs` are the exact ops, settings, commands, fields and error codes the text names
+# in words.
+_CHECKS: dict[str, tuple[RuleContract, str, str, str, list[str]]] = {
     "documents_without_chunks": (
         RuleContract("system_state", 1, uncertainty=_RECENT),
         "without_chunks",
         "Live documents with no live chunk: search cannot return them. A write that stored "
         "the document and not its chunks leaves one.",
-        "For a text document, write it again with knowledge.upsert, or loom rechunk --org "
-        "<org> --namespace <namespace> --source-uri <uri> --apply." + _INGESTED,
+        "For a text document, write it again, or cut it into chunks again with the rechunk "
+        "command." + _INGESTED,
+        ["knowledge.search", "knowledge.upsert", _RECHUNK, *_INGESTED_REFS],
     ),
     "unembedded_chunks": (
         # No wire op writes a chunk without its vector, so a hit is never a write in flight.
         RuleContract("system_state", 1),
         "unembedded",
-        "Live documents with a live chunk that carries no vector: knowledge.search does "
-        "not return that chunk.",
-        "For a text document, loom rechunk --org <org> --namespace <namespace> "
-        "--source-uri <uri> --apply re-embeds it." + _INGESTED,
+        "Live documents with a live chunk that has no vector: search does not return that chunk.",
+        "For a text document, the rechunk command embeds it again." + _INGESTED,
+        ["knowledge.search", _RECHUNK, *_INGESTED_REFS],
     ),
     "chunks_under_other_model": (
         RuleContract(
             "system_state",
             1,
-            exceptions="A document with no live chunk at all is documents_without_chunks.",
+            exceptions="A document with no live chunk at all is the no-chunk finding's.",
             uncertainty="A rolling change of the embedding model passes through this state.",
         ),
         "other_model",
-        "Live documents whose live chunks were all written under another embedding model "
-        "than this server's: knowledge.search reads only the server's model, so it does not "
-        "return them.",
-        "For a text document, loom rechunk --org <org> --namespace <namespace> "
-        "--source-uri <uri> --apply re-chunks it under the current model." + _INGESTED,
+        "Live documents whose live chunks were all embedded by another embedding model "
+        "than this server's: search reads only the server's model, so it does not return "
+        "them.",
+        "For a text document, the rechunk command cuts and embeds it again under the "
+        "current model." + _INGESTED,
+        ["knowledge.search", "documents_without_chunks", _RECHUNK, *_INGESTED_REFS],
     ),
     "mixed_live_versions": (
         RuleContract(
             "usage_heuristic",
             1,
-            uncertainty="Two versions kept on purpose read the same. A knowledge.ingest "
-            "publish passes through this state: it inserts the new version's chunks before "
-            "it writes the row and retires the old ones, and an insert whose outcome it "
-            "could not confirm leaves both live until the job's next run.",
+            uncertainty="Two versions kept on purpose read the same. An ingestion passes "
+            "through this state when it publishes: it inserts the new version's chunks "
+            "before it writes the document and retires the old ones, and an insert whose "
+            "outcome it could not confirm leaves both live until the job's next run.",
         ),
         "mixed_versions",
         "Live documents with live chunks of more than one version under the server's "
-        "model: search serves both texts. knowledge.add on an existing source_uri adds a "
-        "version beside the earlier one; knowledge.upsert retires it.",
-        "Write a changed text document with knowledge.upsert. For an ingested one, a "
-        "knowledge.ingest job of the source still processing at its publish stage "
-        "(knowledge.ingest_status, with the id that ingest returned) settles this state on "
-        "its next run; only when no ingest of the source is open, upload its original "
-        "again and knowledge.ingest it.",
+        "model: search serves both texts. Adding a document at a source that already has "
+        "one keeps the earlier version beside it; an upsert retires it.",
+        "Write a changed text document again with an upsert. For an ingested one, an "
+        "ingestion of the source still at its publish stage settles this state on its next "
+        "run (its status, by the id the ingestion returned, shows the stage); only when no "
+        "ingestion of the source is open, upload its original again and ingest it.",
+        [
+            "knowledge.search",
+            "knowledge.add",
+            "source_uri",
+            "knowledge.upsert",
+            "knowledge.ingest",
+            "knowledge.ingest_status",
+            "ingested",
+            "POST /v1/knowledge.upload",
+        ],
     ),
 }
 
@@ -144,84 +169,145 @@ _CHECKS: dict[str, tuple[RuleContract, str, str, str]] = {
 # Where the remedies below send a caller for one job, and how a failed source is ingested
 # again.
 _STATUS = (
-    " knowledge.ingest_status with the job's id (`ingestion_ids`, or a listed document's "
-    "`jobs`) shows its stage and error_code."
+    " A job's status, read by its id (listed with this finding, and under a listed "
+    "document's jobs), shows its stage and error code."
 )
+_STATUS_REFS = ["knowledge.ingest_status", "ingestion_ids", "jobs", "error_code"]
 _REINGEST = (
-    "upload the original again (POST /v1/knowledge.upload; an upload expires) and "
-    "knowledge.ingest it: a failed job does not run again"
+    "upload the original again (an upload expires) and ingest it: a failed job does not run again"
 )
+_REINGEST_REFS = ["POST /v1/knowledge.upload", "knowledge.ingest"]
 
-# code: (contract, detail, remedy); a hit is a warning, a clean check info. The predicates
-# are store.INGEST_CHECKS; extraction_incomplete reads the document rows' coverage.
-_INGEST_CHECKS: dict[str, tuple[RuleContract, str, str]] = {
+# code: (contract, detail, remedy, refs); a hit is a warning, a clean check info. The
+# predicates are store.INGEST_CHECKS; extraction_incomplete reads the document rows'
+# coverage.
+_INGEST_CHECKS: dict[str, tuple[RuleContract, str, str, list[str]]] = {
     "ingest_backlog": (
         RuleContract(
             "system_state",
             1,
             exceptions="An open job whose last attempt failed for the extractor or for "
             "access is that finding's, not this one's.",
-            uncertainty="A job queued seconds ago waits for the worker's next pass (up to "
-            "knowledge_ingest_idle_interval_seconds when it was idle), and the worker runs "
-            "one job at a time, one source's jobs in order: a young backlog is the queue "
-            "working.",
+            uncertainty="A job queued seconds ago waits for the worker's next pass (longer "
+            "when the worker was idle), and the worker runs one job at a time, one source's "
+            "jobs in order: a young backlog is the queue working.",
         ),
-        "Sources with a knowledge.ingest job pending or processing: queued, running within "
-        "its lease, stalled past it (`ingestions.stalled`: the worker stopped; a later pass "
-        "runs it again from its first stage), put back after a store or embedder outage "
-        "(failure_class `retrying`), or running again after any outage (it keeps the last "
-        "attempt's error_code until the run ends). A pending job with a cancel requested is "
-        "cancelled, not counted. Search serves the source's earlier revision, or nothing "
-        "for a first ingest, until it publishes.",
-        "Wait for the worker: it runs while LOOM_KNOWLEDGE_INGEST_ENABLED is on (see "
-        "`ingestions.worker_enabled`) and a store or embedder outage is retried up to "
-        "knowledge_ingest_max_attempts." + _STATUS + " knowledge.ingest_cancel stops a job "
-        "that is not wanted.",
+        "Sources with an ingestion job waiting or running: queued, running within its "
+        "lease, stalled past it (the worker stopped; a later pass runs it again from its "
+        "first stage), put back to retry after a store or embedder outage, or running again "
+        "after any outage (it keeps the last attempt's error code until the run ends). A "
+        "waiting job with a cancel requested is cancelled, not counted. Search serves the "
+        "source's earlier revision, or nothing for a first ingestion, until it publishes.",
+        "Wait for the worker: it runs while document ingestion is turned on (this report "
+        "says whether it is on the server that answered), and it retries a store or "
+        "embedder outage up to the attempt limit." + _STATUS + " Cancel a job that is not wanted.",
+        [
+            "knowledge.search",
+            "knowledge.ingest",
+            "LOOM_KNOWLEDGE_INGEST_ENABLED",
+            "LOOM_KNOWLEDGE_INGEST_INTERVAL_SECONDS",
+            "LOOM_KNOWLEDGE_INGEST_IDLE_INTERVAL_SECONDS",
+            "LOOM_KNOWLEDGE_INGEST_MAX_ATTEMPTS",
+            "pending",
+            "processing",
+            "ingestions.worker_enabled",
+            "ingestions.stalled",
+            "failure_class",
+            "retrying",
+            *_STATUS_REFS,
+            "knowledge.ingest_cancel",
+            "extractor_unavailable",
+            "ingest_missing_access",
+        ],
     ),
     "extractor_unavailable": (
         RuleContract(
             "system_state",
             1,
-            uncertainty="An extractor that was down when the job ran may be up now; a "
-            "pending job retries by itself.",
+            uncertainty="An extractor that was down when the job ran may be up now; a job "
+            "waiting to retry runs again by itself.",
         ),
         "Sources whose job failed, or waits to retry, because no extractor could take its "
-        "format: none is configured or routed for it (error_code format_unavailable), the "
-        "one routed to it is unreachable, slow past its timeout or failing, or it answered "
-        "an artifact that breaks the extractor contract (invalid_artifact).",
-        "Configure an extractor for the format (LOOM_DOCUMENT_EXTRACTOR_URL, or a route in "
-        "LOOM_DOCUMENT_EXTRACTORS_JSON; see `ingestions.extractor_configured`) and make sure "
-        "it answers within LOOM_DOCUMENT_EXTRACTOR_TIMEOUT_S with an artifact the extractor "
+        "format: none is configured or routed for it, the one routed to it is unreachable, "
+        "slower than the server's extractor timeout or failing, or it answered with an "
+        "artifact the extractor contract does not allow.",
+        "Configure an extractor for the format (a default extractor for every format without "
+        "a route of its own or for its media type, or a route for this one; this report says "
+        "whether the server that answered has any extractor configured) and make sure it "
+        "answers within the server's extractor timeout with an artifact the extractor "
         "contract allows; then, for a failed job, " + _REINGEST + "." + _STATUS,
+        [
+            "LOOM_DOCUMENT_EXTRACTOR_URL",
+            "LOOM_DOCUMENT_EXTRACTORS_JSON",
+            "LOOM_DOCUMENT_EXTRACTOR_TIMEOUT_S",
+            "ingestions.extractor_configured",
+            "pending",
+            "format_unavailable",
+            "invalid_artifact",
+            *_REINGEST_REFS,
+            *_STATUS_REFS,
+        ],
     ),
     "ingest_missing_access": (
         RuleContract("system_state", 1),
         "Sources whose job failed, or waits to retry, on access: the stored original could "
-        "not be read (error_code original_gone), or the extractor refused the server's "
-        "credential (it answered 401, 403 or 407).",
-        "For a refused credential, set the token the extractor expects "
-        "(LOOM_DOCUMENT_EXTRACTOR_TOKEN, or its URL's in LOOM_DOCUMENT_EXTRACTOR_TOKENS_JSON); "
-        "for original_gone, " + _REINGEST + "." + _STATUS,
+        "not be read, or the extractor refused the server's credential (it answered 401, "
+        "403 or 407).",
+        "For a refused credential, set the token the extractor expects (one token for every "
+        "extractor, or one per extractor URL); for an original that could not be read, "
+        + _REINGEST
+        + "."
+        + _STATUS,
+        [
+            "LOOM_DOCUMENT_EXTRACTOR_TOKEN",
+            "LOOM_DOCUMENT_EXTRACTOR_TOKENS_JSON",
+            "original_gone",
+            *_REINGEST_REFS,
+            *_STATUS_REFS,
+        ],
     ),
     "ingest_content_rejected": (
         RuleContract(
             "contract_violation",
             1,
-            exceptions="A job that published with allow_partial is extraction_incomplete's.",
+            exceptions="A job that published an incomplete extraction, as allowed, is the "
+            "incomplete-extraction finding's.",
         ),
-        "Sources whose job failed on the file itself: the extractor refused it "
-        "(format_mismatch, encoding, corrupt, unsupported_format, too_large, ...), or the "
-        "server refused what it made of it (incomplete_extraction without allow_partial, "
-        "no_text, more chunks than knowledge_ingest_max_chunks). resource_limit: the "
-        "extractor passed its own memory or output limit, or its artifact was over "
-        "LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES. Search serves the source's earlier "
+        "Sources whose job failed on the file itself: the extractor refused it (a format "
+        "that does not match, a bad encoding, a corrupt, unsupported or too large file, "
+        "...), or the server refused what it made of it (an incomplete extraction not "
+        "allowed to publish, no text, or more chunks than the server's limit, which is "
+        "reported as too large as well). When a "
+        "resource limit stopped it, the extractor passed its own memory or output limit, or "
+        "its artifact was over the server's size cap. Search serves the source's earlier "
         "revision, if it has one.",
-        "Read the job's error_code with knowledge.ingest_status; fix the file or its "
-        "options (format, encoding, sql_dialect), pass allow_partial to publish an "
-        "incomplete extraction, or raise the limit it passed: the extractor's own "
-        "(LOOM_EXTRACTOR_MEMORY_MB, LOOM_EXTRACTOR_MAX_ARTIFACT_BYTES on the extractor "
-        "service), LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES for an artifact over the "
-        "server's cap, or LOOM_KNOWLEDGE_INGEST_MAX_CHUNKS; then " + _REINGEST + ".",
+        "Read the job's error code in its status; fix the file or its options (format, "
+        "encoding, SQL dialect), allow an incomplete extraction to publish, "
+        "or raise the limit it passed: the extractor's own memory or output limit (set on "
+        "the extractor service), the server's artifact size cap, or the server's chunk "
+        "limit; then " + _REINGEST + ".",
+        [
+            "knowledge.search",
+            "knowledge.ingest_status",
+            "error_code",
+            "format",
+            "format_mismatch",
+            "encoding",
+            "corrupt",
+            "unsupported_format",
+            "too_large",
+            "incomplete_extraction",
+            "no_text",
+            "resource_limit",
+            "sql_dialect",
+            "allow_partial",
+            "extraction_incomplete",
+            "LOOM_EXTRACTOR_MEMORY_MB",
+            "LOOM_EXTRACTOR_MAX_ARTIFACT_BYTES",
+            "LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES",
+            "settings.set knowledge_ingest_max_chunks",
+            *_REINGEST_REFS,
+        ],
     ),
     "ingest_failed_on_server": (
         RuleContract(
@@ -230,14 +316,23 @@ _INGEST_CHECKS: dict[str, tuple[RuleContract, str, str]] = {
             exceptions="An outage of the extractor, or a credential it refused, is that finding's.",
         ),
         "Sources whose job failed on the server's side: a store or embedder outage that used "
-        "up knowledge_ingest_max_attempts, runs cut off before they finished (a pass past "
-        "knowledge_ingest_max_pass_seconds, a process that stopped), both error_code "
-        "retries_exhausted, or a server defect (internal). Neither the file nor the "
+        "up the attempt limit, runs cut off before they finished (a pass past its time "
+        "limit, a process that stopped), or a server defect. Neither the file nor the "
         "extractor is known to be at fault.",
-        "Once the store and embedder answer (or, for runs cut off, with "
-        "knowledge_ingest_max_pass_seconds above the extractor's timeout plus the source's "
-        "embedding), " + _REINGEST + ". For internal, the server log names the job's id "
-        "with its traceback." + _STATUS,
+        "Once the store and embedder answer (or, for runs cut off, with the pass time limit "
+        "above the server's extractor timeout plus the source's embedding), " + _REINGEST + ". For "
+        "a server defect, the server log names the job's id with its traceback." + _STATUS,
+        [
+            "LOOM_KNOWLEDGE_INGEST_MAX_ATTEMPTS",
+            "LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS",
+            "LOOM_DOCUMENT_EXTRACTOR_TIMEOUT_S",
+            "retries_exhausted",
+            "internal",
+            *_REINGEST_REFS,
+            *_STATUS_REFS,
+            "extractor_unavailable",
+            "ingest_missing_access",
+        ],
     ),
     "extraction_incomplete": (
         RuleContract(
@@ -246,11 +341,22 @@ _INGEST_CHECKS: dict[str, tuple[RuleContract, str, str]] = {
             uncertainty="An extractor that does not handle a construct loses it as a file "
             "that breaks its format does; another extractor may keep it.",
         ),
-        "Live documents knowledge.ingest published without all of their source: a unit not "
-        "extracted or failed, or a capability lost (`extraction.lost`: sql_structure, "
-        "exact_keys, section_path, ...). Search serves what was extracted.",
-        "Read a listed document's `extraction`; fix the source, or route its format to an "
-        "extractor that keeps it (LOOM_DOCUMENT_EXTRACTORS_JSON), and " + _REINGEST + ".",
+        "Live documents ingested without all of their source: a unit not extracted or "
+        "failed, or a capability lost (SQL structure, exact keys, section paths, ...). "
+        "Search serves what was extracted.",
+        "Read a listed document's extraction (what it lost and how many units it did not "
+        "extract); fix the source, or route its format to an extractor that keeps it, "
+        "and " + _REINGEST + ".",
+        [
+            "knowledge.search",
+            "extraction",
+            "extraction.lost",
+            "sql_structure",
+            "exact_keys",
+            "section_path",
+            "LOOM_DOCUMENT_EXTRACTORS_JSON",
+            *_REINGEST_REFS,
+        ],
     ),
 }
 
@@ -419,7 +525,7 @@ class _Inspect:
             return []
         population = int(health["live_docs"])
         out: list[DocumentFinding] = []
-        for code, (contract, column, detail, remedy) in _CHECKS.items():
+        for code, (contract, column, detail, remedy, refs) in _CHECKS.items():
             count = int(health[column])
             uris = [str(u) for u in health[f"{column}_uris"]]
             samples = uris[: i.sample_limit]
@@ -443,6 +549,7 @@ class _Inspect:
                     ],
                     detail=detail,
                     remedy=remedy,
+                    refs=refs,
                     exceptions=contract.exceptions,
                     uncertainty=contract.uncertainty,
                 )
@@ -458,7 +565,7 @@ class _Inspect:
         samples: list[tuple[str, str]],
         without_document: int = 0,
     ) -> IngestFinding:
-        contract, detail, remedy = _INGEST_CHECKS[code]
+        contract, detail, remedy, refs = _INGEST_CHECKS[code]
         cut = samples[: self.inp.sample_limit]
         self.rules.ran(code)
         return IngestFinding(
@@ -477,6 +584,7 @@ class _Inspect:
             without_document=without_document,
             detail=detail,
             remedy=remedy,
+            refs=refs,
             exceptions=contract.exceptions,
             uncertainty=contract.uncertainty,
         )
@@ -614,7 +722,7 @@ class _Inspect:
 
     async def decisions(self, listed: list[InspectDocument]) -> DecisionTotals:
         i = self.inp
-        out = DecisionTotals(definition=DECISIONS_DEFINITION)
+        out = DecisionTotals(definition=DECISIONS_DEFINITION, refs=_DECISIONS_REFS)
         listed_uris = [d.source_uri for d in listed]
         # A citation of `doc#v2#Intro` is `doc#v2`'s, listed or not: the longer documents
         # are passed too, so their rows are not counted under `doc`.
@@ -646,8 +754,8 @@ class _Inspect:
         i = self.inp
         if request_scope().narrowed:
             self.skipped.append(
-                "memory_findings: namespace.audit reads every user's rows; not run under a "
-                "read scope bound to one user or session"
+                "memory_findings: the namespace audit reads every user's memories, so it does "
+                "not run for a token limited to one user or session"
             )
             return []
         audit = await self.guarded(
@@ -665,7 +773,7 @@ class _Inspect:
         for code in MEMORY_FINDING_CODES:
             f = next((f for f in audit.findings if f.code == code), None)
             if f is None or code in audit.coverage.rules_skipped:
-                reason = skipped.get(code, "not reported by namespace.audit")
+                reason = skipped.get(code, "not reported by the namespace audit")
                 self.skipped.append(f"memory_findings.{code}: {reason}")
                 continue
             out.append(

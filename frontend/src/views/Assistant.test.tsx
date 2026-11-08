@@ -36,7 +36,7 @@ const INVENTORY: NamespaceInventory = {
   scope: { org: "dev", namespace: "team", read_scope: "namespace", user_id: null, session_id: null },
   sections: [
     { plane: "memories", count: 42, latest_at: "2026-11-01T10:00:00", complete: true, reason: "" },
-    { plane: "records", count: null, latest_at: null, complete: false, reason: "read failed: TimeoutError" },
+    { plane: "records", count: null, latest_at: null, complete: false, reason: "could not be read (TimeoutError)" },
     { plane: "documents", count: 3, latest_at: null, complete: true, reason: "" },
     { plane: "runs", count: 0, latest_at: null, complete: true, reason: "" },
     { plane: "integrations", count: 1, latest_at: null, complete: true, reason: "" },
@@ -80,9 +80,9 @@ const ROW: InspectRow = {
 
 // server/memory/app/inspect.py _DEFINITIONS["user"].
 const OWN_USER =
-  "Live rows filed under this user_id, whoever wrote them: what a token pinned to this user (read_scope own_user) reads. Promoted rows (memory.promote) are not counted.";
+  "Live memories saved for this user, whoever wrote them: what a token limited to this user reads. Memories promoted for every agent of the namespace are not counted.";
 const OTHERS_USER =
-  "Every other live row of the namespace. A member reads these too; a token pinned to this user does not. Promoted rows (memory.promote) are not counted.";
+  "Every other live memory of the namespace. A member reads these too; a token limited to this user does not. Memories promoted for every agent of the namespace are not counted.";
 
 // live_rows is the sum of the same count rows by_type and by_status come from.
 const view = (definition: string, rows: InspectRow[], liveRows = rows.length): InspectView => ({
@@ -105,8 +105,9 @@ const inspection = (subject: MemoryInspection["subject"], id: string): MemoryIns
   subject,
   id,
   computed_at: "2026-11-01T10:00:00",
-  own: view(OWN_USER, [ROW]),
-  others: view(OTHERS_USER, []),
+  // server/memory/app/inspect.py _DEFINITION_REFS["user"].
+  own: { ...view(OWN_USER, [ROW]), refs: ["user_id", "read_scope own_user", "memory.promote"] },
+  others: { ...view(OTHERS_USER, []), refs: ["user_id", "read_scope own_user", "memory.promote"] },
   activity: { window_seconds: 7 * 86_400, calls: [], first_at: null, last_at: null, gap: "" },
   settings: {
     guide_revision: 2,
@@ -115,7 +116,8 @@ const inspection = (subject: MemoryInspection["subject"], id: string): MemoryIns
     extraction_policy: null,
     extraction_policy_unavailable: "only an org admin reads the operator extraction policy",
     extraction_instructions:
-      "Per request only: memory.set_from_messages takes `extraction_instructions`; no user, agent or session setting stores them.",
+      "Each request that extracts memories from messages may send extraction instructions; no user, agent or session setting stores them.",
+    extraction_instructions_refs: ["memory.set_from_messages", "extraction_instructions"],
   },
   skipped: [],
 });
@@ -150,7 +152,7 @@ const CATEGORY: TuneProposal = served({
   scope: "namespace dev/team",
   title: "Register a category for the tag `billing`",
   rationale:
-    "12 live rows carry the tag `billing` and no category is named after it; 4 of them are filed under another category. A registered category is what namespace.search_categories finds, and extraction offers the first 32 by name as tags for new rows.",
+    "12 live memories carry the tag `billing` and no category is named after it; 4 of them are filed under another category. A registered category is what a category search finds, and extraction offers the first 32 by name as tags for new memories.",
   current: "",
   current_revision: null,
   proposed: "billing",
@@ -159,21 +161,27 @@ const CATEGORY: TuneProposal = served({
   affected_agents_total: 3,
   effect: "future",
   historical:
-    "Registering files no row: rows already tagged join the category only through memory.assign_category, a separate action per row.",
+    "Registering files no memory: memories already tagged join the category only when each is assigned to it, a separate action per memory.",
   apply: {
     op: "namespace.register_category",
-    args: { org: "dev", namespace: "team", name: "billing", description: "Rows tagged `billing`." },
+    args: { org: "dev", namespace: "team", name: "billing", description: "Memories tagged `billing`." },
     args_complete: true,
     required_role: "writer",
     guard:
-      "None: registering a name that exists updates that category, so read namespace.list_categories again just before applying.",
+      "None: registering a name that exists updates that category, so list the categories again just before applying.",
   },
   limits: "A tag used for two meanings would need two categories, not one.",
+  refs: [
+    "memory.set_from_messages",
+    "namespace.search_categories",
+    "memory.assign_category",
+    "namespace.list_categories",
+  ],
 });
 
 // _guide_lines appends the prefixes an existing guide leaves out.
-const GUIDE_CURRENT = "# team\n\n## Key layout\n\n- `notes/…`: 9 rows\n";
-const GUIDE_PROPOSED = `${GUIDE_CURRENT}\n## Key layout\n\n- \`billing/…\`: 12 rows\n`;
+const GUIDE_CURRENT = "# team\n\n## Key layout\n\n- `notes/…`: 9 memories\n";
+const GUIDE_PROPOSED = `${GUIDE_CURRENT}\n## Key layout\n\n- \`billing/…\`: 12 memories\n`;
 
 // A guide draft cites no row and counts none; here the writers could not be read.
 const GUIDE: TuneProposal = served({
@@ -182,7 +190,7 @@ const GUIDE: TuneProposal = served({
   scope: "namespace dev/team",
   title: "Name the key prefixes the guide leaves out",
   rationale:
-    "1 key prefixes holding rows are not named in the guide. A writer reads the guide before its first write, so it names the layout new rows should follow; the counts are today's live rows.",
+    "1 key prefixes holding memories are not named in the guide. A writer reads the guide before its first write, so it names the layout new memories should follow; the counts are today's live memories.",
   current: GUIDE_CURRENT,
   current_revision: 2,
   proposed: GUIDE_PROPOSED,
@@ -190,7 +198,8 @@ const GUIDE: TuneProposal = served({
   affected_agents: [],
   affected_agents_total: null,
   effect: "future",
-  historical: "A guide changes no stored row; it shapes the writes that read it.",
+  historical: "A guide changes no stored memory; it shapes the writes that read it.",
+  refs: ["namespace.guide_get", "expected_revision"],
   apply: {
     op: "namespace.guide_set",
     args: {
@@ -203,39 +212,53 @@ const GUIDE: TuneProposal = served({
     args_complete: true,
     required_role: "writer",
     guard:
-      "expected_revision: a guide written since the draft refuses the write and answers with its current text to merge into.",
+      "The guide's revision the draft was read at: a guide written since then refuses the write and answers with its current text to merge into.",
   },
-  limits: "The draft lists what the rows show, not what they mean; a person writes what each prefix and tag is for.",
+  limits:
+    "The draft lists what the memories show, not what they mean; a person writes what each prefix and tag is for.",
 });
 
 // The extraction draft answers audit findings and reaches the agents extraction wrote for.
 const INSTRUCTIONS: TuneProposal = served({
   id: "67a699bd202bbfee",
   target: "extraction_instructions.request",
-  scope: "each memory.set_from_messages request into dev/team that sends them",
+  scope: "each request that extracts memories from messages into dev/team and sends these instructions",
   title: "Send extraction instructions for the shapes the audit found",
   rationale:
-    "The audit flagged episodic_blobs: 5 of 30 rows (counts over every writer). Extraction wrote 30 of the live rows here; 1 of the audit's cited rows came from it. No user, agent or session setting stores instructions, so a writer sends them per request.",
+    "The audit flagged episodic blobs: 5 of 30 memories (counts over every writer). Extraction wrote 30 of the live memories here; 1 of the memories the audit cited came from it. No user, agent or session setting stores instructions, so a writer sends them per request.",
   current: "",
   current_revision: null,
-  proposed: "- Keep an episode to a short summary; a run's full output belongs in context.offload.",
+  proposed: "- Keep an episode to a short summary; a run's full output belongs in offloaded context, not in memory.",
   evidence: { finding_codes: ["episodic_blobs"], supporting_count: 5, supporting: [CITED], counter_count: 25 },
   affected_agents: ["claude-code"],
   affected_agents_total: 1,
   effect: "future",
   historical:
-    "Rows already stored keep their shape. Reworking them is the loom-optimize procedure (memory.move per row, keeping a redirect), a separate action with its own approval.",
+    "Memories already stored keep their shape. Reworking them is the optimize procedure, a separate action with its own approval: each is moved to a new key, and its old key redirects to the new one.",
+  refs: [
+    "namespace.audit",
+    "memory.set_from_messages",
+    "memory.set",
+    "memory.bulk_set",
+    "memory.update_by_id",
+    "source_trace",
+    "memory.move",
+    "loom-optimize",
+    "episodic_blobs",
+    "context.offload",
+  ],
   apply: {
     op: "memory.set_from_messages",
     args: {
-      extraction_instructions: "- Keep an episode to a short summary; a run's full output belongs in context.offload.",
+      extraction_instructions:
+        "- Keep an episode to a short summary; a run's full output belongs in offloaded context, not in memory.",
     },
     args_complete: false,
     required_role: "writer",
     guard: "None needed: the instructions apply only to the request that carries them.",
   },
   limits:
-    "Each writer has to send them; a request without them extracts as before. The flagged counts include rows written by hand (memory.set), which never pass through extraction; a row counts as extraction's by its source trace. They are not drafted as the operator extraction policy: a policy overrides every other instruction and turns off the recovery passes that keep preferences, costs, ages and corrections.",
+    "Each writer has to send them; a request without them extracts as before. The flagged counts include memories written directly, which never pass through extraction; a memory counts as extraction's by the source it records. They are not drafted as the operator extraction policy: a policy overrides every other instruction and turns off the recovery passes that keep preferences, costs, ages and corrections.",
 });
 
 const TUNE: NamespaceTune = {
@@ -327,6 +350,7 @@ const ingestFinding = (
   without_document: withoutDocument,
   detail: `detail of ${code}`,
   remedy: `remedy of ${code}`,
+  refs: [`ref_of_${code}`],
   exceptions: "",
   uncertainty: "",
 });
@@ -446,7 +470,16 @@ const KNOWLEDGE: KnowledgeInspection = {
     by_model: [{ model: "text-embedding-3-small", live: 12, embedded: 11 }],
   },
   decisions: {
-    definition: "Live decision rows citing a document.",
+    // server/knowledge/app/inspect.py DECISIONS_DEFINITION and _DECISIONS_REFS.
+    definition:
+      "Live decisions in this namespace that cite a section of one of its documents, as decision extraction and decision recording write them, within what your token reads, by stage: decided, or proposed. Decisions written into another namespace (a repository's) are not counted.",
+    refs: [
+      "source_resource_id",
+      "knowledge:<namespace>/<source_uri>#<section>",
+      "loom decisions extract",
+      "decision.record",
+      "decision:proposed",
+    ],
     all_documents: { decided: stage(3), proposed: stage(0) },
   },
   listed: [
@@ -932,7 +965,7 @@ describe("Assistant: overview", () => {
     await screen.findByTestId("assistant-inventory");
     const held = screen.getByRole("region", { name: "What this namespace holds" });
     expect(held.querySelector('[data-plane="memories"]')).toHaveTextContent("Memories42");
-    expect(within(held).getByTestId("inventory-incomplete")).toHaveTextContent("Read failed: TimeoutError");
+    expect(within(held).getByTestId("inventory-incomplete")).toHaveTextContent("Could not be read (TimeoutError)");
     expect(screen.getByText(/Model: not enabled/)).toBeInTheDocument();
   });
 
@@ -955,6 +988,11 @@ describe("Assistant: overview", () => {
     await screen.findByTestId("assistant-inspection");
     expect(screen.getByRole("heading", { level: 2, name: "Memories" })).toHaveFocus();
     expect(screen.getByLabelText("User id")).toHaveValue("ada");
+    // The definitions say it in words; the exact names both views mean are listed once.
+    const names = within(screen.getByTestId("assistant-inspection"))
+      .getAllByTestId("exact-names")
+      .map((e) => e.textContent);
+    expect(names.filter((t) => t === "Exact names: user_id, read_scope own_user, memory.promote")).toHaveLength(1);
   });
 
   it("clears the id on a namespace switch and a change of subject, and the entity on a switch", async () => {
@@ -1078,10 +1116,10 @@ describe("Assistant: overview", () => {
     render(<Assistant />);
     await screen.findByTestId("inventory-scope");
     const draft = screen.getByRole("button", { name: "Draft improvements" });
-    expect(draft).toHaveAccessibleDescription(/bound to one user or session/);
+    expect(draft).toHaveAccessibleDescription(/limited to one user or session/);
     await userEvent.click(draft);
     const pick = screen.getByRole("button", { name: "ada 12 memories" });
-    expect(pick).toHaveAccessibleDescription(/bound to one user or session/);
+    expect(pick).toHaveAccessibleDescription(/limited to one user or session/);
     expect(screen.queryByRole("button", { name: "About Who appears here" })).toBeNull();
     await userEvent.click(pick);
     await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
@@ -1095,7 +1133,7 @@ describe("Assistant: overview", () => {
     try {
       render(<Assistant />);
       const draft = screen.getByRole("button", { name: "Draft improvements" });
-      expect(draft).toHaveAccessibleDescription(/bound to one user or session/);
+      expect(draft).toHaveAccessibleDescription(/limited to one user or session/);
       await userEvent.click(draft);
       await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
       expect(tuneNamespace).not.toHaveBeenCalled();
@@ -1114,7 +1152,7 @@ describe("Assistant: overview", () => {
       render(<Assistant />);
       const refresh = screen.getByRole("button", { name: "Refresh" });
       expect(refresh).toHaveAccessibleDescription(
-        "Your token's read scope needs a user or session id this page does not send.",
+        "Your token needs each request to name its user or session, which this page does not send.",
       );
       await userEvent.click(refresh);
       expect(namespaceInventory).not.toHaveBeenCalled();
@@ -1208,7 +1246,9 @@ describe("Assistant: inspection", () => {
     expect(within(result).getByRole("heading", { name: /Filed under this user/ })).toBeInTheDocument();
     expect(within(result).getByText("ada")).toHaveClass("break-all");
     expect(within(result).getByText(OWN_USER)).toBeInTheDocument();
-    expect(within(result).getByRole("heading", { name: /Every other live row of the namespace/ })).toBeInTheDocument();
+    expect(
+      within(result).getByRole("heading", { name: /Every other live memory of the namespace/ }),
+    ).toBeInTheDocument();
     // A listed row opens in the inspector under its writer's agent, user and session.
     await userEvent.click(within(result).getByRole("button", { name: "Open memory billing/invoices" }));
     expect(useStore.getState()).toMatchObject({
@@ -1219,7 +1259,7 @@ describe("Assistant: inspection", () => {
     expect(within(result).getByText("Statuses: active 1")).toBeInTheDocument();
     expect(within(result).getByText("3 versions")).toBeInTheDocument();
     expect(result).not.toHaveTextContent(String(NS_VERSION).slice(0, 10));
-    expect(within(result).getByText("No live rows.")).toBeInTheDocument();
+    expect(within(result).getByText("No live memories.")).toBeInTheDocument();
     expect(within(result).getByTestId("inspect-policy")).toHaveTextContent(
       "not shown (only an org admin reads the operator extraction policy)",
     );
@@ -1250,8 +1290,8 @@ describe("Assistant: inspection", () => {
     await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
     const result = await screen.findByTestId("assistant-inspection");
     expect(within(result).getByText("Newest 1 of 40 listed.")).toBeInTheDocument();
-    expect(within(result).getByText("The rows could not be counted.")).toBeInTheDocument();
-    expect(within(result).queryByText("No live rows.")).toBeNull();
+    expect(within(result).getByText("The memories could not be counted.")).toBeInTheDocument();
+    expect(within(result).queryByText("No live memories.")).toBeNull();
   });
 
   it("states the activity window, and the ledger's retention beside the calls", async () => {
@@ -1262,16 +1302,14 @@ describe("Assistant: inspection", () => {
         calls: [{ operation: "memory.search", calls: 9, succeeded: 8 }],
         first_at: "2026-10-20T10:00:00",
         last_at: "2026-11-01T10:00:00",
-        gap: "The ledger keeps calls for a 7-day window, so older ones are not counted.",
+        gap: "Calls are kept for 7 days, so older ones are not counted.",
       },
     });
     render(<Assistant />);
     await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
     const result = await screen.findByTestId("assistant-inspection");
     expect(within(result).getByText(/Last 30 days, succeeded of called: memory.search 8\/9/)).toBeInTheDocument();
-    expect(
-      within(result).getByText("The ledger keeps calls for a 7-day window, so older ones are not counted."),
-    ).toBeInTheDocument();
+    expect(within(result).getByText("Calls are kept for 7 days, so older ones are not counted.")).toBeInTheDocument();
   });
 
   it("says which settings and calls could not be read, never their defaults", async () => {
@@ -1294,7 +1332,7 @@ describe("Assistant: inspection", () => {
     render(<Assistant />);
     await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
     const result = await screen.findByTestId("assistant-inspection");
-    expect(within(result).getByText("The rows could not be listed.")).toBeInTheDocument();
+    expect(within(result).getByText("The memories could not be listed.")).toBeInTheDocument();
     expect(within(result).queryByText(/Newest 0 of/)).toBeNull();
     expect(within(result).getByText("The guide could not be read.")).toBeInTheDocument();
     expect(within(result).queryByText(/Guide revision none/)).toBeNull();
@@ -1313,7 +1351,7 @@ describe("Assistant: inspection", () => {
     const result = await screen.findByTestId("assistant-inspection");
     expect(within(result).getByText("Tags: could not be read")).toBeInTheDocument();
     expect(within(result).getByText("Categories: could not be read")).toBeInTheDocument();
-    expect(within(result).getByText(/The ledger's retention could not be read/)).toBeInTheDocument();
+    expect(within(result).getByText(/How long calls are kept could not be read/)).toBeInTheDocument();
   });
 
   it.each([
@@ -1343,7 +1381,7 @@ describe("Assistant: inspection", () => {
     const own = (await screen.findByTestId("assistant-inspection")).querySelector(
       '[data-view="inspect-own"]',
     ) as HTMLElement;
-    expect(within(own).getByText("The rows could not be counted.")).toBeInTheDocument();
+    expect(within(own).getByText("The memories could not be counted.")).toBeInTheDocument();
     expect(within(own).getByText("Tags: billing 1")).toBeInTheDocument();
     expect(within(own).getByRole("button", { name: "Open memory billing/invoices" })).toBeInTheDocument();
     expect(within(own).queryByText(/Newest/)).toBeNull();
@@ -1420,6 +1458,9 @@ describe("Assistant: review changes", () => {
     expect(within(card).getByTestId("how-to-apply")).toHaveTextContent(
       "How to apply: A writer on this namespace sends the request below.",
     );
+    expect(within(card).getByTestId("exact-names")).toHaveTextContent(
+      "Exact names: memory.set_from_messages, namespace.search_categories, memory.assign_category, namespace.list_categories",
+    );
     expect(within(review).getByTestId("tune-skipped")).toHaveTextContent(
       "audit.telemetry_unavailable: window within the ledger lag",
     );
@@ -1477,15 +1518,16 @@ describe("Assistant: review changes", () => {
     const card = within(review).getByRole("listitem", {
       name: /Send extraction instructions for the shapes the audit found/,
     });
+    expect(within(card).getByText("Each writer adds these arguments to its own requests:")).toBeInTheDocument();
     expect(
-      within(card).getByText("Each writer adds these arguments to its own memory.set_from_messages requests:"),
-    ).toBeInTheDocument();
-    expect(
-      within(card).getByText(/episodic_blobs · 5 supporting · at least 25 unflagged rows it must keep working for/),
+      within(card).getByText(/episodic_blobs · 5 supporting · at least 25 unflagged memories it must keep working for/),
     ).toBeInTheDocument();
     expect(within(card).getByTestId("proposal-args")).toHaveTextContent('"extraction_instructions"');
     expect(within(card).getByTestId("how-to-apply")).toHaveTextContent(/No single request applies this/);
     expect(within(card).getByTestId("affected-agents")).toHaveTextContent("Affected agents:claude-code");
+    expect(within(card).getByTestId("exact-names")).toHaveTextContent(
+      "Exact names: namespace.audit, memory.set_from_messages, memory.set, memory.bulk_set, memory.update_by_id, source_trace, memory.move, loom-optimize, episodic_blobs, context.offload",
+    );
   });
 
   it("does not claim the evidence supports no change when a read failed", async () => {
@@ -1500,7 +1542,8 @@ describe("Assistant: review changes", () => {
   });
 
   it("lists what was not drafted, and why, when the evidence rules every draft out", async () => {
-    const reason = "extraction: memory.set_from_messages writes no row here, so no rule is drafted for episodic_blobs";
+    const reason =
+      "extraction: no live memory here records extraction from messages as its source, so no rule is drafted for episodic blobs (episodic_blobs)";
     tuneNamespace.mockResolvedValueOnce({ ...TUNE, proposals: [], skipped: [reason] });
     render(<Assistant />);
     await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
@@ -1604,21 +1647,28 @@ describe("Assistant: documents", () => {
     );
     const unembedded = within(result).getByRole("listitem", { name: "Chunks with no vector" });
     expect(unembedded).toHaveTextContent("1 document of 2 (50%)");
-    expect(unembedded).not.toHaveTextContent("published by knowledge.ingest");
+    expect(unembedded).not.toHaveTextContent("ingested from a file");
     expect(within(result).queryByText(/checks? did not run/)).toBeNull();
     expect(within(result).getByTestId("docs-decisions-total")).toHaveTextContent(
       "Decided: 3 (1 confirmed, 2 unconfirmed, 0 source changed, 0 with an outcome) · Proposed: none",
     );
+    const decisions = within(result).getByRole("region", { name: "Decisions recorded from documents" });
+    expect(within(decisions).getByTestId("exact-names")).toHaveTextContent("decision:proposed");
     const spec = result.querySelector('[data-source="https://example.com/spec.pdf"]') as HTMLElement;
     expect(spec).toHaveTextContent("Chunks: 8 of 8 searchable");
-    expect(spec).toHaveTextContent("Extraction: 9 of 10 pages extracted, 1 failed, lost section_path");
+    expect(spec).toHaveTextContent("Extraction: 9 of 10 pages extracted, 1 failed, lost section paths");
     expect(spec).toHaveTextContent("job ing-1: partial");
     const notes = result.querySelector('[data-source="https://example.com/notes.md"]') as HTMLElement;
     expect(notes).toHaveTextContent("Extraction: none (a text write, which no extractor read)");
     expect(within(result).getByTestId("docs-extraction")).toHaveTextContent(
-      "Extraction coverage: 1 of 1 ingested document not complete · lost: section_path 1",
+      "Extraction coverage: 1 of 1 ingested document not complete · lost: section paths 1",
     );
-    expect(within(result).getByText("oversized_values")).toBeInTheDocument();
+    expect(
+      within(result)
+        .getAllByTestId("exact-names")
+        .map((e) => e.textContent),
+    ).toContain("Exact names: section_path");
+    expect(within(result).getByText(/Oversized values/)).toBeInTheDocument();
     expect(await axeViolations(container)).toEqual([]);
   });
 
@@ -1629,7 +1679,7 @@ describe("Assistant: documents", () => {
     expect(within(result).getByRole("status")).toHaveTextContent("This namespace holds no live document");
     expect(within(result).queryByRole("heading", { name: /Newest documents/ })).toBeNull();
     expect(within(result).queryByRole("heading", { name: "What search serves" })).toBeNull();
-    expect(within(result).getByText("No knowledge.ingest job in the last 30 days.")).toBeInTheDocument();
+    expect(within(result).getByText("No ingestion job in the last 30 days.")).toBeInTheDocument();
   });
 
   it("shows a section it could not read as not read, never as zero", async () => {
@@ -1673,6 +1723,7 @@ describe("Assistant: documents", () => {
       expect(card).toHaveAttribute("data-code", code);
       expect(card.closest("[data-kind]")).toHaveAttribute("data-kind", kind);
       expect(card).toHaveTextContent(`remedy of ${code}`);
+      expect(within(card).getByTestId("exact-names")).toHaveTextContent(`Exact names: ref_of_${code}`);
       if (code === "extraction_incomplete") {
         expect(card).toHaveTextContent("1 document of 1 (100%)");
         expect(card).toHaveTextContent(SPEC);
@@ -1694,7 +1745,7 @@ describe("Assistant: documents", () => {
     render(<Assistant />);
     const result = await pickDocuments();
     expect(within(result).queryByRole("status")).toBeNull();
-    expect(within(result).getByText("The knowledge.ingest jobs could not be read.")).toBeInTheDocument();
+    expect(within(result).getByText("The ingestion jobs could not be read.")).toBeInTheDocument();
     // Only the job read failed: its five checks did not run; the coverage check did.
     expect(within(result).getByText("The job checks did not run.")).toBeInTheDocument();
     expect(within(result).queryByText("The extraction coverage check did not run.")).toBeNull();
@@ -1718,6 +1769,12 @@ describe("Assistant: documents", () => {
     expect(within(result).getByText("The extraction coverage check did not run.")).toBeInTheDocument();
     expect(within(result).queryByText("The job checks did not run.")).toBeNull();
     expect(within(result).getByText(/Checked, none found: Backlog/)).toBeInTheDocument();
+    expect(within(result).getByTestId("docs-rules-skipped")).toHaveTextContent("Checks not run: Extraction incomplete");
+    // The clean checks' codes are listed apart, like the ones not run.
+    const names = within(result)
+      .getAllByTestId("exact-names")
+      .map((e) => e.textContent ?? "");
+    expect(names.some((t) => t.startsWith("Exact names: ingest_backlog"))).toBe(true);
   });
 
   it("says the sources with no live document were not listed when that read failed", async () => {
@@ -1763,10 +1820,10 @@ describe("Assistant: documents", () => {
     render(<Assistant />);
     const result = await pickDocuments();
     const card = within(result).getByRole("listitem", { name: "Chunks with no vector" });
-    expect(card).toHaveTextContent("2 documents of 2 (100%) · 1 published by knowledge.ingest");
+    expect(card).toHaveTextContent("2 documents of 2 (100%) · 1 ingested from a file");
     const samples = within(within(card).getByRole("list", { name: /Samples of/ })).getAllByRole("listitem");
-    expect(samples[0]).toHaveTextContent(`${SPEC} · published by knowledge.ingest`);
-    expect(samples[1]).not.toHaveTextContent("published by knowledge.ingest");
+    expect(samples[0]).toHaveTextContent(`${SPEC} · ingested from a file`);
+    expect(samples[1]).not.toHaveTextContent("ingested from a file");
   });
 
   it("names the ingested samples the server sampled apart from the first matches", async () => {
@@ -1831,7 +1888,7 @@ describe("Assistant: documents", () => {
     render(<Assistant />);
     const result = await pickDocuments();
     const card = within(result).getByRole("listitem", { name: "Chunks with no vector" });
-    expect(card).toHaveTextContent(`Also published by knowledge.ingest: ${SPEC}`);
+    expect(card).toHaveTextContent(`Also ingested from a file: ${SPEC}`);
     expect(card).toHaveTextContent("and 1 more not listed");
   });
 
@@ -1971,7 +2028,7 @@ describe("Assistant: documents", () => {
   });
 
   it("lists the audit's memory checks it read, beside the one it names as skipped", async () => {
-    const reason = "memory_findings.episodic_blobs: not reported by namespace.audit";
+    const reason = "memory_findings.episodic_blobs: not reported by the namespace audit";
     inspectKnowledge.mockResolvedValueOnce({
       ...KNOWLEDGE,
       memory_findings: KNOWLEDGE.memory_findings.filter((f) => f.code === "oversized_values"),
@@ -1979,26 +2036,26 @@ describe("Assistant: documents", () => {
     });
     render(<Assistant />);
     const result = await pickDocuments();
-    const list = within(result).getByRole("list", { name: "namespace.audit findings on memories" });
+    const list = within(result).getByRole("list", { name: "Memory check findings" });
     expect(within(list).getAllByRole("listitem")).toHaveLength(1);
-    expect(list).toHaveTextContent("oversized_values 2 rows");
+    expect(list).toHaveTextContent("Oversized values 2 rows");
     expect(within(result).getByTestId("docs-skipped")).toHaveTextContent(reason);
   });
 
-  it("says the audit's memory checks were not read under a read scope bound to one user", async () => {
+  it("says the audit's memory checks were not read for a token limited to one user", async () => {
     inspectKnowledge.mockResolvedValueOnce({
       ...KNOWLEDGE,
       memory_findings: [],
       skipped: [
-        "memory_findings: namespace.audit reads every user's rows; not run under a read scope bound to one user or session",
+        "memory_findings: the namespace audit reads every user's memories, so it does not run for a token limited to one user or session",
       ],
     });
     render(<Assistant />);
     const result = await pickDocuments();
     expect(
-      within(result).getByText("namespace.audit's checks were not read; the reason is listed below."),
+      within(result).getByText("The memory checks were not read; the reason is listed below."),
     ).toBeInTheDocument();
-    expect(within(result).queryByRole("list", { name: "namespace.audit findings on memories" })).toBeNull();
+    expect(within(result).queryByRole("list", { name: "Memory check findings" })).toBeNull();
   });
 
   it("offers documents to a token pinned to one user, which the server answers in scope", async () => {
@@ -2018,7 +2075,7 @@ describe("Assistant: documents", () => {
       render(<Assistant />);
       const inspect = screen.getByRole("button", { name: "Inspect documents" });
       expect(inspect).toHaveAccessibleDescription(
-        "Your token's read scope needs a user or session id this page does not send.",
+        "Your token needs each request to name its user or session, which this page does not send.",
       );
       await userEvent.click(inspect);
       expect(inspectKnowledge).not.toHaveBeenCalled();
@@ -2058,10 +2115,11 @@ const STATS = (size: number, stride: number, chunks: number, cut: number, tokens
 
 // server/knowledge/app/tune.py, word for word where the draft carries the server's text.
 const TUNE_SCOPE = "every namespace of this deployment (a deployment setting)";
-const SETTING_GUARD = "expected: the change is refused when the value in force is no longer the drafted current one.";
+const SETTING_GUARD =
+  "The value it was drafted against: the change is refused when the value in force is no longer that one.";
 // Sent whenever the namespace has a live document or a chunk sample (tune.py DECISIONS_SKIPPED).
 const DECISIONS_SKIPPED =
-  "decision_extraction: no instruction is drafted: loom decisions extract and the source sync's mining build their prompt from fixed text, and no request, namespace or org setting carries instructions for them";
+  "decision_extraction: no instruction is drafted: decision extraction and a source sync's decision mining build their prompt from fixed text, and no request, namespace or org setting carries instructions for them";
 const SAMPLED = Array.from({ length: 30 }, (_, i) => `https://example.com/handbook/${String(i).padStart(2, "0")}.md`);
 
 // The sections-cut rule: 30 sampled documents, 18 of 40 sections cut at size 1000 (more
@@ -2074,8 +2132,8 @@ const CHUNKING: TuneProposal = {
   title: "Cut documents into chunks of 2000 characters",
   rationale:
     "Of 30 documents of dev/team cut again at the current values, the size cuts 18 of 40 sampled sections into more chunks than their structure makes, so a search hit returns part of a section. At size 2000 and stride 1600 the same sample makes 64 chunks (now 120), cuts 2 of 40 sections (now 18) and its largest embedding input is 560 tokens (now 300). The stride keeps its ratio to the size.",
-  current: "LOOM_KNOWLEDGE_CHUNK_SIZE=1000, LOOM_KNOWLEDGE_CHUNK_STRIDE=800",
-  proposed: "LOOM_KNOWLEDGE_CHUNK_SIZE=2000, LOOM_KNOWLEDGE_CHUNK_STRIDE=1600",
+  current: "knowledge_chunk_size=1000, knowledge_chunk_stride=800",
+  proposed: "knowledge_chunk_size=2000, knowledge_chunk_stride=1600",
   current_revision: null,
   evidence: {
     finding_codes: [],
@@ -2088,7 +2146,16 @@ const CHUNKING: TuneProposal = {
   affected_agents_total: 1,
   effect: "future",
   historical:
-    "Documents already stored keep their chunks. A text document is cut again by loom rechunk --org <org> --namespace <namespace> --apply; an ingested one only by a new knowledge.ingest of its original (loom rechunk would turn it into a text document). Each is a separate action with its own approval.",
+    "Documents already stored keep their chunks. A text document is cut again by the rechunk command; an ingested one only by downloading its original, uploading it again and ingesting it (the rechunk command would turn it into a text document). Each is a separate action with its own approval.",
+  refs: [
+    "loom rechunk --org <org> --namespace <namespace> --apply",
+    "GET /v1/knowledge.download",
+    "POST /v1/knowledge.upload",
+    "knowledge.ingest",
+    "settings.set knowledge_chunk_size",
+    "settings.set knowledge_chunk_stride",
+    "expected",
+  ],
   apply: {
     op: "settings.set",
     via: "admin_route",
@@ -2115,7 +2182,7 @@ const CHUNKING: TuneProposal = {
 const ROUTE_SERVICE = 'LOOM_DOCUMENT_EXTRACTORS_JSON["docx"]';
 const ROUTES_PROPOSED = { docx: "<as set>", pdf: `<the URL ${ROUTE_SERVICE} names>` };
 
-// _routes: two pdf sources failed format_unavailable with no extractor configured for pdf
+// _routes: two pdf sources failed (format_unavailable) with no extractor configured for pdf
 // (no default URL, no pdf route); the service a docx route names declares pdf. Five pdf
 // documents were extracted whole before, by a route since removed.
 const ROUTES: TuneProposal = {
@@ -2123,7 +2190,7 @@ const ROUTES: TuneProposal = {
   target: "settings.document_extractors_json",
   scope: TUNE_SCOPE,
   title: "Route pdf to an extractor that declares it",
-  rationale: `pdf: 2 sources failed format_unavailable; no extractor is configured for it; the service ${ROUTE_SERVICE} names declares pdf. Counts are dev/team's.`,
+  rationale: `pdf: 2 sources failed because no extractor took the format; no extractor is configured for it; the service ${ROUTE_SERVICE} names declares pdf. Counts are dev/team's.`,
   current: '{"docx": "<as set>"}',
   current_revision: null,
   // Python's json.dumps: ", " and ": " between items.
@@ -2139,7 +2206,15 @@ const ROUTES: TuneProposal = {
   affected_agents_total: 1,
   effect: "future",
   historical:
-    "Sources already ingested keep their extraction, and a failed job does not run again: each is re-extracted only by uploading its original again and running knowledge.ingest, a separate action with its own approval.",
+    "Sources already ingested keep their extraction, and a failed job does not run again: each is extracted again only by uploading its original again and ingesting it, a separate action with its own approval.",
+  refs: [
+    "format_unavailable",
+    "LOOM_DOCUMENT_EXTRACTORS_JSON",
+    "current",
+    "POST /v1/knowledge.upload",
+    "knowledge.ingest",
+    "knowledge.inspect",
+  ],
   apply: {
     op: "LOOM_DOCUMENT_EXTRACTORS_JSON",
     via: "environment",
@@ -2147,12 +2222,12 @@ const ROUTES: TuneProposal = {
     args_complete: false,
     required_role: "platform_admin",
     guard:
-      "None: an environment setting has no revision; compare the deployment's value with `current` before setting it. It is in force once each server and worker restarts.",
+      "None: an environment setting has no revision; compare the deployment's value with the current one shown here before setting it. It is in force once each server and worker restarts.",
   },
   apply_also: [],
   preview: null,
   limits:
-    "A URL is not shown, as an extractor URL can carry a credential: each placeholder names the setting whose URL it is, and `<as set>` keeps a route as the deployment has it. A service's capabilities name the formats it takes, not what it keeps: ingest one listed source through the new route and read its coverage (knowledge.inspect) before relying on it. A format's own route wins over a media-type route (`application/pdf`), so the drafted route also takes the sources a media-type route sends elsewhere now.",
+    "A URL is not shown, as an extractor URL can carry a credential: each placeholder names the setting whose URL it is, and `<as set>` keeps a route as the deployment has it. A service's capabilities name the formats it takes, not what it keeps: ingest one listed source through the new route and inspect the documents' coverage before relying on it. A format's own route wins over a media-type route (`application/pdf`), so the drafted route also takes the sources a media-type route sends elsewhere now.",
 };
 
 // namespace_tune_document_sample (default 50), MAX_SAMPLE_CHARS (8 Mi).
@@ -2246,5 +2321,8 @@ describe("Assistant: document drafts", () => {
       "How to apply: A platform admin sets the variable below in the deployment; it takes effect once each server and worker restarts.",
     );
     expect(within(card).queryByTestId("proposal-also")).toBeNull();
+    expect(within(card).getByTestId("exact-names")).toHaveTextContent(
+      "Exact names: format_unavailable, LOOM_DOCUMENT_EXTRACTORS_JSON, current, POST /v1/knowledge.upload, knowledge.ingest, knowledge.inspect",
+    );
   });
 });

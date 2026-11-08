@@ -73,9 +73,10 @@ export function Assistant() {
     const scoped = op === "namespace.inventory" || op === "knowledge.inspect";
     if (roleLoading) return "Your role on this namespace is still loading.";
     if (!canCall(op, role, whoami)) return "Your role on this namespace is not known.";
-    if (incomplete && scoped) return "Your token's read scope needs a user or session id this page does not send.";
+    if (incomplete && scoped)
+      return "Your token needs each request to name its user or session, which this page does not send.";
     if (narrowed && !scoped)
-      return "Your token is bound to one user or session; inspecting memories and drafting need a token for the whole namespace.";
+      return "Your token is limited to one user or session; inspecting memories and drafting need a token for the whole namespace.";
     return null;
   };
   const overviewGate = gate("namespace.inventory");

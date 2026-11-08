@@ -181,16 +181,18 @@ Snapshots and point-in-time rollback (`namespace.snapshot`, `namespace.restore`,
 are refused. It changes nothing it reads and gives no recall credit. Like
 `memory.list`, it writes one exposure-ledger row for the rows it lists.
 
-- **`own`**: the live rows whose identity names the subject. For an agent that is what it
-  wrote; the agent name records the writer and is not a read boundary. For a user, the
-  rows filed under that `user_id`, whoever wrote them: what a token pinned to the user
-  (`read_scope: own_user`) reads. For a session, the rows written in that `session_id`
-  by any user; a token pinned to one user and the session (`read_scope: own_session`)
-  reads that user's part.
+- **`own`**: the live rows whose identity names the subject. For an agent, the rows
+  written under its name; the name says which agent a row is from and is not a read
+  boundary. For a user, the rows filed under that `user_id`, whoever wrote them: what a
+  token pinned to the user (`read_scope: own_user`) reads. For a session, the rows
+  written in that `session_id` by any user; a token pinned to one user and the session
+  (`read_scope: own_session`) reads that user's part.
 - **`others`**: every other live row of the namespace. A member reads these as well, so
   `own` alone never stands for everything a user, agent or session can read. Neither
   view counts the promoted rows (`memory.promote`), which a search serves to every
   agent as well.
+- Each view's `definition` says in plain words which rows it holds; its `refs` lists
+  the exact column it means, and the read scope and op where the definition names one.
 - Each view counts its rows by type, status and source class, lists its top tags and the
   registered categories its rows are filed under, and its newest rows (`sample_limit`,
   default 10) with `memory_id`, `version`, the `content_sha256` `memory.get` serves,
@@ -214,7 +216,8 @@ are refused. It changes nothing it reads and gives no recall credit. Like
 - **`settings`**: the guide's revision and summary, the number of registered categories,
   and the operator extraction policy only for an org admin
   (`extraction_policy_unavailable` says why it is missing). Extraction instructions are
-  sent per request; no user, agent or session setting stores them.
+  sent per request; no user, agent or session setting stores them, and
+  `extraction_instructions_refs` names the op and argument that carry them.
 - A section that cannot be read is listed in `skipped`; a skipped section is not an empty
   one. A token narrowed below the namespace (`read_scope`) cannot call it.
 
@@ -255,6 +258,11 @@ and calls no model. Each proposal names:
   `namespace.guide_set` refuses a guide that moved past `expected_revision`;
   `namespace.register_category` has no revision check, so the categories are read again
   just before applying.
+- **`refs`**: each exact name the draft's text says in plain words, for a caller that
+  acts on it. A setting is named as it is changed: `settings.set <field>` when it changes
+  live, its `LOOM_` variable when only the environment sets it. A `skipped` reason about a
+  setting, a lost capability, a finding or an error code, or one that tells the reader to
+  act, names the exact names in parentheses.
 
 The drafts come from fixed rules: an extraction rule per writer-side audit finding
 (double-encoded values, JSON-prefix excerpts, oversized values, episodic blobs,

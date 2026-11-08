@@ -510,8 +510,8 @@ MAX_FORMAT_SOURCES = 1000  # not a setting: a bound on one report's rows, flagge
 async def format_unavailable_sources(
     org: str, namespace: str, *, lease_s: float, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
-    """The sources whose current job (the open one, else the newest) failed or waits
-    because no configured extractor takes its format (error_code format_unavailable), no
+    """The sources whose current job (the open one, else the newest) failed because no
+    configured extractor takes its format (error_code format_unavailable), no
     write having replaced it: each with that job's id and what its format is read from
     (filename, content_type, declared_format), at most MAX_FORMAT_SOURCES + 1 (one more
     means cut)."""

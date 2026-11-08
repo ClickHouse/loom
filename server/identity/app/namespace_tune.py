@@ -82,24 +82,65 @@ _FINDING_RULES: dict[str, str] = {
     ),
     "json_prefix_excerpts": "Open each value with the claim in plain words, not a JSON prefix.",
     "oversized_values": (
-        "Keep a memory to one claim of a few sentences; a document belongs in knowledge.upsert."
+        "Keep a memory to one claim of a few sentences; a document belongs in the knowledge base."
     ),
     "episodic_blobs": (
-        "Keep an episode to a short summary; a run's full output belongs in context.offload."
+        "Keep an episode to a short summary; a run's full output belongs in offloaded "
+        "context, not in memory."
     ),
     "coordination_as_memory": (
         "Keep leases, locks and status flags in working memory, not in memory."
     ),
     "hand_rolled_index_rows": (
-        "Do not write rows that list other keys; the key layout is the index."
+        "Do not write memories that list other keys; the key layout is the index."
     ),
 }
+# Each finding code in words, as the dashboard's audit panel says it; the code rides `refs`.
+_FINDING_WORDS: dict[str, str] = {
+    "double_encoded_values": "double-encoded values",
+    "json_prefix_excerpts": "JSON-prefix excerpts",
+    "oversized_values": "oversized values",
+    "episodic_blobs": "episodic blobs",
+    "coordination_as_memory": "coordination as memory",
+    "hand_rolled_index_rows": "hand-rolled index rows",
+}
+# The op a rule above names in words, for `refs`.
+_FINDING_RULE_REFS: dict[str, str] = {
+    "oversized_values": "knowledge.upsert",
+    "episodic_blobs": "context.offload",
+    "coordination_as_memory": "working_memory.set",
+}
+
+# The exact names each draft's text says in words; the extraction draft adds its findings'
+# codes and `_FINDING_RULE_REFS`.
+_EXTRACTION_REFS = [
+    "namespace.audit",
+    "memory.set_from_messages",
+    "memory.set",
+    "memory.bulk_set",
+    "memory.update_by_id",
+    "source_trace",
+    "memory.move",
+    "loom-optimize",
+]
+_GUIDE_REFS = ["namespace.guide_get", "expected_revision"]
+_CATEGORY_REFS = [
+    "memory.set_from_messages",
+    "namespace.search_categories",
+    "memory.assign_category",
+    "namespace.list_categories",
+]
 
 _HISTORICAL_EXTRACTION = (
-    "Rows already stored keep their shape. Reworking them is the loom-optimize "
-    "procedure (memory.move per row, keeping a redirect), a separate action with its own "
-    "approval."
+    "Memories already stored keep their shape. Reworking them is the optimize procedure, a "
+    "separate action with its own approval: each is moved to a new key, and its old key "
+    "redirects to the new one."
 )
+
+
+def _named(findings: list[Any]) -> str:
+    """Findings in words with their codes, for a skipped note (which has no `refs`)."""
+    return ", ".join(f"{_FINDING_WORDS[f.code]} ({f.code})" for f in findings)
 
 
 def _proposal_id(target: str, proposed: str) -> str:
@@ -208,8 +249,8 @@ async def _extraction_proposal(
     if not writers:
         # Extraction writes nothing here: the instructions would reach nothing.
         run.skipped.append(
-            "extraction: memory.set_from_messages writes no row here, so no rule is drafted for "
-            + ", ".join(f.code for f in drafted)
+            "extraction: no live memory here records extraction from messages as its source, so "
+            "no rule is drafted for " + _named(drafted)
         )
         return None
     cited = {_ref(e) for f in drafted for e in f.evidence}
@@ -231,24 +272,22 @@ async def _extraction_proposal(
     # away before it) is judged on nothing: no draft, said apart from the unreached ones.
     uncited = [f for f in drafted if not f.evidence]
     if uncited:
-        run.skipped.append(
-            "extraction: the audit cited no live row of " + ", ".join(f.code for f in uncited)
-        )
+        run.skipped.append("extraction: the audit cited no live memory for " + _named(uncited))
     unreached = [f for f in drafted if f.evidence and not by_finding[f.code]]
     if unreached:
         run.skipped.append(
-            "extraction: no cited row of "
-            + ", ".join(f.code for f in unreached)
-            + " was written by extraction (judged on the audit's cited rows)"
+            "extraction: none of the memories the audit cited for "
+            + _named(unreached)
+            + " records extraction from messages as its source"
         )
     drafted = [f for f in drafted if by_finding[f.code]]
     if not drafted:
         return None
     rule_text = "\n".join(f"- {_FINDING_RULES[f.code]}" for f in drafted)
     counts = "; ".join(
-        f"{f.code}: {f.count} of {f.population} rows"
+        f"{_FINDING_WORDS[f.code]}: {f.count} of {f.population} memories"
         if f.population is not None
-        else f"{f.code}: {f.count} rows"
+        else f"{_FINDING_WORDS[f.code]}: {f.count} memories"
         for f in drafted
     )
     extraction_rows = int(writers[0]["total_rows"])
@@ -259,14 +298,22 @@ async def _extraction_proposal(
     return TuneProposal(
         id=_proposal_id("extraction_instructions.request", rule_text),
         target="extraction_instructions.request",
-        scope=f"each memory.set_from_messages request into {i.org}/{i.namespace} that sends them",
+        scope=(
+            f"each request that extracts memories from messages into {i.org}/{i.namespace} "
+            "and sends these instructions"
+        ),
         title="Send extraction instructions for the shapes the audit found",
         rationale=(
             f"The audit flagged {counts} (counts over every writer). Extraction wrote "
-            f"{extraction_rows} of the live rows here; {from_it} of the audit's cited rows "
-            "came from it. No user, agent or session setting stores instructions, so a "
+            f"{extraction_rows} of the live memories here; {from_it} of the memories the "
+            "audit cited came from it. No user, agent or session setting stores instructions, so a "
             "writer sends them per request."
         ),
+        refs=[
+            *_EXTRACTION_REFS,
+            *(f.code for f in drafted),
+            *(_FINDING_RULE_REFS[f.code] for f in drafted if f.code in _FINDING_RULE_REFS),
+        ],
         current="",
         proposed=rule_text,
         evidence=TuneEvidence(
@@ -292,8 +339,8 @@ async def _extraction_proposal(
         ),
         limits=(
             "Each writer has to send them; a request without them extracts as before. The "
-            "flagged counts include rows written by hand (memory.set), which never pass "
-            "through extraction; a row counts as extraction's by its source trace. They "
+            "flagged counts include memories written directly, which never pass through "
+            "extraction; a memory counts as extraction's by the source it records. They "
             "are not drafted as the operator extraction policy: a policy overrides every "
             "other instruction and turns off the recovery passes that keep preferences, "
             "costs, ages and corrections."
@@ -357,7 +404,7 @@ async def _category_proposals(
         filed_clause = (
             "" if filed is None else f"; {filed} of them are filed under another category"
         )
-        description = f"Rows tagged `{tag}`."
+        description = f"Memories tagged `{tag}`."
         out.append(
             TuneProposal(
                 id=_proposal_id("namespace.category", tag),
@@ -365,11 +412,12 @@ async def _category_proposals(
                 scope=f"namespace {i.org}/{i.namespace}",
                 title=f"Register a category for the tag `{tag}`",
                 rationale=(
-                    f"{rows} live rows carry the tag `{tag}` and no category is named after "
-                    f"it{filed_clause}. A registered category is what "
-                    "namespace.search_categories finds, and extraction offers the first "
-                    f"{OFFERED_CATEGORIES} by name as tags for new rows."
+                    f"{rows} live memories carry the tag `{tag}` and no category is named after "
+                    f"it{filed_clause}. A registered category is what a category search "
+                    "finds, and extraction offers the first "
+                    f"{OFFERED_CATEGORIES} by name as tags for new memories."
                 ),
+                refs=_CATEGORY_REFS,
                 current="",
                 proposed=tag,
                 evidence=TuneEvidence(
@@ -380,8 +428,8 @@ async def _category_proposals(
                 affected_agents=agents,
                 affected_agents_total=total,
                 historical=(
-                    "Registering files no row: rows already tagged join the category only "
-                    "through memory.assign_category, a separate action per row."
+                    "Registering files no memory: memories already tagged join the category "
+                    "only when each is assigned to it, a separate action per memory."
                 ),
                 apply=TuneApply(
                     op="namespace.register_category",
@@ -393,8 +441,8 @@ async def _category_proposals(
                     },
                     required_role="writer",
                     guard=(
-                        "None: registering a name that exists updates that category, so read "
-                        "namespace.list_categories again just before applying."
+                        "None: registering a name that exists updates that category, so list "
+                        "the categories again just before applying."
                     ),
                 ),
                 limits=_spelling_limits(tag, spellings.get(tag.lower(), []))
@@ -431,11 +479,11 @@ def _spelling_limits(tag: str, spellings: list[tuple[str, int]]) -> str:
     """The draft's limits, naming any other spelling of its tag, which new rows filed
     under the category's exact name would stay apart from."""
     text = "A tag used for two meanings would need two categories, not one."
-    others = [f"`{t}` ({n} rows)" for t, n in spellings if t != tag]
+    others = [f"`{t}` ({n} memories)" for t, n in spellings if t != tag]
     if others:
         text += (
-            f" Also tagged {', '.join(others)}: extraction tags new rows with the "
-            "category's exact name, so rows under another spelling stay apart from it; "
+            f" Also tagged {', '.join(others)}: extraction tags new memories with the "
+            "category's exact name, so memories under another spelling stay apart from it; "
             "pick one spelling and retag the rest."
         )
     return text
@@ -449,10 +497,10 @@ def _names_prefix(content: str, prefix: str) -> bool:
 
 def _guide_lines(prefixes: list[tuple[str, int]], tags: list[tuple[str, int]]) -> list[str]:
     lines = ["## Key layout", ""]
-    lines += [f"- `{p}/…`: {n} rows" for p, n in prefixes]
+    lines += [f"- `{p}/…`: {n} memories" for p, n in prefixes]
     if tags:
         lines += ["", "## Tags", ""]
-        lines += [f"- `{t}`: {n} rows" for t, n in tags]
+        lines += [f"- `{t}`: {n} memories" for t, n in tags]
     return lines
 
 
@@ -485,7 +533,7 @@ def _guide_proposal(
             )
             return None
         title = "Name the key prefixes the guide leaves out"
-        why = f"{len(missing)} key prefixes holding rows are not named in the guide"
+        why = f"{len(missing)} key prefixes holding memories are not named in the guide"
         if len(missing) > len(listed):
             why += f" (the {len(listed)} most used are drafted)"
     else:
@@ -504,7 +552,7 @@ def _guide_proposal(
         title=title,
         rationale=(
             f"{why}. A writer reads the guide before its first write, so it names the "
-            "layout new rows should follow; the counts are today's live rows."
+            "layout new memories should follow; the counts are today's live memories."
         ),
         current=content,
         current_revision=revision,
@@ -513,7 +561,8 @@ def _guide_proposal(
         evidence=TuneEvidence(supporting_count=sum(n for _, n in listed), counter_count=None),
         affected_agents=agents,
         affected_agents_total=total,
-        historical="A guide changes no stored row; it shapes the writes that read it.",
+        historical="A guide changes no stored memory; it shapes the writes that read it.",
+        refs=_GUIDE_REFS,
         apply=TuneApply(
             op="namespace.guide_set",
             args={
@@ -525,12 +574,12 @@ def _guide_proposal(
             },
             required_role="writer",
             guard=(
-                "expected_revision: a guide written since the draft refuses the write and "
-                "answers with its current text to merge into."
+                "The guide's revision the draft was read at: a guide written since then "
+                "refuses the write and answers with its current text to merge into."
             ),
         ),
         limits=(
-            "The draft lists what the rows show, not what they mean; a person writes what "
+            "The draft lists what the memories show, not what they mean; a person writes what "
             "each prefix and tag is for."
         ),
     )

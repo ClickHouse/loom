@@ -736,7 +736,9 @@ bounds the listed documents and every finding's samples.
   `stage="proposed"`, tagged `decision:proposed`). Within a stage, the rows are counted
   as confirmed (pinned or attested; for a proposal that backs its wording, not a
   choice), unconfirmed, tagged `source-changed`, and with a recorded outcome. Rows the
-  extractor wrote into a repository's namespace are not counted.
+  extractor wrote into a repository's namespace are not counted. Its `definition` says
+  this in plain words, and its `refs` lists the field, citation format, command, op and
+  tag the definition means.
 - **`findings`**: one per check, in the shape of the [audit's
   findings](./namespaces-and-sharing.md#reading-a-namespaces-health), a clean check at
   `info` with count 0. `documents_without_chunks`, `unembedded_chunks` and
@@ -752,7 +754,8 @@ bounds the listed documents and every finding's samples.
   rendered text and clears its format, parser, coverage and ingestion. For
   `mixed_live_versions` on an ingested document, a job of the source still processing at
   its publish stage settles the state on its next run, so it is re-ingested only when no
-  ingest of the source is open.
+  ingest of the source is open. Each finding's text says this in plain words, and its
+  `refs` lists the exact names it means.
 - **`ingestions`**: the namespace's `knowledge.ingest` jobs (their rows are kept 30
   days) by state, `stalled` for a processing job no worker has updated within its lease,
   when the oldest open job was queued, and the sources with a job and no live document (a
@@ -810,7 +813,8 @@ bounds the listed documents and every finding's samples.
 
   A revision conflict (a later write of the source landed first, or `expected_revision`
   did not hold) has no finding: it counts in `ingestions.failed`, and the revision that
-  landed is what search serves. Each remedy names the op or setting that clears it.
+  landed is what search serves. Each remedy says in plain words what clears it, and
+  `refs` lists the exact names it means.
   Coverage counts pages only when an extractor reports `pages` as its unit; no field
   records an OCR fallback.
 

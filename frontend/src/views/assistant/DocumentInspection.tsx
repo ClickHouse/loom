@@ -13,6 +13,24 @@ import type {
 import { SectionHeading } from "../../components/ui";
 import { ListTime } from "../../components/ui/ListTime";
 import { fmtInt } from "../../lib/format";
+import { ExactNames } from "./ExactNames";
+
+// server/knowledge/app/tune.py _CAPABILITY_WORDS: a lost capability in words; another code an
+// extractor declares is said with spaces for its underscores.
+const CAPABILITY_WORDS: Record<string, string> = {
+  sql_structure: "SQL structure",
+  exact_keys: "exact keys",
+  section_path: "section paths",
+};
+const capability = (code: string) => CAPABILITY_WORDS[code] ?? code.replaceAll("_", " ");
+
+// The audit's two checks on memories shaped like documents, as its panel labels them
+// (components/NamespaceAuditPanel.tsx CODE_LABELS; kept here so this page does not load the
+// panel). A code the page does not know is shown by its code.
+const MEMORY_CHECK_LABEL: Record<string, string> = {
+  oversized_values: "Oversized values",
+  episodic_blobs: "Episodic blobs",
+};
 
 // server/knowledge/app/inspect.py _CHECKS and _INGEST_CHECKS. A code the page does not know
 // yet (a newer server) is shown by its code.
@@ -106,6 +124,7 @@ export function DocumentInspection({ result }: { result: KnowledgeInspection }) 
         <section aria-labelledby="docs-decisions" className="space-y-1 text-sm">
           <SectionHeading id="docs-decisions" level={3} label="Decisions recorded from documents" />
           <p className="text-xs text-text-muted">{result.decisions.definition}</p>
+          <ExactNames refs={result.decisions.refs} />
           {result.decisions.all_documents ? (
             <>
               <p className="text-text tabular" data-testid="docs-decisions-total">
@@ -127,24 +146,28 @@ export function DocumentInspection({ result }: { result: KnowledgeInspection }) 
         {/* The server sends each of the audit's two checks, a clean one at count 0, or names it
             in `skipped` ("memory_findings.<code>: <reason>"): none sent means none was read. */}
         {result.memory_findings.length === 0 ? (
-          <p className="text-text-muted">namespace.audit's checks were not read; the reason is listed below.</p>
+          <p className="text-text-muted">The memory checks were not read; the reason is listed below.</p>
         ) : (
-          <ul className="space-y-1" aria-label="namespace.audit findings on memories">
+          <ul className="space-y-1" aria-label="Memory check findings">
             {result.memory_findings.map((f) => (
               <li key={f.code} data-code={f.code}>
-                <span className="font-mono">{f.code}</span> <span className="tabular">{plural(f.count, "row")}</span>
+                {MEMORY_CHECK_LABEL[f.code] ?? f.code} <span className="tabular">{plural(f.count, "row")}</span>
                 {f.count > 0 && <span className="text-text-muted"> · {f.detail}</span>}
               </li>
             ))}
           </ul>
         )}
-        <p className="text-xs text-text-muted">namespace.audit lists the rows and their evidence.</p>
+        <p className="text-xs text-text-muted">The namespace audit lists the memories and their evidence.</p>
+        <ExactNames refs={["namespace.audit", ...result.memory_findings.map((f) => f.code)]} />
       </section>
 
       {result.coverage.rules_skipped.length > 0 && (
-        <p className="text-xs text-text-muted" data-testid="docs-rules-skipped">
-          Checks not run: {result.coverage.rules_skipped.join(", ")}
-        </p>
+        <>
+          <p className="text-xs text-text-muted" data-testid="docs-rules-skipped">
+            Checks not run: {result.coverage.rules_skipped.map((c) => FINDING_LABEL[c] ?? c).join(", ")}
+          </p>
+          <ExactNames refs={result.coverage.rules_skipped} />
+        </>
       )}
       {result.skipped.length > 0 && (
         <p className="text-xs text-text-muted" data-testid="docs-skipped">
@@ -256,9 +279,9 @@ function IngestionSection({ result, notes }: { result: KnowledgeInspection; note
         . Another replica may be set otherwise; the jobs say what happened.
       </p>
       {i.sources === null ? (
-        <p className="text-text-muted">The knowledge.ingest jobs could not be read.</p>
+        <p className="text-text-muted">The ingestion jobs could not be read.</p>
       ) : i.sources === 0 ? (
-        <p className="text-text-muted">No knowledge.ingest job in the last 30 days.</p>
+        <p className="text-text-muted">No ingestion job in the last 30 days.</p>
       ) : (
         <p className="text-text tabular" data-testid="docs-jobs">
           {plural(i.sources, "source")} with a job · pending {n(i.pending)} · processing {n(i.processing)}
@@ -297,8 +320,10 @@ function IngestionSection({ result, notes }: { result: KnowledgeInspection; note
           <>
             <p className="text-text tabular" data-testid="docs-extraction">
               Extraction coverage: {n(x.incomplete)} of {plural(x.documents, "ingested document")} not complete
-              {x.lost.length > 0 && ` · lost: ${x.lost.map((l) => `${l.name} ${fmtInt(l.live)}`).join(", ")}`}
+              {x.lost.length > 0 &&
+                ` · lost: ${x.lost.map((l) => `${capability(l.name)} ${fmtInt(l.live)}`).join(", ")}`}
             </p>
+            <ExactNames refs={x.lost.map((l) => l.name)} />
             <Notes lines={notes("extraction")} testId="docs-extraction-note" />
           </>
         )
@@ -349,9 +374,12 @@ function FindingGroups({
               </ul>
             )}
             {clean.length > 0 && (
-              <p className="text-xs text-text-muted">
-                Checked, none found: {clean.map((f) => FINDING_LABEL[f.code] ?? f.code).join(", ")}
-              </p>
+              <>
+                <p className="text-xs text-text-muted">
+                  Checked, none found: {clean.map((f) => FINDING_LABEL[f.code] ?? f.code).join(", ")}
+                </p>
+                <ExactNames refs={clean.map((f) => f.code)} />
+              </>
             )}
           </div>
         );
@@ -388,7 +416,7 @@ function FindingCard({ finding: f, noun }: { finding: DocumentFinding | IngestFi
         {f.population !== null && ` of ${fmtInt(f.population)}`} ({percent(f.count, f.share)})
         {"without_document" in f && f.without_document > 0 && ` · ${fmtInt(f.without_document)} with no live document`}
         {/* The remedy differs: a text document is written again, an ingested one ingested again. */}
-        {"ingested" in f && f.ingested > 0 && ` · ${fmtInt(f.ingested)} published by knowledge.ingest`}
+        {"ingested" in f && f.ingested > 0 && ` · ${fmtInt(f.ingested)} ingested from a file`}
       </p>
       <p className="text-xs text-text-muted">{f.detail}</p>
       {f.samples.length > 0 && (
@@ -397,18 +425,19 @@ function FindingCard({ finding: f, noun }: { finding: DocumentFinding | IngestFi
             <li key={uri} className="text-xs">
               <span className="font-mono break-all">{uri}</span>
               {ids[k] && <span className="text-text-muted"> · job {ids[k]}</span>}
-              {ingested.has(uri) && <span className="text-text-muted"> · published by knowledge.ingest</span>}
+              {ingested.has(uri) && <span className="text-text-muted"> · ingested from a file</span>}
             </li>
           ))}
         </ul>
       )}
       {ingestedOnly.length > 0 && (
         <p className="text-xs text-text-muted">
-          Also published by knowledge.ingest: <span className="font-mono break-all">{ingestedOnly.join(", ")}</span>
+          Also ingested from a file: <span className="font-mono break-all">{ingestedOnly.join(", ")}</span>
         </p>
       )}
       {!f.samples_complete && more > 0 && <p className="text-xs text-text-muted">and {fmtInt(more)} more not listed</p>}
       <p className="text-xs text-text">What to do: {f.remedy}</p>
+      <ExactNames refs={f.refs} />
       {f.uncertainty && <p className="text-xs text-text-muted">{f.uncertainty}</p>}
     </li>
   );
@@ -513,8 +542,9 @@ function DocumentRow({ doc: d, jobsUnread }: { doc: InspectDocument; jobsUnread:
           ? "Extraction: none (a text write, which no extractor read)"
           : `Extraction: ${fmtInt(x.extracted)} of ${fmtInt(x.total)} ${x.unit} extracted${
               x.failed ? `, ${fmtInt(x.failed)} failed` : ""
-            }${x.lost.length ? `, lost ${x.lost.join(", ")}` : ""}${x.complete ? " (complete)" : ""}`}
+            }${x.lost.length ? `, lost ${x.lost.map(capability).join(", ")}` : ""}${x.complete ? " (complete)" : ""}`}
       </p>
+      {x && <ExactNames refs={x.lost} />}
       {d.jobs ? (
         <p className="text-xs">
           <JobLine jobs={d.jobs} />

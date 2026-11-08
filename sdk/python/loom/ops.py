@@ -10427,6 +10427,7 @@ class DecisionTotals(TypedDict, total=False):
     "Decision rows that cite the namespace's documents."
 
     definition: Required[str]
+    refs: NotRequired[list[str]]
     all_documents: NotRequired[Optional["DocumentDecisions"]]
 
 
@@ -10552,6 +10553,7 @@ class DocumentFinding(TypedDict, total=False):
     ingested_samples: NotRequired[list[str]]
     detail: Required[str]
     remedy: Required[str]
+    refs: NotRequired[list[str]]
 
 
 class FindingEvidence(TypedDict, total=False):
@@ -10626,6 +10628,7 @@ class IngestFinding(TypedDict, total=False):
     without_document: NotRequired[int]
     detail: Required[str]
     remedy: Required[str]
+    refs: NotRequired[list[str]]
 
 
 class MemoryFindingRef(TypedDict, total=False):
@@ -13344,6 +13347,7 @@ class InspectView(TypedDict, total=False):
     "One set of live rows of the namespace, described the same way."
 
     definition: Required[str]
+    refs: NotRequired[list[str]]
     live_rows: NotRequired[int]
     by_type: NotRequired[list["InspectCount"]]
     by_status: NotRequired[list["InspectCount"]]
@@ -13406,6 +13410,7 @@ class InspectSettings(TypedDict, total=False):
     extraction_policy: NotRequired[Optional[str]]
     extraction_policy_unavailable: NotRequired[str]
     extraction_instructions: NotRequired[str]
+    extraction_instructions_refs: NotRequired[list[str]]
 
 
 class MemoryKeysInput(TypedDict, total=False):
@@ -16812,6 +16817,7 @@ class TuneProposal(TypedDict, total=False):
     apply_also: NotRequired[list["TuneApply"]]
     preview: NotRequired[Optional["ChunkingPreview"]]
     limits: NotRequired[str]
+    refs: NotRequired[list[str]]
 
 
 class TuneEvidence(TypedDict, total=False):

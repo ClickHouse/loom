@@ -3,6 +3,7 @@ import { Badge } from "@clickhouse/click-ui/Badge";
 import type { InspectCount, InspectView, MemoryInspection } from "../../api";
 import { KeyButton } from "../../components/ui/KeyButton";
 import { CodeBlock } from "./CodeBlock";
+import { ExactNames } from "./ExactNames";
 import { ListTime } from "../../components/ui/ListTime";
 import { SectionHeading } from "../../components/ui";
 import { useStore } from "../../lib/state";
@@ -30,6 +31,8 @@ export function Inspection({ result }: { result: MemoryInspection }) {
         {SUBJECT_COPY[result.subject].label}{" "}
         <span className="font-mono break-all">{shownName(result.subject, result.id)}</span>
       </p>
+      {/* Both views' definitions mean the same names: shown once. */}
+      <ExactNames refs={[...new Set([...(result.own.refs ?? []), ...(result.others.refs ?? [])])]} />
       <InspectViewBlock
         id="inspect-own"
         title={OWN_HEADING[result.subject]}
@@ -38,7 +41,7 @@ export function Inspection({ result }: { result: MemoryInspection }) {
       />
       <InspectViewBlock
         id="inspect-others"
-        title="Every other live row of the namespace"
+        title="Every other live memory of the namespace"
         view={result.others}
         unread={(part) => unread(`others.${part}`)}
       />
@@ -75,6 +78,7 @@ export function Inspection({ result }: { result: MemoryInspection }) {
           )}
         </div>
         <p className="text-text-muted">{result.settings.extraction_instructions}</p>
+        <ExactNames refs={result.settings.extraction_instructions_refs} />
       </section>
       <section aria-labelledby="inspect-activity" className="space-y-1 text-sm">
         <SectionHeading id="inspect-activity" level={3} label="Activity" />
@@ -91,7 +95,7 @@ export function Inspection({ result }: { result: MemoryInspection }) {
         {result.activity.gap && <p className="text-xs text-text-muted">{result.activity.gap}</p>}
         {unread("activity.retention") && (
           <p className="text-xs text-text-muted">
-            The ledger's retention could not be read, so older calls may be missing from the window.
+            How long calls are kept could not be read, so older calls may be missing from the window.
           </p>
         )}
       </section>
@@ -146,9 +150,9 @@ function InspectViewBlock({
     <section aria-labelledby={id} className="space-y-2" data-view={id}>
       <SectionHeading id={id} level={3} label={title} count={counted ? view.live_rows : undefined} />
       <p className="text-xs text-text-muted">{view.definition}</p>
-      {!counted && <p className="text-sm text-text-muted">The rows could not be counted.</p>}
+      {!counted && <p className="text-sm text-text-muted">The memories could not be counted.</p>}
       {counted && view.live_rows === 0 ? (
-        <p className="text-sm text-text-muted">No live rows.</p>
+        <p className="text-sm text-text-muted">No live memories.</p>
       ) : (
         <>
           {lines.map((l) => (
@@ -156,7 +160,7 @@ function InspectViewBlock({
               {l}
             </p>
           ))}
-          {!listed && <p className="text-xs text-text-muted">The rows could not be listed.</p>}
+          {!listed && <p className="text-xs text-text-muted">The memories could not be listed.</p>}
           {listed && counted && view.newest.length < view.live_rows && (
             <p className="text-xs text-text-muted">
               Newest {fmtInt(view.newest.length)} of {fmtInt(view.live_rows)} listed.

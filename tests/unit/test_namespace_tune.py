@@ -51,6 +51,12 @@ def _evidence(key: str) -> FindingEvidence:
     )
 
 
+def _prose_names(p: Any) -> list[str]:
+    """The exact names in `p.refs` that its prose still spells out."""
+    text = " ".join([p.scope, p.title, p.rationale, p.historical, p.limits, p.apply.guard])
+    return [r for r in p.refs if r in text]
+
+
 def _guide(**kw: Any) -> Any:
     from server.identity.api.models_namespace_guide import NamespaceGuideGetOutput
 
@@ -251,6 +257,12 @@ async def test_a_writer_gets_per_request_instructions(world: World) -> None:
     assert p.apply.op == "memory.set_from_messages"
     assert p.apply.args["extraction_instructions"] == p.proposed
     assert "never a JSON string" in p.proposed
+    # Only a request that sends them is reached: a request without them extracts as before.
+    assert (
+        p.scope
+        == "each request that extracts memories from messages into o/ns and sends these instructions"
+    )
+    assert _prose_names(p) == []
     # Only the finding that fired drafts a rule; a clean check (count 0) does not.
     assert "one claim of a few sentences" not in p.proposed
     assert p.evidence.finding_codes == ["double_encoded_values"]
@@ -290,7 +302,8 @@ async def test_a_much_used_plain_tag_with_no_category_drafts_one(world: World) -
     assert p.proposed == "billing" and p.apply.op == "namespace.register_category"
     assert p.apply.args["name"] == "billing"
     assert p.evidence.supporting_count == 12 and p.evidence.counter_count == 2
-    assert "memory.assign_category" in p.historical
+    assert "assigned to it" in p.historical and "memory.assign_category" in p.refs
+    assert _prose_names(p) == []
 
     world.categories = ["Billing"]
     out = await tune.handle_namespace_tune(_inp())
@@ -304,14 +317,14 @@ async def test_two_tags_that_differ_only_in_case_draft_one_category(world: World
     (p,) = _by_target(out, "namespace.category")
     assert p.proposed == "Billing"
     # The approver is told about the other spelling, which new rows would stay apart from.
-    assert "Also tagged `billing` (9 rows)" in p.limits
+    assert "Also tagged `billing` (9 memories)" in p.limits
 
     # A spelling on fewer than min_rows rows is named too.
     world.tags = [("Billing", 12)]
     world.spellings = [("Billing", 12), ("billing", 3)]
     out = await tune.handle_namespace_tune(_inp())
     (p,) = _by_target(out, "namespace.category")
-    assert "Also tagged `billing` (3 rows)" in p.limits
+    assert "Also tagged `billing` (3 memories)" in p.limits
 
 
 @pytest.mark.asyncio
@@ -320,7 +333,8 @@ async def test_no_guide_drafts_one_and_its_guard_is_revision_zero(world: World) 
     (p,) = _by_target(out, "namespace.guide")
     assert p.current == "" and p.current_revision == 0
     assert p.apply.args["expected_revision"] == 0 and p.apply.args["content"] == p.proposed
-    assert "- `billing/…`: 9 rows" in p.proposed and "- `sre/…`: 6 rows" in p.proposed
+    assert p.refs == ["namespace.guide_get", "expected_revision"] and _prose_names(p) == []
+    assert "- `billing/…`: 9 memories" in p.proposed and "- `sre/…`: 6 memories" in p.proposed
     # A prefix under the threshold or not a plain name is left out.
     assert "tmp/" not in p.proposed and "bad prefix" not in p.proposed
 
@@ -470,6 +484,9 @@ async def test_two_findings_share_the_draft_and_its_lower_bound(world: World) ->
         "double_encoded_values/k1",
         "oversized_values/k1",
     ]
+    # The rule says "the knowledge base" in words; `refs` carries the op it means.
+    assert "knowledge.upsert" in p.refs and "knowledge.upsert" not in p.proposed
+    assert _prose_names(p) == []
 
 
 @pytest.mark.asyncio
@@ -523,7 +540,7 @@ async def test_an_unread_population_gives_no_bound(world: World) -> None:
     out = await tune.handle_namespace_tune(_inp())
     (p,) = _by_target(out, "extraction_instructions.request")
     assert p.evidence.counter_count is None
-    assert "double_encoded_values: 30 rows" in p.rationale and "None" not in p.rationale
+    assert "double-encoded values: 30 memories" in p.rationale and "None" not in p.rationale
 
     # One read population still bounds the draft.
     world.findings.append(_finding("oversized_values", 10))
@@ -539,7 +556,10 @@ async def test_no_extraction_rule_where_extraction_writes_nothing(world: World) 
     assert not _by_target(out, "extraction_instructions.request")
     # Said, so the absence is not read as clean.
     assert any(
-        s.startswith("extraction: memory.set_from_messages writes no row") for s in out.skipped
+        s.startswith(
+            "extraction: no live memory here records extraction from messages as its source"
+        )
+        for s in out.skipped
     )
 
 
@@ -552,9 +572,14 @@ async def test_a_finding_the_audit_cited_no_row_of_is_not_claimed_unreached(
     world.audit_skipped = ["evidence: RuntimeError"]
     out = await tune.handle_namespace_tune(_inp())
     assert not _by_target(out, "extraction_instructions.request")
-    assert not any("no cited row" in s for s in out.skipped)
+    assert not any(
+        s.startswith("extraction: none of the memories the audit cited for") for s in out.skipped
+    )
     assert "audit.evidence: RuntimeError" in out.skipped
-    assert "extraction: the audit cited no live row of double_encoded_values" in out.skipped
+    assert (
+        "extraction: the audit cited no live memory for double-encoded values "
+        "(double_encoded_values)" in out.skipped
+    )
 
 
 @pytest.mark.asyncio
@@ -566,7 +591,7 @@ async def test_only_the_cited_rows_extraction_wrote_are_cited(world: World) -> N
     out = await tune.handle_namespace_tune(_inp())
     (p,) = _by_target(out, "extraction_instructions.request")
     assert [e.memory_key for e in p.evidence.supporting] == ["cfg/k2"]
-    assert "1 of the audit's cited rows came from it" in p.rationale
+    assert "1 of the memories the audit cited came from it" in p.rationale
     assert "counts over every writer" in p.rationale
 
 
@@ -577,7 +602,11 @@ async def test_no_rule_when_no_cited_row_came_from_extraction(world: World) -> N
     out = await tune.handle_namespace_tune(_inp())
     assert not _by_target(out, "extraction_instructions.request")
     assert any(
-        s.startswith("extraction: no cited row of double_encoded_values") for s in out.skipped
+        s.startswith(
+            "extraction: none of the memories the audit cited for double-encoded values "
+            "(double_encoded_values)"
+        )
+        for s in out.skipped
     )
 
 
@@ -598,7 +627,7 @@ async def test_a_row_two_checks_flag_is_cited_once(world: World) -> None:
     out = await tune.handle_namespace_tune(_inp())
     (p,) = _by_target(out, "extraction_instructions.request")
     assert [e.memory_key for e in p.evidence.supporting] == ["big/k1"]
-    assert "1 of the audit's cited rows came from it" in p.rationale
+    assert "1 of the memories the audit cited came from it" in p.rationale
 
 
 @pytest.mark.asyncio
@@ -610,7 +639,7 @@ async def test_the_rationale_counts_every_cited_row_extraction_wrote(world: Worl
     (p,) = _by_target(out, "extraction_instructions.request")
     # Two are cited (the sample limit), four of the cited rows came from extraction.
     assert len(p.evidence.supporting) == 2
-    assert "4 of the audit's cited rows came from it" in p.rationale
+    assert "4 of the memories the audit cited came from it" in p.rationale
 
 
 @pytest.mark.asyncio
@@ -775,3 +804,47 @@ async def test_an_unpublished_projection_is_waited_for_once_and_said(
     assert waits == ["o"]
     assert [s.split(": ")[:2] for s in out.skipped] == [["projection", "PROJECTION_BEHIND"]]
     assert out.proposals == published.proposals
+
+
+def test_each_rule_that_names_a_feature_in_words_carries_its_op() -> None:
+    # The knowledge base, offloaded context and working memory are said in words; the op
+    # each means rides the draft's `refs`.
+    for code, words in [
+        ("oversized_values", "knowledge base"),
+        ("episodic_blobs", "offloaded context"),
+        ("coordination_as_memory", "working memory"),
+    ]:
+        assert words in tune._FINDING_RULES[code]
+        assert tune._FINDING_RULE_REFS[code] not in tune._FINDING_RULES[code]
+    assert set(tune._FINDING_RULE_REFS) == {
+        "oversized_values",
+        "episodic_blobs",
+        "coordination_as_memory",
+    }
+
+
+def test_the_drafts_say_each_finding_as_the_audit_panel_does() -> None:
+    import re
+    from pathlib import Path
+
+    panel = Path(__file__).parents[2] / "frontend/src/components/NamespaceAuditPanel.tsx"
+    body = panel.read_text(encoding="utf-8").split("const CODE_LABELS", 1)[1].split("};", 1)[0]
+    labels = dict(re.findall(r'(\w+): "([^"]+)"', body))
+    # Every drafted rule has its words: the rationale reads them for each finding.
+    assert set(tune._FINDING_WORDS) == set(tune._FINDING_RULES)
+    assert {c: w.lower() for c, w in tune._FINDING_WORDS.items()} == {
+        c: labels[c].lower() for c in tune._FINDING_WORDS
+    }
+
+
+def test_the_documents_tab_labels_the_memory_checks_as_the_audit_panel_does() -> None:
+    import re
+    from pathlib import Path
+
+    def labels(path: str, name: str) -> dict[str, str]:
+        text = (Path(__file__).parents[2] / path).read_text(encoding="utf-8")
+        return dict(re.findall(r'(\w+): "([^"]+)"', text.split(name, 1)[1].split("};", 1)[0]))
+
+    panel = labels("frontend/src/components/NamespaceAuditPanel.tsx", "const CODE_LABELS")
+    tab = labels("frontend/src/views/assistant/DocumentInspection.tsx", "const MEMORY_CHECK_LABEL")
+    assert tab and all(panel[code] == label for code, label in tab.items())

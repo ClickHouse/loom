@@ -169,7 +169,18 @@ async def test_sections_cut_by_the_size_draft_a_larger_one_with_its_before_and_a
     assert p.apply.required_role == "platform_admin" and p.effect == "future"
     assert p.evidence.supporting_count == 6 and p.evidence.counter_count == 0
     assert p.evidence.documents == [f"docs/{i}.md" for i in range(5)]
-    assert "every namespace" in p.scope and "loom rechunk" in p.historical
+    assert (
+        "every namespace" in p.scope
+        and "rechunk command" in p.historical
+        and any(r.startswith("loom rechunk") for r in p.refs)
+        and {
+            "settings.set knowledge_chunk_size",
+            "settings.set knowledge_chunk_stride",
+            "expected",
+        }
+        <= set(p.refs)
+    )
+    assert not any(r in p.historical + p.rationale + p.limits for r in p.refs)
     assert p.affected_agents == ["sync"] and p.affected_agents_total == 1
     # No document text leaves the draft.
     assert "word word" not in out.chunking.model_dump_json() + p.model_dump_json()
@@ -193,7 +204,11 @@ async def test_an_unknown_input_limit_drafts_no_larger_size_and_says_why(docs: D
     assert not out.proposals
     assert out.chunking.input_token_limit is None
     assert out.chunking.current.over_input_limit is None
-    assert any("input limit is not known" in s for s in skipped)
+    assert any(
+        "input limit is not known" in s
+        and s.startswith("chunking: the chunk size (settings.set knowledge_chunk_size) cuts")
+        for s in skipped
+    )
 
 
 @pytest.mark.asyncio
@@ -201,7 +216,11 @@ async def test_too_few_documents_judge_no_section_rule(docs: Docs) -> None:
     docs.sample = docs.sample[:2]
     out, skipped = await _drafts()
     assert not out.proposals
-    assert any("fewer than the 5" in s for s in skipped)
+    assert any(
+        "fewer than the 5" in s
+        and s.startswith("chunking: the chunk size (settings.set knowledge_chunk_size) cuts")
+        for s in skipped
+    )
 
 
 @pytest.mark.asyncio
@@ -272,6 +291,18 @@ async def test_a_format_no_service_takes_drafts_a_route_to_one_that_declares_it(
     }
     assert p.evidence.finding_codes == ["extractor_unavailable"]
     assert p.evidence.supporting_count == 3 and p.evidence.documents[0] == "files/0.pdf"
+    assert p.refs == [
+        "format_unavailable",
+        "LOOM_DOCUMENT_EXTRACTORS_JSON",
+        "current",
+        "POST /v1/knowledge.upload",
+        "knowledge.ingest",
+        "knowledge.inspect",
+    ]
+    # The rationale names each service by its setting, as a URL is never shown; the rest
+    # says the exact names in words.
+    text = p.historical + p.limits + p.apply.guard
+    assert not any(r in text for r in p.refs if not r.isalpha())
     # A service's URL can carry a credential: it is never shown.
     assert "token" not in p.model_dump_json() and "pdf-extractor" not in p.model_dump_json()
     # No document: no chunk sample and no decision line.
@@ -313,7 +344,11 @@ async def test_a_format_the_routed_service_declares_now_is_not_drafted(docs: Doc
     ]
     out, skipped = await _drafts()
     assert not _target(out, "settings.document_extractors_json")
-    assert any("declares it now" in s for s in skipped)
+    # A note tells the reader to act: its exact names follow in parentheses.
+    assert any(
+        "declares it now" in s and "(format_unavailable)" in s and "knowledge.ingest)" in s
+        for s in skipped
+    )
 
 
 @pytest.mark.asyncio
@@ -341,7 +376,7 @@ async def test_lost_structure_drafts_another_declaring_service_or_says_none(docs
     out, skipped = await _drafts()
     assert not _target(out, "settings.document_extractors_json")
     assert any(
-        "extractor.sql: 2 of 5 documents extracted lost sql_structure" in s
+        "extractor.sql: 2 of 5 documents extracted lost SQL structure (sql_structure)" in s
         and "no other configured extractor" in s
         for s in skipped
     )
@@ -437,8 +472,8 @@ async def test_a_chunk_size_of_zero_drafts_nothing_and_reports_the_sample(
     assert out.chunking is not None and out.chunking.documents == 5
     assert out.chunking.current.size == 0
     assert (
-        "chunking: knowledge_chunk_size is 0 (no window: a text document is one chunk, an "
-        "ingested one a chunk per block); no size is drafted" in skipped
+        "chunking: the chunk size (settings.set knowledge_chunk_size) is 0 (no window: a text document is "
+        "one chunk, an ingested one a chunk per block); no size is drafted" in skipped
     )
 
 
@@ -449,7 +484,12 @@ async def test_a_negative_chunk_size_is_named_as_it_is(
     monkeypatch.setattr(settings, "knowledge_chunk_size", -5)
     out, skipped = await _drafts()
     assert not out.proposals
-    assert any(s.startswith("chunking: knowledge_chunk_size is -5 (no window") for s in skipped)
+    assert any(
+        s.startswith(
+            "chunking: the chunk size (settings.set knowledge_chunk_size) is -5 (no window"
+        )
+        for s in skipped
+    )
 
 
 @pytest.mark.asyncio
@@ -526,7 +566,10 @@ async def test_each_candidate_size_is_tried_once(
     docs.sample = [_long_sections(f"docs/{i}.md") for i in range(6)]
     out, skipped = await _drafts()
     assert tried == [100, 200, 300, 400]
-    assert any("no size tried (200, 300, 400)" in s for s in skipped)
+    assert any(
+        "none of the chunk sizes (settings.set knowledge_chunk_size) tried (200, 300, 400)" in s
+        for s in skipped
+    )
 
 
 @pytest.mark.asyncio
@@ -541,8 +584,8 @@ async def test_inputs_over_the_limit_at_the_smallest_size_say_so(
     assert any(
         s.startswith("chunking: ")
         and s.endswith(
-            f"knowledge_chunk_size {tune.MIN_CHUNK_SIZE} is at or below the smallest drafted "
-            f"size, {tune.MIN_CHUNK_SIZE}"
+            f"the chunk size (settings.set knowledge_chunk_size), {tune.MIN_CHUNK_SIZE}, is at or below the "
+            f"smallest drafted size, {tune.MIN_CHUNK_SIZE}"
         )
         for s in skipped
     ), skipped
@@ -592,7 +635,8 @@ async def test_a_media_type_route_is_the_service_a_source_goes_to(
     assert "wins over a media-type route" in p.limits
     # The source the default service takes now is ingested again, not rerouted.
     assert any(
-        s.startswith("extractor.pdf: 1 source failed format_unavailable") and "declares it now" in s
+        s.startswith("extractor.pdf: 1 source failed because no extractor took the format")
+        and "declares it now" in s
         for s in skipped
     ), skipped
 
@@ -608,8 +652,8 @@ async def test_inputs_over_the_limit_below_the_smallest_size_name_the_value_in_f
     assert not out.proposals
     assert any(
         s.endswith(
-            f"knowledge_chunk_size 150 is at or below the smallest drafted size, "
-            f"{tune.MIN_CHUNK_SIZE}"
+            f"the chunk size (settings.set knowledge_chunk_size), 150, is at or below the smallest drafted "
+            f"size, {tune.MIN_CHUNK_SIZE}"
         )
         for s in skipped
     ), skipped
@@ -627,7 +671,10 @@ async def test_a_stride_of_zero_or_less_drafts_nothing_and_names_it(
     assert not out.proposals
     assert out.chunking is not None and out.chunking.current.sections_cut == 0
     assert any(
-        s.startswith(f"chunking: knowledge_chunk_stride is {stride} (no window") for s in skipped
+        s.startswith(
+            f"chunking: the chunk stride (settings.set knowledge_chunk_stride) is {stride} (no window"
+        )
+        for s in skipped
     ), skipped
 
 
@@ -748,7 +795,7 @@ async def test_a_route_to_the_service_that_lost_structure_says_it_answers_only_t
     assert p.evidence.finding_codes == ["extractor_unavailable"]
     assert p.evidence.supporting_count == 1
     assert any(
-        s.startswith("extractor.pdf: 3 of 10 documents extracted lost page_text")
+        s.startswith("extractor.pdf: 3 of 10 documents extracted lost page text (page_text)")
         and "the route drafted for its failed sources goes to" in s
         for s in skipped
     ), skipped
@@ -775,6 +822,11 @@ async def test_incomplete_extractions_go_to_the_service_that_extracts_the_rest_w
     assert p.evidence.finding_codes == ["extraction_incomplete"]
     # Nothing that extracts whole moves: W's sources stay on W.
     assert "extracts whole now" not in p.rationale
+    # The rationale says the lost capability in words; its code rides `refs`.
+    assert "lost page text" in p.rationale and "page_text" in p.refs
+    # No source failed: the code for one is not listed.
+    assert "format_unavailable" not in p.refs
+    assert "page_text" not in p.rationale
 
 
 @pytest.mark.asyncio
@@ -862,7 +914,7 @@ async def test_failed_sources_with_and_without_an_extractor_are_told_apart(docs:
     out, _ = await _drafts()
     (p,) = _target(out, "settings.document_extractors_json")
     assert (
-        "pdf: 2 sources failed format_unavailable; 1 goes to "
+        "pdf: 2 sources failed because no extractor took the format; 1 goes to "
         'LOOM_DOCUMENT_EXTRACTORS_JSON["application/pdf"], which does not declare it; '
         "1 has no extractor configured;" in p.rationale
     ), p.rationale
@@ -884,3 +936,13 @@ async def test_failed_sources_of_two_routed_services_take_a_plural_verb(docs: Do
     out, _ = await _drafts()
     (p,) = _target(out, "settings.document_extractors_json")
     assert "which do not declare it" in p.rationale, p.rationale
+
+
+def test_the_page_says_each_lost_capability_in_the_servers_words() -> None:
+    import re
+    from pathlib import Path
+
+    page = Path(__file__).parents[2] / "frontend/src/views/assistant/DocumentInspection.tsx"
+    body = page.read_text(encoding="utf-8").split("const CAPABILITY_WORDS", 1)[1].split("};", 1)[0]
+    words = dict(re.findall(r'(\w+): "([^"]+)"', body))
+    assert words == tune._CAPABILITY_WORDS

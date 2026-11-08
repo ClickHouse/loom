@@ -101,7 +101,7 @@ async def test_inspect_splits_own_from_others_and_changes_nothing(
             "team/oncall",
             "team/pin",
         }
-        assert "not a read boundary" in agent["own"]["definition"]
+        assert "does not limit what the agent reads" in agent["own"]["definition"]
         # A high-sensitivity row is listed without its excerpt or its hash.
         (pin,) = [r for r in agent["others"]["newest"] if r["memory_key"] == "team/pin"]
         assert pin["excerpt"] == "" and pin["content_sha256"] == ""

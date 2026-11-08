@@ -154,6 +154,11 @@ async def test_own_and_others_split_on_the_subjects_column(
     assert out.own.live_rows == 3 and out.others.live_rows == 6
     assert out.own.definition == mi._DEFINITIONS[subject][0]
     assert out.others.definition == mi._DEFINITIONS[subject][1]
+    # The definitions say the exact names in words; `refs` carries them (a name that is a
+    # plain word, such as `agent`, may be said as one).
+    assert out.own.refs == out.others.refs == mi._DEFINITION_REFS[subject]
+    text = out.own.definition + out.others.definition
+    assert not any(r in text for r in out.own.refs if not r.isalpha())
     reads = [s for s in ch.statements("FROM loom.memory FINAL") if "memory_categories" not in s.sql]
     assert reads
     for s in reads:
@@ -216,7 +221,7 @@ async def test_activity_leaves_out_inspectors_and_names_the_retention_gap(
     assert [(c.operation, c.calls, c.succeeded) for c in out.activity.calls] == [
         ("memory.search", 4, 3)
     ]
-    assert "a 3-day window" in out.activity.gap
+    assert "kept for 3 days" in out.activity.gap
     s = ch.statements("FROM loom.agent_events")[0]
     assert s.params["skip"] == ["loom-ui", "loom-assistant"]
 
@@ -227,7 +232,7 @@ async def test_activity_leaves_out_inspectors_and_names_the_retention_gap(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("own", "deployment", "gap"),
-    [(3, 0, "a 3-day window"), (30, 3, ""), (0, 3, "a 3-day window")],
+    [(3, 0, "kept for 3 days"), (30, 3, ""), (0, 3, "kept for 3 days"), (1, 0, "kept for 1 day,")],
 )
 async def test_the_namespaces_own_retention_wins_for_the_gap(
     monkeypatch: pytest.MonkeyPatch, own: int, deployment: int, gap: str
@@ -279,8 +284,12 @@ async def test_the_extraction_policy_is_read_only_for_an_org_admin(
     assert out.settings.extraction_policy is None
     assert "org admin" in out.settings.extraction_policy_unavailable
     assert out.settings.extraction_instructions.startswith(
-        "Per request only: memory.set_from_messages takes `extraction_instructions`;"
+        "Each request that extracts memories from messages may send extraction instructions;"
     )
+    # The text says it in words; the op and argument ride the refs.
+    refs = out.settings.extraction_instructions_refs
+    assert refs == ["memory.set_from_messages", "extraction_instructions"]
+    assert not any(r in out.settings.extraction_instructions for r in refs)
 
 
 @pytest.mark.asyncio

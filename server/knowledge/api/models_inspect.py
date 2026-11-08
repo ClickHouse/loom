@@ -13,7 +13,7 @@ from server.identity.api.models_findings import FindingContract, ReportCoverage
 InspectSeverity = Literal["info", "warning"]
 # Why an ingestion job's last attempt failed, from its error_code (and, for an outage, the
 # class of its message; the message itself is not returned):
-# extractor_unavailable: no extractor takes the format, or the one routed to it is
+# extractor_unavailable: no extractor took the format, or the one routed to it is
 #   unreachable, slow past its timeout or failing (failed, or pending to retry), or
 #   answered an artifact that breaks the contract (`invalid_artifact`);
 # missing_access: the stored original could not be read (`original_gone`), or the
@@ -287,6 +287,8 @@ class DecisionTotals(BaseModel):
 
     # Which rows are counted, in one sentence.
     definition: str
+    # The exact field, citation format, command, op and tag the definition names in words.
+    refs: list[str] = Field(default_factory=list)
     # Across every document of the namespace; null when the read failed or was not made.
     all_documents: DocumentDecisions | None = None
 
@@ -312,6 +314,8 @@ class DocumentFinding(FindingContract):
     ingested_samples: list[str] = Field(default_factory=list)
     detail: str
     remedy: str
+    # Each exact name the text above says in words (an op, setting, command, code or field).
+    refs: list[str] = Field(default_factory=list)
 
 
 class IngestFinding(FindingContract):
@@ -339,6 +343,8 @@ class IngestFinding(FindingContract):
     without_document: int = 0
     detail: str
     remedy: str
+    # Each exact name the text above says in words (an op, setting, command, code or field).
+    refs: list[str] = Field(default_factory=list)
 
 
 class IngestionTotals(BaseModel):
