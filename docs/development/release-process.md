@@ -248,8 +248,8 @@ there costs a candidate number, not a final version.
    `gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=clickhouse/clickhouse-server:A.B.C.D`;
    or accepting the downgrade:
    `gh workflow run release.yml --ref vX.Y.Z -f allow_clickhouse_downgrade=true`.
-   When neither is taken, move `:latest` (if it moved) and `:X.Y` back to the previous release on
-   both images, as in [a failed tag or signature](#a-failed-tag-or-signature);
+   When neither is taken, move `:latest` (if it moved) and, for a final, `:X.Y` back to the
+   previous release on both images, as in [a failed tag or signature](#a-failed-tag-or-signature);
 9. `release-check` (on a tag push) runs `.github/workflows/release-check.yml` against what
    was just published, signed in to nothing: the one-liner from github.com in the same clean
    containers, pulling both images anonymously, and verifies both images' signatures, which
@@ -297,34 +297,30 @@ A failed `docker-tag` (one image tagged, not the other) or a failed `sign` (Sigs
 - Use "Re-run failed jobs" on the run that tagged the images (the tag push, or the dispatch that
   built and tagged them), within 30 days of it; the run's artifacts are kept as long, unless the
   repository's artifact retention limit is shorter. That attempt keeps its `preflight` result and
-  `docker-tag`'s digests, so it tags the same build and signs what it tagged. Another run on the tag
-  (a dispatch, a second push) is a run of its own: re-run that run's failed jobs, or dispatch the
-  tag again, once the tagging run has signed.
+  `docker-tag`'s digests, so it tags the same build and signs what it tagged.
+- Once the tagging run has signed, a failed dispatch or second push on the tag recovers with its
+  own "Re-run failed jobs", or a new dispatch.
 - Never re-run a run that failed before tagging once another run has tagged: its `preflight` saw
   no images, so it rebuilds and would move the published tags.
 - Once "Re-run all jobs" has replaced the tagging run's attempt, or the 30 days have passed, no
   run can tag or sign that build: a run on a half-tagged version fails its `preflight`, and a run
-  on a published tag verifies signatures but cannot make them. Release a new version. Until it is
-  out, the unsigned build's moving tags still name it: point `:latest` (if it moved) and, for a
-  final, `:X.Y` back at the previous release that carried each, for both images, by digest. An
-  `X.Y.0` has no earlier release carrying `:X.Y`, which names the unsigned build until `X.Y.1` is
-  out.
+  on a published tag verifies signatures but cannot make them. Release a new version.
 
-  ```bash
-  digest=$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:<previous release carrying that tag> --format '{{json .Manifest}}' | jq -re .digest)
-  docker buildx imagetools create -t ghcr.io/clickhouse/<image>:<tag> "ghcr.io/clickhouse/<image>@$digest"
-  [ "$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:<tag> --format '{{json .Manifest}}' | jq -re .digest)" = "$digest" ] \
-    || { echo "<tag> does not name $digest" >&2; false; }
-  ```
+Until that version is out, the unsigned build's moving tags still name it. Point `:latest` (if it
+moved) and, for a final, `:X.Y` back at the previous release that carried each, for both images.
+An `X.Y.0` has no earlier release carrying `:X.Y`, which names the unsigned build until `X.Y.1` is
+out. Check that release's signature first (one published before the workflow signed has none to
+check), then move the tag by digest:
 
-  Then check the previous release's signature (one published before the workflow signed has none
-  to check):
-
-  ```bash
-  cosign verify "ghcr.io/clickhouse/<image>@$digest" \
-    --certificate-identity https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v<that release> \
-    --certificate-oidc-issuer https://token.actions.githubusercontent.com
-  ```
+```bash
+digest=$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:<previous release carrying that tag> --format '{{json .Manifest}}' | jq -re .digest)
+cosign verify "ghcr.io/clickhouse/<image>@$digest" \
+  --certificate-identity https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v<that release> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+docker buildx imagetools create -t ghcr.io/clickhouse/<image>:<tag> "ghcr.io/clickhouse/<image>@$digest"
+[ "$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:<tag> --format '{{json .Manifest}}' | jq -re .digest)" = "$digest" ] \
+  || { echo "<tag> does not name $digest" >&2; false; }
+```
 
 ### When the clickhouse job stops
 

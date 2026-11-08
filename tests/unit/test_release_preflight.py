@@ -6,7 +6,6 @@ keyless signatures), and how release.yml and release-check.yml call them."""
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -451,35 +450,35 @@ def test_the_tag_run_signs_the_digests_it_made_and_every_run_verifies_them() -> 
     # What the step writes there: test_docker_quickstart_smoke.py runs it.
     steps = {s["id"]: s for s in jobs["sign"]["steps"] if "id" in s}
     assert steps["sign"]["if"] == "${{ needs.docker-tag.result == 'success' }}"
-    (login,) = [s for s in jobs["sign"]["steps"] if s.get("name") == "Log in to ghcr.io"]
-    assert login["if"] == steps["sign"]["if"]  # the push of a signature needs it
+    assert steps["login"]["if"] == steps["sign"]["if"]  # the push of a signature needs it
     assert steps["sign"]["env"]["DIGESTS"] == "${{ needs.docker-tag.outputs.digests }}"
     assert "if" not in steps["verify"]  # runs whether or not this run signed
     assert VERIFY in steps["verify"]["run"]
 
 
-def _sign(tmp_path: Path, cosign: str) -> subprocess.CompletedProcess[str]:
+def _stub_cosign(tmp_path: Path, body: str) -> dict[str, str]:
+    """An environment whose cosign logs its arguments to tmp_path/calls, then runs `body`."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "cosign").write_text(f'#!/bin/sh\necho "$*" >> "{tmp_path}/calls"\n{body}\n')
+    (bin_dir / "cosign").chmod(0o755)
+    return {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+
+
+@pytest.mark.parametrize(
+    ("cosign", "signed"),
+    [("exit 0", ["a@sha256:1", "b@sha256:2"]), ("exit 1", ["a@sha256:1"])],
+    ids=["both", "stops at a failure"],
+)
+def test_the_sign_step_signs_each_digest(tmp_path: Path, cosign: str, signed: list[str]) -> None:
     """The sign job's signing step, run under `bash -e` with a stub cosign."""
     jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
     (step,) = [s for s in jobs["sign"]["steps"] if s.get("id") == "sign"]
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    (bin_dir / "cosign").write_text(f'#!/bin/sh\necho "$*" >> "{tmp_path}/calls"\n{cosign}\n')
-    (bin_dir / "cosign").chmod(0o755)
-    env = {"PATH": f"{bin_dir}:{os.environ['PATH']}", "DIGESTS": "a@sha256:1 b@sha256:2"}
-    return subprocess.run(
-        ["bash", "-e", "-c", step["run"]], env=env, capture_output=True, text=True
-    )
-
-
-def test_the_sign_step_signs_each_digest_and_stops_at_a_failure(tmp_path: Path) -> None:
-    assert _sign(tmp_path, "exit 0").returncode == 0
+    env = {**_stub_cosign(tmp_path, cosign), "DIGESTS": "a@sha256:1 b@sha256:2"}
+    result = subprocess.run(["bash", "-e", "-c", step["run"]], env=env, capture_output=True)
+    assert (result.returncode == 0) is (cosign == "exit 0")
     calls = (tmp_path / "calls").read_text().splitlines()
-    assert calls == ["sign --yes a@sha256:1", "sign --yes b@sha256:2"]
-    (tmp_path / "calls").unlink()
-    shutil.rmtree(tmp_path / "bin")
-    assert _sign(tmp_path, "exit 1").returncode != 0
-    assert (tmp_path / "calls").read_text().splitlines() == ["sign --yes a@sha256:1"]
+    assert calls == [f"sign --yes {ref}" for ref in signed]
 
 
 def test_release_check_verifies_every_image_the_release_signs_with_the_same_script() -> None:
@@ -492,13 +491,9 @@ def test_release_check_verifies_every_image_the_release_signs_with_the_same_scri
 
 
 def _verify(tmp_path: Path, cosign: str) -> subprocess.CompletedProcess[str]:
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    (bin_dir / "cosign").write_text(f'#!/bin/sh\necho "$*" >> "{tmp_path}/calls"\n{cosign}\n')
-    (bin_dir / "cosign").chmod(0o755)
     return subprocess.run(
         ["bash", str(ROOT / "scripts/release/verify_signatures.sh"), "1.2.0", *IMAGES.split()],
-        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+        env=_stub_cosign(tmp_path, cosign),
         capture_output=True,
         text=True,
     )
