@@ -214,7 +214,7 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    `sign` then signs, by digest, the index `docker-tag` made for each image, with a keyless
    signature (cosign, with the run's GitHub identity, so the certificate names `release.yml`
    and the tag). A run on a tag whose images are out signs nothing: it verifies those
-   signatures, so a tag moved since, or a run that tagged without signing, fails before
+   signatures, so an image tag moved since, or a run that tagged without signing, fails before
    anything publishes (re-running the tag run's failed jobs signs what it tagged). The images
    are tagged before `sign`, so with Sigstore down they are out unsigned until that re-run;
    the GitHub Release, PyPI, npm and the MCP Registry wait for `sign`;
@@ -293,6 +293,12 @@ version and `-t ghcr.io/clickhouse/<image>:latest` when
 docker buildx imagetools create -t ghcr.io/clickhouse/<image>:X.Y.Z \
   ghcr.io/clickhouse/<image>@<amd64 digest> ghcr.io/clickhouse/<image>@<arm64 digest>
 ```
+
+After a failed `sign` (Sigstore down, say), use "Re-run failed jobs" on that same attempt of the
+tag's run: it keeps `docker-tag`'s digests and signs them. Once a later run has started on the tag
+("Re-run all jobs", the tag pushed again, a dispatch), it finds the images out and only verifies
+their signatures, which they lack, and only a run that tagged them can sign them: release a new
+version, and move `:latest` back by hand if it moved.
 
 Never move a tag whose images are published: `published_images.sh` fails when a published image
 was built from another commit than the run's, and a fix needs a new version.

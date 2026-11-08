@@ -106,7 +106,7 @@ def test_a_tag_push_builds_tags_smokes_and_releases() -> None:
 
 
 def test_the_registry_dispatch_on_the_published_tag_reaches_every_registry() -> None:
-    """No image is built or tagged again, the published ones are signed again,
+    """No image is built, tagged or signed again: their signatures are verified,
     and the registries still publish."""
     ran = run(event="workflow_dispatch", dry_run=False, published=True)
     assert ran == BUILD | {"sign", "docker-smoke", "github-release"} | REGISTRIES
@@ -145,7 +145,7 @@ def test_a_failure_on_the_published_tag_smokes_and_publishes_nothing(failed: str
 
 def test_a_tag_push_whose_images_are_published_builds_and_tags_none() -> None:
     """A re-run of every job, or the tag pushed again at the same commit: what is
-    out is signed again, so a run that tagged but did not sign is repaired."""
+    out is verified, not signed."""
     ran = run(event="push", dry_run=None, published=True)
     assert ran == BUILD | {"sign", "docker-smoke", "github-release", "release-check"}
 

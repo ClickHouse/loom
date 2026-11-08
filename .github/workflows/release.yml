@@ -17,7 +17,8 @@ name: release
 # (inspect the exact files) -> docker (build and scan each image on each
 # architecture's own runner) -> docker-tag -> sign (keyless, the digests
 # docker-tag made; a run on a published tag verifies them) and docker-smoke (the
-# quickstart and the installer rehearsal) -> github-release -> release-check (tag push only),
+# quickstart and the installer rehearsal) -> github-release -> release-check
+# (tag push only),
 # and pypi, npm, mcp-registry (dispatch only). A re-run after a partial publish is
 # safe: the bundle keeps the ClickHouse release it was first published with,
 # the release is updated in place, PyPI skips files it already has, npm and the
@@ -610,8 +611,8 @@ jobs:
           echo "digests=${digests[*]}" >> "$GITHUB_OUTPUT"
 
   # The run that tags signs the indexes it made, by digest; a later run on the
-  # tag verifies those signatures instead, so a tag moved since is refused. The
-  # GitHub Release and the SDK registries wait for this job.
+  # tag verifies those signatures instead, so an image tag moved since is
+  # refused. The GitHub Release and the SDK registries wait for this job.
   sign:
     name: Sign both images, or verify their signatures
     if: ${{ !cancelled() && !inputs.dry_run && (needs.docker-tag.result == 'success' || needs.preflight.outputs.images_published == 'true') }}
@@ -649,7 +650,7 @@ jobs:
             cosign verify "$image:$VERSION" \
               --certificate-identity "https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v$VERSION" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null \
-              || { echo "::error::$image:$VERSION carries no signature from release.yml on v$VERSION: re-run the failed jobs of the tag's run"; exit 1; }
+              || { echo "::error::$image:$VERSION carries no signature from release.yml on v$VERSION: re-run the failed jobs (not all jobs) of the tag's run; once a later run has started on the tag, release a new version"; exit 1; }
           done
 
   docker-smoke:
