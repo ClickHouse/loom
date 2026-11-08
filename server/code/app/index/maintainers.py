@@ -134,11 +134,12 @@ def repo_change(org: str, repo: str | None, subject: str) -> AbstractAsyncContex
     None."""
     from server.auth.grant_claims import grant_change
 
-    return grant_change(org, _repo_key(repo), subject) if repo is not None else nullcontext()
+    return grant_change(org, repo_claim_key(repo), subject) if repo is not None else nullcontext()
 
 
-def _repo_key(repo: str) -> str:
-    """The claim name of a repository: a sync and a revoke serialise on it."""
+def repo_claim_key(repo: str) -> str:
+    """The claim name of a repository: a sync, a revoke and a restriction serialise
+    on its admins claim."""
     return f"repo:{repo}"
 
 
@@ -155,7 +156,7 @@ async def repo_admin_claims(org: str, repo: str | None, subject: str) -> AsyncIt
     if repo is None:
         yield
         return
-    async with repo_change(org, repo, subject), admins_change(org, _repo_key(repo)):
+    async with repo_change(org, repo, subject), admins_change(org, repo_claim_key(repo)):
         yield
 
 
@@ -535,24 +536,16 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
     rewrites = [r for r in inserts if (r["namespace"], r["subject"]) in strays]
     inserts = [r for r in inserts if (r["namespace"], r["subject"]) not in strays]
     written, busy = 0, None
-    if revokes:
+    stages = ((revokes, _copy_unchanged), (rewrites, _rewrite_wanted), (inserts, _mirror_wanted))
+    for planned_rows, still_wanted in stages:
+        if not planned_rows:
+            continue
         try:
             written += await _write_under_claims(
-                client, org, revokes, _copy_unchanged, rows, hold_repo=repo
+                client, org, planned_rows, still_wanted, rows, hold_repo=repo
             )
-        except GrantBusyError as e:  # the copies below are still written; a later sync retries
-            busy = e
-    if rewrites:
-        try:
-            written += await _write_under_claims(
-                client, org, rewrites, _rewrite_wanted, rows, hold_repo=repo
-            )
-        except GrantBusyError as e:
+        except GrantBusyError as e:  # the later stages are still written; a later sync retries
             busy = busy or e
-    if inserts:
-        written += await _write_under_claims(
-            client, org, inserts, _mirror_wanted, rows, hold_repo=repo
-        )
     if busy is not None:
         raise busy
     if written:

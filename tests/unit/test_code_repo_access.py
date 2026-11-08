@@ -403,10 +403,10 @@ async def test_restricting_a_page_branch_revokes_the_copy_a_sibling_gave_it(monk
             held.remove(ns)
 
     async def insert(table: str, rows: list[dict[str, Any]], **_: Any) -> None:
-        if (
-            table == "loom.namespaces"
-        ):  # the restriction's directory row is written under the branch's admins claim
-            assert held == ["code-weave-rc"]
+        # The restriction's directory row is written under the repository's admins
+        # claim, which a revoke holds, then the branch's, which a copy holds.
+        if table == "loom.namespaces":
+            assert held == ["repo:ClickHouse/weave", "code-weave-rc"]
         ch.inserts.append((table, rows))
 
     monkeypatch.setattr(grant_claims, "admins_change", admins)

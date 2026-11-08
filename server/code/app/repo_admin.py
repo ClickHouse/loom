@@ -719,9 +719,14 @@ async def handle_code_repo_set_access(input: Any) -> Any:
     ch = get_client()
     subject, _org = current_caller()
     from server.auth.grant_claims import admins_change
+    from server.code.app.index import maintainers
 
-    # A copy onto this branch holds this claim: it lands before the sync below, or sees both rows.
-    async with admins_change(input.org, input.namespace):
+    # A fan-out write onto this branch holds these claims: it lands before the sync
+    # below, or sees both rows.
+    async with (
+        admins_change(input.org, maintainers.repo_claim_key(str(cfg.repo))),
+        admins_change(input.org, input.namespace),
+    ):
         row = await _directory_row(ch, input.org, input.namespace)
         if row is None and cls == "restricted" and cfg.source == "registry":
             # Without one, the restriction reaches other replicas only through their
@@ -755,7 +760,6 @@ async def handle_code_repo_set_access(input: Any) -> Any:
         nc.note_restricted(input.org, input.namespace)
         # This host's mirror at once; every other host's at its next mirror round.
         await asyncio.to_thread(restrict_entry, cfg)
-        from server.code.app.index import maintainers
         from server.core.ch import sequential_reads
 
         # Revokes the admins its siblings added from the page copied onto it.
