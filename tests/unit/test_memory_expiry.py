@@ -780,9 +780,10 @@ async def test_a_replay_mirrors_the_heads_as_they_are_now(
     applied: list[Any] = []
     copied: list[Any] = []
 
-    async def _apply(items, *, ch=None, bare=False) -> None:
+    async def _retire(items, *, ch=None, bare=False) -> int:
         assert bare  # every replayed retire is bare
         applied.append(items)
+        return 0
 
     async def _reemit(items, *, ch=None) -> int:
         copied.append(items)
@@ -823,7 +824,7 @@ async def test_a_replay_mirrors_the_heads_as_they_are_now(
         assert sequential
         return {k: live[k] for k in keys if k in live}
 
-    monkeypatch.setattr(X, "apply_mirror", _apply)
+    monkeypatch.setattr("server.memory.store.retire_vectors_for_keys", _retire)
     monkeypatch.setattr("server.memory.store.reemit_embedding_rows_for_keys", _reemit)
     monkeypatch.setattr("server.memory.store.memory_rows_by_identity_keys", _heads)
     await X.replay_mirror(
@@ -833,14 +834,7 @@ async def test_a_replay_mirrors_the_heads_as_they_are_now(
     )
     # The shell's vectors are retired up to its head (a supersede may have copied the
     # old text above 200); the rewritten key's only below the recorded version.
-    assert applied == [
-        [
-            (shell, 351, "anonymize", None),
-            (rewritten, 200, "anonymize", None),
-            (marker, 200, "anonymize", None),
-            (gone, 200, "tombstone", None),
-        ]
-    ]
+    assert applied == [[(shell, 351), (rewritten, 200), (marker, 200), (gone, 200)]]
     assert copied == [
         [
             (touched, {"expires_at": later, "confidence": 0.4}),
