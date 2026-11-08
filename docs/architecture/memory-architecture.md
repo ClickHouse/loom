@@ -1212,15 +1212,10 @@ Expiry is the writer's choice. `ttl_seconds`, `valid_to`, a type's or namespace'
 | `anonymize`           | Replaces the value with a marker, tombstones embeddings, keeps the shell row. |
 
 The sweep then mirrors the action onto `memory_embeddings` and `entity_vectors` at the
-memory row's version: only rows below it change, so a later write's rows above it stay.
-`entity_vectors` has no version, so its cutoff is the second that version was drawn in.
-The next pass never selects a key it wrote, so a failed mirror is recorded as a
-`memory_expiry_mirror` projection failure, which `projection_repair` replays. A replayed
-retire runs as recorded. A replayed demote copies the key's live head as it is then (its
-expiry and confidence, at its version), so a write since the sweep whose metadata copy
-landed below the sweep's version, such as a touch, keeps what it set. A pass cut
-off between its insert and that record records nothing, as with any fail-open
-projection.
+memory row's version. The next pass never selects a key it wrote, so a failed mirror is
+recorded as a `memory_expiry_mirror` projection failure, which `projection_repair`
+replays; a replayed demote copies the key's live head as it is then. A pass cut off
+between its insert and that record records nothing, as with any fail-open projection.
 
 Table-level retention and tiering are operator TTLs, off by default
 ([ClickHouse](clickhouse.md#partitioning-and-ttl)).

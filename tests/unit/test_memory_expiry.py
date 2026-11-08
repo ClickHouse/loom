@@ -596,7 +596,7 @@ async def test_a_failed_mirror_is_recorded_per_writer_and_the_repair_applies_it(
     assert (other["memory_keys"], json.loads(other["payload"])["user_id"]) == (["d"], "u2")
     assert json.loads(failure["payload"]) == {
         "items": [
-            [["test", "personal", "cursor", "-", "-", "a"], written["a"], "retire"],
+            [["test", "personal", "cursor", "-", "-", "a"], written["a"], "tombstone"],
             [["test", "personal", "cursor", "-", "-", "b"], written["b"], "demote"],
         ],
         "user_id": "-",
@@ -629,7 +629,7 @@ _retire_clients: list[Any] = []
 
 
 async def _retire_many_ok(items, *, ch=None, bare=False) -> int:
-    assert bare  # a late tombstone carries no text a redaction purged
+    assert not bare  # a tombstone keeps its vector for memory.restore
     _retire_clients.append(ch)
     for (_o, _n, _a, _u, _s, key), version in items:
         retired.append((key, version))
@@ -659,7 +659,13 @@ async def test_a_late_mirror_leaves_a_later_writes_vectors_alone(
             "created_at": _NOW,
         }
 
-    live = [_emb("old", 100), _emb("new", 300), _emb("gone", 100), _emb("kept", 300)]
+    live = [
+        _emb("old", 100),
+        _emb("new", 300),
+        _emb("gone", 100),
+        _emb("kept", 300),
+        _emb("deleted", 100),
+    ]
 
     async def _live(ch, keys, **_: Any) -> list[dict[str, Any]]:
         wanted = set(keys)
@@ -691,26 +697,28 @@ async def test_a_late_mirror_leaves_a_later_writes_vectors_alone(
     demote = {"expires_at": None, "confidence": 0.4}
     await X.apply_mirror(
         [
-            (key("old"), 200, demote),
-            (key("new"), 200, demote),
-            (key("gone"), 200, None),
-            (key("kept"), 200, None),
+            (key("old"), 200, "demote", demote),
+            (key("new"), 200, "demote", demote),
+            (key("gone"), 200, "anonymize", None),
+            (key("kept"), 200, "anonymize", None),
+            (key("deleted"), 200, "tombstone", None),
         ]
     )
 
     got = {r["memory_key"]: r for r in inserted}
-    assert set(got) == {"old", "gone"}
+    assert set(got) == {"old", "gone", "deleted"}
     assert got["old"]["version"] == 200 and got["old"]["confidence"] == 0.4
     assert got["old"]["expires_at"] is None and got["old"]["tombstoned_at"] is None
     assert got["gone"]["version"] == 200 and got["gone"]["tombstoned_at"] is not None
-    # The retire's tombstone is bare: no text or vector for a redaction to miss.
+    # An anonymize's tombstone is bare: no text or vector for a redaction to miss. A
+    # tombstone keeps its vector, which memory.restore brings back; a copy keeps its text.
     assert not got["gone"]["content_excerpt"] and not got["gone"]["embedding"]
-    assert got["old"]["content_excerpt"] == "the original text"  # a copy keeps its text
+    assert got["deleted"]["embedding"] == [0.1] and got["deleted"]["tombstoned_at"] is not None
+    assert got["old"]["content_excerpt"] == "the original text"
     # entity_vectors has no version: a retired key keeps the rows created after the
     # second of the memory row's version, a later write's.
-    assert cutoffs == [
-        {key("gone"): embeddings.version_second(200), key("kept"): embeddings.version_second(200)}
-    ]
+    second = embeddings.version_second(200)
+    assert cutoffs == [{key("deleted"): second}, {key("gone"): second, key("kept"): second}]
 
 
 async def test_a_malformed_expiry_mirror_failure_is_abandoned(
@@ -738,7 +746,8 @@ async def test_a_malformed_expiry_mirror_failure_is_abandoned(
 
     for item in (
         [["o", "n", "k"], 200, None],  # not an identity key
-        [["o", "n", "a", "-", "-", "k"], 200, "erase"],  # not a mirror's action
+        [["o", "n", "a", "-", "-", "k"], 200, "erase"],  # not an on_expire action
+        ["abcdef", 200, "tombstone"],  # a string, not an identity key
     ):
         result = await pf._retry(failure(item), ch=object())
         assert (result.abandoned, result.reason) == (True, "malformed_payload")
@@ -777,15 +786,15 @@ async def test_a_replayed_demote_copies_the_head_as_it_is_now(
     monkeypatch.setattr(X, "apply_mirror", _apply)
     monkeypatch.setattr("server.memory.store.memory_rows_by_identity_keys", _heads)
     await X.replay_mirror(
-        [(k, 200, "demote") for k in (touched, locked, deleted)] + [(anonymized, 200, "retire")]
+        [(k, 200, "demote") for k in (touched, locked, deleted)] + [(anonymized, 200, "anonymize")]
     )
     # Each copy is kept to rows of its head's own text.
     assert calls == [
         (
             [
-                (touched, 300, {"expires_at": later, "confidence": 0.4}),
-                (locked, 310, {"expires_at": None, "confidence": 0.4}),
-                (anonymized, 200, None),
+                (touched, 300, "demote", {"expires_at": later, "confidence": 0.4}),
+                (locked, 310, "demote", {"expires_at": None, "confidence": 0.4}),
+                (anonymized, 200, "anonymize", None),
             ],
             {touched: "a" * 64, locked: "b" * 64},
         )
