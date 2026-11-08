@@ -38,6 +38,7 @@ from server.identity.api.models import (
     _NamespaceEntry,
 )
 from server.identity.app import registration
+from server.identity.app.namespace_classification import config_classification
 from server.identity.domain import join_policy as _jp
 from server.identity.domain.account_ties import owner_moved
 from server.identity.store import grants as grants_repo
@@ -176,10 +177,12 @@ def registry_row(
             if input.retrieval_defaults is not None
             else str((existing or {}).get("retrieval_defaults") or "")
         ),
-        # …and a restricted row is never public, whatever the form said.
+        # …and a restricted namespace (by its row or its configuration) is never public,
+        # whatever the form said.
         "visibility": (
             "private"
             if str((existing or {}).get("classification") or "standard") == "restricted"
+            or config_classification(input.org, input.namespace) == "restricted"
             else _set_or_stored(input.visibility, existing, "visibility", "private")
         ),
         "active": _set_or_stored(input.active, existing, "active", True),
@@ -307,10 +310,14 @@ async def require_admin_of_existing(
     from server.auth.context import current_auth
 
     auth = current_auth()
-    # A restricted row is updated only by a principal who passes the two-factor ADMIN
-    # check for it — a flat admin whose claim is `*`, the auto-registered owner and an
-    # inherited grant do not qualify — and it never becomes public.
-    if str(existing.get("classification") or "standard") == "restricted":
+    # A restricted namespace (by its row or its configuration) is updated only by a
+    # principal who passes the two-factor ADMIN check for it — a flat admin whose claim is
+    # `*`, the auto-registered owner and an inherited grant do not qualify — and it never
+    # becomes public.
+    if (
+        str(existing.get("classification") or "standard") == "restricted"
+        or config_classification(org, namespace) == "restricted"
+    ):
         from server.auth.authz import restricted_allows
         from server.core.errors import AuthInsufficientError
 
@@ -596,7 +603,12 @@ async def handle_namespace_get(input: NamespaceGetInput) -> NamespaceGetOutput:
         tag_registry=tag_registry,
         # Only on the found branch: the transport's restricted gate has already admitted the
         # caller to this row, so the word says nothing the caller could not read.
-        classification=("restricted" if row.get("classification") == "restricted" else "standard"),
+        classification=(
+            "restricted"
+            if row.get("classification") == "restricted"
+            or config_classification(input.org, input.namespace) == "restricted"
+            else "standard"
+        ),
         guide_revision=int(guide["revision"]),
         guide_summary=str(guide["summary"]),
         created_at=row["created_at"],

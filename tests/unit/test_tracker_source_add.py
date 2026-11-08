@@ -1261,8 +1261,8 @@ async def test_a_source_whose_namespaces_did_not_parse_is_refused(_cfg, monkeypa
 
 @pytest.mark.asyncio
 async def test_the_listing_reports_the_classification_the_checks_use(_cfg) -> None:
-    """The card reads `classification` as `_admits` and every read do: the directory
-    row once written, the source's own flag until then."""
+    """The card reads `classification` as `_admits` and every read do: the source's
+    own flag restricts whatever the directory row says."""
     ch = _cfg
     await handle_tracker_source_add(_restricted_only())
     rows = list(ch.namespace_rows)
@@ -1277,4 +1277,4 @@ async def test_the_listing_reports_the_classification_the_checks_use(_cfg) -> No
     for row in rows:
         row["classification"] = "standard"
     ch.namespace_rows.extend(rows)
-    assert await classifications() == ["standard"]
+    assert await classifications() == ["restricted"]  # a standard row does not widen it

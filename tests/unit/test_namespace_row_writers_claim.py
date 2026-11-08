@@ -163,6 +163,22 @@ def test_the_gate_reads_a_restricted_tracker_namespace_from_its_config(monkeypat
         assert nc.config_classification(ORG, "memory-ns") == "standard"
         assert nc.config_classification(ORG, "qa-bad") == "restricted"
         assert tracker_sources.namespace_entries()["qa-bad"].repos == ()
-        assert IdentityDirectory().restricted_config_namespaces(ORG) >= {"qa-p", "qa-bad"}
+        assert IdentityDirectory().restricted_config_namespaces(ORG) == {"qa-p", "qa-bad"}
+        assert IdentityDirectory().restricted_config_namespaces("other-org") == set()
     finally:
         tracker_store.reset_cache_for_tests()
+
+
+def test_the_source_list_shows_a_restricted_entry_as_restricted_before_its_row_is() -> None:
+    """`tracker.source.list` skips the gate: a standard, open row of a namespace the map
+    restricts reads as restricted, so no freshness is read through it."""
+    from server.tracker.app.sources import _namespace_view
+
+    entry = SimpleNamespace(namespace="qa-p", repos=("Acme/private",), restricted=True)
+    row = {"classification": "standard", "join_policy": "open", "visibility": "public"}
+    view = _namespace_view(entry, row, None)
+    assert (view["classification"], view["join_policy"], view["visibility"]) == (
+        "restricted",
+        "approval",
+        "private",
+    )
