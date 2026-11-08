@@ -52,7 +52,10 @@ def parse(parser: Any, source: bytes) -> Any:
             return b""
         return source[offset : offset + _CHUNK]
 
-    with _LOCKS.setdefault(parser.language, threading.Lock()):
+    lock = _LOCKS.get(parser.language)
+    if lock is None:
+        lock = _LOCKS.setdefault(parser.language, threading.Lock())
+    with lock:
         tree = parser.parse(read)
     if expired:
         raise ParseTimeout(f"parse stopped after {budget:g}s")

@@ -269,7 +269,7 @@ def _definitions_grammar(source: bytes) -> list[tuple[str, str, int, int, str]] 
     try:
         parser = Parser(Language(tl.language()))
         tree = bounded_parse.parse(parser, source)
-    except Exception:  # noqa: BLE001 — a grammar that cannot parse: the reader falls back
+    except Exception:  # noqa: BLE001 — no parse, or none in time: the reader falls back
         return None
     root = tree.root_node
     if root.has_error:
