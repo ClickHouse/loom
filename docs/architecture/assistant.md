@@ -123,11 +123,13 @@ steps:
    any `conversation_id` in the caller's body: on this path LibreChat stores no
    conversation, so it answers 404 for one it is given.
 
-An answer's token reads no more than the caller's own token, ends no later than it (for
-a sign-in session, no later than the session: the answer's token may outlive the
-hour-long access token it was delegated from, as every child of a first-party session
-does), and is ended with it: revoking the caller's token, its subject, its sign-in
-session or a subject in its `creator` or `parent_subjects` chain ends the answer's token
+An answer's token reads no more than the caller's own token, and ends no later than it,
+except under a sign-in session: every child of a first-party session takes the lifetime
+it asks for, so an answer's token lives one answer's limit
+(`LOOM_ASSISTANT_ANSWER_TTL_S`) and may outlive the hour-long access token it was
+delegated from, or a session that expires during the answer, by at most that limit. It
+is ended with its caller: revoking the caller's token, its subject, its sign-in session
+or a subject in its `creator` or `parent_subjects` chain ends the answer's token
 too, since delegation puts each of them in its revocation check. LibreChat holds the
 token in memory for the one request and stores it nowhere; the deployment sets none of
 LibreChat's tracing variables, which would export the run's request body, and the
@@ -706,10 +708,10 @@ The same file shows that a revoked token stops new calls and that an erased memo
 is gone from the next statement. A unit test pins the generated grants and policies to
 the allowlist. The bridge's tests will show that:
 
-- an answer's token is never wider than the caller's token, never outlives it (a sign-in
-  session's for a dashboard caller) or the answer's limit, and ends with the caller's
-  token, subject, creator or sign-out; a dashboard caller in the last minutes of its
-  access token is answered;
+- an answer's token is never wider than the caller's token, never outlives it (under a
+  sign-in session, never the answer's limit) and ends with the caller's token, subject,
+  creator or sign-out; a dashboard caller in the last minutes of its access token is
+  answered;
 - a request to LibreChat without a token reads nothing, and one with a token reads as
   it;
 - a revoked caller, an org-wide token, a narrowed `read_scope`, a caller about to expire

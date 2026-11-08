@@ -68,9 +68,10 @@ class Ticket:
     org: str
     namespace: str
     agent_id: str
-    api_key: str
-    token: str
-    slot: int
+    # Secrets: kept out of the repr, so no log line or assertion diff prints them.
+    api_key: str = field(repr=False)
+    token: str = field(repr=False)
+    slot: int = 0
 
     def release(self) -> None:
         """Give the answer's slot back; a second call does nothing."""

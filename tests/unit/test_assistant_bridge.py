@@ -284,6 +284,11 @@ def test_only_the_callers_text_turns_reach_the_agent() -> None:
         bridge.admitted_messages([{"role": "assistant", "content": "no question"}])
 
 
+def test_a_ticket_prints_neither_secret() -> None:
+    ticket = bridge.Ticket(ORG, NS, "agent_1", "sk-secret", "answer.jwt", 7)
+    assert "sk-secret" not in repr(ticket) and "answer.jwt" not in repr(ticket)
+
+
 def test_a_refusal_mid_stream_is_an_error_event() -> None:
     event = bridge.error_event(RateLimitedError("spent", retry_after_s=60))
     assert event.startswith(b"data: ") and event.endswith(b"\n\n")
