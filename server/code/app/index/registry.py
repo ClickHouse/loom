@@ -170,7 +170,7 @@ async def _write_row(cfg: Any, client: Any) -> bool:
     # directory has not taken yet.
     follows_access = access is not None and not access_restricted and _newer(access, row)
     if access is None:
-        access_open = str(cfg.source) != "registry"  # the operator's entry alone says public
+        access_open = cfg.source == "config"  # the operator's entry alone says public
     else:
         access_open = follows_access and str(access.get("join_policy")) == "open"
     if opening and access_open:

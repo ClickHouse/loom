@@ -263,8 +263,8 @@ class CodeRepoSetAccessInput(BaseModel):
     # `open`, `approval` or `closed` (case-insensitive); `open` with `restricted` is refused.
     join_policy: str
     # Must equal `namespace` when the call widens `restricted` to `standard`, which also
-    # needs an admin grant of the caller's own there (a copy from a branch added from the
-    # page does not count); else unused.
+    # needs an admin grant of the caller's own there (a copy that does not come from one
+    # of the repository's operator entries does not count); else unused.
     confirm: str = ""
 
 

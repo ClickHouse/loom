@@ -117,16 +117,23 @@ async def test_existing_row_already_restricted_is_left_alone() -> None:
 
 
 @pytest.mark.parametrize(
-    ("access", "written"),
-    [("standard", "after"), ("restricted", "after"), ("standard", "before"), ("standard", "same")],
+    ("source", "access", "written"),
+    [
+        ("config", "standard", "after"),
+        ("config", "restricted", "after"),
+        ("config", "standard", "before"),
+        ("config", "standard", "same"),
+        ("registry", "standard", "after"),
+    ],
 )
 @pytest.mark.asyncio
 async def test_a_maintainer_s_widening_reaches_the_row_only_while_its_access_row_says_so(
-    monkeypatch: pytest.MonkeyPatch, access: str, written: str
+    monkeypatch: pytest.MonkeyPatch, source: str, access: str, written: str
 ) -> None:
     """The snapshot says a maintainer opened it; the access row read now decides, since a
     restriction may have landed after the snapshot was read. An access row older than
-    the directory row is a restriction cut short before its access row was written."""
+    the directory row is a restriction cut short before its access row was written. A
+    branch added from the page is widened by code.repo.set_access alone."""
     from datetime import datetime
 
     existing = {
@@ -144,10 +151,10 @@ async def test_a_maintainer_s_widening_reaches_the_row_only_while_its_access_row
             return self.existing
 
     client = _Access(existing=existing)
-    cfg = dataclasses.replace(_cfg("standard"), access_source="registry")
+    cfg = dataclasses.replace(_cfg("standard"), source=source, access_source="registry")
     held = _hold_admins(monkeypatch, client)
     await registry.ensure_registered(cfg, ch=client)
-    widens = access == "standard" and written == "after"
+    widens = source == "config" and access == "standard" and written == "after"
     widened = [(r["classification"], r["join_policy"]) for _, rows in client.inserted for r in rows]
     assert widened == ([("standard", "closed")] if widens else [])  # the access row's policy
     assert held == (["code-p"] if widens else [])
