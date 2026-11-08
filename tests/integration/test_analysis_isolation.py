@@ -486,10 +486,11 @@ def test_the_statement_text_stays_out_of_the_query_log(
     # Both are logged, as on a server that pins log_queries, but not their text;
     # this read cuts its own, which holds the marker.
     ran, lifted_rows, quoted = ch_client.query(
-        "SELECT countIf(user = 'loom_analyst' AND startsWith(query_id, {ran:String})), "
-        "countIf(user = 'loom_analyst' AND startsWith(query_id, {lift:String})), "
+        "SELECT countIf(user = {analyst:String} AND startsWith(query_id, {ran:String})), "
+        "countIf(user = {analyst:String} AND startsWith(query_id, {lift:String})), "
         "countIf(query LIKE {m:String}) FROM system.query_log",
         parameters={
+            "analyst": boundary.ANALYST_USER,
             "ran": f"text-{seed.nonce}:",
             "lift": f"lift-{seed.nonce}:",
             "m": f"%{marker}%",
@@ -520,8 +521,8 @@ def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client) -> Non
         return (
             ch_client.query(
                 "SELECT count() FROM system.query_log WHERE event_time >= {start:DateTime} "
-                "AND user = 'loom_analyst' AND exception LIKE '%UNKNOWN_SETTING%'",
-                parameters={"start": start},
+                "AND user = {analyst:String} AND exception LIKE '%UNKNOWN_SETTING%'",
+                parameters={"start": start, "analyst": boundary.ANALYST_USER},
                 settings=boundary.LOG_TEXT_CUT,
             ).result_rows[0][0]
             > 0
