@@ -604,7 +604,8 @@ async def reembed_all(
     re-embedded by `aiEmbed` inside ClickHouse instead of a Python loop
     (`in_database_refusal` says when it may not be).
     `resume`: a token a previous run printed; tables before its table are
-    skipped and its table continues after the row it names.
+    skipped, its table continues after the row it names, and `--delete-old` keeps
+    the old-model rows of the orgs it carries.
     Raises CodedWidthMismatchError, before reading any row, when the embedder's
     width is not the one a coded vector table was created at."""
     from server.core.vectors import codes_state

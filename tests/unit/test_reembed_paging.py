@@ -257,19 +257,30 @@ async def test_a_page_larger_than_one_re_read_is_read_again_in_parts(monkeypatch
 @pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
 @pytest.mark.asyncio
 async def test_the_re_read_finds_a_live_row_by_its_key_and_leaves_its_vectors_out() -> None:
-    """On the production table definition: the Enum `scope` matches by name, a tombstoned
-    or lightweight-deleted row is not found, and no vector column is read."""
+    """On the production table definition: the Enum `scope` matches by name, a key's
+    newest version decides (a tombstone or other text written as a newer version), a
+    lightweight-deleted row is not found, and no vector column is read."""
     table = "memory_embeddings"
     head = "org, namespace, agent, user_id, session_id, scope, embedding_model, memory_key"
-    values = ", ".join(
-        f"('o','n','a','-','-','private','m1','{key}','x',{VECTOR},{VECTOR},2,{tombstone})"
-        for key, tombstone in (("live", "NULL"), ("tombstoned", "now()"), ("deleted", "NULL"))
-    )
+
+    def insert(key: str, text: str, version: int, tombstone: str = "NULL") -> str:
+        return (
+            f"INSERT INTO loom.{table} ({head}, content_excerpt, embedding, "
+            "memory_key_embedding, embedding_dim, version, tombstoned_at) VALUES "
+            f"('o','n','a','-','-','private','m1','{key}','{text}',{VECTOR},{VECTOR},2,"
+            f"{version},{tombstone})"
+        )
+
     setup = [
         *EMBEDDINGS,
-        f"INSERT INTO loom.{table} ({head}, content_excerpt, embedding, memory_key_embedding, "
-        f"embedding_dim, tombstoned_at) VALUES {values}",
+        insert("deleted", "x", 1),
         f"DELETE FROM loom.{table} WHERE memory_key = 'deleted'",
+        # After the delete, so each version stays in a part of its own until FINAL.
+        insert("live", "x", 1),
+        insert("tombstoned", "x", 1),
+        insert("tombstoned", "x", 2, "now()"),  # a newer version, as a delete writes it
+        insert("rewritten", "x", 1),
+        insert("rewritten", "y", 2),
     ]
     cols = [
         r["name"]
@@ -292,13 +303,14 @@ async def test_the_re_read_finds_a_live_row_by_its_key_and_leaves_its_vectors_ou
         )
 
     capture = _Capture()
-    read = {
-        i: {**row(k), "content_excerpt": "x"}
-        for i, k in enumerate(["live", "tombstoned", "deleted"])
-    }
+    keys = ["live", "tombstoned", "rewritten", "deleted"]
+    read = {i: {**row(k), "content_excerpt": "x"} for i, k in enumerate(keys)}
     await rb._read_again(capture, table, cols, read, where, params, key_only=False)
     found = run(setup, capture.sql, capture.params)
-    assert [r["memory_key"] for r in found] == ["live"]
+    assert sorted((r["memory_key"], r["content_excerpt"]) for r in found) == [
+        ("live", "x"),
+        ("rewritten", "y"),
+    ]
     assert not {"embedding", "memory_key_embedding"} & set(found[0])
 
 
