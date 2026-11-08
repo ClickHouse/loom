@@ -21,7 +21,7 @@ from pydantic import ValidationError
 from server.code.app import citations as citations_app
 from server.code.app import symbol_context
 from server.code.app.common import repo_relative
-from server.code.app.index import sql_names
+from server.code.app.index import review_brief, sql_names
 from server.code.domain import facets
 from server.code.domain.index import citations, query_trim
 from server.identity.app import scim_groups
@@ -145,6 +145,13 @@ CASES: list[tuple[str, Callable[[str], object], str, str]] = [
     ("query_planner._MIXED_RE", _finditer(query_planner, "_MIXED_RE"), "", "a-"),
     ("sql_names._STATED_CLASS_RE", _search(sql_names, "_STATED_CLASS_RE"), "", "a"),
     ("sql_names._ANY_REG_RE prefixed", _finditer(sql_names, "_ANY_REG_RE"), "", "_register"),
+    ("review_brief._DECL_RE prefixed", _finditer(review_brief, "_DECL_RE"), "", "_DECLARE"),
+    (
+        "review_brief._OBSOLETE_RE prefixed",
+        _finditer(review_brief, "_OBSOLETE_RE"),
+        "",
+        "_MAKE_OBSOLETE",
+    ),
     (
         "sql_names._STATED_CLASS_RE blanks",
         _then(_search(sql_names, "_STATED_CLASS_RE"), "b::"),
@@ -531,3 +538,9 @@ def test_a_registration_call_on_a_prefixed_name_is_read() -> None:
     text = 'self._register("arrayFold"); auto_register<T>("sumMap"); registerFunction("abs")'
     assert sql_names._ANY_REG_RE.findall(text) == ["arrayFold", "sumMap", "abs"]
     assert sql_names._shape_re("arrayFold").search(text)
+
+
+def test_a_settings_macro_with_a_prefix_is_read() -> None:
+    text = "M_DECLARE(UInt64, max_threads, 0) X_MAKE_OBSOLETE(M, Bool, old_flag, 0)"
+    assert review_brief._DECL_RE.findall(text) == ["max_threads"]
+    assert review_brief._OBSOLETE_RE.findall(text) == ["old_flag"]

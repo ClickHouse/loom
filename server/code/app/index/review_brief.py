@@ -138,10 +138,11 @@ _SETTINGS_FILES = (
 )
 _HISTORY_FILE = "src/Core/SettingsChangesHistory.cpp"
 _STATELESS = "tests/queries/0_stateless/"
-# Each starts a word, so a run of macro names is searched once, not from each.
-_DECL_RE = re.compile(r"(?<!\w)DECLARE\w*\(\s*\w+\s*,\s*([a-z][a-z0-9_]{2,80})\s*,")
+# Each starts a word and reads it once (a prefixed `M_DECLARE` included), so a run of
+# macro names is searched once, not from each.
+_DECL_RE = re.compile(r"(?<!\w)(?>\w*DECLARE)\w*+\(\s*\w+\s*,\s*([a-z][a-z0-9_]{2,80})\s*,")
 _OBSOLETE_RE = re.compile(
-    r"(?<!\w)MAKE_OBSOLETE\w*\(\s*\w+\s*,\s*\w+\s*,\s*([a-z][a-z0-9_]{2,80})\s*,"
+    r"(?<!\w)(?>\w*MAKE_OBSOLETE)\w*+\(\s*\w+\s*,\s*\w+\s*,\s*([a-z][a-z0-9_]{2,80})\s*,"
 )
 _HISTORY_RE = re.compile(r'\{\s*"([a-z][a-z0-9_]{2,80})"\s*,')
 _TEST_SET_RE = re.compile(r"(?i)\b(?:SET|SETTINGS)\s+([a-z][a-z0-9_]{2,80})\s*=")
