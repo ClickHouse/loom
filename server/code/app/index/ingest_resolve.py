@@ -362,7 +362,8 @@ def git_text_source(git_dir: str, sha: str) -> Iterator[None]:
 # so without this every import that needs the file would read it again; a file over one
 # cap may be within a larger one.
 _OVERSIZE: TtlCache[tuple[str, str, str, int], bool] = TtlCache(
-    lambda: settings.code_ingest_sibling_text_ttl_s
+    lambda: settings.code_ingest_sibling_text_ttl_s,
+    maxsize=65_536,  # a verdict is a few bytes; the barrels of one pass do not evict a manifest's
 )
 
 

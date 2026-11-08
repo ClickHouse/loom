@@ -274,3 +274,10 @@ def test_a_cut_the_chunks_made_does_not_stop_a_recovered_mirror(
         assert asyncio.run(ingest_resolve._live_text(repo, "o", "n", "go.mod", 50)) == ""
         monkeypatch.setattr(gitrepo, "show_file", show)
         assert asyncio.run(ingest_resolve._live_text(repo, "o", "n", "go.mod", 50)) == "module x\n"
+
+
+def test_a_manifest_verdict_outlasts_a_pass_of_oversize_barrels() -> None:
+    ingest_resolve._over_cap(("o", "n", "package.json", 1 << 20), "o", "n", "big")
+    for i in range(2_000):
+        ingest_resolve._over_cap(("o", "n", f"src/b{i}.ts", 1_000_000), "o", "n", "big")
+    assert ingest_resolve._oversize("o", "n", "package.json", 1 << 20)

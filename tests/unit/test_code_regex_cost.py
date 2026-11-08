@@ -200,7 +200,7 @@ def _composites(p: re.Pattern) -> list[tuple[str, str, str]]:
     units += [f"{a} {b} a(" for a, b in zip(words, words[1:], strict=False)]
     openers = _openers(p)
     shapes += [(o + sep, " ", end) for o in openers for sep in _SEPS for end in ("b", "\n")]
-    units += [o + "a" for o in openers]
+    units += [o + "a" for o in openers] + [o + "1(" for o in openers]  # `1` names no call
     keyed = [(o + "{", w + ":'a',", "b") for o in openers for w in words]
     return shapes + keyed + [(" ".join(words) + " a ", unit, "b") for unit in units]
 
