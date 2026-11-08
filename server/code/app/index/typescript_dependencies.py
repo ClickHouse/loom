@@ -128,7 +128,19 @@ def _install_command(checkout: Path, root: Path) -> tuple[list[str], dict[str, s
     ], {}
 
 
-_LINE_TOO_LONG = "(the last output line is too long to keep; the server log has it)"
+_LINE_TOO_LONG = "(the last output line is too long to keep; the server log has its end)"
+
+
+def _recorded_tail(head: str, output: str) -> str:
+    """The end of a failed install's output that fits beside `head` in the tier-health
+    record. Redacted before the cut, so the budget is what the record keeps, and only
+    whole lines of a bounded window: redaction is quadratic on a long token, and a line
+    cut at the window's start can lose the scheme a credential pattern needs."""
+    room = max(0, ERROR_CHARS - len(error_text(ToolOutputError(head))) - 1)
+    window = output[-4 * ERROR_CHARS :]
+    if len(output) > len(window):
+        window = window.partition("\n")[2] or _LINE_TOO_LONG
+    return redact(window)[-room:] if room else ""
 
 
 def _project(checkout: Path, root: Path) -> str:
@@ -194,12 +206,5 @@ async def prepare_dependencies(
                 f"TypeScript dependency installation failed ({command[0]}, exit "
                 f"{done.returncode}) in {_project(checkout, root)}"
             )
-            # Redact before the cut, so the budget is what the record keeps; only whole lines
-            # of a bounded window: redaction is quadratic, and a cut line can lose a scheme.
-            room = max(0, ERROR_CHARS - len(error_text(ToolOutputError(head))) - 1)
-            window = output[-4 * ERROR_CHARS :]
-            if len(output) > len(window):
-                window = window.partition("\n")[2] or _LINE_TOO_LONG
-            tail = redact(window)[-room:] if room else ""
-            raise ToolOutputError(f"{head}\n{tail}")
+            raise ToolOutputError(f"{head}\n{_recorded_tail(head, output)}")
     await asyncio.to_thread(marker.write_text, fingerprint)

@@ -413,8 +413,9 @@ memory the workers process has. The full index of such a tree takes about an hou
   or interrupted install is retried without advancing the compiler watermark.
   Downloads need network access to the repository's package registry. A private package
   registry, incompatible lockfile or generated types requiring a build can still need
-  project-specific configuration; the worker reports the exact failure in
-  `workers.status`. Server credentials are not passed into the installer environment.
+  project-specific configuration. `workers.status` names the failed installer and its
+  exit code, and the entry's tier-health record (`code.index_status`) holds the end of
+  the installer's output. Server credentials are not passed into the installer environment.
   The server reads the checkout's `package.json` (up to 1 MiB) and each install root's
   `yarn.lock` (up to 64 MiB) only as regular files, never through a link; a symlinked one
   fails the TypeScript pass even when the link points inside the repository.
