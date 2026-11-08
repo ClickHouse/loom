@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import pathlib
 import time
+from typing import Any
 
 import pytest
 
@@ -59,6 +61,8 @@ def _is_parser(node: ast.expr) -> bool:
     """`parser`, or a call of a function named `...parser` (`_parser(grammar)`)."""
     if isinstance(node, ast.Name):
         return node.id == "parser"
+    if isinstance(node, ast.Attribute):
+        return node.attr.endswith("parser")  # `self._parser`
     if isinstance(node, ast.Call):
         f = node.func
         name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else ""
@@ -98,3 +102,32 @@ def test_every_tree_sitter_parse_goes_through_the_deadline() -> None:
             ):
                 unbounded.append(f"{f.relative_to(_SERVER.parent)}:{node.lineno}")
     assert unbounded == []
+
+
+def test_a_header_whose_parse_stops_is_read_as_not_indexed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.code.app.index import ingest_headers as ih
+    from server.code.app.index.ingest_stats import FileIngestStats
+    from server.code.domain.extract.treesitter import parse_cpp
+
+    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 0.2)
+    monkeypatch.setattr(ih, "_needs_header", lambda pf, hd: True)
+
+    async def header_text(repo: Any, org: str, ns: str, path: str) -> tuple[str, bool]:
+        return "'\\''" * 30_000, True
+
+    async def none(*a: Any) -> list[str]:
+        return []
+
+    class Repo:
+        async def live_paths_present(self, org: str, ns: str, paths: list[str]) -> set[str]:
+            return {"src/a.h"}
+
+    monkeypatch.setattr(ih, "_header_text", header_text)
+    monkeypatch.setattr(ih, "_present_includes", none)
+    pf = parse_cpp("src/a.cpp", b"void f() { g(); }\n")
+    stats = FileIngestStats(path="src/a.cpp")
+    asyncio.run(ih.header_context(Repo(), "acme", "code", pf, "src/a.cpp", stats))
+    assert ih._header_cache[("acme", "code", "src/a.h")] is None
+    ih._header_cache.pop(("acme", "code", "src/a.h"))

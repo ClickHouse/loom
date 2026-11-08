@@ -733,6 +733,7 @@ async def build_for_open(
     `base_sha`, and its `merge_sha` is ''. A `diff` the caller sent replaces the
     mirror's, and git is not read."""
     from server.code.app.index import gitrepo
+    from server.code.app.index import pr_overlay as po
 
     if diff is None:
         diff = ""
@@ -762,9 +763,11 @@ async def build_for_open(
     payload["overlay"] = True
     payload["head_sha"] = head_sha
     payload["base_sha"] = base_sha
-    if store and payload.get("overlay_note"):
-        # served, never stored: every later read would serve the partial overlay
+    if store and po.NOT_REACHED in str(payload.get("overlay_note") or ""):
+        # served, never stored: every later read would serve the overlay a later
+        # request completes
         logger.info("review_brief: open PR %s served unstored, its overlay is partial", pr_number)
+        payload["stored"] = False
     elif store:
         try:
             await repo.insert_rows(

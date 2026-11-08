@@ -122,6 +122,13 @@ def parse_for_ingest(path: str, source: bytes) -> tuple[ParsedFile | None, str]:
     return ParsedFile(path=path, lang=lang, source=source), ""
 
 
+def parse_timed_out(error: str) -> bool:
+    """Whether `parse_for_ingest`'s reason says the parse ran past its deadline."""
+    from server.code.domain.extract.bounded_parse import ParseTimeout
+
+    return error.startswith(f"parse: {ParseTimeout.__name__}")
+
+
 def parse_for_round(
     path: str, source: bytes, denylist: Denylist | None = None
 ) -> tuple[ParsedFile | None, str] | None:
@@ -181,7 +188,7 @@ def _parse_host(path: str, source: bytes) -> ParsedFile:
     return pf
 
 
-@functools.lru_cache(maxsize=8)
+@functools.lru_cache(maxsize=32)
 def host_units_of(path: str, source: bytes) -> HostUnits | None:
     """`host_units` of a host file's text, kept so the parse and chunk steps of its
     ingest read its shell once. Callers copy what they change."""

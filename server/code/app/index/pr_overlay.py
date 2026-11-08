@@ -33,7 +33,7 @@ import time
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from server.code.app.ttl_cache import TtlCache
 from server.code.domain.extract.bounded_parse import ParseTimeout
@@ -53,6 +53,8 @@ _HUNK_RE = re.compile(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 HEAD_NOT_IN_MIRROR = "head_not_in_mirror"
 NO_REPO = "no_repo_entry"
 NO_MERGE_BASE = "no_merge_base"
+# In a live overlay's note: changed files a later request may still read
+NOT_REACHED = "not reached"
 # A Loom with no git mirror (still cloning, or LOOM_GIT_HISTORY=none) and no post-image
 # in the request.
 NO_GIT_MIRROR = "no_git_mirror"
@@ -127,6 +129,7 @@ class PrOverlay:
     edges: list[OverlayEdge] = field(default_factory=list)
     reason: str = ""  # '' when the overlay is live
     note: str = ""  # what a live overlay left out
+    unreached: int = 0  # changed files it started no parse of: a later request reads them
 
     @property
     def ok(self) -> bool:
@@ -392,7 +395,8 @@ async def load_pr_overlay(
     """The overlay of one PR from the mirror. Never raises: a head the
     mirror lacks, or a range with no merge-base, returns an overlay whose
     `reason` says so and whose `ok` is False. Cached 60 s per (mirror, PR)
-    keyed on the head sha, so the brief's impact read parses once."""
+    keyed on the head sha, so the brief's impact read parses once, unless it left
+    changed files unreached."""
     from server.code.app.index import gitrepo
 
     ov = PrOverlay(pr_number=int(pr_number))
@@ -432,7 +436,7 @@ async def load_pr_overlay(
             return None  # not parsed either way
 
     await _parse_post_image(repo, org, ns, ov, read=from_mirror, path_prefixes=path_prefixes)
-    if not ov.note:  # a partial overlay is finished by the next request
+    if not ov.unreached:  # the next request finishes a partial one
         _CACHE.put(key, (head, ov))
     return ov
 
@@ -449,7 +453,8 @@ async def load_posted_overlay(
     """The overlay of one PR from the post-image its caller sent: no git read.
     The sent files are the post-image; the diff's hunks classify `modified` and
     its paths add the deletions. Cached 60 s on the content's digest, so the
-    calls of one review parse once. Never raises."""
+    calls of one review parse once, unless it left changed files unreached. Never
+    raises."""
     digest = img.digest()
     key = (f"{POSTED_PREFIX}{org}/{ns}", int(img.pr_number))
     hit = _CACHE.get(key)
@@ -471,7 +476,7 @@ async def load_posted_overlay(
         return None if text is None else text.encode()
 
     await _parse_post_image(repo, org, ns, ov, read=from_request, path_prefixes=path_prefixes)
-    if not ov.note:
+    if not ov.unreached:
         _CACHE.put(key, (digest, ov))
     return ov
 
@@ -547,18 +552,20 @@ async def _file_facts(
     hit = _FILE_FACTS.get(key)
     if hit is not None:
         return None, hit
-    got: tuple[Any, _Facts] | None = await _in_turn(
-        key, deadline, lambda got: _FILE_FACTS.put(key, got[1]), _parsed_facts, path, source
+    return cast(
+        "tuple[Any, _Facts] | None",
+        await _in_turn(
+            key, deadline, lambda done: _FILE_FACTS.put(key, done[1]), _parsed_facts, path, source
+        ),
     )
-    return got
 
 
 def _parsed_facts(path: str, source: bytes) -> tuple[Any, _Facts]:
-    from server.code.app.index.ingest_parse import parse_for_ingest
+    from server.code.app.index.ingest_parse import parse_for_ingest, parse_timed_out
     from server.code.domain.extract.edges_treesitter import collect_call_names
 
     pf, err = parse_for_ingest(path, source)
-    timed_out = ParseTimeout.__name__ in err
+    timed_out = parse_timed_out(err)
     if pf is None or not pf.symbols:
         return None, ((), frozenset(), timed_out)
     names = {s.name for s in pf.symbols if s.kind in ("function", "method")}
@@ -569,23 +576,19 @@ def _parsed_facts(path: str, source: bytes) -> tuple[Any, _Facts]:
     return pf, (tuple(pf.symbols), frozenset(names), timed_out)
 
 
-def _store_edges(key: tuple[str, str, str], edges: tuple[OverlayEdge, ...] | None) -> None:
-    if edges is not None:
-        _FILE_EDGES.put(key, edges)
-
-
 def _file_edges(
     pf: Any, path: str, source: bytes, table: dict[str, list[tuple[str, str, str]]]
-) -> tuple[OverlayEdge, ...] | None:
+) -> tuple[OverlayEdge, ...]:
     """The calls and inherits edges of one post-image file; `pf` is its parse when this
-    request already holds it. None when parsing it again ran past the deadline."""
-    from server.code.app.index.ingest_parse import parse_for_ingest
+    request already holds it. Raises `ParseTimeout` when parsing it again ran past the
+    deadline."""
+    from server.code.app.index.ingest_parse import parse_for_ingest, parse_timed_out
     from server.code.domain.extract.edges_treesitter import extract_edges_and_misses
 
     if pf is None:
         pf, err = parse_for_ingest(path, source)
-        if ParseTimeout.__name__ in err:
-            return None
+        if parse_timed_out(err):
+            raise ParseTimeout(err)
     try:
         edges, _misses = extract_edges_and_misses(pf, table, None)
     except Exception as e:  # noqa: BLE001 — per file, never the overlay
@@ -625,24 +628,24 @@ async def _parse_post_image(
     # An overlay starts no parse once `code_parse_timeout_seconds` have passed since it
     # began, so a request parses for a few deadlines at most
     deadline = time.monotonic() + settings.code_parse_timeout_seconds
-    left_out = 0
+    timed_out = 0
     for p in paths:
         source = await read(p)
         if source is None or len(source) > MAX_FILE_BYTES:
             continue
         digest = _digest(source)
         got = await _file_facts(p, source, digest, deadline)
-        if got is None or got[1][2]:
-            left_out += 1
         if got is None:
+            ov.unreached += 1
             continue
+        timed_out += got[1][2]
         pf, (symbols, file_names, _) = got
         if not symbols:
             continue
         files[p] = (source, digest, pf, symbols, file_names)
         names |= file_names
     if not files:
-        _note_left_out(ov, left_out)
+        _note_left_out(ov, timed_out)
         return
     # one name-keyed read serves both questions: which post-image functions
     # the index already defines (classification) and what the files' call
@@ -658,28 +661,38 @@ async def _parse_post_image(
         if edges is None and pf is not None:
             # binding the tree in hand is no parse: in a thread, outside the turn
             edges = await asyncio.to_thread(_file_edges, pf, p, source, table)
-            _store_edges(key, edges)
+            _FILE_EDGES.put(key, edges)
         elif edges is None:
-            edges = await _in_turn(
-                key,
-                deadline,
-                functools.partial(_store_edges, key),
-                _file_edges,
-                pf,
-                p,
-                source,
-                table,
-            )
-        if edges is None:
-            left_out += 1
-            continue
+            try:
+                edges = await _in_turn(
+                    key,
+                    deadline,
+                    functools.partial(_FILE_EDGES.put, key),
+                    _file_edges,
+                    pf,
+                    p,
+                    source,
+                    table,
+                )
+            except ParseTimeout:
+                timed_out += 1
+                continue
+            if edges is None:
+                ov.unreached += 1
+                continue
         ov.edges.extend(edges)
-    _note_left_out(ov, left_out)
+    _note_left_out(ov, timed_out)
 
 
-def _note_left_out(ov: PrOverlay, left_out: int) -> None:
-    if left_out:
-        ov.note = f"{left_out} changed file(s) not fully read: the overlay's parse time was spent"
+def _note_left_out(ov: PrOverlay, timed_out: int) -> None:
+    parts = []
+    if timed_out:
+        parts.append(f"{timed_out} changed file(s) whose parse timed out")
+    if ov.unreached:
+        parts.append(
+            f"{ov.unreached} changed file(s) {NOT_REACHED}: the request's parse time was spent"
+        )
+    ov.note = "; ".join(parts)
 
 
 async def _name_table(

@@ -194,7 +194,12 @@ def test_an_open_brief_builds_from_the_post_image_and_is_never_stored(
 
     async def build_for_open(repo: Any, org: str, ns: str, **kw: Any) -> dict[str, Any]:
         built.append(kw)
-        return {"pr_number": kw["pr_number"], "overlay": True, "head_sha": kw["head_sha"]}
+        return {
+            "pr_number": kw["pr_number"],
+            "overlay": True,
+            "head_sha": kw["head_sha"],
+            "overlay_note": "1 changed file(s) whose parse timed out",
+        }
 
     monkeypatch.setattr(review_brief_build, "build_for_open", build_for_open)
     out = asyncio.run(
@@ -214,6 +219,7 @@ def test_an_open_brief_builds_from_the_post_image_and_is_never_stored(
     assert kw["changed_paths"] == [PATH, "src/Old.cpp"]
     assert kw["store"] is False and out.stored is False
     assert out.overlay is True and out.overlay_head_sha == "cd" * 20
+    assert out.overlay_note == "1 changed file(s) whose parse timed out"
 
 
 def test_an_open_brief_without_history_or_a_post_image_says_why(
@@ -385,8 +391,8 @@ def test_an_overlay_past_its_parse_time_leaves_the_rest_out(
 ) -> None:
     monkeypatch.setattr(settings, "code_parse_timeout_seconds", 1e-9)
     ov = asyncio.run(po.load_posted_overlay(_Repo(), "acme", "code-ch", _img()))
-    assert ov.ok and ov.symbols == []
-    assert ov.disclosure()["overlay_note"].startswith("1 changed file(s) not fully read")
+    assert ov.ok and ov.symbols == [] and ov.unreached == 1
+    assert po.NOT_REACHED in ov.disclosure()["overlay_note"]
 
 
 def test_concurrent_requests_parse_a_file_once(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -425,7 +431,7 @@ def test_a_file_whose_parse_runs_past_the_deadline_is_counted(
     asyncio.run(po._parse_post_image(_Repo(), "acme", "code-ch", ov, read=read, path_prefixes=()))
     assert "checkPartsLimit" in {s.name for s in ov.symbols}
     assert any(e.to_qualified_name.endswith("checkPartsLimit") for e in ov.edges)
-    assert ov.note.startswith("1 changed file(s) not fully read")
+    assert ov.note == "1 changed file(s) whose parse timed out" and ov.unreached == 0
 
 
 def test_an_open_brief_over_a_partial_overlay_is_served_unstored(
@@ -433,7 +439,7 @@ def test_an_open_brief_over_a_partial_overlay_is_served_unstored(
 ) -> None:
     from server.code.app.index import review_brief_build as rbb
 
-    note = "1 changed file(s) not fully read: the overlay's parse time was spent"
+    note = f"1 changed file(s) {po.NOT_REACHED}: the request's parse time was spent"
 
     async def build_brief(inp: Any, **kw: Any) -> dict[str, Any]:
         return {"pr_number": inp.pr_number, "overlay_note": note}
@@ -463,4 +469,4 @@ def test_an_open_brief_over_a_partial_overlay_is_served_unstored(
             diff=DIFF,  # type: ignore[arg-type]
         )
     )
-    assert repo.inserted == [] and payload["overlay_note"] == note
+    assert repo.inserted == [] and payload["overlay_note"] == note and payload["stored"] is False
