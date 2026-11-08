@@ -275,8 +275,8 @@ class CodeRepoSetAccessOutput(BaseModel):
     classification: str
     # The join policy as written (lower-cased).
     join_policy: str
-    # The entry's classification before this call: `restricted` when either its
-    # registry row or its directory row said so.
+    # The entry's classification before this call: `restricted` when either the
+    # entry, as this process last read it, or its directory row said so.
     previous_classification: str
     # The directory row's join policy before this call (when it had none: `open` for a
     # public entry, else `approval`).
