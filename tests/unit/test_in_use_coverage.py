@@ -25,8 +25,7 @@ _TRANSIENT = "a short-lived claim or projection in Keeper"
 
 EXEMPT: dict[str, str] = {
     "loom.namespaces": "the registry row, which every path reads before the check",
-    # One constant row in a reserved scope (the empty org and namespace) for the analyst probe.
-    "loom.analysis_canary": "the analysis probe's one row, in a scope no tenant uses",
+    "loom.analysis_canary": "the analysis probe's one row, at org '' and namespace '', a scope no tenant uses",
     # derived
     "loom.chunk_supersessions": _DERIVED,
     "loom.chunk_term_freq": _DERIVED,
