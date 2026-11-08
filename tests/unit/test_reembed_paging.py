@@ -38,6 +38,7 @@ class _CH:
                 "content_excerpt": f"c{i}",
                 "embedding": [0.0],
                 "embedding_dim": 1,
+                "agent": "a",
                 "ts": i,
                 "tombstoned_at": None,
             }
@@ -53,9 +54,7 @@ class _CH:
         if "keys" in p:  # the re-read before an insert, by the page's keys
             assert "tombstoned_at IS NULL" in sql
             return [
-                {"_k": key(r), "_s": r["ts"]}
-                for r in self.rows
-                if key(r) in p["keys"] and r["tombstoned_at"] is None
+                dict(r) for r in self.rows if key(r) in p["keys"] and r["tombstoned_at"] is None
             ]
         self.pages.append(p)
         after = tuple(p[f"k{i}"] for i in range(5)) if "k0" in p else None
@@ -144,7 +143,7 @@ async def test_a_memory_row_is_re_embedded_whatever_its_text() -> None:
                 return [{"name": c} for c in row]
             if "keys" in (params or {}):  # by the key the row was read with, not the new model's
                 assert [k[6] for k in params["keys"]] == ["m1"]
-                return [{"_k": tuple(row.values())[:8], "_s": row["version"]}]
+                return [dict(row)]
             return [] if "k0" in (params or {}) else [{**row, "_k": tuple(row.values())[:8]}]
 
         async def query_one(self, sql: str, params: Any = None) -> dict:
@@ -166,16 +165,19 @@ async def test_a_memory_row_is_re_embedded_whatever_its_text() -> None:
 @pytest.mark.asyncio
 async def test_a_row_deleted_or_changed_while_its_page_is_embedded_is_not_written_back() -> None:
     """A redaction deletes a key's rows, an erasure tombstones them and a write stamps a
-    newer row: the page read before must not insert its old copy again."""
-    ch = _CH(4)
+    newer row or hands the row to another agent at the same stamp: the page read before
+    must not insert its old copy again."""
+    ch, lines = _CH(5), []
 
     class _Redacting(_Emb):
         async def embed_many(self, texts: list[str]) -> list[list[float]]:
-            deleted, written, tombstoned = ch.rows[1:]
+            deleted, written, handed, tombstoned = ch.rows[1:]
             ch.rows.remove(deleted)
             written["ts"] = 99
+            handed["agent"] = "peer"
             tombstoned["tombstoned_at"] = "now"
             return await super().embed_many(texts)
 
-    n = await rb.reembed_table(ch, _Redacting(), "conversation_embeddings", log=lambda *_: None)
+    n = await rb.reembed_table(ch, _Redacting(), "conversation_embeddings", log=lines.append)
     assert n == 1 and ch.inserted == ["000"]
+    assert any("4 changed since read, skipped" in line for line in lines)

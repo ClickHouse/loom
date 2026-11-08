@@ -30,8 +30,7 @@ from server.memory.domain.sensitivity import without_high
 from server.settings import settings
 
 # (text-source column, vector column) per table, plus an optional secondary
-# (key text -> key vector, key dim) embedding. `stamp`: the column every write of a row
-# moves (the engine's version).
+# (key text -> key vector, key dim) embedding.
 _TABLES: dict[str, dict[str, Any]] = {
     "memory_embeddings": {
         "text": "content_excerpt",
@@ -40,19 +39,16 @@ _TABLES: dict[str, dict[str, Any]] = {
         "key_vec": "memory_key_embedding",
         "key_dim": "memory_key_embedding_dim",
         "version": "version",
-        "stamp": "version",
     },
     "entity_vectors": {
         "text": "entity_text",
         "vec": "entity_embedding",
         "version": "created_at",
-        "stamp": "created_at",
     },
     "conversation_embeddings": {
         "text": "content_excerpt",
         "vec": "embedding",
         "version": None,
-        "stamp": "ts",
     },
 }
 # read by scripts/ops/vector_codec_rebuild.py to name the re-embed in its width refusal
@@ -324,11 +320,11 @@ async def reembed_table(
     keys = _KEYS[table]
     order = ", ".join(keys)
     after = list(start_after) if start_after else None
-    written = held = 0
+    written = held = changed = 0
     gone: list[int] = []  # per page, the rows another write removed or changed since its read
 
     async def still_stored(read: dict[int, dict[str, Any]]) -> dict[int, dict[str, Any]]:
-        kept = await _still_stored(ch, table, read, where_clause, params)
+        kept = await _still_stored(ch, table, cols, read, where_clause, params)
         gone.append(len(read) - len(kept))
         return kept
 
@@ -357,6 +353,7 @@ async def reembed_table(
         gone.clear()
         left = await _rewrite_page(ch, embedder, table, page, key_only, still_stored)
         written += len(page) - sum(left.values()) - sum(gone)
+        changed += sum(gone)
         if left:
             if left_orgs is not None:
                 left_orgs.update(left)
@@ -366,6 +363,7 @@ async def reembed_table(
             )
         after = [str(x) for x in rows[-1]["_k"]]
         progress = f"{written}/{total}" + (f" ({held} held as high)" if held else "")
+        progress += f" ({changed} changed since read, skipped)" if changed else ""
         log(f"  {table}: {progress}  resume: {encode_resume(table, after)}")
         if len(rows) < batch:
             break
@@ -381,31 +379,37 @@ def _without_key(row: dict[str, Any]) -> dict[str, Any]:
 async def _still_stored(
     ch: Any,
     table: str,
+    cols: list[str],
     read: dict[int, dict[str, Any]],
     where_clause: str,
     params: dict[str, Any],
 ) -> dict[int, dict[str, Any]]:
-    """The rows of `read` still stored as read, by `stamp`, and still matching the run's
-    filter, read FINAL now by their keys: a row a redaction deleted, an erasure tombstoned
-    or a write changed while the page was embedded is not written back."""
+    """The rows of `read` still stored as read (every column but the vectors) and still
+    matching the run's filter, read FINAL now by their keys: a row a redaction deleted,
+    an erasure tombstoned or any write changed while the page was embedded is not
+    written back."""
     if not read:
         return read
-    cols, stamp = _KEY_COLUMNS[table], _TABLES[table]["stamp"]
+    cfg, keys = _TABLES[table], _KEY_COLUMNS[table]
+    same = [c for c in cols if c not in (cfg["vec"], cfg.get("key_vec"))]
 
     def key(r: dict[str, Any]) -> tuple[str, ...]:
-        return tuple(str(r[c]) for c in cols)
+        return tuple(str(r[c]) for c in keys)
 
     # The bare key columns, so the primary key prunes to the page's rows.
-    names, types = ", ".join(cols), ", ".join("String" for _ in cols)
+    names, types = ", ".join(keys), ", ".join("String" for _ in keys)
     with sequential_reads():  # the redaction may have run on another replica
         stored = await ch.query_all(
-            f"SELECT tuple({', '.join(_KEYS[table])}) AS _k, {stamp} AS _s "
-            f"FROM loom.{table} FINAL "
+            f"SELECT {', '.join(same)} FROM loom.{table} FINAL "
             f"WHERE {where_clause} AND ({names}) IN {{keys:Array(Tuple({types}))}}",
             params={**params, "keys": [key(r) for r in read.values()]},
         )
-    now = {tuple(str(x) for x in r["_k"]): r["_s"] for r in stored}
-    return {i: r for i, r in read.items() if now.get(key(r), _GONE) == r[stamp]}
+    now = {key(r): r for r in stored}
+    return {
+        i: r
+        for i, r in read.items()
+        if (row := now.get(key(r))) is not None and all(row[c] == r[c] for c in same)
+    }
 
 
 async def _rewrite_page(
@@ -485,8 +489,6 @@ _KEYS: dict[str, tuple[str, ...]] = {
     table: tuple("toString(scope)" if c == "scope" else c for c in cols)
     for table, cols in _KEY_COLUMNS.items()
 }
-# A row the re-read before an insert did not find.
-_GONE = object()
 
 
 def encode_resume(table: str, key: list[str]) -> str:
