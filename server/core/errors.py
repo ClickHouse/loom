@@ -134,7 +134,8 @@ class OverloadedError(LoomServerError):
     lock or lease: a sibling held it past its wait; the matchers: the org's share of them
     stayed busy, and the write is refused rather than stored unchecked; a conversation
     delete or compaction: writes to the thread's embeddings kept landing; insights.query
-    before its replica's first probe, or while ClickHouse is short of memory. Safe to resend
+    while its replica's probe has no answer from ClickHouse, or while ClickHouse is short
+    of memory. Safe to resend
     on an idempotent op, or when it came before the handler ran; `retry_after_s` is the
     wait."""
 
@@ -366,8 +367,8 @@ class AnalysisUnavailableError(LoomServerError):
     ClickHouse user missing, wider than the allowlist, or refusing this
     replica's key or password. Only an operator's fix ends
     it, so it is not retried: `loom doctor` names the cause and the fix. A
-    replica whose first probe has not run, or a ClickHouse short of memory,
-    answers OVERLOADED instead."""
+    replica whose probe has no answer from ClickHouse, or a ClickHouse short
+    of memory, answers OVERLOADED instead."""
 
     code = "ANALYSIS_UNAVAILABLE"
     status_code = 503

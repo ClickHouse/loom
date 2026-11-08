@@ -116,7 +116,8 @@ _LEASE_TTL_S = 60  # not a setting: the statements under it are bounded by its s
 _SECRETS_PURPOSE = "analysis.secrets"
 _loaded: tuple[bytes, str] | None = None
 
-# Whether this process's last probe passed: None = not probed yet.
+# Whether this process's last probe passed: None = no answer yet, or its last
+# probe got no answer (the op answers OVERLOADED); False = a finding.
 _ready: bool | None = None
 _problem = ""
 
@@ -233,11 +234,12 @@ def _scope_extra(org: str, namespaces: list[str], key: bytes | None = None) -> d
     return {**signed, "replace_running_query": 1}
 
 
-async def provision() -> None:
+async def provision() -> bool:
     """Load the secrets, write the analyst user when the stored entities
     differ from this build's and are not a newer build's, then probe it. Each
     process runs it once in the background of its start (`start_probe_loop`),
-    one at a time under the lease."""
+    one at a time under the lease. True once the setup ran, whatever it found;
+    False when it got no answer, for the loop to run it again."""
     try:
         async with lease():
             await load_secrets(may_draw=await store.analyst_user_absent())
@@ -257,10 +259,12 @@ async def provision() -> None:
                     await store.write_entities(boundary.caps_sql(caps()))
         if foreign and foreign[0]:
             _set_problem(*foreign)
-            return
+            return True
         await reprobe()
+        return True
     except Exception as e:  # noqa: BLE001 — a failed setup is a reported problem, never fatal to boot
         _probe_failed(f"writing or probing {boundary.ANALYST_USER} failed", e)
+        return not _no_answer(e)
 
 
 async def _current_statements() -> list[str]:
@@ -340,6 +344,12 @@ async def rewrite() -> None:
     if not await store.secrets_table_exists():
         raise SetupRefused(NOT_MIGRATED)
     async with lease():
+        if not await store.can_manage_access():
+            raise SetupRefused(
+                "LOOM_CH_USER cannot manage access entities, so `loom ch-setup` cannot write "
+                "the analyst user: have an admin run the SQL `loom ch-setup "
+                "--print-analyst-sql` prints"
+            )
         if await store.sealed_secrets() is None and not await store.analyst_user_absent():
             raise SetupRefused(_LOST_ROW)
         await load_secrets(may_draw=True)
@@ -481,10 +491,15 @@ def start_probe_loop() -> asyncio.Task[None]:
         from server.core.ch import set_query_tag
 
         set_query_tag("analysis.probe")  # every process runs it, not a worker
-        await provision()
+        provisioned = False
         while True:
+            # A setup that got no answer is run again: only it writes a new
+            # version's entities and changed caps.
+            if provisioned:
+                await reprobe()
+            else:
+                provisioned = await provision()
             await asyncio.sleep(float(settings.ch_analysis_probe_interval_s))
-            await reprobe()
 
     return asyncio.get_running_loop().create_task(_run(), name="loom-analysis-probe")
 
@@ -667,7 +682,8 @@ async def handle_insights_query(input: InsightsQueryInput) -> InsightsQueryOutpu
         # The first probe runs in the background and can wait on the lease; a
         # resend after retry_after_s finds it done.
         raise OverloadedError(
-            "insights.query is starting on this replica: its first probe has not run yet",
+            "insights.query has no probe answer on this replica yet, or its last probe got "
+            "no answer from ClickHouse",
             retry_after_s=5,
         )
     if _ready is not True:

@@ -169,6 +169,7 @@ def test_ch_setup_refuses_a_new_key_beside_a_live_analyst_user(
 
     monkeypatch.setattr(app, "lease", _NoLease)
     monkeypatch.setattr(app.store, "secrets_table_exists", _returns(True))
+    monkeypatch.setattr(app.store, "can_manage_access", _returns(True))
     monkeypatch.setattr(app.store, "sealed_secrets", none)
     monkeypatch.setattr(app.store, "analyst_user_absent", no)
     with pytest.raises(RuntimeError, match=f"DROP USER {boundary.ANALYST_USER}"):
@@ -181,6 +182,7 @@ def test_ch_setup_refuses_over_a_newer_builds_entities(
     written: list[Any] = []
     monkeypatch.setattr(app, "lease", _NoLease)
     monkeypatch.setattr(app.store, "secrets_table_exists", _returns(True))
+    monkeypatch.setattr(app.store, "can_manage_access", _returns(True))
     monkeypatch.setattr(app.store, "sealed_secrets", _returns("sealed"))
     monkeypatch.setattr(app, "_opened", lambda _: SECRETS)
     newer = boundary.Stored(boundary.ENTITY_VERSION + 1, "theirs")
@@ -921,3 +923,57 @@ def _failing_probe(error: Exception):
         raise error
 
     return probe
+
+
+def test_ch_setup_without_access_management_says_so(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    # It cannot tell whether the analyst user exists, so it names that, not a lost row.
+    monkeypatch.setattr(app, "lease", _NoLease)
+    monkeypatch.setattr(app.store, "secrets_table_exists", _returns(True))
+    monkeypatch.setattr(app.store, "can_manage_access", _returns(False))
+    with pytest.raises(app.SetupRefused, match="cannot manage access entities"):
+        asyncio.run(app.rewrite())
+
+
+def test_a_setup_with_no_answer_is_run_again_until_it_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Only the setup writes a new version's entities and changed caps.
+    from server.settings import settings
+
+    answers = iter([False, False, True])
+    calls: list[str] = []
+
+    async def provision() -> bool:
+        calls.append("provision")
+        return next(answers)
+
+    async def reprobe() -> None:
+        calls.append("reprobe")
+
+    async def sleep(_: float) -> None:
+        if len(calls) >= 4:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(settings, "ch_analysis_probe_interval_s", 5.0)
+    monkeypatch.setattr(app, "provision", provision)
+    monkeypatch.setattr(app, "reprobe", reprobe)
+    monkeypatch.setattr(app.asyncio, "sleep", sleep)
+
+    async def run() -> None:
+        with pytest.raises(asyncio.CancelledError):
+            await app.start_probe_loop()
+
+    asyncio.run(run())
+    assert calls == ["provision", "provision", "provision", "reprobe"]
+
+
+def test_a_serving_replica_whose_probe_gets_no_answer_says_so(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    _clean_ran(monkeypatch)
+    monkeypatch.setattr(app, "_probe", _failing_probe(TimeoutError("read timed out")))
+    asyncio.run(app.reprobe())
+    with pytest.raises(OverloadedError, match="no answer from ClickHouse"):
+        asyncio.run(app.handle_insights_query(_query()))

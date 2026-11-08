@@ -86,8 +86,8 @@ class HealthState:
     ch_reader_ok: bool | None = None
     # ClickHouse's answer when that read failed.
     ch_reader_error: str = ""
-    # insights.query's analyst user: None = not probed, False = unusable
-    # (`analysis_error` says why).
+    # insights.query's analyst user: True = the last probe passed, False = a
+    # finding, None = no probe answer (`analysis_error` set once that lasts).
     analysis_ok: bool | None = None
     analysis_error: str = ""
     # Whether a sign-in lately found loom.oauth_signin_state at its key limit.
@@ -771,12 +771,25 @@ def _reader_user_problems(settings: Any, state: HealthState) -> list[Problem]:
 
 
 def _analysis_problems(settings: Any, state: HealthState) -> list[Problem]:
-    """insights.query runs as the analyst user; while it is missing or wider
-    than the allowlist every analysis call answers ANALYSIS_UNAVAILABLE."""
+    """insights.query runs as the analyst user. A finding (the user missing or
+    wider than the allowlist) answers ANALYSIS_UNAVAILABLE; a probe that has had
+    no answer from ClickHouse for a while answers OVERLOADED, and its fix is
+    ClickHouse's reachability and load, not access."""
     del settings
-    # False: a finding. None with a problem: the probe has had no answer for a while.
     if state.analysis_ok is True or not state.analysis_error:
         return []
+    if state.analysis_ok is None:
+        return [
+            Problem(
+                "analysis_user_failing",
+                "warn",
+                f"insights.query is unavailable: {state.analysis_error}",
+                "ClickHouse has not answered the analysis probe: check that it is reachable "
+                "and not overloaded (the analyst user's concurrency cap included); the next "
+                "probe that gets an answer clears it.",
+                source="runtime",
+            )
+        ]
     return [
         Problem(
             "analysis_user_failing",
