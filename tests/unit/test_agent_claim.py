@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 import server.auth.self_signup as ss
 from server.auth import agents, claim_codes, device, login, oauth, passwords, revocation
 from server.identity.app import agent_claim
+from server.identity.app.directory import IdentityDirectory
 from server.identity.store import grants, namespaces
 from tests.unit.clickhouse_local import CLICKHOUSE, KeptCH, ddl
 from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
@@ -34,6 +35,10 @@ class _Req:
     headers = {"host": "loom.test:7777"}
     client = type("C", (), {"host": "10.0.0.1"})()
     url = type("U", (), {"scheme": "http"})()
+
+
+async def _nothing_in_use(*_a: Any, **_k: Any) -> bool:
+    return False
 
 
 @pytest.fixture(autouse=True)
@@ -73,6 +78,7 @@ def world(monkeypatch: pytest.MonkeyPatch, auth_attempts: Any, tmp_path: Path) -
     monkeypatch.setattr(core_ch, "get_client", lambda: ch)  # read lazily by service_accounts
     monkeypatch.setattr(namespaces, "_default_client", lambda: ch)
     monkeypatch.setattr(grants, "_default_client", lambda: ch)
+    monkeypatch.setattr(IdentityDirectory, "in_use", _nothing_in_use)  # tables not kept here
     out = asyncio.run(ss.agent_signup(ss.AgentSignupInput(name="nightly triage"), _Req()))
     legacy_code = "legacy-claim-code"
     ch.create(

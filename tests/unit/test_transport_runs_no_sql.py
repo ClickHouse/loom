@@ -62,6 +62,11 @@ def test_a_subject_with_no_slug_defaults_to_the_provisioned_name(
     monkeypatch.setattr("server.core.ch.get_client", lambda: object())
     # Nobody owns the personal namespace yet: first contact provisions it.
     monkeypatch.setattr("server.auth.personal_namespace.namespace_owner", _none_owner)
+
+    async def _not_in_use(*_a: Any, **_k: Any) -> bool:
+        return False
+
+    monkeypatch.setattr("server.identity.app.directory.IdentityDirectory.in_use", _not_in_use)
     monkeypatch.setattr(
         "server.identity.app.namespace_classification.restricted_set", _none_restricted
     )

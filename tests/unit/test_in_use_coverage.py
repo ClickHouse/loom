@@ -38,7 +38,7 @@ EXEMPT: dict[str, str] = {
     "loom.blob_uploads": "records who uploaded which original; no content",
     "loom.namespace_snapshots": "counts and the source name of a snapshot; its payload is never stored",
     "loom.llm_response_cache": _DERIVED,
-    "loom.code_answers": _DERIVED,
+    "loom.code_answers": "an answer cache kept with its index's retired registry row; the memory rows it quotes are read",
     "loom.query_nodes": "beside its memory's rows, which the check reads, and erased with them",
     "loom.procedure_runs": "beside its memory's rows, which the check reads, and erased with them",
     "loom.qa_item_embeddings": _TRACKER,

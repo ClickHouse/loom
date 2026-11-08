@@ -31,7 +31,8 @@ async def test_a_name_taken_during_the_probe_writes_nothing(
         return True
 
     monkeypatch.setattr(repo_admin, "account_change", _account_change)
-    monkeypatch.setattr(repo_admin, "_empty_tracker_links", AsyncMock())
+    emptied = AsyncMock()
+    monkeypatch.setattr(repo_admin, "_empty_tracker_links", emptied)
     monkeypatch.setattr(repo_admin, "current_caller", lambda: ("alice", None))
     monkeypatch.setattr(repo_admin, "_namespace_taken", _taken)
     insert = AsyncMock()
@@ -55,6 +56,7 @@ async def test_a_name_taken_during_the_probe_writes_nothing(
         )
     assert ei.value.to_detail()["code"] == "REPO_EXISTS"
     insert.assert_not_awaited()
+    emptied.assert_not_awaited()  # another's tracker links are left alone
     make.assert_not_awaited()
 
 

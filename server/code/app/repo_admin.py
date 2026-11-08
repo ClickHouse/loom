@@ -143,12 +143,13 @@ async def _register(
     from server.code.store.index import CodeRepo
 
     subject = current_caller()[0] or auth_off_subject()
-    # Rows a removed namespace of this name left (N-1 clears none; the purge is detached).
-    await _empty_tracker_links(org, namespace, detail="stale row of a removed namespace")
     # Checked again under the account claim sign-up and register hold: the probe took time.
     async with account_change(org, namespace):
         if await _namespace_taken(org, namespace):
             raise _in_use_error(repo, branch, namespace)
+        # Rows a removed namespace of this name left (N-1 clears none; the purge is
+        # detached), emptied only once the name is this caller's.
+        await _empty_tracker_links(org, namespace, detail="stale row of a removed namespace")
         # The grant first: a replica that has not loaded the entry yet sees the name in use.
         if subject:
             from server.identity.app.registration import grant_self_admin

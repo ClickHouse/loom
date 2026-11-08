@@ -403,7 +403,7 @@ _human_signups = Attempts("signup.human", HUMAN_SIGNUPS_PER_HOUR, 3600)
 CLAIM_TTL_S = 60
 # The wait for the account claim inside the name claim, short so the name claim's 24 s cut
 # is not reached; another change to the account answers SIGNUP_IN_PROGRESS.
-ACCOUNT_WAIT_S = 2.0
+ACCOUNT_WAIT_S = 2.0  # not a setting: kept under the name claim's 24 s cut
 
 
 def agent_namespace(name: str) -> str | None:
