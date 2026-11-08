@@ -88,17 +88,9 @@ function RenameDialog({
   const submit = async () => {
     setBusy(true);
     try {
-      // The row belongs to the agent that opened the thread, not always the last writer;
-      // a thread built by appends has none yet, so one is written with the title.
-      const newTitle = title.trim();
-      const head = await getConversationThread(identity, "*", thread.thread_id, { limit: 1 });
-      if (!head.found) throw new Error("This conversation was deleted");
-      // A row deleted since the read answers `updated: false` too.
-      const { updated } = head.created_at
-        ? await renameThread(identity, head.agent, thread.thread_id, newTitle)
-        : { updated: false };
-      if (!updated) await createThreadRow(identity, thread.agent, thread.thread_id, newTitle);
-      toast("Renamed", "ok");
+      // A conversation deleted meanwhile is said to be gone, and the list reads again.
+      const renamed = await retitle(identity, thread, title.trim());
+      toast(renamed ? "Renamed" : "This conversation was deleted", renamed ? "ok" : "info");
       onClose(true);
     } catch (e) {
       setError(humanizeError(e));
@@ -159,4 +151,20 @@ async function deleteEveryAgent(
     return { parts, left, error };
   }
   return { parts, left };
+}
+
+/** Title the thread: update its row as the agent that owns it (not always the last
+ *  writer), or write one for a thread built by appends, which has none. Answers false
+ *  when the conversation is gone. */
+async function retitle(id: Pick<Identity, "org" | "namespace">, thread: Thread, title: string): Promise<boolean> {
+  const read = () => getConversationThread(id, "*", thread.thread_id, { limit: 1 });
+  const head = await read();
+  if (!head.found) return false;
+  if (head.created_at) {
+    if ((await renameThread(id, head.agent, thread.thread_id, title)).updated) return true;
+    // The row went since the read: write one only while the conversation still has turns.
+    if (!(await read()).found) return false;
+  }
+  await createThreadRow(id, thread.agent, thread.thread_id, title);
+  return true;
 }

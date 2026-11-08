@@ -15,6 +15,13 @@ export interface AgentSpendRow {
 
 /** POST /v1/cost.agent_summary: what the coding agents spent themselves, by model, over
  *  the last `days` (cost.summary prices what Loom spends upstream). */
+export interface AgentSpendSummary {
+  rows: AgentSpendRow[];
+  total_cost_usd: number;
+  total_turns: number;
+  unpriced_turns: number;
+}
+
 export async function getAgentSpend(
   id: Pick<Identity, "org" | "namespace">,
   days: number,
@@ -25,13 +32,6 @@ export async function getAgentSpend(
     { org: id.org, namespace: id.namespace, ...lastDays(days), group_by: ["model"] },
     opts.signal,
   );
-}
-
-export interface AgentSpendSummary {
-  rows: AgentSpendRow[];
-  total_cost_usd: number;
-  total_turns: number;
-  unpriced_turns: number;
 }
 
 /** The last `days` days, today included, as the inclusive UTC dates the cost ops take. */
