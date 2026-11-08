@@ -32,7 +32,6 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -375,12 +374,7 @@ def _mirror_items(mirrors: list[tuple[str, Any, int]], *, cfg: ExpiryConfig) -> 
     return items
 
 
-async def apply_mirror(
-    items: list[MirrorItem],
-    *,
-    ch: Any | None = None,
-    of_content: Mapping[IdentityKey, str] | None = None,
-) -> int:
+async def apply_mirror(items: list[MirrorItem], *, ch: Any | None = None) -> int:
     """Search reads loom.memory_embeddings, so the post-action lands there too, at the
     memory row's version: only rows below it change, never one a later write landed
     above it (entity_vectors has no version: its cutoff is that version's second).
@@ -388,8 +382,8 @@ async def apply_mirror(
     the vector in the tombstone for `memory.restore`. Anonymize retires them bare, with
     no text or vector, so an anonymized key keeps no entity names in search and one
     landing after a redaction's purge carries nothing. Demote copies them with the
-    expiry cleared and confidence lowered, from rows of `of_content`'s hash when given.
-    Batched as one keyed read and one insert per 500 keys, never one per key."""
+    expiry cleared and confidence lowered. Batched as one keyed read and one insert per
+    500 keys, never one per key."""
     import server.memory.store as memory_repo
 
     def pins(action: str) -> list[tuple[IdentityKey, int]]:
@@ -406,7 +400,7 @@ async def apply_mirror(
     if anonymized := pins("anonymize"):
         n += await memory_repo.retire_vectors_for_keys(anonymized, ch=ch, bare=True)
     if copies:
-        n += await memory_repo.reemit_embedding_rows_for_keys(copies, ch=ch, of_content=of_content)
+        n += await memory_repo.reemit_embedding_rows_for_keys(copies, ch=ch)
     return n
 
 
@@ -415,32 +409,34 @@ RecordedMirror = tuple[IdentityKey, int, str]
 
 
 async def replay_mirror(recorded: list[RecordedMirror], *, ch: Any | None = None) -> int:
-    """`apply_mirror` for a recorded failure, run after later writes may have landed. A
-    tombstone or anonymize runs as recorded: the key's vectors below the version hold
-    the text it took out. A demote copies the key's live head as it is now (its expiry
-    and confidence, at its version, from rows of its text only), so a write since the
-    sweep that copied the vectors at read + 1, below the sweep's version (a touch, a
-    verify), keeps what it set; a key with no live head, or a 'high' one, has nothing
-    to copy."""
+    """The mirror of a recorded failure, run after later writes may have landed. A
+    tombstone or anonymize runs as recorded (`apply_mirror`): the key's vectors below
+    the version hold the text it took out. A demote copies the key's live head as it is
+    now, its expiry and confidence, as a metadata copy at read + 1 of rows of the head's
+    text: a write since the sweep (a touch, a verify, a tag edit) keeps what it set, and
+    a row its writer lands after the read is newer than the copy. A key with no live
+    head, or a 'high' one, has nothing to copy."""
     import server.memory.store as memory_repo
 
-    demoted = [key for key, _version, action in recorded if action == "demote"]
-    heads = (
-        await memory_repo.memory_rows_by_identity_keys(demoted, ch=ch, sequential=True)
-        if demoted
-        else {}
+    n = await apply_mirror(
+        [(key, version, action, None) for key, version, action in recorded if action != "demote"],
+        ch=ch,
     )
-    items: list[MirrorItem] = []
+    demoted = [key for key, _version, action in recorded if action == "demote"]
+    if not demoted:
+        return n
+    heads = await memory_repo.memory_rows_by_identity_keys(demoted, ch=ch, sequential=True)
+    copies = []
     of_content: dict[IdentityKey, str] = {}
-    for key, version, action in recorded:
-        if action != "demote":
-            items.append((key, version, action, None))
-        elif (head := heads.get(key)) is not None and head.sensitivity != "high":
-            now = {"expires_at": head.expires_at, "confidence": head.confidence}
-            items.append((key, head.version, action, now))
-            if is_content_hash(head.content_sha256):
-                of_content[key] = head.content_sha256
-    return await apply_mirror(items, ch=ch, of_content=of_content)
+    for key, head in heads.items():
+        if head.sensitivity == "high":
+            continue
+        copies.append((key, {"expires_at": head.expires_at, "confidence": head.confidence}))
+        if is_content_hash(head.content_sha256):
+            of_content[key] = head.content_sha256
+    if copies:
+        n += await memory_repo.reemit_embedding_rows_for_keys(copies, ch=ch, of_content=of_content)
+    return n
 
 
 async def _record_mirror_failures(items: list[MirrorItem], error: Exception) -> None:
@@ -455,7 +451,9 @@ async def _record_mirror_failures(items: list[MirrorItem], error: Exception) -> 
 
     by_writer: dict[tuple[str, ...], list[MirrorItem]] = {}
     for item in items:
-        by_writer.setdefault(item[0][:4], []).append(item)
+        key = item[0]
+        writer = key[:4]  # org, namespace, agent, user_id
+        by_writer.setdefault(writer, []).append(item)
     rows = []
     for (org, namespace, agent, user_id), group in by_writer.items():
         rows.append(
@@ -465,7 +463,7 @@ async def _record_mirror_failures(items: list[MirrorItem], error: Exception) -> 
                 agent=agent,
                 projection=EXPIRY_MIRROR,
                 source_operation="memory.sweep_expired",
-                memory_keys=[memory_key for (*_writer, memory_key), *_rest in group],
+                memory_keys=[key[5] for key, *_rest in group],
                 error=error,
                 payload={
                     "items": [[list(key), version, action] for key, version, action, _c in group]

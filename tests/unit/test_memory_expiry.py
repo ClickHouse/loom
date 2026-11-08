@@ -89,6 +89,7 @@ class _CH:
 _DEMOTE_REEMITS: list[tuple[str, dict[str, Any]]] = []
 reemit_calls: list[int] = []
 retired: list[tuple[str, int]] = []
+retired_bare: dict[str, bool] = {}
 
 
 def _stub(monkeypatch: pytest.MonkeyPatch, rows: list[MemoryRow]) -> tuple[_CH, list[str]]:
@@ -126,10 +127,12 @@ def _stub(monkeypatch: pytest.MonkeyPatch, rows: list[MemoryRow]) -> tuple[_CH, 
 
     monkeypatch.setattr("server.memory.store.reemit_embedding_rows_for_keys", _reemit_many)
     retired.clear()
+    retired_bare.clear()
 
     async def _retire_many(items, *, ch=None, bare=False) -> int:
         # Tombstone and anonymize retire memory_embeddings AND entity_vectors.
         for (_o, _n, _a, _u, _s, key), version in items:
+            retired_bare[key] = bare
             tombstoned_keys.append(key)
             retired.append((key, version))
         return len(items)
@@ -176,6 +179,8 @@ async def test_sweep_writes_one_batched_insert_and_mirrors(monkeypatch: pytest.M
     # each retire carries its memory row's version.
     assert reemit_calls == [2]
     assert sorted(retired) == sorted((k, written[k]["version"]) for k in ("a", "c"))
+    # Only the anonymize retires bare: a tombstone keeps its vector for memory.restore.
+    assert retired_bare == {"a": False, "c": True}
 
 
 @pytest.mark.asyncio
@@ -620,9 +625,8 @@ async def test_a_failed_mirror_is_recorded_per_writer_and_the_repair_applies_it(
     assert [r.resolved for r in results] == [True, True]
     assert retired == [("a", written["a"]), ("d", written["d"])]
     assert _retire_clients == [ch, ch]  # the repair's client, not the default
-    assert _DEMOTE_REEMITS == [
-        ("b", {"expires_at": None, "confidence": 0.45, "version": written["b"]})
-    ]
+    # The replayed demote is a metadata copy of the head (read + 1), never pinned.
+    assert _DEMOTE_REEMITS == [("b", {"expires_at": None, "confidence": 0.45})]
 
 
 _retire_clients: list[Any] = []
@@ -748,6 +752,7 @@ async def test_a_malformed_expiry_mirror_failure_is_abandoned(
         [["o", "n", "k"], 200, None],  # not an identity key
         [["o", "n", "a", "-", "-", "k"], 200, "erase"],  # not an on_expire action
         ["abcdef", 200, "tombstone"],  # a string, not an identity key
+        [["o", "n", "a", "-", "-", "k"], True, "tombstone"],  # not a version
     ):
         result = await pf._retry(failure(item), ch=object())
         assert (result.abandoned, result.reason) == (True, "malformed_payload")
@@ -758,12 +763,18 @@ async def test_a_replayed_demote_copies_the_head_as_it_is_now(
 ) -> None:
     # Writes since the sweep moved the heads: a touch set a new expiry, a lock changed
     # neither expiry nor confidence, and one key was deleted. Each demote copies its
-    # head's expiry and confidence at the head's version; the deleted key has nothing to
-    # copy. The retire runs as recorded.
-    calls: list[Any] = []
+    # head's expiry and confidence as a metadata copy (read + 1, no pinned version, so a
+    # row the head's writer lands later is newer), from rows of the head's text; the
+    # deleted key has nothing to copy. The anonymize runs as recorded.
+    applied: list[Any] = []
+    copied: list[Any] = []
 
-    async def _apply(items, *, ch=None, of_content=None) -> int:
-        calls.append((items, of_content))
+    async def _apply(items, *, ch=None) -> int:
+        applied.append(items)
+        return 0
+
+    async def _reemit(items, *, ch=None, of_content=None) -> int:
+        copied.append((items, of_content))
         return 0
 
     later = _REAL_NOW + timedelta(hours=1)
@@ -774,27 +785,23 @@ async def test_a_replayed_demote_copies_the_head_as_it_is_now(
     async def _heads(keys, *, ch=None, sequential=False) -> dict[Any, Any]:
         assert sequential
         live = {
-            touched: SimpleNamespace(
-                version=300, expires_at=later, confidence=0.4, content_sha256="a" * 64
-            ),
-            locked: SimpleNamespace(
-                version=310, expires_at=None, confidence=0.4, content_sha256="b" * 64
-            ),
+            touched: SimpleNamespace(expires_at=later, confidence=0.4, content_sha256="a" * 64),
+            locked: SimpleNamespace(expires_at=None, confidence=0.4, content_sha256="b" * 64),
         }
         return {k: SimpleNamespace(**vars(live[k]), sensitivity="") for k in keys if k in live}
 
     monkeypatch.setattr(X, "apply_mirror", _apply)
+    monkeypatch.setattr("server.memory.store.reemit_embedding_rows_for_keys", _reemit)
     monkeypatch.setattr("server.memory.store.memory_rows_by_identity_keys", _heads)
     await X.replay_mirror(
         [(k, 200, "demote") for k in (touched, locked, deleted)] + [(anonymized, 200, "anonymize")]
     )
-    # Each copy is kept to rows of its head's own text.
-    assert calls == [
+    assert applied == [[(anonymized, 200, "anonymize", None)]]
+    assert copied == [
         (
             [
-                (touched, 300, "demote", {"expires_at": later, "confidence": 0.4}),
-                (locked, 310, "demote", {"expires_at": None, "confidence": 0.4}),
-                (anonymized, 200, "anonymize", None),
+                (touched, {"expires_at": later, "confidence": 0.4}),
+                (locked, {"expires_at": None, "confidence": 0.4}),
             ],
             {touched: "a" * 64, locked: "b" * 64},
         )

@@ -881,19 +881,24 @@ async def _retry_expiry_mirror(failure: ProjectionFailureRow, *, ch: Any) -> str
     """Apply the sweep's mirror again (`replay_mirror`)."""
     from server.memory.app.expiry import ACTIONS, replay_mirror
 
-    try:
-        items = failure.payload["items"]
-        recorded = [
-            (cast(IdentityKey, tuple(str(c) for c in key)), int(version), str(action))
-            for key, version, action in items
-        ]
-        if not recorded or any(
-            not isinstance(key, list) or len(key) != 6 or action not in ACTIONS
-            for key, _version, action in items
-        ):
-            raise ValueError("no items, or an item that is not a mirror")
-    except (KeyError, TypeError, ValueError):
+    items = failure.payload.get("items")
+    if not isinstance(items, list) or not items:
         return "malformed_payload"
+    recorded = []
+    for item in items:
+        if not isinstance(item, list) or len(item) != 3:
+            return "malformed_payload"
+        key, version, action = item
+        if (
+            not isinstance(key, list)
+            or len(key) != 6
+            or not all(isinstance(c, str) for c in key)
+            or not isinstance(version, int)
+            or isinstance(version, bool)
+            or action not in ACTIONS
+        ):
+            return "malformed_payload"
+        recorded.append((cast(IdentityKey, tuple(key)), version, action))
     await replay_mirror(recorded, ch=ch)
     return ""
 
