@@ -24,7 +24,7 @@ from server.code.api.models_repos import (
     CodeRepoRemoteBranchesInput,
 )
 from server.code.api.ops import OPERATIONS
-from server.core.errors import ValidationError
+from server.core.errors import BackendTimeoutError, GrantBusyError, ValidationError
 from server.settings import settings
 
 ORG = "clickhouse"
@@ -302,6 +302,12 @@ async def test_add_registers_every_chosen_branch_and_skips_per_branch(monkeypatc
         return f"sha-{branch}"
 
     async def _register(**kw):
+        if kw["branch"] == "26.5":
+            raise GrantBusyError("another change to the account is running; retry shortly")
+        if kw["branch"] == "26.3":
+            raise BackendTimeoutError("a statement ran past its bound")
+        if kw["branch"] == "26.4":
+            raise ValidationError("code-clickhouse-26-4 is already in use", code="REPO_EXISTS")
         registered.append(kw)
         count["n"] += 1
         return CodeRepoAddOutput(
@@ -331,7 +337,7 @@ async def test_add_registers_every_chosen_branch_and_skips_per_branch(monkeypatc
             join_policy="open",
             classification="standard",
             access_token="ghp_t",
-            branches=["26.8", "master", "26.6", "ghost", "..bad", "26.7"],
+            branches=["26.8", "26.5", "26.4", "26.3", "master", "26.6", "ghost", "..bad", "26.7"],
         )
     )
     # the primary, then 26.8 and 26.7; master is the primary (not twice);
@@ -343,11 +349,21 @@ async def test_add_registers_every_chosen_branch_and_skips_per_branch(monkeypatc
         "namespace": "code-clickhouse-26-8",
         "remote_head": "sha-26.8",
     }
-    assert {s["branch"]: s["reason"] for s in out.skipped} == {
-        "26.6": "the namespace code-clickhouse-26-6 is taken",
-        "ghost": "ClickHouse/ClickHouse has no branch named 'ghost'",
-        "..bad": "not a branch name git accepts",
-    }
+    assert (
+        {s["branch"]: s["reason"] for s in out.skipped}
+        == {
+            "26.6": "the namespace code-clickhouse-26-6 is taken",
+            "26.5": "GRANT_BUSY: another change to the account is running; retry shortly",  # busy: a skip
+            "26.4": "code-clickhouse-26-4 is already in use",  # taken during the probe
+            # its claim's bound: it may be written, so it is not called a clean skip
+            "26.3": (
+                "code-clickhouse-26-3: BACKEND_TIMEOUT: a statement ran past its bound; it may be "
+                "partly set up, check it before adding again"
+            ),
+            "ghost": "ClickHouse/ClickHouse has no branch named 'ghost'",
+            "..bad": "not a branch name git accepts",
+        }
+    )
     assert [r["branch"] for r in registered] == ["master", "26.8", "26.7"]
     # every extra index inherits rule, token and paths from the add
     assert all(r["github_token"] == "ghp_t" and r["join_policy"] == "open" for r in registered)

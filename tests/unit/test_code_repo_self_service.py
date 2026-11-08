@@ -161,6 +161,8 @@ class _CH:
         self, sql: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any] | None:
         params = params or {}
+        if "AS in_use" in sql:  # the in-use read: a name taken is in use
+            return {"in_use": 1} if params.get("ns") in self.taken else None
         if "loom.code_repos" in sql:
             return {"n": self.count}
         if "loom.code_index_state" in sql:

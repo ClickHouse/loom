@@ -731,6 +731,29 @@ def census_tables(scope_type: str) -> list[str]:
     return [*(s.table for s in _CENSUS if s.counted_in(scope_type)), *_pg_census()]
 
 
+# Census tables a namespace lookup leaves out: none is ordered by (org, namespace), so
+# each would be scanned, and each row sits beside rows the lookup reads already. The
+# link queue and the LLM cache are a week-long queue and cache, not ordered by org;
+# a code link goes with its loom.memory row, and an upload records who uploaded which
+# original, with no content.
+_BESIDE_OTHER_ROWS = frozenset(
+    {
+        "loom.memory_code_link_queue",
+        "loom.llm_response_cache",
+        "loom.memory_code_links",
+        "loom.blob_uploads",
+    }
+)
+
+
+def namespace_tables() -> list[str]:
+    """The census tables that hold a namespace's rows under its `namespace` column:
+    the namespace scope's substrates less those with a predicate of their own (counted
+    org-wide, or by the memory namespace they quote) and those whose rows sit beside
+    rows of the others (`_BESIDE_OTHER_ROWS`)."""
+    return [s.table for s in _CENSUS if s.ns_pred is None and s.table not in _BESIDE_OTHER_ROWS]
+
+
 def step_owners(scope_type: str) -> dict[str, tuple[str, ...]]:
     """Saga step → the census tables it owns in `scope_type` (namespace|user_id)."""
     out: dict[str, list[str]] = {}

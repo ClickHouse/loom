@@ -29,6 +29,7 @@ from server.auth import authz
 from server.auth.directory import ClassificationUnavailable
 from server.auth.jwt import AuthInfo
 from server.auth.personal_namespace import derive_personal_slug, personal_candidates
+from server.identity.app.directory import IdentityDirectory
 from server.operations.base import Role
 
 ORG = "o"
@@ -153,6 +154,9 @@ def _fakes(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _owner(ch: Any, org: str, namespace: str) -> str | None:
         return (WORLD.owner or None) if namespace == SLUG else None
 
+    async def _in_use(self: Any, org: str, namespace: str, **_: Any) -> bool:
+        return _in_use_by_grant(namespace)
+
     async def _granted(org: str, subjects: list[str]) -> set[str]:
         return {str(r["namespace"]) for r in _ranked_rows(subjects)}
 
@@ -172,6 +176,7 @@ def _fakes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(caller_defaults, "saved_default", _saved)
     monkeypatch.setattr(caller_defaults, "ranked_grants", _ranked)
     monkeypatch.setattr(personal_namespace, "namespace_owner", _owner)
+    monkeypatch.setattr(IdentityDirectory, "in_use", _in_use)
     monkeypatch.setattr(context, "_granted_namespaces", _granted)
     monkeypatch.setattr(chmod, "get_client", lambda: None)
     monkeypatch.setattr(settings, "identity_provider", "trust-network")
@@ -245,14 +250,19 @@ async def _admits(token: AuthInfo, role: Role, namespace: str) -> bool:
 def _provisioned(token: AuthInfo) -> str:
     """What `gates.authorize` gives before the gate: a person of this org with
     no live grant, under any spelling, gets the personal namespace when nobody
-    owns it yet, else its fallback name when someone else does
+    owns or uses it yet, else its fallback name when someone else does
     (`ensure_personal_namespace_cached`); "" otherwise."""
     live = any(r > 0 for (s, _ns), r in WORLD.grants.items() if _same(s, token.subject))
     if token.is_service_account or token.org != ORG or live:
         return ""
-    if not WORLD.owner:
-        return SLUG
+    if not WORLD.owner:  # unowned, but a live grant there puts it in use: the fallback
+        return FALLBACK if _in_use_by_grant(SLUG) else SLUG
     return FALLBACK if WORLD.owner == OTHER and token.subject == PERSON else ""
+
+
+def _in_use_by_grant(namespace: str) -> bool:
+    """A live grant on a name with no row puts it in use (`IdentityDirectory.in_use`)."""
+    return any(r > 0 for (_s, ns), r in WORLD.grants.items() if ns == namespace)
 
 
 def _provision(token: AuthInfo) -> None:

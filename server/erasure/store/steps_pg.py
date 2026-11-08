@@ -292,6 +292,20 @@ PG_NO_MEMORY_CONTENT: dict[str, str] = {
 }
 
 
+# The Postgres tables a namespace's memory lives in, which the in-use check reads.
+PG_IN_USE_TABLES = ("loom.memory_current", "loom.memory_revisions")
+
+
+async def pg_holds_namespace(org: str, namespace: str) -> bool:
+    """Whether the Postgres authority holds a memory head or revision of (org, namespace):
+    one committed but not yet delivered to ClickHouse is in no census table there."""
+    if not pg.enabled() or pg.unstorable(org) or pg.unstorable(namespace):
+        return False
+    branches = [f"SELECT 1 FROM {t} WHERE org = $1 AND namespace = $2" for t in PG_IN_USE_TABLES]
+    row = await pg.fetchrow(" UNION ALL ".join(branches) + " LIMIT 1", org, namespace)
+    return row is not None
+
+
 async def pg_residue(org: str, scope_type: str, scope_value: str | Sequence[str]) -> dict[str, int]:
     """Rows still in scope per Postgres substrate; no substrate without the Postgres
     authority."""

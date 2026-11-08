@@ -229,18 +229,18 @@ async def _gate_view(
 
 
 async def _provisioned(auth: Any, org: str) -> str:
-    """The personal namespace `gates.authorize` gives this person, with an
-    admin grant, before the gate runs (`ensure_personal_namespace_cached`):
-    a person of this org with no live grant gets the first of its names
-    nobody owns (`personal_candidates`; a person who owns one, their grant
-    there revoked, is given nothing),
-    and only while this process has not already resolved the person, which it
-    does once (`provisioning_pending`); "" otherwise. A delegated token counts
-    it only when its creator is that person, whose grants the gate reads."""
+    """The personal namespace `gates.authorize` gives this person, with an admin grant,
+    before the gate runs (`ensure_personal_namespace_cached`): a person of this org
+    with no live grant gets the first of its names nobody owns and nothing uses
+    (`personal_candidates`; a person who owns one, their grant there revoked, is
+    given nothing), and only while this process has not already resolved the person,
+    which it does once (`provisioning_pending`); "" otherwise. A delegated token
+    counts it only when its creator is that person, whose grants the gate reads."""
     if auth.is_service_account or auth.org != org:
         return ""
     if auth.creator and auth.creator.lower() != auth.subject.lower():
         return ""
+    from server.auth.directory import directory
     from server.auth.personal_namespace import (
         namespace_owner,
         personal_candidates,
@@ -255,7 +255,7 @@ async def _provisioned(auth: Any, org: str) -> str:
         return ""
     for name in personal_candidates(auth.subject):
         owner = await namespace_owner(get_client(), org, name)
-        if owner is None:
+        if owner is None and not await directory().in_use(org, name):
             return name
         if owner == auth.subject:
             return ""  # theirs, with the grant revoked: nothing is given

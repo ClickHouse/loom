@@ -191,7 +191,8 @@ under its own model.
 
 `namespace.restore(target_namespace, payload)` writes the payload back as version rows.
 It is idempotent on `snapshot_id` (a rerun answers `restored=false`). It restores into a
-fresh namespace (the caller becomes admin) or one the caller administers;
+fresh namespace (the caller becomes admin; refused for a name with no row that already
+holds data or grants, unless the caller already administers it) or one the caller administers;
 `rebind_agent` reassigns every row's writer. Restored rows are `imported`.
 
 A snapshot is not a deployment backup; see

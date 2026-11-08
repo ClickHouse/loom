@@ -1,15 +1,18 @@
 """Namespace registry census — who holds live memory without an owner row,
-and which registered bench namespaces have gone idle.
+whether a name is in use with or without one, and which registered bench
+namespaces have gone idle.
 
 The SQL lives here so the two gauges, the `namespaces-gc` worker and the
-`namespaces-adopt` CLI read the same statements; a gauge that reads one
-shape while the operator's command reads another cannot agree on zero.
+`namespaces-adopt` CLI read the same statements; a gauge that reads one shape
+while the operator's command reads another cannot agree on zero. The in-use
+lookup for a name registered as new lives here beside them.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from server.core.grant_sql import LIVE_GRANT
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.census import BenchGcCandidate, UnregisteredNamespace
 
@@ -67,6 +70,54 @@ async def unregistered_live(
         params,
     )
     return [UnregisteredNamespace.from_row(r) for r in rows]
+
+
+_AT = "org = {org:String} AND namespace = {ns:String}"
+# Tables outside the erasure census whose live rows a later owner of the name would
+# inherit (a grant, an outside target, a source, a tree node, an identity link, an open
+# erasure), each with the condition that makes its row live. Every other table keyed by
+# namespace is counted by the census or exempt with a reason
+# (tests/unit/test_in_use_coverage.py).
+STATE_TABLES: dict[str, str] = {
+    "loom.namespace_grants": f"FINAL WHERE {_AT} AND {LIVE_GRANT}",
+    "loom.memory_webhooks": f"FINAL WHERE {_AT} AND is_deleted = 0",
+    "loom.task_inboxes": "FINAL WHERE org = {org:String} AND owner_namespace = {ns:String}"
+    " AND is_deleted = 0",
+    "loom.knowledge_sources": f"FINAL WHERE {_AT} AND active",
+    "loom.code_repos": f"FINAL WHERE {_AT} AND active",
+    "loom.qa_sources": "FINAL WHERE org = {org:String} AND active"
+    " AND JSONHas(namespaces_json, {ns:String})",
+    "loom.collections": f"FINAL WHERE {_AT} AND NOT deleted",
+    "loom.shared": f"WHERE {_AT}",
+    "loom.sso_links": f"FINAL WHERE {_AT} AND linked = 1",
+    # An open erasure of the name, alone or in a list (an array or {"namespaces": [...]}),
+    # would sweep a new owner's rows as its own.
+    "loom.erasure_requests": "FINAL WHERE org = {org:String} AND status != 'completed'"
+    " AND ((scope_type = 'namespace' AND scope_value = {ns:String})"
+    " OR (scope_type = 'namespace_list' AND has(if(JSONType(scope_value) = 'Array',"
+    " JSONExtract(scope_value, 'Array(String)'),"
+    " JSONExtract(scope_value, 'namespaces', 'Array(String)')), {ns:String})))",
+}
+
+
+async def in_use(
+    org: str, namespace: str, tables: list[str], *, ch: _CHClient | None = None
+) -> bool:
+    """Whether (org, namespace) holds a row in any of `tables` or a live row in
+    `STATE_TABLES`, registered or not. One statement, each branch stopping at one row: a
+    census branch filters on (org, namespace), a state branch on its own live condition
+    (the few not keyed by (org, namespace) are listed in the sort-key test). A data row
+    counts whether or not it is tombstoned, as a stored row of the name."""
+    ch = ch or _default_client()
+    branches = [f"(SELECT 1 FROM {t} {cond} LIMIT 1)" for t, cond in STATE_TABLES.items()]
+    # The table names come from the erasure registry (census.namespace_tables), never
+    # from a request.
+    branches += [f"(SELECT 1 FROM {table} WHERE {_AT} LIMIT 1)" for table in tables]
+    row = await ch.query_one(
+        f"SELECT 1 AS in_use FROM ({' UNION ALL '.join(branches)}) LIMIT 1",
+        params={"org": org, "ns": namespace},
+    )
+    return row is not None
 
 
 async def bench_gc_candidates(

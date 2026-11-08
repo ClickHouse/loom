@@ -1,6 +1,7 @@
 """`namespace.restore` into a registered target — active or soft-deleted — applies
 the same admin + restricted check as `namespace.register`, and reactivating a
-soft-deleted target carries its row forward. Both refuse a collection name.
+soft-deleted target carries its row forward. Both refuse a collection name, and a
+fresh name that already holds data or grants someone else controls.
 `namespace.register` keeps the row's `created_at` and `duplicate_threshold`."""
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from server.identity.api.models import (
 )
 from server.identity.app import namespace as h
 from server.identity.app import namespace_snapshot
+from server.identity.app.directory import IdentityDirectory
 from server.operations.base import Role
 
 ORG, NS = "clickhouse", "ops-deleted"
@@ -162,6 +164,106 @@ async def test_register_refuses_a_collection_name(wire) -> None:
     assert ch.inserts == []
 
 
+def _in_use(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _yes(self: Any, org: str, namespace: str, **_k: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(IdentityDirectory, "in_use", _yes)
+
+
+@pytest.mark.asyncio
+async def test_register_refuses_an_unregistered_name_in_use(wire, monkeypatch) -> None:
+    """A name holding data or grants with no registry row: a fresh register would make
+    any viewer in the org admin of what is already there. The refusal is the one a
+    registered name's non-admin gets."""
+    install, _grants = wire
+    _in_use(monkeypatch)
+    ch = install(None, "mallory@x", Role.VIEWER)
+    with pytest.raises(AuthInsufficientError, match="not an admin"):
+        await h.handle_namespace_register(
+            NamespaceRegisterInput(org=ORG, namespace=NS, owner_email="mallory@x")
+        )
+    assert ch.inserts == []
+
+
+def _register(caller: str) -> Any:
+    return h.handle_namespace_register(
+        NamespaceRegisterInput(org=ORG, namespace=NS, owner_email=caller)
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_admin_of_an_unregistered_name_in_use_registers_it(wire, monkeypatch) -> None:
+    """The gate's own admin check decides: an org admin, or a subject with an admin grant
+    there, already controls the name, so registering it grants nothing new."""
+    install, grants = wire
+    _in_use(monkeypatch)
+    ch = install(None, "ops@x", Role.ADMIN)
+    await _register("ops@x")
+    assert [r["namespace"] for r in ch.rows_for("loom.namespaces")] == [NS]
+    grants[(ORG, NS, "kim@x")] = Role.ADMIN
+    ch = install(None, "kim@x", Role.VIEWER)
+    await _register("kim@x")
+    assert [r["namespace"] for r in ch.rows_for("loom.namespaces")] == [NS]
+
+
+@pytest.mark.asyncio
+async def test_a_token_limited_below_admin_on_the_name_cannot_register_it(
+    wire, monkeypatch
+) -> None:
+    """A scoped token's role on the name is its ceiling, whatever its subject's grant."""
+    install, grants = wire
+    _in_use(monkeypatch)
+    grants[(ORG, NS, "kim@x")] = Role.ADMIN
+    ch = install(None, "kim@x", Role.VIEWER)
+    set_current_auth(
+        AuthInfo(
+            subject="kim@x",
+            org=ORG,
+            namespaces=(NS,),
+            roles=(Role.VIEWER,),
+            is_service_account=False,
+            ns_roles=((NS, "viewer"),),
+        )
+    )
+    with pytest.raises(AuthInsufficientError, match="not an admin"):
+        await _register("kim@x")
+    assert ch.inserts == []
+
+
+@pytest.mark.asyncio
+async def test_with_auth_off_an_unregistered_name_in_use_registers(wire, monkeypatch) -> None:
+    """No principal to keep out: a namespace written with auth off has no row, since
+    auto-registration needs a token, and registering it afterwards still works."""
+    install, _grants = wire
+    _in_use(monkeypatch)
+    ch = install(None, "you", Role.VIEWER)
+    set_current_auth(None)
+    await _register("you")
+    assert [r["namespace"] for r in ch.rows_for("loom.namespaces")] == [NS]
+
+
+@pytest.mark.asyncio
+async def test_an_admin_restores_into_an_unregistered_target_in_use(wire, monkeypatch) -> None:
+    install, grants = wire
+    _in_use(monkeypatch)
+    grants[(ORG, NS, "kim@x")] = Role.ADMIN
+    ch = install(None, "kim@x", Role.VIEWER)
+    out = await namespace_snapshot.handle_namespace_restore(_restore_input())
+    assert out.restored
+    assert [r["namespace"] for r in ch.rows_for("loom.namespaces")] == [NS]
+
+
+@pytest.mark.asyncio
+async def test_a_restore_refuses_an_unregistered_target_in_use(wire, monkeypatch) -> None:
+    install, _grants = wire
+    _in_use(monkeypatch)
+    ch = install(None, "mallory@x", Role.VIEWER)
+    with pytest.raises(AuthInsufficientError, match="not an admin"):
+        await namespace_snapshot.handle_namespace_restore(_restore_input())
+    assert ch.inserts == []
+
+
 @pytest.mark.asyncio
 async def test_a_viewer_cannot_restore_into_a_soft_deleted_namespace(wire) -> None:
     install, _grants = wire
@@ -180,6 +282,19 @@ async def test_register_refuses_the_same_viewer_the_same_way(wire) -> None:
         await h.handle_namespace_register(
             NamespaceRegisterInput(org=ORG, namespace=NS, owner_email="mallory@x")
         )
+
+
+@pytest.mark.asyncio
+async def test_a_registered_name_and_one_in_use_refuse_a_non_admin_alike(wire, monkeypatch) -> None:
+    install, _grants = wire
+    install(_deleted_row(active=True), "mallory@x", Role.VIEWER)
+    with pytest.raises(AuthInsufficientError) as registered:
+        await _register("mallory@x")
+    _in_use(monkeypatch)
+    install(None, "mallory@x", Role.VIEWER)
+    with pytest.raises(AuthInsufficientError) as in_use:
+        await _register("mallory@x")
+    assert str(registered.value) == str(in_use.value)
 
 
 @pytest.mark.asyncio
@@ -270,6 +385,26 @@ async def test_the_auto_registered_owner_completes_a_registration_but_cannot_res
         NamespaceRegisterInput(org=ORG, namespace=NS, owner_email="alice@x")
     )
     assert ch.rows_for("loom.namespace_grants") == []
+
+
+@pytest.mark.asyncio
+async def test_the_auto_registered_owner_cannot_complete_a_name_another_holds(
+    wire,
+) -> None:
+    from server.identity.app.namespace_autoregister import AUTO_REGISTER_TAG
+
+    install, _grants = wire
+    row = _deleted_row(active=True, owner_email="alice@x", tags=[AUTO_REGISTER_TAG])
+    ch = install(row, "alice@x", Role.VIEWER)
+    row_read = ch.query_one
+
+    async def _another_holds(sql: str, params: Any = None, **_k: Any) -> Any:
+        return {"held": 1} if "AS held" in sql else await row_read(sql, params)
+
+    ch.query_one = _another_holds  # type: ignore[method-assign]
+    with pytest.raises(AuthInsufficientError):
+        await _register("alice@x")
+    assert ch.rows_for("loom.namespaces") == []
 
 
 def _released_on_claim(monkeypatch: pytest.MonkeyPatch, ch: _CH, *modules: Any) -> None:

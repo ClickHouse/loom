@@ -1,5 +1,5 @@
-"""The personal-namespace auto-claim keeps working past its cache size, and
-counts a grant under any spelling of the person."""
+"""The personal-namespace auto-claim keeps working past its cache size, counts a
+grant under any spelling of the person, and passes over a name already in use."""
 
 from __future__ import annotations
 
@@ -14,9 +14,12 @@ from server.auth import personal_namespace as pn
 class _CH:
     def __init__(self, owners: set[str]) -> None:
         self.owners = owners
+        self.used: set[str] = set()
         self.inserts: list[str] = []
 
     async def query_one(self, sql: str, params: Any = None) -> Any:
+        if "AS in_use" in sql:
+            return {"in_use": 1} if params["ns"] in self.used else None
         if "namespace_grants" in sql:
             return {"x": 1} if set(params["subs"]) & self.owners else None
         return None
@@ -106,3 +109,62 @@ def _claims_in_memory(monkeypatch: pytest.MonkeyPatch) -> None:
     from tests.unit.claims_fake import memory_claims
 
     memory_claims(monkeypatch)
+
+
+def test_a_name_holding_data_with_no_row_is_passed_over(ch: _CH) -> None:
+    """Data or a grant under the name with no registry row is someone else's."""
+    ch.used = {"personal-bob"}
+    _ensure("bob@x.io")
+    assert len(ch.inserts) == 1
+    assert ch.inserts[0].startswith("personal-bob-")
+
+
+def test_the_default_namespace_picks_the_name_the_auto_claim_will_provision(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The default-namespace picker and the auto-claim pass over the same in-use name, so
+    the caller's default is the namespace it is given."""
+    from server.auth.jwt import AuthInfo
+    from server.core.grant_cache import GrantMap
+    from server.identity.app import caller_home
+
+    async def _no_grants(org: str, subject: str) -> GrantMap:
+        return GrantMap(ranks={})
+
+    monkeypatch.setattr("server.core.grant_cache.grant_map", _no_grants)
+    ch.used = {"personal-bob"}
+    bob = AuthInfo(
+        subject="bob@x.io", org="o", namespaces=("*",), roles=(), is_service_account=False
+    )
+    picked = asyncio.run(caller_home._provisioned(bob, "o"))
+    _ensure("bob@x.io")
+    assert picked.startswith("personal-bob-") and ch.inserts == [picked]
+
+
+def test_the_auto_claim_holds_the_account_claim_without_waiting(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """namespace.register holds the account claim, so the two cannot both find the name
+    free; a busy one is retried on the next request, not waited for in the auth step."""
+    from contextlib import asynccontextmanager
+
+    from server.core.errors import GrantBusyError
+
+    taken: list[tuple[str, bool]] = []
+    busy = {"personal-bob"}
+
+    @asynccontextmanager
+    async def _account_change(
+        org: str, ns: str, *, wait_s: float = 10.0, statement_s: float = 10.0
+    ) -> Any:
+        taken.append((ns, wait_s == 0 and statement_s < pn.CLAIM_TTL_S * 0.4 / 2))
+        if ns in busy:
+            raise GrantBusyError("busy")
+        yield
+
+    monkeypatch.setattr(pn, "account_change", _account_change)
+    with pytest.raises(pn.PersonalNamespaceBusy):
+        asyncio.run(pn.ensure_personal_namespace(ch, "o", "bob@x.io"))
+    assert taken == [("personal-bob", True)] and ch.inserts == []  # no wait, short statements
+    busy.clear()
+    assert asyncio.run(pn.ensure_personal_namespace(ch, "o", "bob@x.io")) == "personal-bob"

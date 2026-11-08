@@ -362,6 +362,17 @@ _WORK_SHARE = 0.4
 _STATEMENT_SHARE = 0.15
 
 
+def work_left(lease: Lease, ttl_s: float) -> float:
+    """Seconds left for the work under `lease` (`_WORK_SHARE` of its TTL), counted
+    from when its winning attempt was sent."""
+    return lease.renewed_at + ttl_s * _WORK_SHARE - time.monotonic()
+
+
+def statement_bound(ttl_s: float) -> float:
+    """Each statement's bound under a claim of `ttl_s` (`_STATEMENT_SHARE`)."""
+    return max(1.0, ttl_s * _STATEMENT_SHARE)
+
+
 class ClaimExpired(LeaseUnavailable):
     """The work under a claim did not finish well inside its TTL: it was cut off."""
 
@@ -382,12 +393,12 @@ async def holding(
         return
     # From when the winning attempt was sent, not when its reply came: a reply held
     # up past the TTL must not open the block beside the claim's next holder.
-    left = lease.renewed_at + ttl_s * _WORK_SHARE - time.monotonic()
+    left = work_left(lease, ttl_s)
     try:
         if left <= 0:
             raise TimeoutError
         async with asyncio.timeout(left):
-            with statement_timeout(max(1.0, ttl_s * _STATEMENT_SHARE)):
+            with statement_timeout(statement_bound(ttl_s)):
                 yield True
     except TimeoutError as e:
         raise ClaimExpired(

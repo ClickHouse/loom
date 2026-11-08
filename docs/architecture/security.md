@@ -740,6 +740,44 @@ run at once (past it a caller waits a second, then gets 429 with `Retry-After: 1
 attempts are waiting async inserts, so a burst shares parts and cannot take the
 ClickHouse pool every route uses.
 
+### What a new name may claim
+
+Self-signup and agent sign-up hand the caller an admin account on the name they claim (an
+agent's through its claim code), so a name already in use is refused with the same 409
+`NAMESPACE_CLAIMED` as a registered one, and the answer says no more than that; a sign-up
+made while another change to that account runs answers 409 `SIGNUP_IN_PROGRESS`, which
+says only that a change is running. In use means a `loom.namespaces` row, a configured
+code-plane repository or tracker namespace, any row in a table the erasure census counts
+by namespace (`census.namespace_tables`), tombstoned or not, a live row in a table whose
+rows a later owner would inherit (`namespace_census.STATE_TABLES`: grants, webhooks, task
+inboxes, sources and the like), or, on the Postgres authority, a memory there
+(`steps_pg.pg_holds_namespace`). Every other table keyed by namespace is exempt with a
+reason (`tests/unit/test_in_use_coverage.py`), which a new table cannot skip. A namespace
+can hold such rows without a registry row when auto-registration failed or was off, for
+data older than it, and for a grant made before the first write. The ClickHouse read is
+one statement that stops at the first row in each table
+(`server/identity/store/namespace_census.py`, `in_use`), read under the name's claim and
+the account's (`account_change`, which `namespace.register` and `namespace.restore` hold
+too) with sequential consistency; when it cannot be read the sign-up fails and nothing is
+provisioned. The personal-namespace auto-claim passes over a name in use to its fallback
+name, and a workload trust's exchange refuses an agent name in use. Every other path that
+registers a name as new and makes its caller admin (`namespace.register`,
+`namespace.restore` into a fresh target, `collection.create`, a self-service code
+repository or tracker source, which checks again under the account's claim after its
+remote probe) refuses a name in use unless the caller passes the gate's ADMIN check on it,
+within its token's limit on the name (`registration.refused_as_in_use`; for a collection
+name outside the tree, a platform admin). The refusal is the one a registered name's
+non-admin gets; the time it takes may still differ, as a registered name is answered
+before the in-use read. With auth off nobody is refused. An operator gives such a
+namespace an owner: `loom namespaces-adopt` registers the ones holding live memory, and an
+admin grant covers the rest.
+
+Two kinds of use leave nothing to find. A flat token minted for a name
+(`loom mint-token --namespaces <name>`) authorizes it without a row until its first
+write, and a code-plane or tracker entry in the configuration is read from the replica's
+own settings, so a replica that has not yet loaded a new entry does not see it. Register
+such a name (`namespace.register`) when minting the token or before shipping the entry.
+
 **Client-facing URLs** (OAuth metadata, setup config, claim links) come from
 `LOOM_OAUTH_ISSUER` / `LOOM_PUBLIC_BASE_URL`, else (only on a loopback bind) the
 request's own scheme and `Host`, validated as `http(s)://hostname[:port]`.

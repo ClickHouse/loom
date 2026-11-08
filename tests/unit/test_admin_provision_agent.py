@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from server.auth import agents, machines, self_signup
 from server.auth.jwt import mint_token
 from server.identity.app import admin_account_routes
+from server.identity.app.directory import IdentityDirectory
 
 _TRUST: machines.Machine = {
     "name": "fleet",
@@ -68,6 +69,10 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         state["audits"].append((event, kw))
         return ""
 
+    async def in_use(self: Any, org: str, namespace: str, **_k: Any) -> bool:
+        return False  # nothing under the agent's name yet
+
+    monkeypatch.setattr(IdentityDirectory, "in_use", in_use)
     monkeypatch.setattr(agents, "get_client", lambda: _CH())
     monkeypatch.setattr(machines, "get", get)
     monkeypatch.setattr(self_signup, "provision_account", provision)

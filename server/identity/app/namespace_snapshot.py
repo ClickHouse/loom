@@ -24,6 +24,7 @@ from server.identity.api.models import (
     _SnapshotTypeRow,
 )
 from server.identity.app import namespace as _registry
+from server.identity.app import registration
 from server.identity.store import grants as grants_repo
 from server.identity.store import namespaces as namespaces_repo
 from server.memory.app import snapshot_rows as memory_snapshot
@@ -185,6 +186,8 @@ async def handle_namespace_restore(
         target_existing = await namespaces_repo.fetch_row(input.org, input.target_namespace, ch=ch)
         if target_existing is None:
             _registry.refuse_sso_name(input.target_namespace)
+            if await registration.refused_as_in_use(input.org, input.target_namespace, ch=ch):
+                raise registration.not_admin_error(input.org, input.target_namespace, caller)
         # A restore's audit row implies its namespace row (rewritten, never deleted), so a
         # replay below is answered only past this check.
         if target_existing is not None:
