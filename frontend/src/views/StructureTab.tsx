@@ -466,8 +466,14 @@ function ProfileSchemaPanel({ canSet, canClear }: { canSet: boolean; canClear: b
       return;
     setBusy(true);
     try {
-      // Each answers the schema as it now stands, so the panel shows it at once.
-      setData(clear ? await clearProfileSchema(identity) : await setProfileSchema(identity, JSON.parse(shown)));
+      if (clear) {
+        // Clear answers the schema it removed, so the panel goes empty itself.
+        await clearProfileSchema(identity);
+        setData({ found: false, json_schema: {}, updated_by: "", updated_at: null });
+      } else {
+        // Set answers the schema as it now stands: shown at once.
+        setData(await setProfileSchema(identity, JSON.parse(shown)));
+      }
       toast(clear ? "Profile schema removed" : "Profile schema saved", "ok");
       setDraft(null);
     } catch (e) {
@@ -641,7 +647,7 @@ function Categories({ canAdd }: { canAdd: boolean }) {
     try {
       const r = await registerCategory(identity, name.trim(), description.trim());
       if (r.embedded) toast(`Added ${name.trim()}`, "ok");
-      else toast(`Added ${name.trim()}, but agents cannot find it by meaning yet: add it again later`, "info");
+      else toast(`Added ${name.trim()}, but category search cannot find it: the embedder failed`, "info");
       setName("");
       setDescription("");
       refresh();

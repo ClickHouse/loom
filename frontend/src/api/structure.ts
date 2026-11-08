@@ -29,7 +29,7 @@ export interface RecordSchema {
 }
 
 export async function listRecordSchemas(id: Scope, opts: RequestOpts = {}): Promise<{ schemas: RecordSchema[] }> {
-  // The server's most; the list says nothing when it holds more.
+  // 500 is the server's cap; the answer has no truncated flag, so a longer list is cut silently.
   return post("/v1/memory_schema.list", { ...scope(id), include_proposed: true, limit: 500 }, opts.signal);
 }
 

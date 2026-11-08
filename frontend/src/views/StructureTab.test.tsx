@@ -46,7 +46,12 @@ vi.mock("../api/structure", async (importOriginal) => {
     recordConflicts: vi.fn(async () => ({ rows: [] })),
     getProfileSchema: vi.fn(async () => ({ found: false, json_schema: {}, updated_by: "", updated_at: null })),
     setProfileSchema: vi.fn(async () => ({ found: true, json_schema: {}, updated_by: "a", updated_at: null })),
-    clearProfileSchema: vi.fn(),
+    clearProfileSchema: vi.fn(async () => ({
+      found: true,
+      json_schema: { type: "object" },
+      updated_by: "a",
+      updated_at: null,
+    })),
     listOntology: vi.fn(async () => [
       { kind: "relation_verb", name: "works_at", status: "pending", description: "employer", cardinality: "one" },
     ]),
@@ -367,9 +372,39 @@ describe("StructureTab", () => {
     await userEvent.click(screen.getByRole("button", { name: "Add category" }));
     await waitFor(() =>
       expect(toast).toHaveBeenCalledWith(
-        "Added Legal, but agents cannot find it by meaning yet: add it again later",
+        "Added Legal, but category search cannot find it: the embedder failed",
         "info",
       ),
     );
+  });
+
+  it("shows a saved profile schema at once, and an empty panel once one is removed", async () => {
+    signIn("admin");
+    const saved = { type: "object", properties: { tz: { type: "string", description: "zone" } } };
+    vi.mocked(api.getProfileSchema).mockResolvedValueOnce({
+      found: true,
+      json_schema: { type: "object", properties: {} },
+      updated_by: "a",
+      updated_at: null,
+    });
+    vi.mocked(api.setProfileSchema).mockResolvedValueOnce({
+      found: true,
+      json_schema: saved,
+      updated_by: "b",
+      updated_at: null,
+    });
+    render(<StructureTab />);
+    const field = await screen.findByLabelText("JSON Schema");
+    await userEvent.clear(field);
+    await userEvent.click(field);
+    await userEvent.paste(JSON.stringify(saved));
+    await userEvent.click(screen.getByRole("button", { name: "Save schema" }));
+    await waitFor(() => expect(screen.getByText(/Set by b/)).toBeInTheDocument());
+    expect((field as HTMLTextAreaElement).value).toBe(JSON.stringify(saved, null, 2));
+    expect(api.getProfileSchema).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Remove" })).toBeNull());
+    expect((field as HTMLTextAreaElement).value).toBe("");
+    expect(screen.queryByText(/Set by/)).toBeNull();
   });
 });
