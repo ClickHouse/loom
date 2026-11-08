@@ -92,6 +92,19 @@ class _CH:
         self.queries.append(sql)
         return dict(self.row) if self.row else None
 
+    async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        # The caller holds an admin grant given there, unless a test says otherwise.
+        return [
+            {
+                "namespace": params["ns"][0],
+                "subject": params["subs"][0],
+                "role": "admin",
+                "status": "active",
+                "revoked_at": None,
+                "granted_by": "ops",
+            }
+        ]
+
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
         self.inserts.append((table, rows))
 
@@ -374,7 +387,11 @@ async def test_restricting_a_page_branch_revokes_the_copy_a_sibling_gave_it(monk
         "granted_by": "repo-maintainers:code-weave-dev",
         "version": 1,
     }
-    grants = [copy, copy | {"namespace": "code-weave-dev", "granted_by": "mallory", "version": 2}]
+    grants = [
+        copy,
+        copy | {"namespace": "code-weave-dev", "granted_by": "mallory", "version": 2},
+        copy | {"subject": "alice", "granted_by": "ops", "version": 3},  # given there
+    ]
 
     class _Directory(_CH):
         async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
@@ -444,10 +461,9 @@ async def test_restricting_a_page_branch_revokes_the_copy_a_sibling_gave_it(monk
         confirm="",
     )
     await h.handle_code_repo_set_access(inp)
-    revoked = [r for t, rows in ch.inserts if t == "loom.namespace_grants" for r in rows]
-    assert [(r["namespace"], r["subject"], r["revoked_at"] is not None) for r in revoked] == [
-        ("code-weave-rc", "mallory", True)
-    ]
+    written = [r for t, rows in ch.inserts if t == "loom.namespace_grants" for r in rows]
+    on_it = [r for r in written if r["namespace"] == "code-weave-rc"]
+    assert [(r["subject"], r["revoked_at"] is not None) for r in on_it] == [("mallory", True)]
 
     # A sync that fails leaves the decision written and the call answered (so audited):
     # the ingest pass finishes it. A widening syncs too, bringing the siblings back.
@@ -583,10 +599,11 @@ async def test_widening_needs_confirm_when_the_row_read_now_says_restricted(monk
     assert out.previous_classification == "restricted"
 
 
+@pytest.mark.parametrize("revoked", [False, True])
 @pytest.mark.asyncio
-async def test_a_stray_copy_cannot_widen_a_restricted_branch(monkeypatch) -> None:
+async def test_a_stray_copy_cannot_widen_a_restricted_branch(monkeypatch, revoked: bool) -> None:
     """Its holder could otherwise widen the branch before the next sync revokes the copy,
-    and keep it for good."""
+    and keep it for good; a copy revoked since the gate passed counts as none either."""
     from server.code.app import repo_admin as h
     from server.core.errors import AuthInsufficientError
 
@@ -598,20 +615,26 @@ async def test_a_stray_copy_cannot_widen_a_restricted_branch(monkeypatch) -> Non
     monkeypatch.setattr(reg, "refresh_db_repos", refresh)
     monkeypatch.setattr(repos, "configured_repos", lambda: [sibling, mine])
     monkeypatch.setattr("server.code.domain.index.repos.repo_for_namespace", lambda org, ns: mine)
+    seen: list[list[str]] = []
 
     class _Stray(_CH):
-        async def query_one(self, sql, params=None):
-            if "namespace_grants" in sql:
-                return {
+        async def query_all(self, sql, params=None):
+            seen.append(params["subs"])
+            return [
+                {
                     "namespace": "code-weave-rc",
-                    "subject": "mallory",
+                    "subject": "Mallory@corp.example",  # another spelling of the caller
                     "role": "admin",
                     "status": "active",
-                    "revoked_at": None,
+                    "revoked_at": "2026-09-01 00:00:00" if revoked else None,
                     "granted_by": "repo-maintainers:code-weave-dev",
                 }
-            return await super().query_one(sql, params)
+            ]
 
+    async def aliases(org: str, subject: str, **_: Any) -> list[str]:
+        return [subject, "Mallory@corp.example"]
+
+    monkeypatch.setattr("server.auth.aliases.subject_aliases", aliases)
     ch = _Stray({"org": ORG, "namespace": "code-weave-rc", "classification": "restricted"})
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     monkeypatch.setattr(h, "current_caller", lambda: ("mallory", ORG))
@@ -625,4 +648,4 @@ async def test_a_stray_copy_cannot_widen_a_restricted_branch(monkeypatch) -> Non
                 confirm="code-weave-rc",
             )
         )
-    assert ch.inserts == []
+    assert ch.inserts == [] and seen == [["mallory", "mallory@corp.example"]]

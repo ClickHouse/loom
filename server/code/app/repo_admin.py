@@ -682,6 +682,21 @@ def _require_confirm(input: Any) -> None:
         )
 
 
+async def _require_widening(input: Any, subject: str, ch: Any) -> None:
+    """Widening a restricted branch, under the call's claims: `confirm` = namespace, and
+    an admin grant of the caller's own there. A copy the next sync revokes, or one revoked
+    since the gate passed, must not widen the branch and keep itself."""
+    from server.code.app.index import maintainers
+
+    _require_confirm(input)
+    if subject and not await maintainers.holds_own_admin(ch, input.org, input.namespace, subject):
+        raise AuthInsufficientError(
+            f"{input.namespace} is restricted and you hold no admin grant of its own there "
+            "(a copy that does not come from one of the repository's operator entries does "
+            "not count); ask one of its admins"
+        )
+
+
 async def handle_code_repo_set_access(input: Any) -> Any:
     """The repository's maintainer (the transport's ADMIN gate
     on the namespace) sets its classification and join policy. The decision
@@ -738,13 +753,7 @@ async def handle_code_repo_set_access(input: Any) -> Any:
             (row or {}).get("classification"),
         )
         if was_restricted and cls == "standard":
-            _require_confirm(input)
-            if await maintainers.holds_stray_copy(ch, input.org, input.namespace, subject):
-                # A copy the next sync revokes must not widen the branch and keep itself.
-                raise AuthInsufficientError(
-                    f"{input.namespace} is restricted and your admin grant there is a copy "
-                    "from a branch added from the page; ask one of its own admins"
-                )
+            await _require_widening(input, subject, ch)
         previous_policy = str(
             (row or {}).get("join_policy") or ("open" if cfg.public else "approval")
         )

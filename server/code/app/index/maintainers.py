@@ -842,17 +842,27 @@ async def sync_restricted_page_branches(
                 await sync_quietly(org, cfg.namespace)
 
 
-async def holds_stray_copy(client: Any, org: str, namespace: str, subject: str) -> bool:
-    """`subject`'s live row on `namespace` is a copy whose source is none of its
-    repository's operator entries (`_foreign`): one a restricted branch does not keep."""
+async def holds_own_admin(client: Any, org: str, namespace: str, subject: str) -> bool:
+    """`subject`, under any spelling the ADMIN gate accepts, holds a live admin row on
+    `namespace` that is not a copy a restricted branch does not keep (`_foreign`). Read
+    under the caller's claims: a copy revoked since the gate passed counts as none."""
+    from server.auth.aliases import lowered, subject_aliases
+
     repo = repo_of(org, namespace)
-    if repo is None or not subject:
-        return False
-    config = [b for b, source in _branches(org, repo).items() if source == "config"]
-    row = await client.query_one(
-        _GRANT_ROW_SQL, params={"org": org, "ns": namespace, "sub": subject}
+    sources = _branches(org, repo) if repo is not None else {}
+    config = [b for b, source in sources.items() if source == "config"]
+    spellings = lowered(await subject_aliases(org, subject))
+    rows = await client.query_all(
+        """
+        SELECT namespace, subject, role, ifNull(toString(status), 'active') AS status,
+               revoked_at, granted_by
+        FROM loom.namespace_grants FINAL
+        WHERE org = {org:String} AND namespace IN {ns:Array(String)}
+          AND lower(subject) IN {subs:Array(String)}
+        """,
+        params={"org": org, "ns": [namespace], "subs": spellings},
     )
-    return row is not None and _foreign(row, config)
+    return any(_live_admin(r) and not _foreign(r, config) for r in rows)
 
 
 async def sync_quietly(org: str, namespace: str, *, ch: Any | None = None) -> None:
