@@ -95,11 +95,10 @@ def test_a_bad_token_is_refused() -> None:
         rb.decode_resume("not-a-token")
     with pytest.raises(ValueError):
         rb.decode_resume(rb.encode_resume("memory_embeddings", ["only-one"]))
-    with pytest.raises(ValueError):
-        rb.decode_resume(rb.encode_resume("conversation_embeddings", ["o"] * 5, "acme"))  # type: ignore[arg-type]
-    raw = '{"table":"conversation_embeddings","key":["o","o","o","o","o"],"keep":{}}'
-    with pytest.raises(ValueError):
-        rb.decode_resume(base64.urlsafe_b64encode(raw.encode()).decode())
+    for keep in ('"acme"', "{}"):
+        raw = '{"table":"conversation_embeddings","key":["o","o","o","o","o"],"keep":' + keep + "}"
+        with pytest.raises(ValueError):
+            rb.decode_resume(base64.urlsafe_b64encode(raw.encode()).decode())
 
 
 @pytest.mark.asyncio
