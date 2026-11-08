@@ -26,6 +26,7 @@ from server.tasks.api import ops_task
 from server.tasks.app import common, inboxes, reads, sweep, transitions, trust
 from server.tasks.store import repo as repo
 from server.tasks.store.repo import ClaimResult, KeeperLeases, resolve_policy
+from tests.unit import clickhouse_local
 from tests.unit.claims_fake import memory_claims
 
 ORG = "acme"
@@ -1529,3 +1530,20 @@ async def test_the_poster_listing_matches_the_token_subject_never_an_agent_label
 
     assert await mine("public-bot") == []
     assert await mine("sa:public-bot") == ["sa:public-bot"]
+
+
+@pytest.mark.skipif(clickhouse_local.CLICKHOUSE is None, reason="clickhouse not installed")
+@pytest.mark.asyncio
+async def test_the_subject_filter_never_matches_an_agent_label_on_clickhouse() -> None:
+    setup = [
+        clickhouse_local.ddl("tasks"),
+        "INSERT INTO loom.tasks (org, inbox, task_id, from_agent, from_subject, version)"
+        " VALUES ('o', 'ops', generateUUIDv4(), 'public-bot', 'sa:public-bot', 1)",
+    ]
+
+    class _Local:
+        async def query_all(self, sql: str, params: Any = None) -> Any:
+            return clickhouse_local.run(setup, sql, params)
+
+    assert await repo.list_tasks("o", from_subject="public-bot", ch=_Local()) == []
+    assert len(await repo.list_tasks("o", posted_by="public-bot", ch=_Local())) == 1
