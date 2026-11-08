@@ -17,7 +17,17 @@ import json
 import posixpath
 import re
 
-_YAML_ITEM_RE = re.compile(r"^\s*-\s*['\"]?([^'\"#\n]+?)['\"]?\s*(?:#.*)?$", re.M)
+from server.code.domain.extract.ts_config import strip_comments
+
+# `[^\S\n]`: whitespace within the line; `^\s*` would scan on through every blank line
+# below each line start, quadratic in a file of them.
+# The item ends on a character that is not whitespace and the runs around the closing
+# quote are possessive: a lazy item before `\s*` splits a run of spaces every way.
+_YAML_ITEM_RE = re.compile(
+    r"^[^\S\n]*-\s*+['\"]?([^'\"#\n]*[^'\"#\s])[^\S\n]*+['\"]?[^\S\n]*+(?:#.*)?$", re.M
+)
+# not a setting: each member glob is matched against every package directory
+MEMBER_GLOBS_MAX = 1000
 _YAML_PACKAGES_RE = re.compile(r"^packages:\s*$", re.M)
 _YAML_TOP_KEY_RE = re.compile(r"^[A-Za-z_][\w-]*:", re.M)
 
@@ -34,7 +44,7 @@ def workspace_globs(pnpm_yaml: str, root_package_json: str) -> list[str]:
         out.extend(g.strip() for g in _YAML_ITEM_RE.findall(block) if not g.strip().startswith("!"))
     try:
         data = json.loads(root_package_json or "{}")
-    except ValueError:
+    except (ValueError, RecursionError):  # nesting deeper than the parser's stack
         data = {}
     ws = data.get("workspaces") if isinstance(data, dict) else None
     if isinstance(ws, dict):
@@ -53,11 +63,11 @@ def extra_manifest_globs(lerna_json: str, rush_json: str, nx_json: str) -> list[
     for text in (lerna_json, rush_json, nx_json):
         if not text:
             continue
-        stripped = re.sub(r"//[^\n]*|/\*.*?\*/", "", text, flags=re.S)
+        stripped = strip_comments(text)
         stripped = re.sub(r",(\s*[}\]])", r"\1", stripped)
         try:
             data = json.loads(stripped)
-        except ValueError:
+        except (ValueError, RecursionError):  # nesting deeper than the parser's stack
             continue
         if not isinstance(data, dict):
             continue
@@ -78,14 +88,15 @@ def extra_manifest_globs(lerna_json: str, rush_json: str, nx_json: str) -> list[
 def member_dirs(globs: list[str], present: set[str]) -> list[str]:
     """The directories the globs name that hold a `package.json` in the
     namespace: `docs` → `docs`; `packages/*` → each `packages/<x>`;
-    `packages/**` → every depth below."""
+    `packages/**` → every depth below. The first `MEMBER_GLOBS_MAX` globs count."""
     manifests = [p for p in present if posixpath.basename(p) == "package.json" and "/" in p]
     dirs = sorted(posixpath.dirname(p) for p in manifests)
-    out: list[str] = []
-    for g in globs:
+    known = set(dirs)
+    out: dict[str, None] = {}  # ordered, and a membership test that does not scan
+    for g in globs[:MEMBER_GLOBS_MAX]:
         if "*" not in g:
-            if g in dirs and g not in out:
-                out.append(g)
+            if g in known:
+                out[g] = None
             continue
         head = g.split("*", 1)[0].rstrip("/")
         deep = "**" in g
@@ -95,9 +106,9 @@ def member_dirs(globs: list[str], present: set[str]) -> list[str]:
             rest = d[len(head) + 1:] if head else d
             if "node_modules" in rest.split("/"):
                 continue
-            if (deep or "/" not in rest) and d not in out:
-                out.append(d)
-    return out
+            if deep or "/" not in rest:
+                out[d] = None
+    return list(out)
 
 
 def registry(member_texts: dict[str, str]) -> dict[str, str]:
@@ -105,10 +116,11 @@ def registry(member_texts: dict[str, str]) -> dict[str, str]:
     out: dict[str, str] = {}
     for d, text in member_texts.items():
         try:
-            name = json.loads(text or "{}").get("name")
-        except ValueError:
+            data = json.loads(text or "{}")
+        except (ValueError, RecursionError):  # nesting deeper than the parser's stack
             m = re.search(r'"name"\s*:\s*"([^"]+)"', text or "")  # a manifest the reader mangled
-            name = m.group(1) if m else None
+            data = {"name": m.group(1)} if m else None
+        name = data.get("name") if isinstance(data, dict) else None
         if isinstance(name, str) and name:
             out[name] = d
     return out

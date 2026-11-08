@@ -1029,11 +1029,31 @@ async def commit_meta_many(git_dir: str, shas: list[str]) -> dict[str, tuple[str
     return meta
 
 
-async def show_file(git_dir: str, sha: str, path: str) -> bytes | None:
+# The bytes of an oversize blob read for the denylist's content rules (binary, a
+# generated marker), which look no further.
+# not a setting: it must cover denylist._BINARY_PROBE_BYTES and _GENERATED_PROBE_BYTES
+OVERSIZE_HEAD_BYTES = 8192
+
+
+class BlobTooLarge(Exception):
+    """A file at a commit is larger than the cap its reader set; only its first
+    `OVERSIZE_HEAD_BYTES` were read."""
+
+    def __init__(self, path: str, size: int, blob: str, max_bytes: int, head: bytes) -> None:
+        super().__init__(f"{path} is {size} bytes; max {max_bytes}")
+        self.size = size
+        self.blob = blob  # the blob's object id, what `blob_sha` gives for its bytes
+        self.head = head
+
+
+async def show_file(git_dir: str, sha: str, path: str, max_bytes: int = 0) -> bytes | None:
     """File contents at a commit; None when the path is no file there (absent, a
-    directory, a submodule) or `sha` is not a revision."""
+    directory, a submodule) or `sha` is not a revision. With `max_bytes`, a larger
+    file raises BlobTooLarge with its first bytes, the rest unread."""
     if not _is_rev(sha):
         return None
+    if max_bytes:
+        return await _capped_blob(git_dir, sha, path, max_bytes)
     proc = await asyncio.create_subprocess_exec(
         "git",
         "--git-dir",
@@ -1054,11 +1074,68 @@ async def show_file(git_dir: str, sha: str, path: str) -> bytes | None:
     return out
 
 
-async def file_at(git_dir: str, sha: str, path: str) -> bytes | None:
+async def _capped_blob(git_dir: str, sha: str, path: str, max_bytes: int) -> bytes | None:
+    """`show_file` under a cap: one `git cat-file --batch` names the object's type and
+    size before its bytes, and the read stops at the cap's verdict."""
+    spec = f"{sha}:{path}"
+    if "\n" in spec or spec.endswith("\r"):  # --batch reads lines, a CR before LF dropped
+        try:
+            spec = (await _git(git_dir, "rev-parse", "--verify", "--quiet", spec)).strip()
+        except GitError:
+            return None
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        *UNQUOTED_PATHS,
+        "--git-dir",
+        git_dir,
+        "cat-file",
+        "--batch",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+        env=auth_env(),
+    )
+    assert proc.stdin is not None and proc.stdout is not None
+    whole = False  # every byte git writes was read: it exits on its own
+    try:
+        async with asyncio.timeout(settings.code_git_timeout_s):
+            proc.stdin.write(f"{spec}\n".encode())
+            await proc.stdin.drain()
+            proc.stdin.close()
+            parts = (await proc.stdout.readline()).split()
+            if len(parts) != 3 or parts[1] != b"blob" or not parts[2].isdigit():
+                # a missing reply is the whole output; a directory's tree, however
+                # large, is left unread with the process killed
+                whole = len(parts) != 3
+                return None  # missing (`<spec> missing`, any path), a directory or a submodule
+            size = int(parts[2])
+            if size > max_bytes:
+                head = await proc.stdout.readexactly(min(size, OVERSIZE_HEAD_BYTES))
+                raise BlobTooLarge(path, size, parts[0].decode(), max_bytes, head)
+            data = await proc.stdout.readexactly(size)
+            whole = True
+            return data
+    except TimeoutError:
+        raise GitError(f"git cat-file {path} timed out") from None
+    except (asyncio.IncompleteReadError, BrokenPipeError, ConnectionResetError) as e:
+        raise GitError(f"git cat-file {path} failed: {type(e).__name__}") from None
+    finally:
+        # It may still be writing the bytes past the cap. Once it is killed, what the pipe
+        # holds is read out: `wait` waits for the pipe to close, which a paused reader
+        # never sees.
+        if not whole and proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+        with contextlib.suppress(OSError, asyncio.IncompleteReadError):
+            await proc.stdout.read()
+        await proc.wait()
+
+
+async def file_at(git_dir: str, sha: str, path: str, max_bytes: int = 0) -> bytes | None:
     """`path` at `sha`; None only when that commit has no such file (a directory or a
     submodule there is none). A mirror git cannot read, or a commit it does not have,
-    raises GitError."""
-    data = await show_file(git_dir, sha, path)
+    raises GitError; a file over `max_bytes` raises BlobTooLarge, as `show_file`."""
+    data = await show_file(git_dir, sha, path, max_bytes=max_bytes)
     if data is not None:
         return data
     listed = await _git(git_dir, "ls-tree", _rev(sha), "--", path)

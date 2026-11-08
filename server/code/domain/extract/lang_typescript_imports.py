@@ -4,9 +4,11 @@ exports), barrels and their re-exports."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import posixpath
 import re
+from collections import OrderedDict
 from typing import Any
 
 from server.code.domain.extract.lang_typescript import (
@@ -61,7 +63,7 @@ def import_bindings(pf: ParsedFile) -> dict[str, str]:
     ):
         out[m.group(1)] = m.group(2)
     for m in re.finditer(
-        r"""(?:const|let|var)\s*\{([^}]*)\}\s*=\s*(?:await\s+)?import\(\s*["']([^"']+)["']""",
+        r"""(?:const|let|var)\s*\{([^{}]*)\}\s*=\s*(?:await\s+)?import\(\s*["']([^"']+)["']""",
         text,
     ):
         for part in m.group(1).split(","):
@@ -70,7 +72,7 @@ def import_bindings(pf: ParsedFile) -> dict[str, str]:
                 out[name] = m.group(2)
     # `const { a, b: c } = require("y")` binds a and c to y
     for m in re.finditer(
-        r"""(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\(\s*["']([^"']+)["']""",
+        r"""(?:const|let|var)\s*\{([^{}]*)\}\s*=\s*require\(\s*["']([^"']+)["']""",
         text,
     ):
         for part in m.group(1).split(","):
@@ -235,6 +237,10 @@ def package_subpath(spec: str) -> str:
     return "./" + "/".join(rest) if rest else "."
 
 
+# `exports` with each target's condition picked: one target string, or subpath -> target
+ExportsView = str | dict[str, str] | None
+
+
 def _pick_condition(target: Any) -> str:
     if isinstance(target, str):
         return target
@@ -244,7 +250,9 @@ def _pick_condition(target: Any) -> str:
                 picked = _pick_condition(target[cond])
                 if picked:
                     return picked
-        for value in target.values():  # a nested condition object without a known key
+        for key, value in target.items():  # a nested condition object without a known key
+            if key in _EXPORT_CONDITIONS:
+                continue  # read above: a second read per level is exponential in the depth
             picked = _pick_condition(value)
             if picked:
                 return picked
@@ -256,20 +264,16 @@ def _pick_condition(target: Any) -> str:
     return ""
 
 
-def _exports_target(exports: Any, subpath: str) -> str:
-    """The target string the `exports` field maps `subpath` to, '' when
-    the subpath is not exported. Exact keys first, then `*` patterns
-    (longest literal prefix wins, as Node ranks them)."""
-    if exports is None:
-        return ""
+def _exports_target(exports: ExportsView, subpath: str) -> str:
+    """The target string a manifest view's `exports` (`_view`: each target's condition
+    already picked) maps `subpath` to, '' when the subpath is not exported. Exact keys
+    first, then `*` patterns (longest literal prefix wins, as Node ranks them)."""
     if isinstance(exports, str):
         return exports if subpath == "." else ""
-    if isinstance(exports, dict) and not any(k.startswith(".") for k in exports):
-        return _pick_condition(exports) if subpath == "." else ""  # conditions at the top level
     if not isinstance(exports, dict):
         return ""
     if subpath in exports:
-        return _pick_condition(exports[subpath])
+        return exports[subpath]
     best_key, best = "", ""
     for key, target in exports.items():
         if "*" not in key:
@@ -279,26 +283,77 @@ def _exports_target(exports: Any, subpath: str) -> str:
         if fits and len(subpath) >= len(head) + len(tail):
             if len(head) > len(best_key):
                 star = subpath[len(head) : len(subpath) - len(tail)]
-                picked = _pick_condition(target)
-                best_key, best = head, picked.replace("*", star) if picked else ""
+                best_key, best = head, target.replace("*", star)
     return best
+
+
+# Parsed manifests kept, by count and by the characters of their texts: a view holds up
+# to about 7 times its text's size, and a miss only parses again.
+# not a setting: a memory bound on a parse cache
+_MANIFESTS_KEPT = 256
+# not a setting: a memory bound on a parse cache
+_MANIFESTS_CHARS = 4 * 1024 * 1024
+# digest -> (view, its text's length)
+_MANIFESTS: OrderedDict[bytes, tuple[tuple[ExportsView, str] | None, int]] = OrderedDict()
+_manifest_chars = 0
+
+
+def _view(data: Any) -> tuple[ExportsView, str] | None:
+    """`_manifest`'s view of a parsed package.json; None when it is no object."""
+    if not isinstance(data, dict):
+        return None
+    raw = data.get("exports")
+    exports: ExportsView = raw if isinstance(raw, str) else None
+    if isinstance(raw, dict):
+        if any(k.startswith(".") for k in raw):
+            exports = {k: _pick_condition(v) for k, v in raw.items()}
+        else:
+            exports = _pick_condition(raw)  # conditions at the top level: "." only
+    return exports, str(data.get("types") or data.get("module") or data.get("main") or "")
+
+
+def _manifest(package_json: str) -> tuple[ExportsView, str] | None:
+    """(`exports` with each target's condition picked, the `types` / `module` / `main`
+    fallback) of a package.json, parsed once per text: every importer of the package
+    asks again. None when it does not parse."""
+    global _manifest_chars
+    key = hashlib.blake2b(package_json.encode(), digest_size=16).digest()
+    if key in _MANIFESTS:
+        _MANIFESTS.move_to_end(key)
+        return _MANIFESTS[key][0]
+    try:
+        view = _view(json.loads(package_json))
+    except (ValueError, RecursionError):  # nesting deeper than the parser's or our stack
+        view = None
+    _MANIFESTS[key] = (view, len(package_json))
+    _manifest_chars += len(package_json)
+    while len(_MANIFESTS) > 1 and (
+        len(_MANIFESTS) > _MANIFESTS_KEPT or _manifest_chars > _MANIFESTS_CHARS
+    ):
+        _manifest_chars -= _MANIFESTS.popitem(last=False)[1][1]
+    return view
+
+
+def clear_manifests() -> None:
+    """Drop every parsed manifest (tests start from an empty cache)."""
+    global _manifest_chars
+    _MANIFESTS.clear()
+    _manifest_chars = 0
 
 
 def exports_candidates(spec: str, pkg_dir: str, package_json: str) -> list[str]:
     """Repository paths the package's `exports` (or `main` / `types`) maps
     the specifier to, most likely first; [] when the package.json does not
     parse or the subpath is not exported."""
-    try:
-        data = json.loads(package_json)
-    except ValueError:
+    view = _manifest(package_json)
+    if view is None:
         return []
-    if not isinstance(data, dict):
-        return []
+    exports, fallback = view
     subpath = package_subpath(spec)
-    target = _exports_target(data.get("exports"), subpath)
+    target = _exports_target(exports, subpath)
     if not target and subpath == ".":
-        target = str(data.get("types") or data.get("module") or data.get("main") or "")
-    if not target or not isinstance(target, str):
+        target = fallback
+    if not target:
         return []
     rel = target[2:] if target.startswith("./") else target.lstrip("/")
     forms = [rel]
@@ -334,7 +389,7 @@ def unresolved_package_specs(from_path: str, specs: list[str], present: set[str]
 # imports from `features/query` also depends on `features/query/dataModel` — an
 # `includes` edge at `BARREL_CONFIDENCE`, below the direct import's 1.0.
 _REEXPORT_RE = re.compile(
-    r"""^\s*export\s+(?:type\s+)?(?:\*(?:\s+as\s+\w+)?|\{[^}]*\})\s+from\s+["']([^"']+)["']""",
+    r"""^[^\S\n]*export\s+(?:type\s+)?(?:\*(?:\s+as\s+\w+)?|\{[^{}]*\})\s+from\s+["']([^"']+)["']""",
     re.M,
 )
 BARREL_CONFIDENCE = 0.9

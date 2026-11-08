@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from typing import Any
 
 from server.code.domain.index.repos import RepoConfig
@@ -32,3 +34,33 @@ def repo_config(**overrides: Any) -> RepoConfig:
     }
     fields.update(overrides)
     return RepoConfig(**fields)
+
+
+def assert_linear(
+    cost: Callable[[Any], float],
+    small: Any,
+    big: Any,
+    *,
+    ratio: float = 8.0,
+    floor: float = 0.0,
+    bound: float | None = None,
+) -> None:
+    """`cost(big)` is under `ratio` times `cost(small)` (8 suits 4 times the size: a
+    quadratic one takes 16) or under `floor` seconds, and under `bound` seconds when
+    given. On a loaded host the best of three runs of each counts."""
+    a, b = cost(small), cost(big)
+    if b > ratio * a:
+        a, b = min(a, cost(small), cost(small)), min(b, cost(big), cost(big))
+    assert (b < ratio * a or b < floor) and (bound is None or b < bound), (a, b)
+
+
+def grows_linearly(run: Callable[[int], object], small: int, big: int) -> None:
+    """`run(big)` costs under 8 times `run(small)` at 4 times the size, or under 50 ms,
+    as `assert_linear` checks."""
+
+    def cost(n: int) -> float:
+        t0 = time.perf_counter()
+        run(n)
+        return time.perf_counter() - t0
+
+    assert_linear(cost, small, big, floor=0.05)

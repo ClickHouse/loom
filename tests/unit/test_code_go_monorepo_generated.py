@@ -26,7 +26,7 @@ from server.code.domain.extract.lang_go import (
 )
 from server.code.domain.index.repos import configured_repos
 from server.settings import settings
-from tests.unit.code_fixtures import repo_config
+from tests.unit.code_fixtures import grows_linearly, repo_config
 
 # The scalar code repository these tests model (none is configured by default).
 pytestmark = pytest.mark.usefixtures("scalar_code_repo")
@@ -207,7 +207,7 @@ async def test_load_denylist_reads_the_gitattributes_beside_the_ignore_file() ->
 
     files = {".loomignore": b"*.snap\n", ".gitattributes": b"fixtures/** linguist-generated=true\n"}
 
-    async def show_file(_git_dir: str, _sha: str, name: str) -> bytes | None:
+    async def show_file(_git_dir: str, _sha: str, name: str, max_bytes: int = 0) -> bytes | None:
         return files.get(name)
 
     d = await load_denylist(Cfg(), "abc", show_file)
@@ -225,3 +225,9 @@ def test_infrastructure_extensions_chunk_as_config_and_rules_as_docs() -> None:
     assert detect_by_extension(".cursor/rules/go.mdc") == "doc"
     assert detect_by_extension("experiments/x/dashboard.html") == "doc"
     assert detect_by_extension("go.sum") == ""  # a checksum list is not indexed
+
+
+def test_a_go_mod_line_of_one_long_replace_token_costs_linear_time() -> None:
+    from server.code.domain.extract.lang_go import _GO_MOD_REPLACE_RE
+
+    grows_linearly(lambda n: list(_GO_MOD_REPLACE_RE.finditer("a=>" * n + "a b")), 2_000, 8_000)

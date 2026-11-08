@@ -541,7 +541,13 @@ async def _mirror_leg(
                 c.target = {**c.target, "at_commit": {"checked": False}}
             continue
         try:
-            blob = await gitrepo.show_file(git_dir, sha, path)
+            blob = await gitrepo.show_file(
+                git_dir, sha, path, max_bytes=settings.code_ingest_max_file_bytes
+            )
+        except gitrepo.BlobTooLarge:
+            for c in mine:  # the file exists; its lines are not counted past the cap
+                c.target = {**c.target, "at_commit": {"checked": False}}
+            continue
         except gitrepo.GitError:
             blob = None
         lines = None if blob is None else _count_lines(blob)

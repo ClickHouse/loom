@@ -1531,10 +1531,22 @@
           "type": "boolean",
           "description": "C++ compiler-tier per-merge deltas: scip-clang over changed TUs when git_head outruns scip_commit. Needs the configured checkout and a scip-clang binary; CPU-heavy in bursts."
         },
+        "code_scip_delta_file_max_mb": {
+          "default": 180,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Largest compiler-tier delta file the server reads, in MiB; a larger one fails the entry's pass (sizing: code-index-operations.md)."
+        },
         "code_scip_delta_interval_seconds": {
           "default": 300,
           "type": "integer",
           "description": "Seconds between C++ delta passes."
+        },
+        "code_scip_delta_max_nodes": {
+          "default": 6000000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Most `{`, `[` and `,` bytes a compiler-tier delta may hold, counted before it is parsed; more fails the entry's pass (sizing: code-index-operations.md)."
         },
         "code_scip_delta_max_tus": {
           "default": 200,

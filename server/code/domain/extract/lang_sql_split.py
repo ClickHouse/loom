@@ -257,7 +257,7 @@ def _split_leading_comments(raw: str, hash_comments: bool = False) -> tuple[str,
 
 _LINE_COMMENT_RE = re.compile(r"--[^\n]*")
 _HASH_COMMENT_RE = re.compile(r"(?m)^[ \t]*#[^\n]*")
-_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.S)
+_BLOCK_COMMENT_RE = re.compile(r"/\*.*?(?:\*/|\Z)", re.S)  # unclosed: to the end
 
 
 def strip_comments(sql: str, hash_comments: bool = False) -> str:
@@ -271,7 +271,7 @@ def strip_comments(sql: str, hash_comments: bool = False) -> str:
 # TestHint
 # --------------------------------------------------------------------------
 
-_HINT_WORD_RE = re.compile(r"\{([^}]*)\}")
+_HINT_WORD_RE = re.compile(r"\{([^{}]*)\}")
 _HINT_ERROR_KINDS = ("serverError", "clientError", "error")
 _HINT_ECHO = ("echoOn", "echoOff", "echo")
 
@@ -375,6 +375,10 @@ def split_statements(text: str, mode: SplitMode | None = None) -> list[Statement
     to what the text itself asks for (`detect_mode`)."""
     out: list[Statement] = []
     mode = detect_mode(text) if mode is None else mode
+    # Line numbers and comment-only tails are carried forward, not recounted from the
+    # top or re-copied per segment, which costs quadratic time in a file of many.
+    pos, line = 0, 1
+    tail: list[str] = []
     for start, end in _raw_segments(text, mode):
         raw = text[start:end]
         leading, rest = _split_leading_comments(raw, mode.hash_comments)
@@ -384,12 +388,13 @@ def split_statements(text: str, mode: SplitMode | None = None) -> list[Statement
             # a trailing comment-only tail (a stray hint, a closing remark):
             # it belongs to the previous statement's text, never a record
             if out:
-                out[-1].text += raw
-                out[-1].end_line = out[-1].start_line + out[-1].text.rstrip("\n").count("\n")
+                tail.append(raw)
             continue
+        _join_tail(out, tail)
+        line, pos = line + text.count("\n", pos, start), start
         comment_lines = [ln for ln in leading.split("\n") if ln.strip() and not is_header_line(ln)]
         body = strip_comments(rest, mode.hash_comments)
-        first_line, last_line = _span_of(text, start, raw)
+        first_line, last_line = _span_of(line, raw)
         stmt = Statement(
             ordinal=len(out) + 1,
             start_line=first_line,
@@ -401,11 +406,19 @@ def split_statements(text: str, mode: SplitMode | None = None) -> list[Statement
             comments="\n".join(comment_lines),
         )
         out.append(stmt)
+    _join_tail(out, tail)
     return out
 
 
-def start_line_of(text: str, offset: int) -> int:
-    return text.count("\n", 0, offset) + 1
+def _join_tail(out: list[Statement], tail: list[str]) -> None:
+    """The comment-only segments after the last statement, added to its text."""
+    if tail:
+        out[-1].text += "".join(tail)
+        # `start_line` is past the blank lines `text` starts with; as in `_span_of`, the
+        # lines of only whitespace at its end are nobody's
+        last = out[-1]
+        last.end_line = last.start_line - _blank_head(last.text) + last.text.rstrip().count("\n")
+        tail.clear()
 
 
 def _blank_head(raw: str) -> int:
@@ -420,14 +433,14 @@ def _blank_head(raw: str) -> int:
     return n
 
 
-def _span_of(text: str, start: int, raw: str) -> tuple[int, int]:
-    """(first, last) file lines of a raw segment's kept lines: the blank
-    lines at its top (the newline that closed the previous statement) belong
-    to nobody, and so does a trailing empty split."""
+def _span_of(start_line: int, raw: str) -> tuple[int, int]:
+    """(first, last) file lines of a raw segment's kept lines, from the line it starts
+    on: the blank lines at its top (the newline that closed the previous statement)
+    belong to nobody, and so does a trailing empty split."""
     lines = raw.split("\n")
     head = _blank_head(raw)
     kept = lines[head:]
     while kept and kept[-1].strip() == "":
         kept.pop()
-    first = start_line_of(text, start) + head
+    first = start_line + head
     return first, first + max(0, len(kept) - 1)

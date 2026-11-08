@@ -300,8 +300,21 @@ async def _batch_sources(
     show_file: Any,
     out: DependentsResult,
 ) -> dict[str, bytes]:
-    """The batch's sources at `commit_sha`; an absent path is counted skipped."""
-    got = await asyncio.gather(*(show_file(git_dir, commit_sha, p) for p in batch))
+    """The batch's sources at `commit_sha`; an absent path, or one over
+    `code_ingest_max_file_bytes` (which re-derives nothing), is counted skipped."""
+    from server.code.app.index.gitrepo import BlobTooLarge
+    from server.settings import settings
+
+    cap = settings.code_ingest_max_file_bytes
+
+    async def _read(path: str) -> bytes | None:
+        try:
+            source: bytes | None = await show_file(git_dir, commit_sha, path, max_bytes=cap)
+        except BlobTooLarge:
+            return None
+        return source
+
+    got = await asyncio.gather(*(_read(p) for p in batch))
     sources = {}
     for path, source in zip(batch, got, strict=True):
         if source is None:

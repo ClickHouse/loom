@@ -1000,7 +1000,7 @@ async def test_ingest_builds_the_brief_after_the_pack_and_a_failure_is_not_fatal
         async def diff_files(self, git_dir: str, base: str, head: str) -> list[Any]:
             return [NS_(status="M", path="src/a.cpp")]
 
-        async def show_file(self, git_dir: str, sha: str, path: str) -> bytes:
+        async def show_file(self, git_dir: str, sha: str, path: str, max_bytes: int = 0) -> bytes:
             return b"int f() { return 1; }"
 
         async def commit_subject(self, git_dir: str, sha: str) -> str:

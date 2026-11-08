@@ -18,6 +18,7 @@ from server.code.domain.extract.lang_k8s import (
     resolve_imports,
     wanted_paths,
 )
+from tests.unit.code_fixtures import assert_linear
 
 MANIFEST = b"""apiVersion: v1
 kind: ServiceAccount
@@ -177,3 +178,16 @@ def test_includes_and_detection() -> None:
     assert not is_k8s_manifest("x/values.yaml", b"replicaCount: 1\nimage: x\n")
     chunks = span_chunks(parse_k8s("x/a.yaml", MANIFEST), 6000, **CHUNK_OPTIONS)
     assert [c.kind for c in chunks].count("function") == 5
+
+
+def test_an_application_of_many_blank_lines_reads_in_linear_time() -> None:
+    import time
+
+    def cost(n: int) -> float:
+        from server.code.domain.extract.lang_k8s import _includes_of
+
+        t0 = time.perf_counter()
+        _includes_of("Application", "spec:\n" + "\n" * n)
+        return time.perf_counter() - t0
+
+    assert_linear(cost, 20_000, 80_000, floor=0.05)

@@ -34,9 +34,9 @@ from server.code.domain.extract.treesitter import ParsedFile, Symbol
 _TEST_HEADER_RE = re.compile(
     rb'^(?P<indent>[ \t]*)@test[ \t]+(?P<q>["\'])(?P<desc>.*?)(?P=q)[ \t]*\{', re.M
 )
-_LOAD_RE = re.compile(r"^\s*load\s+(['\"]?)([^'\"\s]+)\1", re.M)
-_LOAD_LIB_RE = re.compile(r"^\s*bats_load_library\s+(['\"]?)([^'\"\s]+)\1", re.M)
-_TAGS_RE = re.compile(r"^\s*#\s*bats\s+(test_tags|file_tags)\s*=\s*(.+?)\s*$", re.M)
+_LOAD_RE = re.compile(r"^[^\S\n]*load\s+(['\"]?)([^'\"\s]+)\1", re.M)
+_LOAD_LIB_RE = re.compile(r"^[^\S\n]*bats_load_library\s+(['\"]?)([^'\"\s]+)\1", re.M)
+_TAGS_RE = re.compile(r"^[^\S\n]*#\s*bats\s+(test_tags|file_tags)\s*=\s*(.+?)\s*$", re.M)
 _SLUG_RE = re.compile(r"[^A-Za-z0-9]+")
 HOOKS: frozenset[str] = frozenset(
     {

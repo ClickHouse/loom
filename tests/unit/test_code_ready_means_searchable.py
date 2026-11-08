@@ -152,7 +152,7 @@ def _wire(
     async def ls_tree(git_dir: str, head: str, prefixes: Any) -> list[str]:
         return list(paths)
 
-    async def show_file(git_dir: str, head: str, path: str) -> bytes:
+    async def show_file(git_dir: str, head: str, path: str, max_bytes: int = 0) -> bytes:
         return b"int x;"
 
     async def load_denylist(cfg: Any, head: str, show: Any) -> None:

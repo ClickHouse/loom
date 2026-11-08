@@ -86,7 +86,7 @@ def test_lockfile_selects_the_shipped_manager_and_disables_scripts(
     tmp_path: Path, filename: str, contents: str, tool: str
 ) -> None:
     (tmp_path / filename).write_text(contents)
-    command, env = deps._install_command(tmp_path)
+    command, env = deps._install_command(tmp_path, tmp_path)
     assert command[0] == tool
     if tool == "yarn-modern":
         assert env["YARN_ENABLE_SCRIPTS"] == "false"

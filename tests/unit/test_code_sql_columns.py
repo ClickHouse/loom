@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from server.code.domain.extract import lang_sql_columns as lc
 from server.code.domain.extract.lang_sql_objects import references
 from server.code.domain.extract.lang_sql_split import split_statements
+from tests.unit.code_fixtures import assert_linear
 
 DDL = """
 CREATE TABLE users (id UInt64, email String DEFAULT '', created DateTime CODEC(ZSTD),
@@ -80,6 +83,11 @@ DELETE FROM orders WHERE total > 100;
         ("orders", "total"),
     }
     assert dele.reads == [("orders", "total", 0.9)]
+    # a table named `update`: the mutation is the UPDATE that a space follows
+    sts, known = _known(
+        "CREATE TABLE `update` (email String);\nALTER TABLE `update` UPDATE email = 'z' WHERE 1;"
+    )
+    assert lc.column_refs(sts[1], known).writes == [("update", "email", 1.0)]
 
 
 def test_nothing_binds_where_the_text_is_ambiguous() -> None:
@@ -178,3 +186,45 @@ def test_gate_wires_the_sql_and_python_lanes(monkeypatch: pytest.MonkeyPatch, fl
         b'def test(node):\n    node.query("CREATE TABLE t (a Int, b Int)")\n',
     )
     assert py is not None and (sum(s.kind == "column" for s in py.symbols) == 2) is flag
+
+
+_NEST = "WITH a AS ({}SELECT 1{}"
+
+
+@pytest.mark.parametrize(
+    "unit", [",a AS (", "INSERT INTO a(", ",a AS (SELECT 1", ",FROM a", "SELECT 1, a AS ("]
+)
+def test_column_refs_on_a_long_run_costs_linear_time(unit: str) -> None:
+    def text(n: int) -> str:  # the nested scopes closed; every other run left open
+        return _NEST.format(unit * n, ")" * (n + 1)) if unit.startswith("SELECT") else unit * n
+
+    def cost(n: int) -> float:
+        (st,) = split_statements(text(n))
+        t0 = time.perf_counter()
+        lc.column_refs(st, {"a": {"x"}})
+        return time.perf_counter() - t0
+
+    assert_linear(cost, 2_000, 8_000, floor=0.05, bound=2.0)
+
+
+@pytest.mark.parametrize("width", [lc.STAR_COLUMNS_MAX, lc.STAR_COLUMNS_MAX + 1])
+def test_a_star_reads_a_table_of_at_most_the_cap_of_columns(width: int) -> None:
+    cols = ", ".join(f"c{i:04} Int" for i in range(width))
+    sts, known = _known(f"CREATE TABLE w ({cols});\nSELECT * FROM w;")
+    reads = [c for _, c, _ in lc.column_refs(sts[1], known).reads]
+    assert reads == ([f"c{i:04}" for i in range(width)] if width <= lc.STAR_COLUMNS_MAX else [])
+
+
+@pytest.mark.parametrize("width", [lc.STAR_COLUMNS_MAX, 15_000])
+def test_many_stars_over_a_wide_table_cost_linear_time(width: int) -> None:
+    cols = ", ".join(f"c{i} Int" for i in range(width))
+
+    def cost(n: int) -> float:
+        sts, known = _known(f"CREATE TABLE w ({cols});\n" + "SELECT * FROM w;\n" * n)
+        t0 = time.perf_counter()
+        facets = lc.column_facets(sts, known)
+        took = time.perf_counter() - t0
+        assert len(facets) <= lc.STAR_READS_MAX
+        return took
+
+    assert_linear(cost, 500, 2_000, floor=0.05, bound=2.0)

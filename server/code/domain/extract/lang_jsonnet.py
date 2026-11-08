@@ -30,6 +30,7 @@ to the next member). Outside the extractor stamp with the other lanes.
 
 from __future__ import annotations
 
+import bisect
 import posixpath
 import re
 from dataclasses import dataclass, field
@@ -51,12 +52,23 @@ CHUNK_OPTIONS: dict[str, Any] = {
     "header_prefixes": ("local ",),
 }
 
-_LOCAL_RE = re.compile(r"^local\s+([A-Za-z_][\w]*)\s*(\([^)]*\))?\s*=")
+_LOCAL_RE = re.compile(r"^local\s+([A-Za-z_][\w]*)\s*+(\([^)]*\))?\s*+=")
 _IMPORT_RE = re.compile(r"import(?:str|bin)?\s*['\"]([^'\"\n]+)['\"]")
 _ALIAS_IMPORT_RE = re.compile(r"^local\s+([A-Za-z_]\w*)\s*=\s*import\s*['\"]([^'\"\n]+)['\"]")
 _MEMBER_CALL_RE = re.compile(r"\b([A-Za-z_]\w*)\.([A-Za-z_]\w*)\s*\(")
-_COMMENT_RE = re.compile(r"//[^\n]*|#[^\n]*|/\*.*?\*/", re.S)
-_STRING_RE = re.compile(r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"|\|\|\|.*?\|\|\|", re.S)
+# An unclosed `/*` runs to the end, as the lexer reads it, instead of being searched
+# again from every later one.
+_COMMENT_RE = re.compile(r"//[^\n]*|#[^\n]*|/\*.*?(?:\*/|\Z)", re.S)
+# A string may hold a newline, and an unclosed one runs to the end, as the lexer reads
+# it: retried from each quote it holds, it would scan the rest from every one.
+_STRING_RE = re.compile(
+    r"@'(?:[^']|'')*+'?|@\"(?:[^\"]|\"\")*+\"?"  # verbatim: a backslash is itself
+    r"|'(?:[^'\\]|\\.)*+'?|\"(?:[^\"\\]|\\.)*+\"?|\|\|\|.*?\|\|\|",
+    re.S,
+)
+# One pass, strings first: a `//` or `#` inside a string is not a comment, and a quote
+# inside a comment opens no string.
+_BLANK_RE = re.compile(_STRING_RE.pattern + "|" + _COMMENT_RE.pattern, re.S)
 
 
 @dataclass
@@ -73,7 +85,7 @@ def _blank_comments_and_strings(text: str) -> str:
     def blank(m: re.Match[str]) -> str:
         return re.sub(r"[^\n]", " ", m.group(0))
 
-    return _STRING_RE.sub(blank, _COMMENT_RE.sub(blank, text))
+    return _BLANK_RE.sub(blank, text)
 
 
 def _root_object_pos(code: str, from_line: int = 1) -> int | None:
@@ -99,7 +111,7 @@ def _root_object_pos(code: str, from_line: int = 1) -> int | None:
 def _binding_end(code_lines: list[str], start: int) -> int:
     """The line index where a top-level `local … = …;` ends: the first
     depth-0 `;` at or after its `=` (brackets opened by the value close
-    first)."""
+    first), else the last line."""
     depth = 0
     for j in range(start, len(code_lines)):
         text = code_lines[j].split("=", 1)[-1] if j == start else code_lines[j]
@@ -110,7 +122,7 @@ def _binding_end(code_lines: list[str], start: int) -> int:
                 depth -= 1
             elif ch == ";" and depth <= 0:
                 return j
-    return start
+    return len(code_lines) - 1  # unterminated: it runs to the end, as the lexer reads it
 
 
 def _top_level_locals(
@@ -148,7 +160,7 @@ def _top_level_locals(
     return after_locals
 
 
-_KEY_RE = re.compile(r"([A-Za-z_][\w]*|'[^']*'|\"[^\"]*\")\s*(\([^)]*\))?\s*(::?)(?!:)")
+_KEY_RE = re.compile(r"((?<!\w)[A-Za-z_][\w]*|'[^']*'|\"[^\"]*\")\s*+(\([^()]*\))?\s*+(::?)(?!:)")
 _MAX_MEMBER_DEPTH = 3
 
 
@@ -166,6 +178,7 @@ def _line_of(offset: int, line_starts: list[int]) -> int:
 
 def _object_members(
     text: str,
+    lines: list[str],
     code: str,
     line_starts: list[int],
     open_pos: int,
@@ -178,7 +191,6 @@ def _object_members(
     too, up to `_MAX_MEMBER_DEPTH`. Computed keys, `local`s and comprehension clauses
     are skipped — a key is read only where the grammar puts one: after `{`, `,` or `;`
     at the object's own depth. Returns the offset of the closing `}`."""
-    lines = text.split("\n")
     depth = 0
     expect_key = True
     i = open_pos
@@ -216,7 +228,8 @@ def _object_members(
         start = _line_of(pos, line_starts)
         # the member ends before the next key position — a computed key or
         # an object `local` bounds it too — else before the object's closer
-        nxt = next((b for b in bounds if b > pos), close)
+        k = bisect.bisect_right(bounds, pos)
+        nxt = bounds[k] if k < len(bounds) else close
         end = _line_of(nxt, line_starts)
         if end > start:
             end -= 1  # the next member's line (or the closer's) is not this member's
@@ -226,7 +239,9 @@ def _object_members(
                 end -= 1
         add(f"{prefix}{key}", kind, sig, start, max(end, start))
         if value_pos is not None and level < _MAX_MEMBER_DEPTH:
-            _object_members(text, code, line_starts, value_pos, f"{prefix}{key}.", level + 1, add)
+            _object_members(
+                text, lines, code, line_starts, value_pos, f"{prefix}{key}.", level + 1, add
+            )
     return close
 
 
@@ -255,7 +270,7 @@ def jsonnet_units(path: str, text: str) -> JsonnetUnits:
     root = _root_object_pos(code, after_locals)
     if root is not None:
         line_starts = [0] + [i + 1 for i, ch in enumerate(text) if ch == "\n"]
-        _object_members(text, code, line_starts, root, "", 1, add)
+        _object_members(text, lines, code, line_starts, root, "", 1, add)
     # imports (from the real text: the specifier is a string)
     for m in _IMPORT_RE.finditer(text):
         units.imports.append(m.group(1))

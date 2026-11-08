@@ -390,6 +390,8 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_SCIP_WORK_DIR` | `str` | `''` |  | Where the C++ harness writes its index and delta (several GB for a full run of a large tree); "" = the system temp dir. |
 | `LOOM_CODE_SCIP_DELTA_MAX_TUS` | `int` | `200` |  | Max translation units one delta indexes; past it only the changed `.cpp` files are indexed and the header fan-out heals on the next full run. |
 | `LOOM_CODE_SCIP_DELTA_TIMEOUT_SECONDS` | `int` | `3600` |  | Seconds the C++ delta harness may run before it is killed. |
+| `LOOM_CODE_SCIP_DELTA_FILE_MAX_MB` | `int` | `180` | live | Largest compiler-tier delta file the server reads, in MiB; a larger one fails the entry's pass (sizing: code-index-operations.md). |
+| `LOOM_CODE_SCIP_DELTA_MAX_NODES` | `int` | `6000000` | live | Most `{`, `[` and `,` bytes a compiler-tier delta may hold, counted before it is parsed; more fails the entry's pass (sizing: code-index-operations.md). |
 | `LOOM_CODE_SCIP_FULL_ENABLED` | `bool` | `True` |  | C++ full re-index: seeds an entry the delta has no watermark for, and re-indexes each entry every `code_scip_full_every_hours` (heals deltas that hit the TU cap). One entry per pass, under its entry lock. |
 | `LOOM_CODE_SCIP_FULL_INTERVAL_SECONDS` | `int` | `900` |  | Seconds between the C++ full re-index's checks for an entry that is due. |
 | `LOOM_CODE_SCIP_FULL_EVERY_HOURS` | `int` | `168` |  | Hours between full re-indexes of one entry. |

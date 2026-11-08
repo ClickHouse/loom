@@ -49,7 +49,8 @@ _KEBAB_TAG_RE = re.compile(r"<([a-z][a-z0-9]*(?:-[a-z0-9]+)+)(?=[\s/>])")
 # `(click)="save()"`, `(ngSubmit)="submit($event)"`, `(click)="save"`
 _EVENT_RE = re.compile(r"""\(([\w.]+)\)\s*=\s*["']\s*([A-Za-z_$][\w$]*)\s*[(\s"']""")
 # `{{ fmt(row) }}`, `{{ items().length }}`
-_INTERP_RE = re.compile(r"\{\{[^}]*?\b([A-Za-z_$][\w$]*)\s*\(")
+# The body stops at the next `{{`: an unclosed one would search on from each.
+_INTERP_RE = re.compile(r"\{\{(?:(?!\{\{)[^}])*?\b([A-Za-z_$][\w$]*)\s*\(")
 # `*ngIf="check(x)"`, `[items]="rows()"`, `@if (loaded())` (control flow)
 _BOUND_CALL_RE = re.compile(
     r"""(?:\*\w+|\[[\w.]+\]|@(?:if|for|switch|else if))\s*[=(]\s*["'(]?[^"')]*?"""

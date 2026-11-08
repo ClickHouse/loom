@@ -422,7 +422,10 @@ async def load_pr_overlay(
         ov.changed_paths = list(ov.hunks)
 
     async def from_mirror(path: str) -> bytes | None:
-        return await gitrepo.show_file(git_dir, head, path)
+        try:
+            return await gitrepo.show_file(git_dir, head, path, max_bytes=MAX_FILE_BYTES)
+        except gitrepo.BlobTooLarge:
+            return None  # not parsed either way
 
     await _parse_post_image(repo, org, ns, ov, read=from_mirror, path_prefixes=path_prefixes)
     _CACHE.put(key, (head, ov))

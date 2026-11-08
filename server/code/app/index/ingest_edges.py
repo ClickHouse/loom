@@ -658,7 +658,11 @@ async def _reexport_chains(
     return out
 
 
-_IMPORT_CLAUSE_RE = re.compile(r"""\bimport\s+([^;'"]+?)\s+from\s*["']([^"']+)["']""")
+# A clause stops at the next `import` keyword: an import with no `from` would otherwise
+# search on to the end of the file from each one, quadratic in a file of them.
+_IMPORT_CLAUSE_RE = re.compile(
+    r"""\bimport\s++((?:(?!\bimport\b)[^;'"])+?)(?<=\S)\s+from\s*["']([^"']+)["']"""
+)
 
 
 def _import_names(pf: ParsedFile, bindings: dict[str, str]) -> list[tuple[str, str, str]]:
@@ -671,7 +675,7 @@ def _import_names(pf: ParsedFile, bindings: dict[str, str]) -> list[tuple[str, s
         dflt = re.match(r"^\s*([A-Za-z_$][\w$]*)\s*(?:,|$)", clause)
         if dflt and bindings.get(dflt.group(1)) == spec:
             out.append((dflt.group(1), "default", spec))
-        inner = re.search(r"\{([^}]*)\}", clause)
+        inner = re.search(r"\{([^{}]*)\}", clause)  # `[^}]` would rescan from every `{`
         if inner:
             for part in inner.group(1).split(","):
                 part = part.strip()

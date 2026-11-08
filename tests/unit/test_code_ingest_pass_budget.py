@@ -276,7 +276,7 @@ def test_heal_stops_starting_rounds_at_the_budget_and_reports_what_it_attempted(
     monkeypatch.setattr(reconcile, "time", clock)
     seen: list[str] = []
 
-    async def show_file(git_dir: str, head: str, path: str) -> bytes:
+    async def show_file(git_dir: str, head: str, path: str, max_bytes: int = 0) -> bytes:
         return b"int x;"
 
     async def ingest_file(repo: Any, org: str, ns: str, *, path: str, **kw: Any) -> Any:
@@ -423,7 +423,7 @@ def test_the_bootstrap_slice_stops_starting_rounds_at_the_budget_and_its_cursor_
     async def ls_tree(git_dir: str, head: str, prefixes: Any) -> list[str]:
         return list(paths)
 
-    async def show_file(git_dir: str, head: str, path: str) -> bytes:
+    async def show_file(git_dir: str, head: str, path: str, max_bytes: int = 0) -> bytes:
         return b"int x;"
 
     async def load_denylist(cfg: Any, head: str, show: Any) -> None:

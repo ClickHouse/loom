@@ -48,6 +48,7 @@ from server.code.domain.extract.lang_vue import (
     synthetic_script,
 )
 from server.code.domain.extract.treesitter import ParsedFile, Symbol
+from server.code.domain.extract.ts_config import strip_comments
 
 _FENCE = "---"
 # `on:click={save}`, `on:click|preventDefault={save}`, `onclick={save}` (Svelte 5),
@@ -55,7 +56,7 @@ _FENCE = "---"
 _EVENT_RE = re.compile(r"\bon:?[A-Za-z]+(?:\|[a-z]+)*\s*=\s*\{\s*([A-Za-z_$][\w$]*)\s*[(}]")
 # any `{ … name( … }` expression: `{format(row)}`, `{#if check(x)}`, `{@html render(x)}`,
 # `{#each sort(items) as item}` — the first identifier that is called
-_EXPR_CALL_RE = re.compile(r"\{(?:[#:@/]\w+\s+)?[^}\n]*?\b([A-Za-z_$][\w$]*)\s*\(")
+_EXPR_CALL_RE = re.compile(r"\{(?:[#:@/]\w+\s+)?[^{}\n]*?\b([A-Za-z_$][\w$]*)\s*\(")
 # a prop whose value is a bare identifier: `<Child onSave={save}>`, `formatter={fmt}`
 _PROP_RE = re.compile(r"""(?<![\w:@])([A-Za-z][\w:-]*)\s*=\s*\{\s*([A-Za-z_$][\w$]*)\s*\}""")
 _HTML_COMMENT_RE = re.compile(r"^\s*<!--\s*(.*?)\s*-->", re.S)
@@ -64,12 +65,12 @@ _SFC_EXTS = (".svelte", ".astro", ".vue")
 _BARREL_NAMES = ("index.ts", "index.js", "index.mts", "index.mjs")
 # `import Root, { x } from "./button.svelte"` — the default import's local name and its spec
 _DEFAULT_IMPORT_RE = re.compile(
-    r"""\bimport\s+([A-Za-z_$][\w$]*)\s*(?:,\s*\{[^}]*\})?\s+from\s+["']([^"']+)["']"""
+    r"""\bimport\s+([A-Za-z_$][\w$]*)(?:\s*,\s*\{[^{}]*\})?\s+from\s+["']([^"']+)["']"""
 )
 _NAMED_IMPORT_RE = re.compile(
-    r"""\bimport\s+(?:[A-Za-z_$][\w$]*\s*,\s*)?\{([^}]*)\}\s+from\s+["']([^"']+)["']"""
+    r"""\bimport\s+(?:[A-Za-z_$][\w$]*\s*,\s*)?\{([^{}]*)\}\s+from\s+["']([^"']+)["']"""
 )
-_EXPORT_LIST_RE = re.compile(r"""\bexport\s+\{([^}]*)\}(?:\s+from\s+["']([^"']+)["'])?""")
+_EXPORT_LIST_RE = re.compile(r"""\bexport\s+\{([^{}]*)\}(?:\s+from\s+["']([^"']+)["'])?""")
 
 
 def _alias_parts(part: str) -> tuple[str, str] | None:
@@ -103,7 +104,7 @@ def barrel_alias_map(text: str) -> dict[str, tuple[str, str]]:
     "./button.svelte"; export { Root, Root as Button }` — plus the direct `export {
     default as Root, A as B } from "./x"` forms. A name re-exported through `export *
     from` is not here (the barrel edges handle it)."""
-    text = re.sub(r"//[^\n]*|/\*.*?\*/", "", text, flags=re.S)
+    text = strip_comments(text)  # one pass: the pattern rescans from every unclosed `/*`
     local: dict[str, tuple[str, str]] = {}
     for m in _DEFAULT_IMPORT_RE.finditer(text):
         if m.group(1) != "type":

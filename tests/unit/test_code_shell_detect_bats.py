@@ -86,7 +86,8 @@ def test_bats_symbols_includes_and_tags() -> None:
         "$BATS_LIB_PATH/bats-support/load.bash",
     ]
     file_tags, per_line = lb.tags(_BATS.decode())
-    assert file_tags == ("core", "slow") and per_line == {11: ("parallel",)}
+    # the line the tag is written on (a blank line above it is not the tag's)
+    assert file_tags == ("core", "slow") and per_line == {12: ("parallel",)}
     # chunks read the original text, one per test function
     chunks = chunk_file(pf)
     fn = [c for c in chunks if c.kind == "function"]

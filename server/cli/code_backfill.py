@@ -82,7 +82,7 @@ async def _backfill(args: argparse.Namespace) -> int:
         print(f"chunks stored as dim=0 stubs for model {model}; run --phase embed after")
 
     from server.code.app.index.denylist import load_denylist
-    from server.code.app.index.ingest import ingest_file
+    from server.code.app.index.ingest import ingest_file, read_capped
 
     suffix = str(getattr(args, "embedding_model_suffix", "") or "")
     model_name = get_embedder().model_name + suffix
@@ -96,10 +96,27 @@ async def _backfill(args: argparse.Namespace) -> int:
     started = time.monotonic()
     sem = asyncio.Semaphore(max(1, args.concurrency))
     counters = {"files": 0, "chunks": 0, "symbols": 0, "edges": 0, "errors": 0}
+    oversize: set[str] = set()  # recorded once; the edge pass reads them again
 
     async def _source(path: str) -> tuple[str, bytes | None]:
+        if path in oversize:
+            return path, None
         async with sem:
-            return path, await gitrepo.show_file(cfg.git_dir, head, path)
+            source, counter = await read_capped(
+                gitrepo.show_file,
+                repo,
+                org,
+                ns,
+                git_dir=cfg.git_dir,
+                path=path,
+                commit_sha=head,
+                embedding_model=model_name,
+                denylist=denylist,
+            )
+        if counter:
+            oversize.add(path)
+            counters[counter] += 1
+        return path, source
 
     async def _one(reads: Any, path: str, source: bytes) -> None:
         async with sem:

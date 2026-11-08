@@ -19,7 +19,6 @@ environment file the operator may leave empty.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import sys
@@ -41,6 +40,7 @@ from server.code.app.index.compiler_tier import (
 )
 from server.code.app.index.gitrepo import git_config_env
 from server.code.app.index.sandbox import tool_mounts
+from server.code.app.index.untrusted_files import read_delta
 from server.core.paths import SCIP_HARNESS_DIR
 from server.settings import settings
 
@@ -102,15 +102,17 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipPyDeltaResu
     with tempfile.TemporaryDirectory(prefix="scip_py_delta_") as tmp:
         delta_path = Path(tmp) / "delta.json"
         await _run_harness(checkout, scip_commit or "--full", target, delta_path)
-        if not await asyncio.to_thread(delta_path.exists):
+        try:
+            raw = await asyncio.to_thread(read_delta, delta_path)
+        except FileNotFoundError:
             # the harness exits 0 with no delta when no Python file changed
             logger.info("code_scip_py_delta: %s no Python changes in window", cfg.namespace)
             await repo.set_state(cfg.org, cfg.namespace, WATERMARK, target)
             return
-        from server.code.app.index.scip_delta import ScipDelta, apply_delta
+        from server.code.app.index.scip_delta import apply_delta, parse_delta
 
-        raw = await asyncio.to_thread(delta_path.read_text)
-        delta = ScipDelta.model_validate(json.loads(raw))
+        delta = parse_delta(raw)
+        del raw  # the bytes are not needed past the parse
     if not scip_commit:
         # A full run sees the whole tree; a document with live
         # compiler rows the new index does not emit is gone — retire it

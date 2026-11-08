@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import uuid
@@ -17,6 +18,7 @@ from pathlib import Path
 
 from server.code.app.index.gitrepo import auth_env
 from server.code.app.index.sandbox import run_job
+from server.code.app.index.untrusted_files import read_checkout_file, read_package_json
 from server.settings import settings
 
 LOCKFILES = (
@@ -33,15 +35,21 @@ _INPUTS = (*LOCKFILES, "package.json", "pnpm-workspace.yaml", ".npmrc", ".yarnrc
 def install_roots(checkout: Path, projects: tuple[str, ...]) -> list[Path]:
     """Install a workspace once at its root, or each independent named project."""
     manifest = checkout / "package.json"
-    if manifest.exists():
-        package = json.loads(manifest.read_text())
+    if os.path.lexists(manifest):  # a link of any kind reaches the read and is refused
+        package = json.loads(read_package_json(manifest))
+        if not isinstance(package, dict):
+            raise ValueError(f"{manifest} is not a JSON object")
         if not projects or package.get("workspaces") or (checkout / "pnpm-workspace.yaml").exists():
             return [checkout]
     roots = [checkout / p for p in projects] if projects else [checkout]
     for root in roots:
-        if not root.resolve().is_relative_to(checkout.resolve()):
-            raise ValueError(f"TypeScript project escapes its checkout: {root}")
-    return [root for root in roots if (root / "package.json").exists()]
+        _require_inside(checkout, root)
+    return [root for root in roots if os.path.lexists(root / "package.json")]
+
+
+def _require_inside(checkout: Path, root: Path) -> None:
+    if not root.resolve().is_relative_to(checkout.resolve()):
+        raise ValueError(f"TypeScript project escapes its checkout: {root}")
 
 
 def _dependency_state(checkout: Path) -> tuple[Path, str]:
@@ -67,8 +75,11 @@ def _dependency_state(checkout: Path) -> tuple[Path, str]:
     return marker, hashlib.sha256(inputs).hexdigest()
 
 
-def _install_command(root: Path) -> tuple[list[str], dict[str, str]]:
+def _install_command(checkout: Path, root: Path) -> tuple[list[str], dict[str, str]]:
     """Use shipped managers and immutable lockfiles; never load JS config hooks."""
+    # An earlier root's install may have made this folder a link: re-check before the
+    # host reads its lockfile or the job runs in it.
+    _require_inside(checkout, root)
     if (root / "pnpm-lock.yaml").exists() or (root / "pnpm-workspace.yaml").exists():
         args = [
             "pnpm",
@@ -81,8 +92,8 @@ def _install_command(root: Path) -> tuple[list[str], dict[str, str]]:
         if (root / "pnpm-lock.yaml").exists():
             args.append("--frozen-lockfile")
         return args, {}
-    if (root / "yarn.lock").exists():
-        modern = "__metadata:" in (root / "yarn.lock").read_text()
+    if os.path.lexists(root / "yarn.lock"):
+        modern = b"__metadata:" in read_checkout_file(root / "yarn.lock")
         if modern:
             return ["yarn-modern", "install", "--immutable", "--mode=skip-build"], {
                 "YARN_ENABLE_SCRIPTS": "false",
@@ -128,7 +139,7 @@ async def prepare_dependencies(
     # pending marker until every root succeeded so the next pass retries it.
     await asyncio.to_thread(marker.write_text, "installing")
     for root in roots:
-        command, extra_env = await asyncio.to_thread(_install_command, root)
+        command, extra_env = await asyncio.to_thread(_install_command, checkout, root)
         # Do not pass the server environment (JWT, provider and ClickHouse keys).
         install_env = {
             **env,

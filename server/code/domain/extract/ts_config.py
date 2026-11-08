@@ -19,18 +19,50 @@ from dataclasses import dataclass, field
 from typing import Any
 
 CONFIG_NAMES = ("tsconfig.json", "jsconfig.json")
-_COMMENT_RE = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
 _TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
 _MAX_EXTENDS = 8
+# A config's `paths` keeps at most this many patterns, and each at most this many
+# targets (real ones: tens and one to three).
+# not a setting: every import specifier is matched against every pattern; a bound on that
+PATHS_PATTERNS_MAX = 1000
+# not a setting: every target of the matching pattern is a candidate path to look up
+PATHS_TARGETS_MAX = 50
+
+
+def strip_comments(text: str) -> str:
+    r"""`text` without its `//` and `/* */` comments, as `re.sub(r"//[^\n]*|/\*.*?\*/",
+    "", text, flags=re.S)` gives, in one pass: that pattern searches to the end of the
+    text from every unclosed `/*`, quadratic in a file of them."""
+    out: list[str] = []
+    i = 0
+    closed = True  # False once a `/*` has no `*/` after it: no later one has either
+    while (j := text.find("/", i)) >= 0 and j + 1 < len(text):
+        nxt = text[j + 1]
+        if nxt == "/":
+            end = text.find("\n", j)
+            out.append(text[i:j])
+            i = len(text) if end < 0 else end
+            continue
+        if nxt == "*" and closed:
+            end = text.find("*/", j + 2)
+            if end >= 0:
+                out.append(text[i:j])
+                i = end + 2
+                continue
+            closed = False
+        out.append(text[i : j + 1])
+        i = j + 1
+    out.append(text[i:])
+    return "".join(out)
 
 
 def parse_jsonc(text: str) -> dict[str, Any]:
     """tsconfig is JSON with comments and trailing commas; a file that still
     does not parse is an empty config, never an ingest failure."""
-    stripped = _TRAILING_COMMA_RE.sub(r"\1", _COMMENT_RE.sub("", text or ""))
+    stripped = _TRAILING_COMMA_RE.sub(r"\1", strip_comments(text or ""))
     try:
         data = json.loads(stripped)
-    except ValueError:
+    except (ValueError, RecursionError):  # nesting deeper than the parser's stack
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -138,8 +170,11 @@ def resolve_config(
         if paths:
             table = PathsTable(base=resolved_base if resolved_base is not None else here)
             for pat, targets in paths.items():
+                if len(table.patterns) >= PATHS_PATTERNS_MAX:
+                    break
                 if isinstance(pat, str) and isinstance(targets, list):
-                    table.patterns[pat] = [t for t in targets if isinstance(t, str)]
+                    kept = [t for t in targets if isinstance(t, str)]
+                    table.patterns[pat] = kept[:PATHS_TARGETS_MAX]
             out.tables.append(table)
         cur = next_extends(cur, text, package_dirs_for, present)
     return out
@@ -168,7 +203,6 @@ def paths_candidates(spec: str, cfg: ResolvedConfig) -> list[str]:
     the specifier. Relative specifiers map to nothing here."""
     if spec.startswith((".", "/")) or not spec:
         return []
-    out: list[str] = []
     for table in cfg.tables:
         best: tuple[int, str, str] | None = None
         for pat in table.patterns:
@@ -180,19 +214,17 @@ def paths_candidates(spec: str, cfg: ResolvedConfig) -> list[str]:
                 best = (prefix_len, pat, bound)
         if best is None:
             continue
-        for target in table.patterns[best[1]]:
-            stem = _join(table.base, target.replace("*", best[2], 1))
-            if stem and stem not in out:
-                out.append(stem)
-        return out  # the nearest table with a matching pattern decides
+        stems = (_join(table.base, t.replace("*", best[2], 1)) for t in table.patterns[best[1]])
+        return [s for s in dict.fromkeys(stems) if s]  # the nearest matching table decides
     if cfg.base_url is not None:
         stem = _join(cfg.base_url, spec)
         if stem:
-            out.append(stem)
-    return out
+            return [stem]
+    return []
 
 
 __all__ = [
     "CONFIG_NAMES", "PathsTable", "ResolvedConfig", "config_dir_for", "config_path_in",
     "extends_candidates", "next_extends", "parse_jsonc", "paths_candidates", "resolve_config",
+    "strip_comments",
 ]

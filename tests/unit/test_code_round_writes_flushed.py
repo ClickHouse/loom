@@ -64,7 +64,7 @@ async def test_reconcile_heal_writes_every_round() -> None:
         await reads.insert_rows("code_files", [{"path": path}])
         return types.SimpleNamespace(chunks_new=0, chunks_moved=0, symbols_moved=0)
 
-    async def show_file(git_dir: str, head: str, path: str) -> bytes:
+    async def show_file(git_dir: str, head: str, path: str, max_bytes: int = 0) -> bytes:
         return b"x = 1\n"
 
     repo = _Repo()

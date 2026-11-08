@@ -47,11 +47,11 @@ _FASTIFY_ROUTE_RE = re.compile(
     re.S,
 )
 _APP_HANDLER_RE = re.compile(
-    r"^\s*export\s+(?:async\s+)?(?:function\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b"
+    r"^[^\S\n]*export\s+(?:async\s+)?(?:function\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b"
     r"|const\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*=)",
     re.M,
 )
-_DEFAULT_EXPORT_RE = re.compile(r"^\s*export\s+default\b", re.M)
+_DEFAULT_EXPORT_RE = re.compile(r"^[^\S\n]*export\s+default\b", re.M)
 _PAGES_API_RE = re.compile(r"(?:^|/)pages/api/(.+)\.[tj]sx?$")
 _APP_ROUTE_RE = re.compile(r"(?:^|/)app/(.*?)(?:^|/)?(route|page)\.[tj]sx?$")
 

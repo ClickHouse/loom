@@ -251,9 +251,13 @@ async def _externs(
         except gitrepo.GitError:
             rev = ""
 
-    async def from_mirror(path: str) -> bytes | None:
+    async def from_mirror(path: str) -> bytes | gitrepo.BlobTooLarge | None:
         try:
-            return await gitrepo.show_file(git_dir, rev, path)
+            return await gitrepo.show_file(
+                git_dir, rev, path, max_bytes=settings.code_ingest_max_file_bytes
+            )
+        except gitrepo.BlobTooLarge as e:
+            return e  # over the cap: unread; the index holds no chunks of these bytes
         except gitrepo.GitError:
             return None
 
@@ -268,6 +272,11 @@ async def _externs(
     if git_dir and rev:
         blobs = await asyncio.gather(*(from_mirror(p) for p in paths))
         for path, blob in zip(paths, blobs, strict=True):
+            if isinstance(blob, gitrepo.BlobTooLarge):
+                for name in by_path[path]:
+                    out[(path, name)] = None  # unknown, not undeclared
+                exact = False
+                continue
             if blob is None:
                 # a file the post-image lacks (deleted later, or a supplied
                 # diff adding it): fall through to the index

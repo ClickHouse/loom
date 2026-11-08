@@ -3,10 +3,15 @@ tools' directive table."""
 
 from __future__ import annotations
 
+import time
+
+import pytest
+
 from server.code.app.index.ingest_parse import parse_file
 from server.code.domain.extract import lang_sql as ls
 from server.code.domain.extract import lang_sql_directives as ld
 from server.code.domain.extract import lang_sql_split
+from tests.unit.code_fixtures import assert_linear
 
 _PLPGSQL = """\
 CREATE FUNCTION f() RETURNS int AS $$
@@ -248,3 +253,31 @@ def test_parse_and_units_carry_the_directive_rows(monkeypatch) -> None:
         ("statement_kind", "CREATE TRIGGER"),
     }
     assert units.prefixes[0].startswith("00003_add_index.sql · goose 00003 · down, up · ")
+
+
+@pytest.mark.parametrize(
+    "head,unit",
+    [
+        ("", "--changeset a:1\nSELECT 1;\n--rollback x\n"),
+        ("", "-- name: Q :one\nSELECT 1;\n"),
+        ("", "CREATE TABLE a{} (x Int);\nSELECT 1 FROM a{};\n"),
+        ("", "\n"),
+        ("DELIMITER --\nSELECT 1--", "\n--"),  # each `--` ends a comment-only tail
+    ],
+)
+def test_a_file_of_many_directives_or_definitions_parses_in_linear_time(
+    head: str, unit: str
+) -> None:
+    def cost(n: int) -> float:
+        text = head + "".join(unit.format(i, i) for i in range(n))
+        t0 = time.perf_counter()
+        ls.parse_sql("db/m.sql", text.encode())
+        return time.perf_counter() - t0
+
+    assert_linear(cost, 4_000, 16_000)
+
+
+def test_a_comment_after_the_last_statement_ends_it_on_its_own_line() -> None:
+    for tail in ("-- tail\n", "-- tail\n  "):
+        sts = lang_sql_split.split_statements("SELECT 1;\n\nSELECT 2;\n" + tail)
+        assert (sts[-1].start_line, sts[-1].end_line) == (3, 4), tail

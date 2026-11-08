@@ -19,7 +19,7 @@ import time
 from collections.abc import Callable
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from server.code.app.index.entry_lock import check_held
 from server.code.domain.extract.treesitter import symbol_id
@@ -77,6 +77,15 @@ class ScipDelta(BaseModel):
     files: list[ScipFile] = Field(default_factory=list)
     deleted_files: list[str] = Field(default_factory=list)
     features: list[str] = Field(default_factory=list)
+
+
+def parse_delta(raw: bytes | bytearray) -> ScipDelta:
+    """A harness's JSON delta as a ScipDelta. An invalid one raises a short ValueError:
+    a ValidationError names every bad item, so its text grows with the delta."""
+    try:
+        return ScipDelta.model_validate_json(raw)
+    except ValidationError as e:
+        raise ValueError(f"delta invalid: {e.error_count()} errors") from None
 
 
 class ScipApplyStats(BaseModel):

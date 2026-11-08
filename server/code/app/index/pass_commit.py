@@ -7,6 +7,8 @@ import logging
 import time
 from typing import Any
 
+from server.code.app.index.gitrepo import BlobTooLarge
+from server.code.app.index.ingest import record_oversize
 from server.code.app.index.pass_budget import _PR_NUMBER_RE, CodeIngestResult
 from server.settings import settings
 
@@ -193,9 +195,16 @@ async def _ingest_commit_files(
             break
         round_started = time.monotonic()
         sources: dict[str, bytes] = {}
+        oversize: dict[str, BlobTooLarge] = {}
         for entry in round_entries:
             if entry.status != "D":
-                src = await gitrepo.show_file(git_dir, sha, entry.path)
+                try:
+                    src = await gitrepo.show_file(
+                        git_dir, sha, entry.path, max_bytes=settings.code_ingest_max_file_bytes
+                    )
+                except BlobTooLarge as e:
+                    oversize[entry.path] = e
+                    continue
                 if src is not None:
                     sources[entry.path] = src
         reads = RoundReads(repo, org, ns)
@@ -218,6 +227,7 @@ async def _ingest_commit_files(
                 sha,
                 round_entries,
                 sources,
+                oversize=oversize,
                 embedder=embedder,
                 llm=llm,
                 describe=describe,
@@ -279,6 +289,7 @@ async def _ingest_round_files(
     round_entries: list[Any],
     sources: dict[str, bytes],
     *,
+    oversize: dict[str, BlobTooLarge],
     embedder: Any,
     llm: Any,
     describe: bool,
@@ -291,7 +302,8 @@ async def _ingest_round_files(
     changed_symbols: list[dict[str, Any]],
     file_stats: list[Any],
 ) -> None:
-    """One round's files in order (headers first), each through `ingest_file`."""
+    """One round's files in order (headers first), each through `ingest_file`; a file
+    over the byte cap gets its verdict from its size, unread."""
     for entry in round_entries:
         result.files_done += 1
         changed_paths.append(entry.path)
@@ -307,24 +319,36 @@ async def _ingest_round_files(
             )
             continue
         source = sources.get(entry.path)
-        if source is None:
+        if entry.path in oversize:
+            stats = await record_oversize(
+                reads,
+                org,
+                ns,
+                path=entry.path,
+                too_large=oversize[entry.path],
+                commit_sha=sha,
+                embedding_model=embedder.model_name,
+                denylist=denylist,
+            )
+        elif source is None:
             continue
-        stats = await ingest_file(
-            reads,
-            org,
-            ns,
-            path=entry.path,
-            source=source,
-            commit_sha=sha,
-            embedding_model=embedder.model_name,
-            embedder=embedder,
-            llm=llm,
-            max_chunk_chars=settings.code_chunk_max_chars,
-            describe=describe,
-            embed_reuse_from=embed_reuse_from,
-            denylist=denylist,
-            parsed=reads.parsed.get(entry.path),
-        )
+        else:
+            stats = await ingest_file(
+                reads,
+                org,
+                ns,
+                path=entry.path,
+                source=source,
+                commit_sha=sha,
+                embedding_model=embedder.model_name,
+                embedder=embedder,
+                llm=llm,
+                max_chunk_chars=settings.code_chunk_max_chars,
+                describe=describe,
+                embed_reuse_from=embed_reuse_from,
+                denylist=denylist,
+                parsed=reads.parsed.get(entry.path),
+            )
         if stats.excluded:
             result.files_excluded += 1
             continue

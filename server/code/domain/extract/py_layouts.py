@@ -52,10 +52,13 @@ _KV_RE = re.compile(
 )
 _ENTRY_GROUPS = {"project.scripts": "console_scripts", "project.gui-scripts": "gui_scripts"}
 _ENTRY_PREFIX = "project.entry-points."
-_TARGET_RE = re.compile(r"^\s*([A-Za-z_][\w.]*)\s*(?::\s*([A-Za-z_][\w.]*))?\s*(?:\[.*\])?\s*$")
+# Possessive runs: three `\s*` around two optional parts split one run of spaces three ways.
+_TARGET_RE = re.compile(
+    r"^\s*+([A-Za-z_][\w.]*)\s*+(?::\s*+([A-Za-z_][\w.]*))?\s*+(?:\[.*\])?\s*+$"
+)
 _SETUP_EP_RE = re.compile(r"""["'](console_scripts|gui_scripts)["']\s*:\s*\[""")
 _SETUP_STR_RE = re.compile(r"""["']([^"'\n]+)["']""")
-_SETUP_PKGDIR_RE = re.compile(r"package_dir\s*=\s*\{([^}]*)\}")
+_SETUP_PKGDIR_RE = re.compile(r"package_dir\s*=\s*\{([^{}]*)\}")
 _SETUP_WHERE_RE = re.compile(
     r"""find(?:_namespace)?_packages\s*\(\s*(?:where\s*=\s*)?["']([^"']+)["']"""
 )
@@ -130,7 +133,7 @@ def _toml(text: str) -> dict[str, Any] | None:
 
     try:
         return tomllib.loads(text)
-    except (tomllib.TOMLDecodeError, ValueError, TypeError):
+    except (tomllib.TOMLDecodeError, ValueError, TypeError, RecursionError):
         return None
 
 

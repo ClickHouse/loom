@@ -296,6 +296,7 @@ async def heal(
 
         show_file = _sf
     from server.code.app.index.denylist import load_denylist
+    from server.code.app.index.ingest import read_capped
     from server.code.app.index.round_reads import RoundReads, round_size, rounds
     from server.settings import settings
 
@@ -306,7 +307,20 @@ async def heal(
 
     async def _source(path: str) -> tuple[str, bytes | None]:
         async with sem:
-            return path, await show_file(cfg.git_dir, head, path)
+            source, counter = await read_capped(
+                show_file,
+                repo,
+                cfg.org,
+                cfg.namespace,
+                git_dir=cfg.git_dir,
+                path=path,
+                commit_sha=head,
+                embedding_model=embedder.model_name,
+                denylist=denylist,
+            )
+        if counter == "errors":
+            out.errors += 1
+        return path, source
 
     async def _one(reads: Any, path: str, source: bytes) -> None:
         async with sem:

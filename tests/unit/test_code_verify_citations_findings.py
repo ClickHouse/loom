@@ -258,7 +258,7 @@ class _Git:
             return ""
         return ""
 
-    async def show(self, git_dir: str, sha: str, path: str) -> bytes | None:
+    async def show(self, git_dir: str, sha: str, path: str, max_bytes: int = 0) -> bytes | None:
         self.calls.append(("show", path))
         return b"x\n" * 700
 

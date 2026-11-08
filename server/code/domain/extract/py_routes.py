@@ -62,7 +62,10 @@ _FIRST_STR_RE = re.compile(r"^\s*" + _STR)
 _ANY_STR_RE = re.compile(r"""['"]([^'"]+)['"]""")
 _DEC_NAME_RE = re.compile(r"^@\s*([\w.]+)")
 _PREFIX_DECL_RE = re.compile(
-    r"^\s*([\w.]+)\s*=\s*(?:[\w.]+\.)?(?:APIRouter|Blueprint)\s*\(([^)]*)\)",
+    # The arguments stop at the next constructor: an unclosed one is not searched on to
+    # the end of the file from each.
+    r"^[^\S\n]*([\w.]+)\s*=\s*(?:[\w.]+\.)?(?:APIRouter|Blueprint)\s*\("
+    r"((?:(?!APIRouter|Blueprint)[^)])*)\)",
     re.M,
 )
 _PREFIX_KW_RE = re.compile(r"\b(?:url_)?prefix\s*=\s*" + _STR)

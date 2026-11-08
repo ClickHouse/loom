@@ -37,10 +37,18 @@ touches the file — no separate purge.
 from __future__ import annotations
 
 import fnmatch
+import logging
 import posixpath
 import re
 from dataclasses import dataclass
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# A repository's `.loomignore` and `.gitattributes` together name at most this many
+# patterns (real ones: tens).
+# not a setting: every indexed path is matched against every pattern; a bound on that
+REPO_PATTERNS_MAX = 1000
 
 DEFAULT_SUFFIXES: tuple[str, ...] = (
     ".pb.cc",
@@ -235,19 +243,29 @@ def denylist_for(cfg: Any, ignore_text: str = "", attributes_text: str = "") -> 
 
     exclude = tuple(cfg.exclude)
     contrib_paths = tuple(str(p) for p in cfg.include_contrib_paths if str(p))
+    from_repo = (*parse_ignore_file(ignore_text), *parse_gitattributes(attributes_text))
+    if len(from_repo) > REPO_PATTERNS_MAX:
+        logger.warning(
+            "code ingest: %s: %d ignore and attribute patterns, the first %d kept",
+            getattr(cfg, "label", "repository"),
+            len(from_repo),
+            REPO_PATTERNS_MAX,
+        )
+        from_repo = from_repo[:REPO_PATTERNS_MAX]
     return Denylist(
         builtin=bool(settings.code_ingest_denylist_builtin),
         include_contrib=cfg.include_contrib,
-        patterns=(*exclude, *parse_ignore_file(ignore_text), *parse_gitattributes(attributes_text)),
+        patterns=(*exclude, *from_repo),
         exclude_generated=cfg.exclude_generated,
         contrib_paths=contrib_paths,
     )
 
 
 async def load_denylist(cfg: Any, sha: str, show_file: Any) -> Denylist:
-    """`denylist_for` with the repo-local ignore file read at `sha` through
-    `show_file(git_dir, sha, path) -> bytes | None`. A missing or unreadable
-    file is simply no patterns — never a failed pass."""
+    """`denylist_for` with the repo-local ignore file and `.gitattributes` read at `sha`
+    through `show_file(git_dir, sha, path, max_bytes=...)`, each up to 1 MiB and at most
+    `REPO_PATTERNS_MAX` patterns together. A missing, unreadable or oversize file is no
+    patterns — never a failed pass."""
     name = cfg.ignore_file
     ignore_text = await _show_text(cfg, sha, show_file, name) if name else ""
     attributes_text = await _show_text(cfg, sha, show_file, GITATTRIBUTES)
@@ -258,8 +276,15 @@ GITATTRIBUTES = ".gitattributes"
 
 
 async def _show_text(cfg: Any, sha: str, show_file: Any, name: str) -> str:
+    """The file's text, read up to `PACKAGE_JSON_MAX_BYTES`; '' past it."""
+    from server.code.app.index.gitrepo import BlobTooLarge
+    from server.code.app.index.untrusted_files import PACKAGE_JSON_MAX_BYTES
+
     try:
-        raw = await show_file(cfg.git_dir, sha, name)
+        raw = await show_file(cfg.git_dir, sha, name, max_bytes=PACKAGE_JSON_MAX_BYTES)
+    except BlobTooLarge as e:
+        logger.warning("code ingest: %s not read, no patterns from it: %s", name, e)
+        raw = None
     except Exception:  # noqa: BLE001 — a repo-local file is best-effort
         raw = None
     return raw.decode("utf-8", "replace") if raw else ""

@@ -51,7 +51,7 @@ FACET_MACRO_CALL = "macro_call"
 
 _COMMENT_RE = re.compile(r"\{#.*?#\}", re.S)
 _STATEMENT_RE = re.compile(r"\{%-?.*?-?%\}", re.S)
-_EXPR_RE = re.compile(r"\{\{-?.*?-?\}\}", re.S)
+_EXPR_RE = re.compile(r"\{\{-?(?:(?!\{\{).)*?-?\}\}", re.S)  # stops at the next `{{`
 _RAW_RE = re.compile(r"\{%-?\s*raw\s*-?%\}(.*?)\{%-?\s*endraw\s*-?%\}", re.S)
 
 _REF_RE = re.compile(r"""\bref\(\s*(?:['"]([^'"]+)['"]\s*,\s*)?['"]([^'"]+)['"]""")

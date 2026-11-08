@@ -80,20 +80,20 @@ _MANIFEST_EXTENSIONS: frozenset[str] = frozenset({".yaml", ".yml"})
 _API_RE = re.compile(r"(?m)^apiVersion:\s*\S")
 _KIND_RE = re.compile(r"(?m)^kind:\s*([A-Za-z][\w.-]*)\s*$")
 _NAME_RE = re.compile(r"^  name:\s*(.+?)\s*$")
-_CRD_KIND_RE = re.compile(r"(?m)^\s+kind:\s*([A-Za-z][\w]*)\s*$")
+_CRD_KIND_RE = re.compile(r"(?m)^[^\S\n]+kind:\s*([A-Za-z][\w]*)\s*$")
 _REF_BLOCK_RE = re.compile(
-    r"^(\s*)-?\s*(configMapRef|configMapKeyRef|configMap|secretRef|secretKeyRef|roleRef|"
+    r"^(\s*)(?:-\s*)?(configMapRef|configMapKeyRef|configMap|secretRef|secretKeyRef|roleRef|"
     r"persistentVolumeClaim)\s*:\s*$"
 )
 _INLINE_REF_RE = re.compile(
-    r"^\s*-?\s*(serviceAccountName|secretName|claimName|serviceName)\s*:\s*[\"']?([^\"'\s#]+)"
+    r"^\s*(?:-\s*)?(serviceAccountName|secretName|claimName|serviceName)\s*:\s*[\"']?([^\"'\s#]+)"
 )
-_NAME_LINE_RE = re.compile(r"^(\s*)-?\s*name\s*:\s*[\"']?([^\"'\s#]+)")
-_KIND_LINE_RE = re.compile(r"^(\s*)-?\s*kind\s*:\s*([A-Za-z]+)")
+_NAME_LINE_RE = re.compile(r"^(\s*)(?:-\s*)?name\s*:\s*[\"']?([^\"'\s#]+)")
+_KIND_LINE_RE = re.compile(r"^(\s*)(?:-\s*)?kind\s*:\s*([A-Za-z]+)")
 _SUBJECTS_RE = re.compile(r"^(\s*)subjects\s*:\s*$")
 _RESOURCES_RE = re.compile(r"^(\s*)resources\s*:\s*$")
 _LIST_ITEM_RE = re.compile(r"^(\s*)-\s*[\"']?([^\"'\s#]+)")
-_SOURCE_PATH_RE = re.compile(r"(?m)^\s+path:\s*[\"']?([^\"'\s#]+)")
+_SOURCE_PATH_RE = re.compile(r"(?m)^[^\S\n]+path:\s*[\"']?([^\"'\s#]+)")
 _TEMPLATE_ACTION = b"{{"
 _MAX_DOCS = 400
 
@@ -295,7 +295,8 @@ def _includes_of(kind: str, body: str) -> list[str]:
                 if im and not im.group(2).startswith(("http://", "https://", "git@")):
                     specs.append(im.group(2))
     elif kind == "Application":
-        m = re.search(r"(?ms)^\s*source:\s*\n(.*?)(?=^\S|\Z)", body)
+        # `[^\S\n]`: `^\s*` would scan every blank line below each line start
+        m = re.search(r"(?ms)^[^\S\n]*source:\s*\n(.*?)(?=^\S|\Z)", body)
         if m:
             pm = _SOURCE_PATH_RE.search(m.group(1))
             if pm and not pm.group(1).startswith(("http", "oci://")):

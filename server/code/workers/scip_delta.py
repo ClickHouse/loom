@@ -23,7 +23,6 @@ seeded `scip_commit`.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import sys
 import tempfile
@@ -45,6 +44,7 @@ from server.code.app.index.entry_lock import check_held
 from server.code.app.index.gitrepo import git_config_env
 from server.code.app.index.sandbox import tool_mounts
 from server.code.app.index.scip_full import work_dir
+from server.code.app.index.untrusted_files import read_delta
 from server.core.paths import SCIP_HARNESS_DIR
 from server.settings import settings
 
@@ -154,17 +154,19 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
             # base unknown clears scip_commit: code_scip_full re-indexes the entry
             raise harness_failure(returncode, out[-2000:])
 
-        if not await asyncio.to_thread(delta_path.exists):
+        try:
+            raw = await asyncio.to_thread(read_delta, delta_path)
+        except FileNotFoundError:
             # harness legitimately exits 0 with no delta when no C++ TU changed
             logger.info("code_scip_delta: %s no C++ changes in window", cfg.namespace)
             check_held()
             await repo.set_state(cfg.org, cfg.namespace, WATERMARK, target)
             return
 
-        from server.code.app.index.scip_delta import ScipDelta, apply_delta
+        from server.code.app.index.scip_delta import apply_delta, parse_delta
 
-        raw = await asyncio.to_thread(delta_path.read_text)
-        delta = ScipDelta.model_validate(json.loads(raw))
+        delta = parse_delta(raw)
+        del raw  # the bytes are not needed past the parse
 
     stats = await apply_delta(repo, cfg.org, cfg.namespace, delta)
     check_held()

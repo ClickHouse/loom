@@ -695,19 +695,24 @@ def go_import_candidates(spec: str, module_path: str, module_dir: str = "") -> l
     ]
 
 
+# `[^\S\n]`: whitespace within the line; `\s` would scan on through every blank line
+# from each line start, quadratic in a go.mod of them. The replaced path stops at the
+# first `=>` (a module path holds none) and the runs are possessive: a `\S+` that could
+# end at every `=>` of one long token is quadratic in it.
 _GO_MOD_REPLACE_RE = re.compile(
-    r"(?m)^\s*(?:replace\s+)?(\S+)(?:\s+v\S+)?\s*=>\s*(\S+)(?:\s+v\S+)?\s*$"
+    r"(?m)^[^\S\n]*(?:replace[^\S\n]+)?((?:(?!=>)\S)++)(?:[^\S\n]+v(?:(?!=>)\S)*+)?"
+    r"[^\S\n]*=>[^\S\n]*(\S++)(?:[^\S\n]+v\S++)?[^\S\n]*$"
 )
 
 
 def go_module_index(texts: dict[str, str]) -> list[tuple[str, str]]:
-    """{go.mod path: text} for every go.mod the namespace holds → [(module path, module
-    directory)], longest module path first, so `go_module_for` picks the nearest module
-    for an import path the way `go build` does across a multi-module repository. A
-    `replace` directive whose target is a relative directory (`=> ../lib`) maps the
-    replaced path onto that directory too — the repository's own statement of where a
-    module lives — unless a go.mod already names it. A replace onto a remote module
-    names nothing in the tree."""
+    """{go.mod path: text} for the go.mod files read (the resolver passes the shallowest
+    `GO_MODS_MAX`, each capped) → [(module path, module directory)], longest module path
+    first, so `go_module_for` picks the nearest module for an import path the way
+    `go build` does across a multi-module repository. A `replace` directive whose target
+    is a relative directory (`=> ../lib`) maps the replaced path onto that directory too
+    — the repository's own statement of where a module lives — unless a go.mod already
+    names it. A replace onto a remote module names nothing in the tree."""
     seen: dict[str, str] = {}
     replaces: list[tuple[str, str]] = []
     for mod_path in sorted(texts):

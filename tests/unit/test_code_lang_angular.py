@@ -101,7 +101,8 @@ def test_an_empty_manifest_read_is_not_cached() -> None:
             return self.texts.get(path, "")
 
     repo = _Repo()
-    ingest_resolve._PACKAGE_JSON_CACHE.pop(("o", "n", "src/app/app.component.ts"))
+    key = ("o", "n", "src/app/app.component.ts", ingest_resolve.PACKAGE_JSON_MAX_BYTES)
+    ingest_resolve._PACKAGE_JSON_CACHE.pop(key)
     assert (
         asyncio.run(ingest_resolve._package_json_text(repo, "o", "n", "src/app/app.component.ts"))
         == ""

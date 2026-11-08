@@ -14,10 +14,15 @@ heuristic re-reading of the repo. Pure functions here take text and a tree;
 from __future__ import annotations
 
 import fnmatch
+import logging
 import posixpath
 import re
 from dataclasses import dataclass, field
 from typing import Any
+
+from server.settings import settings
+
+logger = logging.getLogger(__name__)
 
 # Files agents read automatically or on demand. Matched against the tree
 # at head, so a repo with none of them yields an empty report, not an error.
@@ -95,12 +100,14 @@ class FileReport:
     tokens: int
     refs: int
     stale: list[Finding] = field(default_factory=list)
+    skipped: str = ""  # why the file was not linted (over the byte cap)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "path": self.path,
             "tokens": self.tokens,
             "refs": self.refs,
+            "skipped": self.skipped,
             "stale": [
                 {
                     "kind": f.ref.kind,
@@ -286,7 +293,18 @@ async def lint_repo(
     targets = files if files else select_targets(tree, globs)
     reports: list[FileReport] = []
     for path in targets:
-        raw = await gitrepo.show_file(cfg.git_dir, head, path)
+        try:
+            raw = await gitrepo.show_file(
+                cfg.git_dir, head, path, max_bytes=settings.code_ingest_max_file_bytes
+            )
+        except gitrepo.BlobTooLarge as e:
+            logger.warning("instructions lint: %s: %s not read: %s", cfg.label, path, e)
+            reports.append(
+                FileReport(
+                    path=path, tokens=0, refs=0, skipped=f"over code_ingest_max_file_bytes: {e}"
+                )
+            )
+            continue
         if raw is None:
             reports.append(
                 FileReport(
@@ -318,7 +336,10 @@ def render_report(report: LintReport, *, stale_only: bool = False) -> str:
         f"stale refs: {report.stale_count} · head {report.head[:12]}",
     ]
     for f in report.files:
-        if stale_only and not f.stale:
+        if stale_only and not f.stale and not f.skipped:
+            continue
+        if f.skipped:
+            lines.append(f"  {f.path}  (not linted: {f.skipped})")
             continue
         lines.append(f"  {f.path}  ({f.tokens:,} tok, {f.refs} refs, {len(f.stale)} stale)")
         for finding in f.stale:
