@@ -41,7 +41,7 @@ def test_same_credentials_and_database() -> None:
     assert env == {k: str(v) for k, v in CH["environment"].items()}
 
 
-def test_same_config_mounts_except_named_collections() -> None:
+def test_same_config_mounts_except_the_two_intended_differences() -> None:
     ci = {}
     for mount in re.findall(r'-v "([^"]+)"', SCRIPT):
         src, dst, *_ = mount.split(":")

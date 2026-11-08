@@ -211,6 +211,44 @@ _ESCAPES = [
 ]
 
 
+# Expressions that throw on a row's value, so the error quotes it: the policy
+# must drop another scope's rows before any of them is evaluated.
+_QUOTING_ERRORS = [
+    "SELECT toUInt64(memory_key) FROM loom.memory",
+    "SELECT 1 FROM loom.memory WHERE toUInt64(memory_key) = 1",
+    "SELECT 1 FROM loom.memory PREWHERE toUInt64(memory_key) = 1",
+    "SELECT 1 FROM loom.memory WHERE toUInt64(memory_key) = 1 "
+    "SETTINGS short_circuit_function_evaluation = 'disable'",
+    "SELECT 1 FROM loom.memory WHERE toUInt64(memory_key) = 1 "
+    "SETTINGS optimize_move_to_prewhere = 1, optimize_move_to_prewhere_if_final = 1, "
+    "short_circuit_function_evaluation = 'disable'",
+    "SELECT 1 FROM loom.memory WHERE toUInt64(memory_key) = 1 "
+    "SETTINGS query_plan_merge_filters = 1, short_circuit_function_evaluation = 'disable'",
+]
+
+
+@pytest.mark.parametrize("sql", _QUOTING_ERRORS)
+def test_an_error_quotes_no_value_from_another_scope(
+    control_plane_url: str, seed: _Seed, ch_client, sql: str
+) -> None:
+    request_id = f"quote-{uuid.uuid4().hex[:12]}"
+    r = _query(control_plane_url, seed, sql, request_id=request_id)
+    assert r.status_code in _REFUSED, r.text
+    for leaked in ("other-ns/", "other-org/", "deleted/"):
+        assert leaked not in r.text, r.text[:300]
+    ch_client.command("SYSTEM FLUSH LOGS")
+    logged = ch_client.query(
+        "SELECT groupArray(exception) FROM system.query_log "
+        "WHERE startsWith(query_id, {rid:String}) AND exception != ''",
+        parameters={"rid": f"{request_id}:"},
+        settings=boundary.TEXT_CUT_FROM_LOG,
+    ).result_rows[0][0]
+    # The caller's own row is the one that threw.
+    assert any(f"own/{seed.nonce}" in e for e in logged), logged
+    for leaked in ("other-ns/", "other-org/", "deleted/"):
+        assert not any(leaked in e for e in logged), logged
+
+
 @pytest.mark.parametrize("template", _ESCAPES)
 def test_escape_is_refused_or_reads_nothing_foreign(
     control_plane_url: str, seed: _Seed, template: str

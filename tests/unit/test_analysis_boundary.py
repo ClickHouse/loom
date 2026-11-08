@@ -184,10 +184,11 @@ def test_every_allowlisted_table_is_reached_by_erasure() -> None:
     assert classified["loom.analysis_secrets"] == "no_memory_content"
 
 
-def test_no_entity_statement_changes_log_queries() -> None:
-    # ClickHouse Cloud pins log_queries for its users and refuses a profile or
-    # a statement that changes it; the text is cut from the log instead.
-    assert not any(re.search(r"\blog_queries\s*=", stmt) for stmt in SQL)
+def test_no_entity_statement_changes_what_cloud_pins() -> None:
+    # ClickHouse Cloud pins how its users' queries are logged and refuses a
+    # profile or a statement that changes it; the text is cut from the log instead.
+    pinned = re.compile(r"\blog_(queries|query_settings|queries_min_type)\s*=")
+    assert not any(pinned.search(stmt) for stmt in SQL)
 
 
 def test_entity_statements_are_sent_with_their_text_cut_from_the_log() -> None:

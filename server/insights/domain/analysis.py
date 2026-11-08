@@ -60,12 +60,13 @@ DIGEST_SETTING = "SQL_loom_analyst_digest"
 # The caps profile's own stamp: the digest of the caps it holds.
 CAPS_DIGEST_SETTING = "SQL_loom_analyst_caps_digest"
 
-# A statement's text in system.query_log and the server log is cut to this
-# many bytes, and a text cut that short is logged as only its length. Loom
-# cannot turn query logging off everywhere (ClickHouse Cloud pins
-# `log_queries` for its users) but Cloud leaves this one unconstrained.
+# The statement text in system.query_log and the server log is cut to one
+# byte, which ClickHouse logs as only the number of characters it removed.
+# Loom cannot turn query logging off everywhere (ClickHouse Cloud pins
+# `log_queries` for its users), but Cloud leaves this setting unconstrained.
 LOG_CUT_SETTING = "log_queries_cut_to_length"
-TEXT_CUT_FROM_LOG = {LOG_CUT_SETTING: 1}
+LOG_CUT_BYTES = 1
+TEXT_CUT_FROM_LOG = {LOG_CUT_SETTING: LOG_CUT_BYTES}
 
 _BLOCK = 64  # SHA-256 block size, for HMAC's inner and outer pads
 
@@ -290,8 +291,8 @@ def _masked_bytes(key: bytes, data: bytes) -> str:
 
 
 def hmac_sql(key: bytes, payload: str) -> str:
-    """HMAC-SHA256 of `payload` under `key` as ClickHouse computes it, spelled
-    as the key's inner and outer pads."""
+    """HMAC-SHA256 of `payload` under `key` as ClickHouse computes it, with the
+    key's inner and outer pads masked as `decrypt` expressions."""
     padded = key.ljust(_BLOCK, b"\0")
     ipad = _masked_bytes(key, bytes(b ^ 0x36 for b in padded))
     opad = _masked_bytes(key, bytes(b ^ 0x5C for b in padded))
@@ -339,7 +340,7 @@ def profile_settings() -> list[str]:
         "final = 1 CONST",
         "apply_row_policy_after_final = 1 CONST",
         # A statement that runs is logged without its text; the ledger keeps its digest.
-        f"{LOG_CUT_SETTING} = 1 CONST",
+        f"{LOG_CUT_SETTING} = {LOG_CUT_BYTES} CONST",
         "read_overflow_mode = 'throw' CONST",
         "result_overflow_mode = 'throw' CONST",
         "timeout_overflow_mode = 'throw' CONST",

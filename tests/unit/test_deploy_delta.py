@@ -331,8 +331,13 @@ def test_a_failed_query_log_read_leaves_the_ledger_half_standing() -> None:
 
 
 def test_the_analysts_statements_are_not_shapes() -> None:
-    for sql in (dds.shapes_sql(""), dds.samples_sql("")):
+    ch = _CH()
+    _collect(ch)
+    reads = [(sql, params) for sql, params in ch.calls if "system.query_log" in sql]
+    assert reads
+    for sql, params in reads:
         assert "user != {analyst:String}" in sql
+        assert params["analyst"] == "loom_analyst"
 
 
 def test_no_cluster_reads_the_connected_replica_only() -> None:
