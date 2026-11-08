@@ -1307,8 +1307,9 @@ The steps that reach the user's chunks, entity vectors, graph rows and version h
 treat those summaries as the user's rows, and the census counts them the same way:
 
 - `consolidated.tombstone` runs right after the user's rows are tombstoned.
-- `graph_links.delete` deletes the graph rows its links alone hold before the links, so a
-  run the census reopens leaves none unlinked.
+- `graph_links.delete` deletes the triples, edges and communities that only the user's
+  and the summaries' links hold before it deletes those links, so a run the census
+  reopens leaves none unlinked.
 - `memory_versions.delete` runs after the cache steps, which find an answer that quoted a
   summary by its history.
 - A purge's `memory.retire` runs those steps again before it deletes the rows that name a
@@ -1325,8 +1326,9 @@ it.
 
 Under the Postgres authority the journal's revisions of a summary go with it when its
 current head names the user; a summary rebuilt without the user keeps its older
-revisions there. The user-scope census counts a summary's row, not its vector or code
-link rows, which `consolidated.tombstone` and `memory.retire` retire with it.
+revisions there. The user-scope census counts a summary's row, not its
+`loom.memory_embeddings` or `loom.memory_code_links` rows or its `loom.shared` copies,
+which `consolidated.tombstone`, `shared.tombstone` and `memory.retire` retire with it.
 
 An erasure in an org, at any scope, deletes the whole org's cached query vectors in
 `loom.embedding_cache`, not only the erased scope's: the rows carry the org but no

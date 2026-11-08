@@ -475,6 +475,9 @@ async def retire_memory_by_user(org: str, user_id: str, *, ch: _CHClient | None 
     if purge_mode():
         return await _purge_memory_by_user(org, user_id, ch=ch)
     total, _ = await _retire_summaries(org, user_id, ch=ch)
+    # a copy promoted since `shared.tombstone`: the census does not count loom.shared
+    total += await tombstone_shared_embeddings_by_user(org, user_id, ch=ch)
+    total += await tombstone_shared_by_user(org, user_id, ch=ch)
     # the rows written since memory.tombstone are stamped before the answers go, so no
     # new answer quotes them in between
     total += await tombstone_scoped(

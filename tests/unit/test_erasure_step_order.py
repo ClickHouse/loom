@@ -104,6 +104,9 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
             (U, "loom.memory_embeddings"),
             (U, "loom.memory"),
             (D, "loom.memory_code_links"),
+            # a shared copy promoted since
+            (U, "loom.memory_embeddings"),
+            (U, "loom.shared"),
             (U, "loom.memory"),
             (D, "loom.llm_response_cache"),
             (D, "loom.memory_ask_precedents"),
