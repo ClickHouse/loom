@@ -229,10 +229,9 @@ _INGEST_CHECKS: dict[str, tuple[RuleContract, str, str, list[str]]] = {
             "waiting to retry runs again by itself.",
         ),
         "Sources whose job failed, or waits to retry, because no extractor could take its "
-        "format: none is configured or routed for it, the one routed to it does not take "
-        "the format, is unreachable, "
-        "slower than the server's extractor timeout or failing, or it answered with an "
-        "artifact the extractor contract does not allow.",
+        "format: none is configured or routed for it, or the one routed to it does not take "
+        "the format, is unreachable, is slower than the server's extractor timeout, is "
+        "failing, or answered with an artifact the extractor contract does not allow.",
         "Configure an extractor for the format (a default extractor for every format without "
         "a route of its own or for its media type, or a route for this one; this report says "
         "whether the server that answered has any extractor configured) and make sure it "
@@ -279,9 +278,9 @@ _INGEST_CHECKS: dict[str, tuple[RuleContract, str, str, list[str]]] = {
         "that does not match, a bad encoding, a corrupt, unsupported or too large file, "
         "...), or the server refused what it made of it (an incomplete extraction not "
         "allowed to publish, no text, or more chunks than the server's limit, which is "
-        "reported as too large as well). When a "
-        "resource limit stopped it, the extractor passed its own memory or output limit, or "
-        "its artifact was over the server's size cap. Search serves the source's earlier "
+        "reported as too large as well). When a resource limit stopped it, the extractor "
+        "passed its own memory or output limit, or its artifact was over the server's size "
+        "cap. Search serves the source's earlier "
         "revision, if it has one.",
         "Read the job's error code in its status; fix the file or its options (format, "
         "encoding, SQL dialect), allow an incomplete extraction to publish, "

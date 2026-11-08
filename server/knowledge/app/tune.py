@@ -269,8 +269,8 @@ async def _load(org: str, namespace: str, rows: list[dict[str, Any]]) -> tuple[l
 
 
 def _setting_apply(env: str, value: int, current: int) -> TuneApply:
-    """settings.set of the LIVE field `env` (LOOM_<FIELD>) names, guarded by its current
-    value. The field's name is the op's argument here, not a read of the setting."""
+    """settings.set of the LIVE field that `env` (LOOM_<FIELD>) names, guarded by its
+    current value."""
     return TuneApply(
         op="settings.set",
         via="admin_route",
