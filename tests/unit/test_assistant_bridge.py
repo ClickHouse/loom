@@ -243,7 +243,11 @@ def test_a_sign_in_session_is_not_refused_for_its_short_access_token(world: _Wor
     # ended with the session instead.
     soon = int(time.time()) + 30
     caller = _caller(expires_at=soon, session_id="fam-ui", first_party=True)
+    asyncio.run(bridge.authorize(caller, ORG, NS))  # where the expiry check runs
     asyncio.run(bridge.open_answer(caller, ORG, NS))
+    # The same token outside a sign-in session is refused.
+    with pytest.raises(AuthInsufficientError, match="expires in"):
+        asyncio.run(bridge.authorize(_caller(expires_at=soon), ORG, NS))
 
 
 def test_a_replica_runs_its_limit_of_answers_per_namespace(
@@ -282,6 +286,14 @@ def test_only_the_callers_text_turns_reach_the_agent() -> None:
     ]
     with pytest.raises(ValidationError):
         bridge.admitted_messages([{"role": "assistant", "content": "no question"}])
+
+
+def test_a_logged_librechat_text_names_neither_secret() -> None:
+    ticket = bridge.Ticket(ORG, NS, "agent_1", "sk-secret", "answer.jwt." + "x" * 400, 7)
+    echoed = f"bad request: parent_message_id={ticket.token} key=sk-secret".encode()
+    logged = bridge._redacted(ticket, echoed)
+    assert "answer.jwt" not in logged and "sk-secret" not in logged
+    assert "<answer token>" in logged and "<service key>" in logged
 
 
 def test_a_ticket_prints_neither_secret() -> None:

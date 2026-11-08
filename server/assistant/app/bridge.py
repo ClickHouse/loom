@@ -71,7 +71,7 @@ class Ticket:
     # Secrets: kept out of the repr, so no log line or assertion diff prints them.
     api_key: str = field(repr=False)
     token: str = field(repr=False)
-    slot: int = 0
+    slot: int
 
     def release(self) -> None:
         """Give the answer's slot back; a second call does nothing."""
@@ -262,7 +262,7 @@ async def stream(
                 )
             try:
                 if r.status_code != 200:
-                    _refused(ticket, r.status_code, (await r.aread())[:300])
+                    _refused(ticket, r.status_code, _redacted(ticket, await r.aread()))
                 answer.started = True
                 lines = r.aiter_lines()
                 while True:
@@ -277,7 +277,10 @@ async def stream(
                         continue
                     _note(answer, line[6:])
                     if answer.error:
-                        log.warning("LibreChat ended an answer with an error: %s", answer.error)
+                        log.warning(
+                            "LibreChat ended an answer with an error: %s",
+                            _redacted(ticket, answer.error.encode()),
+                        )
                         raise AssistantUpstreamError("LibreChat ended the answer with an error")
                     yield (line + "\n\n").encode()
             finally:
@@ -294,7 +297,17 @@ async def stream(
     yield b"data: [DONE]\n\n"
 
 
-def _refused(ticket: Ticket, status: int, text: bytes) -> NoReturn:
+def _redacted(ticket: Ticket, text: bytes) -> str:
+    """LibreChat's text for a log line, without the answer's token or the service key it
+    may echo back, cut after the redaction so no part of either survives."""
+    out = text.decode("utf-8", "replace")
+    for secret, name in ((ticket.token, "<answer token>"), (ticket.api_key, "<service key>")):
+        if secret:
+            out = out.replace(secret, name)
+    return out[:300]
+
+
+def _refused(ticket: Ticket, status: int, text: str) -> NoReturn:
     """LibreChat refused the request. A key or agent it no longer knows (401, 403, 404)
     means the stored ones went stale: the service is set up again, unless another answer
     already did and this one only carried the key it replaced."""

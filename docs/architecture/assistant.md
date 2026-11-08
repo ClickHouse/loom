@@ -97,10 +97,10 @@ steps:
    role on the request's namespace. The chat route takes the same `Origin` and CSRF
    checks as `POST /v1/{op}`. Refused here, before LibreChat is called: a revoked or
    expired caller, an org-wide (`*`) token (an answer reads one org), a token whose
-   `read_scope` is narrower than its namespace (as `insights.query` refuses it), a
-   caller whose token has less life left than one answer may run (for a dashboard or
-   `loom login` caller, whose access token a refresh replaces every hour, its sign-in
-   session's: the dashboard refreshes before it asks), an org whose model calls an admin
+   reads are narrower than its namespace (as `insights.query` refuses it), a caller
+   whose token has less life left than one answer may run (a dashboard or `loom login`
+   caller is not refused for its access token, which a refresh replaces every hour: its
+   answer's token ends at sign-out instead), an org whose model calls an admin
    switched off (`org.set_model_calls`), and a namespace over its assistant budget or
    running its most concurrent answers ([Model and cost](#model-and-cost)).
 2. Delegate the answer's token from the caller's (`server/auth/delegation.py`
@@ -706,7 +706,9 @@ builds side by side and a Loom user without access management come with part 2 o
 
 The same file shows that a revoked token stops new calls and that an erased memory
 is gone from the next statement. A unit test pins the generated grants and policies to
-the allowlist. The bridge's tests will show that:
+the allowlist. The bridge's tests (`tests/unit/test_assistant_bridge.py`,
+`test_delegation.py`, `test_assistant_service.py`, and `test_mcp_unauthenticated.py` for
+the MCP endpoint) show that:
 
 - an answer's token is never wider than the caller's token, never outlives it (under a
   sign-in session, never the answer's limit) and ends with the caller's token, subject,
@@ -720,9 +722,10 @@ the allowlist. The bridge's tests will show that:
   its maker left at any step is finished by the next boot, registration never runs where
   LibreChat would log the password, `loom secrets reseal` rewrites both sealed rows
   while a boot waits for the lease, and a boot whose read of the service row hits a
-  lagging replica still sees the row;
-- a `sql` citation verifies in a restricted namespace and when its tool call landed on
-  another replica.
+  lagging replica still sees the row.
+
+Still to come with the citation check: a `sql` citation verifies in a restricted
+namespace and when its tool call landed on another replica.
 
 A probe of this boundary on ClickHouse 26.9, with a scratch table, user and policy of
 this shape, showed each refusal in the table above, the query cache keeping the two
