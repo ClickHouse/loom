@@ -19,9 +19,10 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
+from server.core.ch import sequential_reads
 from server.llm import customer
 from server.memory.app.model_attribution import attribution_for, memory_writers
 from server.memory.domain.import_keys import IMPORT_KEY_MATCH
@@ -320,6 +321,13 @@ async def reembed_table(
     order = ", ".join(keys)
     after = list(start_after) if start_after else None
     written = held = 0
+    gone: list[int] = []  # the page's rows a redaction or an erasure removed since its read
+
+    async def still_stored(read: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        kept = await _still_stored(ch, table, read, where_clause, params)
+        gone.append(len(read) - len(kept))
+        return kept
+
     while True:
         page_where, page_params = where_clause, dict(params)
         if after is not None:
@@ -342,8 +350,9 @@ async def reembed_table(
             # memory row's vector follows its own sensitivity label instead.
             page = without_high(page, lambda r: str(r.get(cfg["text"]) or ""))
         held += len(rows) - len(page)
-        left = await _rewrite_page(ch, embedder, table, page, key_only)
-        written += len(page) - sum(left.values())
+        gone.clear()
+        left = await _rewrite_page(ch, embedder, table, page, key_only, still_stored)
+        written += len(page) - sum(left.values()) - sum(gone)
         if left:
             if left_orgs is not None:
                 left_orgs.update(left)
@@ -365,11 +374,45 @@ def _without_key(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if k != "_k"}
 
 
+def _key_columns(table: str) -> list[str]:
+    return [k.removeprefix("toString(").removesuffix(")") for k in _KEYS[table]]
+
+
+async def _still_stored(
+    ch: Any, table: str, read: list[dict[str, Any]], where_clause: str, params: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """The rows of `read` whose stored row, read FINAL now, still matches the run's filter
+    and holds the text they were embedded from: a redaction or an erasure that deleted or
+    changed one while the page was embedded is not written back over."""
+    if not read:
+        return read
+    cols, text = _key_columns(table), _TABLES[table]["text"]
+    key_sql = ", ".join(f"toString({c})" for c in cols)
+
+    def key(r: dict[str, Any]) -> list[str]:
+        return [str(r[c]) for c in cols]
+
+    with sequential_reads():  # the redaction may have run on another replica
+        stored = await ch.query_all(
+            f"SELECT [{key_sql}] AS _k, {text} AS _t FROM loom.{table} FINAL "
+            f"WHERE {where_clause} AND has({{keys:Array(Array(String))}}, [{key_sql}])",
+            params={**params, "keys": [key(r) for r in read]},
+        )
+    now = {tuple(r["_k"]): r["_t"] for r in stored}
+    return [r for r in read if now.get(tuple(key(r))) == r.get(text)]
+
+
 async def _rewrite_page(
-    ch: Any, embedder: Any, table: str, chunk: list[dict[str, Any]], key_only: bool
+    ch: Any,
+    embedder: Any,
+    table: str,
+    chunk: list[dict[str, Any]],
+    key_only: bool,
+    still_stored: Callable[[list[dict[str, Any]]], Awaitable[list[dict[str, Any]]]] | None = None,
 ) -> dict[str, int]:
     """Re-embed and write `chunk`; returns the rows it left unwritten per org,
-    of an org whose model calls were switched off during the run."""
+    of an org whose model calls were switched off during the run. `still_stored`
+    filters the rows read, after their vectors are made and before the insert."""
     cfg = _TABLES[table]
     model, dim = embedder.model_name, embedder.dim
     vecs: list[list[float]] | None = [[] for _ in chunk] if not key_only else None
@@ -401,10 +444,12 @@ async def _rewrite_page(
             # or unread: its rows wait, and the other groups' vectors are written.
             left.update(positions)
             left_by_org[who.org] = left_by_org.get(who.org, 0) + len(positions)
+    read = [r for i, r in enumerate(chunk) if i not in left]
+    kept = {id(r) for r in (await still_stored(read) if still_stored else read)}
     out = [
         rewrite_row(r, cfg, model, dim, vecs[i] if vecs else None, kvecs[i] if kvecs else None)
         for i, r in enumerate(chunk)
-        if i not in left
+        if id(r) in kept
     ]
     if out:
         await ch.insert(

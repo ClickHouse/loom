@@ -26,7 +26,10 @@ before ClickHouse applies it; watch `system.mutations`.
   identity header is set or the inference gateway is required: ClickHouse's own calls name no
   customer or identity and skip the gateway's host check. The Python path reads
   `--batch-size` rows at a time in sort-key order and prints a `resume:` token after each
-  page; `--resume <token>` continues an interrupted run there. The Python path never sends a
+  page; `--resume <token>` continues an interrupted run there. Before each page's insert it
+  reads the page's rows again and skips any a redaction or an erasure deleted or changed
+  since. `--in-database` reads each table once, as its statement starts, so run it while
+  nothing redacts or erases. The Python path never sends a
   conversation turn whose text reads as high to the embedder: the row stays on the old
   model, which search does not read, until `--delete-old` removes it. A memory row's vector
   follows its sensitivity label. `--in-database` cannot check the text and re-embeds such a
