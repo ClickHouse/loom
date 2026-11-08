@@ -187,13 +187,15 @@ def test_a_page_that_is_not_loom_keeps_the_token_in_hand(monkeypatch) -> None:
         assert login.token() == "t1"
 
 
-def test_a_busy_server_is_retryable_not_a_refusal(monkeypatch) -> None:
+@pytest.mark.parametrize(("status", "category"), [(503, "dependency"), (429, "capacity")])
+def test_a_busy_server_is_retryable_not_a_refusal(monkeypatch, status: int, category: str) -> None:
     from loom.errors import BackendUnavailable
 
-    monkeypatch.setattr(machine.httpx, "post", lambda *a, **k: httpx.Response(503, json={}))
+    monkeypatch.setattr(machine.httpx, "post", lambda *a, **k: httpx.Response(status, json={}))
     monkeypatch.setenv("LOOM_WORKLOAD_TOKEN", "ci")
-    with pytest.raises(BackendUnavailable):
+    with pytest.raises(BackendUnavailable) as info:
         machine.MachineLogin("https://loom.example", "deploy").token()
+    assert (info.value.category, info.value.retryable) == (category, True)
 
 
 _FAILED = [

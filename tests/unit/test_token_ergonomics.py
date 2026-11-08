@@ -303,15 +303,17 @@ def _raising_transport(exc: Exception) -> tuple[Transport, list[int]]:
 
 
 @pytest.mark.parametrize(
-    "exc",
+    ("exc", "where"),
     [
-        httpx.ConnectError("[Errno 111] Connection refused"),
-        httpx.ConnectTimeout("timed out"),
-        httpx.ReadTimeout("slow"),
+        (httpx.ConnectError("[Errno 111] Connection refused"), "cannot reach"),
+        (httpx.ConnectTimeout("timed out"), "cannot reach"),
+        (httpx.ReadTimeout("slow"), "no response from"),
     ],
     ids=["ConnectError", "ConnectTimeout", "ReadTimeout"],
 )
-async def test_sdk_wraps_httpx_network_errors_naming_the_base_url(exc: Exception) -> None:
+async def test_sdk_wraps_httpx_network_errors_naming_the_base_url(
+    exc: Exception, where: str
+) -> None:
     t, calls = _raising_transport(exc)
     try:
         with pytest.raises(BackendUnavailable) as info:
@@ -323,7 +325,7 @@ async def test_sdk_wraps_httpx_network_errors_naming_the_base_url(exc: Exception
     finally:
         await t.close()
     err = info.value
-    assert str(err).startswith("cannot reach http://loom.invalid:7777: " + type(exc).__name__)
+    assert str(err).startswith(f"{where} http://loom.invalid:7777: {type(exc).__name__}")
     assert str(exc) in str(err)
     assert err.code == "NETWORK" and err.status == 0
     assert err.__cause__ is exc

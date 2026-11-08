@@ -206,6 +206,11 @@ def hidden_refusal(name: str) -> dict[str, Any] | None:
 def _result(req_id: Any, body: dict[str, Any], *, error: bool = False) -> dict[str, Any]:
     import json
 
+    from server.core.errors import classified
+
+    # The text block is the body as JSON, so it carries the error's class too.
+    if error and body.get("code"):
+        body = classified(body, 0)
     return _ok(
         req_id,
         {

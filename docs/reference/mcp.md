@@ -349,10 +349,17 @@ arguments."` followed by each field error, every unknown key with the field
 failed"`. A fault Loom names (`OVERLOADED`, `BACKEND_TIMEOUT`,
   `SCHEMA_PENDING`, `EMBED_TIMEOUT`) states its code and message in that error, and
   `error.data` is the HTTP `detail` plus `status`, `tool` and `request_id` (with
-  `retry_after_s` for `OVERLOADED`); any other fault says only `internal error` and the
+  `retry_after_s` when the error names a wait); any other fault says only `internal error` and the
   request id.
 
-Every code, with its cause and fix, is in the [errors reference](./errors.md).
+Every refusal body with a `code` and every fault's `error.data` also carries `category`
+and `retryable`, as the HTTP envelope does. A tool's refusal text ends with the same class
+in words (`(auth: do not retry unchanged)`), for a host that shows the model only the text;
+`loom_op`'s own refusals carry the fields in their JSON text. A `NAMESPACE_NOT_ACCESSIBLE`
+refusal of a namespace that is not a collection, from a tool that is not a code or tracker
+tool, on a toolset that reaches `loom_op`, also carries a `next` step
+([errors reference](./errors.md#the-error-envelope-over-http)). Every code, with its
+cause and fix, is in the [errors reference](./errors.md).
 
 ## Security
 

@@ -12,6 +12,12 @@ from fastapi import Request, Response
 
 from server.auth.fanout import knowledge_search_reads_collections
 from server.code.domain.scope import set_code_scope
+from server.core.errors import (
+    IdentityIncompleteError,
+    LoomServerError,
+    classified,
+    unverified_class,
+)
 from server.core.naming import present
 from server.observability.consumer import ASSISTANT_CONSUMER
 from server.operations.base import Role
@@ -36,7 +42,6 @@ async def _may_read(auth: AuthInfo, org: str, ns: str) -> tuple[bool, bool]:
     because a read it needed failed (server.auth.fail_closed): still
     refused, but the server's failure."""
     from server.auth.authz import check_authorized
-    from server.core.errors import IdentityIncompleteError
     from server.operations.base import Role
 
     try:
@@ -46,6 +51,15 @@ async def _may_read(auth: AuthInfo, org: str, ns: str) -> tuple[bool, bool]:
     except IdentityIncompleteError:
         return False, False
     return True, False
+
+
+# The next step for a namespace the token may not read. A namespace that does not exist
+# is refused alike, so the step is the same for both and confirms neither.
+NAMESPACE_NEXT = (
+    "namespace.list_mine (the loom_namespace_list_mine tool, or through loom_op) lists the "
+    "namespaces this token can use: check the namespace name against it before requesting "
+    "a grant"
+)
 
 
 def _not_accessible_result(
@@ -59,20 +73,25 @@ def _not_accessible_result(
     """A namespace the token may not read. `assistant`: the connection is the assistant
     toolset, which reaches neither loom_search nor loom_op, so neither is suggested.
     `unverified`: the check itself failed (a grant could not be read), so a collection's
-    refusal asks for no grant: the caller may hold one and should retry."""
+    refusal asks for no grant: the caller may hold one and should retry. A plain
+    namespace's refusal is the same either way."""
     from server.transport import access_refusal as ar
 
     if ar.is_plane_tool(str(tool_name or "")):
-        return ar.mcp_result(
-            ar.refusal(str(getattr(auth, "subject", "") or ""), str(getattr(auth, "org", "")), ns)
-        )
+        # One answer whether or not the check ran: a restricted code namespace is refused
+        # before the grant read that fails.
+        subject, org = str(getattr(auth, "subject", "") or ""), str(getattr(auth, "org", ""))
+        return ar.mcp_result(ar.refusal(subject, org, ns))
     from server.auth import sharing
 
     # Someone else's personal collection takes no grant: no advice could work. Any other
     # collection is shared by grants, never joined; the words are the same whether or not
     # it exists.
-    if sharing.is_personal(ns) or (unverified and sharing.is_collection(ns)):
-        return _refusal_body(f"namespace {ns!r} is not in your accessible list.", ns)
+    not_listed = f"namespace {ns!r} is not in your accessible list."
+    if sharing.is_personal(ns):
+        return _refusal_body(not_listed, ns)
+    if unverified and sharing.is_collection(ns):
+        return _refusal_body(not_listed, ns, **unverified_class("NAMESPACE_NOT_ACCESSIBLE", True))
     creator = ""
     if sharing.is_collection(ns):
         # A delegated token's creator needs the role too, as the gate says.
@@ -112,14 +131,16 @@ def _not_accessible_result(
             else "your namespaces"
         )
         msg += (
-            " Omit the namespace argument to use your default namespace (loom_search reads "
-            f"{reads}), or request a grant from the dashboard's Spaces page.{creator}"
+            f" Next: {NAMESPACE_NEXT}. Omit the namespace argument to use your default "
+            f"namespace (loom_search reads {reads}), or request a grant from the dashboard's "
+            f"Spaces page.{creator}"
         )
+        return _refusal_body(msg, ns, next=NAMESPACE_NEXT)
     return _refusal_body(msg, ns)
 
 
-def _refusal_body(msg: str, ns: str) -> dict[str, Any]:
-    body = {"error": msg, "code": "NAMESPACE_NOT_ACCESSIBLE", "namespace": ns}
+def _refusal_body(msg: str, ns: str, **extra: Any) -> dict[str, Any]:
+    body = {"error": msg, "code": "NAMESPACE_NOT_ACCESSIBLE", "namespace": ns, **extra}
     return {"content": [{"type": "text", "text": msg}], "isError": True, "structuredContent": body}
 
 
@@ -337,7 +358,8 @@ def _token_refused(
     if isinstance(error, AuthUnavailable):
         response.status_code = 503
         response.headers["Retry-After"] = "5"
-        return _err(_echo_request_id(payload), TOOL_EXEC_FAILED, str(error))
+        data = classified({"code": "AUTH_UNAVAILABLE", "message": str(error)}, 503)
+        return _err(_echo_request_id(payload), TOOL_EXEC_FAILED, str(error), data)
     return _reject_unauthenticated(
         request,
         response,
@@ -398,7 +420,6 @@ async def _screen_tool_call(
     target_org = req_org or auth.org
     if not req_ns:
         return None
-    from server.core.errors import LoomServerError
 
     try:
         return await _screen_namespace(req, tool_name, args, auth, target_org, req_ns, consumer)

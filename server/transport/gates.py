@@ -36,7 +36,7 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from server.code.app.common import plane_namespace_for, plane_org_for
 from server.core import fail_open
@@ -65,7 +65,7 @@ END_USER_ORG_OPS = frozenset(
 
 # The code a role / namespace refusal carries on both transports: the one the
 # SDKs map (`AuthInsufficient`) and docs/reference/errors.md lists.
-ROLE_REFUSAL_CODE = "AUTH_INSUFFICIENT"
+ROLE_REFUSAL_CODE: Final = "AUTH_INSUFFICIENT"
 
 
 def _token_org(auth: AuthInfo | None) -> str | None:

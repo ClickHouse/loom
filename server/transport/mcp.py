@@ -37,6 +37,7 @@ from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request, Response
 
+from server.core.errors import classified
 from server.identity.app.caller_home import caller_org
 from server.observability.consumer import ASSISTANT_CONSUMER
 from server.transport import gates
@@ -87,6 +88,7 @@ from server.transport.mcp_primer import (
     _read_resource,
     _resources_descriptor,
 )
+from server.transport.mcp_refusals import classify_tool_errors
 from server.transport.mcp_tools import _tools_descriptor, assistant_connection
 
 log = logging.getLogger(__name__)
@@ -210,13 +212,15 @@ async def _handle_request(
         from server.transport.lean_results import single_channel
 
         return single_channel(
-            await _call_tool(
-                req_id,
-                params,
-                auth,
-                client_name,
-                mcp_session_id=mcp_session_id,
-                toolset=toolset,
+            classify_tool_errors(
+                await _call_tool(
+                    req_id,
+                    params,
+                    auth,
+                    client_name,
+                    mcp_session_id=mcp_session_id,
+                    toolset=toolset,
+                )
             ),
             _client_name_to_agent(client_name),
         )
@@ -404,7 +408,7 @@ def attach(app: FastAPI) -> None:
             listing = _listing_params(request)
             req, early = route_loom_op(req, toolset=listing["toolset"], auth=auth)
             if early is not None:
-                return early
+                return early  # classified where its text is rendered (mcp_op._result)
             # AuthZ: identity must match the args; a namespace the JWT lacks → grants.
             if auth is not None and req.get("method") == "tools/call":
                 # An assistant connection's refusals are its own, as its calls are.
@@ -413,7 +417,7 @@ def attach(app: FastAPI) -> None:
                     req, auth, consumer=ASSISTANT_CONSUMER if assistant else ""
                 )
                 if screened is not None:
-                    return screened
+                    return classify_tool_errors(screened)
             return await _handle_request(
                 req,
                 auth,
@@ -461,7 +465,7 @@ def attach(app: FastAPI) -> None:
             response.status_code = 429
             response.headers["Retry-After"] = str(wait)
             msg = f"MCP session end rate limit exceeded (retry in {wait}s)"
-            return {"error": msg, "code": "RATE_LIMITED", "retry_after_s": wait}
+            return classified({"error": msg, "code": "RATE_LIMITED", "retry_after_s": wait}, 429)
         session_id = request.headers.get("mcp-session-id")
         closed = await _mcp_runs.close_session(session_id, org, _mcp_runs.subject_of(auth))
         if session_id:

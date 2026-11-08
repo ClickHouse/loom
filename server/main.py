@@ -29,6 +29,7 @@ from server.auth.public_url import (
 )
 from server.core import readiness as _readiness
 from server.core.ch import get_client, probe_reader_user
+from server.core.errors import classified
 from server.core.logging_config import configure_logging
 from server.insights.app.provider_barrier import participant_lifespan
 from server.memory.app import embedder_calibration
@@ -340,7 +341,8 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 def _refused(status: int, *, code: str, message: str) -> Response:
-    return JSONResponse(status_code=status, content={"detail": {"code": code, "message": message}})
+    detail = classified({"code": code, "message": message}, status)
+    return JSONResponse(status_code=status, content={"detail": detail})
 
 
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})

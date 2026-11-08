@@ -18,7 +18,7 @@
  * browser bundle never pulls them.
  */
 
-import { AuthError, BackendUnavailable, LoomError, NETWORK_ERROR_CODE } from "./errors.js";
+import { AuthError, BackendUnavailable, busy, classed, LoomError, NETWORK_ERROR_CODE } from "./errors.js";
 import { envVar } from "./runtime.js";
 
 /** A credential fetched per request, e.g. a bot's renewing token. */
@@ -291,10 +291,12 @@ export class MachineLogin implements TokenProvider {
       // Never followed: a redirect would carry the proof in the body elsewhere.
       res = await this.#fetch(url, { ...init, redirect: "manual", signal: AbortSignal.timeout(30_000) });
     } catch (e) {
-      throw new BackendUnavailable(`bot ${this.clientId}: cannot reach ${new URL(url).origin}`, {
+      // A client-credentials login spends nothing: asking again is safe.
+      const err = new BackendUnavailable(`bot ${this.clientId}: cannot reach ${new URL(url).origin}`, {
         cause: e,
         code: NETWORK_ERROR_CODE,
       });
+      throw classed(err, "dependency", true);
     }
     if (res.type === "opaqueredirect" || (res.status >= 300 && res.status < 400))
       throw new AuthError(`bot ${this.clientId}: ${new URL(url).origin} answered a redirect; not followed`, {
@@ -324,7 +326,7 @@ function b64url(s: string): string {
 /** Busy or away (429, 5xx) is retryable; any other answer is a refusal, as
  *  the Python SDK reads it. */
 function answerError(what: string, status: number): LoomError {
-  if (status === 429 || status >= 500) return new BackendUnavailable(`${what}: ${status}; retry shortly`, { status });
+  if (status === 429 || status >= 500) return busy(`${what}: ${status}; retry shortly`, { status });
   return new AuthError(`${what}: ${status}`, { status });
 }
 
@@ -336,7 +338,8 @@ async function bodyObject(res: Response, what: string): Promise<Record<string, u
   try {
     text = await res.text();
   } catch (e) {
-    throw new BackendUnavailable(`${what}: the answer was cut off`, { status: res.status, cause: e });
+    const err = new BackendUnavailable(`${what}: the answer was cut off`, { status: res.status, cause: e });
+    throw classed(err, "dependency", true);
   }
   try {
     const parsed: unknown = JSON.parse(text);

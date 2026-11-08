@@ -17,7 +17,7 @@ from server.core.errors import (
     SchemaPendingError,
 )
 from server.transport import mcp_call, mcp_outcome
-from server.transport.mcp_refusals import refusal_body, refusal_text
+from server.transport.mcp_refusals import classify_tool_errors, refusal_body, refusal_text
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -88,6 +88,7 @@ def _fail(monkeypatch: pytest.MonkeyPatch, e: BaseException) -> tuple[dict[str, 
 
     class _Op:
         name = "memory.delete"
+        idempotent = True
 
     out = mcp_outcome._handler_failed(
         e,
@@ -124,6 +125,12 @@ def test_a_bug_stays_a_json_rpc_error_recorded_as_internal(monkeypatch: pytest.M
     out, events = _fail(monkeypatch, ValueError("oops"))
     assert out["error"]["message"] == "tool execution failed: internal error; request_id=rid"
     assert events[0]["error_code"] == "INTERNAL_ERROR"
+    data = classify_tool_errors(out)["error"]["data"]
+    assert (data["code"], data["category"], data["retryable"]) == (
+        "INTERNAL_ERROR",
+        "internal",
+        False,
+    )
 
 
 def test_owner_only_refusals_name_the_user_never_a_route() -> None:
@@ -263,3 +270,15 @@ def test_a_role_refusal_names_the_role_the_catalogue_names() -> None:
     assert out["isError"] is True
     assert out["structuredContent"]["code"] == "AUTH_INSUFFICIENT"
     assert out["structuredContent"]["required_role"] == op.required_role.name == "ADMIN"
+
+
+def test_a_coded_5xx_fault_names_its_retry_after() -> None:
+    from server.transport.mcp_refusals import server_failure
+
+    e = HTTPException(503, detail={"code": "BUSY_X", "message": "m"}, headers={"Retry-After": "7"})
+    assert server_failure(e) == {
+        "code": "BUSY_X",
+        "message": "m",
+        "status": 503,
+        "retry_after_s": 7,
+    }

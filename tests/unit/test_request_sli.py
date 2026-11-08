@@ -396,7 +396,7 @@ def _mcp_refusals_before_dispatch(monkeypatch) -> None:
     monkeypatch.setattr(nr, "match", lambda *a, **k: None)
     monkeypatch.setattr(nr, "default_branches", lambda org: {})
     monkeypatch.setattr(nr, "suggestable", lambda *a: [])
-    monkeypatch.setattr(access_refusal, "reason_fields", lambda ns: {})
+    monkeypatch.setattr(access_refusal, "reason_fields", lambda ns, **_k: {})
     for refuse in refusals:
         _previous_entry()
         assert refuse()
@@ -769,7 +769,7 @@ def test_mcp_s_screen_records_an_unverifiable_refusal_as_the_server_s(monkeypatc
     monkeypatch.setattr(nr, "match", lambda ns, *a, **k: "code-x" if ns == "code-x-main" else None)
     monkeypatch.setattr(nr, "default_branches", lambda org: {})
     monkeypatch.setattr(nr, "suggestable", lambda *a: [])
-    monkeypatch.setattr(access_refusal, "reason_fields", lambda ns: {})
+    monkeypatch.setattr(access_refusal, "reason_fields", lambda ns, **_k: {})
     seen: list[str] = []
 
     async def _first_unreadable(auth: Any, org: str, ns: str) -> tuple[bool, bool]:

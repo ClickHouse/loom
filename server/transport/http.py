@@ -30,7 +30,13 @@ from server.code.app.common import (
     schedule_code_trace_validation_failure,
 )
 from server.core import idempotency, llm_free
-from server.core.errors import AuthInsufficientError, IdentityIncompleteError, LoomServerError
+from server.core.errors import (
+    AuthInsufficientError,
+    IdentityIncompleteError,
+    LoomServerError,
+    handler_failure_detail,
+    unverified_class,
+)
 from server.core.naming import present
 from server.observability.consumer import (
     bind_current_consumer,
@@ -288,16 +294,23 @@ async def _idempotency_gate(
         op, call.auth, target, request.headers.get("Idempotency-Key") or "", payload
     )
     if replay.conflict:
-        code = "IDEMPOTENT_IN_PROGRESS" if replay.in_progress else "IDEMPOTENT_CONFLICT"
-        _emit_event(op, request_id, raw_body, 0, success=False, error_code=code)
+        # Each code a literal: the errors reference finds the codes the server answers by them.
         if replay.in_progress:
+            _emit_event(
+                op, request_id, raw_body, 0, success=False, error_code="IDEMPOTENT_IN_PROGRESS"
+            )
             # A 503, so every client that retries 5xx after Retry-After
             # gets the stored answer.
             raise HTTPException(
                 status_code=503,
-                detail={"code": code, "message": gates.IN_PROGRESS_MESSAGE, "in_progress": True},
+                detail={
+                    "code": "IDEMPOTENT_IN_PROGRESS",
+                    "message": gates.IN_PROGRESS_MESSAGE,
+                    "in_progress": True,
+                },
                 headers={"Retry-After": "1"},
             )
+        _emit_event(op, request_id, raw_body, 0, success=False, error_code="IDEMPOTENT_CONFLICT")
         raise HTTPException(
             status_code=409,
             detail={
@@ -405,7 +418,12 @@ async def _authorize(
         # trusted caller acts for is not an index's refusal.
         ns = target.namespace
         indexed = ar.is_plane_op(op.name) and not isinstance(e, ActedForRevoked)
-        why: dict[str, object] = ar.reason_fields(ns) if ns and indexed else {}
+        unverified = bool(getattr(e, "unverified", False))
+        why: dict[str, object] = (
+            ar.reason_fields(ns, unverified=unverified)
+            if ns and indexed
+            else unverified_class(gates.ROLE_REFUSAL_CODE, unverified)
+        )
         raise _refuse(op, call, 403, error_code=gates.ROLE_REFUSAL_CODE, e=e, detail=why) from e
     except LoomServerError as e:
         # A read the gate could not make past its cache (a 503): counted
@@ -587,7 +605,8 @@ async def _run_handler(op: Operation, payload: Any, call: _HttpCall) -> tuple[An
             error=_http_exception_note(he),
         )
         _record_failure(op, identity, elapsed_ms)
-        raise
+        detail = handler_failure_detail(he.detail, he.status_code, op.idempotent)
+        raise HTTPException(he.status_code, detail=detail, headers=he.headers) from he
     except LoomServerError as le:
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         _emit_event(
@@ -602,9 +621,8 @@ async def _run_handler(op: Operation, payload: Any, call: _HttpCall) -> tuple[An
             error=le,
         )
         _record_failure(op, identity, elapsed_ms)
-        raise HTTPException(
-            status_code=le.status_code, detail=le.to_detail(), headers=le.headers()
-        ) from le
+        detail = handler_failure_detail(le.to_detail(), le.status_code, op.idempotent)
+        raise HTTPException(status_code=le.status_code, detail=detail, headers=le.headers()) from le
     except Exception as e:
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         # Full traceback at ERROR — the response carries only the request

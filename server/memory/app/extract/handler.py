@@ -117,7 +117,10 @@ async def _enqueue_deferred(
             status_code=503,
             detail={
                 "code": "EXTRACTION_QUEUE_UNAVAILABLE",
-                "message": "deferred extraction could not be queued; retry or call without defer",
+                "message": (
+                    "deferred extraction could not be confirmed as queued; it may still run, "
+                    "so resending can extract the messages twice"
+                ),
             },
         ) from e
     return MemorySetFromMessagesOutput(deferred=True, queue_id=queue_id, deferred_by="flag")

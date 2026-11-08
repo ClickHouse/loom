@@ -3722,6 +3722,7 @@
     "Capabilities",
     "DEFAULT_RETRY_POLICY",
     "Datapack",
+    "ErrorCategory",
     "INVALID_RESPONSE_CODE",
     "IdempotentConflict",
     "LOOM_TOOL_SPECS",

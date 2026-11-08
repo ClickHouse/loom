@@ -273,7 +273,7 @@ async def test_timeouts_retry_only_for_ops_the_server_dedups_unless_told(
     assert calls.count("/v1/memory.ask") == 1
     # Not idempotent: surfaces at once — as the typed error naming the server,
     # the httpx exception as its cause.
-    with pytest.raises(BackendUnavailable, match="cannot reach http://x: ReadTimeout") as exc:
+    with pytest.raises(BackendUnavailable, match="no response from http://x: ReadTimeout") as exc:
         await t.post("/v1/memory.set_from_messages", {})
     assert isinstance(exc.value.__cause__, httpx.ReadTimeout)
     assert calls.count("/v1/memory.set_from_messages") == 1
@@ -283,7 +283,7 @@ async def test_timeouts_retry_only_for_ops_the_server_dedups_unless_told(
     }
     assert len(calls) == 2
     calls.clear()
-    with pytest.raises(BackendUnavailable, match="cannot reach http://x"):
+    with pytest.raises(BackendUnavailable, match="no response from http://x"):
         await t.post("/v1/memory.get", {}, retry={"retry_timeouts": "never"})
     assert len(calls) == 1
     await t.close()

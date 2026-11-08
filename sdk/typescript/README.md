@@ -87,17 +87,17 @@ const status = await loom.knowledge.ingestFile({
 
 ## Errors
 
-Every failure is a `LoomError` with `status`, `code` (the server's `detail.code`), `message`, `requestId` (echoed by the server, findable in its ledger) and the raw `detail`. Subclasses mirror the Python SDK:
+Every failure is a `LoomError` with `status`, `code` (the server's `detail.code`), `message`, `requestId` (echoed by the server, findable in its ledger), the raw `detail`, and the server's `category` and `retryable`, the SDK's own when the body names none ([the error envelope](../../docs/reference/errors.md#the-error-envelope-over-http)). Subclasses mirror the Python SDK:
 
-| class                                      | when                                                                                                                                                                   |
-| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ValidationError`                          | 400 / 422                                                                                                                                                              |
-| `AuthError`                                | 401 / 403 — no or insufficient authorization for the op or namespace                                                                                                   |
-| `NotFound`                                 | 404                                                                                                                                                                    |
-| `PreconditionFailed`, `IdempotentConflict` | 409 / 412 — a version, lifecycle or idempotency precondition                                                                                                           |
-| `RateLimited`                              | 429 past the pacing budget; `retryAfterS` is the server's hint                                                                                                         |
-| `BackendUnavailable`                       | 5xx after the retries, or a connection that never got a response — then the message reads `cannot reach <baseUrl>: …` and `code` is `NETWORK_ERROR_CODE` (`"NETWORK"`) |
-| `TimeoutError`                             | the per-call timeout elapsed; retried only for idempotent non-read-only ops (`retryTimeouts`), since the server may still be processing                                |
+| class                                      | when                                                                                                                                                                                                                                                 |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ValidationError`                          | 400 / 422                                                                                                                                                                                                                                            |
+| `AuthError`                                | 401 / 403 — no or insufficient authorization for the op or namespace                                                                                                                                                                                 |
+| `NotFound`                                 | 404                                                                                                                                                                                                                                                  |
+| `PreconditionFailed`, `IdempotentConflict` | 409 / 412 — a version, lifecycle or idempotency precondition                                                                                                                                                                                         |
+| `RateLimited`                              | 429 past the pacing budget; `retryAfterS` is the server's hint                                                                                                                                                                                       |
+| `BackendUnavailable`                       | 5xx after the retries, or a connection that never got a response — then the message reads `cannot reach <baseUrl>: …` (or `no response from <baseUrl>: …`, or `response from <baseUrl> cut off: …`) and `code` is `NETWORK_ERROR_CODE` (`"NETWORK"`) |
+| `TimeoutError`                             | the per-call timeout elapsed; retried only for idempotent non-read-only ops (`retryTimeouts`), since the server may still be processing                                                                                                              |
 
 A 2xx whose body is not JSON (a proxy or gateway page) is a `LoomError` with `code` `INVALID_RESPONSE_CODE` (`"INVALID_RESPONSE"`); it is not retried, and `detail.message` holds the start of the body.
 
@@ -115,7 +115,9 @@ try {
 
 ## Retries, pacing, idempotency
 
-The transport does what the Python SDK's does: connection failures are retried with exponential backoff (3 attempts, 250 ms base; the server did not process the request), and so are 5xx for registry-idempotent ops — any other op only on a 408 or a 503 `AUTH_UNAVAILABLE`, which the server answers before running it; a 429 is retried after the server's `Retry-After` (seconds or an HTTP-date, honoured up to 60 s) for up to `ratelimitMaxWaitS` (15 s) per call; `X-RateLimit-*` headers are read so a client at the floor waits for the refill before the next request instead of taking a 429. Idempotent operations (the registry says which) get an `Idempotency-Key` automatically, so a retry after a dropped response cannot double-write; pass your own key to make two deliberate calls one. Every request carries `X-Request-Id` (the server echoes it; a `requestId` that is not 1 to 64 letters, digits, `.`, `_` or `-` is replaced by a generated one before sending, with a warning; every error has `requestId`), `User-Agent` / `X-Loom-SDK` (`loom-ts/<version>`), `X-Loom-Runtime` and `X-Loom-Retry-Count`.
+The transport does what the Python SDK's does: a failed connection is retried with exponential backoff (3 attempts, 250 ms base; the fetch named a connect-phase error, so the server did not process the request), and so are 5xx for registry-idempotent ops — any other op only on a 408 or a 503 `AUTH_UNAVAILABLE`, which the server answers before running it — except an answer the server classes `configuration`; a 429 is retried after the server's `Retry-After` (seconds or an HTTP-date, honoured up to 60 s) for up to `ratelimitMaxWaitS` (15 s) per call; `X-RateLimit-*` headers are read so a client at the floor waits for the refill before the next request instead of taking a 429. Idempotent operations (the registry says which) get an `Idempotency-Key` automatically, so a retry after a dropped response cannot double-write; pass your own key to make two deliberate calls one. Every request carries `X-Request-Id` (the server echoes it; a `requestId` that is not 1 to 64 letters, digits, `.`, `_` or `-` is replaced by a generated one before sending, with a warning; every error has `requestId`), `User-Agent` / `X-Loom-SDK` (`loom-ts/<version>`), `X-Loom-Runtime` and `X-Loom-Retry-Count`.
+
+A response cut off mid-body, a socket dropped after the request went out, and an op request whose fetch failure names no connect error (a browser's bare `TypeError`, and Bun, Deno or Workers) are resent as a timeout is (`retryTimeouts`), since the server may have run the call; a token the sign-in could not fetch is asked for again either way.
 
 ```ts
 const loom = new LoomClient({
@@ -146,15 +148,15 @@ await loom.memory.get(input, { retry: { maxAttempts: 1 } }); // this call: no re
 await loom.memory.setFromMessages(input, { retry: { retryTimeouts: "always" } });
 ```
 
-| field                                        | default        | meaning                                                                                                                      |
-| -------------------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `maxAttempts`                                | 3              | total attempts including the first                                                                                           |
-| `backoffMs`, `backoffMaxMs`, `backoffJitter` | 250, 5000, 0.5 | exponential backoff between attempts, ±25 % jitter                                                                           |
-| `statuses`                                   | 408 + 5xx      | statuses retried (a 429 is paced, not retried)                                                                               |
-| `retryConnectionErrors`                      | true           | the server never saw the request                                                                                             |
-| `retryTimeouts`                              | `"idempotent"` | retry a per-call timeout never, only for idempotent non-read-only ops (the server dedups their `Idempotency-Key`), or always |
-| `respectRetryAfter`, `maxRetryAfterS`        | true, 60       | honour a `Retry-After` on a retried status (a 503 OVERLOADED sends one) up to the cap                                        |
-| `totalBackoffBudgetMs`                       | ∞              | total time one call may sleep between attempts                                                                               |
+| field                                        | default        | meaning                                                                                                                                                                    |
+| -------------------------------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `maxAttempts`                                | 3              | total attempts including the first                                                                                                                                         |
+| `backoffMs`, `backoffMaxMs`, `backoffJitter` | 250, 5000, 0.5 | exponential backoff between attempts, ±25 % jitter                                                                                                                         |
+| `statuses`                                   | 408 + 5xx      | statuses retried (a 429 is paced, not retried)                                                                                                                             |
+| `retryConnectionErrors`                      | true           | the connection failed, so the server never saw the request                                                                                                                 |
+| `retryTimeouts`                              | `"idempotent"` | retry a timeout, a cut-off response or a socket dropped after sending: never, only for idempotent non-read-only ops (the server dedups their `Idempotency-Key`), or always |
+| `respectRetryAfter`, `maxRetryAfterS`        | true, 60       | honour a `Retry-After` on a retried status (a 503 OVERLOADED sends one) up to the cap                                                                                      |
+| `totalBackoffBudgetMs`                       | ∞              | total time one call may sleep between attempts                                                                                                                             |
 
 ## Logging
 

@@ -45,7 +45,7 @@ function server(opts: Script = {}) {
       new Response(JSON.stringify(body), { status, headers });
     if (op === "knowledge.upload") {
       const fail = failUpload.shift();
-      if (fail === "connect") throw new TypeError("fetch failed");
+      if (fail === "connect") throw new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } });
       if (fail !== undefined) return json({ detail: { code: "INTERNAL" } }, fail);
       if (refused > 0) {
         refused--;
@@ -201,6 +201,11 @@ describe("knowledge.waitForIngest", () => {
     const { loom } = server({ running: 1_000 });
     const wait = loom.knowledge.waitForIngest(scope, "job-1", { timeoutMs: 0 });
     await expect(wait).rejects.toBeInstanceOf(TimeoutError);
+    // Waiting again is safe.
+    const err = (await loom.knowledge
+      .waitForIngest(scope, "job-1", { timeoutMs: 0 })
+      .catch((e: unknown) => e)) as TimeoutError;
+    expect([err.category, err.retryable]).toEqual(["capacity", true]);
     await expect(loom.knowledge.waitForIngest(scope, "job-1", { timeoutMs: 0 })).rejects.toThrow(
       /job-1 is still processing/,
     );

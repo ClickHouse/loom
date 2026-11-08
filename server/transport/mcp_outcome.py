@@ -178,15 +178,18 @@ def _handler_failed(
 ) -> dict[str, Any]:
     """The handler raised. A 4xx refusal (LOCKED, PINNED,
     a task state, BLACKLISTED, NOT_FOUND, 429 — not 401) is an `isError`
-    result carrying its structured body, recorded under its own code. A 5xx
-    LoomServerError (OVERLOADED, BACKEND_TIMEOUT, SCHEMA_PENDING, EMBED_TIMEOUT)
-    stays a JSON-RPC error that carries HTTP's body and is recorded under its
-    code; any other exception is one that says only "internal error" and is
-    logged with its traceback."""
+    result carrying its structured body, recorded under its own code. A 5xx the
+    server named (a LoomServerError such as OVERLOADED or BACKEND_TIMEOUT, or an
+    HTTPException whose detail has a code) stays a JSON-RPC error that carries
+    HTTP's body and is recorded under its code; any other exception is one that
+    says only "internal error" and is logged with its traceback."""
+    from server.core.errors import handler_failure_detail
     from server.transport.mcp_refusals import refusal_body, refusal_text, server_failure
 
     refused = refusal_body(e)
     failure = server_failure(e) if refused is None else None
+    if failure is not None:
+        failure = handler_failure_detail(failure, failure["status"], op.idempotent)
     if refused is not None:
         log.info("mcp.refused %s request_id=%s: %s", op.name, request_id, refused.get("code"))
     elif failure is not None:  # the raiser logged its cause; no traceback for a named 5xx
@@ -242,7 +245,7 @@ def _handler_failed(
         req_id,
         TOOL_EXEC_FAILED,
         f"tool execution failed: internal error; request_id={request_id}",
-        data={"tool": name, "request_id": request_id},
+        data={"code": "INTERNAL_ERROR", "tool": name, "request_id": request_id},
     )
 
 

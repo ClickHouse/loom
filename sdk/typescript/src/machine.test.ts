@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readEnv } from "./client.js";
-import { AuthError, BackendUnavailable, TimeoutError } from "./errors.js";
+import { AuthError, BackendUnavailable, type LoomError, TimeoutError } from "./errors.js";
 import {
   type KeySource,
   MachineLogin,
@@ -268,6 +268,20 @@ describe("answers other than the token's", () => {
     await expect(bot.token()).rejects.toBeInstanceOf(error);
   });
 
+  it.each([
+    [503, "dependency"],
+    [429, "capacity"],
+  ] as const)("classes server metadata answering %s retryable", async (status, category) => {
+    const answer = async (url: string) =>
+      url.endsWith("/.well-known/oauth-authorization-server")
+        ? new Response("{}", { status })
+        : new Response(JSON.stringify({ access_token: accessToken(1) }), { status: 200 });
+    const key = { source: "LOOM_CLIENT_KEY" as const, value: pem("ec").privatePem };
+    const bot = new MachineLogin({ baseUrl: BASE, clientId: "b", key, fetch: answer });
+    const err = (await bot.token().catch((e: unknown) => e)) as LoomError;
+    expect([err.category, err.retryable]).toEqual([category, true]);
+  });
+
   it.each(busyOrRefused)("reads server metadata answering %s as the Python SDK does", async (status, error) => {
     const answer = async (url: string) =>
       url.endsWith("/.well-known/oauth-authorization-server")
@@ -506,6 +520,15 @@ describe("Transport with a token provider", () => {
   }
   const v1 = (srv: ReturnType<typeof server>) => srv.calls.filter((c) => c.url.startsWith(`${BASE}/v1/`));
   const auth = (c: { init: RequestInit }) => (c.init.headers as Record<string, string>).Authorization;
+
+  it("asks again for a token the endpoint could not give, busy or away, and then sends the call", async () => {
+    for (const status of [503, 500]) {
+      const srv = server({ token: [{ status, body: {} }] });
+      const t = new Transport({ baseUrl: BASE, tokenProvider: bot(srv), fetch: srv.fetch, sleep: async () => {} });
+      expect(await t.post("memory.set", { org: "o" })).toEqual({ ok: true });
+      expect(srv.tokenCalls()).toHaveLength(2);
+    }
+  });
 
   it("sends the bot's token and retries a 401 once with a fresh one", async () => {
     const srv = server({ v1: [{ status: 401, body: { detail: { code: "UNAUTHENTICATED" } } }] });

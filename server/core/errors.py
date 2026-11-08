@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -133,8 +133,9 @@ class OverloadedError(LoomServerError):
     contended. The pool: every pooled connection was busy past `ch_pool_wait_ms`; the
     lock or lease: a sibling held it past its wait; the matchers: the org's share of them
     stayed busy, and the write is refused rather than stored unchecked; a conversation
-    delete or compaction: writes to the thread's embeddings kept landing. A retry is
-    safe; `retry_after_s` is the hint the SDK's retry layer honours."""
+    delete or compaction: writes to the thread's embeddings kept landing. Safe to resend
+    on an idempotent op, or when it came before the handler ran; `retry_after_s` is the
+    wait."""
 
     code = "OVERLOADED"
     status_code = 503
@@ -358,6 +359,95 @@ def stored_caller_text(text: str) -> str:
     return ""
 
 
+# How a caller acts on an error without knowing its code: `category` says whose move it
+# is, `retryable` whether resending the same request unchanged can succeed later (after
+# `retry_after_s` when the error names one). The status decides unless the code is listed;
+# an error that knows better (a refusal whose check could not run) sets its own.
+ErrorCategory = Literal["input", "auth", "capacity", "dependency", "configuration", "internal"]
+
+CLASS_BY_CODE: dict[str, tuple[ErrorCategory, bool]] = {
+    # Busy or not ready, not down: the same request succeeds once that passes. On an op
+    # that is not idempotent a handler's answer may follow a write (OVERLOADED too: each
+    # statement waits for a pool slot), so there it is not retryable (`handler_failure_detail`).
+    "OVERLOADED": ("capacity", True),
+    "GRANT_BUSY": ("capacity", True),
+    "IDEMPOTENT_IN_PROGRESS": ("capacity", True),
+    "MODEL_CALL_DEFERRED": ("capacity", True),
+    "MODEL_CHANGE_IN_PROGRESS": ("capacity", True),
+    "CONFIG_DRIFT": ("capacity", True),
+    "IDEMPOTENT_TAKEN_OVER": ("capacity", True),
+    "ADMISSION_CONTENDED": ("capacity", True),
+    "PROJECTION_BEHIND": ("capacity", True),
+    # Committed already, and its message says not to make the write again.
+    "PUBLICATION_PENDING": ("dependency", False),
+    # Only an operator's fix ends these; resending changes nothing.
+    "SCHEMA_PENDING": ("configuration", False),
+    "OVERRIDE_NOT_STORED": ("configuration", False),
+    "CODED_WIDTH_MISMATCH": ("configuration", False),
+    "GATEWAY_REQUIRED": ("configuration", False),
+    "INTEGRATION_NOT_CONFIGURED": ("configuration", False),
+    "MODEL_CALLS_DISABLED": ("configuration", False),
+    "NO_SIGNING_KEY": ("configuration", False),
+    # Listed, not left to the status: the MCP screen's refusals carry none.
+    "RATE_LIMITED": ("capacity", True),
+    "AUTH_INVALID": ("auth", False),
+    "AUTH_INSUFFICIENT": ("auth", False),
+    "POLICY_FORBIDDEN": ("auth", False),
+    "NAMESPACE_NOT_ACCESSIBLE": ("auth", False),
+    "ORG_MISMATCH": ("auth", False),
+}
+
+
+# The refusals that can say their check could not run (a grant or a policy trace that could
+# not be read); the errors reference lists them.
+UnverifiedCode = Literal["AUTH_INSUFFICIENT", "POLICY_FORBIDDEN", "NAMESPACE_NOT_ACCESSIBLE"]
+UNVERIFIED_CODES = frozenset(get_args(UnverifiedCode))
+
+
+def unverified_class(code: UnverifiedCode, unverified: bool) -> dict[str, Any]:
+    """The class of a `code` refusal whose check could not run: the caller may be allowed,
+    so the same request can succeed once the store answers. Empty when the check ran.
+    `code` is checked by its type only: mypy keeps each call site's code in
+    `UNVERIFIED_CODES`, which the errors reference lists."""
+    return {"category": "dependency", "retryable": True} if unverified else {}
+
+
+def error_class(code: str, status: int) -> tuple[ErrorCategory, bool]:
+    """`(category, retryable)` for an error `code` answered with HTTP `status`
+    (0 for an MCP refusal that has none)."""
+    if code in CLASS_BY_CODE:
+        return CLASS_BY_CODE[code]
+    if status in (401, 403):
+        return "auth", False
+    if status in (408, 429):
+        return "capacity", True
+    if status in (502, 503, 504):
+        return "dependency", True
+    if status >= 500:
+        return "internal", False
+    return "input", False
+
+
+def classified(detail: dict[str, Any], status: int) -> dict[str, Any]:
+    """`detail` with the `category` and `retryable` every coded error body carries,
+    unless the error set them itself."""
+    category, retryable = error_class(str(detail.get("code") or ""), status)
+    return {
+        **detail,
+        "category": detail.get("category", category),
+        "retryable": detail.get("retryable", retryable),
+    }
+
+
+def handler_failure_detail(detail: Any, status: int, idempotent: bool) -> Any:
+    """A handler's 5xx on an op that is not idempotent may follow a write the call
+    made, so resending it unchanged is not safe: `retryable` false. A 4xx, an idempotent
+    op and a detail with no code (which carries no class at all) are left as they are."""
+    if idempotent or status < 500 or not isinstance(detail, dict) or not detail.get("code"):
+        return detail
+    return {**detail, "retryable": False}
+
+
 # Each code's entry in the error catalogue; an HTTP error names it in a `Link` header.
 ERROR_CATALOGUE_URL = "https://github.com/ClickHouse/loom/blob/main/docs/reference/errors.md"
 
@@ -382,8 +472,8 @@ def loads_keeping_non_finite(text: str) -> Any:
 
 def register_exception_handler(app: FastAPI) -> None:
     """Turn any LoomServerError into `{"detail": {"code", "message", ...}}`, give every
-    coded HTTP error a `Link: <catalogue#code>; rel="help"` header, and keep a
-    request body's 422 JSON-safe."""
+    coded HTTP error its `category` and `retryable` fields and a
+    `Link: <catalogue#code>; rel="help"` header, and keep a request body's 422 JSON-safe."""
     from fastapi import Request
     from fastapi.encoders import jsonable_encoder
     from fastapi.exception_handlers import http_exception_handler
@@ -393,7 +483,7 @@ def register_exception_handler(app: FastAPI) -> None:
 
     @app.exception_handler(LoomServerError)
     async def _handle_loom_error(_: Request, exc: LoomServerError) -> JSONResponse:
-        detail = exc.to_detail()
+        detail = classified(exc.to_detail(), exc.status_code)
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": detail},
@@ -403,9 +493,12 @@ def register_exception_handler(app: FastAPI) -> None:
     @app.exception_handler(StarletteHTTPException)
     async def _handle_http_error(request: Request, exc: StarletteHTTPException) -> Response:
         headers = _with_help_link(getattr(exc, "headers", None), exc.detail)
-        if headers is not getattr(exc, "headers", None):
-            exc.headers = headers
-        return await http_exception_handler(request, exc)
+        detail = exc.detail
+        if isinstance(detail, dict) and detail.get("code"):
+            detail = classified(detail, exc.status_code)
+        # Never write onto exc: a module-level HTTPException is raised on every request.
+        answer = StarletteHTTPException(exc.status_code, detail=detail, headers=headers)
+        return await http_exception_handler(request, answer)
 
     @app.exception_handler(RequestValidationError)
     async def _handle_request_validation(_: Request, exc: RequestValidationError) -> JSONResponse:

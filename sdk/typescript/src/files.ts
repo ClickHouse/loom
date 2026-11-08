@@ -10,7 +10,7 @@
  */
 
 import type { OpInput, OpOutput } from "./client.js";
-import { TimeoutError } from "./errors.js";
+import { classed, TimeoutError } from "./errors.js";
 import { type CallOptions, defaultSleep, type Transport } from "./transport.js";
 
 /** The states a `knowledge.ingest` job ends in; any other is still running. */
@@ -148,9 +148,14 @@ export function knowledgeFiles(transport: Transport): KnowledgeFiles {
       );
       if (!status.found || INGEST_DONE.has(status.state ?? "")) return status;
       if (Date.now() >= deadline)
-        throw new TimeoutError(
-          `ingestion ${ingestionId} is still ${status.state} after ${timeoutMs} ms; knowledge.ingest_status follows it`,
-          { op: "knowledge.ingest_status" },
+        // A wait that ran out, not a call that may have run: waiting again is safe.
+        throw classed(
+          new TimeoutError(
+            `ingestion ${ingestionId} is still ${status.state} after ${timeoutMs} ms; knowledge.ingest_status follows it`,
+            { op: "knowledge.ingest_status" },
+          ),
+          "capacity",
+          true,
         );
       // Real timers, not a Transport's injected `sleep`; an abort cuts the sleep short and
       // the next poll then throws the transport's "aborted by caller".
