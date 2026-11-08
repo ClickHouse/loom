@@ -227,7 +227,8 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "permission",
         re.compile(
             r"'[^'\n]*': permission denied|insufficient permission for adding an object"
-            r"|^PermissionError: \[Errno \d+\] [^\n]*: '[^'\n]*'",
+            # Python quotes the path as repr does: '...', "..." or b'...'
+            r"|^PermissionError: \[Errno \d+\] [^\n]*: (?:b?'[^'\n]*'|\"[^\"\n]*\")",
             re.IGNORECASE | re.MULTILINE,
         ),
     ),
