@@ -30,6 +30,7 @@ from server.memory.domain.extracted_facts import (
     keep_latest_relation_keyed,
 )
 from server.memory.domain.forget_requests import (
+    MAX_FORGET_REQUESTS,
     forget_requests_from_messages,
     forget_targets,
     is_forget_request,
@@ -778,19 +779,26 @@ async def _forget_plan(
     # The request is read from the user's own sentences too;
     # the extractor is not asked to notice it.
     forget_requests = forget_requests_from_messages(state.messages)
-    state.forget_requests = len(forget_requests)
+    # Every request's words guard its replacement; the latest ones, the user's
+    # last word, are resolved by content and counted in the result.
+    resolved = forget_requests[-MAX_FORGET_REQUESTS:]
+    state.forget_requests = len(resolved)
+    if len(forget_requests) > MAX_FORGET_REQUESTS:
+        log.warning(
+            "forget requests: %d in one window, the latest %d resolved by content",
+            len(forget_requests),
+            MAX_FORGET_REQUESTS,
+        )
     # The batch-level fetch is similarity to the whole window; a short
     # "please forget that I keep a journal" rarely pulls its target into
     # those fifty rows. Each request fetches
     # the rows nearest its own clause as well.
-    candidates = list(state.existing_memories) + await _fetch_for_forget_requests(
-        state, forget_requests
-    )
+    candidates = list(state.existing_memories) + await _fetch_for_forget_requests(state, resolved)
     # What the user said instead is written, never retired.
     facts, keep, linked_old = replacement_facts(
         facts, forget_requests, candidates, state.messages, keep_said=not state.operator_policy
     )
-    forget_keys = forget_targets(facts + forget_requests, candidates, keep) | linked_old
+    forget_keys = forget_targets(facts + resolved, candidates, keep) | linked_old
     # A replacement's own key is retired only when a live row holds it (the
     # old version); otherwise the "retire" would be a no-op reported as forgotten.
     rows = {str(r.get("memory_key") or "") for r in candidates}

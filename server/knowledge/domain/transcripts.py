@@ -24,8 +24,9 @@ _TIME = r"(?:\d+:)?\d{1,2}:\d{2}[.,]\d{1,3}"
 _CUE_TIME = re.compile(rf"^({_TIME})\s+-->\s+({_TIME})")
 # A cue line that names its speaker: `Name: text`.
 _SPEAKER = re.compile(r"^([^:<>]{1,80}):\s+(.*)$")
-# A WebVTT voice span names its speaker: `<v Name>text`.
-_VOICE = re.compile(r"^<v(?:\.[^ >]*)?\s+([^>]{1,80})>(.*)$")
+# A WebVTT voice span names its speaker: `<v Name>text`. A class holds no blank,
+# so a run of tabs is not split between the class and the blanks after it.
+_VOICE = re.compile(r"^<v(?:\.[^\s>]*)?\s+([^>]{1,80})>(.*)$")
 _TAG = re.compile(r"<[^>]*>")
 # A line that would read as Markdown structure (a heading, a quote, a table, a fence,
 # a Setext underline, an HTML block) and cut a section where the speaker did not.
@@ -81,7 +82,10 @@ def parse_vtt(text: str) -> list[Entry]:
         voice = _VOICE.match(body)
         if voice is not None:
             speaker, body = " ".join(voice.group(1).split()), voice.group(2)
-        body = " ".join(html.unescape(_TAG.sub("", body)).split())
+        # no tag closes after the last `>`: reading only up to it keeps a run of
+        # unclosed `<` from being rescanned from each one
+        cut = body.rfind(">") + 1
+        body = " ".join(html.unescape(_TAG.sub("", body[:cut]) + body[cut:]).split())
         if body:
             cues.append((_seconds(timing.group(1)), _seconds(timing.group(2)), speaker, body))
     unnamed = [c for c in cues if not c[2]]

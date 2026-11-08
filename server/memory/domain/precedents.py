@@ -22,7 +22,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 _WS_RE = re.compile(r"\s+")
-_TRAIL_RE = re.compile(r"[\s?.!]+$")
+# from the run's first character only, so a long run is one pass
+_TRAIL_RE = re.compile(r"(?<![\s?.!])[\s?.!]+$")
 # A memory row whose content_sha256 holds the default '0' (or nothing) cannot
 # have its content verified, so it never anchors a precedent.
 _UNHASHED = frozenset({"", "0"})

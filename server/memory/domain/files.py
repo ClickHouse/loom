@@ -15,13 +15,15 @@ from collections.abc import Iterable
 from typing import Any
 
 from server.code.domain.facets import extract_code_facets
+from server.core.relative_paths import without_dot_slashes
 
 MAX_FILES = 32
 MAX_FILE_CHARS = 1024
 
 # A URL's path segments look like repo paths (`github.com/o/r/blob/x.py`);
-# they are removed before detection, never attached.
-_URL_RE = re.compile(r"(?:[a-z][a-z0-9+.-]*://|www\.)\S+", re.IGNORECASE)
+# they are removed before detection, never attached. A scheme is at most 32
+# characters, so a long word is not rescanned from each letter.
+_URL_RE = re.compile(r"(?:[a-z][a-z0-9+.-]{0,31}://|www\.)\S+", re.IGNORECASE)
 # Library names that read as a bare `<name>.js` file in prose.
 _LIBRARY_NAMES = frozenset(
     {
@@ -46,9 +48,7 @@ def normalize_file_ref(raw: Any) -> str:
     """One stored file reference: trimmed, forward slashes, no leading `./`,
     at most MAX_FILE_CHARS. '' for a value that is no reference."""
     s = str(raw or "").strip().replace("\\", "/")
-    while s.startswith("./"):
-        s = s[2:]
-    return s[:MAX_FILE_CHARS].strip()
+    return without_dot_slashes(s)[:MAX_FILE_CHARS].strip()
 
 
 def normalize_files(values: Iterable[Any], cap: int = MAX_FILES) -> list[str]:

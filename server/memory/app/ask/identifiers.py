@@ -26,8 +26,10 @@ logger = logging.getLogger(__name__)
 # high-precision, low-false-positive: a snake_case setting/symbol, a PascalCase
 # 2+-hump handle/type, or a zero-padded test id. Each is exact-substring matched
 # in find_by_identifier and additive, so a stray match only mildly dilutes.
-_INJECT_SNAKE_RE = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+){1,}\b")
-_INJECT_HANDLE_RE = re.compile(r"\b[A-Z][a-z]+(?:[A-Z][a-zA-Z0-9]+)+\b")
+_INJECT_SNAKE_RE = re.compile(r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+){1,})\b")
+# The humps after the first are one run: a word splits into humps in many
+# ways, and trying each one is exponential in the word's length.
+_INJECT_HANDLE_RE = re.compile(r"\b([A-Z][a-z]++[A-Z][a-zA-Z0-9]++)\b")
 # A named account or handle written without its "@" —
 # "the GitHub account octodev", "reporter janedoe" — is the identifier
 # of every row about that account; nothing above caught a bare lowercase name.
@@ -36,17 +38,18 @@ _INJECT_ACCOUNT_RE = re.compile(
     r"([a-z][a-z0-9_-]{4,})\b",
     re.IGNORECASE,
 )
-_INJECT_ZEROID_RE = re.compile(r"\b0\d{3,}\b")
+_INJECT_ZEROID_RE = re.compile(r"\b(0\d{3,})\b")
 # A ClickHouse/CI "STID" (sighting/trace id), e.g. 3782-2f00 — a digit run then a
 # hex quartet. It is the load-bearing key of a failure a query is about, yet the
 # other injectable shapes miss it entirely (digits+hyphen+hex isn't snake_case,
 # a PascalCase hump, a zero-id, or a bare number), so a query naming ONLY a STID
 # extracted no identifier at all and injection fell back to topic words.
-_INJECT_STID_RE = re.compile(r"\b\d{3,4}-[0-9a-f]{4}\b")
+_INJECT_STID_RE = re.compile(r"\b(\d{3,4}-[0-9a-f]{4})\b")
 # file:line (e.g. MergeTreeData.cpp:3539) — a per-site anchor a query names and
 # the root-cause memory repeats verbatim; also unmatched by the shapes above.
+# Group 1, read from a path's first word only, so a long path costs one pass.
 _INJECT_FILELINE_RE = re.compile(
-    r"\b[\w/]+\.(?:cpp|hpp|cc|cxx|h|py|sql|go|rs|cmake|sh|yml|yaml):\d+\b"
+    r"(?<![\w/])/*+\b([\w/]+\.(?:cpp|hpp|cc|cxx|h|py|sql|go|rs|cmake|sh|yml|yaml):\d+)\b"
 )
 # An ordinal in the question ("the 27th parameter", "the fourth
 # option") names a LINE of a list the store holds verbatim — "\n27. Sound
@@ -175,13 +178,16 @@ async def _mention_window_chunks(search_input: Any, question: str, ranked: list[
     return out
 
 
-_TECH_PASCAL_RE = re.compile(r"\b[A-Z][a-z0-9]+(?:[A-Z][a-zA-Z0-9]+)+(?:::\w+)?\b")
-_TECH_CAMEL_RE = re.compile(r"\b[a-z]{2,}[A-Z][A-Za-z0-9]+\b")
+# The humps are one run, as in _INJECT_HANDLE_RE.
+_TECH_PASCAL_RE = re.compile(r"\b([A-Z][a-z0-9]++[A-Z][a-zA-Z0-9]++(?:::\w+)?)\b")
+_TECH_CAMEL_RE = re.compile(r"\b([a-z]{2,}[A-Z][A-Za-z0-9]+)\b")
+# group 1, read from a path's first word only, so a long path costs one pass
 _TECH_FILE_RE = re.compile(
-    r"\b[\w/.-]+\.(?:cpp|hpp|cc|cxx|h|py|sql|go|rs|cmake|sh|yml|yaml|reference|xml)(?::\d+)?\b"
+    r"(?<![\w/.-])[/.-]*+\b([\w/.-]+\.(?:cpp|hpp|cc|cxx|h|py|sql|go|rs|cmake|sh|yml|yaml|reference|xml)"
+    r"(?::\d+)?)\b"
 )
 _TECH_QUOTE_RE = re.compile(r"[\"“'‘]([^\"”'’\n]{8,120})[\"”'’]")
-_TECH_SNAKE_RE = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+){1,}\b")
+_TECH_SNAKE_RE = re.compile(r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+){1,})\b")
 # Product and prose words that match the shapes above but name nothing.
 _TECH_STOP = {
     "clickhouse",
@@ -219,9 +225,10 @@ def _technical_identifiers(text: str) -> list[str]:
 
     for m in _TECH_QUOTE_RE.finditer(t):
         _add(m.group(1))
+    # each pattern's identifier is its group 1
     for pat in (_TECH_FILE_RE, _TECH_PASCAL_RE, _TECH_CAMEL_RE, _TECH_SNAKE_RE):
         for m in pat.finditer(t):
-            _add(m.group(0))
+            _add(m.group(1))
     return out[:12]
 
 
@@ -235,6 +242,7 @@ def _injectable_identifiers(query_text: str) -> list[str]:
 
     out = list(_salient_identifiers(query_text))
     seen = {o.lower() for o in out}
+    # each pattern's identifier is its group 1
     for pat in (
         _INJECT_SNAKE_RE,
         _INJECT_HANDLE_RE,
@@ -243,7 +251,7 @@ def _injectable_identifiers(query_text: str) -> list[str]:
         _INJECT_FILELINE_RE,
     ):
         for m in pat.finditer(query_text or ""):
-            t = m.group(0)
+            t = m.group(1)
             # A product word is not an identifier: OR-ed into the exact fetch
             # it would crowd the numbered rows out.
             if len(t) >= 5 and t.lower() not in seen and t.lower() not in _TECH_STOP:

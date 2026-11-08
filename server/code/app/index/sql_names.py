@@ -237,7 +237,9 @@ class RegistrationHit:
     stated_class: str = ""
 
 
-_STATED_CLASS_RE = re.compile(r"([A-Za-z_]\w*)\s*(?:<[^;]*>)?\s*::\s*$")
+# Read from each word's first letter and each blank run once; a line of many
+# `<` (closed or not) still rescans (code chunks are at most 6,000 characters).
+_STATED_CLASS_RE = re.compile(r"(?<!\w)[^\WA-Za-z_]*+([A-Za-z_]\w*+)\s*+(?:<[^;]*>)?\s*::\s*$")
 
 
 def _stated_class(content: str, m: re.Match[str]) -> str:

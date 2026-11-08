@@ -80,7 +80,8 @@ def _score_unit(unit: str, q_tokens: set[str]) -> int:
 # option. A list's items are what a question about the list asks for, so a
 # turn with at least three enumerated lines is kept whole up to a hard cap
 # instead of being windowed to its best sentence.
-_ENUM_LINE_RE = re.compile(r"(?m)^\s*(?:\d{1,3}[.)]|[-*\u2022])\s+\S")
+# A line's own leading blanks only: `^\s*` would rescan every blank line below.
+_ENUM_LINE_RE = re.compile(r"(?m)^[^\S\n]*(?:\d{1,3}[.)]|[-*\u2022])\s+\S")
 _ENUM_MIN_LINES = 3
 _ENUM_CAP_CHARS = 1600
 

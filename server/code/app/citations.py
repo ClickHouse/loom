@@ -108,11 +108,17 @@ class _Index:
     error_codes: set[str] = field(default_factory=set)
 
 
+# Each retry is one lookup, and a cited name has no length bound of its own.
+MAX_QUALIFIER_RETRIES = 8  # not a setting: more `::` parts than a real C++ name has
+
+
 def _shorter(name: str) -> list[str]:
     """`A::B::C` -> ["B::C", "C"]: the qualifiers a draft may have got
-    wrong, longest first (a static free function cited as a method)."""
+    wrong, longest first (a static free function cited as a method): the
+    suffixes of at most MAX_QUALIFIER_RETRIES `::` parts."""
     parts = name.split("::")
-    return ["::".join(parts[i:]) for i in range(1, len(parts))]
+    first = max(1, len(parts) - MAX_QUALIFIER_RETRIES)
+    return ["::".join(parts[i:]) for i in range(first, len(parts))]
 
 
 def _is_error_code(name: str) -> bool:

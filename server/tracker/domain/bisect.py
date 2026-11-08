@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 import re
+from bisect import bisect_left  # the standard library's, not this module
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import lru_cache
@@ -92,12 +93,14 @@ _IDENT_RE = re.compile(r"(?<![@\w])([A-Za-z_][A-Za-z0-9_]{7,})\b")
 # triage comment carries the bisect's own answer (`introduced_by_pr`, the
 # introducer's handle, a commit sha) — feeding it back is circular at triage
 # time and a leak in any measurement; a version-info block names the fix.
+# A block between paired markers (`<!-- x:start --> … <!-- x:end -->`,
+# `<!-- x --> … <!-- /x -->`) is the bot's, comment or not: (opener, closer).
+_BOT_MARKERS = (
+    (re.compile(r"<!--\s*([\w-]+):start\s*-->"), re.compile(r"<!--\s*([\w-]+):end\s*-->")),
+    (re.compile(r"<!--\s*([\w-]+)\s*-->"), re.compile(r"<!--\s*/([\w-]+)\s*-->")),
+)
+_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 _BOT_BLOCK_RES = (
-    # a block between paired markers (`<!-- x:start --> … <!-- x:end -->`,
-    # `<!-- x --> … <!-- /x -->`) is the bot's, comment or not
-    re.compile(r"<!--\s*([\w-]+):start\s*-->.*?<!--\s*\1:end\s*-->", re.S),
-    re.compile(r"<!--\s*([\w-]+)\s*-->.*?<!--\s*/\1\s*-->", re.S),
-    re.compile(r"<!--.*?-->", re.S),
     # a report template's metadata sections: what the triage found, not
     # what the reporter saw
     # … up to the next heading, rule, code fence or blank line before prose
@@ -367,9 +370,35 @@ def report_text(text: str) -> str:
     is named there), the `cc introducing PR author` lines. What remains is
     what the reporter saw."""
     out = text or ""
+    for opener, closer in _BOT_MARKERS:
+        out = _without_blocks(out, opener, closer)
+    # no comment closes after the last `-->`, so an unclosed one is not rescanned
+    end = out.rfind("-->")
+    if end >= 0:
+        out = _COMMENT_RE.sub(" ", out[: end + 3]) + out[end + 3 :]
     for rx in (*_BOT_BLOCK_RES, *_bot_signature_res(settings.code_bot_authors)):
         out = rx.sub(" ", out)
     return out
+
+
+def _without_blocks(text: str, opener: re.Pattern[str], closer: re.Pattern[str]) -> str:
+    """Each opener through the first closer of its name after it, replaced by a
+    blank. The closers are indexed once, so an opener with none is not a scan
+    to the end of the text."""
+    closers: dict[str, list[tuple[int, int]]] = {}
+    for m in closer.finditer(text):
+        closers.setdefault(m.group(1), []).append(m.span())
+    parts: list[str] = []
+    pos = 0
+    for m in opener.finditer(text):
+        if m.start() < pos:
+            continue
+        spans = closers.get(m.group(1), [])
+        i = bisect_left(spans, (m.end(), -1))
+        if i < len(spans):
+            parts += [text[pos : m.start()], " "]
+            pos = spans[i][1]
+    return "".join(parts) + text[pos:]
 
 
 @lru_cache(maxsize=4)

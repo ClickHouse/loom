@@ -21,8 +21,12 @@ from server.memory.domain.search_types import RANK_SCORE_PRE_RERANK
 # the only one that can find the row.
 _UUID_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)
 _HEX_RE = re.compile(r"\b[0-9a-f]{12,64}\b", re.I)
+# Read from the first word boundary of each `[A-Za-z0-9_-]` run, the one
+# place a match can start: the lookaheads then scan a run once, not once per
+# boundary in it.
 _MIXED_RE = re.compile(
-    r"\b(?=[A-Za-z0-9_-]{6,}\b)(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]+\b"
+    r"(?<![A-Za-z0-9_-])(?>[A-Za-z0-9_-]*?\b)"
+    r"((?=[A-Za-z0-9_-]{6,}\b)(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]+\b)"
 )
 _ORDINAL_WORD_RE = re.compile(r"^\d+(st|nd|rd|th)$", re.I)
 
@@ -50,7 +54,7 @@ def identifier_tokens(query_text: str) -> list[str]:
     for m in _HEX_RE.finditer(text):
         _add(m.group(0))
     for m in _MIXED_RE.finditer(text):
-        tok = m.group(0)
+        tok = m.group(1)
         # A date-like or version-like run ("2026-09-12", "v2") is not an id.
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", tok) or re.fullmatch(r"v\d+(\.\d+)*", tok, re.I):
             continue

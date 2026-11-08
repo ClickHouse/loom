@@ -678,18 +678,31 @@ _IDENT_TOKEN_RE = re.compile(
     r"|(?:\b\w+\(\))"  # a call
     r"|(?:\b[\w./-]+\.(?:py|cpp|h|hpp|ts|tsx|js|go|rs|java|sql|sh)\b)"  # a source path
 )
+# A line's own leading blanks only: `^\s*` would rescan every blank line below.
 _TRACE_LINE_RES = (
-    re.compile(r"^\s*File \"[^\"]+\", line \d+", re.M),  # Python
-    re.compile(r"^\s*at [\w.$<>]+ ?\(.*:\d+(?::\d+)?\)", re.M),  # JS/Java
-    re.compile(r"^\s*#\d+\s+0x[0-9a-fA-F]+ in ", re.M),  # gdb / ClickHouse
-    re.compile(r"^\s*\d+\.\s+(?:0x[0-9a-fA-F]+\s+)?[\w:<>]+.*@ 0x", re.M),  # ClickHouse
-    re.compile(r"^\s*goroutine \d+ \[", re.M),  # Go
-    re.compile(r"^\s*[\w./-]+\.go:\d+", re.M),  # Go frames
+    re.compile(r"^[^\S\n]*File \"[^\"]+\", line \d+", re.M),  # Python
+    re.compile(r"^[^\S\n]*at [\w.$<>]+ ?\(.*:\d+(?::\d+)?\)", re.M),  # JS/Java
+    re.compile(r"^[^\S\n]*#\d+\s+0x[0-9a-fA-F]+ in ", re.M),  # gdb / ClickHouse
+    re.compile(r"^[^\S\n]*\d+\.\s+(?:0x[0-9a-fA-F]+\s+)?[\w:<>]++.*@ 0x", re.M),  # ClickHouse
+    re.compile(r"^[^\S\n]*goroutine \d+ \[", re.M),  # Go
+    re.compile(r"^[^\S\n]*[\w./-]+\.go:\d+", re.M),  # Go frames
 )
 _TRACE_HEAD_RE = re.compile(
     r"Traceback \(most recent call last\)|Stack trace|Exception:|Error:|panic:|DB::Exception|"
-    r"Segmentation fault|SIGSEGV|Assertion .* failed"
+    r"Segmentation fault|SIGSEGV"
 )
+
+
+def _assertion_failed(text: str) -> bool:
+    """An `Assertion … failed` line. Read once per line: as a pattern, each
+    `Assertion ` on a line rescans the rest of it."""
+    for line in text.split("\n"):
+        at = line.find("Assertion ")
+        if at >= 0 and line.find(" failed", at + len("Assertion ")) >= 0:
+            return True
+    return False
+
+
 _ISSUE_REF_RE = re.compile(r"(?:^|[\s(\[])#(\d{3,7})\b|/(?:pull|issues)/(\d{2,7})\b")
 
 
@@ -712,7 +725,7 @@ def looks_like_stack_trace(value: str) -> bool:
     if len(v) < 80:
         return False
     frames = sum(len(r.findall(v)) for r in _TRACE_LINE_RES)
-    return frames >= 3 or (frames >= 1 and bool(_TRACE_HEAD_RE.search(v)))
+    return frames >= 3 or (frames >= 1 and (bool(_TRACE_HEAD_RE.search(v)) or _assertion_failed(v)))
 
 
 def issue_references(text: str) -> list[str]:

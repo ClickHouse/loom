@@ -121,7 +121,7 @@ def replay_messages(observations: list[Any], *, agent: str) -> list[Any]:
 # it ("Claude-Code ran a Bash command in the paths a.py"); a read, a listing
 # or a bare edit is the same.
 _RESULT_LINE = re.compile(
-    r"^\s*(?:output|result|stdout|stderr|error)\s*:", re.IGNORECASE | re.MULTILINE
+    r"^[^\S\n]*(?:output|result|stdout|stderr|error)\s*:", re.IGNORECASE | re.MULTILINE
 )
 
 

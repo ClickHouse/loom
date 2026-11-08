@@ -1,3 +1,5 @@
+from typing import Any
+
 from server.memory.domain.extracted_facts import _source_role_tags
 
 
@@ -664,8 +666,16 @@ async def test_a_phrased_forget_request_is_never_stored(monkeypatch: pytest.Monk
 # ---------------------------------------------------------------- forget by content
 
 
-def test_forget_targets_by_content_finds_the_row_the_request_names() -> None:
-    from server.memory.domain.forget_requests import forget_targets, forget_targets_by_content
+def _by_content(fact: dict[str, Any], rows: list[dict[str, Any]]) -> set[str]:
+    """The rows a forget entry names by content: its targets less its own keys."""
+    from server.memory.domain.forget_requests import forget_targets
+
+    fact = {**fact, "forget": True}
+    return forget_targets([fact], rows) - forget_targets([fact], [])
+
+
+def test_a_forget_request_by_content_finds_the_row_the_request_names() -> None:
+    from server.memory.domain.forget_requests import forget_targets
 
     existing = [
         {
@@ -680,7 +690,7 @@ def test_forget_targets_by_content_finds_the_row_the_request_names() -> None:
         "tags": ["preference", "forget"],
         "value": "User asked to forget their enjoyment of jazz and blues performances.",
     }
-    assert forget_targets_by_content(fact, existing) == {"user_music_preference"}
+    assert _by_content(fact, existing) == {"user_music_preference"}
     # the batch-level helper falls back to content only when nothing was linked
     assert forget_targets([fact], existing) == {
         "user_jazz_blues_forget",
@@ -695,26 +705,24 @@ def test_forget_targets_by_content_finds_the_row_the_request_names() -> None:
     }
 
 
-def test_forget_targets_by_content_needs_real_overlap() -> None:
-    from server.memory.domain.forget_requests import forget_targets_by_content
-
+def test_a_forget_request_by_content_needs_real_overlap() -> None:
     existing = [
         {"memory_key": "user_bible_reading", "value": "User reads the Bible every morning."}
     ]
     assert (
-        forget_targets_by_content(
+        _by_content(
             {"key": "user_salary_forget", "value": "User asked to forget their salary."}, existing
         )
         == set()
     )
     # one shared word is not a target
     assert (
-        forget_targets_by_content(
+        _by_content(
             {"key": "k", "value": "User asked to forget their morning coffee order."}, existing
         )
         == set()
     )
-    assert forget_targets_by_content(
+    assert _by_content(
         {"key": "k", "value": "User asked you not to remember that they read the Bible daily."},
         existing,
     ) == {"user_bible_reading"}
@@ -830,8 +838,6 @@ def test_forget_requests_from_messages_resolve_against_existing_rows() -> None:
 
 
 def test_one_word_forget_request_only_resolves_against_the_users_rows() -> None:
-    from server.memory.domain.forget_requests import forget_targets_by_content
-
     fact = {"key": "", "value": "my salary", "forget": True}
     rows = [
         {
@@ -840,7 +846,7 @@ def test_one_word_forget_request_only_resolves_against_the_users_rows() -> None:
         },
         {"memory_key": "user_salary", "value": "User earns 92k a year."},
     ]
-    assert forget_targets_by_content(fact, rows) == {"user_salary"}
+    assert _by_content(fact, rows) == {"user_salary"}
 
 
 # --- whose fact a sentence states is read from its subject ---

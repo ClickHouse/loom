@@ -169,18 +169,19 @@ _TOOL_NOUN = (
     r"(?:code|tracker|memory|knowledge|task|inbox)\.\w+)"
 )
 _TOOL_SUBJECT_RE = re.compile(
-    r"^\W*(?:the\s+|both\s+|all\s+\w+\s+|each\s+)?(?:[\w-]+\s+){0,3}" + _TOOL_NOUN +
+    r"^\W*+(?:the\s+|both\s+|all\s+\w+\s+|each\s+)?(?:[\w-]+\s+){0,3}" + _TOOL_NOUN +
     # "the raw response for loom_memory_set", "the memories returned by loom"
-    r"(?:\s+(?:for|of|from|returned\s+by|by)\s+\S+(?:\s+about\s+[^,.;]+?)?)?\s+"
+    # "about <topic>": the topic ends on a non-space, so each blank is read once
+    r"(?:\s+(?:for|of|from|returned\s+by|by)\s+\S+(?:\s+about\s[^,.;]*?[^\s,.;])?)?\s+"
     r"(?:returned|found|shows?|showed|stored|saved|added|made|swapped|rated|ranked|came\s+back|"
     r"answered|refused|failed|matched|ran|succeeded|worked|includes?|contains?|lists?|reads|says)\b"
     # "the result of loom_memory_update is …": a named tool's result described
-    r"|^\W*(?:the\s+)?(?:raw\s+)?(?:results?|responses?|output)\s+(?:of|for|from)\s+`?"
+    r"|^\W*+(?:the\s+)?(?:raw\s+)?(?:results?|responses?|output)\s+(?:of|for|from)\s+`?"
     r"(?:loom_|knowledge_|memory_|working_memory_|code\.|tracker\.|memory\.)\S*\s+(?:is|was|were|are)\b"
     # "the loom_memory_history has 25 versions": counts only after a tool name
-    r"|^\W*(?:the\s+)?(?:loom_|knowledge_|memory_|working_memory_)\w+\s+(?:has|had)\s+\d+"
+    r"|^\W*+(?:the\s+)?(?:loom_|knowledge_|memory_|working_memory_)\w+\s+(?:has|had)\s+\d+"
     # "the memories returned by loom about X are about Y": a result described
-    r"|^\W*(?:the\s+)?(?:memories|results?|hits?|rows?)\s+returned\s+by\b",
+    r"|^\W*+(?:the\s+)?(?:memories|results?|hits?|rows?)\s+returned\s+by\b",
     re.IGNORECASE,
 )
 # What still makes a tool's result worth keeping: a defect and its cause.
@@ -201,8 +202,10 @@ _ASSISTANT_REPORT_RE = re.compile(
     r"(?:reported|stated|noted|said|confirmed)\b",
     re.IGNORECASE,
 )
+# Read once per clause, from its first attempt word: a later one finds
+# nothing the first did not.
 _FAILED_ATTEMPT_RE = re.compile(
-    r"\b(?:attempt|call|request|sequence|registration)\b[^.;]*?"
+    r"(?<![^.;])(?>[^.;]*?\b(?:attempt|call|request|sequence|registration)\b)[^.;]*?"
     r"\b(?:refused|could\s+not|couldn't|failed|was\s+rejected)\b",
     re.IGNORECASE,
 )
@@ -238,8 +241,13 @@ def is_activity_narration(value: Any) -> bool:
 
 
 # A token with a path separator, a dotted/hyphenated/underscored identifier,
-# or anything in backticks.
-_PATHLIKE_RE = re.compile(r"`[^`]*`|\S*[/\\]\S*|\S+[._-]\S*[._-]\S*|\S+\.\w{1,5}\b")
+# or anything in backticks; read from a token's start only, so each token is one
+# pass. A start after a backtick is not a token start and can recur inside one
+# token, so each run before, between and after its separators reads at most 63.
+_PATHLIKE_RE = re.compile(
+    r"`[^`]*`|(?<!\S)(?:\S*[/\\]\S*|\S+[._-]\S*[._-]\S*|\S+\.\w{1,5}\b)"
+    r"|(?<=`)(?:\S{0,63}[/\\]\S{0,63}|\S{1,63}[._-]\S{0,63}[._-]\S{0,63}|\S{1,63}\.\w{1,5}\b)"
+)
 
 
 _USER_SUBJECT_RE = re.compile(r"^(\W*)(?:the\s+)?user\b(?!'s)", re.IGNORECASE)

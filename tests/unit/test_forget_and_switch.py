@@ -30,6 +30,8 @@ async def _write(
     user_turns: list[tuple[str, str]],
     existing: list[dict[str, str]],
     extracted: list[dict[str, Any]],
+    fetched: list[list[str]] | None = None,
+    states: list[Any] | None = None,
 ) -> tuple[dict[str, str], list[str]]:
     written: dict[str, str] = {}
     deleted: list[str] = []
@@ -44,6 +46,8 @@ async def _write(
         return _Out()
 
     async def _fetch(state: Any, requests: Any, *, limit: int = 10) -> list:
+        if fetched is not None:
+            fetched.append([r["value"] for r in requests])
         return []
 
     monkeypatch.setattr(bulk_set_mod, "handle_memory_bulk_set", _bulk)
@@ -58,6 +62,8 @@ async def _write(
         extracted_facts=extracted,
     )
     await mp._step_bulk_write(state, {})
+    if states is not None:
+        states.append(state)
     return written, sorted(deleted)
 
 
@@ -275,6 +281,19 @@ def test_forget_sentences_mark_the_message_and_what_it_says_instead() -> None:
     assert [r["value"] for r in forget.forget_requests_from_messages(msgs)] == ["my salary"]
 
 
+def test_a_message_with_two_forget_requests_keeps_its_other_sentences_once() -> None:
+    # each request's replacement, then the sentences that are not requests, once
+    msgs = [
+        {
+            "role": "user",
+            "content": "forget that I like jazz. I play the drums now. "
+            "forget my old address, it's 12 Elm Street now.",
+        }
+    ]
+    assert forget.forget_sentences(msgs) == {0: "it's 12 Elm Street now. I play the drums now."}
+    assert forget.forget_sentences(msgs, same_sentence=True) == {0: "it's 12 Elm Street now."}
+
+
 @pytest.mark.asyncio
 async def test_a_request_that_names_the_replacement_keeps_the_users_words(monkeypatch) -> None:
     """Observed: one request-shaped entry holding the replacement and no
@@ -391,3 +410,48 @@ async def test_a_replacement_key_no_row_holds_is_not_reported_forgotten(monkeypa
         ],
     )
     assert deleted == ["user_editor"]
+
+
+@pytest.mark.asyncio
+async def test_a_correction_past_the_forget_cap_keeps_its_replacement(monkeypatch) -> None:
+    """Past the requests resolved by content, the extractor's own forget entry
+    still retires the old row, and the message's replacement is still written."""
+    cap = forget.MAX_FORGET_REQUESTS
+    turns = [("user", "forget that I use Vim, I switched to Emacs.")]
+    turns += [("user", f"forget jazz{i}.") for i in range(cap)]
+    fetched: list[list[str]] = []
+    states: list[Any] = []
+    written, deleted = await _write(
+        monkeypatch,
+        turns,
+        [{"memory_key": "user_editor", "value": "User uses Vim."}],
+        [
+            {
+                "key": "user_editor_forget",
+                "value": "User asked to forget that they use Vim.",
+                "forget": True,
+                "source_message_indices": [0],
+            },
+            {"key": "user_editor", "value": "User uses Emacs.", "source_message_indices": [0]},
+            # restates only the older request's words: no replacement, so it goes
+            {"key": "user_vim_forget", "forget": True, "source_message_indices": [0]},
+            {"key": "user_vim", "value": "use Vim", "source_message_indices": [0]},
+        ],
+        fetched,
+        states,
+    )
+    assert "user_vim" not in written
+    assert written.get("user_editor") == "User uses Emacs."
+    assert "user_editor" in deleted
+    # the per-request candidate reads stop at the cap, on the latest requests
+    assert len(fetched[0]) == cap and "I use Vim" not in fetched[0]
+    assert states[0].forget_requests == cap  # the result counts the resolved ones
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_forget_request_is_resolved_at_its_latest_mention(monkeypatch) -> None:
+    cap = forget.MAX_FORGET_REQUESTS
+    turns = ["forget my salary."] + [f"forget jazz{i}." for i in range(cap)] + ["forget my salary."]
+    fetched: list[list[str]] = []
+    await _write(monkeypatch, [("user", t) for t in turns], [SALARY], [], fetched)
+    assert len(fetched[0]) == cap and "my salary" in fetched[0]

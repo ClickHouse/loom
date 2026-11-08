@@ -61,9 +61,10 @@ def _content_tokens(text: str) -> set[str]:
 # A request to forget is read from the user's own message. The
 # verb families that ask the assistant to drop something it knows — and none
 # of the ones that ask it to change its behaviour ("stop using emojis") or
-# to do something later ("don't forget to remind me").
+# to do something later ("don't forget to remind me"). "no wait" is read as
+# "no" then "wait": as its own word too, a run of them parses in 2^n ways.
 _FORGET_MSG_PREFIX = (
-    r"^(?:(?:please|kindly|also|and|hey|ok|okay|so|oh|actually|by the way|no wait|wait|no)[,\s]+)*"
+    r"^(?:(?:please|kindly|also|and|hey|ok|okay|so|oh|actually|by the way|wait|no)[,\s]+)*"
     r"(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|"
     r"i(?:'d|\s+would)\s+(?:like|prefer|want)\s+you\s+to\s+|i\s+(?:want|need)\s+you\s+to\s+)?"
     r"(?:please\s+)?"
@@ -101,11 +102,18 @@ _FORGET_MSG_RE = re.compile(
     + r"\s+"
     + _FORGET_MSG_LINK
     + ")"
-    + r"(?P<what>.+?)\s*$",
+    # the clause up to its last non-blank (a lone blank when it has none),
+    # found in one pass instead of one per character
+    + r"(?P<what>.*\S|\s)\s*$",
     re.IGNORECASE,
 )
 # "forget it", "forget about that, let's move on": no object to resolve.
 _FORGET_MSG_PRONOUNS = frozenset("it this that them those these everything anything all".split())
+# A longer sentence is not read as a request to forget.
+MAX_FORGET_SENTENCE_CHARS = 400  # not a setting: a request is one short clause
+# The requests of one window resolved by content: each costs a candidate read
+# and a pass over the candidates.
+MAX_FORGET_REQUESTS = 50  # not a setting: more than a person asks to forget in one window
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
 
 
@@ -115,7 +123,8 @@ _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
 # otherwise the replacement rides inside the clause, its words match the new
 # fact, and the write step drops the truth it was asked to keep.
 _REPLACEMENT_CUT_RE = re.compile(
-    r"\s+[—–]\s*|\s+-\s+|\s*;\s*|"
+    # a blank run read from its first blank only
+    r"(?<!\s)\s+[—–]\s*|(?<!\s)\s+-\s+|(?<!\s)\s*;\s*|"
     r",\s*(?=(?:i|i'm|i've|i'd|we|we're|we've|it|it's|its|my|our|now|they|he|she|"
     r"that's|the\s+new|instead|but|and\s+(?:i|we|now))\b)",
     re.IGNORECASE,
@@ -137,12 +146,14 @@ _REPLACEMENT_META = frozenset(
 )
 
 
-def _new_content(value: str, against: list[str]) -> set[str]:
-    """Content words of `value` that none of `against` holds."""
-    have: set[str] = set()
-    for text in against:
-        have |= _content_tokens(text)
-    return _content_tokens(value) - have - _REPLACEMENT_META
+def _words(texts: list[str]) -> set[str]:
+    """The content words of all of `texts`."""
+    return set().union(*(_content_tokens(t) for t in texts))
+
+
+def _new_content(value: str, against: set[str]) -> set[str]:
+    """Content words of `value` that `against` does not hold."""
+    return _content_tokens(value) - against - _REPLACEMENT_META
 
 
 def replacement_facts(
@@ -174,13 +185,15 @@ def replacement_facts(
     rest_by_msg = {i: _content_tokens(t) for i, t in rest_text.items()}
     msgs = set(rest_by_msg)
     clauses = [str(r.get("value") or "") for r in requests]
+    asked = _words(clauses)  # what the user asked to forget
+    asked_text = " ".join(clauses)
     # Messages whose replacement is already an ordinary fact of the batch.
     kept_msgs: set[int] = set()
     for f in facts:
         src = {int(i) for i in (f.get("source_message_indices") or []) if str(i).isdigit()}
         if not is_forget_request(f) and src & msgs:
             base = [by_key[k] for k in (f.get("linked_keys") or []) if k in by_key]
-            if _new_content(str(f.get("value") or ""), base or clauses):
+            if _new_content(str(f.get("value") or ""), _words(base) if base else asked):
                 kept_msgs |= src & msgs
     out: list[dict[str, Any]] = []
     protected: set[str] = set()
@@ -193,9 +206,9 @@ def replacement_facts(
             # Novel against the rows it replaces when it links them — the
             # user's clause may carry the replacement's own words when the
             # sentence has no cut ("the 30s cap, retries now cap at 60s").
-            if src & msgs and _new_content(str(f.get("value") or ""), forgotten or clauses):
+            against = _words(forgotten) if forgotten else asked
+            if src & msgs and _new_content(str(f.get("value") or ""), against):
                 protected.add(str(f.get("key") or ""))
-                asked = set().union(*(_content_tokens(c) for c in clauses)) if clauses else set()
                 retire.update(
                     k
                     for k in links
@@ -205,7 +218,7 @@ def replacement_facts(
             continue
         rest = set().union(*(rest_by_msg.get(i, set()) for i in src)) if src else set()
         value = str(f.get("value") or "")
-        novel = _new_content(value, forgotten + clauses) & rest
+        novel = (_new_content(value, asked) - _words(forgotten)) & rest
         if not rest or not novel:
             out.append(f)
             continue
@@ -215,16 +228,15 @@ def replacement_facts(
         # A carrier's own text is the replacement, so its links are checked
         # against what the user asked to forget, not against that text: the
         # extractor linked "forget that, I prefer coffee" to the dark-roast row.
-        asked_words = set().union(*(_content_tokens(c) for c in clauses)) if clauses else set()
         kept_links = [
             k
             for k in (f.get("linked_keys") or [])
             if k not in by_key
-            or asked_words & (_content_tokens(by_key[k]) | _content_tokens(k.replace("_", " ")))
+            or asked & (_content_tokens(by_key[k]) | _content_tokens(k.replace("_", " ")))
         ]
         # ...and the request resolves by what was asked to forget, never by
         # the replacement's words.
-        out.append({**f, "value": " ".join(clauses), "linked_keys": kept_links})
+        out.append({**f, "value": asked_text, "linked_keys": kept_links})
         copy = {k: v for k, v in f.items() if k not in ("forget", "linked_keys")}
         copy["tags"] = [t for t in (f.get("tags") or []) if str(t).lower() != "forget"]
         copy["key"] = _FORGET_KEY_RE.sub("_", str(f.get("key") or "")).strip("_") or "user_update"
@@ -250,10 +262,11 @@ def _said_corrections(
     whose replacement a fact already carries; `known`: what the request named
     and the rows it may retire."""
     out: list[dict[str, Any]] = []
+    known_words = _words(known)  # once, not once per message
     for i, said in forget_sentences(messages, same_sentence=True).items():
         if i in kept_msgs or not said or not _FIRST_PERSON_RE.match(said):
             continue
-        if not _new_content(said, known):
+        if not _new_content(said, known_words):
             continue
         key = f"user_said_{i}_" + "_".join(sorted(_content_tokens(said)))[:40].strip("_")
         out.append(
@@ -277,8 +290,8 @@ def forget_requests_from_messages(messages: list[dict[str, Any]]) -> list[dict[s
     change something ("don't forget to remind me", "stop using emojis") is
     not a request to forget; a clause with no content word ("forget it") is
     dropped here."""
-    out: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    # a repeated request moves to its latest mention, so the latest requests are the last
+    out: dict[str, dict[str, Any]] = {}
     for m in messages or []:
         if str(m.get("role") or "").lower() != "user":
             continue
@@ -287,7 +300,7 @@ def forget_requests_from_messages(messages: list[dict[str, Any]]) -> list[dict[s
             continue
         for sent in _SENTENCE_SPLIT_RE.split(text):
             sent = sent.strip().strip("\"'“”‘’")
-            if not sent or len(sent) > 400:
+            if not sent or len(sent) > MAX_FORGET_SENTENCE_CHARS:
                 continue
             mt = _FORGET_MSG_RE.match(sent)
             if not mt:
@@ -301,11 +314,9 @@ def forget_requests_from_messages(messages: list[dict[str, Any]]) -> list[dict[s
                 continue
             if not _content_tokens(what):
                 continue
-            if low in seen:
-                continue
-            seen.add(low)
-            out.append({"key": "", "value": what, "forget": True, "tags": ["forget"]})
-    return out
+            out.pop(low, None)
+            out[low] = {"key": "", "value": what, "forget": True, "tags": ["forget"]}
+    return list(out.values())
 
 
 def forget_sentences(
@@ -322,13 +333,24 @@ def forget_sentences(
             continue
         text = str(m.get("content") or "")
         sents = [x.strip() for x in _SENTENCE_SPLIT_RE.split(text) if x.strip()]
+        rests: list[str] = []
+        others: list[str] = []
         for raw in sents:
-            mt = _FORGET_MSG_RE.match(raw.strip("\"'“”‘’"))
-            if not mt:
+            sent = raw.strip("\"'“”‘’")
+            # the length forget_requests_from_messages reads; a longer
+            # sentence that opens like a request is no other sentence of the message
+            if len(sent) > MAX_FORGET_SENTENCE_CHARS:
+                if not same_sentence and not _FORGET_MSG_RE.match(sent[:MAX_FORGET_SENTENCE_CHARS]):
+                    others.append(raw)
                 continue
-            _, rest = split_replacement(mt.group("what"))
-            others = "" if same_sentence else " ".join(x for x in sents if x is not raw)
-            out[i] = " ".join(p for p in (out.get(i, ""), rest, others) if p).strip()
+            mt = _FORGET_MSG_RE.match(sent)
+            if mt:
+                rests.append(split_replacement(mt.group("what"))[1])
+            elif not same_sentence:
+                others.append(raw)
+        # The message's other sentences ride along once, however many requests it holds.
+        if rests:
+            out[i] = " ".join(p for p in (*rests, *others) if p).strip()
     return out
 
 
@@ -341,38 +363,46 @@ _FIRST_PERSON_RE = re.compile(
 )
 
 
-def forget_targets_by_content(
-    fact: dict[str, Any], existing: list[dict[str, Any]], *, min_overlap: float = 0.5
-) -> set[str]:
-    """Existing memories a forget request is about, found by content when the
-    extractor did not link them: the request's content
-    words ("jazz blues performance") against each existing row's value and
-    key; a row whose tokens cover at least `min_overlap` of the request's
-    (and at least two of them) is a target. The candidates are the rows the
-    pipeline already fetched as semantically relevant to this batch."""
-    want = _content_tokens(fact.get("value") or "") | _content_tokens(
-        _FORGET_KEY_RE.sub(" ", str(fact.get("key") or "").replace("_", " "))
-    )
+def _request_words(fact: dict[str, Any], value_words: dict[str, set[str]]) -> set[str]:
+    """The content words of a forget entry's value and of its key less the
+    marker; `value_words` holds values already read (split entries share one)."""
+    value = str(fact.get("value") or "")
+    if value not in value_words:
+        value_words[value] = _content_tokens(value)
+    key = _content_tokens(_FORGET_KEY_RE.sub(" ", str(fact.get("key") or "").replace("_", " ")))
+    return value_words[value] | key
+
+
+def _row_words(rows: list[dict[str, Any]]) -> list[tuple[str, set[str]]]:
+    """Each keyed row with the content words of its value and key."""
+    out = []
+    for row in rows:
+        key = str(row.get("memory_key") or "").strip()
+        if key:
+            words = _content_tokens(row.get("value") or "") | _content_tokens(key.replace("_", " "))
+            out.append((key, words))
+    return out
+
+
+def _targets_by_words(want: set[str], rows: list[tuple[str, set[str]]]) -> set[str]:
+    """The rows a request's words name: those holding at least half of them,
+    and at least two (one, on a `user_` row, for a one-word request)."""
     if not want:
         return set()
     # A one-word request ("forget what I told you about my salary") resolves
     # only against rows keyed to the user; two or more words resolve anywhere.
     need = 2 if len(want) >= 2 else 1
     out: set[str] = set()
-    for row in existing or []:
-        key = str(row.get("memory_key") or "").strip()
-        if not key:
-            continue
+    for key, have in rows:
         if need == 1 and not key.startswith("user_"):
             continue
-        have = _content_tokens(row.get("value") or "") | _content_tokens(key.replace("_", " "))
         hit = len(want & have)
-        if hit >= need and hit / len(want) >= min_overlap:
+        if hit >= need and hit / len(want) >= 0.5:
             out.add(key)
     return out
 
 
-def _link_is_about(f: dict[str, Any], key: str, existing: list[dict[str, Any]] | None) -> bool:
+def _link_is_about(want: set[str], key: str, existing: list[dict[str, Any]] | None) -> bool:
     """A forget entry's link retires a row only when the row
     shares a content word with the request — measured, the extractor linked
     "forget my tea preference" to the editor row and "stop using emojis" to
@@ -381,9 +411,6 @@ def _link_is_about(f: dict[str, Any], key: str, existing: list[dict[str, Any]] |
     row = next((r for r in existing or [] if str(r.get("memory_key") or "") == key), None)
     if row is None:
         return True
-    want = _content_tokens(f.get("value") or "") | _content_tokens(
-        _FORGET_KEY_RE.sub(" ", str(f.get("key") or "").replace("_", " "))
-    )
     have = _content_tokens(row.get("value") or "") | _content_tokens(key.replace("_", " "))
     return not want or not have or bool(want & have)
 
@@ -401,9 +428,20 @@ def forget_targets(
     content names. Empty when no entry asks to
     forget."""
     out: set[str] = set()
+    # The rows and batch facts a request may name, read once for every request.
+    batch = [
+        {"memory_key": gk, "value": g.get("value") or ""}
+        for g in facts
+        if not is_forget_request(g)
+        and (gk := str(g.get("key") or "").strip())
+        and gk not in protected  # the replacement is not a target
+    ]
+    candidates: list[tuple[str, set[str]]] | None = None  # read on the first unlinked request
+    value_words: dict[str, set[str]] = {}  # entries split from carriers share a value
     for f in facts:
         if not is_forget_request(f):
             continue
+        want = _request_words(f, value_words)
         key = str(f.get("key") or "").strip()
         if key:
             out.add(key)
@@ -418,7 +456,7 @@ def forget_targets(
             for lk in (f.get("linked_keys") or [])
             if str(lk or "").strip() and not str(lk).strip().startswith("__idx:")
         ]
-        linked = [lk for lk in linked if _link_is_about(f, lk, existing)]
+        linked = [lk for lk in linked if _link_is_about(want, lk, existing)]
         out.update(linked)
         if not linked:
             # The premise and the request are often adjacent turns ("Since
@@ -426,15 +464,7 @@ def forget_targets(
             # the request names may be in this very batch, not yet written:
             # resolve against the batch's own facts too, and the write step
             # drops the ones named.
-            candidates: list[dict[str, Any]] = list(existing or [])
-            for g in facts:
-                if g is f or is_forget_request(g):
-                    continue
-                gk = str(g.get("key") or "").strip()
-                if gk in protected:  # the replacement is not a target
-                    continue
-                if gk:
-                    candidates.append({"memory_key": gk, "value": g.get("value") or ""})
-            if candidates:
-                out.update(forget_targets_by_content(f, candidates))
+            if candidates is None:
+                candidates = _row_words([*(existing or []), *batch])
+            out.update(_targets_by_words(want, candidates))
     return out

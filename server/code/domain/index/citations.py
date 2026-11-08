@@ -22,9 +22,12 @@ diff's new-side line ranges for the `in_pr_diff` check.
 
 from __future__ import annotations
 
+import bisect
 import re
 from dataclasses import dataclass, field
 from typing import Any
+
+from server.core.relative_paths import without_dot_slashes
 
 MAX_CITATIONS = 500
 MAX_TEXT_CHARS = 200_000
@@ -38,17 +41,18 @@ _EXTS = (
     "jinja|tpl|patch|diff|gradle|sbt|mk|ninja|jsonl|ndjson|arrow|feather|npy|npz"
 )
 _PATH = rf"(?:[\w.+\-@]+/)+[\w.+\-@]+\.(?:{_EXTS})"
-_PATH_RE = re.compile(rf"(?<![\w/.\-])(?P<path>{_PATH})(?![\w/])")
+_PATH_RE = re.compile(rf"(?<![\w/.+\-@])(?P<path>{_PATH})(?![\w/])")
 # `path:12`, `path:12-20`, `path:12:34` (column dropped), `path#L12-L20`,
 # `path:L12`; inside brackets or backticks or bare.
 _LOC_RE = re.compile(
-    rf"(?<![\w/.\-])(?P<path>{_PATH})"
+    rf"(?<![\w/.+\-@])(?P<path>{_PATH})"
     r"(?:(?::|#)L?(?P<start>\d+)(?:(?:-|–|—|\.\.|-L)(?P<end>\d+))?(?::\d+)?)"
     r"(?![\w/])"
 )
-# github.com/<owner>/<repo>/blob/<rev>/<path>#L12-L20 — the rev rides along.
+# github.com/<owner>/<repo>/blob/<rev>/<path>#L12-L20 — the rev rides along. The rev
+# is one segment: the path after a longer one also follows the first.
 _BLOB_URL_RE = re.compile(
-    r"https?://github\.com/[\w.\-]+/[\w.\-]+/blob/(?P<rev>[\w.\-/]+?)/"
+    r"https?://github\.com/[\w.\-]+/[\w.\-]+/blob/(?P<rev>[\w.\-]+)/"
     rf"(?P<path>{_PATH})(?:#L(?P<start>\d+)(?:-L?(?P<end>\d+))?)?"
 )
 _ITEM_URL_RE = re.compile(r"https?://github\.com/[\w.\-]+/[\w.\-]+/(?:pull|issues)/(?P<number>\d+)")
@@ -62,8 +66,9 @@ _NUMBER_RE = re.compile(
     r"Related to|Follow-?up to|Backport of|Part of)\s+#?|#)(?P<number>\d{1,8})\b"
 )
 # Ns::Name, Class::method, DB::Foo::~Foo, a::b::operator[] — two or more parts.
+# Not from a destructor part's name (`::~Foo`): a start there rescans the chain.
 _NAME_RE = re.compile(
-    r"(?<![\w:>.])(?P<name>[A-Za-z_]\w*(?:::(?:operator\s*(?:\[\]|\(\)|[^\s\w(]{1,3})|~?[A-Za-z_]\w*))+)"
+    r"(?<![\w:>.])(?<!::~)(?P<name>[A-Za-z_]\w*(?:::(?:operator\s*(?:\[\]|\(\)|[^\s\w(]{1,3})|~?[A-Za-z_]\w*))+)"
     r"(?![\w:])"
 )
 _FENCE_RE = re.compile(r"```.*?```|~~~.*?~~~", re.S)
@@ -77,7 +82,7 @@ _BARE_EXTS = (
 )
 _BARE_FILE = rf"[A-Za-z_][\w.+\-]+\.(?:{_BARE_EXTS})"
 _BARE_LOC_RE = re.compile(
-    rf"(?<![\w/.\-])(?P<path>{_BARE_FILE})"
+    rf"(?<![\w/.\-])(?<![\w.+\-]\+)(?P<path>{_BARE_FILE})"
     r"(?:(?::|#)L?(?P<start>\d+)(?:(?:-|–|—|\.\.|-L)(?P<end>\d+))?(?::\d+)?)"
     r"(?![\w/])"
 )
@@ -253,15 +258,15 @@ class Extraction:
 
 
 def normalise_path(path: str) -> str:
-    p = path.strip()
-    while p.startswith("./"):
-        p = p[2:]
-    p = p.lstrip("/")
-    while p.startswith(("a/", "b/")) and p.count("/") > 1 and not p.startswith(("a/b", "b/a")):
+    p = without_dot_slashes(path.strip()).lstrip("/")
+    # each diff prefix is stepped past, not sliced off: a slice copies the rest of the path
+    i, slashes = 0, p.count("/")
+    while p.startswith(("a/", "b/"), i) and slashes > 1 and not p.startswith(("a/b", "b/a"), i):
         # unified-diff prefixes; a real `a/` top-level directory is rare
         # enough that the loss is one citation read as unresolved
-        p = p[2:]
-    return p
+        i += 2
+        slashes -= 1
+    return p[i:]
 
 
 def _span(start: str | None, end: str | None) -> tuple[int, int]:
@@ -277,7 +282,10 @@ def _fence_spans(text: str) -> list[tuple[int, int]]:
 
 
 def _in_spans(pos: int, spans: list[tuple[int, int]]) -> bool:
-    return any(a <= pos < b for a, b in spans)
+    """`spans` are in order and do not overlap, so the one that could hold
+    `pos` is found by bisection, not by walking every fence."""
+    i = bisect.bisect_right(spans, pos, key=lambda span: span[0]) - 1
+    return i >= 0 and pos < spans[i][1]
 
 
 def _blank(text: str, spans: list[tuple[int, int]]) -> str:

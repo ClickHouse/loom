@@ -23,7 +23,7 @@ _CODE_FILE_EXTS = (
     "vue|svelte|dart|lua|r|jl|tf|tfvars|dockerfile|makefile|gradle|xml"
 )
 _FILE_PATH_RE = re.compile(
-    r"(?<![\w./-])"  # left boundary: not mid-token
+    r"(?<![\w./@-])"  # left boundary: not mid-token
     r"((?:[\w.@-]+/)+[\w.@-]+\.(?:" + _CODE_FILE_EXTS + r"))"
     r"(?::\d+(?::\d+)?)?"  # optional :line or :line:col
     r"(?![\w])",
@@ -34,7 +34,7 @@ _FILE_PATH_RE = re.compile(
 # is plausibly a filename, not a sentence ending. Requires the extension
 # to be one of the closed-class code extensions.
 _BARE_FILE_RE = re.compile(
-    r"(?<![\w./-])([\w@-]+\.(?:" + _CODE_FILE_EXTS + r"))(?::\d+(?::\d+)?)?(?![\w])",
+    r"(?<![\w./@-])([\w@-]+\.(?:" + _CODE_FILE_EXTS + r"))(?::\d+(?::\d+)?)?(?![\w])",
     re.IGNORECASE,
 )
 # Extensionless conventional filenames coding agents touch constantly.
@@ -121,20 +121,20 @@ def _strip_line_suffix(path: str) -> str:
     return m.group(1) if m else path
 
 
-def _looks_like_commit_sha(token: str, text: str) -> bool:
-    """A 7-40 hex run is only a commit SHA when the surrounding prose says
-    so — otherwise hex-looking tokens (ids, hashes, colors) over-match.
-    Closed-class: require a commit/sha/revision cue near the token."""
-    if not (7 <= len(token) <= 40):
-        return False
-    # Pure-decimal runs are never SHAs (years, counts).
-    if token.isdigit():
-        return False
+def _has_commit_cue(text: str) -> bool:
+    """The prose says a hex run is a commit: a commit/sha/revision cue.
+    Read once per text, not once per hex run."""
     lowered = text.lower()
     return any(
         cue in lowered
         for cue in ("commit", "sha", "revision", "rev ", "git ", "cherry-pick", "hash")
     )
+
+
+def _looks_like_commit_sha(token: str) -> bool:
+    """A 7-40 hex run that is not all digits (years, counts). Read only when
+    the prose has a commit cue: hex-looking ids, hashes and colors over-match."""
+    return 7 <= len(token) <= 40 and not token.isdigit()
 
 
 def extract_code_facets(text: str) -> tuple[list[str], list[str]]:
@@ -222,9 +222,10 @@ def extract_code_facets(text: str) -> tuple[list[str], list[str]]:
         if _BARE_FILE_RE.fullmatch(sym):
             continue
         _add_concept(sym, from_prose=True)
-    # Commit SHA (gated on a nearby commit/sha cue).
-    for m in _COMMIT_SHA_RE.finditer(text):
-        if _looks_like_commit_sha(m.group(1), text):
-            _add_concept(f"commit:{m.group(1).lower()}")
+    # Commit SHAs, only when the text has a commit cue.
+    if _has_commit_cue(text):
+        for m in _COMMIT_SHA_RE.finditer(text):
+            if _looks_like_commit_sha(m.group(1)):
+                _add_concept(f"commit:{m.group(1).lower()}")
 
     return (files, concepts)

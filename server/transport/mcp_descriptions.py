@@ -2058,11 +2058,11 @@ TOOL_DESCRIPTIONS["tracker.links"] = (
 )
 
 TOOL_DESCRIPTIONS["tracker.duplicate_check"] = (
-    "Does this draft issue already exist? Give the draft as it would be "
+    "Does this draft issue already exist? Give it as it would be "
     "filed — `title`, `body`, the crash's `frames`, `component`, `version`, "
     "the numbers it `mentions`, the finding's `paths` and `symbols`. Omit `namespace`: "
     "the checkout's repository reads EVERY tracker record you may read (items name their "
-    "`namespace`; `namespaces: [...]` picks). One verdict: "
+    "`namespace`; `namespaces: [...]` picks). Verdict: "
     "`duplicate_of` (the top candidate's calibrated confidence reaches the "
     "duplicate threshold — hold for a reviewer), `related` (a candidate "
     "reaches the related threshold — attach as see-also), or `none` with NO "
@@ -2072,18 +2072,18 @@ TOOL_DESCRIPTIONS["tracker.duplicate_check"] = (
     "name)), `relation`, "
     "`relation_recorded` (the tracker graph's edge to `issue_number` — a recorded "
     "related_to is never promoted to duplicate), `evidence` lines, `why` "
-    "(incl. `fix_path`: a fix PR touched the draft's paths) and `features`; "
+    "(e.g. `fix_path`: a fix PR touched the draft's paths) and `features`; "
     "`epistemic` is calibrated; uncalibrated when no fit is stored (then "
     "`related` at most, confidence null; a restricted namespace borrows the "
     "org's standard fit — `fit.borrowed_from`); degraded when a leg failed after "
     "its one retry (`leg_status` names it and why) — a degraded `none` is not clearance. "
-    "`tracker_unavailable` means nobody read the record. With the judge on, a `related` "
-    "verdict is read once more by a small model; one it labels the same defect is "
+    "`tracker_unavailable`: nobody read the record. With the judge on, a small model "
+    "rereads a `related` verdict; one it labels the same defect is "
     "served as a duplicate (`judge` block); it never demotes and never overrides a "
     "recorded related_to. "
-    "Give `paths`: PRs that touched them, open ones included, and the issues "
-    "they fix become candidates too (`fix #N (open) touches …`) — how a "
-    "symptom-level draft reaches its root-cause report. `answer`: reported? fixed by "
+    "Give `paths`: PRs touching them (open too) and the issues they fix "
+    "become candidates (`fix #N (open) touches …`) — how a symptom-level "
+    "draft reaches its root-cause report. `answer`: reported? fixed by "
     "which PR, in which release (rows' `links`, `fixed_in`); `related_prs` on none."
 )
 

@@ -43,7 +43,8 @@ _ASK_RE = re.compile(
     r"|check the (?:qa|tracker) record(?: before i file(?: it)?)?|before i file(?: it)?)"
     r"[\s?.!:]*$"
 )
-_SEGMENT_SPLIT_RE = re.compile(r"(\s+[—–]\s+|\s+-\s+(?=\S)|(?<=[?!])\s+|:\s+(?=\S))")
+# A dash split starts at the first blank of a run, so a long run is one pass.
+_SEGMENT_SPLIT_RE = re.compile(r"((?<!\s)\s+[—–]\s+|(?<!\s)\s+-\s+(?=\S)|(?<=[?!])\s+|:\s+(?=\S))")
 
 # Under a tracker verdict: the knowledge row that may stay, and how much of
 # it (knowledge hits carry whole chunks).

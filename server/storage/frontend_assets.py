@@ -43,6 +43,7 @@ _FRESH = timedelta(hours=6)
 _REPUBLISH_S = 12 * 3600.0
 # Vite's `[name]-[hash].[ext]`: the hash makes the name a version.
 _HASHED = re.compile(r"-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$")
+_MAX_NAME_CHARS = 255  # not a setting: a file system's longest file name
 # Fetched bodies, by path (content-addressed, so never stale).
 _CACHE: OrderedDict[str, tuple[str, bytes]] = OrderedDict()
 _CACHE_MAX_BYTES = 32 * 1024 * 1024
@@ -56,8 +57,11 @@ _table_missing_warned = False
 
 
 def is_hashed_asset(path: str) -> bool:
-    """True when `path`'s file name carries a content hash (safe to cache forever)."""
-    return bool(_HASHED.search(path.rsplit("/", 1)[-1]))
+    """True when `path`'s file name carries a content hash (safe to cache forever).
+    A name longer than a file system allows is no bundle file, and is refused
+    before the search, which costs the square of the name's length."""
+    name = path.rsplit("/", 1)[-1]
+    return len(name) <= _MAX_NAME_CHARS and bool(_HASHED.search(name))
 
 
 def content_type_for(path: str) -> str:
