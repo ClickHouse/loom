@@ -75,10 +75,25 @@ Rules:
   has run for it.
 - Admin grants flow between a repository's branches in one direction. The operator's
   entries pass their admins to every branch of the repository, and a branch added here
-  passes its admins only to other branches added here.
+  passes its admins only to other standard branches added here. A restricted branch
+  added here takes the operator's admins only. Every sync revokes the other copies it
+  holds, or makes an operator admin's one a copy of the operator grant; a copy whose
+  `granted_by` names an entry the replica does not configure is revoked too (a retired
+  entry, or a new one a rolling deploy has not reached: grant admin on that entry
+  again). A branch whose admins were all such copies is left with none, and only an
+  admin grant on one of the repository's operator entries reaches it. A member who held
+  such a copy may have granted or approved others there, themselves included: review
+  its grants. Widening the branch again does not bring back a copy a restriction
+  revoked; grant that admin on a sibling again. Only an admin with a grant given there,
+  or a copy of one from an operator entry, can widen it; a copy from a branch added here
+  does not count.
 - A revoke follows the same path. One made on an operator entry removes from a branch
-  added here only a copied grant, and none while the subject holds an admin grant given
-  on a branch added here.
+  added here only a copied grant, and none from a standard one while the subject holds
+  an admin grant given on a branch added here. A copy that is a branch's only admin
+  stays, except on a restricted branch added here, where a revoke takes a copy whose
+  source is not an operator entry (one whose holder keeps an admin grant given on an
+  operator entry other than the revoked one is rewritten by the next sync instead); an
+  operator copy kept there goes at the next sync once its operator grant is gone.
 - An operator entry that names a namespace already added here keeps that namespace's
   admins, who then reach the repository's other operator entries, and its access row,
   whose classification and join policy win over the entry's: review both before
@@ -175,6 +190,7 @@ and survives restarts. `code.refresh` (writer) and the admin ops always need a g
 | A private self-service repository stops fetching  | `LOOM_JWT_SECRET` was rotated; re-enter the token                                                                                                                                                                                                                      |
 | An entry is missing from `code.repos`             | check `loom.code.repos_config_errors`; `code.repos` also lists only what the caller may read                                                                                                                                                                           |
 | Revoking or lowering an admin answers busy        | a revoke on a code namespace first re-reads `loom.code_repos`, so it sees the branches added here from another process, and answers busy while that read fails; retry once the read succeeds                                                                           |
+| A restricted branch added here has no admin       | its admins were all copies from branches added here, which the sync revokes; grant admin on one of the repository's operator entries (with none, the operator lists a branch of it in `LOOM_CODE_REPOS_JSON` first)                                                    |
 | A new maintainer lacks the other branches         | the admin grant was made before this process read `loom.code_repos` (that process logs `not synced` the first time); the next admin grant or approval on a branch of the repository, or a branch added, copies it; or grant it again                                   |
 | Answers are lexical only                          | the entry has not reached `LOOM_CODE_READY_EMBED_COVERAGE` ([freshness](freshness.md))                                                                                                                                                                                 |
 

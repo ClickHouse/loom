@@ -1,8 +1,12 @@
-"""Maintainer sync on ClickHouse orders grant changes by row version.
+"""Maintainer sync on ClickHouse: grant changes ordered by row version, and the
+statements the restricted-branch fan-out runs.
 
 `granted_at` keeps whole seconds, so a lowering on one branch and a promotion
 on another within the same second compare equal by time; the row version
-tells which came last. Written in order, as two admins would.
+tells which came last. Written in order, as two admins would. A restricted
+branch added from the page drops its page copies, restricted by the snapshot or
+by its directory row alone, and the own-grant and refused-rewrite statements
+count only live admin grants.
 """
 
 from __future__ import annotations
@@ -23,8 +27,11 @@ BRANCHES = ("code-ord", "code-ord-26-5")
 
 
 class _Entry:
-    def __init__(self, org: str, namespace: str, source: str = "config") -> None:
+    def __init__(
+        self, org: str, namespace: str, source: str = "config", classification: str = "standard"
+    ) -> None:
         self.org, self.namespace, self.repo, self.source = org, namespace, "It/ord", source
+        self.classification = classification
 
 
 @pytest.fixture
@@ -52,6 +59,8 @@ async def _grant(
     at: datetime,
     status: str = "active",
     subject: str = "alice",
+    granted_by: str = "it",
+    revoked_at: datetime | None = None,
 ) -> None:
     row = {
         "org": org,
@@ -60,8 +69,8 @@ async def _grant(
         "role": role,
         "status": status,
         "granted_at": at,
-        "granted_by": "it",
-        "revoked_at": None,
+        "granted_by": granted_by,
+        "revoked_at": revoked_at,
         "version": time.time_ns(),
     }
     await client.insert(
@@ -145,3 +154,151 @@ async def test_a_page_added_branch_admin_never_reaches_the_operator_entry(
     monkeypatch.setattr(repo_registry, "read_registry", _read)
     await maintainers.revoke_repo_maintainer(org, "code-ord", "ops", repo="It/ord", ch=client)
     assert await _state(client, org, "code-ord-dev", "ops") == "admin/active/revoked"
+
+
+async def test_a_restricted_page_branch_drops_a_page_copy_and_takes_an_operator_grant_after(
+    ch: tuple[Any, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On ClickHouse: the sync's revoke replaces the page copy under FINAL, and an
+    operator grant made afterwards is copied onto the branch, not held back by it."""
+    client, org = ch
+    entries = [
+        _Entry(org, "code-ord"),
+        _Entry(org, "code-ord-dev", source="registry"),
+        _Entry(org, "code-ord-rc", source="registry", classification="restricted"),
+    ]
+    monkeypatch.setattr(repos, "configured_repos", lambda: entries)
+    second = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
+    await _grant(client, org, "code-ord-dev", "admin", second, subject="mallory")
+    copy = "repo-maintainers:code-ord-dev"
+    await _grant(client, org, "code-ord-rc", "admin", second, subject="mallory", granted_by=copy)
+    await maintainers.sync_repo_maintainers(org, "code-ord", ch=client)
+    assert await _state(client, org, "code-ord-rc", "mallory") == "admin/active/revoked"
+    await _grant(client, org, "code-ord", "admin", second, subject="mallory")
+    await maintainers.sync_repo_maintainers(org, "code-ord", ch=client)
+    assert await _state(client, org, "code-ord-rc", "mallory") == "admin/active"
+
+
+async def test_a_page_branch_restricted_by_its_directory_row_alone_drops_a_page_copy(
+    ch: tuple[Any, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On ClickHouse: the snapshot says standard, the directory row says restricted;
+    the sync reads the row and revokes the copy a sibling page branch gave it."""
+    client, org = ch
+    entries = [
+        _Entry(org, "code-ord"),
+        _Entry(org, "code-ord-dev", source="registry"),
+        _Entry(org, "code-ord-rc", source="registry"),
+    ]
+    monkeypatch.setattr(repos, "configured_repos", lambda: entries)
+    await client.insert(
+        "loom.namespaces",
+        [
+            {
+                "org": org,
+                "namespace": "code-ord-rc",
+                "owner_email": "",
+                "classification": "restricted",
+            }
+        ],
+        settings={"async_insert": 0, "wait_for_async_insert": 1},
+    )
+    try:
+        second = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
+        await _grant(client, org, "code-ord-dev", "admin", second, subject="mallory")
+        await maintainers.sync_repo_maintainers(org, "code-ord", ch=client)
+        assert await _state(client, org, "code-ord-rc", "mallory") == "none"
+        # A copy an earlier build left there, or one made while the branch was standard.
+        copy = "repo-maintainers:code-ord-dev"
+        await _grant(
+            client, org, "code-ord-rc", "admin", second, subject="mallory", granted_by=copy
+        )
+        await maintainers.sync_repo_maintainers(org, "code-ord", ch=client)
+        assert await _state(client, org, "code-ord-rc", "mallory") == "admin/active/revoked"
+    finally:
+        await client.execute(
+            "ALTER TABLE loom.namespaces DROP PARTITION {p:String}", params={"p": org}
+        )
+
+
+@pytest.mark.parametrize(
+    ("role", "status", "granted_by", "revoked", "holds"),
+    [
+        ("admin", "active", "alice", False, True),
+        ("admin", "pending", "alice", False, False),  # asked, not given
+        ("admin", "active", "alice", True, False),  # revoked since the gate passed
+        ("viewer", "active", "alice", False, False),  # lowered
+        ("admin", "active", "repo-maintainers:code-ord-dev", False, False),  # a page copy
+        ("admin", "active", "repo-maintainers:code-ord", False, True),  # an operator copy
+    ],
+)
+async def test_only_a_live_admin_grant_not_from_a_page_branch_counts_as_the_caller_s_own(
+    ch: tuple[Any, str],
+    monkeypatch: pytest.MonkeyPatch,
+    role: str,
+    status: str,
+    granted_by: str,
+    revoked: bool,
+    holds: bool,
+) -> None:
+    """On ClickHouse: the statement `holds_own_admin` runs refuses a pending, revoked
+    or lowered grant, and the label check refuses a copy from a page branch."""
+    client, org = ch
+    entries = [
+        _Entry(org, "code-ord"),
+        _Entry(org, "code-ord-dev", source="registry"),
+        _Entry(org, "code-ord-rc", source="registry", classification="restricted"),
+    ]
+    monkeypatch.setattr(repos, "configured_repos", lambda: entries)
+    at = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
+    await _grant(
+        client,
+        org,
+        "code-ord-rc",
+        role,
+        at,
+        status=status,
+        subject="mallory",
+        granted_by=granted_by,
+        revoked_at=at if revoked else None,
+    )
+    assert await maintainers.holds_own_admin(client, org, "code-ord-rc", "mallory") is holds
+
+
+@pytest.mark.parametrize(
+    ("namespace", "role", "status", "granted_by", "revoked", "holds"),
+    [
+        ("code-ord", "admin", "active", "alice", False, True),
+        ("code-ord", "admin", "pending", "alice", False, False),
+        ("code-ord", "admin", "active", "alice", True, False),
+        ("code-ord", "writer", "active", "alice", False, False),  # lowered
+        ("code-ord", "admin", "active", "repo-maintainers:code-ord-26-5", False, False),  # a copy
+        ("code-ord-dev", "admin", "active", "alice", False, False),  # not an operator entry
+    ],
+)
+async def test_a_refused_rewrite_reads_the_subject_s_given_operator_admin_grants(
+    ch: tuple[Any, str],
+    namespace: str,
+    role: str,
+    status: str,
+    granted_by: str,
+    revoked: bool,
+    holds: bool,
+) -> None:
+    """On ClickHouse: the statement behind a refused rewrite counts only live admin
+    grants given on the operator entries it is passed."""
+    client, org = ch
+    at = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
+    await _grant(
+        client,
+        org,
+        namespace,
+        role,
+        at,
+        status=status,
+        subject="ops",
+        granted_by=granted_by,
+        revoked_at=at if revoked else None,
+    )
+    config = ["code-ord", "code-ord-26-5"]
+    assert await maintainers._holds_operator_admin(client, org, "ops", config) is holds

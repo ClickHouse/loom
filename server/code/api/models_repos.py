@@ -262,7 +262,9 @@ class CodeRepoSetAccessInput(BaseModel):
     classification: str
     # `open`, `approval` or `closed` (case-insensitive); `open` with `restricted` is refused.
     join_policy: str
-    # Must equal `namespace` when the call widens `restricted` to `standard`; else unused.
+    # Must equal `namespace` when the call widens `restricted` to `standard`, which also
+    # needs an admin grant of the caller's own there (a copy that does not come from one
+    # of the repository's operator entries does not count); else unused.
     confirm: str = ""
 
 
@@ -275,13 +277,15 @@ class CodeRepoSetAccessOutput(BaseModel):
     classification: str
     # The join policy as written (lower-cased).
     join_policy: str
-    # The entry's classification before this call.
+    # The entry's classification before this call: `restricted` when either the
+    # entry, as this process last read it, or its directory row said so.
     previous_classification: str
     # The directory row's join policy before this call (when it had none: `open` for a
     # public entry, else `approval`).
     previous_join_policy: str
-    # True when the namespace's directory row got the new access too; False when the
-    # namespace has no directory row (only the registry row was written).
+    # True when the namespace's directory row got the new access too, a branch added
+    # from the page with no row yet getting its first one; False for an operator entry
+    # with no directory row.
     directory_updated: bool
     # every process re-reads the access row within this many seconds
     effective_within_s: int

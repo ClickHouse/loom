@@ -8,14 +8,16 @@ override is read before the config map and "" clears it."""
 from __future__ import annotations
 
 import dataclasses
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from server.auth import grant_claims
 from server.code.app.index import repo_registry as reg
 from server.code.domain.index import repos
-from server.core.errors import ValidationError
+from server.core.errors import GrantBusyError, ValidationError
 from server.tracker.app import binding
 
 ORG = "clickhouse"
@@ -90,7 +92,20 @@ class _CH:
         self.queries.append(sql)
         return dict(self.row) if self.row else None
 
-    async def insert(self, table: str, rows: list[dict[str, Any]]) -> None:
+    async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        # The caller holds an admin grant given there, unless a test says otherwise.
+        return [
+            {
+                "namespace": params["ns"],
+                "subject": params["subs"][0],
+                "role": "admin",
+                "status": "active",
+                "revoked_at": None,
+                "granted_by": "ops",
+            }
+        ]
+
+    async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
         self.inserts.append((table, rows))
 
 
@@ -351,3 +366,310 @@ async def test_upsert_access_copies_an_existing_registry_row_and_builds_one_for_
         and row["path_prefixes"] == ["src/"]
     )
     assert row["classification"] == "standard" and row["active"] is True and "created_at" in row
+
+
+@pytest.mark.asyncio
+async def test_restricting_a_page_branch_revokes_the_copy_a_sibling_gave_it(monkeypatch) -> None:
+    from server.code.app import repo_admin as h
+    from server.code.app.index import maintainers
+    from server.identity.app import namespace_classification as nc
+
+    mine = _cfg("code-weave-rc", classification="standard", source="registry")
+    sibling = dataclasses.replace(mine, namespace="code-weave-dev", git_branch="dev")
+    snapshot = [sibling, mine]
+    copy = {
+        "namespace": "code-weave-rc",
+        "subject": "mallory",
+        "role": "admin",
+        "status": "active",
+        "revoked_at": None,
+        "granted_at": "2026-09-01 00:00:00",
+        "granted_by": "repo-maintainers:code-weave-dev",
+        "version": 1,
+    }
+    grants = [
+        copy,
+        copy | {"namespace": "code-weave-dev", "granted_by": "mallory", "version": 2},
+        copy | {"subject": "alice", "granted_by": "ops", "version": 3},  # given there
+    ]
+
+    class _Directory(_CH):
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            if "loom.namespaces" in sql:  # the restriction written a moment ago
+                written = [r for t, rows in self.inserts if t == "loom.namespaces" for r in rows]
+                return [
+                    {"namespace": r["namespace"], "classification": "restricted"} for r in written
+                ]
+            return [g for g in grants if g["namespace"] in params["ns"]]
+
+        async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+            if "namespace_grants" in sql:
+                key = (params["ns"], params["sub"])
+                return next((g for g in grants if (g["namespace"], g["subject"]) == key), None)
+            return await super().query_one(sql, params)
+
+    ch = _Directory({"org": ORG, "namespace": "code-weave-rc", "classification": "standard"})
+    held: list[str] = []
+    real = grant_claims.admins_change
+
+    @asynccontextmanager
+    async def admins(org: str, ns: str) -> Any:
+        async with real(org, ns):
+            held.append(ns)
+            yield
+            held.remove(ns)
+
+    async def insert(table: str, rows: list[dict[str, Any]], **_: Any) -> None:
+        # The restriction's directory row is written under the repository's admins
+        # claim, which a revoke holds, then the branch's, which a copy holds.
+        if table == "loom.namespaces":
+            assert held == ["repo:ClickHouse/weave", "code-weave-rc"]
+        ch.inserts.append((table, rows))
+
+    monkeypatch.setattr(grant_claims, "admins_change", admins)
+    monkeypatch.setattr(h, "admins_change", admins)
+    monkeypatch.setattr(ch, "insert", insert)
+
+    refreshed: list[bool] = []
+
+    async def refresh(*a, **k):
+        from server.core.ch import sequential_reads_active
+
+        if "ch" in k:  # the one after the claims: the sync reads this snapshot
+            refreshed.append(sequential_reads_active())
+        return []
+
+    async def upsert(*a, **k):
+        # The directory row first: a restriction cut short after it still stops copies.
+        assert ch.inserts[-1][0] == "loom.namespaces"
+
+    monkeypatch.setattr(reg, "refresh_db_repos", refresh)
+    monkeypatch.setattr(reg, "upsert_access", upsert)
+    monkeypatch.setattr(reg, "registry_read", lambda: True)
+    monkeypatch.setattr(repos, "configured_repos", lambda: snapshot)
+    monkeypatch.setattr("server.code.domain.index.repos.repo_for_namespace", lambda org, ns: mine)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr(nc, "note_restricted", lambda org, ns: None)
+    monkeypatch.setattr(h, "current_caller", lambda: ("alice", ORG))
+    monkeypatch.setattr(h, "restrict_entry", lambda cfg: None)
+    maintainers.reset_for_tests()
+    inp = SimpleNamespace(
+        org=ORG,
+        namespace="code-weave-rc",
+        classification="restricted",
+        join_policy="approval",
+        confirm="",
+    )
+    await h.handle_code_repo_set_access(inp)
+    written = [r for t, rows in ch.inserts if t == "loom.namespace_grants" for r in rows]
+    on_it = [r for r in written if r["namespace"] == "code-weave-rc"]
+    assert [(r["subject"], r["revoked_at"] is not None) for r in on_it] == [("mallory", True)]
+
+    # A sync that fails leaves the decision written and the call answered (so audited):
+    # the ingest pass finishes it. A widening syncs too, bringing the siblings back.
+    synced: list[str] = []
+
+    async def busy(org: str, ns: str, **k: Any) -> int:
+        synced.append(ns)
+        raise GrantBusyError("busy")
+
+    monkeypatch.setattr(maintainers, "sync_repo_maintainers", busy)
+    ch.inserts.clear()
+    await h.handle_code_repo_set_access(inp)
+    assert [t for t, _ in ch.inserts] == ["loom.namespaces"]
+    inp.classification, inp.confirm = "standard", "code-weave-rc"
+    await h.handle_code_repo_set_access(inp)
+    assert synced == ["code-weave-rc", "code-weave-rc"]
+    assert refreshed and all(refreshed)
+
+
+@pytest.mark.parametrize(
+    ("source", "snapshot", "classification"),
+    [
+        ("registry", "standard", "restricted"),
+        ("registry", "restricted", "standard"),
+        ("config", "standard", "restricted"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_page_branch_with_no_directory_row_gets_its_first_one(
+    monkeypatch, source: str, snapshot: str, classification: str
+) -> None:
+    """A copy onto it reads that row under the branch's admins claim, and the ingest pass
+    may not reach the branch for a long time (a pending clone, an org with model calls
+    off): the access change writes the row itself. An operator entry's row stays the
+    registrar's to write."""
+    from server.code.app import repo_admin as h
+    from server.code.app.index import maintainers
+
+    async def refresh(*a, **k):
+        return []
+
+    async def upsert(*a, **k):
+        return None
+
+    async def sync(*a, **k):
+        return None
+
+    monkeypatch.setattr(reg, "refresh_db_repos", refresh)
+    monkeypatch.setattr(reg, "upsert_access", upsert)
+    monkeypatch.setattr(maintainers, "sync_quietly", sync)
+    monkeypatch.setattr(h, "restrict_entry", lambda cfg: None)
+    monkeypatch.setattr(h, "current_caller", lambda: ("alice", ORG))
+    monkeypatch.setattr(
+        "server.code.domain.index.repos.repo_for_namespace",
+        lambda org, ns: _cfg("code-weave-rc", classification=snapshot, source=source),
+    )
+    ch = _CH(None)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    inp = SimpleNamespace(
+        org=ORG,
+        namespace="code-weave-rc",
+        classification=classification,
+        join_policy="approval",
+        confirm="",
+    )
+    if snapshot == "restricted":  # a widening still needs confirm
+        with pytest.raises(ValidationError):
+            await h.handle_code_repo_set_access(inp)
+        inp.confirm = "code-weave-rc"
+    out = await h.handle_code_repo_set_access(inp)
+    if source == "config":
+        assert ch.inserts == [] and not out.directory_updated
+        return
+    ((table, (row,)),) = ch.inserts
+    assert table == "loom.namespaces" and out.directory_updated
+    assert (row["namespace"], row["kind"], row["classification"], row["join_policy"]) == (
+        "code-weave-rc",
+        "code",
+        classification,
+        "approval",
+    )
+
+
+@pytest.mark.asyncio
+async def test_widening_needs_confirm_when_the_row_read_now_says_restricted(monkeypatch) -> None:
+    """This replica's snapshot may still say standard after another restricted it."""
+    from server.code.app import repo_admin as h
+
+    async def refresh(*a, **k):
+        return []
+
+    monkeypatch.setattr(reg, "refresh_db_repos", refresh)
+    from server.code.app.index import maintainers
+
+    async def sync(*a, **k):
+        return None
+
+    monkeypatch.setattr(maintainers, "sync_quietly", sync)
+    monkeypatch.setattr(
+        "server.code.domain.index.repos.repo_for_namespace",
+        lambda org, ns: _cfg("code-weave", classification="standard", source="registry"),
+    )
+    ch = _CH({"org": ORG, "namespace": "code-weave", "classification": "restricted"})
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr(h, "current_caller", lambda: ("alice", ORG))
+    with pytest.raises(ValidationError) as e:
+        await h.handle_code_repo_set_access(
+            SimpleNamespace(
+                org=ORG,
+                namespace="code-weave",
+                classification="standard",
+                join_policy="approval",
+                confirm="",
+            )
+        )
+    assert e.value.to_detail()["code"] == "CONFIRM_REQUIRED" and ch.inserts == []
+
+    # With confirm, the reply names the classification the directory row had.
+    async def upsert(*a, **k):
+        return None
+
+    monkeypatch.setattr(reg, "upsert_access", upsert)
+    monkeypatch.setattr(h, "restrict_entry", lambda cfg: None)
+    out = await h.handle_code_repo_set_access(
+        SimpleNamespace(
+            org=ORG,
+            namespace="code-weave",
+            classification="standard",
+            join_policy="approval",
+            confirm="code-weave",
+        )
+    )
+    assert out.previous_classification == "restricted"
+
+
+_STRAY = {
+    "subject": "Mallory@corp.example",  # another spelling of the caller
+    "role": "admin",
+    "status": "active",
+    "revoked_at": None,
+    "granted_by": "repo-maintainers:code-weave-dev",
+}
+
+
+@pytest.mark.parametrize(
+    ("rows", "allowed"),
+    [
+        ([_STRAY], False),  # a stray copy only
+        ([], False),  # the copy revoked since the gate passed: no live admin row left
+        ([_STRAY, {**_STRAY, "subject": "mallory", "granted_by": "alice"}], True),
+        ([{**_STRAY, "granted_by": "repo-maintainers:code-weave"}], True),  # an operator copy
+    ],
+)
+@pytest.mark.asyncio
+async def test_only_an_own_admin_grant_widens_a_restricted_branch(
+    monkeypatch, rows: list[dict[str, Any]], allowed: bool
+) -> None:
+    """A stray copy's holder could otherwise widen the branch before the next sync revokes
+    the copy, and keep it for good. Every spelling of the caller counts."""
+    from server.code.app import repo_admin as h
+    from server.core.errors import AuthInsufficientError
+
+    async def refresh(*a, **k):
+        return []
+
+    async def quiet(*a, **k):
+        return None
+
+    mine = _cfg("code-weave-rc", classification="restricted", source="registry")
+    sibling = dataclasses.replace(mine, namespace="code-weave-dev", classification="standard")
+    operator = dataclasses.replace(mine, namespace="code-weave", source="config")
+    monkeypatch.setattr(reg, "refresh_db_repos", refresh)
+    monkeypatch.setattr(reg, "upsert_access", quiet)
+    monkeypatch.setattr(repos, "configured_repos", lambda: [operator, sibling, mine])
+    monkeypatch.setattr("server.code.domain.index.repos.repo_for_namespace", lambda org, ns: mine)
+    from server.code.app.index import maintainers
+
+    monkeypatch.setattr(maintainers, "sync_quietly", quiet)
+    seen: list[list[str]] = []
+
+    class _Grants(_CH):
+        async def query_all(self, sql, params=None):
+            seen.append(params["subs"])
+            return [r | {"namespace": "code-weave-rc"} for r in rows]
+
+    async def aliases(org: str, subject: str, **_: Any) -> list[str]:
+        return [subject, "Mallory@corp.example"]
+
+    monkeypatch.setattr("server.auth.aliases.subject_aliases", aliases)
+    monkeypatch.setattr("server.auth.context.current_auth", lambda: object())  # auth on
+    monkeypatch.setattr(h, "_require_same_org", lambda org: None)
+    ch = _Grants({"org": ORG, "namespace": "code-weave-rc", "classification": "restricted"})
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr(h, "current_caller", lambda: ("mallory", ORG))
+    widen = SimpleNamespace(
+        org=ORG,
+        namespace="code-weave-rc",
+        classification="standard",
+        join_policy="approval",
+        confirm="code-weave-rc",
+    )
+    if allowed:
+        await h.handle_code_repo_set_access(widen)
+        assert [t for t, _ in ch.inserts] == ["loom.namespaces"]
+    else:
+        with pytest.raises(AuthInsufficientError):
+            await h.handle_code_repo_set_access(widen)
+        assert ch.inserts == []
+    assert seen == [["mallory", "mallory@corp.example"]]

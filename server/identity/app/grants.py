@@ -220,7 +220,7 @@ async def _create_grant(
     now = await _write_or_lower(input, subject, may_replace)
     if input.role == "admin":
         # Admin flows to the repository's other branches: from an operator entry to
-        # all of them, from a page-added branch to page-added ones (`_reaches`).
+        # all of them, from a page-added branch to standard page-added ones.
         from server.code.app.index import maintainers
 
         await maintainers.sync_quietly(input.org, input.namespace)
@@ -605,7 +605,7 @@ async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutpu
         out = await _decide_request(input)
     if out.decision == "approve" and out.role == "admin":
         # Admin flows to the repository's other branches: from an operator entry to
-        # all of them, from a page-added branch to page-added ones (`_reaches`).
+        # all of them, from a page-added branch to standard page-added ones.
         from server.code.app.index import maintainers
 
         await maintainers.sync_quietly(input.org, input.namespace)

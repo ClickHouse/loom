@@ -29,6 +29,23 @@ async def fetch_row(
     return dict(row) if row else None
 
 
+async def classifications(
+    org: str, namespaces: list[str], *, ch: _CHClient | None = None
+) -> dict[str, str]:
+    """The classification of each of `namespaces` that has a directory row."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        """
+        SELECT namespace, toString(classification) AS classification
+        FROM loom.namespaces FINAL
+        WHERE org = {org:String} AND namespace IN {ns:Array(String)}
+        LIMIT {n:UInt32}
+        """,
+        params={"org": org, "ns": list(namespaces), "n": len(namespaces)},
+    )
+    return {str(r["namespace"]): str(r["classification"]) for r in rows}
+
+
 async def unclaimed_rows(
     namespace: str, unclaimed_sql: str, *, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:

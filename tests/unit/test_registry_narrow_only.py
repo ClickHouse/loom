@@ -1,8 +1,10 @@
-"""The code namespace registry writes the classification on a
-fresh row and narrows an existing standard row when the config says
-restricted — mirroring every column — and never widens one."""
+"""The code namespace registry writes the classification on a fresh row, and
+narrows, opens or widens an existing one, mirroring every column, only while the
+registry row read again under the namespace's admins claim still says so."""
 
 from __future__ import annotations
+
+import dataclasses
 
 import pytest
 
@@ -17,6 +19,8 @@ class _Client:
         self.inserted: list[tuple[str, list[dict]]] = []
 
     async def query_one(self, sql, params=None):
+        if "loom.code_repos" in sql:
+            return None  # an operator entry with no access row
         return self.existing
 
     async def insert(self, table, rows):
@@ -110,3 +114,230 @@ async def test_existing_row_already_restricted_is_left_alone() -> None:
     client = _Client(existing=existing)
     await registry.ensure_registered(_cfg("restricted"), ch=client)
     assert client.inserted == []
+
+
+@pytest.mark.parametrize(
+    ("source", "access", "written"),
+    [
+        ("config", "standard", "after"),
+        ("config", "restricted", "after"),
+        ("config", "standard", "before"),
+        ("config", "standard", "same"),
+        ("registry", "standard", "after"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_maintainer_s_widening_reaches_the_row_only_while_its_access_row_says_so(
+    monkeypatch: pytest.MonkeyPatch, source: str, access: str, written: str
+) -> None:
+    """The snapshot says a maintainer opened it; the access row read now decides, since a
+    restriction may have landed after the snapshot was read. An access row older than
+    the directory row is a restriction cut short before its access row was written. A
+    branch added from the page is widened by code.repo.set_access alone."""
+    from datetime import datetime
+
+    existing = {
+        "org": "clickhouse",
+        "namespace": "code-p",
+        "classification": "restricted",
+        "updated_at": datetime(2026, 9, 1, 10, 0, 0),
+    }
+    at = datetime(2026, 9, 1, {"after": 11, "before": 9, "same": 10}[written], 0, 0)
+
+    class _Access(_Client):
+        async def query_one(self, sql, params=None):
+            if "loom.code_repos" in sql:
+                return {"classification": access, "updated_at": at, "join_policy": "closed"}
+            return self.existing
+
+    client = _Access(existing=existing)
+    cfg = dataclasses.replace(_cfg("standard"), source=source, access_source="registry")
+    held = _hold_admins(monkeypatch, client)
+    await registry.ensure_registered(cfg, ch=client)
+    widens = source == "config" and access == "standard" and written == "after"
+    widened = [(r["classification"], r["join_policy"]) for _, rows in client.inserted for r in rows]
+    assert widened == ([("standard", "closed")] if widens else [])  # the access row's policy
+    assert held == (["code-p"] if widens else [])
+
+
+def _hold_admins(monkeypatch: pytest.MonkeyPatch, client: _Client) -> list[str]:
+    """The namespaces whose admins claim was held at each directory write."""
+    from contextlib import asynccontextmanager
+
+    from server.auth import grant_claims
+
+    real, holding, held = grant_claims.admins_change, [], []
+
+    @asynccontextmanager
+    async def _admins(org: str, ns: str):
+        async with real(org, ns):
+            holding.append(ns)
+            yield
+            holding.remove(ns)
+
+    write = client.insert
+
+    async def _insert(table, rows):
+        held.extend(holding)
+        await write(table, rows)
+
+    monkeypatch.setattr(grant_claims, "admins_change", _admins)
+    monkeypatch.setattr(client, "insert", _insert)
+    return held
+
+
+@pytest.mark.parametrize("existing", [None, {"classification": "standard"}])
+@pytest.mark.asyncio
+async def test_the_registrar_reads_and_writes_the_row_under_the_admins_claim(
+    monkeypatch: pytest.MonkeyPatch, existing: dict | None
+) -> None:
+    """`code.repo.set_access` restricts under the same claim: a read made before it, or
+    on a lagging replica, must not open, widen or recreate a restricted row."""
+    from server.core.ch import sequential_reads_active
+
+    reads: list[bool] = []
+
+    class _Fresh(_Client):
+        async def query_one(self, sql, params=None):
+            reads.append(sequential_reads_active())
+            if "loom.code_repos" in sql:
+                return None  # no access row: the operator's entry says public
+            return dict(self.existing) if self.existing else None
+
+    client = _Fresh(existing=existing)
+    held = _hold_admins(monkeypatch, client)
+    await registry.ensure_registered(dataclasses.replace(_cfg("standard"), public=True), ch=client)
+    assert reads == [True, True]  # the directory row, then the registry row
+    assert [r["join_policy"] for _, rows in client.inserted for r in rows] == ["open"]
+    assert held == ["code-p"]
+
+
+@pytest.mark.parametrize(
+    ("join_policy", "written"), [("open", "after"), ("approval", "after"), ("open", "before")]
+)
+@pytest.mark.asyncio
+async def test_a_page_branch_opens_only_while_its_registry_row_says_open(
+    join_policy: str, written: str
+) -> None:
+    """The snapshot may predate a maintainer closing it to approval; an access row older
+    than the directory row is a change cut short before its access row was written."""
+    from datetime import datetime
+
+    at = datetime(2026, 9, 1, 11 if written == "after" else 9, 0, 0)
+
+    class _Registry(_Client):
+        async def query_one(self, sql, params=None):
+            if "loom.code_repos" in sql:
+                return {"classification": "standard", "join_policy": join_policy, "updated_at": at}
+            return {
+                "classification": "standard",
+                "join_policy": "approval",
+                "updated_at": datetime(2026, 9, 1, 10, 0, 0),
+            }
+
+    client = _Registry()
+    cfg = dataclasses.replace(_cfg("standard"), public=True, source="registry")
+    await registry.ensure_registered(cfg, ch=client)
+    opened = [r["join_policy"] for _, rows in client.inserted for r in rows]
+    assert opened == (["open"] if (join_policy, written) == ("open", "after") else [])
+
+
+@pytest.mark.parametrize("access", ["standard", "restricted"])
+@pytest.mark.asyncio
+async def test_a_narrowing_reaches_the_row_only_while_the_registry_row_says_restricted(
+    access: str,
+) -> None:
+    """The snapshot may predate a maintainer opening it: re-restricting would then
+    revoke the copies its siblings gave it."""
+
+    class _Access(_Client):
+        async def query_one(self, sql, params=None):
+            if "loom.code_repos" in sql:
+                return {"classification": access}
+            return {"classification": "standard", "join_policy": "approval"}
+
+    client = _Access()
+    await registry.ensure_registered(_cfg("restricted"), ch=client)
+    narrowed = [r["classification"] for _, rows in client.inserted for r in rows]
+    assert narrowed == (["restricted"] if access == "restricted" else [])
+
+
+@pytest.mark.asyncio
+async def test_a_first_row_follows_a_registry_row_newer_than_the_snapshot() -> None:
+    """A maintainer restricted the entry before it had a directory row; this process's
+    snapshot still says standard and public."""
+
+    class _Restricted(_Client):
+        async def query_one(self, sql, params=None):
+            if "loom.code_repos" in sql:
+                return {"classification": "restricted", "join_policy": "approval"}
+            return None
+
+    client = _Restricted()
+    cfg = dataclasses.replace(_cfg("standard"), public=True)
+    assert await registry.ensure_registered(cfg, ch=client)
+    ((_table, (row,)),) = client.inserted
+    assert (row["classification"], row["join_policy"]) == ("restricted", "approval")
+
+
+@pytest.mark.asyncio
+async def test_a_first_row_follows_a_standard_registry_row_over_a_restricted_snapshot() -> None:
+    """A maintainer widened the entry before it had a directory row; this process's
+    snapshot still says restricted."""
+
+    class _Standard(_Client):
+        async def query_one(self, sql, params=None):
+            if "loom.code_repos" in sql:
+                return {"classification": "standard", "join_policy": "approval"}
+            return None
+
+    client = _Standard()
+    assert await registry.ensure_registered(_cfg("restricted"), ch=client)
+    ((_table, (row,)),) = client.inserted
+    assert (row["classification"], row["join_policy"]) == ("standard", "approval")
+
+
+@pytest.mark.asyncio
+async def test_a_first_row_keeps_the_registry_row_s_closed_policy() -> None:
+    class _Closed(_Client):
+        async def query_one(self, sql, params=None):
+            if "loom.code_repos" in sql:
+                return {"classification": "standard", "join_policy": "closed"}
+            return None
+
+    client = _Closed()
+    cfg = dataclasses.replace(_cfg("standard"), public=True)
+    assert await registry.ensure_registered(cfg, ch=client)
+    ((_table, (row,)),) = client.inserted
+    assert row["join_policy"] == "closed"
+
+
+@pytest.mark.asyncio
+async def test_a_restricted_first_row_is_never_open() -> None:
+    class _RestrictedOpen(_Client):
+        async def query_one(self, sql, params=None):
+            if "loom.code_repos" in sql:
+                return {"classification": "restricted", "join_policy": "open"}
+            return None
+
+    client = _RestrictedOpen()
+    assert await registry.ensure_registered(_cfg("standard"), ch=client)
+    ((_table, (row,)),) = client.inserted
+    assert (row["classification"], row["join_policy"]) == ("restricted", "approval")
+
+
+@pytest.mark.asyncio
+async def test_an_inactive_registry_row_decides_nothing() -> None:
+    """A removed branch added from the page leaves its registry row inactive: the
+    operator's entry for the same namespace decides."""
+
+    class _Removed(_Client):
+        async def query_one(self, sql, params=None):
+            if "loom.code_repos" in sql:
+                return {"classification": "standard", "join_policy": "open", "active": False}
+            return None
+
+    client = _Removed()
+    assert await registry.ensure_registered(_cfg("restricted"), ch=client)
+    ((_table, (row,)),) = client.inserted
+    assert (row["classification"], row["join_policy"]) == ("restricted", "approval")

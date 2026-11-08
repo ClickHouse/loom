@@ -1244,7 +1244,7 @@ A maintainer sets a repository's access — its classification (`standard` | `re
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `classification` | `str` | required | `standard` or `restricted` (case-insensitive); anything else is BAD_CLASSIFICATION. |
 | `join_policy` | `str` | required | `open`, `approval` or `closed` (case-insensitive); `open` with `restricted` is refused. |
-| `confirm` | `str` | `''` | Must equal `namespace` when the call widens `restricted` to `standard`; else unused. |
+| `confirm` | `str` | `''` | Must equal `namespace` when the call widens `restricted` to `standard`, which also needs an admin grant of the caller's own there (a copy that does not come from one of the repository's operator entries does not count); else unused. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -1253,9 +1253,9 @@ A maintainer sets a repository's access — its classification (`standard` | `re
 | `repo` | `str` | The repository's GitHub owner/name. |
 | `classification` | `str` | The classification as written (lower-cased). |
 | `join_policy` | `str` | The join policy as written (lower-cased). |
-| `previous_classification` | `str` | The entry's classification before this call. |
+| `previous_classification` | `str` | The entry's classification before this call: `restricted` when either the entry, as this process last read it, or its directory row said so. |
 | `previous_join_policy` | `str` | The directory row's join policy before this call (when it had none: `open` for a public entry, else `approval`). |
-| `directory_updated` | `bool` | True when the namespace's directory row got the new access too; False when the namespace has no directory row (only the registry row was written). |
+| `directory_updated` | `bool` | True when the namespace's directory row got the new access too, a branch added from the page with no row yet getting its first one; False for an operator entry with no directory row. |
 | `effective_within_s` | `int` | every process re-reads the access row within this many seconds |
 
 ## `code.repo.set_source`

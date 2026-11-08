@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import time
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -25,8 +26,16 @@ pytestmark = pytest.mark.usefixtures("no_directory_ties")
 
 
 class _Cfg:
-    def __init__(self, org: str, namespace: str, repo: str, source: str = "config") -> None:
+    def __init__(
+        self,
+        org: str,
+        namespace: str,
+        repo: str,
+        source: str = "config",
+        classification: str = "standard",
+    ) -> None:
         self.org, self.namespace, self.repo, self.source = org, namespace, repo, source
+        self.classification = classification
 
 
 REPOS = [
@@ -40,24 +49,45 @@ REPOS = [
 class _FakeCH:
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self.rows = rows
+        self.restricted: set[str] = set()  # by their directory rows
         self.inserted: list[dict[str, Any]] = []
         self.sql: list[str] = []
 
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
         self.sql.append(sql)
         wanted = set(params["ns"])
+        if "loom.namespaces" in sql:
+            return [
+                {"namespace": ns, "classification": "restricted"}
+                for ns in params["ns"]
+                if ns in self.restricted
+            ]
         return [r for r in self.rows if r["namespace"] in wanted]
 
     async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
+        if "startsWith(granted_by" in sql:  # a subject's given operator admin grants
+            given = [
+                r
+                for r in self.rows
+                if r["namespace"] in params["ns"]
+                and r["subject"] == params["sub"]
+                and not r["granted_by"].startswith(params["prefix"])
+            ]
+            return {"n": sum(_live_admin_row(r) for r in given)}
         if "count()" in sql:  # a branch's live admins
-            live = [r for r in self.rows if r["namespace"] == params["ns"] and r["role"] == "admin"]
-            return {"n": sum(r["revoked_at"] is None and r["status"] == "active" for r in live)}
+            return {
+                "n": sum(_live_admin_row(r) for r in self.rows if r["namespace"] == params["ns"])
+            }
         key = (params["ns"], params["sub"])
         return next((r for r in self.rows if (r["namespace"], r["subject"]) == key), None)
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
         assert table == "loom.namespace_grants"
         self.inserted.extend(rows)
+
+
+def _live_admin_row(r: dict[str, Any]) -> bool:
+    return r["role"] == "admin" and r["revoked_at"] is None and r["status"] == "active"
 
 
 T0 = datetime(2026, 9, 17, 10, 0, 0)
@@ -276,6 +306,488 @@ async def test_a_lowering_on_a_self_service_branch_never_reaches_an_operator_ent
     assert [(r["namespace"], r["role"]) for r in ch.inserted] == [("code-z-26-5", "writer")]
 
 
+# A restricted branch added from the page, beside a standard one any org member may add.
+PRIVATE = [
+    _Cfg("clickhouse", "code-z", "Org/z"),
+    _Cfg("clickhouse", "code-z-dev", "Org/z", source="registry"),
+    _Cfg("clickhouse", "code-z-26-5", "Org/z", source="registry", classification="restricted"),
+]
+
+
+def _copy(ns: str, subject: str, source: str) -> dict[str, Any]:
+    return _admin(ns, subject) | {"granted_by": f"repo-maintainers:{source}"}
+
+
+def _on(ch: _FakeCH, ns: str) -> set[str]:
+    """The subjects the sync made admin on `ns`."""
+    return {r["subject"] for r in ch.inserted if r["namespace"] == ns and r["revoked_at"] is None}
+
+
+@pytest.mark.parametrize("by", ["snapshot", "directory row"])
+async def test_a_restricted_page_branch_takes_only_the_operators_admins(
+    monkeypatch: pytest.MonkeyPatch, by: str
+) -> None:
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE if by == "snapshot" else MIXED)
+    ch = _FakeCH([_admin("code-z", "ops"), _admin("code-z-dev", "mallory")])
+    ch.restricted = {"code-z-26-5"} if by == "directory row" else set()
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z-dev", ch=ch)
+    assert _on(ch, "code-z-26-5") == {"ops"}
+    assert _on(ch, "code-z-dev") == {"ops"}
+
+
+async def test_a_sync_revokes_the_copies_a_restricted_page_branch_must_not_hold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Copies made while it was standard go, even the branch's last admin; a copy of an
+    operator admin and a grant given there stay."""
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    rows = [
+        _admin("code-z", "ops"),
+        _admin("code-z-dev", "mallory"),
+        _copy("code-z-26-5", "mallory", "code-z-dev"),
+        _copy("code-z-26-5", "carol", "code-z-gone"),
+        _copy("code-z-26-5", "ops", "code-z"),
+        _admin("code-z-26-5", "alice"),
+    ]
+    ch = _FakeCH(rows)
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    revoked = sorted(
+        (r["namespace"], r["subject"]) for r in ch.inserted if r["revoked_at"] is not None
+    )
+    assert revoked == [("code-z-26-5", "carol"), ("code-z-26-5", "mallory")]
+    ch = _FakeCH([_admin("code-z-dev", "mallory"), _copy("code-z-26-5", "mallory", "code-z-dev")])
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z-dev", ch=ch)
+    assert [(r["subject"], r["revoked_at"] is not None) for r in ch.inserted] == [("mallory", True)]
+
+
+async def test_a_lone_restricted_page_branch_is_cleaned_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lone = [_Cfg("clickhouse", "code-z-26-5", "Org/z", "registry", "restricted")]
+    monkeypatch.setattr(repos, "configured_repos", lambda: lone)
+    ch = _FakeCH([_admin("code-z-26-5", "alice"), _copy("code-z-26-5", "mallory", "code-z-dev")])
+    assert await maintainers.sync_repo_maintainers("clickhouse", "code-z-26-5", ch=ch) == 1
+    assert [(r["subject"], r["revoked_at"] is not None) for r in ch.inserted] == [("mallory", True)]
+
+
+async def test_a_copy_relayed_by_an_operator_entry_s_stand_in_goes_once_restricted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """mallory's copy on code-z stands in for a removed page branch, and a sync wrote
+    it onto code-z-26-5 while that was standard, named after code-z. Restricted, the
+    branch does not keep it: mallory holds no operator admin grant there."""
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    ch = _FakeCH(
+        [
+            _admin("code-z", "ops"),
+            _copy("code-z", "mallory", "code-z-gone"),
+            _copy("code-z-26-5", "mallory", "code-z"),
+            _copy("code-z-26-5", "ops", "code-z"),
+        ]
+    )
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    on_it = [r for r in ch.inserted if r["namespace"] == "code-z-26-5"]
+    assert [(r["subject"], r["revoked_at"] is not None) for r in on_it] == [("mallory", True)]
+
+
+async def test_a_busy_rewrite_does_not_stop_the_copies(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.auth import grant_claims
+
+    held = grant_claims.grant_change
+
+    def _ops_busy(org: str, ns: str, subject: str) -> Any:
+        if subject == "ops":
+            raise GrantBusyError("busy")
+        return held(org, ns, subject)
+
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    monkeypatch.setattr(grant_claims, "grant_change", _ops_busy)
+    rows = [_admin("code-z", "ops"), _admin("code-z", "carol")]
+    ch = _FakeCH([*rows, _copy("code-z-26-5", "ops", "code-z-dev")])
+    with pytest.raises(GrantBusyError):
+        await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    assert _on(ch, "code-z-26-5") == {"carol"}
+
+
+async def test_a_stray_whose_rewrite_is_refused_is_revoked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ops's operator grant is revoked after the plan: the stray is not rewritten from
+    it, and does not stay either. Its revoke is versioned at the plan's read, so an
+    operator grant made after that read stays newer and the next sync copies it."""
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    revoked = _admin("code-z", "ops", revoked_at=T0 + timedelta(hours=1))
+    after_plan: list[int] = []
+
+    class _RevokedMeanwhile(_FakeCH):
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            planned = await super().query_all(sql, params)
+            if "loom.namespaces" not in sql:
+                self.rows = [revoked, *self.rows[1:]]
+                after_plan.append(time.time_ns())
+            return planned
+
+    stray = _copy("code-z-26-5", "ops", "code-z-dev")
+    ch = _RevokedMeanwhile([_admin("code-z", "ops"), stray])
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    assert [(r["granted_by"], r["revoked_at"] is not None) for r in ch.inserted] == [
+        ("repo-maintainers:code-z-dev", True)
+    ]
+    assert ch.inserted[0]["version"] < after_plan[0]
+
+
+async def test_a_refused_rewrite_leaves_the_stray_to_another_operator_grant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ops is admin on two operator entries. The one the rewrite copies is revoked after
+    the plan: the stray is left, and the next sync rewrites it from the other one."""
+    entries = [
+        _Cfg("clickhouse", "code-z", "Org/z"),
+        _Cfg("clickhouse", "code-z-26-4", "Org/z"),
+        _Cfg("clickhouse", "code-z-dev", "Org/z", source="registry"),
+        _Cfg("clickhouse", "code-z-26-5", "Org/z", source="registry", classification="restricted"),
+    ]
+    monkeypatch.setattr(repos, "configured_repos", lambda: entries)
+    older = _admin("code-z-26-4", "ops")
+    newer = _admin("code-z", "ops")
+    revoked = newer | {"revoked_at": T0 + timedelta(hours=1), "version": newer["version"] + 10}
+
+    class _RevokedMeanwhile(_FakeCH):
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            planned = await super().query_all(sql, params)
+            if "loom.namespaces" not in sql and newer in self.rows:
+                self.rows = [revoked if r is newer else r for r in self.rows]
+            return planned
+
+    stray = _copy("code-z-26-5", "ops", "code-z-dev")
+    ch = _RevokedMeanwhile([newer, older, stray])
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    assert ch.inserted == []
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    assert [
+        (r["granted_by"], r["revoked_at"]) for r in ch.inserted if r["namespace"] == "code-z-26-5"
+    ] == [("repo-maintainers:code-z-26-4", None)]
+
+
+async def test_a_sync_plans_from_sequentially_consistent_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lagging replica could miss an operator grant just made, and the stray's revoke
+    planned from it would be newer than that grant."""
+    from server.core.ch import sequential_reads_active
+
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    reads: list[bool] = []
+
+    class _Recorded(_FakeCH):
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            reads.append(sequential_reads_active())
+            return await super().query_all(sql, params)
+
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=_Recorded([]))
+    assert reads and all(reads)
+
+
+def test_a_stray_s_revoke_outranks_a_stray_written_after_the_read() -> None:
+    stray = _copy("code-z-26-5", "mallory", "code-z-dev") | {"version": 2_000}
+    assert maintainers._revoke_row("clickhouse", stray, read_at=1_000)["version"] == 2_001
+    assert maintainers._revoke_row("clickhouse", stray, read_at=5_000)["version"] == 5_000
+
+
+async def test_a_stray_s_revoke_is_older_than_an_operator_grant_made_after_the_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The next sync then copies that grant onto the branch: the revoke does not end it."""
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    granted: list[dict[str, Any]] = []
+
+    class _GrantedMeanwhile(_FakeCH):
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            if "loom.namespaces" in sql and not granted:
+                granted.append(_admin("code-z", "mallory", version=time.time_ns()))
+                self.rows = [*self.rows, *granted]
+            return await super().query_all(sql, params)
+
+    ch = _GrantedMeanwhile([_admin("code-z", "ops"), _copy("code-z-26-5", "mallory", "code-z-dev")])
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    (revoke,) = [r for r in ch.inserted if r["namespace"] == "code-z-26-5" and r["revoked_at"]]
+    assert revoke["version"] < granted[0]["version"]
+
+
+async def test_a_stray_whose_operator_grant_was_only_given_again_is_left_for_the_next_sync(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A revoke written now would be newer than ops's new grant, and keep them off for
+    good."""
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    again = _admin("code-z", "ops", at=T0 + timedelta(hours=1))
+
+    class _GivenAgain(_FakeCH):
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            planned = await super().query_all(sql, params)
+            if "loom.namespaces" not in sql:
+                self.rows = [again, *self.rows[1:]]
+            return planned
+
+    ch = _GivenAgain([_admin("code-z", "ops"), _copy("code-z-26-5", "ops", "code-z-dev")])
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    assert [r for r in ch.inserted if r["namespace"] == "code-z-26-5"] == []
+
+
+async def test_a_page_copy_an_operator_entry_kept_never_reaches_a_restricted_page_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An operator entry that adopted a page namespace keeps its copies; their page
+    source gone or not, none is a source for a restricted branch."""
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    for source in ("code-z-dev", "code-z-gone"):
+        ch = _FakeCH([_admin("code-z", "ops"), _copy("code-z", "mallory", source)])
+        await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+        assert _on(ch, "code-z-26-5") == {"ops"}, source
+
+
+async def test_a_copy_planned_before_a_restriction_is_not_written_after_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(repos, "configured_repos", lambda: MIXED)
+
+    class _RestrictedMeanwhile(_FakeCH):
+        async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
+            self.restricted = {"code-z-26-5"}  # lands once the plan was made
+            return await super().query_one(sql, params)
+
+    ch = _RestrictedMeanwhile([_admin("code-z", "ops"), _admin("code-z-dev", "mallory")])
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z-dev", ch=ch)
+    assert _on(ch, "code-z-26-5") == {"ops"}
+    # A stand-in on the operator entry is written under its name: read again too.
+    stand_in = _copy("code-z", "mallory", "code-z-gone")
+    ch = _RestrictedMeanwhile([_admin("code-z", "ops"), stand_in])
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    assert _on(ch, "code-z-26-5") == {"ops"}
+
+
+async def test_a_copy_is_traced_across_operator_entries_to_a_grant_of_its_role(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A copy named after code-z, whose row there is a copy of a grant given on
+    code-z-ops, stays; a copy above the role of the grant it leads to goes."""
+    two = [_Cfg("clickhouse", "code-z-ops", "Org/z"), *PRIVATE]
+    monkeypatch.setattr(repos, "configured_repos", lambda: two)
+    rows = [
+        _admin("code-z-ops", "ops"),
+        _copy("code-z", "ops", "code-z-ops"),
+        _copy("code-z-26-5", "ops", "code-z"),
+        _admin("code-z-ops", "carol", role="viewer"),
+        _copy("code-z", "carol", "code-z-ops") | {"role": "viewer"},
+        _copy("code-z-26-5", "carol", "code-z") | {"role": "writer"},
+    ]
+    ch = _FakeCH(rows)
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    on_it = [r for r in ch.inserted if r["namespace"] == "code-z-26-5"]
+    assert [(r["subject"], r["revoked_at"] is not None) for r in on_it] == [("carol", True)]
+
+
+async def test_a_lowering_from_an_operator_entry_stands_on_a_restricted_page_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    ch = _FakeCH(
+        [
+            _admin("code-z", "ops", role="writer"),
+            _admin("code-z", "alice"),
+            _copy("code-z-26-5", "ops", "code-z") | {"role": "writer"},
+            _copy("code-z-26-5", "alice", "code-z"),
+        ]
+    )
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    assert [r for r in ch.inserted if r["namespace"] == "code-z-26-5"] == []
+
+
+async def test_an_unreadable_classification_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(repos, "configured_repos", lambda: MIXED)
+
+    class _NoDirectory(_FakeCH):
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            if "loom.namespaces" in sql:
+                raise ConnectionError("ClickHouse is not answering")
+            return await super().query_all(sql, params)
+
+    ch = _NoDirectory([_admin("code-z", "ops"), _admin("code-z-dev", "mallory")])
+    with pytest.raises(ConnectionError):
+        await maintainers.sync_repo_maintainers("clickhouse", "code-z-dev", ch=ch)
+    rows = [_admin(ns, s) for ns in ("code-z-dev", "code-z-26-5") for s in ("alice", "bob")]
+    ch = _NoDirectory(rows)
+    with pytest.raises(ConnectionError):  # not skipped: it may be a standard one
+        await _revoke("code-z-dev", "alice", ch=ch)
+    assert ch.inserted == []
+
+
+async def test_a_page_revoke_takes_off_a_restricted_page_branch_only_a_stray_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A grant given there and a copy of an operator admin stay; a copy from a page
+    branch goes, even as the branch's last admin."""
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    rows = [_admin(ns, s) for ns in ("code-z-dev", "code-z-26-5") for s in ("alice", "bob")]
+    assert await _revoke("code-z-dev", "alice", ch=_FakeCH(rows)) == 0
+    rows = [_admin("code-z-dev", "alice"), _copy("code-z-26-5", "alice", "code-z")]
+    assert await _revoke("code-z-dev", "alice", ch=_FakeCH(rows)) == 0
+    ch = _FakeCH([_admin("code-z-dev", "mallory"), _copy("code-z-26-5", "mallory", "code-z-dev")])
+    assert await _revoke("code-z-dev", "mallory", ch=ch) == 1
+    assert [(r["namespace"], r["revoked_at"] is not None) for r in ch.inserted] == [
+        ("code-z-26-5", True)
+    ]
+
+
+async def test_an_operator_revoke_leaves_a_stray_of_an_admin_of_another_entry_for_the_sync(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """alice stays admin of code-z-ops: the next sync copies that grant over her stray,
+    which a revoke now would end for good."""
+    two = [_Cfg("clickhouse", "code-z-ops", "Org/z"), *PRIVATE]
+    monkeypatch.setattr(repos, "configured_repos", lambda: two)
+    rows = [
+        _admin("code-z", "alice"),
+        _admin("code-z", "x"),
+        _admin("code-z-ops", "alice"),
+        _copy("code-z-26-5", "alice", "code-z-dev"),
+    ]
+    ch = _FakeCH(rows)
+    await _revoke("code-z", "alice", ch=ch)
+    assert "code-z-26-5" not in {r["namespace"] for r in ch.inserted}
+
+
+@pytest.mark.parametrize("lowered_to", [None, "writer"])
+async def test_an_operator_revoke_takes_the_stray_of_an_admin_of_that_entry_alone(
+    monkeypatch: pytest.MonkeyPatch, lowered_to: str | None
+) -> None:
+    """The grant revoked is still live while the fan-out runs: it does not count as one
+    the subject keeps."""
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    rows = [
+        _admin("code-z", "alice"),
+        _admin("code-z", "x"),
+        _copy("code-z-26-5", "alice", "code-z-dev"),
+    ]
+    ch = _FakeCH(rows)
+    await _revoke("code-z", "alice", ch=ch, lowered_to=lowered_to)
+    assert [(r["namespace"], r["revoked_at"] is not None) for r in ch.inserted] == [
+        ("code-z-26-5", True)
+    ]
+
+
+async def test_an_operator_admin_s_copy_from_a_page_branch_becomes_a_copy_of_the_operator_grant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ops added code-z-dev after their operator grant, so their copy came from it:
+    the restricted branch keeps them, now as a copy of the operator entry's grant."""
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    rows = [
+        _admin("code-z", "ops"),
+        _admin("code-z-dev", "ops", at=T0 + timedelta(hours=1)),
+        _copy("code-z-26-5", "ops", "code-z-dev"),
+    ]
+    ch = _FakeCH(rows)
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    assert [(r["namespace"], r["granted_by"], r["revoked_at"]) for r in ch.inserted] == [
+        ("code-z-26-5", "repo-maintainers:code-z", None)
+    ]
+    # Lowered there after their operator grant: admin is not copied back, and the
+    # lowered stray copy is revoked.
+    lowered = _copy("code-z-26-5", "ops", "code-z-dev") | {"role": "writer"}
+    ch = _FakeCH([*rows[:2], lowered])
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    assert [(r["role"], r["revoked_at"] is not None) for r in ch.inserted] == [("writer", True)]
+
+
+async def test_an_operator_revoke_takes_only_a_copy_off_a_restricted_page_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """alice's grant on her own page branch does not reach the restricted one, so the
+    copy of her operator grant there goes; a grant given there stays."""
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    rows = [
+        _admin("code-z", "alice"),
+        _admin("code-z", "ops"),
+        _admin("code-z-dev", "alice"),
+        _admin("code-z-dev", "bob"),
+        _copy("code-z-26-5", "alice", "code-z"),
+        _admin("code-z-26-5", "bob"),
+    ]
+    ch = _FakeCH(rows)
+    await _revoke("code-z", "alice", ch=ch)
+    assert [r["namespace"] for r in ch.inserted] == ["code-z-26-5"]
+    ch = _FakeCH([*rows[:4], _admin("code-z-26-5", "alice"), _admin("code-z-26-5", "bob")])
+    assert await _revoke("code-z", "alice", ch=ch) == 0
+
+
+async def test_a_page_revoke_leaves_an_operator_admin_s_stray_for_the_sync_to_rewrite(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    rows = [
+        _admin("code-z", "ops"),
+        _admin("code-z-dev", "ops"),
+        _admin("code-z-dev", "bob"),
+        _copy("code-z-26-5", "ops", "code-z-dev"),
+    ]
+    assert await _revoke("code-z-dev", "ops", ch=_FakeCH(rows)) == 0
+
+
+_SOURCES = [("config", "standard"), ("registry", "standard"), ("registry", "restricted")]
+
+
+@pytest.mark.parametrize(
+    "kinds", list(itertools.product(_SOURCES, repeat=3)), ids=lambda k: "-".join(map(str, k))
+)
+async def test_no_sync_or_revoke_leaves_a_restricted_page_branch_a_copy_from_a_page_branch(
+    monkeypatch: pytest.MonkeyPatch, kinds: tuple[tuple[str, str], ...]
+) -> None:
+    """Every mix of three branches, each with its own admin, a copy of every other
+    branch's and a lowered one: after a sync, or a revoke or a lowering from any
+    branch, a restricted branch added from the page holds no live copy, of any role,
+    whose source is not an operator entry."""
+    names = [f"code-z-{i}" for i in range(3)]
+    cfgs = [_Cfg("clickhouse", ns, "Org/z", s, c) for ns, (s, c) in zip(names, kinds, strict=True)]
+    monkeypatch.setattr(repos, "configured_repos", lambda: cfgs)
+    rows = [_admin(ns, f"own-{ns}") for ns in names]
+    rows += [_copy(ns, f"own-{src}", src) for ns in names for src in names if src != ns]
+    rows += [
+        _copy(ns, f"low-{src}", src) | {"role": "writer"}
+        for ns in names
+        for src in names
+        if src != ns
+    ]
+    restricted = {
+        c.namespace for c in cfgs if c.source == "registry" and c.classification == "restricted"
+    }
+    operator = {c.namespace for c in cfgs if c.source == "config"}
+
+    def strays(written: list[dict[str, Any]], subject: str = "") -> list[tuple[str, str]]:
+        final = {(r["namespace"], r["subject"]): r for r in [*rows, *written]}
+        return [
+            (ns, r["granted_by"])
+            for (ns, who), r in final.items()
+            if ns in restricted
+            and subject in ("", who)
+            and r["revoked_at"] is None
+            and r["granted_by"].startswith("repo-")
+            and r["granted_by"].removeprefix("repo-maintainers:") not in operator
+        ]
+
+    ch = _FakeCH(rows)
+    await maintainers.sync_repo_maintainers("clickhouse", names[0], ch=ch)
+    assert strays(ch.inserted) == []
+    for origin in names:
+        for subject in (f"own-{origin}", f"low-{origin}"):
+            for lowered_to in (None, "writer"):
+                ch = _FakeCH(rows)
+                await _revoke(origin, subject, ch=ch, lowered_to=lowered_to)
+                assert strays(ch.inserted, subject) == [], (origin, subject, lowered_to)
+
+
 def _code_rows(monkeypatch: pytest.MonkeyPatch, code: set[str]) -> list[str]:
     """Directory rows: `code` are code indexes, any other namespace a memory one.
     Returns the namespaces whose row was read."""
@@ -414,6 +926,44 @@ async def test_an_operator_revoke_keeps_a_mirror_that_is_a_page_branch_s_only_ad
     ]
 
 
+async def test_a_copy_an_operator_revoke_keeps_as_a_restricted_branch_s_last_admin_goes_at_sync(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The revoke keeps the branch's last admin; the sync after it takes the copy once its
+    operator grant is gone."""
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    rows = [_admin("code-z", "ops"), _admin("code-z", "x"), _copy("code-z-26-5", "ops", "code-z")]
+    assert await _revoke("code-z", "ops", ch=_FakeCH(rows)) == 0
+    gone = _admin("code-z", "ops", revoked_at=T0 + timedelta(hours=1))
+    ch = _FakeCH([gone, *rows[1:]])
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    on_it = [r for r in ch.inserted if r["namespace"] == "code-z-26-5"]
+    # ops's copy goes; x, an operator admin, is copied on.
+    assert {(r["subject"], r["revoked_at"] is not None) for r in on_it} == {
+        ("ops", True),
+        ("x", False),
+    }
+
+
+async def test_an_operator_revoke_keeps_a_restricted_branch_s_last_admin_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ops's copy of their code-z-ops grant is the restricted branch's only admin: the
+    guard keeps it. With another admin there it goes, under the guard."""
+    two = [_Cfg("clickhouse", "code-z-ops", "Org/z"), *PRIVATE]
+    monkeypatch.setattr(repos, "configured_repos", lambda: two)
+    rows = [
+        _admin("code-z", "ops"),
+        _admin("code-z", "x"),
+        _admin("code-z-ops", "ops"),
+        _copy("code-z-26-5", "ops", "code-z-ops"),
+    ]
+    assert await _revoke("code-z", "ops", ch=_FakeCH(rows)) == 0
+    ch = _FakeCH([*rows, _admin("code-z-26-5", "alice")])
+    await _revoke("code-z", "ops", ch=ch)
+    assert ("code-z-26-5", "ops") in {(r["namespace"], r["subject"]) for r in ch.inserted}
+
+
 async def test_an_operator_revoke_takes_a_mirror_of_an_entry_no_longer_configured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -531,6 +1081,63 @@ async def test_the_registrar_syncs_a_branch_once_the_registry_is_read(
     await registry.ensure_registered(cfg, ch=object())
     await registry.ensure_registered(cfg, ch=object())
     assert synced == ["code-x", "code-x"]  # once while unread, once after, then done
+
+
+async def test_the_ingest_pass_syncs_each_repository_with_a_restricted_page_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On every pass, once per repository: a restriction whose own sync failed still has
+    its strays go. code-z-2 is restricted by its directory row alone, as a restriction
+    cut short before its access row leaves it."""
+    from types import SimpleNamespace
+
+    synced: list[str] = []
+
+    async def _sync(org: str, ns: str, **_k: Any) -> None:
+        synced.append(ns)
+
+    monkeypatch.setattr(maintainers, "sync_quietly", _sync)
+
+    def entry(ns: str, classification: str) -> Any:
+        return SimpleNamespace(
+            org="clickhouse",
+            namespace=ns,
+            repo="Org/z",
+            source="registry",
+            classification=classification,
+        )
+
+    ch = _FakeCH([])
+    ch.restricted = {"code-z-2"}
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    standard = [entry("code-z-3", "standard"), entry("code-z-2", "standard")]
+
+    def going() -> bool:
+        return False
+
+    await maintainers.sync_restricted_page_branches(standard, exhausted=going)
+    snapshot = [entry("code-z-1", "restricted"), *standard]
+    monkeypatch.setattr(repos, "configured_repos", lambda: snapshot)
+    await maintainers.sync_restricted_page_branches(snapshot, exhausted=going)
+    # Once for the repository, from whichever of its restricted branches comes first.
+    assert synced[0] == "code-z-2" and synced[1:] in (["code-z-1"], ["code-z-2"])
+    await maintainers.sync_restricted_page_branches(standard, exhausted=lambda: True)
+    assert len(synced) == 2  # past the pass budget
+
+    # An org whose directory cannot be read waits for the next pass; the others go on.
+    class _Unreadable(_FakeCH):
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            if "loom.namespaces" in sql and params["org"] == "other":
+                raise ConnectionError("ClickHouse is not answering")
+            return await super().query_all(sql, params)
+
+    ch = _Unreadable([])
+    ch.restricted = {"code-z-2"}
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    other = SimpleNamespace(**{**vars(entry("code-o", "restricted")), "org": "other"})
+    synced.clear()
+    await maintainers.sync_restricted_page_branches([other, *standard], exhausted=going)
+    assert synced == ["code-z-2"]
 
 
 async def test_code_init_reads_the_registry_before_it_registers(
@@ -997,13 +1604,21 @@ async def test_a_sync_takes_the_repository_claim_before_the_branch_s(
 
     ch = _Logged([_admin("code-x", "alice")])
     await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch)
+    # The repository's admins, as a revoke holds them, then every branch's admins,
+    # which a restriction is written under, then the grants.
     assert log == [
         "+repo:Org/x",
+        "+repo:Org/x/admins",
+        "+code-x-26-5/admins",
+        "+code-x-26-6/admins",
         "+code-x-26-5",
         "+code-x-26-6",
         "insert ['code-x-26-5', 'code-x-26-6']",
         "-code-x-26-6",
         "-code-x-26-5",
+        "-code-x-26-6/admins",
+        "-code-x-26-5/admins",
+        "-repo:Org/x/admins",
         "-repo:Org/x",
     ]
 
@@ -1167,6 +1782,26 @@ async def test_a_subject_that_cannot_be_claimed_does_not_stop_a_sync_for_the_oth
         ("code-x-26-5", "bob"),
         ("code-x-26-6", "bob"),
     }
+
+
+async def test_a_stray_that_cannot_be_claimed_does_not_stop_the_copies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.auth import grant_claims
+
+    held = grant_claims.grant_change
+
+    def _mallory_busy(org: str, ns: str, subject: str) -> Any:
+        if subject == "mallory":
+            raise GrantBusyError("busy")
+        return held(org, ns, subject)
+
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    monkeypatch.setattr(grant_claims, "grant_change", _mallory_busy)
+    ch = _FakeCH([_admin("code-z", "ops"), _copy("code-z-26-5", "mallory", "code-z-dev")])
+    with pytest.raises(GrantBusyError):
+        await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    assert _on(ch, "code-z-26-5") == {"ops"}
 
 
 async def test_a_keeper_that_cannot_answer_stops_a_sync_at_the_first_subject(

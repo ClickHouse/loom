@@ -19,7 +19,7 @@ from typing import Any
 
 from server.auth import authz
 from server.auth.context import current_caller
-from server.auth.grant_claims import NotClaimed, account_change
+from server.auth.grant_claims import NotClaimed, account_change, admins_change
 from server.code.api.models_repos import (
     CodeRepoAddBranchInput,
     CodeRepoAddInput,
@@ -36,7 +36,7 @@ from server.code.app.index.bootstrap import awaits_first_index, restrict_entry
 from server.code.domain.index import repos as code_repos
 from server.code.domain.index.remote import repo_key
 from server.code.domain.index.repos import registry_repos
-from server.core.ch import own_write_reads
+from server.core.ch import own_write_reads, sequential_reads
 from server.core.errors import (
     AuthInsufficientError,
     BackendUnavailableError,
@@ -673,6 +673,33 @@ async def _directory_row(ch: Any, org: str, namespace: str) -> dict[str, Any] | 
     return await namespace_row(org, namespace, ch=ch)
 
 
+def _require_confirm(input: Any) -> None:
+    """Widening restricted → standard needs `confirm` = namespace."""
+    if input.confirm.strip() != input.namespace:
+        raise ValidationError(
+            f"opening a restricted repository: type the namespace ({input.namespace}) in `confirm`",
+            code="CONFIRM_REQUIRED",
+        )
+
+
+async def _require_widening(input: Any, subject: str, ch: Any) -> None:
+    """Widening a restricted branch, under the call's claims: `confirm` = namespace, and
+    an admin grant of the caller's own there. A copy the next sync revokes, or one revoked
+    since the gate passed, must not widen the branch and keep itself."""
+    from server.auth.context import current_auth
+    from server.code.app.index import maintainers
+
+    _require_confirm(input)
+    if current_auth() is None:
+        return  # auth off: no principal to hold a grant
+    if not await maintainers.holds_own_admin(ch, input.org, input.namespace, subject):
+        raise AuthInsufficientError(
+            f"{input.namespace} is restricted and you hold no admin grant of your own there "
+            "(a copy that does not come from one of the repository's operator entries does "
+            "not count); ask one of its admins"
+        )
+
+
 async def handle_code_repo_set_access(input: Any) -> Any:
     """The repository's maintainer (the transport's ADMIN gate
     on the namespace) sets its classification and join policy. The decision
@@ -682,7 +709,9 @@ async def handle_code_repo_set_access(input: Any) -> Any:
     joins the classification snapshot, a widening drops it), and every other
     process re-reads the row
     within `code_repos_refresh_seconds`. Widening restricted → standard
-    needs `confirm` = namespace; a restricted index is never `open`."""
+    needs `confirm` = namespace; a restricted index is never `open`. The change
+    then syncs the repository's maintainers, quietly: a restriction's failed sync is
+    finished by the ingest pass, a widening's by the next sync of the repository."""
     require_code_intel()
     from server.code.domain.index.repos import repo_for_namespace
     from server.core.ch import get_client
@@ -708,33 +737,57 @@ async def handle_code_repo_set_access(input: Any) -> Any:
     cfg: Any = repo_for_namespace(input.org, input.namespace)
     if cfg is None:
         raise ValidationError(f"{input.namespace} is not a repository index", code="NOT_A_REPO")
-    widening = str(cfg.classification) == "restricted" and cls == "standard"
-    if widening and input.confirm.strip() != input.namespace:
-        raise ValidationError(
-            f"opening a restricted repository: type the namespace ({input.namespace}) in `confirm`",
-            code="CONFIRM_REQUIRED",
-        )
+    if str(cfg.classification) == "restricted" and cls == "standard":
+        _require_confirm(input)  # before any claim; the row read under them may say so too
     ch = get_client()
-    row = await _directory_row(ch, input.org, input.namespace)
-    previous_policy = str((row or {}).get("join_policy") or ("open" if cfg.public else "approval"))
     subject, _org = current_caller()
-    await reg.upsert_access(
-        cfg, classification=cls, join_policy=pol, created_by=subject or "maintainer", ch=ch
-    )
-    await reg.refresh_db_repos(force=True, ch=ch)
-    directory_updated = False
-    if row is not None:
-        new_row = dict(row)
-        new_row.update(
-            {
-                "classification": cls,
-                "join_policy": pol,
-                "visibility": "private",
-                "updated_at": datetime.now(UTC).replace(microsecond=0, tzinfo=None),
-            }
+    from server.code.app.index import maintainers
+
+    # A fan-out write onto this branch holds these claims: it lands before the sync
+    # below, or sees both rows.
+    async with (
+        admins_change(input.org, maintainers.repo_claim_key(str(cfg.repo))),
+        admins_change(input.org, input.namespace),
+    ):
+        row = await _directory_row(ch, input.org, input.namespace)
+        # Restricted by the snapshot or by the row read here, which may be newer.
+        was_restricted = "restricted" in (
+            str(cfg.classification),
+            (row or {}).get("classification"),
         )
-        await ch.insert("loom.namespaces", [new_row])
-        directory_updated = True
+        if was_restricted and cls == "standard":
+            await _require_widening(input, subject, ch)
+        previous_policy = str(
+            (row or {}).get("join_policy") or ("open" if cfg.public else "approval")
+        )
+        # The directory row first, which every replica reads now: a restriction cut short
+        # after it still stops copies, and the registrar widens no row newer than the
+        # access row.
+        directory_updated = False
+        if row is None and cfg.source == "registry":
+            # Not registered yet: a copy onto it reads the directory row, so the
+            # decision is written there now rather than waiting for the ingest pass.
+            from server.code.app.index.registry import insert_first_row
+
+            await insert_first_row(cfg, ch, restricted=cls == "restricted", join_policy=pol)
+            directory_updated = True
+        elif row is not None:
+            new_row = dict(row)
+            new_row.update(
+                {
+                    "classification": cls,
+                    "join_policy": pol,
+                    "visibility": "private",
+                    "updated_at": datetime.now(UTC).replace(microsecond=0, tzinfo=None),
+                }
+            )
+            await ch.insert("loom.namespaces", [new_row])
+            directory_updated = True
+        await reg.upsert_access(
+            cfg, classification=cls, join_policy=pol, created_by=subject or "maintainer", ch=ch
+        )
+    with sequential_reads():  # the sync below reads this snapshot
+        await reg.refresh_db_repos(force=True, ch=ch)
     if cls == "restricted":
         # Joins this process's snapshot at once; a reset first would leave it nothing
         # to join, and the next request would wait on a directory read instead.
@@ -743,13 +796,14 @@ async def handle_code_repo_set_access(input: Any) -> Any:
         await asyncio.to_thread(restrict_entry, cfg)
     else:
         nc.reset()  # a widening drops the stale restricted entry
+    await maintainers.sync_quietly(input.org, input.namespace, ch=ch)
     return CodeRepoSetAccessOutput(
         org=input.org,
         namespace=input.namespace,
         repo=str(cfg.repo),
         classification=cls,
         join_policy=pol,
-        previous_classification=str(cfg.classification),
+        previous_classification="restricted" if was_restricted else "standard",
         previous_join_policy=previous_policy,
         directory_updated=directory_updated,
         effective_within_s=int(settings.code_repos_refresh_seconds),
