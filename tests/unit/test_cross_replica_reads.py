@@ -71,18 +71,16 @@ def test_an_auto_row_carries_the_lowest_version() -> None:
 
 
 @pytest.mark.skipif(clickhouse_local.CLICKHOUSE is None, reason="clickhouse not installed")
-def test_an_owned_auto_row_beats_an_ownerless_one_whatever_lands_last() -> None:
+@pytest.mark.parametrize("owned_first", [True, False])
+def test_an_owned_auto_row_beats_an_ownerless_one_whatever_lands_last(owned_first: bool) -> None:
     def row(owner: str, version: datetime) -> str:
         return (
             "INSERT INTO loom.namespaces (org, namespace, owner_email, updated_at) VALUES"
             f" ('o', 'n', '{owner}', toDateTime({int(version.timestamp())}, 'UTC'))"
         )
 
-    setup = [
-        clickhouse_local.ddl("namespaces"),
-        row("w", autoreg.AUTO_ROW_VERSION),
-        row("", autoreg.OWNERLESS_ROW_VERSION),
-    ]
+    rows = [row("w", autoreg.AUTO_ROW_VERSION), row("", autoreg.OWNERLESS_ROW_VERSION)]
+    setup = [clickhouse_local.ddl("namespaces"), *(rows if owned_first else rows[::-1])]
     rows = clickhouse_local.run(setup, "SELECT owner_email FROM loom.namespaces FINAL")
     assert rows == [{"owner_email": "w"}]
 
