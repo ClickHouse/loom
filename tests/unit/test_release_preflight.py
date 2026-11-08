@@ -527,3 +527,38 @@ def test_a_missing_version_or_image_is_a_usage_error(args: list[str]) -> None:
     script = ROOT / "scripts/release/verify_signatures.sh"
     result = subprocess.run(["bash", str(script), *args], capture_output=True, text=True)
     assert result.returncode == 2 and "usage:" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("version", "prerelease", "latest", "tag"),
+    [
+        ("1.3.0", "false", "true", "latest"),
+        ("1.2.4", "false", "false", "release-1.2"),  # a patch to an older line
+        ("1.3.0-rc.1", "true", "false", "next"),
+    ],
+)
+def test_npm_latest_follows_the_github_releases_latest(
+    tmp_path: Path, version: str, prerelease: str, latest: str, tag: str
+) -> None:
+    jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
+    assert jobs["github-release"]["outputs"]["latest"] == "${{ steps.latest.outputs.latest }}"
+    assert jobs["npm"]["env"]["LATEST"] == "${{ needs.github-release.outputs.latest }}"
+    (step,) = [s for s in jobs["npm"]["steps"] if s.get("id") == "publish"]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    # npm view finds nothing published; npm publish logs its arguments.
+    (bin_dir / "npm").write_text(
+        f'#!/bin/sh\n[ "$1" = view ] && exit 1\necho "$*" >> "{tmp_path}/calls"\n'
+    )
+    (bin_dir / "npm").chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "VERSION": version,
+        "PRERELEASE": prerelease,
+        "LATEST": latest,
+    }
+    result = subprocess.run(["bash", "-e", "-c", step["run"]], env=env, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    (call,) = (tmp_path / "calls").read_text().splitlines()
+    assert call.endswith(f"--tag {tag}")

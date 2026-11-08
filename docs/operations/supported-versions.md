@@ -21,7 +21,8 @@ A minor release comes from `main` about every two weeks; a patch comes from the 
 ## SDKs and servers
 
 The SDKs (`clickhouse-loom` on PyPI, `@clickhouse/loom` on npm) are published with every release, at
-the server's version. An SDK at `X.Y` works with a server at `X.Y` or `X.(Y−1)`:
+the server's version; npm's `latest` names the highest final, and a patch to an older line takes its
+`release-X.Y` dist-tag. Against the older server:
 
 - a field the SDK sends that the older server does not know is served and named in the answer's
   `ignored_args`, except on an op that changes state, where a key the server reads as a misspelling
@@ -52,7 +53,8 @@ server their hooks support (`minServerVersion`). A session against an older serv
 A removal is announced, by hand in the release pull request, in the release notes of the minor
 release before the one that removes it, under "What changed for clients". Until the removal, the
 server serves the old field or flag; after it, a removed request field is still accepted and named
-in `ignored_args`, so a client sending it learns of the change without failing.
+in `ignored_args`, so a client sending it learns of the change without failing, and a removed op
+answers `404` (`NotFound`), which `ops.capabilities` tells apart from a missing row.
 
 ## Release artifacts
 

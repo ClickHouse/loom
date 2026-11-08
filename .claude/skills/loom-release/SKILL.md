@@ -10,11 +10,11 @@ metadata:
 
 A release publishes what nobody can take back: images anyone pulls, a PyPI version that can never be reused, an npm version, an MCP Registry listing, and the GitHub Release the one-line installer reads. The procedure and the workflow are in [release process](../../../docs/development/release-process.md); this skill orders the steps and adds the checks that prove each one. Supported lines and deprecations: [supported versions](../../../docs/operations/supported-versions.md).
 
-Every step others see is the owner's to start: opening the release pull request and posting on it, pushing a tag or `release/X.Y`, the registry dispatch, editing a GitHub Release, a PyPI yank, `npm deprecate` and `npm dist-tag`, moving `:latest`. Print the command, get the go-ahead, then run it. Everything else here (the dry run, `prepare.py`, the checks) you run yourself.
+Every step others see is the owner's to start, as AGENTS.md has it: opening or merging a pull request (the release pull request, and a fix's against `release/X.Y`) and posting on it, pushing a tag or `release/X.Y`, the registry dispatch, editing a GitHub Release, a PyPI yank, `npm deprecate` and `npm dist-tag`, moving `:latest`. Print the command, get the go-ahead, then run it. Everything else here (the dry run, `prepare.py`, the checks) you run yourself.
 
 ## 0. Is it time
 
-- A minor release every two weeks from `main`; a patch when a fix must reach a supported line before the next minor: any fix for N, and for N−1 only what [supported versions](../../../docs/operations/supported-versions.md#release-lines) lists. Nothing is released from a private repository: the `preflight` job refuses it.
+- A minor release every two weeks from `main`; a patch when a fix must reach a supported line before the next minor (which fixes: §7). Nothing is released from a private repository: the `preflight` job refuses it.
 - Nothing open blocks it: no open `Release X.Y.Z` pull request (`gh pr list -R ClickHouse/loom --state open --search '"Release X.Y.Z" in:title'`), and `main` is green.
 - The image scan is clean: a scheduled `docker-smoke` run on `main` from the past week passed (release process, "Cutting the release", step 1).
 - A dry run of `main` is green; it publishes nothing:
@@ -25,13 +25,13 @@ Every step others see is the owner's to start: opening the release pull request 
   ```
 
   Its `preflight` warnings name every owner prerequisite still missing ("Before the first release"); a release with any of them fails in its first minute, before a build.
-- For a patch, run the scan and the dry run on the line instead: `gh workflow run docker-smoke.yml -R ClickHouse/loom --ref release/X.Y` (read it with `--event workflow_dispatch`) and the dry run with `--ref release/X.Y`.
+- For a patch, run the scan and the dry run on the line instead: `gh workflow run docker-smoke.yml -R ClickHouse/loom --ref release/X.Y` and the dry run with `--ref release/X.Y`, and read both with `--branch release/X.Y` (the scan with `--event workflow_dispatch`).
 
 ## 1. The version
 
 - One version for the server, both images, the web app, both SDKs, the root skills and the chart's `appVersion`; `prepare.py` moves all of them and the chart's own `version`.
 - The coding-agent plugins keep their own version, bumped in the pull request that changes them. Raise their `minServerVersion` as the [release process](../../../docs/development/release-process.md#cutting-the-release) step 2 says.
-- A minor for features, a patch for fixes only (on a release branch, §7), a major for a break beyond the N−1 rule. A field or op to be removed is announced one minor ahead, by hand under the notes' "What changed for clients" (the generated wire diff lists only what has changed), and served as `ignored_args` meanwhile ([unknown and removed fields](../../../docs/reference/http-api.md#unknown-and-removed-fields)).
+- A minor for features, a patch for fixes only (on a release branch, §7), a major for a break beyond the N−1 rule. A field or op to be removed is announced one minor ahead, by hand under the notes' "What changed for clients" (the generated wire diff lists only what has changed), and served until the removal; after it, a removed field is named in `ignored_args` and a removed op answers `NotFound` ([unknown and removed fields](../../../docs/reference/http-api.md#unknown-and-removed-fields)).
 
 ## 2. The release pull request
 
@@ -46,7 +46,7 @@ It refuses a prerelease, an older or an already tagged version before the notes,
 ## 3. Release candidate and soak
 
 ```bash
-git fetch origin main
+git fetch origin main release/X.Y   # release/X.Y for a patch
 git tag vX.Y.Z-rc.1 <the release pull request's merge commit>
 git push origin vX.Y.Z-rc.1          # the owner's go-ahead first
 # The tag's run may take a few seconds to appear: re-run this line until it prints an id.
@@ -82,13 +82,17 @@ Signed in to nothing, it runs the one-line installer (`curl -fsSL https://github
 
 ```bash
 curl -fsS "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.ClickHouse/loom" | jq '.servers[].server.version'   # lists X.Y.Z
+npm view @clickhouse/loom dist-tags   # latest names the highest final
 ```
 
 The plugins, in a throwaway `HOME`: `claude plugin marketplace add ClickHouse/loom && claude plugin install loom@loom`, and `codex plugin marketplace add ClickHouse/loom` then install `loom` from it; each lists the plugin version on `main`, and its SessionStart against this server prints no `loom:` line about the server's version. Post what you checked, with the run links, on the release pull request (the owner's go-ahead first).
 
 ## 6. Something is wrong
 
-- **The installer or an image is bad**: move back only the tags the bad release took. When it is Latest (`GITHUB_REPOSITORY=ClickHouse/loom python3 scripts/release/make_latest.py X.Y.Z` prints `true`, with `gh` signed in), point Latest at the release before it (`gh release edit v<previous> -R ClickHouse/loom --latest`) and both images' `:latest` there; a final also took `:X.Y`, which goes back to the previous patch of that line (an `X.Y.0` has none: `:X.Y` stays until `X.Y.1`); a candidate took neither. After that, never dispatch or re-run the bad tag: its `github-release` job makes it Latest again until a higher final is tagged. [A failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature) has the commands, which check the previous release's signature before moving a tag. Then ship a patch.
+- **The installer or an image is bad**: move back only the tags the bad release took, checking the previous release's signature before moving each ([a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature) has the commands), then ship a patch.
+  - A final took `:X.Y`: point it at the previous patch of that line. An `X.Y.0` has none, so `:X.Y` stays until `X.Y.1`.
+  - When the bad release is also Latest (`GITHUB_REPOSITORY=ClickHouse/loom python3 scripts/release/make_latest.py X.Y.Z` prints `true`, with `gh` signed in), point Latest at the release before it (`gh release edit v<previous> -R ClickHouse/loom --latest`) and both images' `:latest` there. After that, never dispatch or re-run the bad tag: its `github-release` job makes it Latest again until a higher final is tagged.
+  - A candidate took neither.
 
   Never delete a release's assets or tag: an installed version reruns its installer from them. A host already on the bad release keeps it until the patch: the older installer refuses to run over a newer install; going back is [downgrading an installer install](../../../docs/operations/upgrades.md#downgrading-an-installer-install), ClickHouse pinned first.
 - **An SDK is bad**: yank it on PyPI (the project's settings: the release, Yank, with the reason), which keeps pinned installs working; `npm deprecate @clickhouse/loom@X.Y.Z "<reason>; use <fixed version>"` and, if `latest` names it, `npm dist-tag add @clickhouse/loom@<previous> latest`. A version number is never reused: the fix is a new patch.
@@ -103,4 +107,4 @@ git switch -c fix/X.Y-<what> origin/release/X.Y
 git cherry-pick -x -s <the merge commit on main>
 ```
 
-Once it merges, the release pull request follows as in §2, from `origin/release/X.Y` and against it, with `prepare.py bump X.Y.<Z+1>`: in one pull request with the fix, the notes would leave the fix out, as they skip the commit that bumps the version. Tag the release pull request's merge commit as in §3 and §4. Latest and `:latest` go only to the highest final version, so a patch to N−1 leaves them on N.
+Once it merges, the release pull request follows as in §2, from `origin/release/X.Y` and against it, with `prepare.py bump X.Y.<Z+1>`: in one pull request with the fix, the notes would leave the fix out, as they skip the commit that bumps the version. Tag the release pull request's merge commit as in §3 and §4. Latest, `:latest` and npm's `latest` go only to the highest final version, so a patch to N−1 leaves them on N; its npm package goes to the `release-X.Y` dist-tag.

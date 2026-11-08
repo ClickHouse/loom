@@ -17,8 +17,8 @@ from server.transport import http as http_mod
 @pytest.fixture()
 def older_server(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     """The HTTP router with every op but `memory.set`, which this server predates. In
-    the production app, no route or middleware answers a POST to an unrouted
-    `/v1/<op>` with anything but 404."""
+    the production app, with a valid token, no route or middleware answers a POST to
+    an unrouted `/v1/<op>` with anything but 404."""
     ops = [op for op in ALL_OPERATIONS if op.name != "memory.set"]
     assert len(ops) == len(ALL_OPERATIONS) - 1
     monkeypatch.setattr(http_mod, "ALL_OPERATIONS", ops)

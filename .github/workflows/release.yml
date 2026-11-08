@@ -731,6 +731,8 @@ jobs:
     concurrency:
       group: release-publish
       cancel-in-progress: false
+    outputs:
+      latest: ${{ steps.latest.outputs.latest }}
     permissions:
       contents: write
     steps:
@@ -867,6 +869,7 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
       PRERELEASE: ${{ needs.version.outputs.prerelease }}
+      LATEST: ${{ needs.github-release.outputs.latest }}
     steps:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -876,9 +879,11 @@ jobs:
         with:
           name: release-files
           path: release
-      # A prerelease goes to the `next` dist-tag so `npm install` keeps the
-      # last stable version.
+      # `latest` follows the GitHub Release's Latest: a prerelease goes to `next`
+      # and a patch to an older line to its own `release-X.Y`, so `npm install`
+      # keeps the highest final.
       - name: Publish the verified tarball (provenance)
+        id: publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }} # fallback while trusted publishing is not registered
         run: |
@@ -886,8 +891,13 @@ jobs:
             echo "@clickhouse/loom@$VERSION is already published"
             exit 0
           fi
-          TAG=latest
-          [ "$PRERELEASE" = true ] && TAG=next
+          if [ "$PRERELEASE" = true ]; then
+            TAG=next
+          elif [ "$LATEST" = true ]; then
+            TAG=latest
+          else
+            TAG="release-${VERSION%.*}"
+          fi
           npm publish "release/npm/clickhouse-loom-$VERSION.tgz" --provenance --access public --tag "$TAG"
 
   mcp-registry:
