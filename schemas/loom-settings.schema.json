@@ -1352,7 +1352,7 @@
           "default": 3.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "CPU seconds after which a tree-sitter parse stops reading its file. A file of a known language is then indexed as chunks without symbols, its parse error recorded until it is ingested again (`code.index_errors` lists it); the shell detector reads a timeout as \"not shell\"."
+          "description": "CPU seconds after which a tree-sitter parse stops reading its file; the file then takes its reader's parse-failure path (chunks without symbols, the error recorded)."
         },
         "code_path_prefixes": {
           "default": "",
@@ -1403,7 +1403,7 @@
           "default": 60.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds a PR overlay (the PR's changed files over its base) is cached."
+          "description": "Seconds a PR overlay (the PR's changed files over its base) is cached; one that left changed files unreached is not."
         },
         "code_pr_overlay_file_ttl_s": {
           "default": 3600.0,

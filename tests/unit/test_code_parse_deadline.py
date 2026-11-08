@@ -91,9 +91,8 @@ def _receiver(node: ast.expr) -> str:
 def test_every_tree_sitter_parse_goes_through_the_deadline() -> None:
     """Outside `bounded_parse`, no `.parse(` is called on a parser; and in the code plane's
     domain, or in any module that names tree-sitter, no `.parse(` at all except on a
-    receiver in `_NOT_A_PARSER`. A parser is
-    known by its name (`parser`, `_parser(...)`), so one held under another name outside
-    those modules is not caught."""
+    receiver in `_NOT_A_PARSER`. A parser is known by its name (`parser`, `_parser(...)`),
+    so one held under another name outside those modules is not caught."""
     unbounded = []
     for f in _SERVER.rglob("*.py"):
         if f.name == "bounded_parse.py":

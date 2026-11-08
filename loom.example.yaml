@@ -1198,10 +1198,9 @@ settings:
   # heal on the next backfill. [restart]
   # code_ingest_max_files_per_commit: 500
 
-  # CPU seconds after which a tree-sitter parse stops reading its file. A file of a
-  # known language is then indexed as chunks without symbols, its parse error recorded
-  # until it is ingested again (`code.index_errors` lists it); the shell detector reads
-  # a timeout as "not shell". [live]
+  # CPU seconds after which a tree-sitter parse stops reading its file; the file then
+  # takes its reader's parse-failure path (chunks without symbols, the error recorded).
+  # [live]
   # code_parse_timeout_seconds: 3.0
 
   # The ingest pass's own deadline (seconds), kept at the supervisor's cap;
@@ -2073,7 +2072,8 @@ settings:
   # barrel). [live]
   # code_ingest_sibling_text_ttl_s: 600.0
 
-  # Seconds a PR overlay (the PR's changed files over its base) is cached. [live]
+  # Seconds a PR overlay (the PR's changed files over its base) is cached; one that left
+  # changed files unreached is not. [live]
   # code_pr_overlay_cache_ttl_s: 60.0
 
   # Seconds one PR file's parse is kept, so a push that changes one file re-parses that

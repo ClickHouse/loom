@@ -1035,10 +1035,8 @@ class CodeSettings(BaseModel):
     # Changed files indexed per commit; past it the rest are skipped with a warning
     # and heal on the next backfill.
     code_ingest_max_files_per_commit: int = 500
-    # CPU seconds after which a tree-sitter parse stops reading its file. A file of a
-    # known language is then indexed as chunks without symbols, its parse error recorded
-    # until it is ingested again (`code.index_errors` lists it); the shell detector
-    # reads a timeout as "not shell".
+    # CPU seconds after which a tree-sitter parse stops reading its file; the file then
+    # takes its reader's parse-failure path (chunks without symbols, the error recorded).
     code_parse_timeout_seconds: Annotated[float, LIVE] = Field(default=3.0, gt=0)
     # The ingest pass's own deadline (seconds), kept at the supervisor's cap;
     # `code_ingest_pass_budget_fraction` keeps a pass under it.
@@ -1689,7 +1687,8 @@ class CodeSettings(BaseModel):
     # Seconds the ingest keeps a sibling-text answer (a manifest, a listing, a config, a
     # barrel).
     code_ingest_sibling_text_ttl_s: Annotated[float, LIVE] = Field(default=600.0, gt=0)
-    # Seconds a PR overlay (the PR's changed files over its base) is cached.
+    # Seconds a PR overlay (the PR's changed files over its base) is cached; one that
+    # left changed files unreached is not.
     code_pr_overlay_cache_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
     # Seconds one PR file's parse is kept, so a push that changes one file re-parses
     # that file alone; a PR's next review follows its next push.
