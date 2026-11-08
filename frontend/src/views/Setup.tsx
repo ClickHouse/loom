@@ -29,12 +29,18 @@ import { hasPlatformAdminClaim } from "../lib/role";
 import { TokensSection } from "./Tokens";
 import { ModelsSettings } from "./ModelsSettings";
 import { WebhooksSection } from "./WebhooksSection";
+import { StructureTab } from "./StructureTab";
 
 /** The URL carries the open settings tab
  *  (`?tab=memory`). */
-const SETTINGS_TABS = ["tokens", "memory", "models"] as const;
+const SETTINGS_TABS = ["tokens", "memory", "structure", "models"] as const;
 type SettingsTab = (typeof SETTINGS_TABS)[number];
-const TAB_LABELS: Record<SettingsTab, string> = { tokens: "Tokens", memory: "Memory", models: "Models & keys" };
+const TAB_LABELS: Record<SettingsTab, string> = {
+  tokens: "Tokens",
+  memory: "Memory",
+  structure: "Structure",
+  models: "Models & keys",
+};
 
 function isSettingsTab(v: string | null): v is SettingsTab {
   return SETTINGS_TABS.some((t) => t === v);
@@ -90,6 +96,7 @@ export function Setup() {
   // null total.
   const role = useNamespaceRole(namespace);
   const canListMemories = canCall("memory.list", role, whoami);
+  const showStructure = !!memoryNamespace && canCall("memory_schema.list", role, whoami);
   const [memoryTotal, setMemoryTotal] = useState<number | null>(null);
   useEffect(() => {
     if (!memoryNamespace || !canListMemories) {
@@ -223,6 +230,11 @@ export function Setup() {
           <TabTrigger value="memory" icon="light-bulb">
             {TAB_LABELS.memory}
           </TabTrigger>
+          {showStructure && (
+            <TabTrigger value="structure" icon="table">
+              {TAB_LABELS.structure}
+            </TabTrigger>
+          )}
           {canManageModels && (
             <TabTrigger value="models" icon="gear">
               {TAB_LABELS.models}
@@ -240,6 +252,14 @@ export function Setup() {
         </Tabs.Content>
         <Tabs.Content value="memory">
           <MemoryTab />
+        </Tabs.Content>
+        <Tabs.Content value="structure">
+          {/* Keyed by scope: another namespace starts with no rows, draft or dialog of this one. */}
+          {showStructure ? (
+            <StructureTab key={`${identity.org}/${namespace}`} />
+          ) : (
+            <p>Structure is shown for a memory namespace you can read.</p>
+          )}
         </Tabs.Content>
         <Tabs.Content value="models">
           {canManageModels ? <ModelsSettings /> : <p>Model settings require a platform administrator.</p>}

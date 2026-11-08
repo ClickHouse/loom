@@ -146,6 +146,14 @@ export const OP_MIN_ROLE = {
   // The Review queue's Proposals tab: read by a viewer, decided by a writer.
   "memory.proposals": VIEWER,
   "memory.proposal_decide": WRITER,
+  // Settings → Structure.
+  "memory_schema.list": VIEWER,
+  "memory_schema.register": ADMIN,
+  "memory_schema.approve": ADMIN,
+  "profile_schema.set": ADMIN,
+  "profile_schema.clear": ADMIN,
+  "namespace.register_ontology": ADMIN,
+  "namespace.register_category": WRITER,
   // The task inbox plane. The header bell polls `task.counts` only for a known role; the
   // Tasks view offers each action to a role that reaches it (the handler still authorizes
   // against the inbox's owner namespace).
