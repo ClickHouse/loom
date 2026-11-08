@@ -83,9 +83,9 @@ Rules:
   again). A branch whose admins were all such copies is left with none, and only an
   admin grant on one of the repository's operator entries reaches it. A member who held
   such a copy may have granted or approved others there, themselves included: review
-  its grants.
-  Widening the branch again does not bring back a copy a restriction revoked; grant
-  that admin on a sibling again. Only an admin with a grant of their own there can widen it, not one holding such a copy.
+  its grants. Widening the branch again does not bring back a copy a restriction
+  revoked; grant that admin on a sibling again. Only an admin with a grant of their own
+  there can widen it, not one holding such a copy.
 - A revoke follows the same path. One made on an operator entry removes from a branch
   added here only a copied grant, and none from a standard one while the subject holds
   an admin grant given on a branch added here. A copy that is a branch's only admin
