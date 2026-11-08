@@ -57,6 +57,18 @@ class AssistantSettings(BaseModel):
     # Seconds before a failed assistant setup is tried again; each next failure doubles
     # the wait, up to 16 times as long (docs/architecture/assistant.md#deployment).
     assistant_setup_retry_s: float = Field(default=60.0, ge=60, le=3600)
+    # Seconds one assistant answer may run, and how long its delegated token lives.
+    assistant_answer_ttl_s: int = Field(default=600, ge=60, le=3600)
+    # The share of a namespace's daily model cost cap the assistant may spend, so
+    # questions cannot spend what extraction and the conflict resolver need.
+    assistant_budget_share: float = Field(default=0.5, gt=0, le=1)
+    # Answers one web process runs at once per namespace (a replica runs its web
+    # workers' count times this); bounds how far answers that each passed the cap check
+    # can overshoot it.
+    assistant_concurrent_answers: int = Field(default=2, ge=1, le=50)
+    # USD charged for an answer cut before LibreChat reported its usage (a
+    # disconnect, a timeout) or on a model with no price, so no answer is free.
+    assistant_answer_ceiling_usd: float = Field(default=0.10, ge=0, le=10)
 
 
 # ===== Auth ===================================================================
@@ -5626,6 +5638,9 @@ class TrackerSettings(BaseModel):
 OP_BUDGETS_P99_MS: dict[str, int] = {
     "admin.users": 300,
     "agents.connected": 120,
+    # One agent answer: a model turn per tool call (measured p95 10.7 s, at most 15 s
+    # over the deployed qualification).
+    "assistant.ask": 30000,
     "audit.list": 200,
     "blacklist.add": 50,
     "blacklist.list": 80,

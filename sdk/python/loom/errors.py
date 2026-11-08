@@ -76,6 +76,7 @@ class BackendUnavailable(LoomError):
 #: committed whose rows are still on their way.
 _NEVER_RETRIED: Mapping[str, ErrorCategory] = {
     "ANALYSIS_UNAVAILABLE": "configuration",
+    "ASSISTANT_UNAVAILABLE": "configuration",
     "CODED_WIDTH_MISMATCH": "configuration",
     "GATEWAY_REQUIRED": "configuration",
     "MODEL_CALL_UNATTRIBUTED": "internal",

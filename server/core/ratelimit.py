@@ -55,6 +55,9 @@ _OP_CLASS_OVERRIDES: dict[str, str] = {
     # Up to a statement's time cap of ClickHouse each: its own bucket, so analysis
     # never spends the budget of the ops filed under default.
     "insights.query": "insights.query",
+    # One model-backed answer each, its tool calls a handful of reads: its own bucket,
+    # so answers never spend the budget of the ops filed under default.
+    "assistant.ask": "assistant.ask",
 }
 
 # Exact-key memory reads: one primary-key lookup each, and the shape an agent that uses loom
@@ -140,6 +143,9 @@ DEFAULT_LIMITS: dict[str, Limit] = {
     "code": Limit(capacity=60, rate=10),  # ~600/min
     # One SQL statement per call, each up to the analysis time cap.
     "insights.query": Limit(capacity=20, rate=3),  # ~180/min
+    # One answer per call, each held to the assistant's budget share and its
+    # per-process limit; the bucket bounds a burst of asks before those apply.
+    "assistant.ask": Limit(capacity=10, rate=1),  # ~60/min
     "default": Limit(capacity=50, rate=10),
 }
 
@@ -799,3 +805,32 @@ _limiter = Limiter()
 
 def get_limiter() -> Limiter:
     return _limiter
+
+
+def admit_route(
+    op_name: str,
+    namespace: str,
+    *,
+    org: str,
+    actor: str | None,
+    label: str = "",
+    traffic_class: str = "",
+) -> None:
+    """The rate-limit buckets of `op_name`, drawn for a route that serves it outside
+    the op dispatcher, as the transports draw them for the op in `traffic_class` (''
+    for a route that does not classify its calls): RATE_LIMITED when one is empty; a
+    limiter that fails admits the request, as it admits an op, and its log names `label`
+    (the route) or the op."""
+    from server.core import fail_open
+    from server.core.errors import RateLimitedError
+
+    try:
+        rl = get_limiter().check(
+            namespace, op_name, org=org, actor=actor or None, traffic_class=traffic_class
+        )
+    except Exception as e:  # noqa: BLE001 — the limiter fails open: the request is admitted
+        fail_open.note("rate_limit", label or op_name, e)
+        return
+    if not rl.allowed:
+        wait = max(1, int(rl.retry_after_s + 0.99))
+        raise RateLimitedError("rate limit exceeded; retry later", retry_after_s=wait)

@@ -304,6 +304,8 @@ pass every bucket, and a refusal decrements none.
 | `knowledge.read`   | The other `read_only` `knowledge.*` ops, `knowledge.inspect` aside: `knowledge.get`, `knowledge.list`, …      | 50       | 10         |
 | `knowledge.add`    | Every other `knowledge.*` op, `knowledge.inspect`, `knowledge.synthesize` and `knowledge.dedup_list` included | 10       | 2          |
 | `code`             | `code.*` (except `code.outcome`, which draws from `memory`)                                                   | 60       | 10         |
+| `insights.query`   | `insights.query`                                                                                              | 20       | 3          |
+| `assistant.ask`    | `assistant.ask` and the assistant's chat route                                                                | 10       | 1          |
 | `default`          | Everything else                                                                                               | 50       | 10         |
 
 These are the namespace-tier defaults (`DEFAULT_LIMITS`, `op_class_for`):

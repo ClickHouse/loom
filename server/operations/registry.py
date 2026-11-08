@@ -10,6 +10,7 @@ every other domain.
 
 from __future__ import annotations
 
+from server.assistant.api import ops as assistant
 from server.code.api import ops as code
 from server.code.api import ops_coverage_watch as code_watch
 from server.erasure.api import ops as erasure
@@ -72,6 +73,7 @@ _OPERATION_MODULES = (
     erasure,
     cost,
     analysis,
+    assistant,
     decision,
     demonstrate,
     audit,

@@ -352,14 +352,15 @@ Every call that names a namespace draws from token buckets keyed by namespace
 and **op class**: `memory`, `memory.read` (exact-key reads such as
 `memory.get`), `memory.import`, `knowledge.search`, `knowledge.query`,
 `knowledge.read` (the other `read_only` knowledge ops, `knowledge.inspect` aside),
-`knowledge.add`, `code` and `default` (`server/core/ratelimit.py`,
+`knowledge.add`, `code`, `insights.query`, `assistant.ask` (its chat route too) and
+`default` (`server/core/ratelimit.py`,
 `DEFAULT_LIMITS`). Three tiers must all admit it:
 
-| Tier      | Key                            | Default (burst / per second)                                                                                                                                                                                |
-| --------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| namespace | (namespace, op class)          | `memory` 100 / 17, `memory.read` 300 / 50, `memory.import` 10 / 2, `knowledge.search` 20 / 3, `knowledge.query` 20 / 3, `knowledge.read` 50 / 10, `knowledge.add` 10 / 2, `code` 60 / 10, `default` 50 / 10 |
-| org       | (verified token org, op class) | 3 × the namespace limit, so a tenant with many namespaces cannot sustain many times one namespace's budget                                                                                                  |
-| actor     | (namespace, token subject)     | `LOOM_RATELIMIT_ACTOR_FRACTION` × the namespace limit; the default 1.0 creates no actor bucket                                                                                                              |
+| Tier      | Key                            | Default (burst / per second)                                                                                                                                                                                                                                 |
+| --------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| namespace | (namespace, op class)          | `memory` 100 / 17, `memory.read` 300 / 50, `memory.import` 10 / 2, `knowledge.search` 20 / 3, `knowledge.query` 20 / 3, `knowledge.read` 50 / 10, `knowledge.add` 10 / 2, `code` 60 / 10, `insights.query` 20 / 3, `assistant.ask` 10 / 1, `default` 50 / 10 |
+| org       | (verified token org, op class) | 3 × the namespace limit, so a tenant with many namespaces cannot sustain many times one namespace's budget                                                                                                                                                   |
+| actor     | (namespace, token subject)     | `LOOM_RATELIMIT_ACTOR_FRACTION` × the namespace limit; the default 1.0 creates no actor bucket                                                                                                                                                               |
 
 - The limits are deployment-wide targets: each process holds the limit divided by
   the live serving replicas in `loom.instances` (at least `LOOM_REPLICA_COUNT`, which

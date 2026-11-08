@@ -230,6 +230,15 @@
             ]
           }
         },
+        "assistant": {
+          "class": "AssistantOps",
+          "methods": {
+            "ask": [
+              "body",
+              "options"
+            ]
+          }
+        },
         "audit": {
           "class": "AuditOps",
           "methods": {

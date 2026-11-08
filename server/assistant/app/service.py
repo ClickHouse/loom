@@ -54,6 +54,10 @@ _USER_NAME = "loom-assistant"
 # Whether this process has the service set up: None = not yet tried, False = a problem.
 _ready: bool | None = None
 _problem = ""
+# The agent id and agents API key answers run with, once a setup succeeded.
+_answering: tuple[str, str] | None = None
+# This process's setup loop, while it runs.
+_loop: asyncio.Task[None] | None = None
 
 
 class ServiceRefused(RuntimeError):
@@ -63,6 +67,22 @@ class ServiceRefused(RuntimeError):
 def assistant_state() -> tuple[bool | None, str]:
     """(ready, why not) for `/v1/health`."""
     return _ready, _problem
+
+
+def answering() -> tuple[str, str] | None:
+    """(agent id, agents API key) once this process set the service up, else None."""
+    return _answering
+
+
+def forget_answering(why: str) -> None:
+    """LibreChat no longer takes the stored key or agent (another replica replaced it,
+    or LibreChat's database was): drop them and set the service up again, which reads
+    the row another replica may have written or repairs it."""
+    global _answering, _ready, _problem
+    _answering = None
+    _ready, _problem = False, f"setting up the assistant again: {why}"
+    if _loop is None or _loop.done():
+        start_setup_loop()
 
 
 def current_definition() -> agent_definition.Definition:
@@ -201,6 +221,7 @@ async def ensure_service() -> None:
     """Set the service user and agent up, doing only what the row lacks, and check
     with the stored key that LibreChat still holds them (its database replaced, or
     the agent deleted, makes the step again)."""
+    global _answering
     defn = current_definition()
     async with lease():
         row = await store.read()
@@ -250,6 +271,7 @@ async def ensure_service() -> None:
                 await lc.write_agent(row.agent_id, defn)
                 row = row.advanced(definition_version=defn.version, definition_model=defn.model)
                 await store.write(row)
+    _answering = (row.agent_id, key)
 
 
 async def _still_held(lc: _LibreChat, key: str, agent_id: str) -> tuple[str, str]:
@@ -304,10 +326,14 @@ def start_setup_loop() -> asyncio.Task[None] | None:
             await asyncio.sleep(float(settings.assistant_setup_retry_s) * 2 ** min(failures, 4))
             failures += 1
 
-    return asyncio.get_running_loop().create_task(_run(), name="loom-assistant-service")
+    global _loop
+    _loop = asyncio.get_running_loop().create_task(_run(), name="loom-assistant-service")
+    return _loop
 
 
 __all__ = [
+    "answering",
+    "forget_answering",
     "assistant_state",
     "current_definition",
     "ensure_service",

@@ -58,6 +58,24 @@ class AgentsOps:
         )
 
 
+class AssistantOps:
+    """The `assistant.*` operations."""
+
+    # SyncAgent proxies a nested client's coroutines as blocking calls.
+    _loom_nested_client = True
+
+    def __init__(self, agent: Agent) -> None:
+        self._agent = agent
+
+    async def ask(
+        self, body: _ops.AssistantAskBody | None = None, /, **options: Any
+    ) -> _ops.AssistantAskOutput:
+        """`assistant.ask`."""
+        return cast(
+            "_ops.AssistantAskOutput", await self._agent.call("assistant.ask", body, **options)
+        )
+
+
 class AuditOps:
     """The `audit.*` operations."""
 
@@ -3373,6 +3391,7 @@ class OpsClient:
     def __init__(self, agent: Agent) -> None:
         self.admin = AdminOps(agent)
         self.agents = AgentsOps(agent)
+        self.assistant = AssistantOps(agent)
         self.audit = AuditOps(agent)
         self.blacklist = BlacklistOps(agent)
         self.calibration = CalibrationOps(agent)

@@ -46,6 +46,34 @@
           "type": "string",
           "description": "Anthropic's API root (the Messages API is <root>/v1/messages): point it at a gateway in front of Anthropic. Off the default, the key also goes as a bearer, the scheme gateways take."
         },
+        "assistant_answer_ceiling_usd": {
+          "default": 0.1,
+          "maximum": 10,
+          "minimum": 0,
+          "type": "number",
+          "description": "USD charged for an answer cut before LibreChat reported its usage (a disconnect, a timeout) or on a model with no price, so no answer is free."
+        },
+        "assistant_answer_ttl_s": {
+          "default": 600,
+          "maximum": 3600,
+          "minimum": 60,
+          "type": "integer",
+          "description": "Seconds one assistant answer may run, and how long its delegated token lives."
+        },
+        "assistant_budget_share": {
+          "default": 0.5,
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "type": "number",
+          "description": "The share of a namespace's daily model cost cap the assistant may spend, so questions cannot spend what extraction and the conflict resolver need."
+        },
+        "assistant_concurrent_answers": {
+          "default": 2,
+          "maximum": 50,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Answers one web process runs at once per namespace (a replica runs its web workers' count times this); bounds how far answers that each passed the cap check can overshoot it."
+        },
         "assistant_librechat_url": {
           "default": "",
           "type": "string",

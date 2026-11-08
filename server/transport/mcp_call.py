@@ -37,7 +37,7 @@ from server.transport import mcp_runs as _mcp_runs
 from server.transport._common import begin_call, bind_request, validation_note
 from server.transport._common import validation_errors as _validation_errors
 from server.transport.arg_feedback import feedback, refused_result, tool_error
-from server.transport.assistant_call import assistant_call, set_assistant_call
+from server.transport.assistant_call import answer_run, assistant_call, set_assistant_call
 from server.transport.lean_results import lean_result
 from server.transport.mcp_config import (
     _LOOM_ACTIVATE_TOOL_NAME,
@@ -384,6 +384,9 @@ async def _bind_session_run(
             run = await _mcp_runs.ensure(mcp_session_id, defaults, caller)
             if run is not None:
                 session_run_id = run.run_id
+        if assistant_call():
+            # An assistant call opens no session run: it is labelled with its answer's id.
+            session_run_id = answer_run()
         set_ledger_run(session_run_id)
     except Exception as _run_err:  # noqa: BLE001 — the ledger never fails a tool call
         log.debug("mcp session run failed for %s (non-fatal): %s", op.name, _run_err)

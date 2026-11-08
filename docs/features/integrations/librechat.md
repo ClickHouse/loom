@@ -261,27 +261,37 @@ a boot over a set-up row checks with the stored key that LibreChat still holds t
 From a failed try until one succeeds, `/v1/health` shows `assistant_service_failing`.
 The chart's `assistant.enabled` does the same on Kubernetes.
 
-The qualification runs the same cases through that agent. `setup-deployed` reads the
-agent and its key from `loom.assistant_service`, so it runs from a Loom checkout with
-the server's `LOOM_CH_*` and `LOOM_JWT_SECRET` in its environment, and mints each
-person's answer token (`viewer` on their namespace alone); `run` then sends each case to
-the agent with that token as `parent_message_id`. LibreChat publishes no port, so
-publish one for the run with an override file and pass it as `--librechat-url`:
-
-```yaml
-# compose.qualify.yaml, beside compose.yaml
-services:
-  librechat:
-    ports: ["127.0.0.1:3080:3080"]
-```
+Ask it through Loom, as yourself: the chat route takes OpenAI's chat request and answers
+with its chunks, streaming or whole, and needs `viewer` on the namespace it names.
 
 ```bash
-LOOM_BUILD_COMMIT=$(git rev-parse --short HEAD) \
-  docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml \
-    -f compose.qualify.yaml --profile bundled --profile assistant up -d --build
+curl -N "$LOOM_URL/v1/assistant/chat/completions" \
+  -H "Authorization: Bearer $LOOM_TOKEN" -H "X-Loom-Namespace: my-namespace" \
+  -d '{"stream": true, "messages": [{"role": "user", "content": "Which agent writes the most?"}]}'
+```
+
+An agent asks one question with `loom_assistant_ask` over MCP (called by name: no toolset
+lists it), or `assistant.ask` over HTTP and the SDKs' generated `ops.assistant.ask` /
+`loom.assistant.ask`, which answer whole. An answer may run up to
+`LOOM_ASSISTANT_ANSWER_TTL_S` (600 s), longer than the SDKs' default 60 s request timeout,
+and is never resent, so give the call a timeout that long (`timeout_s=600` in Python,
+`{ timeoutMs: 600_000 }` in TypeScript): a call that times out first leaves an answer the
+server finishes and charges. Each answer is ledgered as `assistant.ask` with its model
+spend, and its tool calls carry the answer's id as `run_id`.
+
+The qualification runs the same cases through Loom's assistant route
+(`POST /v1/assistant/chat/completions`), each with the person's own token, so Loom
+delegates each answer's token and runs the agent it seeded. `setup-bridge` grants each
+person `viewer` on their namespace, since an answer's token is delegated from a live
+grant. A run spends about a dollar from each namespace's daily model cost cap, and the
+assistant may spend half of it, so raise the cap for the run
+(`LOOM_DEFAULT_DAILY_COST_CAP_USD=20` on the server, or the namespace's
+`daily_cost_cap_usd`); otherwise the last cases are refused with `RATE_LIMITED`:
+
+```bash
 Q=integrations/librechat/qualification/qualify.py
 python $Q seed
-python $Q --librechat-url http://localhost:3080 setup-deployed
+python $Q setup-bridge
 python $Q revoke
 python $Q run --cancel-probe
 ```
@@ -292,7 +302,7 @@ rows) and two recommendation cases over `acme-notes`, a namespace written badly 
 purpose (hash-named keys, a JSON value encoded twice, a 6.5 KB runbook stored as a
 memory).
 
-| Measured on v0.8.8, 28 cases, `claude-haiku-4-5`, fake embedder   | The deployed agent                                              |
+| Measured on v0.8.8, 28 cases, `claude-haiku-4-5`, fake embedder   | The deployed agent, asked directly                              |
 | ----------------------------------------------------------------- | --------------------------------------------------------------- |
 | Correct answers                                                   | 28 of 28, in one run                                            |
 | Analysis cases / recommendation cases                             | 3 of 3 / 2 of 2                                                 |
@@ -306,6 +316,11 @@ memory).
 | Loom calls after a client disconnects mid-answer                  | 0                                                               |
 | Answer tokens or service password in LibreChat's logs or database | none                                                            |
 | What LibreChat stored                                             | `transactions` only: no messages, conversations or tool calls   |
+
+The same cases asked through Loom's chat route, each with the person's own token: 25 of
+28 correct and the other 3 refused with `RATE_LIMITED` once the namespace had spent the
+assistant's half of the default $1 cap (all 3 correct with the cap at $20); a mean of
+$0.027 and a maximum of $0.047 per answer, p95 9.4 s.
 
 A model's answers vary from run to run, so one run of 28 cases is a sample, not a
 bound. The invalid memory citations are two hash keys the answer shortened and one key

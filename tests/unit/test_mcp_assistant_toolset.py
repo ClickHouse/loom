@@ -9,6 +9,7 @@ reads that record usage told not to, whatever the model sent.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import re
 from typing import Any, get_args
 
@@ -691,3 +692,81 @@ def test_an_assistant_tool_call_naming_no_namespace_is_filled_with_the_tokens(
 
     asyncio.run(_run())
     assert arguments["org"] == "acme" and arguments["namespace"] == "acme-handbook"
+
+
+@pytest.mark.parametrize(("on_assistant", "run"), [(True, "chatcmpl-1"), (False, "")])
+def test_an_assistant_tool_call_is_ledgered_under_its_answer(on_assistant: bool, run: str) -> None:
+    # The agent's MCP server sends the answer's id as X-Loom-Run-Id; only an assistant
+    # call takes it as its row's run_id (it opens no session run).
+    from server.observability.run_context import current_ledger_run
+    from server.transport.assistant_call import set_answer_run, set_assistant_call
+
+    async def _run() -> str:
+        set_assistant_call(on_assistant)
+        set_answer_run("chatcmpl-1")
+        await mcp_call._bind_session_run(OPERATIONS_BY_NAME["memory.search"], None, "", None)
+        return current_ledger_run()
+
+    assert asyncio.run(_run()) == run
+
+
+@pytest.mark.parametrize(
+    ("toolset", "consumer", "run"),
+    [
+        ("assistant", "loom-assistant", "chatcmpl-1"),
+        ("core", "loom-assistant", ""),
+        # Any other caller on the assistant toolset files nothing under an answer's id.
+        ("assistant", "", ""),
+        ("assistant", "my-script", ""),
+    ],
+)
+def test_only_an_answer_token_on_an_assistant_connection_reads_the_answer_header(
+    toolset: str, consumer: str, run: str
+) -> None:
+    import server.transport.mcp as mcp_module
+    from server.auth.jwt import AuthInfo
+
+    class _Request:
+        headers = {"X-Loom-Run-Id": "chatcmpl-1"}
+
+    auth = AuthInfo(
+        subject="alice",
+        org="acme",
+        namespaces=("acme-handbook",),
+        roles=(),
+        is_service_account=False,
+        consumer=consumer,
+    )
+    assert mcp_module.answer_run_of(_Request(), toolset, auth) == run
+
+
+@pytest.mark.parametrize(("answer", "run"), [("chatcmpl-9", "chatcmpl-9"), ("", "")])
+def test_a_refused_assistant_tool_call_is_ledgered_under_its_answer(
+    answer: str, run: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A call the screen refuses (another tenant's namespace) is the row an audit of the
+    # answer most needs: it keeps the answer's id, as an admitted call does.
+    from server.auth.jwt import AuthInfo
+    from server.observability import ledger
+    from server.observability.run_context import current_ledger_run
+    from server.transport import mcp_ledger
+    from server.transport.assistant_call import set_answer_run
+
+    seen: list[str] = []
+    monkeypatch.setattr(ledger, "emit_agent_event", lambda **_kw: seen.append(current_ledger_run()))
+    auth = AuthInfo(
+        subject="alice",
+        org="acme",
+        namespaces=("acme-handbook",),
+        roles=(),
+        is_service_account=False,
+        consumer="loom-assistant",
+    )
+
+    def _refuse() -> None:
+        set_answer_run(answer)
+        mcp_ledger.emit_token_refusal("memory.search", auth, error_code="NAMESPACE_NOT_ACCESSIBLE")
+
+    # In a copy of the context, so the answer id is set for this test alone.
+    contextvars.copy_context().run(_refuse)
+    assert seen == [run]

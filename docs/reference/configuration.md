@@ -57,6 +57,10 @@ The assistant: LibreChat run headless beside Loom, and the agent Loom seeds in i
 | `LOOM_ASSISTANT_LIBRECHAT_URL` | `str` | `''` |  | LibreChat's internal address (http://librechat:3080), reachable only from Loom. "" = no assistant: no service setup at boot. |
 | `LOOM_ASSISTANT_SERVICE_EMAIL` | `str` | `'loom-assistant@loom.invalid'` |  | Email of the LibreChat service user that owns the agent, read once, when the first boot writes loom.assistant_service; LibreChat sends it no mail. |
 | `LOOM_ASSISTANT_SETUP_RETRY_S` | `float` | `60.0` |  | Seconds before a failed assistant setup is tried again; each next failure doubles the wait, up to 16 times as long (docs/architecture/assistant.md#deployment). |
+| `LOOM_ASSISTANT_ANSWER_TTL_S` | `int` | `600` |  | Seconds one assistant answer may run, and how long its delegated token lives. |
+| `LOOM_ASSISTANT_BUDGET_SHARE` | `float` | `0.5` |  | The share of a namespace's daily model cost cap the assistant may spend, so questions cannot spend what extraction and the conflict resolver need. |
+| `LOOM_ASSISTANT_CONCURRENT_ANSWERS` | `int` | `2` |  | Answers one web process runs at once per namespace (a replica runs its web workers' count times this); bounds how far answers that each passed the cap check can overshoot it. |
+| `LOOM_ASSISTANT_ANSWER_CEILING_USD` | `float` | `0.1` |  | USD charged for an answer cut before LibreChat reported its usage (a disconnect, a timeout) or on a model with no price, so no answer is free. |
 
 ## Auth
 

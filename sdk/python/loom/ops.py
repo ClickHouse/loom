@@ -41,6 +41,7 @@ class OpSpec:
 OpName = Literal[
     "admin.users",
     "agents.connected",
+    "assistant.ask",
     "audit.list",
     "blacklist.add",
     "blacklist.list",
@@ -402,6 +403,7 @@ OpName = Literal[
 OP_NAMES: tuple[str, ...] = (
     "admin.users",
     "agents.connected",
+    "assistant.ask",
     "audit.list",
     "blacklist.add",
     "blacklist.list",
@@ -784,6 +786,18 @@ OPS: dict[str, OpSpec] = {
         120,
         False,
         True,
+    ),
+    "assistant.ask": OpSpec(
+        "assistant.ask",
+        "AssistantAskInput",
+        "AssistantAskBody",
+        "AssistantAskOutput",
+        False,
+        "viewer",
+        "experimental",
+        30000,
+        False,
+        False,
     ),
     "audit.list": OpSpec(
         "audit.list",
@@ -5135,6 +5149,31 @@ class ConnectedAgent(TypedDict, total=False):
     namespaces_touched: Required[int]
     primary_namespace: Required[str]
     cost_usd: NotRequired[float]
+
+
+class AssistantAskInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    question: Required[str]
+    history: NotRequired[list["AssistantMessage"]]
+
+
+class AssistantMessage(TypedDict, total=False):
+    role: Required[Literal["user", "assistant"]]
+    content: Required[str]
+
+
+class AssistantAskBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    question: Required[str]
+    history: NotRequired[list["AssistantMessage"]]
+
+
+class AssistantAskOutput(TypedDict, total=False):
+    answer: NotRequired[str]
+    run_id: NotRequired[str]
+    model: NotRequired[str]
 
 
 class AuditListInput(TypedDict, total=False):

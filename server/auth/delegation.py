@@ -147,6 +147,7 @@ async def delegate(
     scoped: bool,
     ttl_seconds: int | None,
     is_service_account: bool,
+    ends_with_session: bool = False,
 ) -> Delegated:
     """The child `parent` may mint in `org`. `requested` maps each namespace,
     in read-priority order, to the role asked for there; None asks for the
@@ -155,18 +156,20 @@ async def delegate(
     otherwise a flat token whose one role is the lowest role allowed on any
     requested namespace, a role-less name beside `*` counting at the parent's
     ceiling (`_flat_role`). The caller lists the child where its owner can revoke
-    it (`loom.service_accounts`). Raises 403 AUTH_INSUFFICIENT naming what was
-    refused."""
+    it (`loom.service_accounts`). `ends_with_session` also names a first-party
+    sign-in session among the child's `parents`, so the child ends at sign-out as
+    a third-party client's always does (the assistant's per-answer token). Raises
+    403 AUTH_INSUFFICIENT naming what was refused."""
     child_org = _child_org(parent, org)
     if parent.is_service_account and not is_service_account:
         raise _refuse("a service-account token can only mint service-account tokens")
     parents = [*parent.parents, parent.token_id] if parent.token_id else list(parent.parents)
-    if parent.session_id and not parent.first_party:
-        # A third-party client's session: what it mints ends when the session
-        # is revoked, not when the parent's access token runs out.
+    if parent.session_id and (ends_with_session or not parent.first_party):
+        # A third-party client's session, or a first-party one asked for: what it
+        # mints ends when the session is revoked, not when the access token runs out.
         parents.append(parent.session_id)
     if len(parents) > MAX_CHAIN_DEPTH:
-        # Counts the ancestor tokens and, for a third-party client, its session.
+        # Counts the ancestor tokens and the session when one is named.
         raise _refuse(f"a delegation chain is limited to {MAX_CHAIN_DEPTH} ancestors")
     if scoped and "*" in requested:
         raise _refuse("a per-namespace token cannot name '*'")
@@ -230,15 +233,15 @@ def _child_org(parent: AuthInfo, org: str) -> str:
 
 
 def _child_ttl(parent: AuthInfo, ttl_seconds: int | None) -> int | None:
-    """The child's TTL in seconds (None: never expires): the one asked for,
-    else the default. A child never outlives its parent. A session of Loom's
-    own sign-in (`first_party`: `loom login`, the dashboard) has an access
-    token that lives an hour and the next refresh replaces it, so its
-    children take what was asked: they are what the person made for agents
-    and CI, outlive the session (a logout, a lost refresh answer), and are
-    revoked one by one or with the person. A third-party MCP client's session
-    gets no such reach: its children end with its access token, or sooner
-    with the session (`delegate` names it in their `parents`)."""
+    """The child's TTL in seconds (None: never expires): the one asked for, else the
+    default. A child never outlives its parent. A session of Loom's own sign-in
+    (`first_party`: `loom login`, the dashboard) has an access token that lives an hour
+    and the next refresh replaces it, so its children take what was asked: they are what
+    the person made for agents and CI, outlive the session (a logout, a lost refresh
+    answer), and are revoked one by one or with the person; one asked to end with the
+    session (`ends_with_session`) still takes what was asked, and a sign-out ends it. A
+    third-party MCP client's session gets no such reach: its children end with its
+    access token, or sooner with the session (`delegate` names it in their `parents`)."""
     ttl = DEFAULT_TTL_DAYS * 86400 if ttl_seconds is None else ttl_seconds
     never = ttl == NEVER
     if (parent.session_id and parent.first_party) or parent.expires_at is None:

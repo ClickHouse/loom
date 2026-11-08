@@ -247,6 +247,14 @@ class _Accumulator:
         self.embed_tokens += tokens
         self.cost_usd += embed_cost_usd(model, tokens)
 
+    def add_charge(self, model: str, cost_usd: float) -> None:
+        """One call of `model` at a set price, with no tokens (`report_charge`)."""
+        self.cost_usd += cost_usd
+        self.llm_calls += 1
+        tally = self.by_model.setdefault(model or "", [0, 0, 0, 0.0, 0, 0])
+        tally[0] += 1
+        tally[3] += cost_usd
+
     def add_llm(
         self,
         model: str,
@@ -316,6 +324,16 @@ def report_embed(model: str, tokens: int) -> None:
     if acc is None:
         return
     acc.add_embed(model, tokens)
+
+
+def report_charge(model: str, cost_usd: float) -> None:
+    """Charge one model call at a set price, for a call that cannot be priced from its
+    tokens (the assistant's answer cut before its usage arrived, or on a model with no
+    price): it counts as one call of `model` costing `cost_usd`, with no tokens."""
+    acc = _current.get()
+    if acc is None:
+        return
+    acc.add_charge(model, cost_usd)
 
 
 def report_llm(

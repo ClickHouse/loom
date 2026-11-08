@@ -29,9 +29,8 @@ from server.auth.authz import check_acted_for, check_authorized
 from server.auth.bearer import missing_bearer, verify_bearer_header
 from server.auth.context import set_current_auth
 from server.auth.gateway import effective_auth, personal_namespace
-from server.core import fail_open, tenant_slots
+from server.core import tenant_slots
 from server.core.document_formats import format_of
-from server.core.errors import RateLimitedError
 from server.identity.app.namespace_autoregister import maybe_autoregister
 from server.identity.app.restricted_access import note_restricted_access
 from server.operations.base import Role
@@ -71,24 +70,17 @@ def _bucket_org(auth: Any, org: str) -> str:
 
 
 def _admit(auth: Any, org: str, namespace: str) -> None:
-    """`knowledge.add`'s rate-limit buckets, as the transports draw them for an
-    op, as interactive traffic (an upload is not classified); a limiter that
-    fails admits the upload, as it admits an op."""
-    from server.core.ratelimit import get_limiter
+    """`knowledge.add`'s rate-limit buckets, as the transports draw them for an op, as
+    interactive traffic (an upload is not classified)."""
+    from server.core.ratelimit import admit_route
 
-    try:
-        rl = get_limiter().check(
-            namespace,
-            "knowledge.add",
-            org=_bucket_org(auth, org),
-            actor=getattr(auth, "subject", None) or None,
-        )
-    except Exception as e:  # noqa: BLE001 — the limiter fails open: the upload is admitted
-        fail_open.note("rate_limit", "knowledge.upload", e)
-        return
-    if not rl.allowed:
-        wait = max(1, int(rl.retry_after_s + 0.99))
-        raise RateLimitedError("rate limit exceeded; retry later", retry_after_s=wait)
+    admit_route(
+        "knowledge.add",
+        namespace,
+        org=_bucket_org(auth, org),
+        actor=getattr(auth, "subject", None),
+        label="knowledge.upload",
+    )
 
 
 @upload_router.post("/v1/knowledge.upload")
