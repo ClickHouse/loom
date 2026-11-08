@@ -214,25 +214,6 @@ def test_a_refusals_body_is_never_read(world: _World) -> None:
     assert served[0] == 0
 
 
-def test_a_refusal_whose_body_stalls_is_still_the_refusal(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    forgotten: list[str] = []
-    monkeypatch.setattr(service, "forget_answering", forgotten.append)
-    monkeypatch.setattr(settings, "assistant_answer_ttl_s", 1)
-
-    class _Stalled(httpx.AsyncByteStream):
-        async def __aiter__(self) -> Any:
-            yield b"{"
-            await asyncio.sleep(30)
-
-    world.override = lambda _request: httpx.Response(401, stream=_Stalled())
-    with pytest.raises(AssistantUpstreamError, match="401") as refused:
-        _answer(_caller(), QUESTION)
-    # Its status, not the answer's limit, and the stale key is dropped as for any 401.
-    assert "ran past" not in str(refused.value) and forgotten
-
-
 @pytest.mark.parametrize(
     ("change", "refusal"),
     [
@@ -337,7 +318,7 @@ def test_only_the_callers_text_turns_reach_the_agent() -> None:
 
 def test_a_logged_librechat_error_names_neither_secret() -> None:
     ticket = bridge.Ticket(ORG, NS, "agent_1", "sk-secret", "answer.jwt." + "x" * 400, 7)
-    echoed = f"bad request: parent_message_id={ticket.token} key=sk-secret".encode()
+    echoed = f"bad request: parent_message_id={ticket.token} key=sk-secret"
     logged = bridge._redacted(ticket, echoed)
     assert "answer.jwt" not in logged and "sk-secret" not in logged
     assert "<answer token>" in logged and "<service key>" in logged

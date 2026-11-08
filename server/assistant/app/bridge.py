@@ -288,7 +288,7 @@ async def stream(
                     if answer.error:
                         log.warning(
                             "LibreChat ended an answer with an error: %s",
-                            _redacted(ticket, answer.error.encode()),
+                            _redacted(ticket, answer.error),
                         )
                         raise AssistantUpstreamError("LibreChat ended the answer with an error")
                     yield (line + "\n\n").encode()
@@ -306,10 +306,10 @@ async def stream(
     yield b"data: [DONE]\n\n"
 
 
-def _redacted(ticket: Ticket, text: bytes) -> str:
+def _redacted(ticket: Ticket, text: str) -> str:
     """LibreChat's error text for a log line, without the answer's token or the service
     key it may echo back, cut after the redaction so no part of either survives."""
-    out = text.decode("utf-8", "replace")
+    out = text
     for secret, name in ((ticket.token, "<answer token>"), (ticket.api_key, "<service key>")):
         if secret:
             out = out.replace(secret, name)
