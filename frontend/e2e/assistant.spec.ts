@@ -511,6 +511,16 @@ const TUNE = {
       effect: "future",
       historical:
         "Documents already stored keep their chunks. A text document is cut again by the rechunk command; an ingested one only by downloading its original, uploading it again and ingesting it (the rechunk command would turn it into a text document). Each is a separate action with its own approval.",
+      // server/knowledge/app/tune.py _CHUNKS_REFS.
+      refs: [
+        "loom rechunk --org <org> --namespace <namespace> --apply",
+        "GET /v1/knowledge.download",
+        "POST /v1/knowledge.upload",
+        "knowledge.ingest",
+        "settings.set knowledge_chunk_size",
+        "settings.set knowledge_chunk_stride",
+        "expected",
+      ],
       apply: {
         op: "settings.set",
         via: "admin_route",
@@ -557,6 +567,15 @@ const TUNE = {
       effect: "future",
       historical:
         "Sources already ingested keep their extraction, and a failed job does not run again: each is extracted again only by uploading its original again and ingesting it, a separate action with its own approval.",
+      // server/knowledge/app/tune.py: format_unavailable (a source failed), then _ROUTES_REFS.
+      refs: [
+        "format_unavailable",
+        "LOOM_DOCUMENT_EXTRACTORS_JSON",
+        "current",
+        "POST /v1/knowledge.upload",
+        "knowledge.ingest",
+        "knowledge.inspect",
+      ],
       apply: {
         op: "LOOM_DOCUMENT_EXTRACTORS_JSON",
         via: "environment",
