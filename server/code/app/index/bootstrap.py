@@ -582,7 +582,7 @@ async def index_slice(
                 denylist=denylist,
             )
         if recorded is not None:
-            counters["files" if recorded else "errors"] += 1
+            counters["errors" if recorded is False else "files"] += 1
         return path, source
 
     async def _one(reads: Any, path: str, source: bytes) -> None:
