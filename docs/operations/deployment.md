@@ -988,8 +988,10 @@ cosign verify ghcr.io/clickhouse/loom:X.Y.Z \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
-The one-line installer pins `X.Y.Z` in its generated `.env`; pin an immutable version (or
-digest) in production rather than tracking `latest`
+The signature is on each image's multi-arch index, so verify the tag or the index digest
+(`docker buildx imagetools inspect ghcr.io/clickhouse/loom:X.Y.Z` prints it), not one
+architecture's. The one-line installer pins `X.Y.Z` in its generated `.env`; pin an immutable
+version (or that index digest) in production rather than tracking `latest`
 ([release process](../development/release-process.md)).
 
 The document extractor service (the parsers, apart from the server: [document
