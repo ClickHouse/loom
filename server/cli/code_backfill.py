@@ -10,14 +10,23 @@ import os
 import pathlib
 import sys
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from server.cli.code_maintenance import _compact_after_bulk
 from server.cli.code_run import _identity, _note, _repo_cfg
 from server.core.background import gather_or_cancel
 from server.llm import customer
 
+if TYPE_CHECKING:
+    from server.code.app.index.ingest_stats import FileIngestStats
+
 log = logging.getLogger("loom.cli.code")
+
+
+def _count_record(counters: dict[str, int], recorded: FileIngestStats | Literal[False]) -> None:
+    """Count an oversize file's record as `_one` counts an ingested file."""
+    key = "errors" if recorded is False else "excluded" if recorded.excluded else "files"
+    counters[key] = counters.get(key, 0) + 1
 
 
 async def _backfill(args: argparse.Namespace) -> int:
@@ -115,7 +124,7 @@ async def _backfill(args: argparse.Namespace) -> int:
             )
         if recorded is not None:
             oversize.add(path)
-            counters["files" if recorded else "errors"] += 1
+            _count_record(counters, recorded)
         return path, source
 
     async def _one(reads: Any, path: str, source: bytes) -> None:

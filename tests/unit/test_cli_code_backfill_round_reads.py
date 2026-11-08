@@ -88,3 +88,13 @@ def test_round_size_zero_keeps_the_per_file_reads(monkeypatch: pytest.MonkeyPatc
     # one wrapper for the whole batch; with nothing prefetched it delegates
     assert len({id(r) for r, _, _ in seen}) == 1
     assert all(r.parsed == {} for r, _, _ in seen)
+
+
+def test_an_oversize_record_moves_the_counter_an_ingest_would() -> None:
+    from server.code.app.index.ingest_stats import FileIngestStats
+
+    counters = {"files": 0, "errors": 0}
+    for recorded in (FileIngestStats(path="a.png", excluded="binary"), False):
+        code_backfill._count_record(counters, recorded)
+    code_backfill._count_record(counters, FileIngestStats(path="a.json", error="skipped: …"))
+    assert counters == {"files": 1, "errors": 1, "excluded": 1}
