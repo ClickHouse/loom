@@ -368,7 +368,8 @@ async def reembed_table(
         after = [str(x) for x in rows[-1]["_k"]]
         progress = f"{written}/{total}" + (f" ({held} held as high)" if held else "")
         progress += f" ({changed} removed or rewritten since read, skipped)" if changed else ""
-        log(f"  {table}: {progress}  resume: {encode_resume(table, after)}")
+        token = encode_resume(table, after, sorted(left_orgs or ()))
+        log(f"  {table}: {progress}  resume: {token}")
         if len(rows) < batch:
             break
     if held:
@@ -497,22 +498,27 @@ _KEYS: dict[str, tuple[str, ...]] = {
 }
 
 
-def encode_resume(table: str, key: list[str]) -> str:
+def encode_resume(table: str, key: list[str], keep: list[str] | None = None) -> str:
     """The resume token a run prints after each page: `--resume <token>`
-    continues after that row (tables before it are done)."""
-    raw = json.dumps({"table": table, "key": key}, separators=(",", ":"))
+    continues after that row (tables before it are done). `keep`: the orgs whose
+    old-model rows `--delete-old` keeps, as the run so far found them."""
+    data: dict[str, Any] = {"table": table, "key": key}
+    if keep:
+        data["keep"] = keep
+    raw = json.dumps(data, separators=(",", ":"))
     return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
 
 
-def decode_resume(token: str) -> tuple[str, list[str]]:
+def decode_resume(token: str) -> tuple[str, list[str], list[str]]:
     try:
         data = json.loads(base64.urlsafe_b64decode(token.encode("ascii")).decode("utf-8"))
         table, key = str(data["table"]), [str(x) for x in data["key"]]
-    except (ValueError, KeyError, TypeError) as e:
+        keep = [str(x) for x in data.get("keep") or []]
+    except (ValueError, KeyError, TypeError, AttributeError) as e:
         raise ValueError(f"not a reembed resume token: {e}") from None
     if table not in _TABLES or len(key) != len(_KEYS[table]):
         raise ValueError(f"not a reembed resume token for a known table: {table!r}")
-    return table, key
+    return table, key, keep
 
 
 async def delete_off_model(
@@ -597,8 +603,8 @@ async def reembed_all(
     if org:
         off = off & {org}
     waiting = 0
-    left_orgs: set[str] = set()
-    resume_table, resume_key = decode_resume(resume) if resume else ("", None)
+    resume_table, resume_key, kept_before = decode_resume(resume) if resume else ("", None, [])
+    left_orgs = set(kept_before)  # what the interrupted run found, so --delete-old keeps it
     tables = list(_TABLES)
     if resume_table:
         if in_database:

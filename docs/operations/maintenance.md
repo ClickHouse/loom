@@ -30,10 +30,11 @@ before ClickHouse applies it; watch `system.mutations`.
   it reads the page's rows again by key: a row deleted, tombstoned or given other text
   since the page was read is skipped, and for an old-model row given other text
   `--delete-old` keeps its org's old-model rows for a later run; the rest are written with
-  their columns as stored then. A deletion, redaction or erasure that lands between that
-  read and the insert, or whose mutation has not reached the row yet, can leave the row
-  live with its new vector. `--in-database` reads each table once, as its statement
-  starts, so run it while nothing redacts or erases. The Python path never sends a
+  their other columns as that second read found them. A deletion, redaction or erasure
+  that lands between that read and the insert, or whose mutation has not reached the row
+  yet, can leave the row live with its new vector. `--in-database` reads each table once,
+  as its statement starts, so run it while nothing redacts or erases.
+  The Python path never sends a
   conversation turn whose text reads as high to the embedder: the row stays on the old
   model, which search does not read, until `--delete-old` removes it. A memory row's vector
   follows its sensitivity label. `--in-database` cannot check the text and re-embeds such a

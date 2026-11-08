@@ -81,7 +81,7 @@ async def test_pages_are_bounded_by_the_batch_and_a_token_resumes_after_its_row(
     assert n == 5 and ch.inserted == ["000", "001", "002", "003", "004"]
     assert [p["page"] for p in ch.pages] == [2, 2, 2]  # never more than a batch in memory
     token = next(line for line in lines if "3/5" in line or "4/5" in line).rsplit("resume: ", 1)[1]
-    table, key = rb.decode_resume(token)
+    table, key, _ = rb.decode_resume(token)
     assert table == "conversation_embeddings" and key[-1] == "003"
 
     ch2 = _CH(5)
@@ -332,3 +332,26 @@ async def test_a_key_only_row_rewritten_on_the_current_model_keeps_no_org() -> N
         _KeyCH(), _Emb(), "memory_embeddings", key_only=True, left_orgs=kept, log=lambda *_: None
     )
     assert n == 0 and kept == set()
+
+
+@pytest.mark.asyncio
+async def test_a_resume_token_carries_the_orgs_delete_old_keeps(monkeypatch) -> None:
+    """A run interrupted after skipping a rewritten row: the resumed run's --delete-old
+    still keeps that org's old-model rows."""
+    key = ["o", "ns", "m1", "t", "001"]
+    assert rb.decode_resume(rb.encode_resume("conversation_embeddings", key))[2] == []
+    token = rb.encode_resume("conversation_embeddings", key, ["o"])
+    assert rb.decode_resume(token) == ("conversation_embeddings", key, ["o"])
+
+    ch, deletes = _CH(3), []
+
+    async def execute(sql: str, params: Any = None, **_: Any) -> None:
+        deletes.append(params or {})
+
+    async def width(table: str, dim: int) -> None:
+        return None
+
+    ch.execute = execute  # type: ignore[attr-defined]
+    monkeypatch.setattr("server.core.vectors.codes_state.refuse_width", width)
+    await rb.reembed_all(ch, _Emb(), resume=token, delete_old=True, log=lambda *_: None)
+    assert ch.inserted == ["002"] and deletes and all(p.get("off") == ["o"] for p in deletes)
