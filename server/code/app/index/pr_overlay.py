@@ -31,7 +31,6 @@ import hashlib
 import logging
 import re
 import time
-from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
@@ -512,9 +511,8 @@ _FILE_EDGES: TtlCache[tuple[str, str, str], _Edges] = TtlCache(
 _NAMES: TtlCache[tuple[str, str, str, str], tuple[tuple[str, str, str], ...]] = TtlCache(
     lambda: settings.code_pr_overlay_file_ttl_s, maxsize=200_000
 )
-# (org, ns) -> the overlay parse in progress for it, by its cache key: at most one. A
-# namespace's dict is kept once made, so every waiter watches the same one.
-_RUNNING: defaultdict[tuple[str, str], dict[Any, asyncio.Future[Any]]] = defaultdict(dict)
+# (org, ns) -> (cache key, future) of the one overlay parse in progress for it
+_RUNNING: dict[tuple[str, str], tuple[Any, asyncio.Future[Any]]] = {}
 # Overlay parses run here, not in the default executor, so a pile of them never holds
 # back the process's other threaded work; two, so one slow namespace leaves room for
 # another without a parse per request. Parses of one grammar still wait for each other
@@ -551,21 +549,22 @@ async def _in_turn[T](
     grammar also wait for each other across the process, `bounded_parse`), the event
     loop runs at each of the parser's reads, and a request asking for the key already
     running awaits that one."""
-    running = _RUNNING[scope]
-    while (task := running.get(key)) is None and running:
+    while (current := _RUNNING.get(scope)) is not None and current[0] != key:
         left = deadline - time.monotonic()
         if left <= 0:
             return None
-        await asyncio.wait(set(running.values()), timeout=left)
-    if task is None:
+        await asyncio.wait({current[1]}, timeout=left)
+    if current is not None:
+        task = current[1]
+    else:
         if time.monotonic() > deadline:
             return None
         call = functools.partial(contextvars.copy_context().run, fn, *args)
         task = asyncio.get_running_loop().run_in_executor(_PARSE_POOL, call)
-        running[key] = task
+        _RUNNING[scope] = (key, task)
 
         def finished(t: asyncio.Future[Any]) -> None:
-            running.pop(key, None)
+            _RUNNING.pop(scope, None)
             if not t.cancelled() and t.exception() is None:
                 store(t.result())  # kept even when every request waiting on it went away
 

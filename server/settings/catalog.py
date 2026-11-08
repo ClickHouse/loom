@@ -1037,7 +1037,8 @@ class CodeSettings(BaseModel):
     code_ingest_max_files_per_commit: int = 500
     # CPU seconds after which a tree-sitter parse stops reading its file; the file then
     # takes its reader's parse-failure path until its text changes or that result leaves
-    # its cache (raising it re-reads none; `code.index_errors` lists indexed files).
+    # its cache (raising it re-reads nothing; `code.index_errors` lists the indexed files
+    # that timed out).
     code_parse_timeout_seconds: Annotated[float, LIVE] = Field(default=3.0, gt=0)
     # The ingest pass's own deadline (seconds), kept at the supervisor's cap;
     # `code_ingest_pass_budget_fraction` keeps a pass under it.
