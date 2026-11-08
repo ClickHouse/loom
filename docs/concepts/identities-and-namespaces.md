@@ -110,8 +110,8 @@ On an `open` namespace a `viewer` join is active at once and a `writer` or `admi
 is pending until an admin approves it; on `approval` every join is pending; `closed`
 refuses joins.
 
-A **restricted** namespace (`classification=restricted` on its directory row, or on its
-entry in `LOOM_CODE_REPOS_JSON`) admits a call only when the token belongs to the
+A **restricted** namespace (`classification=restricted` on its directory row, on its
+entry in `LOOM_CODE_REPOS_JSON`, or `restricted` on its tracker source entry) admits a call only when the token belongs to the
 namespace's org, names the namespace literally (not through `*`), holds a role there that
 reaches the operation's role, and the token's own subject holds a live direct grant. No
 org-readable rule, public visibility, wildcard, inherited service-account grant,

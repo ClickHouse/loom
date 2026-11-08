@@ -864,9 +864,9 @@ async def _authority(org: str, name: str, need: Need) -> Any:
 async def _admits(auth: AuthInfo, org: str, namespace: str, *, flagged: bool) -> bool:
     """Whether the caller administers one namespace of a source: a standard one
     by the gate at admin (a live grant, or a token whose admin role covers it),
-    a restricted one by `_administers_restricted`. Restricted when the directory
-    says so, as every read decides it, or, while its row is not written yet, when
-    the source registered it so (`flagged`), so a missing row does not open it.
+    a restricted one by `_administers_restricted`. Restricted when the gate says so,
+    as every read decides it (the directory row or the source's entry), or when the
+    source registered it so (`flagged`), so a missing row does not open it.
     An unreadable classification refuses, noted as the server's."""
     from server.auth.directory import ClassificationUnavailable, directory
     from server.auth.fail_closed import note_unreadable

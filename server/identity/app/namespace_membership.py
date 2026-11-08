@@ -491,7 +491,7 @@ async def _inherited_rows(ch: Any, org: str, caller: str, skip: set[str]) -> lis
             ns = str(r.get("namespace") or "")
             if not ns or ns in skip or (r.get("status") or "active") != "active":
                 continue
-            # Restricted by the directory, or by its own entry in the repository config.
+            # Restricted by the directory, or by its own entry in the configuration.
             if ns in restricted or config_classification(org, ns) == RESTRICTED:
                 continue
             skip.add(ns)

@@ -138,13 +138,28 @@ async def test_a_namespace_skipped_at_boot_is_registered_on_a_later_try(
 
 def test_the_gate_reads_a_restricted_tracker_namespace_from_its_config(monkeypatch) -> None:
     """A narrowing still waiting for its claim leaves the row standard; the gate fails
-    closed from the configuration meanwhile."""
+    closed from the configuration meanwhile. An entry it cannot read is dropped, never
+    an error on every call of the org."""
+    import server.tracker.domain.sources as tracker_sources
+    import server.tracker.store.source as tracker_store
     from server.identity.app import namespace_classification as nc
+    from server.settings import settings
+    from tests.unit._tracker_config import tracker_sources_json
 
-    entry = SimpleNamespace(org=ORG, restricted=True)
-    monkeypatch.setattr(
-        "server.tracker.domain.namespaces.tracker_namespace",
-        lambda org, ns: entry if (org, ns) == (ORG, "qa-p") else None,
+    tracker_store.reset_cache_for_tests()
+    tracker_sources.reset_warnings_for_tests()
+    monkeypatch.setattr(settings, "tracker_org", ORG)
+    configured = tracker_sources_json(
+        {"Acme/private": "qa-p", "Acme/public": "qa-open"},
+        restricted="qa-p",
+        extra_namespaces={"qa-bad": {"source": "qa", "repos": 5, "restricted": True}},
     )
-    assert nc.is_restricted_cached(ORG, "qa-p")
-    assert not nc.is_restricted_cached(ORG, "qa-open")
+    monkeypatch.setattr(settings, "tracker_sources_json", configured)
+    try:
+        assert nc.is_restricted_cached(ORG, "qa-p")
+        assert not nc.is_restricted_cached(ORG, "qa-open")
+        assert not nc.is_restricted_cached("other-org", "qa-p")
+        assert nc.config_classification(ORG, "memory-ns") == "standard"
+        assert "qa-bad" not in tracker_sources.namespace_entries()  # serves nothing
+    finally:
+        tracker_store.reset_cache_for_tests()

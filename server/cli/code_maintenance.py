@@ -34,7 +34,10 @@ async def _register_after_init(cfg: Any) -> None:
         if await ensure_registered(cfg):
             print(f"registered code namespace {name}")
         else:
-            print(f"code namespace {name} already registered or left to the next ingest pass")
+            print(
+                f"code namespace {name} not registered now "
+                "(already registered, or left to the next ingest pass)"
+            )
     except Exception as e:  # noqa: BLE001 — registration is also the ingest pass's job
         print(f"namespace registration deferred to the next ingest pass ({type(e).__name__}: {e})")
 

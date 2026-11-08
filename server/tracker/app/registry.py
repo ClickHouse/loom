@@ -114,7 +114,7 @@ async def ensure_configured_tracker_namespaces(*, ch: Any | None = None) -> list
 
 
 def configured_pending() -> bool:
-    """Whether a configured namespace was skipped by every pass so far."""
+    """Whether a configured namespace is not yet registered by this process."""
     from server.tracker.domain.namespaces import configured_namespaces
     from server.tracker.store.source import qa_intel
 
