@@ -468,6 +468,7 @@ USER_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
             (D, "loom.entity_edge_memories"),
             (D, "loom.memory_versions"),
             (D, "loom.memory_versions"),
+            (L, "loom.memory_embeddings"),
             (D, "loom.memory"),
             (D, "loom.memory"),
         ),

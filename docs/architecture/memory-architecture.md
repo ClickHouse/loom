@@ -1319,6 +1319,9 @@ key, erasing one also takes a summary built from the other's row, with its histo
 chunks, entity vectors and graph links and the graph rows only those links held. The
 erasure takes every summary that may quote the user; the summary's current row is only
 tombstoned outside a purge, and consolidation rebuilds it from the rows that remain.
+Outside a purge the user's tombstoned keys stay, so such a rebuild counts as the user's
+too: a saga still running retires it again, and a later census of the erasure reports
+it.
 
 Under the Postgres authority the journal's revisions of a summary go with it when its
 current head names the user; a summary rebuilt without the user keeps its older

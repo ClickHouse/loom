@@ -385,7 +385,7 @@ async def test_a_user_purge_deletes_the_memory_rows_after_the_steps_that_read_th
         )
         keys, one = {"keys": ["t"]}, {"n": 1}
         ch.query_one_returns.extend(
-            [one, one, one, one, keys, one, keys, one, keys, one, one, {"n": 2}]
+            [one, one, one, one, keys, one, keys, one, keys, one, one, one, {"n": 2}]
         )
         # each row counts once: the summary's at its tombstone, the user's at their
         # delete here (memory.tombstone counts none in a purge, the late stamp neither)
@@ -393,7 +393,8 @@ async def test_a_user_purge_deletes_the_memory_rows_after_the_steps_that_read_th
         calls = [(" ".join(sql.split()), params) for sql, params in ch.execute_calls]
         embeddings, summaries, (links, link_params), stamp, cache, precedents, code, *rest = calls
         assert stamp[0].startswith("ALTER TABLE loom.memory UPDATE tombstoned_at")
-        (memory, memory_params), (own, own_params) = rest
+        (late_vectors, _), (memory, memory_params), (own, own_params) = rest
+        assert late_vectors.startswith("DELETE FROM loom.memory_embeddings")
         assert embeddings[0].startswith("DELETE FROM loom.memory_embeddings")
         assert summaries[0].startswith("ALTER TABLE loom.memory UPDATE tombstoned_at")
         assert "loom.memory_code_links" in links and link_params["rows"] == [("ns", topic)]

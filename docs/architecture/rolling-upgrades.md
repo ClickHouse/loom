@@ -433,8 +433,8 @@ schema. These rules keep that safe. The operator procedure is in
     next resume runs their steps again; in a purge past `memory.retire` the user's keys
     are gone and nothing finds them. The ledger does not name the build that ran a
     saga: once N serves alone, request again each user erasure without `purge` that
-    completed since the rollout began (`loom.erasure_requests`, `scope_type =
-'user_id'`); no gate holds the rollout.
+    completed since the rollout began (the `user_id` rows of `loom.erasure_requests`);
+    no gate holds the rollout.
 
 ## What checks them
 
