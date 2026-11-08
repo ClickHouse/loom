@@ -159,7 +159,26 @@ async def test_a_failed_install_keeps_only_whole_output_lines(
     with pytest.raises(RuntimeError) as failed:
         await deps.prepare_dependencies(checkout, (), env)
     kept = str(failed.value).partition("\n")[2]
-    assert kept == (f"{last}\n" if cut == "boundary" else "")
+    assert kept == (last if cut == "boundary" else "")
+
+
+@pytest.mark.asyncio
+async def test_a_redacted_tail_still_fits_the_record_whole(checkout: Path, tmp_path: Path) -> None:
+    head = deps.ToolOutputError(
+        "TypeScript dependency installation failed (npm, exit 1) in the checkout root"
+    )
+    room = tier_health.ERROR_CHARS - len(recorder.error_text(head)) - 1
+    # A last line that fills the budget raw, with a one-character token that grows
+    # when redacted: the record must still start with the whole first line.
+    start = "GET /pkg?token=1 "
+    last = start + "y" * (room - 1 - len(start))
+    env = _installer(tmp_path)
+    (tmp_path / "npm").write_text(f"#!/bin/sh\necho first\necho '{last}'\nexit 1\n")
+    with pytest.raises(RuntimeError) as failed:
+        await deps.prepare_dependencies(checkout, (), env)
+    record = tier_health.failed(None, "typescript", recorder.error_text(failed.value), NOW)
+    assert record.error.startswith("ToolOutputError: TypeScript dependency installation failed")
+    assert "token=1 " not in record.error
 
 
 @pytest.mark.asyncio

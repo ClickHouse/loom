@@ -21,7 +21,7 @@ from server.code.app.index.gitrepo import auth_env
 from server.code.app.index.sandbox import run_job
 from server.code.app.index.tier_health import ToolOutputError, error_text
 from server.code.app.index.untrusted_files import read_checkout_file, read_package_json
-from server.code.domain.index.tier_health import ERROR_CHARS
+from server.code.domain.index.tier_health import ERROR_CHARS, redact
 from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.typescript_dependencies")
@@ -196,6 +196,8 @@ async def prepare_dependencies(
             # Whole lines: a cut mid-line could split a URL credential from its scheme,
             # which the record's redaction needs.
             room = ERROR_CHARS - len(error_text(ToolOutputError(head))) - 1
-            tail = output[-room - 1 :].partition("\n")[2] if len(output) > room else output
+            # Redacted before the cut: the record redacts again (a no-op) and keeps it all.
+            shown = redact(output)
+            tail = shown[-room - 1 :].partition("\n")[2] if len(shown) > room else shown
             raise ToolOutputError(f"{head}\n{tail}")
     await asyncio.to_thread(marker.write_text, fingerprint)
