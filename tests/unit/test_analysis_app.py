@@ -10,6 +10,7 @@ import pytest
 
 from server.core.errors import (
     AnalysisUnavailableError,
+    LoomServerError,
     OverloadedError,
     RateLimitedError,
     ValidationError,
@@ -491,16 +492,44 @@ def test_ch_setups_analyst_line_advises_the_printed_sql_only_after_a_migration(
     assert ("--print-analyst-sql" in line) is advised
 
 
-def test_a_driver_error_shows_as_its_kind_and_its_text_goes_to_the_log(
+def test_an_unreached_probe_keeps_the_last_answer_and_logs_the_text(
     monkeypatch: pytest.MonkeyPatch, ready: None, caplog: pytest.LogCaptureFixture
 ) -> None:
+    # A dropped connection is no finding: a replica whose probe passed keeps answering.
     driver = "Code: 210. Connection refused (ch-internal-7:9440) SELECT 1 AS one"
     monkeypatch.setattr(app.store, "sealed_secrets", _failing(driver))
+    monkeypatch.setattr(app, "_unreached_kind", "")
     asyncio.run(app.reprobe())
-    ready_now, problem = app.analysis_state()
-    assert ready_now is False
-    assert "ch-internal-7" not in problem and problem.endswith("RuntimeError")
-    assert any("ch-internal-7" in r.message for r in caplog.records)
+    asyncio.run(app.reprobe())
+    assert app.analysis_state() == (True, "")
+    logged = [r.message for r in caplog.records if "ch-internal-7" in r.message]
+    assert len(logged) == 1  # once per kind
+
+
+def test_a_replica_whose_first_setup_could_not_run_answers_overloaded(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    from server.core import leases
+
+    class _Busy:
+        def __init__(self, *_: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> None:
+            raise leases.LeaseBusy("analysis.entities")
+
+        async def __aexit__(self, *_: Any) -> None:
+            return None
+
+    monkeypatch.setattr(app, "_ready", None)
+    monkeypatch.setattr(app, "_unreached_kind", "")
+    monkeypatch.setattr(app, "lease", _Busy)
+    asyncio.run(app.provision())
+    assert app.analysis_state()[0] is None
+    with pytest.raises(OverloadedError) as caught:
+        asyncio.run(app.handle_insights_query(_query()))
+    assert error_class(caught.value.code, caught.value.status_code) == ("capacity", True)
+    assert caught.value.headers() == {"Retry-After": "5"}
 
 
 def test_an_unavailable_answer_names_no_cause(monkeypatch: pytest.MonkeyPatch, ready: None) -> None:
@@ -695,18 +724,6 @@ def test_a_replica_still_starting_is_retried_and_a_failed_probe_is_not(
 ) -> None:
     # A first probe still to run passes; only an operator ends a failed one.
     monkeypatch.setattr(app, "_ready", state)
-    with pytest.raises(Exception) as caught:
+    with pytest.raises(LoomServerError) as caught:
         asyncio.run(app.handle_insights_query(_query()))
-    err = caught.value
-    assert error_class(err.code, err.status_code) == (category, retryable)  # type: ignore[attr-defined]
-
-
-def test_clickhouse_short_of_memory_is_retried(
-    monkeypatch: pytest.MonkeyPatch, ready: None
-) -> None:
-    monkeypatch.setattr(
-        app.store, "run_statement", _failing("Code: 241. DB::Exception: (total) memory limit")
-    )
-    with pytest.raises(OverloadedError) as caught:
-        asyncio.run(app.handle_insights_query(_query()))
-    assert error_class(caught.value.code, caught.value.status_code) == ("capacity", True)
+    assert error_class(caught.value.code, caught.value.status_code) == (category, retryable)

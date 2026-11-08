@@ -495,21 +495,25 @@ access management:
   nothing but the allowlist and the canary. A newer build's entities are its own to
   check.
 
-A failed check answers `ANALYSIS_UNAVAILABLE` and is a `loom doctor` problem.
-`/v1/health` answers without a token, so the problem it shows is Loom's own text, an
-error as its kind; the driver's text and the names of policies and databases go to the
-server log, and the 503 a caller gets names no cause. Unless the stored version is newer
-than its own, a replica that writes the entities itself writes them again under the
-lease after a check failed with a definite answer that a write repairs: a table without
-its policy, a canary under another key (with [part 2](#build-order), checked again once
-three settle times have passed since the row's stored time, as `loom doctor` does, since
-a server still applying a rotation looks the same), a grant outside the allowlist.
-Elsewhere `loom doctor` names `loom ch-setup` as the fix. A policy Loom did not write,
-which a write cannot remove, is left to an admin: `loom doctor` reports it, and the
-server log names it where Loom's user can list policies, or the table that admits rows
-in the reserved scope where it cannot. The canary shows only that its own policy has the
-key; a single table's policy under another key, which only a hand edit leaves, shows as
-empty answers from that table.
+A failed check answers `ANALYSIS_UNAVAILABLE`, which no client resends, and is a
+`loom doctor` problem. A probe that could not run (a lease another replica holds, a
+dropped connection) is no finding and keeps the last answer, so a replica whose first
+probe has not run answers `OVERLOADED`, as does a statement that finds ClickHouse short
+of memory; both are resent after 5 s. `/v1/health` answers without a token, so the
+problem it shows is Loom's own text, an error as its kind; the driver's text and the
+names of policies and databases go to the server log, and the 503 a caller gets names no
+cause. Unless the stored version is newer than its own, a replica that writes the
+entities itself writes them again under the lease after a check failed with a definite
+answer that a write repairs: a table without its policy, a canary under another key
+(with [part 2](#build-order), checked again once three settle times have passed since
+the row's stored time, as `loom doctor` does, since a server still applying a rotation
+looks the same), a grant outside the allowlist. Elsewhere `loom doctor` names
+`loom ch-setup` as the fix. A policy Loom did not write, which a write cannot remove, is
+left to an admin: `loom doctor` reports it, and the server log names it where Loom's
+user can list policies, or the table that admits rows in the reserved scope where it
+cannot. The canary shows only that its own policy has the key; a single table's policy
+under another key, which only a hand edit leaves, shows as empty answers from that
+table.
 
 Between a policy dropped by hand and the next probe, ClickHouse by default lets the
 analyst read every row of that table. The ClickHouse that Loom configures itself (the

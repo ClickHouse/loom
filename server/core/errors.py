@@ -133,7 +133,8 @@ class OverloadedError(LoomServerError):
     contended. The pool: every pooled connection was busy past `ch_pool_wait_ms`; the
     lock or lease: a sibling held it past its wait; the matchers: the org's share of them
     stayed busy, and the write is refused rather than stored unchecked; a conversation
-    delete or compaction: writes to the thread's embeddings kept landing. Safe to resend
+    delete or compaction: writes to the thread's embeddings kept landing; insights.query
+    before its replica's first probe, or while ClickHouse is short of memory. Safe to resend
     on an idempotent op, or when it came before the handler ran; `retry_after_s` is the
     wait."""
 
@@ -361,8 +362,9 @@ def stored_caller_text(text: str) -> str:
 
 class AnalysisUnavailableError(LoomServerError):
     """`insights.query` cannot run on this replica: the probe each process
-    runs on an interval found the analyst ClickHouse user missing, wider than
-    the allowlist, or refusing this replica's key. Only an operator's fix ends
+    runs on an interval found, or a statement's login met, the analyst
+    ClickHouse user missing, wider than the allowlist, or refusing this
+    replica's key or password. Only an operator's fix ends
     it, so it is not retried: `loom doctor` names the cause and the fix. A
     replica whose first probe has not run, or a ClickHouse short of memory,
     answers OVERLOADED instead."""

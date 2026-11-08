@@ -135,7 +135,9 @@ def test_a_polled_failure_is_logged_once_a_minute(caplog: pytest.LogCaptureFixtu
     assert sum("the ping failed" in r.getMessage() for r in caplog.records) == 1
 
 
-def test_a_failed_analysis_probe_names_the_kind(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_unreached_analysis_probe_shows_no_driver_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A probe that could not reach ClickHouse is no finding: health shows no
+    # analysis problem, and the driver's text goes to the log only.
     from server.insights.app import analysis
     from server.observability import problems
 
@@ -144,14 +146,14 @@ def test_a_failed_analysis_probe_names_the_kind(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(analysis, "_ready", None)
     monkeypatch.setattr(analysis, "_problem", "")
+    monkeypatch.setattr(analysis, "_unreached_kind", "")
     monkeypatch.setattr(analysis.store, "sealed_secrets", down)
     asyncio.run(analysis.reprobe())
     ok, error = analysis.analysis_state()
     shown = problems._analysis_problems(
         settings, problems.HealthState(analysis_ok=ok, analysis_error=error)
     )
-    assert shown and "ch-internal-7" not in shown[0].message
-    assert shown[0].message.endswith("RuntimeError")
+    assert shown == [] and "ch-internal-7" not in error
 
 
 @pytest.mark.parametrize("manages", [False, True])

@@ -252,9 +252,10 @@ async def provision() -> None:
             _set_problem(*foreign)
             return
         await reprobe()
-    except Exception as e:  # noqa: BLE001 — a failed analyst setup is a reported problem, never fatal to boot
-        cause, detail = _cause(e)
-        _set_problem(f"writing or probing {boundary.ANALYST_USER} failed: {cause}", detail)
+    except SetupRefused as e:
+        _set_problem(f"writing or probing {boundary.ANALYST_USER} failed: {e}")
+    except Exception as e:  # noqa: BLE001 — an unreached setup is retried by the next probe, never fatal to boot
+        _probe_unreached(e)
 
 
 async def _current_statements() -> list[str]:
@@ -280,15 +281,6 @@ async def _foreign_problem() -> tuple[str, str]:
             f"policies: {', '.join(foreign)}",
         )
     return "", ""
-
-
-def _cause(e: BaseException) -> tuple[str, str]:
-    """An error as the problem shows it, and its full text for the log: a
-    refusal Loom wrote as is, anything else as its kind, since a driver's text
-    can carry a statement or the server's address."""
-    if isinstance(e, SetupRefused):
-        return str(e), ""
-    return error_kind(e), error_line(e)
 
 
 async def _write_under_lease() -> tuple[str, str]:
@@ -399,10 +391,31 @@ async def reprobe() -> None:
             # A policy added since the last write widens other users, not the
             # analyst, so only this check sees it.
             problem, detail = await _foreign_problem()
-    except Exception as e:  # noqa: BLE001 — a failed probe is a reported problem
-        cause, detail = _cause(e)
-        problem = f"probing {boundary.ANALYST_USER} failed: {cause}"
+    except SetupRefused as e:
+        problem, detail = f"probing {boundary.ANALYST_USER} failed: {e}", ""
+    except Exception as e:  # noqa: BLE001 — an unreached probe keeps the last answer
+        _probe_unreached(e)
+        return
     _set_problem(problem, detail)
+
+
+_unreached_kind = ""
+
+
+def _probe_unreached(e: BaseException) -> None:
+    """A probe that could not run (a lease another replica held, a dropped
+    connection, a timeout) is not a finding: it keeps the last answer, so a
+    replica still starting answers OVERLOADED, which a client resends, and one
+    whose probe passed keeps answering. The error is logged once per kind."""
+    global _unreached_kind
+    kind = error_kind(e)
+    if kind != _unreached_kind:
+        _unreached_kind = kind
+        log.warning(
+            "the analysis probe could not run (%s); the last answer stands: %s",
+            kind,
+            _scrubbed(error_line(e)),
+        )
 
 
 def start_probe_loop() -> asyncio.Task[None]:
@@ -581,8 +594,8 @@ async def handle_insights_query(input: InsightsQueryInput) -> InsightsQueryOutpu
     if "," in input.namespace:
         raise ValidationError("a namespace name cannot hold a comma")
     if _ready is None:
-        # The first probe runs beside the start and can wait on the lease: a
-        # passing state, which a resend after the wait outlives.
+        # The first probe runs in the background and can wait on the lease; a
+        # resend after retry_after_s finds it done.
         raise OverloadedError(
             "insights.query is starting on this replica: its first probe has not run yet",
             retry_after_s=5,
