@@ -78,10 +78,10 @@ describe("ThreadActions", () => {
     expect(api.renameThread).not.toHaveBeenCalled();
   });
 
-  it("writes the row when it went between the read and the update but the turns remain", async () => {
+  it("writes the row when it was deleted after the read but turns remain", async () => {
     vi.mocked(api.getConversationThread)
       .mockResolvedValueOnce({ found: true, msg_count: 1, agent: "codex", created_at: "2000-01-01 00:00:00" } as never)
-      .mockResolvedValueOnce({ found: true, msg_count: 1, agent: "claude-code", created_at: null } as never);
+      .mockResolvedValueOnce({ found: true, msg_count: 1, agent: "cursor", created_at: null } as never);
     vi.mocked(api.renameThread).mockResolvedValueOnce({ updated: false });
     render(<ThreadActions identity={identity} thread={thread} canRename canDelete={false} onChanged={vi.fn()} />);
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
@@ -191,12 +191,15 @@ describe("ThreadActions", () => {
       .mockResolvedValueOnce({ found: true, msg_count: 1, agent: "codex", created_at: "2000-01-01 00:00:00" } as never)
       .mockResolvedValueOnce({ found: false, msg_count: 0, agent: "" } as never);
     vi.mocked(api.renameThread).mockResolvedValueOnce({ updated: false });
-    render(<ThreadActions identity={identity} thread={thread} canRename canDelete={false} onChanged={vi.fn()} />);
+    const onChanged = vi.fn();
+    render(<ThreadActions identity={identity} thread={thread} canRename canDelete={false} onChanged={onChanged} />);
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
     const dialog = await screen.findByRole("dialog", { name: "Rename conversation" });
     await userEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("This conversation was deleted", "info"));
+    expect(api.renameThread).toHaveBeenCalledWith(identity, "codex", "t1", "Deploy plan");
     expect(api.createThreadRow).not.toHaveBeenCalled();
+    expect(onChanged).toHaveBeenCalled();
   });
 });

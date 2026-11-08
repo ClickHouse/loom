@@ -63,9 +63,9 @@ export function ThreadActions({
         <RenameDialog
           identity={identity}
           thread={thread}
-          onClose={(renamed) => {
+          onClose={(changed) => {
             setRenaming(false);
-            if (renamed) onChanged();
+            if (changed) onChanged();
           }}
         />
       )}
@@ -80,7 +80,7 @@ function RenameDialog({
 }: {
   identity: Pick<Identity, "org" | "namespace">;
   thread: Thread;
-  onClose: (renamed: boolean) => void;
+  onClose: (changed: boolean) => void;
 }) {
   const [title, setTitle] = useState(thread.title);
   const [busy, setBusy] = useState(false);
@@ -88,7 +88,6 @@ function RenameDialog({
   const submit = async () => {
     setBusy(true);
     try {
-      // A conversation deleted meanwhile is said to be gone, and the list reads again.
       const renamed = await retitle(identity, thread, title.trim());
       toast(renamed ? "Renamed" : "This conversation was deleted", renamed ? "ok" : "info");
       onClose(true);
@@ -120,6 +119,11 @@ function RenameDialog({
   );
 }
 
+/** What of a thread is left across every agent: `agent` is its row's owner while a row is
+ *  left, else the oldest remaining turn's writer. */
+const readHead = (id: Pick<Identity, "org" | "namespace">, threadId: string) =>
+  getConversationThread(id, "*", threadId, { limit: 1 });
+
 // A thread's turns are deleted per agent; one thread is unlikely to hold more agents.
 const MAX_AGENTS = 20;
 
@@ -139,7 +143,7 @@ async function deleteEveryAgent(
       parts++;
       // What was left before this delete is no longer known.
       left = 0;
-      const rest = await getConversationThread(id, "*", thread.thread_id, { limit: 1 });
+      const rest = await readHead(id, thread.thread_id);
       if (!rest.found) return { parts, left: 0 };
       left = rest.msg_count;
       // Next: the row's owner while a row is left, else the oldest remaining turn's writer.
@@ -157,13 +161,12 @@ async function deleteEveryAgent(
  *  writer), or write one for a thread built by appends, which has none. Answers false
  *  when the conversation is gone. */
 async function retitle(id: Pick<Identity, "org" | "namespace">, thread: Thread, title: string): Promise<boolean> {
-  const read = () => getConversationThread(id, "*", thread.thread_id, { limit: 1 });
-  const head = await read();
+  const head = await readHead(id, thread.thread_id);
   if (!head.found) return false;
   if (head.created_at) {
     if ((await renameThread(id, head.agent, thread.thread_id, title)).updated) return true;
     // The row went since the read: write one only while the conversation still has turns.
-    if (!(await read()).found) return false;
+    if (!(await readHead(id, thread.thread_id)).found) return false;
   }
   await createThreadRow(id, thread.agent, thread.thread_id, title);
   return true;

@@ -20,9 +20,8 @@ describe("cost windows", () => {
   it("asks for seven dates, today included, for the last 7 days", async () => {
     await listCostRollup(id, { days: 7 });
     await getAgentSpend(id, 7);
-    for (const [, body] of post.mock.calls as unknown as [string, Record<string, unknown>][]) {
-      expect(body).toEqual(expect.objectContaining({ from_date: "2000-01-04", to_date: "2000-01-10" }));
-    }
-    expect(post).toHaveBeenCalledTimes(2);
+    const week = expect.objectContaining({ from_date: "2000-01-04", to_date: "2000-01-10" });
+    expect(post).toHaveBeenCalledWith("/v1/cost.summary", week, undefined);
+    expect(post).toHaveBeenCalledWith("/v1/cost.agent_summary", week, undefined);
   });
 });

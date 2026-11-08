@@ -13,8 +13,6 @@ export interface AgentSpendRow {
   unpriced_turns: number;
 }
 
-/** POST /v1/cost.agent_summary: what the coding agents spent themselves, by model, over
- *  the last `days` (cost.summary prices what Loom spends upstream). */
 export interface AgentSpendSummary {
   rows: AgentSpendRow[];
   total_cost_usd: number;
@@ -22,6 +20,8 @@ export interface AgentSpendSummary {
   unpriced_turns: number;
 }
 
+/** POST /v1/cost.agent_summary: what the coding agents spent themselves, by model, over
+ *  the last `days` (cost.summary prices what Loom spends upstream). */
 export async function getAgentSpend(
   id: Pick<Identity, "org" | "namespace">,
   days: number,
@@ -953,9 +953,6 @@ export async function listCostRollup(
   id: Pick<Identity, "org" | "namespace">,
   opts: { days?: number; groupBy?: CostGroupDim[]; orgWide?: boolean; includeCache?: boolean } & RequestOpts = {},
 ): Promise<{ rows: CostRow[] }> {
-  // Backend cost.summary requires explicit from_date / to_date (YYYY-MM-DD).
-  // Translate the simpler "last N days" UI knob into a date range here so
-  // the view code stays unaware of the date plumbing.
   const body: Record<string, unknown> = {
     org: id.org,
     ...lastDays(opts.days ?? 7),
