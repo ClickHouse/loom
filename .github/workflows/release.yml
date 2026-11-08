@@ -290,6 +290,11 @@ jobs:
           zip -q "release/plugins/loom-claude-code-plugin-v${VERSION}.zip" LICENSE NOTICE THIRD_PARTY_NOTICES
           zip -q "release/plugins/loom-codex-plugin-v${VERSION}.zip" LICENSE NOTICE THIRD_PARTY_NOTICES
           ls -la release/*
+      # docs/getting-started/agent-setup.md with this release's version and commit.
+      - name: Render agent-setup.txt
+        run: |
+          python scripts/release/agent_setup.py --version "$VERSION" --commit "$GITHUB_SHA" \
+            --out release/agent/agent-setup.txt
       # The bundle, its checksum and install.sh, which installs this version.
       - name: Build the source-free Compose installer bundle
         env:
@@ -420,6 +425,13 @@ jobs:
               if stamped(version) not in pathlib.Path("release/stack/install.sh").read_text():
                   errors.append(f"install.sh does not install {version}")
 
+          contract = pathlib.Path("release/agent/agent-setup.txt").read_text()
+          for pin in (f'PIN_VERSION = "{version}"', f'PIN_COMMIT = "{os.environ["GITHUB_SHA"]}"'):
+              if pin not in contract:
+                  errors.append(f"agent-setup.txt does not pin {pin}")
+          if "<version>" in contract or "<commit>" in contract:
+              errors.append("agent-setup.txt leaves a <version> or <commit> unfilled")
+
           for e in errors:
               print(f"::error::{e}")
           sys.exit(1 if errors else 0)
@@ -510,6 +522,8 @@ jobs:
           # A dry run's goes to a file instead, which docker-smoke loads.
           outputs: ${{ inputs.dry_run && format('type=docker,name={0}:{1},dest={2}/image.tar', matrix.image, needs.version.outputs.version, runner.temp) || format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', matrix.image) }}
           labels: ${{ steps.meta.outputs.labels }}
+          # The server's /v1/health build_commit, which the agent setup contract checks.
+          build-args: ${{ matrix.artifact == 'server' && format('LOOM_BUILD_COMMIT={0}', github.sha) || '' }}
           provenance: ${{ !inputs.dry_run && 'mode=max' || 'false' }}
           sbom: ${{ !inputs.dry_run }}
           # Built from the package archives as they are now: a cached apt layer
@@ -707,6 +721,13 @@ jobs:
           python3 scripts/gates/docker_quickstart_smoke.py --image "ghcr.io/clickhouse/loom:$VERSION" \
             --extractor-image "ghcr.io/clickhouse/loom-extractor:$VERSION" \
             --clickhouse-image "$CLICKHOUSE_IMAGE"
+      # The commit /v1/health reports, which agent-setup.txt pins.
+      - name: The server image names the tag's commit
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          built=$(docker run --rm --entrypoint printenv "ghcr.io/clickhouse/loom:$VERSION" LOOM_BUILD_COMMIT)
+          [ "$built" = "$GITHUB_SHA" ] || { echo "::error::the image names commit '$built', not $GITHUB_SHA"; exit 1; }
       # The release's own install.sh and bundle, before they are published: the
       # one-liner in clean Debian, Ubuntu and Alpine containers (install, round
       # trip, re-run, a refused downgrade) and an upgrade over the previous
@@ -817,6 +838,7 @@ jobs:
             release/npm/*.tgz
             release/plugins/*.zip
             release/stack/*
+            release/agent/agent-setup.txt
 
   # The published release as a user meets it, signed in to nothing. The SDKs are
   # checked by a dispatch of release-check after the registry dispatch.

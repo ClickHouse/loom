@@ -25,6 +25,8 @@ TypeScript SDKs, and the dashboard. This page lists every page in reading order.
 - [Evaluate Loom](getting-started/evaluate.md): smoke test, workload evaluation and
   reproducible public benchmarks.
 - [Connect a coding agent](getting-started/connect-a-coding-agent.md): plugin or MCP entry.
+- [Set up Loom with your coding agent](getting-started/agent-setup.md): for an agent that
+  installs a pinned release and proves it works, with a fixed report.
 - [Your first agent](getting-started/first-agent.md): an SDK tutorial.
 
 ## 2. Install and run the server

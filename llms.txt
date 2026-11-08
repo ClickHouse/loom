@@ -6,6 +6,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 
 ## Getting started
 
+- [Set up Loom with your coding agent](docs/getting-started/agent-setup.md): This page is for a coding agent, Claude Code or Codex, asked to install Loom on the machine it runs on and to prove that the install works.
 - [Connect a coding agent](docs/getting-started/connect-a-coding-agent.md): This page connects Claude Code, Codex, Cursor or another MCP client to a running Loom server.
 - [Evaluate Loom](docs/getting-started/evaluate.md): Evaluate the decision you need to make, not every harness in the repository.
 - [Your first agent](docs/getting-started/first-agent.md): This tutorial builds a small agent with the Python SDK.
