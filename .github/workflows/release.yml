@@ -16,7 +16,7 @@ name: release
 # installer bundle names, migrated and schema-checked) -> build -> verify
 # (inspect the exact files) -> docker (build and scan each image on each
 # architecture's own runner) -> docker-tag -> sign (keyless, the digests
-# docker-tag made; a run on a published tag verifies them) and docker-smoke (the
+# docker-tag made; every run verifies them) and docker-smoke (the
 # quickstart and the installer rehearsal) -> github-release -> release-check
 # (tag push only), and pypi, npm, mcp-registry (dispatch only). A re-run after a
 # partial publish is safe: the bundle keeps the ClickHouse release it was first
@@ -613,7 +613,7 @@ jobs:
   # verifies the signature users check, so a wrong identity, or an image tag
   # moved since, is refused. The GitHub Release and the registries wait for it.
   sign:
-    name: Sign both images, or verify their signatures
+    name: Sign and verify both images
     if: ${{ !cancelled() && !inputs.dry_run && (needs.docker-tag.result == 'success' || needs.preflight.outputs.images_published == 'true') }}
     needs: [version, preflight, docker-tag]
     runs-on: ubuntu-latest
@@ -650,7 +650,7 @@ jobs:
             cosign verify "$image:$VERSION" \
               --certificate-identity "https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v$VERSION" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null \
-              || { echo "::error::$image:$VERSION carries no signature from release.yml on v$VERSION: use \"Re-run failed jobs\" (not \"Re-run all jobs\") on the run that tagged it, within 30 days; past that, release a new version"; exit 1; }
+              || { echo "::error::could not verify release.yml's signature on $image:$VERSION (cosign's error above): if it is unsigned, use \"Re-run failed jobs\" (not \"Re-run all jobs\") on the run that tagged it, within 30 days; past that, release a new version (docs/development/release-process.md#a-failed-tag-or-signature)"; exit 1; }
           done
 
   docker-smoke:

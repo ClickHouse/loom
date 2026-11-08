@@ -448,7 +448,9 @@ def test_the_tag_run_signs_the_digests_it_made_and_every_run_verifies_them() -> 
     jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
     tag = jobs["docker-tag"]
     assert tag["outputs"]["digests"] == "${{ steps.tag.outputs.digests }}"
-    steps = {s.get("id"): s for s in jobs["sign"]["steps"]}
+    (tagging,) = [s for s in tag["steps"] if s.get("id") == "tag"]
+    assert 'echo "digests=${digests[*]}" >> "$GITHUB_OUTPUT"' in tagging["run"]
+    steps = {s["id"]: s for s in jobs["sign"]["steps"] if "id" in s}
     assert steps["sign"]["if"] == "${{ needs.docker-tag.result == 'success' }}"
     assert steps["sign"]["env"]["DIGESTS"] == "${{ needs.docker-tag.outputs.digests }}"
     assert "if" not in steps["verify"]  # after signing too, before anything publishes

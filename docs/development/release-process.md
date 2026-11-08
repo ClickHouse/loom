@@ -247,17 +247,9 @@ the package's visibility to public in its settings, then re-run the failed jobs.
 9. `release-check` (on a tag push) runs `.github/workflows/release-check.yml` against what
    was just published, signed in to nothing: the one-liner from github.com in the same clean
    containers, pulling both images anonymously, and verifies both images' signatures, which
-   must come from `release.yml` on that tag:
-
-   ```bash
-   cosign verify ghcr.io/clickhouse/loom:X.Y.Z \
-     --certificate-identity https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/vX.Y.Z \
-     --certificate-oidc-issuer https://token.actions.githubusercontent.com
-   ```
-
-   Run it with cosign 3 or later, which reads the signature format the release stores. A
-   release published before the release workflow signed carries none, so a check of it fails
-   its `signatures` job.
+   must come from `release.yml` on that tag, as a user does
+   ([container images](../operations/deployment.md#container-images)). A release published
+   before the release workflow signed carries none, so a check of it fails its `signatures` job.
 
 The server and extractor images are published before the GitHub Release, so an installer
 shown on the release page never points at a missing image.
@@ -278,27 +270,6 @@ version builds and tags none (`scripts/release/published_images.sh`), smoke-test
 ones, and goes on to the registries. Release images build without the cache, so a rebuild would
 move the version's tags onto other bytes.
 
-### A failed tag or signature
-
-A failed `docker-tag` (one image tagged, not the other) or a failed `sign` (Sigstore down, say)
-is recovered by "Re-run failed jobs" on the run that tagged the images (the tag push, or the
-dispatch that built and tagged them), within 30 days of it: that attempt keeps its `preflight`
-result and `docker-tag`'s digests, so it tags the same build and signs what it tagged. Never re-run
-a run that failed before tagging once another run has tagged: its `preflight` saw no images, so it
-rebuilds and would move the published tags. Another run on the
-tag (a dispatch, a second push) is a run of its own and leaves the tagging run re-runnable; re-run
-its failed jobs, or dispatch the tag again, once the tagging run has signed. Once "Re-run all jobs"
-has replaced the tagging run's attempt, or the 30 days have passed, no run can tag or sign that
-build (a run on a half-tagged version fails its `preflight`, and a run on a published tag only
-verifies signatures that only the tagging run can make): release a new version, and if `:latest`
-moved, point it back at the previous release for both images:
-
-```bash
-docker buildx imagetools create -t ghcr.io/clickhouse/<image>:latest ghcr.io/clickhouse/<image>:<previous X.Y.Z>
-```
-
-The previous release's index keeps its signature, which belongs to its digest.
-
 Never move a tag whose images are published: `published_images.sh` fails when a published image
 was built from another commit than the run's, and a fix needs a new version.
 
@@ -312,6 +283,28 @@ A re-run after a partial publish is safe: each publish job skips what already ex
 a version twice. Publishing SDKs only on dispatch lets the release files be checked first.
 The server image is automatic because it is a prerequisite of the GitHub Release's
 installer, and creating the signed release tag is its review gate.
+
+### A failed tag or signature
+
+A failed `docker-tag` (one image tagged, not the other) or a failed `sign` (Sigstore down, say):
+
+- Use "Re-run failed jobs" on the run that tagged the images (the tag push, or the dispatch that
+  built and tagged them), within 30 days of it. That attempt keeps its `preflight` result and
+  `docker-tag`'s digests, so it tags the same build and signs what it tagged. Another run on the
+  tag (a dispatch, a second push) is a run of its own: re-run that run's failed jobs, or dispatch
+  the tag again, once the tagging run has signed.
+- Never re-run a run that failed before tagging once another run has tagged: its `preflight` saw
+  no images, so it rebuilds and would move the published tags.
+- Once "Re-run all jobs" has replaced the tagging run's attempt, or the 30 days have passed, no
+  run can tag or sign that build: a run on a half-tagged version fails its `preflight`, and a run
+  on a published tag verifies signatures but cannot make them. Release a new version, and if
+  `:latest` moved, point it back at the previous release for both images:
+
+  ```bash
+  docker buildx imagetools create -t ghcr.io/clickhouse/<image>:latest ghcr.io/clickhouse/<image>:<previous X.Y.Z>
+  ```
+
+  The previous release's index keeps its signature, which belongs to its digest.
 
 ### When the clickhouse job stops
 
