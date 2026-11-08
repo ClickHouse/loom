@@ -609,6 +609,25 @@ async def test_an_operator_revoke_leaves_a_stray_of_an_admin_of_another_entry_fo
     assert "code-z-26-5" not in {r["namespace"] for r in ch.inserted}
 
 
+@pytest.mark.parametrize("lowered_to", [None, "writer"])
+async def test_an_operator_revoke_takes_the_stray_of_an_admin_of_that_entry_alone(
+    monkeypatch: pytest.MonkeyPatch, lowered_to: str | None
+) -> None:
+    """The grant revoked is still live while the fan-out runs: it does not count as one
+    the subject keeps."""
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    rows = [
+        _admin("code-z", "alice"),
+        _admin("code-z", "x"),
+        _copy("code-z-26-5", "alice", "code-z-dev"),
+    ]
+    ch = _FakeCH(rows)
+    await _revoke("code-z", "alice", ch=ch, lowered_to=lowered_to)
+    assert [(r["namespace"], r["revoked_at"] is not None) for r in ch.inserted] == [
+        ("code-z-26-5", True)
+    ]
+
+
 async def test_an_operator_admin_s_copy_from_a_page_branch_becomes_a_copy_of_the_operator_grant(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

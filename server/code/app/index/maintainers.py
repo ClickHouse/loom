@@ -698,8 +698,9 @@ async def revoke_repo_maintainer(
     grant given on a branch added from the page. On a restricted branch added from
     the page, a revoke takes a copy whose source is not an operator entry
     (`_foreign`), even as that branch's last admin, unless the subject keeps an
-    admin grant given on another operator entry, which the next sync copies over
-    it; a revoke from an operator entry also takes an operator copy, under the guard.
+    admin grant given on an operator entry other than `namespace`, which the next
+    sync copies over it; a revoke from an operator entry also takes an operator
+    copy, under the guard.
 
     The registry is read again under the claims: a branch added after
     `read_repo` read it, and given a copy by a sync that held the claims
