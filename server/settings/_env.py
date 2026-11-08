@@ -95,6 +95,7 @@ NON_SETTINGS_ENV = frozenset(
         "LOOM_REDEPLOY_READY_TIMEOUT_S",
         "LOOM_RELEASES_URL",
         "LOOM_REPO",
+        "LOOM_REPOSITORY",
         "LOOM_SETTINGS_FILE",
         "LOOM_SHUNT_READ_CAP",
         "LOOM_UVICORN_LOOP",
