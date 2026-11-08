@@ -4,45 +4,61 @@ Loom follows SemVer. The server, the Python SDK, the TypeScript SDK, the web app
 
 ## Where the version lives
 
-Bump each of these in the release commit:
+`.venv/bin/python scripts/release/prepare.py bump X.Y.Z` bumps each of these in the release commit, except the plugins, and writes the [release notes](#release-notes):
 
 | Component            | Files                                                                                                                                                                                                                                                                                                                                                               |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Server               | `server/__init__.py` (`__version__`), `pyproject.toml` and `server.json`                                                                                                                                                                                                                                                                                            |
+| Server               | `server/__init__.py` (`__version__`), `pyproject.toml`, `uv.lock` and `server.json`                                                                                                                                                                                                                                                                                 |
 | Python SDK           | `sdk/python/pyproject.toml` and `sdk/python/loom/_version.py`                                                                                                                                                                                                                                                                                                       |
 | TypeScript SDK       | `sdk/typescript/package.json`, `sdk/typescript/package-lock.json`, `sdk/typescript/src/version.ts`                                                                                                                                                                                                                                                                  |
 | Web app              | `frontend/package.json` and `frontend/package-lock.json`                                                                                                                                                                                                                                                                                                            |
 | Root skills          | `.claude-plugin/plugin.json` and the `metadata.version` of `skills/loom-code/SKILL.md` and `skills/loom/SKILL.md`                                                                                                                                                                                                                                                   |
-| Helm chart           | `deploy/helm/loom/Chart.yaml` (`appVersion`): the default tag of the server image and of the extractor image, and the chart's `app.kubernetes.io/version` label                                                                                                                                                                                                     |
+| Helm chart           | `deploy/helm/loom/Chart.yaml`: `appVersion` (the default tag of the server and extractor images, and the chart's `app.kubernetes.io/version` label) and the chart's own `version`: a minor for a major or minor release, a patch for a patch release                                                                                                                |
 | Coding-agent plugins | `integrations/claude-code-plugin/.claude-plugin/plugin.json`, `integrations/codex-plugin/.codex-plugin/plugin.json` (their own version, and `minServerVersion`, which rises with a release (step 2 below); bump the version on a behaviour change to any file the plugin ships: `hooks/`, `lib/`, `bin/`, `skills/`, `.mcp.json`, the Codex `plugin-defaults.json`) |
 
-The server reads its version from `server/__init__.py` only; the OpenAPI document, MCP `serverInfo`, `loom report` and `GET /v1/health` (checked by `tests/unit/test_health_problems.py`) report it. Four checks keep the numbers consistent:
+The server reads its version from `server/__init__.py` only; the OpenAPI document, MCP `serverInfo`, `loom report` and `GET /v1/health` (checked by `tests/unit/test_health_problems.py`) report it. These checks keep the numbers consistent:
 
-| Check                                    | Asserts                                                                                                |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `tests/unit/test_release_version.py`     | `server/__init__.py` equals `pyproject.toml` and `server.json`, and every surface reports it           |
-| `npm run check:version` (TypeScript SDK) | its four version sources agree                                                                         |
-| `tests/unit/test_codex_plugin.py`        | both plugin manifests carry one version and one `minServerVersion`, no newer than the server's version |
-| `tests/unit/test_loom_code_skill.py`     | both root skills and `.claude-plugin/plugin.json` carry the server's version                           |
+| Check                                          | Asserts                                                                                                                               |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/unit/test_release_version.py`           | every surface reports the server's version, and `server.json` keeps the registry listing's shape                                      |
+| `npm run check:version` (TypeScript SDK)       | its four version sources agree                                                                                                        |
+| `tests/unit/test_codex_plugin.py`              | both plugin manifests carry one version and one `minServerVersion`, no newer than the server's version                                |
+| `tests/unit/test_release_prepare.py`           | every file `prepare.py` bumps names the server's version                                                                              |
+| `prepare.py check`, `check-tag`, `check-chart` | the release's `version` job ([step 1](#what-the-release-workflow-does)): one version everywhere, the candidate order, the chart moved |
 
 Two plugin pull requests that bump to the same number merge without a conflict, and the second ships nothing to clients the first already updated. Check the plugin version on `main` before bumping.
 
 ## Release notes
 
-The run that creates the GitHub Release generates its notes from the commits since the previous tag; a
-re-run or the later registry dispatch keeps them as they are. What commits cannot say goes in a "Release
-notes" section of the release pull request's description, so it is reviewed before the tag: the
-changelog entries of the pull requests merged since the previous tag, grouped by their changelog
-category (pull requests in a category that needs no entry are left out), then operator steps (new
-settings, backfills, table rebuilds) and client-visible wire changes, including every removed request
-field and retired flag. No registry of removed fields exists, so the release notes are where a
-client learns of one. Generate the wire diff instead of writing it:
+The run that creates the GitHub Release generates its notes from the commits since the previous final
+release's tag (`prepare.py previous`), so a final on its candidate's commit lists them too;
+a re-run or the later registry dispatch keeps them as they are. What commits cannot say goes in a
+"Release notes" section of the release pull request's description, so it is reviewed before the tag:
+the pull requests' changelog entries, grouped by their changelog category (pull requests in a
+category that needs no entry are left out), then operator steps (new settings, backfills, table
+rebuilds) and client-visible wire changes, including every removed request field and retired flag.
+No registry of removed fields exists, so the release notes are where a client learns of one.
+`prepare.py` writes the section to `release-notes.md` (not committed), from the squash merges
+since the highest final tag below the release:
 
-```bash
-python scripts/codegen/wire_changelog.py v<previous> HEAD
-```
+- each pull request's changelog entry under its category, in the template's order, or its title when
+  the entry is empty; one whose description names no single category is listed under "Unclassified"
+  for the author to place;
+- each "Operator steps" item, as written, under its pull request's number, from every pull request,
+  including one in a category that needs no entry; an item that says there are none (`none`, `N/A`,
+  `No operator steps.`) or is the template's own text is left out, and the author prunes the rest
+  that name no step;
+- the wire diff ([code generation](./code-generation.md#wire-changelog)).
 
-([code generation](./code-generation.md#wire-changelog)).
+A fix that a patch release of an older line already shipped is listed again, and so is a pull
+request reverted in the same range, beside its revert; the author drops them.
+
+It fetches the upstream repository's tags itself, reads the pull requests with `gh` and the wire
+diff through the server's registry, so it needs a signed-in `gh` and the project's environment
+(`uv sync`). `.venv/bin/python scripts/release/prepare.py notes X.Y.Z` prints the section again
+without bumping anything: run it after rebasing the release pull request just before it merges,
+and again at the highest-numbered candidate's commit before the final tag, so the notes name every
+pull request the tag ships.
 
 ## Cutting the release
 
@@ -60,13 +76,16 @@ python scripts/codegen/wire_changelog.py v<previous> HEAD
    or a lock file) on `main` first. The base image's own packages move only with a new base-image
    digest; a package an `apt-get install` layer adds moves with any uncached build.
 
-2. On a branch from `main`, open a pull request that sets the version everywhere above, with the
-   [release notes](#release-notes) section in its description. CI must pass, including
+2. On a branch from `main`, run `.venv/bin/python scripts/release/prepare.py bump X.Y.Z`, and open a
+   pull request with its changes and `release-notes.md` as the [release notes](#release-notes)
+   section of its description; edit the notes where an entry needs it. CI must pass, including
    `make schema-check` and the strict migration dry run.
    When a merged pull request's changelog entry says it needs the next server release, the same
    pull request raises both plugins' `minServerVersion` to this version and bumps both plugin
    versions: clients get a manifest only through a new plugin version.
-3. After the release pull request merges, tag its merge commit and push the tag:
+3. After the release pull request merges, tag its merge commit and push the tag. To soak a
+   release candidate first, tag `vX.Y.Z-rc.1` there instead, and the final later on the
+   highest-numbered candidate's commit (below):
 
    ```bash
    git tag vX.Y.Z <merge commit>
@@ -81,12 +100,26 @@ python scripts/codegen/wire_changelog.py v<previous> HEAD
    gh workflow run release.yml --ref vX.Y.Z
    ```
 
-6. Paste the pull request's release notes section into the GitHub Release, above the generated notes.
+6. Paste the release notes made at the final tag's commit ([release notes](#release-notes)) into
+   the GitHub Release, above the generated notes.
 
-A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release. Only the highest final version
-becomes the repository's Latest release (`releases/latest` serves the installer) and moves
-`:latest`: a prerelease or a patch to an older line leaves both where they are. The versions are
-read from the repository's tags, so delete a final tag that will not ship, or Latest stays below it.
+A release candidate is a `vX.Y.Z-rc.N` tag, and makes a GitHub pre-release; the release refuses any
+other prerelease tag. The first candidate goes on the release pull request's merge commit, whose
+files name `X.Y.Z`, so the candidate's server already reports `X.Y.Z`; a later one, after a fix,
+goes on a later commit of `main`. The final `vX.Y.Z` tag goes on the highest-numbered candidate's
+commit after the soak. The final's bundle keeps the ClickHouse release of the highest-numbered
+candidate on that commit with a published bundle; its images are built again from the same
+commit, uncached, so an OS package may be newer than in the soaked image. A run of a
+candidate tag after its final is refused. One on the final's commit is told to run the final. One
+numbered below the highest-numbered candidate on the final's commit, such as an older candidate
+dispatched to publish its SDKs, has nothing to run, and its tag stays. Any other is a stray: it
+also fails the final's later runs until it is deleted. The chart's `appVersion` names `X.Y.Z` too,
+so a soak on Kubernetes sets `image.tag` and `extractor.image.tag` to `X.Y.Z-rc.N`.
+
+Only the highest final version becomes the repository's Latest release (`releases/latest` serves the
+installer) and moves `:latest`: a prerelease or a patch to an older line leaves both where they are.
+The versions are read from the repository's tags, so delete a final tag that will not ship, or
+Latest stays below it.
 
 ## Rehearsing a release
 
@@ -97,13 +130,15 @@ nothing: no image push, GitHub Release or registry upload.
 gh workflow run release.yml --ref <branch> -f dry_run=true
 ```
 
-It runs at the version `server/__init__.py` names. Its images go to run artifacts instead of ghcr.io,
-without the provenance and SBOM attestations that only a registry keeps, and `docker-smoke` loads them
-from there. The `preflight` job reports each missing [prerequisite](#before-the-first-release) as a
-warning instead of failing. What only a published release exercises, a dry run does not: `docker-tag`
-(joining each image's two digests, the Latest decision, `:latest`), the GitHub Release, the
-registry publishes, and the published-images check (`scripts/release/published_images.sh`) with the
-skipped-build path it selects.
+It runs at the version `server/__init__.py` names. Its images go to run artifacts instead of
+ghcr.io, without the provenance and SBOM attestations that only a registry keeps, and
+`docker-smoke` loads them from there. The `preflight` job reports each missing
+[prerequisite](#before-the-first-release) as a warning instead of failing. What only a published
+release exercises, a dry run does not: `docker-tag` (joining each image's two digests, the Latest
+decision, `:latest`), the GitHub Release, the registry publishes, the published-images check
+(`scripts/release/published_images.sh`) with the skipped-build path it selects, the
+candidate-order check (`prepare.py check-tag`, which a dry run of a branch skips with a notice),
+and the chart check when the version is already tagged on another commit.
 
 ## Before the first release
 
@@ -131,27 +166,27 @@ the package's visibility to public in its settings, then re-run the failed jobs.
 **On a tag push (`v*`)**:
 
 1. `version` takes the version from the tag (`vX.Y.Z` → `X.Y.Z`) and refuses a ref that
-   is not a `v*` tag (unless the run is a [dry run](#rehearsing-a-release)) or not SemVer; it
-   fails unless `server/__init__.py` reads `__version__ = "X.Y.Z"` and `server.json` carries
-   the same version;
+   is not a `v*` tag (unless the run is a [dry run](#rehearsing-a-release)) or not `X.Y.Z` or
+   `X.Y.Z-rc.N`. It fails when any of these is false (for `vX.Y.Z-rc.N`, against `X.Y.Z`):
+   - `prepare.py check`: `server/__init__.py` reads `__version__ = "X.Y.Z"`, and every other
+     version file, `server.json` included, names that version;
+   - `prepare.py check-tag`: a candidate `vX.Y.Z-rc.N` before `vX.Y.Z` is tagged, and a final
+     `vX.Y.Z` on the commit of its highest-numbered candidate;
+   - `prepare.py check-chart`: the chart's version is above the previous release's;
 2. `preflight` fails the run on a missing [prerequisite](#before-the-first-release);
-3. `clickhouse` names the ClickHouse release the Compose bundle runs: the release
-   `clickhouse/clickhouse-server:latest` names now (`dev/clickhouse_release.sh`), or, on a
-   re-run, the one this version's published bundle already names, so rerunning the
-   installer for a version never moves ClickHouse (`scripts/release/published_bundle.sh`;
-   a release without a bundle resolves anew, as `github-release` never replaces one, so
-   nobody can have installed it). It migrates a fresh server of that
-   release and runs `make schema-check` before `build` may pin it. Each tag resolves
-   its own, so a final release can name a newer ClickHouse than its release candidates.
-   When `latest` names a bad release, dispatch the tag with an exact one instead
-   (`gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=clickhouse/clickhouse-server:A.B.C.D`);
-   a bundle already published keeps its own, and the run warns that it ignored the input.
-   The dispatch passes only if that release dumps the tag's `schemas/schema.sql`;
-   otherwise regenerate it on that release (the
-   [schema dump](./migrations.md#schema-dump-and-check) commands with
-   `LOOM_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:A.B.C.D`), commit it, and re-tag.
-   A ClickHouse downgrade (see step 8) is refused here first, so such a run stops before
-   it builds and pushes images;
+3. `clickhouse` names the ClickHouse release the Compose bundle runs
+   (`scripts/release/release_clickhouse.sh`), migrates a fresh server of that release and runs
+   `make schema-check` before `build` may pin it, and refuses a ClickHouse downgrade (see step 8),
+   so such a run stops before it builds and pushes images
+   ([when it stops](#when-the-clickhouse-job-stops)). The release is the first of:
+   - the one this version's published bundle already names, so rerunning the installer for a
+     version never moves ClickHouse (a release without a bundle resolves anew, as `github-release`
+     never replaces one, so nobody can have installed it);
+   - a dispatch's `clickhouse_image`, which for a final is used in place of any release its
+     candidates on the same commit published;
+   - for a final, the one the highest-numbered candidate on the same commit with a published
+     bundle was soaked with;
+   - the release `clickhouse/clickhouse-server:latest` names now (`dev/clickhouse_release.sh`);
 4. `build` writes the version into the Python and TypeScript SDK sources and builds the
    Python SDK wheel and sdist, the npm tarball (after the TypeScript SDK's `check:dist`),
    and zips of the two plugins (`loom-claude-code-plugin-vX.Y.Z.zip`,
@@ -170,7 +205,8 @@ the package's visibility to public in its settings, then re-run the failed jobs.
 7. `docker-smoke` installs the bundle with those images, on the ClickHouse release it
    names, on amd64 and arm64;
 8. `github-release` creates the GitHub Release only after both images exist, with notes
-   generated from the commits since the previous tag, or updates it on a re-run, keeping
+   generated from the commits since the previous final release (`prepare.py previous`, an
+   output of `version`; a candidate's notes start there too), or updates it on a re-run, keeping
    its notes as they are, and attaches the verified files. A bundle the release already
    carries is kept, and so is its checksum (one the release lost is written again from
    it): replacing an asset deletes it first, and a failed upload would leave an installed
@@ -183,11 +219,12 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    waiting one, which must then be re-run by hand (Re-run failed jobs). A refusal here
    comes after `docker-tag` pushed the tag's image tags (and `:latest` when it is the highest
    final version). A re-run keeps the run's inputs and fails again, so dispatch the tag instead,
-   which also publishes the SDKs and the MCP Registry listing:
-   `gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=<the newer release the error names>`
-   (if that release dumps the tag's `schemas/schema.sql`),
-   or `gh workflow run release.yml --ref vX.Y.Z -f allow_clickhouse_downgrade=true`.
-   Otherwise move `:latest` back to the previous release by hand, on both
+   which also publishes the SDKs and the MCP Registry listing. Dispatch it either with the newer
+   release the error names, when that release dumps the tag's `schemas/schema.sql`:
+   `gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=clickhouse/clickhouse-server:A.B.C.D`;
+   or accepting the downgrade:
+   `gh workflow run release.yml --ref vX.Y.Z -f allow_clickhouse_downgrade=true`.
+   When neither is taken, move `:latest` back to the previous release by hand, on both
    `ghcr.io/clickhouse/loom` and `ghcr.io/clickhouse/loom-extractor`.
 
 The server and extractor images are published before the GitHub Release, so an installer
@@ -236,6 +273,35 @@ A re-run after a partial publish is safe: each publish job skips what already ex
 a version twice. Publishing SDKs only on dispatch lets the release files be checked first.
 The server image is automatic because it is a prerequisite of the GitHub Release's
 installer, and creating the signed release tag is its review gate.
+
+### When the clickhouse job stops
+
+A run that stopped in `clickhouse` published nothing.
+
+- **`latest` names a bad release**: dispatch the tag with an exact one,
+  `gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=clickhouse/clickhouse-server:A.B.C.D`.
+  A bundle already published keeps its own, and the run warns that it ignored the input.
+- **The release does not dump the tag's `schemas/schema.sql`**: regenerate it on that release (the
+  [schema dump](./migrations.md#schema-dump-and-check) commands with
+  `LOOM_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:A.B.C.D`) and commit it. For a candidate, tag
+  the next `-rc.N` on the fix's commit. For a final (one with no candidate on its commit that
+  published a bundle, as only that one resolves `latest`), delete its tag
+  (`git push origin :refs/tags/vX.Y.Z`, and `git tag -d vX.Y.Z` in every clone that fetched it, as a
+  fetch never removes a tag), then tag a new candidate on the fix's commit. Either way dispatch the
+  new candidate with the same `-f clickhouse_image=...`, as its tag push resolves `latest` again;
+  soak it, and tag the final there, which keeps that release.
+- **A downgrade during the soak**: a final carrying its candidate's release is checked too, so a
+  patch to an older line published during the soak with a newer release stops it. Two ways out:
+  - delete the final's tag as above (it published nothing), tag a new candidate on that commit,
+    soak it, and tag the final there again. The candidate's tag push resolves `latest`; when that
+    is older than the release the error names, dispatch the candidate with that release:
+    `gh workflow run release.yml --ref vX.Y.Z-rc.N -f clickhouse_image=clickhouse/clickhouse-server:A.B.C.D`;
+  - or dispatch the final with `-f allow_clickhouse_downgrade=true` and accept the downgrade for
+    that patch's installs.
+
+Each dispatch above also runs the `pypi` and `npm` jobs, so a dispatched candidate publishes its
+SDKs once their environments are approved; decline those approvals to publish only the images and
+the GitHub Release.
 
 ## Installing from a GitHub Release
 

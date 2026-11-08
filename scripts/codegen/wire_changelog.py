@@ -39,7 +39,7 @@ ROOT = Path(__file__).resolve().parents[2]
 # of anything newer than the registry itself.
 _PROBE = r"""
 import json, sys
-from server.operations import ALL_OPERATIONS
+from server.operations.registry import ALL_OPERATIONS
 try:
     from server.operations import toolsets as _mc
 except ImportError:  # a revision from before the rosters left the transport

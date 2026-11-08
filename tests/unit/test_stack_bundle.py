@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.unit import git_repo
+
 
 def _module():
     path = Path(__file__).parents[2] / "scripts" / "release" / "build_stack_bundle.py"
@@ -153,13 +155,6 @@ def _release_workflow() -> dict:
     )
 
 
-def test_the_release_warns_when_a_published_bundle_keeps_its_own_release() -> None:
-    (resolve,) = [
-        s for s in _release_workflow()["jobs"]["clickhouse"]["steps"] if s.get("id") == "resolve"
-    ]
-    assert "::warning::clickhouse_image=" in resolve["run"]
-
-
 # `gh` as a release step sees it: v1.1.0 is not published yet, and v1.2.0's
 # bundle (STUB_BUNDLE) was published by another tag's run.
 STUB_GH = """#!/usr/bin/env bash
@@ -185,14 +180,20 @@ DOWNGRADES = pytest.mark.parametrize(
 
 
 def _run_step(tmp_path: Path, script: str, **env: str):
-    """Run a release step's script in a checkout whose `gh` is STUB_GH."""
+    """Run a release step's script in a checkout (a git repository with one
+    commit and no tags) whose `gh` is STUB_GH."""
     import os
+    import shutil
     import subprocess
     import sys
 
     work = tmp_path / "work"
     work.mkdir(exist_ok=True)
-    (work / "scripts").symlink_to(Path(__file__).parents[2] / "scripts")
+    # A copy, not a link: through a link, the script's ../../dev would be the
+    # real dev/, not the stub written beside it.
+    shutil.copytree(Path(__file__).parents[2] / "scripts" / "release", work / "scripts" / "release")
+    git_repo.git(work, "init", "-q")
+    git_repo.git(work, "commit", "-q", "--allow-empty", "-m", "release")
     other, _ = _module().build(
         "1.2.0", tmp_path / "other", "clickhouse/clickhouse-server:26.9.18.11"
     )

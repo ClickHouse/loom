@@ -31,6 +31,11 @@ from typing import Any
 import dns.asyncresolver
 import pytest
 
+# A run from a git hook exports GIT_DIR; drop it so every test's git uses the
+# repository the test made.
+for _name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+    os.environ.pop(_name, None)
+
 # The unit suite runs as CI does: no dotenv, no LOOM_* or provider keys from
 # the developer's shell. Set before `server.settings` builds its singleton.
 # LOOM_UPDATE_* are the snapshot tests' regenerate switches and LOOM_TEST_* other

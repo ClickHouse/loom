@@ -42,7 +42,9 @@ on:
       clickhouse_image:
         description: >-
           An exact ClickHouse release for a bundle not yet published (e.g.
-          clickhouse/clickhouse-server:26.9.18.11), when `latest` names a bad one
+          clickhouse/clickhouse-server:26.9.18.11), when `latest` names a bad one;
+          for a final it is used in place of any release its candidates on this
+          commit published
         required: false
         default: ""
       allow_clickhouse_downgrade:
@@ -76,10 +78,16 @@ jobs:
     outputs:
       version: ${{ steps.parse.outputs.version }}
       prerelease: ${{ steps.parse.outputs.prerelease }}
+      previous: ${{ steps.checks.outputs.previous }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0 # the tags: the chart's previous version and the candidate order
+      # prepare.py's checks need only the standard library; the project's Python runs them.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
       # A dispatch from a branch would otherwise take the branch name as the
       # version and publish it. A dry run publishes nothing, so it runs on any
       # ref, at the version the server names.
@@ -99,8 +107,9 @@ jobs:
               VERSION=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' server/__init__.py)
               ;;
           esac
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::$VERSION is not a SemVer X.Y.Z[-pre] version"
+          # A prerelease is a release candidate, X.Y.Z-rc.N.
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+            echo "::error::$VERSION is not X.Y.Z or X.Y.Z-rc.N"
             exit 1
           fi
           PRERELEASE=false
@@ -108,17 +117,23 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
           echo "Releasing v$VERSION (prerelease: $PRERELEASE, dry run: $DRY_RUN)"
-      # The server reports its version from server/__init__.py (= pyproject.toml);
-      # a tag that disagrees would ship an image that names another release.
-      # The mcp-registry job publishes server.json as committed, so it must agree too.
-      - name: The server's version names the release
+      # Every version file names the tag's final, the candidate order holds, and the
+      # chart's own version moved (release-process.md); check-tag skips off the tag's
+      # commit in a dry run. `previous` is the tag the generated release notes start
+      # from (github-release's previous_tag).
+      - name: Version files, the candidate order and the chart
+        id: checks
         env:
           VERSION: ${{ steps.parse.outputs.version }}
+          DRY_RUN: ${{ inputs.dry_run == true }}
         run: |
-          grep -qxF "__version__ = \"$VERSION\"" server/__init__.py \
-            || { echo "::error file=server/__init__.py::__version__ is not $VERSION"; exit 1; }
-          jq -e --arg v "$VERSION" '.version == $v' server.json >/dev/null \
-            || { echo "::error file=server.json::version is not $VERSION"; exit 1; }
+          dry_run=()
+          [ "$DRY_RUN" != true ] || dry_run=(--dry-run)
+          python3 scripts/release/prepare.py check "$VERSION"
+          python3 scripts/release/prepare.py check-tag "${dry_run[@]}" "$VERSION"
+          python3 scripts/release/prepare.py check-chart "$VERSION"
+          previous=$(python3 scripts/release/prepare.py previous "$VERSION")
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
 
   # What only an owner can grant (a public repository; ghcr.io packages this
   # workflow can push and anyone can pull), checked before the builds rather
@@ -159,8 +174,9 @@ jobs:
           published=$(bash scripts/release/published_images.sh "$VERSION" $IMAGES)
           echo "published=$published" >> "$GITHUB_OUTPUT"
 
-  # The bundle names the ClickHouse release that is latest now, so an installed
-  # Loom version keeps its ClickHouse; it is migrated and checked here first.
+  # The ClickHouse release the bundle pins (scripts/release/release_clickhouse.sh
+  # says which), so an installed Loom version keeps its ClickHouse; it is
+  # migrated and checked here first.
   clickhouse:
     name: The ClickHouse release the bundle names
     needs: [version, preflight]
@@ -179,6 +195,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0 # the candidate tags on this commit
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         id: python
         with:
@@ -190,48 +207,18 @@ jobs:
         run: |
           uv sync --locked --python "${{ steps.python.outputs.python-path }}"
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
-      # A re-run keeps the release this version's published bundle names, so
-      # rerunning the installer for it never moves ClickHouse.
-      # A dispatch may name the release in place of `latest`; a published
-      # bundle keeps its own either way. A downgrade is refused here so the
-      # run stops before it builds and pushes images; github-release checks
-      # again before it uploads.
-      - id: resolve
+      # release_clickhouse.sh decides which release, in order of
+      # preference. A downgrade is refused here so the run stops before it
+      # builds and pushes images; github-release checks again before it uploads.
+      - name: Which ClickHouse release the bundle names
+        id: resolve
         env:
           VERSION: ${{ needs.version.outputs.version }}
           GH_TOKEN: ${{ github.token }}
           CLICKHOUSE_IMAGE: ${{ inputs.clickhouse_image }}
           ALLOW_DOWNGRADE: ${{ inputs.allow_clickhouse_downgrade }}
         run: |
-          if [ -n "$CLICKHOUSE_IMAGE" ]; then
-            python - <<'PY'
-          import os, sys
-          sys.path.insert(0, "scripts/release")
-          from build_stack_bundle import EXACT_CLICKHOUSE
-          image = os.environ["CLICKHOUSE_IMAGE"]
-          if not EXACT_CLICKHOUSE.fullmatch(image):
-              sys.exit(f"::error::not one ClickHouse release: {image!r}")
-          PY
-          fi
-          status=0
-          bash scripts/release/published_bundle.sh "$VERSION" published || status=$?
-          case $status in
-            0)
-              image=$(python scripts/release/build_stack_bundle.py pinned-in published/loom-stack.tar.gz)
-              if [ -n "$CLICKHOUSE_IMAGE" ] && [ "$CLICKHOUSE_IMAGE" != "$image" ]; then
-                echo "::warning::clickhouse_image=$CLICKHOUSE_IMAGE ignored: v$VERSION's published bundle names $image"
-              fi
-              ;;
-            3)
-              if [ -n "$CLICKHOUSE_IMAGE" ]; then
-                image=$CLICKHOUSE_IMAGE
-              else
-                image=$(bash dev/clickhouse_release.sh)
-              fi
-              bash scripts/release/refuse_downgrade.sh "$image"
-              ;;
-            *) exit "$status" ;;
-          esac
+          image=$(bash scripts/release/release_clickhouse.sh "$VERSION")
           echo "image=$image" >> "$GITHUB_OUTPUT"
       - name: Migrate a fresh server of that release and check schema.sql
         env:
@@ -748,7 +735,9 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
-          generate_release_notes: ${{ steps.existing.outputs.release != 'true' }} # from the commits since the previous tag
+          generate_release_notes: ${{ steps.existing.outputs.release != 'true' }}
+          # Since the previous final release, not the candidate on this commit.
+          previous_tag: ${{ needs.version.outputs.previous }}
           draft: false
           prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
           make_latest: ${{ steps.latest.outputs.latest }}

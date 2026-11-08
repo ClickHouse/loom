@@ -79,8 +79,18 @@ def test_the_release_checks_its_clickhouse_before_pinning_it() -> None:
     assert "clickhouse" in _needs(_jobs("release.yml")["verify"])
 
 
+def test_the_release_clickhouse_job_sees_the_candidate_tags() -> None:
+    """Without the tags, `prepare.py candidates-on-head` finds no candidate and a
+    final resolves `latest` instead of its soaked release."""
+    job = _jobs("release.yml")["clickhouse"]
+    (checkout,) = [s for s in job["steps"] if s.get("uses", "").startswith("actions/checkout@")]
+    assert checkout["with"]["fetch-depth"] == 0
+
+
 def test_a_dispatch_names_its_clickhouse_through_the_environment() -> None:
-    """The input reaches the shell as data, and is checked as one exact release."""
+    """The input reaches the shell as data; the script checks it
+    (test_release_clickhouse.py)."""
     (step,) = [s for s in _jobs("release.yml")["clickhouse"]["steps"] if s.get("id") == "resolve"]
     assert step["env"]["CLICKHOUSE_IMAGE"] == "${{ inputs.clickhouse_image }}"
-    assert "inputs." not in step["run"] and "EXACT_CLICKHOUSE.fullmatch" in step["run"]
+    assert "inputs." not in step["run"]
+    assert "scripts/release/release_clickhouse.sh" in step["run"]
