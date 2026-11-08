@@ -205,7 +205,7 @@ async def test_a_row_removed_while_its_page_is_embedded_is_not_written_back() ->
 async def test_delete_old_keeps_the_old_rows_of_an_org_with_a_skipped_row(monkeypatch) -> None:
     """A row given other text while its page was embedded has no new-model copy yet: its
     org's old-model rows stay for a later run."""
-    ch, deletes = _CH(2), []
+    ch, deletes, lines = _CH(2), [], []
 
     class _Rewriting(_Emb):
         async def embed_many(self, texts: list[str]) -> list[list[float]]:
@@ -228,9 +228,11 @@ async def test_delete_old_keeps_the_old_rows_of_an_org_with_a_skipped_row(monkey
         return await real(ch, embedder, table, **kw)
 
     monkeypatch.setattr(rb, "reembed_table", only_turns)
-    await rb.reembed_all(ch, _Rewriting(), delete_old=True, log=lambda *_: None)
+    await rb.reembed_all(ch, _Rewriting(), delete_old=True, log=lines.append)
     assert ch.inserted == ["000"]
     assert deletes and all(p.get("off") == ["o"] for p in deletes)
+    token = [line for line in lines if "resume: " in line][-1].rsplit("resume: ", 1)[1]
+    assert rb.decode_resume(token)[2] == ["o"]  # a resumed run keeps it too
 
 
 @pytest.mark.asyncio
