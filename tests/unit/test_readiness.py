@@ -287,9 +287,9 @@ def test_health_walks_the_mirrors_only_when_asked(monkeypatch) -> None:
     walked: list[int] = []
     monkeypatch.setattr(settings, "code_intel_enabled", True)
     monkeypatch.setattr(health, "_ping_clickhouse", _down)
-    monkeypatch.setattr(mirrors, "mirror_status", lambda: walked.append(1) or {"ready": []})
+    monkeypatch.setattr(mirrors, "mirror_status", lambda: walked.append(1) or {"ready": 0})
     assert "mirrors" not in _client().get("/v1/health").json() and not walked
-    assert _client().get("/v1/health?include=mirrors").json()["mirrors"] == {"ready": []}
+    assert _client().get("/v1/health?include=mirrors").json()["mirrors"] == {"ready": 0}
 
 
 @pytest.mark.asyncio
