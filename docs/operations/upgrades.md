@@ -118,8 +118,9 @@ checkout.
     the rollout began (the `user_id` rows of `loom.erasure_requests`). The old build's
     saga left the summary's history, chunks, vectors, graph rows and shared copies
     ([rolling upgrades](../architecture/rolling-upgrades.md), rule 37). A user purge
-    the old build completed left them too, with the search rows of shared copies of the
-    user's own memories, and no later user erasure finds them: the user's keys are gone.
+    the old build completed left them too, and no later user erasure finds them: the
+    user's keys are gone. One it ran past `shared.tombstone` also left the search rows of
+    shared copies of the user's own memories, whichever build finished it.
 
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in
