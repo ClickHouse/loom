@@ -1,6 +1,7 @@
 """The release workflow's scripts and wiring: preflight.sh (the owner-granted
 prerequisites), published_images.sh (a run on a published tag builds nothing),
-make_latest.py (which release becomes Latest), and how release.yml calls them."""
+make_latest.py (which release becomes Latest), the sign job, and how release.yml
+calls them."""
 
 from __future__ import annotations
 
@@ -224,7 +225,7 @@ def test_the_image_and_the_release_ask_for_latest_when_they_apply_it() -> None:
 def test_a_dry_run_publishes_nothing() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
     # The registries follow github-release, which a dry run skips (test_release_job_paths.py).
-    for name in ("docker-tag", "github-release"):
+    for name in ("docker-tag", "sign", "github-release"):
         assert "!inputs.dry_run" in jobs[name]["if"], name
     # A release stops at the first failing image; a dry run reports them all.
     assert jobs["docker"]["strategy"]["fail-fast"] == "${{ !inputs.dry_run }}"
@@ -434,7 +435,7 @@ def test_the_workflow_images_are_the_docker_matrix_images() -> None:
 def test_only_sign_and_the_registries_get_an_oidc_token() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
     oidc = [name for name, job in jobs.items() if "id-token" in job.get("permissions", {})]
-    assert oidc == ["sign", "pypi", "npm", "mcp-registry"]
+    assert set(oidc) == {"sign", "pypi", "npm", "mcp-registry"}
 
 
 def test_the_release_signs_the_index_each_version_tag_names() -> None:

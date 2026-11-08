@@ -205,6 +205,7 @@ def test_the_release_check_verifies_the_release_workflows_signature() -> None:
     assert "--certificate-oidc-issuer https://token.actions.githubusercontent.com" in verify["run"]
     release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
     assert verify["env"]["IMAGES"] == release["env"]["IMAGES"]  # every image it signs
+    assert verify["env"]["VERSION"] == "${{ inputs.version }}"
 
 
 def _previous_install(
