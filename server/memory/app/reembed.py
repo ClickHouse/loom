@@ -403,7 +403,8 @@ async def _read_again(
     """The rows of `read` as stored now (FINAL, by key, under the run's filter), each
     with the vectors being rebuilt as read, and the positions of those stored with other
     text or identity. A row deleted, tombstoned, or given other text or another agent or
-    user since its read (its vector was made for that one) is left out."""
+    user since its read (its vector was made for that one) is left out; with `key_only`
+    too, as the write that changed it embeds its own key vector."""
     cfg, keys = _TABLES[table], _KEY_COLUMNS[table]
     rebuilt = {cfg.get("key_vec")} if key_only else {cfg["vec"], cfg.get("key_vec")}
     vectors = rebuilt - {None}  # no key axis on two of the tables
@@ -427,7 +428,7 @@ async def _read_again(
     present = {i: now[key(r)] for i, r in read.items() if key(r) in now}
     # The text the vector is made from, and the row's agent and user. A change to a key
     # column reads as gone; on conversation_embeddings none of the three is one, on
-    # memory_embeddings only the text is not.
+    # memory_embeddings only the text is not, on entity_vectors all three are.
     same = [text, "agent", "user_id"]
     kept = {
         i: read[i] | row for i, row in present.items() if all(row[c] == read[i][c] for c in same)

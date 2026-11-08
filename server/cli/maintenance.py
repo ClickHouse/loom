@@ -320,7 +320,9 @@ def _add_reembed_parser(sub: Any) -> None:
         "--dry-run", action="store_true", help="Count off-model rows without writing"
     )
     p_reembed.add_argument(
-        "--delete-old", action="store_true", help="Delete off-model rows after re-embedding"
+        "--delete-old",
+        action="store_true",
+        help="Delete off-model rows after re-embedding, except an org's the run left",
     )
     p_reembed.add_argument(
         "--key-only",
@@ -332,7 +334,7 @@ def _add_reembed_parser(sub: Any) -> None:
         "--resume",
         default="",
         help="Continue after the row a previous run's `resume:` line names "
-        "(the tables before it are done)",
+        "(the tables before it are done; it carries the orgs --delete-old keeps)",
     )
     p_reembed.set_defaults(func=_cmd_reembed)
 

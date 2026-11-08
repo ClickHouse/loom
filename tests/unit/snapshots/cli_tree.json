@@ -6583,7 +6583,7 @@
        "nargs": 0,
        "type": null,
        "required": false,
-       "help": "Delete off-model rows after re-embedding",
+       "help": "Delete off-model rows after re-embedding, except an org's the run left",
        "metavar": null
       },
       {
@@ -6613,7 +6613,7 @@
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "Continue after the row a previous run's `resume:` line names (the tables before it are done)",
+       "help": "Continue after the row a previous run's `resume:` line names (the tables before it are done; it carries the orgs --delete-old keeps)",
        "metavar": null
       }
      ]
