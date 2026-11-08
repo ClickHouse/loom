@@ -39,9 +39,9 @@ from server.erasure.store.predicates import (
     WINDOW_KEYS_IN,
 )
 from server.erasure.store.scope_reads import (
+    consolidated_slices,
     hashes,
     slices_or_one_empty,
-    summary_slices,
     user_key_pairs,
     user_quoted_keys,
     user_summary_rows,
@@ -414,7 +414,7 @@ async def _retire_summaries(
     the link queue never sees it. The loom.memory rows are only tombstoned, even in a
     purge, so no new link or read finds them live while the steps that read their keys
     still can. Returns the count and the bound slices."""
-    slices = await summary_slices(org, user_id, ch=ch)
+    slices = await consolidated_slices(org, user_id, ch=ch)
     total = 0
     for params in slices:
         total += await tombstone_scoped(

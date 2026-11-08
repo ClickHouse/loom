@@ -35,9 +35,9 @@ from server.erasure.store.predicates import (
     UID,
 )
 from server.erasure.store.scope_reads import (
+    consolidated_slices,
     hashes,
     slices_or_one_empty,
-    summary_slices,
     user_key_pairs,
     user_summary_rows,
 )
@@ -659,7 +659,7 @@ async def delete_memory_versions_by_user(
     total = await delete_scoped(
         "loom.memory_versions", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
     )
-    for params in await summary_slices(org, user_id, ch=ch):
+    for params in await consolidated_slices(org, user_id, ch=ch):
         total += await delete_scoped(
             "loom.memory_versions", org=org, scope_where=CONSOLIDATED_IN, params=params, ch=ch
         )

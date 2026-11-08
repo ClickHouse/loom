@@ -29,7 +29,7 @@ async def user_key_pairs(org: str, user_id: str, *, ch: _CHClient) -> list[tuple
     return sorted((str(r["namespace"]), str(r["memory_key"])) for r in rows)
 
 
-async def summary_slices(org: str, user_id: str, *, ch: _CHClient) -> list[dict[str, Any]]:
+async def consolidated_slices(org: str, user_id: str, *, ch: _CHClient) -> list[dict[str, Any]]:
     """The bound values of `CONSOLIDATED_IN`, a slice of the user's (namespace, key) at a
     time. Pairs are measured without the `src:` prefix they are bound with: half a field
     leaves room for it."""

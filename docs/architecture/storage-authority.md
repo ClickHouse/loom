@@ -495,9 +495,9 @@ The residue census counts `pg:loom.memory_current`, `pg:loom.memory_revisions` a
 `pg:loom.idempotency` beside the ClickHouse tables, over the scope's own rows: an erased
 id cannot come back while its evidence is kept, since its commit is refused. A user's
 consolidated dependents (the summaries a `src:` tag pairs with a key the user wrote in
-the row's namespace) are counted in ClickHouse, with what they fed
-([erasure saga](memory-architecture.md#erasure-saga)), and not in Postgres. A Postgres table that holds no memory content is listed with its
-reason (`PG_NO_MEMORY_CONTENT`). Under the ClickHouse authority the saga has no Postgres
+the row's namespace) are counted in ClickHouse, with their history, chunks, entity vectors
+and graph links ([erasure saga](memory-architecture.md#erasure-saga)), and not in
+Postgres. A Postgres table that holds no memory content is listed with its reason (`PG_NO_MEMORY_CONTENT`). Under the ClickHouse authority the saga has no Postgres
 step and the census no Postgres rows.
 
 Under the Postgres authority `namespace.snapshot` reads the heads the authority holds,

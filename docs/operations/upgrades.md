@@ -125,10 +125,13 @@ checkout.
     One it ran past `shared.tombstone` also left the search rows of shared copies of the
     user's own memories, whichever build finished it. A shared copy an older build
     promoted with `agent="*"` names `*` for its source agent, and no erasure of the
-    user it copied may find it: list them with
-    `SELECT org, namespace, memory_key FROM loom.shared FINAL WHERE tombstoned_at IS NULL
-AND arrayExists(x -> splitByChar('/', x)[3] = '*', promoted_from)` and review each,
-    with `memory.demote` for one that holds an erased user's text.
+    user it copied may find it. List them, and review each, with `memory.demote` for one
+    that holds an erased user's text:
+
+    ```sql
+    SELECT org, namespace, memory_key FROM loom.shared FINAL
+    WHERE tombstoned_at IS NULL AND arrayExists(x -> splitByChar('/', x)[3] = '*', promoted_from)
+    ```
 
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in
