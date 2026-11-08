@@ -44,6 +44,7 @@ next login does that; the rows written here are the direct grants that check rea
 
 from __future__ import annotations
 
+import functools
 import logging
 import random
 import time
@@ -353,13 +354,19 @@ async def _copy_unchanged(
 
 
 async def _rewrite_wanted(
-    client: Any, org: str, row: dict[str, Any], now: dict[str, Any] | None, seen: _Seen
+    client: Any,
+    org: str,
+    row: dict[str, Any],
+    now: dict[str, Any] | None,
+    seen: _Seen,
+    *,
+    read_at: int,
 ) -> dict[str, Any] | None:
     """A stray copy planned to become a copy of the operator grant. When that grant is
-    no longer a live admin grant, the stray's revoke is written instead: the
-    restricted branch must not keep it. One that only changed since the plan (given
-    again, say) leaves the stray to the next sync."""
-    read_at = time.time_ns()
+    no longer a live admin grant, the stray's revoke is written instead, versioned at
+    the plan's read like the other strays' revokes: the restricted branch must not keep
+    it, and an operator grant made since stays newer. One that only changed since the
+    plan (given again, say) leaves the stray to the next sync."""
     source = await _source_row(client, org, row)
     if await _copy_wanted(client, org, row, now, seen, source):
         return row
@@ -586,7 +593,8 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
     rewrites = [r for r in inserts if (r["namespace"], r["subject"]) in strays]
     inserts = [r for r in inserts if (r["namespace"], r["subject"]) not in strays]
     written, busy = 0, None
-    stages = ((revokes, _copy_unchanged), (rewrites, _rewrite_wanted), (inserts, _mirror_wanted))
+    rewrite = functools.partial(_rewrite_wanted, read_at=read_at)
+    stages = ((revokes, _copy_unchanged), (rewrites, rewrite), (inserts, _mirror_wanted))
     for planned_rows, still_wanted in stages:
         if not planned_rows:
             continue
@@ -661,8 +669,8 @@ def _given_on_added(
     subject: str, admins: dict[str, dict[str, dict[str, Any]]], sources: dict[str, str]
 ) -> bool:
     """`subject` holds an admin grant given (not mirrored) on a branch added from
-    the page: such a grant reaches every branch added from the page, so an
-    operator revoke leaves them all to it. A mirror whose page-added source was
+    the page: such a grant reaches every standard branch added from the page, so an
+    operator revoke leaves them to it. A mirror whose page-added source was
     removed holds no such grant and is taken, like a mirror of an operator
     entry."""
     return any(

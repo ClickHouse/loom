@@ -38,7 +38,8 @@ def describe(cfg: Any) -> str:
 
 async def sync_maintainers(cfg: Any, client: Any) -> None:
     """On first sight of a branch namespace each process, bring onto it the admins
-    of the repository's branches that reach it (`maintainers._reaches`). Until
+    of the repository's branches that reach it (`maintainers._reaches`); a restricted
+    branch added from the page takes the operator entries' admins only. Until
     the self-service registry is first read the sync does nothing, and a later
     pass syncs the branch again."""
     from server.code.app.index import maintainers

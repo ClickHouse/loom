@@ -398,15 +398,20 @@ async def test_a_stray_whose_rewrite_is_refused_is_revoked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """ops's operator grant is revoked after the plan: the stray is not rewritten from
-    it, and does not stay either."""
+    it, and does not stay either. Its revoke is versioned at the plan's read, so an
+    operator grant made after that read stays newer and the next sync copies it."""
+    import time
+
     monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
     revoked = _admin("code-z", "ops", revoked_at=T0 + timedelta(hours=1))
+    after_plan: list[int] = []
 
     class _RevokedMeanwhile(_FakeCH):
         async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
             planned = await super().query_all(sql, params)
             if "loom.namespaces" not in sql:
                 self.rows = [revoked, *self.rows[1:]]
+                after_plan.append(time.time_ns())
             return planned
 
     stray = _copy("code-z-26-5", "ops", "code-z-dev")
@@ -415,6 +420,7 @@ async def test_a_stray_whose_rewrite_is_refused_is_revoked(
     assert [(r["granted_by"], r["revoked_at"] is not None) for r in ch.inserted] == [
         ("repo-maintainers:code-z-dev", True)
     ]
+    assert ch.inserted[0]["version"] < after_plan[0]
 
 
 async def test_a_sync_plans_from_sequentially_consistent_reads(
