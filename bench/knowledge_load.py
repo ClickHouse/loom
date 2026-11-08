@@ -18,7 +18,8 @@ namespaces, each in an org of its own (`<org>-0` …, so a token must reach them
 all: auth off, or an org-wide token), so the server carries K times the load
 while each tenant stays within its own rate limits (`server/core/ratelimit.py`).
 Calls arrive at their rate whether or not earlier ones have answered (open
-loop), so a slow server meets the same load, and a rejected call is not retried.
+loop), so a slow server meets the same load, and a rejected call is not retried, except
+the CSV's one dataset read, which the queries need.
 It reports, per op, the calls, p50 / p95 / p99 latency of the successful ones,
 errors by status and the rejected ones (429 and 503); per ingest, the time from
 its job's creation to its end (the server's timestamps, else the time polled);
@@ -79,8 +80,16 @@ OPEN = ("pending", "processing")
 # Between one job's knowledge.ingest_status reads: every open job polls from the
 # namespace's knowledge.read rate limit.
 POLL_S = 1.0
+POLL_MAX_S = 8.0  # the longest wait between one job's polls after rejections
 CANARY_S = 60.0  # a deployment that takes no job in this long runs no worker
 INGEST_WAIT_S = 600  # past it a job counts as still open: the run reports it, not hangs
+
+
+def next_pause(pause: float, status: int) -> float:
+    """The wait before a job's next status poll: doubled (to POLL_MAX_S) after a
+    rejected poll, so a long queue leaves read budget for the run's other reads, and
+    POLL_S after any other."""
+    return min(pause * 2, POLL_MAX_S) if status in REJECTED else POLL_S
 
 
 def percentile(values: list[float], p: float) -> float:
@@ -209,7 +218,7 @@ class Run:
     ) -> tuple[str, float]:
         """Upload and ingest `data`, then wait for its job to end: its state and the
         seconds from the job's creation to its end, by the server's own timestamps,
-        which the 1 s poll does not inflate (else the time polled; "not queued" when
+        which the poll interval does not inflate (else the time polled; "not queued" when
         the upload or the ingest failed, "still open" past `wait_s`)."""
         t0 = time.perf_counter()
         try:
@@ -234,12 +243,15 @@ class Run:
         status, job = await self.op("knowledge.ingest", {"upload_id": upload_id, "source_uri": uri})
         if status != 200 or not job.get("ingestion_id"):
             return "not queued", 0.0
-        polled = time.perf_counter()
+        polled, pause = time.perf_counter(), POLL_S
         while time.perf_counter() - polled < wait_s:
-            await asyncio.sleep(POLL_S)
-            _, st = await self.op("knowledge.ingest_status", {"ingestion_id": job["ingestion_id"]})
+            await asyncio.sleep(pause)
+            status, st = await self.op(
+                "knowledge.ingest_status", {"ingestion_id": job["ingestion_id"]}
+            )
             if st.get("state") and st["state"] not in OPEN:
                 return str(st["state"]), _job_seconds(st, time.perf_counter() - polled)
+            pause = next_pause(pause, status)
         return "still open", time.perf_counter() - polled
 
     async def small_ingest(self, n: int) -> None:
@@ -253,11 +265,22 @@ class Run:
         state, seconds = await self.ingest(data, filename, uri)
         self.ingests[label] = {"state": state, "seconds": round(seconds, 2), "bytes": len(data)}
         if label == "csv" and state == "ready":
-            _, got = await self.op("knowledge.dataset_get", {"source_uri": uri})
+            got = await self.dataset_of(uri)
             sets = got.get("datasets")
             first = sets[0] if isinstance(sets, list) and sets else None
             if isinstance(first, dict) and isinstance(first.get("dataset_id"), str):
                 self.dataset = {"source_uri": uri, "dataset_id": first["dataset_id"]}
+
+    async def dataset_of(self, uri: str) -> dict[str, Any]:
+        """The CSV's knowledge.dataset_get answer, which the queries cannot run without:
+        tried again every POLL_S while it is rejected (it shares the namespace's read
+        limit with the status polls), until it answers or the run ends; {} if it never
+        did."""
+        while True:
+            status, got = await self.op("knowledge.dataset_get", {"source_uri": uri})
+            if status not in REJECTED or not self.live():
+                return got
+            await asyncio.sleep(POLL_S)
 
     async def search(self, n: int) -> None:
         words = ("replica", "request batch", "order", "region owner", "invoice total")
