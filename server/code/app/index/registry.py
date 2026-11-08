@@ -77,7 +77,7 @@ async def ensure_registered(cfg: Any, *, ch: Any | None = None, sync: bool = Tru
 
 async def insert_first_row(cfg: Any, client: Any, *, restricted: bool, join_policy: str) -> None:
     """Write a code namespace's first directory row. The caller holds the namespace's
-    admins claim and has read no row under it."""
+    admins claim, under which it found no row."""
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
     row = {
         "org": cfg.org,
@@ -137,7 +137,13 @@ async def _write_row(cfg: Any, client: Any) -> bool:
     if access is None:
         access_open = str(cfg.source) != "registry"  # the operator's entry alone says public
     else:
-        access_open = not access_restricted and str(access.get("join_policy")) == "open"
+        # `code.repo.set_access` writes the directory row first: one newer than the
+        # access row is a change whose access row is not written yet.
+        access_open = (
+            not access_restricted
+            and str(access.get("join_policy")) == "open"
+            and _newer(access, row)
+        )
     if opening and access_open:
         # The config says the repository is public; the row is brought to open +
         # discoverable. Open means joinable, not readable — the row stays

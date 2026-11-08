@@ -27,10 +27,10 @@ gives no grant on the operator's namespaces.
   operator grant (``_stray``), or rewrites it as a copy of the subject's one.
 * ``revoke_repo_maintainer`` — a revoked admin leaves the branches the revoke
   reaches, except a branch where they are the only active admin (the handler's
-  own guard) other than a restricted branch added from the page. From an
-  operator entry it takes off a branch added from the page only a mirror, and
-  none from a standard one while the subject holds an admin
-  grant given on one. On a restricted branch added from the page it takes only
+  own guard) other than a restricted branch added from the page whose copy is of
+  the grant revoked. From an operator entry it takes off a branch added from the
+  page only a mirror, and none from a standard one while the subject holds an
+  admin grant given on one. On a restricted branch added from the page it takes only
   copies, and a page branch's revoke only those whose source is not an operator
   entry.
 
@@ -685,7 +685,8 @@ async def revoke_repo_maintainer(
     """Revoke `subject`'s active admin grant on the other branches of the
     repository the revoke reaches, or lower it to `lowered_to`; a branch where
     they are the only active admin keeps them (the same guard `grants.revoke`
-    applies), but not a restricted branch added from the page, which no copy keeps.
+    applies), but not a restricted branch added from the page holding a copy of
+    the grant revoked, which no copy keeps.
     `repo` is what `read_repo` answered, and the caller holds
     `repo_admin_claims` on it.
 
@@ -761,7 +762,9 @@ async def revoke_repo_maintainer(
             revoked=lowered_to is None,
             role=lowered_to or "admin",
         )
-        if ns in restricted:  # a copy keeps no restricted branch, its last admin or not
+        # A copy of the grant this revoke takes keeps no restricted branch, its last
+        # admin or not; one of another entry's grant is the next sync's to judge.
+        if ns in restricted and planned["granted_by"] == f"{GRANTED_BY_PREFIX}{namespace}":
             strays.append(planned)
         elif len(admins[ns]) <= 1:
             log.warning(

@@ -205,22 +205,34 @@ async def test_the_registrar_reads_and_writes_the_row_under_the_admins_claim(
     assert held == ["code-p"]
 
 
-@pytest.mark.parametrize("join_policy", ["open", "approval"])
+@pytest.mark.parametrize(
+    ("join_policy", "written"), [("open", "after"), ("approval", "after"), ("open", "before")]
+)
 @pytest.mark.asyncio
-async def test_a_page_branch_opens_only_while_its_registry_row_says_open(join_policy: str) -> None:
-    """The snapshot may predate a maintainer closing it to approval."""
+async def test_a_page_branch_opens_only_while_its_registry_row_says_open(
+    join_policy: str, written: str
+) -> None:
+    """The snapshot may predate a maintainer closing it to approval; an access row older
+    than the directory row is a change cut short before its access row was written."""
+    from datetime import datetime
+
+    at = datetime(2026, 9, 1, 11 if written == "after" else 9, 0, 0)
 
     class _Registry(_Client):
         async def query_one(self, sql, params=None):
             if "loom.code_repos" in sql:
-                return {"classification": "standard", "join_policy": join_policy}
-            return {"classification": "standard", "join_policy": "approval"}
+                return {"classification": "standard", "join_policy": join_policy, "updated_at": at}
+            return {
+                "classification": "standard",
+                "join_policy": "approval",
+                "updated_at": datetime(2026, 9, 1, 10, 0, 0),
+            }
 
     client = _Registry()
     cfg = dataclasses.replace(_cfg("standard"), public=True, source="registry")
     await registry.ensure_registered(cfg, ch=client)
     opened = [r["join_policy"] for _, rows in client.inserted for r in rows]
-    assert opened == (["open"] if join_policy == "open" else [])
+    assert opened == (["open"] if (join_policy, written) == ("open", "after") else [])
 
 
 @pytest.mark.parametrize("access", ["standard", "restricted"])

@@ -852,6 +852,22 @@ async def test_an_operator_revoke_takes_a_copy_that_is_a_restricted_branch_s_onl
     ]
 
 
+async def test_an_operator_revoke_keeps_a_copy_of_another_entry_s_grant_it_cannot_take(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ops stays admin of code-z-ops, its only admin there: the copy of that grant on the
+    restricted branch stays too, as the guard keeps it there."""
+    two = [_Cfg("clickhouse", "code-z-ops", "Org/z"), *PRIVATE]
+    monkeypatch.setattr(repos, "configured_repos", lambda: two)
+    rows = [
+        _admin("code-z", "ops"),
+        _admin("code-z", "x"),
+        _admin("code-z-ops", "ops"),
+        _copy("code-z-26-5", "ops", "code-z-ops"),
+    ]
+    assert await _revoke("code-z", "ops", ch=_FakeCH(rows)) == 0
+
+
 async def test_an_operator_revoke_takes_a_mirror_of_an_entry_no_longer_configured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
