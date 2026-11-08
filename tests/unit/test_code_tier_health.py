@@ -934,3 +934,18 @@ async def test_a_failed_git_step_keeps_its_output_for_the_record(tmp_path: Path)
     with pytest.raises(Exception) as ei:
         await compiler_tier.git(tmp_path, "rev-parse", "HEAD")
     assert "rev-parse" in recorder.error_text(ei.value)
+
+
+@pytest.mark.asyncio
+async def test_a_compiler_tier_runs_no_entry_while_the_registry_is_unread(monkeypatch) -> None:
+    # Unread, an operator entry for a namespace a member added is not skipped yet.
+    from server.code.app.index import repo_registry
+
+    ran: list[str] = []
+
+    async def run(_repo: Any, cfg: Any, _result: Any) -> None:
+        ran.append(cfg.namespace)
+
+    monkeypatch.setattr(repo_registry, "registry_read", lambda: False)
+    result = await _run_tier("server.code.workers.scip_delta", _StateRepo(), run)
+    assert ran == [] and any("registry is unread" in s for s in result.skipped)

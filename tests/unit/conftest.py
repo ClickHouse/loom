@@ -355,6 +355,19 @@ def _no_repo_job_sandbox() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _code_registry_read() -> Iterator[None]:
+    """The code ingest pass, the compiler tiers, the PR history and the code CLI run
+    only once the self-service registry has been read; unit tests fake that read. A
+    test of an unread registry resets it (`repo_registry.reset_for_tests`)."""
+    from server.code.app.index import repo_registry
+
+    before = repo_registry._EVER_LOADED
+    repo_registry._EVER_LOADED = True
+    yield
+    repo_registry._EVER_LOADED = before
+
+
+@pytest.fixture(autouse=True)
 def _no_copy_head_check(request: pytest.FixtureRequest) -> Iterator[None]:
     """A vector copy re-reads its keys' heads after its insert
     (`retire_copies_under_unembedded_heads`); unit fakes answer statements by

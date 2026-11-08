@@ -22,13 +22,6 @@ from tests.unit.switch_state import switch_off
 from tests.unit.test_conflict_resolver import _q, pass_env, row_env  # noqa: F401
 from tests.unit.test_model_call_identity import AGENT_NS, _Directory, _stub, directory  # noqa: F401
 
-
-@pytest.fixture(autouse=True)
-def _registry_read(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The ingest pass and the code CLI run only once the registry has been read."""
-    monkeypatch.setattr("server.code.app.index.repo_registry.registry_read", lambda: True)
-
-
 AGENT_8 = "sa:cell-t1:agent-8"
 NS_8 = "cell-t1-agent-8"
 SHARED = "t-1-shared"

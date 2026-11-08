@@ -9,13 +9,6 @@ import pytest
 
 from server.cli import _ch, maintenance, reports
 
-
-@pytest.fixture(autouse=True)
-def _registry_read(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The ingest pass and the code CLI run only once the registry has been read."""
-    monkeypatch.setattr("server.code.app.index.repo_registry.registry_read", lambda: True)
-
-
 pytestmark = pytest.mark.usefixtures("stub_model_command")
 
 

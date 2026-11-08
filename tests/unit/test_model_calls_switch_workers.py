@@ -15,12 +15,6 @@ from server.settings import settings
 from tests.unit.switch_state import switch_off, switch_stale
 
 
-@pytest.fixture(autouse=True)
-def _registry_read(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The ingest pass and the code CLI run only once the registry has been read."""
-    monkeypatch.setattr("server.code.app.index.repo_registry.registry_read", lambda: True)
-
-
 class _CH:
     """Records each statement and its parameters; answers `rows` filtered by
     the statement's switched-off orgs, as ClickHouse would."""

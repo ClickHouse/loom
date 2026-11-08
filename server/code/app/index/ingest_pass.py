@@ -145,6 +145,7 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
         # Unread, an operator entry for a namespace a member added is not skipped yet,
         # and would be indexed into that member's namespace.
         logger.warning("code_ingest: the self-service registry is unread; nothing indexed")
+        result.note = "the self-service registry is unread; nothing indexed"
         return
     inactive = await _inactive_namespaces()
     # A deleted directory row means retired — the worker must

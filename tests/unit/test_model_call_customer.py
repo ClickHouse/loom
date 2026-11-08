@@ -19,12 +19,6 @@ from tests.unit.model_client import through_the_model_client
 from tests.unit.test_conflict_resolver import row_env  # noqa: F401
 
 
-@pytest.fixture(autouse=True)
-def _registry_read(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The ingest pass and the code CLI run only once the registry has been read."""
-    monkeypatch.setattr("server.code.app.index.repo_registry.registry_read", lambda: True)
-
-
 @pytest.fixture
 def metered(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(settings, "inference_customer_header", "X-Customer")

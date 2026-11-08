@@ -2,7 +2,7 @@
 
 A fresh install indexes no repository. Entries come from two sources, merged: the
 repositories people add themselves and the operator's configuration. An operator entry
-for a namespace a member added here is skipped (see the rules below). One code namespace
+for a namespace added here is skipped (see the rules below). One code namespace
 is one branch
 ([overview](overview.md#one-namespace-is-one-branch)).
 
@@ -95,9 +95,10 @@ Rules:
   source is not an operator entry (one whose holder keeps an admin grant given on an
   operator entry other than the revoked one is rewritten by the next sync instead); an
   operator copy kept there goes at the next sync once its operator grant is gone.
-- An operator entry that names a namespace a member added here, even one removed
-  since, is skipped, with a warning in the server log, since that member's grants
-  there would become an operator entry's: list the entry under another namespace.
+- An operator entry that names a namespace added here (`code.repo.add` or
+  `code.repo.add_branch`), even one removed since, is skipped, with a warning in the
+  server log, since the grants of whoever added it would become an operator entry's.
+  Removing the branch does not free the name: list the entry under another namespace.
   A registry row that records no kind is read as the entry's access row, a namespace
   a member created with `namespace.register` has no registry row, and while
   self-service is off the registry is not read: review a namespace's grants before
@@ -193,7 +194,7 @@ and survives restarts. `code.refresh` (writer) and the admin ops always need a g
 
 | Symptom                                           | Cause and fix                                                                                                                                                                                                                                                          |
 | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A configured entry never indexes                  | no `git_head` watermark: run `loom code init` and `loom code backfill`; or a member added that namespace from the page, and the log says the entry is skipped: list it under another namespace                                                                         |
+| A configured entry never indexes                  | no `git_head` watermark: run `loom code init` and `loom code backfill`; or the namespace was added from the page (removed since or not), and the log says the entry is skipped: list it under another namespace                                                        |
 | Adding a repository answers `SANDBOX_UNAVAILABLE` | this deployment cannot run the sandbox: list the repository in `LOOM_CODE_REPOS_JSON` instead (unless `LOOM_CODE_SANDBOX_REQUIRED` is set, which skips those too), or see the [sandbox requirements](../../operations/code-index-operations.md#repository-job-sandbox) |
 | A self-service card stays at `error`              | read `stage_detail` in `code.repos`; a failed clone retries next pass (timeout `LOOM_CODE_BOOTSTRAP_CLONE_TIMEOUT_S`)                                                                                                                                                  |
 | A private self-service repository stops fetching  | `LOOM_JWT_SECRET` was rotated; re-enter the token                                                                                                                                                                                                                      |

@@ -55,6 +55,7 @@ async def run_pass() -> CodePrHistoryResult:
 async def _run(result: CodePrHistoryResult) -> None:
     from server.code.app.index.bootstrap import awaits_first_index
     from server.code.app.index.pass_budget import rotate_to
+    from server.code.app.index.repo_registry import registry_read
     from server.code.domain.index.repos import configured_repos
     from server.code.store.index import CodeRepo
 
@@ -63,6 +64,11 @@ async def _run(result: CodePrHistoryResult) -> None:
     # The pass starts at the entry the previous one did not finish, so the
     # entries after a cut are served before the ones already served: a slow
     # entry early in the list cannot keep the later ones from ever syncing.
+    if not registry_read():
+        # Unread, an operator entry for a namespace a member added is not skipped yet,
+        # and its PR history would be written into that member's namespace.
+        result.note = "the self-service registry is unread; nothing synced"
+        return
     configured = configured_repos()
     repos = rotate_to(configured, pass_context.resume_cursor())
     for i, cfg in enumerate(repos):

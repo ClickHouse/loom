@@ -91,6 +91,7 @@ async def run_tier[R: TierResult](
     success unless `run_repo` returned False (it attempted nothing: the entry was not
     due) or added a skip. An entry the tier does not own drops its record
     (`tier_health.forget`)."""
+    from server.code.app.index.repo_registry import registry_read
     from server.code.domain.index.repos import configured_repos
     from server.code.store.index import CodeRepo
 
@@ -118,7 +119,12 @@ async def run_tier[R: TierResult](
     # stalled tier is diagnosable.
     with record_pass(worker) as rec:
         repo = CodeRepo()
-        for cfg in configured_repos():
+        entries = configured_repos()
+        if not registry_read():
+            # Unread, an operator entry for a namespace a member added is not skipped yet.
+            result.skipped.append("the self-service registry is unread; no entry run")
+            entries = []
+        for cfg in entries:
             if not await worker_owns(repo, cfg, producer):
                 await tier_health.forget(repo, cfg.org, cfg.namespace, not_run)
                 continue
