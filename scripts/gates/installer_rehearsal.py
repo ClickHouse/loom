@@ -477,12 +477,15 @@ class Rehearsal:
 
     def install_previous(self, image: str, home: Path, port: int) -> None:
         """The previous release by its own install.sh: published, the release's
-        copy; locally, the tag's copy with the tag's bundle mounted."""
+        copy naming its version (a copy from before releases stamped install.sh
+        installs `latest` otherwise; on a fresh home it lifts no guard); locally,
+        the tag's copy with the tag's bundle mounted."""
         release = self.release
         files = release.previous_files
         if files is None:
             url = f"{GITHUB_RELEASES}/download/v{release.previous}/install.sh"
-            self.one_liner(image, home, port, url)
+            script = f'curl -fsSL "{url}" | LOOM_VERSION={release.previous} sh'
+            self.container(image, home, port, script)
             return
         self.container(
             image,

@@ -195,10 +195,10 @@ def test_release_check_runs_the_published_one_liner_on_both_architectures() -> N
     assert "LOOM_RELEASES_URL" not in yaml.safe_dump(workflow)
 
 
-def test_the_published_previous_release_is_installed_by_its_own_copy(
+def test_the_published_previous_release_is_installed_by_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """No LOOM_VERSION: the release's install.sh installs its own release."""
+    """By version: a copy from before releases stamped install.sh installs `latest`."""
     release = rehearsal.Release("1.2.0", "1.1.0", "unused", env={})
     docker = rehearsal.HostDocker("/compose", 0)
     rehearsing = rehearsal.Rehearsal(release, ExitStack(), tmp_path, "id", docker)
@@ -207,7 +207,8 @@ def test_the_published_previous_release_is_installed_by_its_own_copy(
         rehearsing, "container", lambda image, home, port, script: scripts.append(script)
     )
     rehearsing.install_previous("image", tmp_path, 1)
-    assert scripts == [f'curl -fsSL "{rehearsal.GITHUB_RELEASES}/download/v1.1.0/install.sh" | sh']
+    url = f"{rehearsal.GITHUB_RELEASES}/download/v1.1.0/install.sh"
+    assert scripts == [f'curl -fsSL "{url}" | LOOM_VERSION=1.1.0 sh']
 
 
 @pytest.mark.parametrize("flag", ["--version", "--previous-version"])
