@@ -574,7 +574,8 @@ def test_a_widening_policy_makes_analysis_unavailable(
             description="the probe to report the widening policy",
         )
         assert r.json()["detail"]["code"] == "ANALYSIS_UNAVAILABLE", r.text
-        assert "widen_test ON memory" in r.text, r.text
+        # The policy's name goes to the server log, never to a caller.
+        assert "widen_test" not in r.text, r.text
         assert "widen_test" in str(ch_client.command("SHOW ROW POLICIES ON loom.memory"))
     finally:
         ch_client.command("DROP ROW POLICY IF EXISTS `widen_test` ON loom.memory")

@@ -280,11 +280,12 @@ user, Loom's own included, reading the tables as before, whatever the server's
 `users_without_row_policies_can_read_rows` says. ClickHouse ORs the permissive policies
 on a table, so this one would widen any permissive policy someone else put on an
 allowlisted table: before every write Loom lists them in `system.row_policies` and,
-finding one, writes nothing and names it, for an admin to drop or make restrictive. A
-restrictive policy is left alone, since it narrows every user it names. The analyst
-user, its profiles and its policies' names are server-wide, so analysis needs one Loom
-per ClickHouse service: a deployment that finds the analyst's scope policy in another
-database writes nothing and names it.
+finding one, writes nothing and reports it, naming it in the server log and in
+`loom ch-setup`'s refusal, for an admin to drop or make restrictive. A restrictive
+policy is left alone, since it narrows every user it names. The analyst user, its
+profiles and its policies' names are server-wide, so analysis needs one Loom per
+ClickHouse service: a deployment that finds the analyst's scope policy in another
+database writes nothing and reports it, naming that database in the server log.
 
 The key and the analyst's password are random and kept together, as one sealed value, in
 one row of `loom.analysis_secrets`, sealed with `server/core/secrets_at_rest.py` in the
@@ -485,18 +486,21 @@ background, as the analyst itself, so the probe needs no access management:
   build older than the stored version skips these, since the entities are another
   build's.
 
-A failed check answers `ANALYSIS_UNAVAILABLE` and is a `loom doctor` problem. When the
-stored version is its own, a replica that writes the entities itself writes them again
-under the lease after a check failed with a definite answer that a write repairs: a
-table without its policy, a canary under another key (with [part 2](#build-order),
-checked again once three settle times have passed since the row's stored time, as
-`loom doctor` does, since a server still applying a rotation looks the same), a grant
-outside the allowlist. Elsewhere
+A failed check answers `ANALYSIS_UNAVAILABLE` and is a `loom doctor` problem.
+`/v1/health` answers without a token, so the problem it shows is Loom's own text, an
+error as its kind; the driver's text and the names of policies and databases go to the
+server log, and the 503 a caller gets names no cause. When the stored version is its
+own, a replica that writes the entities itself writes them again under the lease after a
+check failed with a definite answer that a write repairs: a table without its policy, a
+canary under another key (with [part 2](#build-order), checked again once three settle
+times have passed since the row's stored time, as `loom doctor` does, since a server
+still applying a rotation looks the same), a grant outside the allowlist. Elsewhere
 `loom doctor` names `loom ch-setup` as the fix. A policy Loom did not write, which a
-write cannot remove, is left to an admin: `loom doctor` names it where Loom's user can
-list policies, and the table that admits rows in the reserved scope where it cannot. The
-canary shows only that its own policy has the key; a single table's policy under another
-key, which only a hand edit leaves, shows as empty answers from that table.
+write cannot remove, is left to an admin: `loom doctor` reports it, and the server log
+names it where Loom's user can list policies, or the table that admits rows in the
+reserved scope where it cannot. The canary shows only that its own policy has the key; a
+single table's policy under another key, which only a hand edit leaves, shows as empty
+answers from that table.
 
 Between a policy dropped by hand and the next probe, ClickHouse by default lets the
 analyst read every row of that table. The ClickHouse that Loom configures itself (the

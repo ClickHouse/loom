@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import Any, Protocol
 
 from server.core.ch import as_analyst, own_write_reads, uncaptured
 from server.core.ch_names import database, quote
@@ -18,6 +18,21 @@ from server.core.sql_literal import sql_string
 from server.insights.domain import analysis as boundary
 
 log = logging.getLogger(__name__)
+
+
+class _AnalystClient(_CHClient, Protocol):
+    """The client the analyst's own reads need: rows with their column names
+    and types, which only these reads ask for."""
+
+    async def query_columns(
+        self, sql: str, params: dict[str, Any] | None = None
+    ) -> tuple[list[str], list[str], list[tuple[Any, ...]]]: ...
+
+
+def _analyst_client() -> _AnalystClient:
+    from server.core.ch import get_client
+
+    return get_client()
 
 
 async def stored_entities(*, ch: _CHClient | None = None) -> boundary.Stored | None:
@@ -187,9 +202,11 @@ async def can_manage_access(*, ch: _CHClient | None = None) -> bool:
     return True
 
 
-async def own_version(*, password: str, extra: dict[str, Any], ch: _CHClient | None = None) -> int:
+async def own_version(
+    *, password: str, extra: dict[str, Any], ch: _AnalystClient | None = None
+) -> int:
     """The version stamped on the analyst's profile, read as the analyst (0 for none)."""
-    ch = ch or _default_client()
+    ch = ch or _analyst_client()
     with as_analyst(boundary.ANALYST_USER, password, extra):
         try:
             _, _, rows = await ch.query_columns(
@@ -209,12 +226,12 @@ _GRANT = re.compile(
 
 
 async def own_grants(
-    *, password: str, extra: dict[str, Any], ch: _CHClient | None = None
+    *, password: str, extra: dict[str, Any], ch: _AnalystClient | None = None
 ) -> frozenset[tuple[str, str]]:
     """The (table, column) pairs the analyst's own SHOW GRANTS names; any grant
     of another shape (a whole table, another privilege) comes back as
     ("*", <the grant>) so it can never match the allowlist."""
-    ch = ch or _default_client()
+    ch = ch or _analyst_client()
     with as_analyst(boundary.ANALYST_USER, password, extra):
         _, _, rows = await ch.query_columns("SHOW GRANTS")
     out: set[tuple[str, str]] = set()
@@ -228,10 +245,10 @@ async def own_grants(
 
 
 async def own_grant_lines(
-    *, password: str, extra: dict[str, Any], ch: _CHClient | None = None
+    *, password: str, extra: dict[str, Any], ch: _AnalystClient | None = None
 ) -> list[str]:
     """The analyst's own SHOW GRANTS, line by line, read as the analyst."""
-    ch = ch or _default_client()
+    ch = ch or _analyst_client()
     with as_analyst(boundary.ANALYST_USER, password, extra):
         _, _, rows = await ch.query_columns("SHOW GRANTS")
     return [str(line) for (line,) in rows]
@@ -252,10 +269,10 @@ def target_database() -> str:
 
 
 async def run_statement(
-    sql: str, *, password: str, extra: dict[str, Any], ch: _CHClient | None = None
+    sql: str, *, password: str, extra: dict[str, Any], ch: _AnalystClient | None = None
 ) -> tuple[list[str], list[str], list[tuple[Any, ...]]]:
     """Column names, column types and rows of one statement run as the analyst
     user with `extra` (the signed scope and the caps) as its settings."""
-    ch = ch or _default_client()
+    ch = ch or _analyst_client()
     with as_analyst(boundary.ANALYST_USER, password, extra):
         return await ch.query_columns(sql)

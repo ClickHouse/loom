@@ -133,3 +133,22 @@ def test_a_polled_failure_is_logged_once_a_minute(caplog: pytest.LogCaptureFixtu
         for _ in range(3):
             assert health._shown_error(RuntimeError(_DRIVER_TEXT), "the ping") == "RuntimeError"
     assert sum("the ping failed" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_a_failed_analysis_probe_names_the_kind(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.insights.app import analysis
+    from server.observability import problems
+
+    async def down() -> Any:
+        raise RuntimeError(_DRIVER_TEXT)
+
+    monkeypatch.setattr(analysis, "_ready", None)
+    monkeypatch.setattr(analysis, "_problem", "")
+    monkeypatch.setattr(analysis.store, "sealed_secrets", down)
+    asyncio.run(analysis.reprobe())
+    ok, error = analysis.analysis_state()
+    shown = problems._analysis_problems(
+        settings, problems.HealthState(analysis_ok=ok, analysis_error=error)
+    )
+    assert shown and "ch-internal-7" not in shown[0].message
+    assert shown[0].message.endswith("RuntimeError")

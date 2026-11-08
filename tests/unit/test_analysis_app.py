@@ -55,6 +55,12 @@ def _returns(value: Any):
     return fn
 
 
+def _named_in_the_log_only(caplog: pytest.LogCaptureFixture, problem: str, name: str) -> None:
+    # /v1/health shows the problem without a token: the names go to the log.
+    assert problem and name not in problem
+    assert any(name in r.message for r in caplog.records)
+
+
 @pytest.mark.parametrize(
     ("message", "answer"),
     [
@@ -111,7 +117,7 @@ def test_a_reserved_scope_read_refused_for_want_of_grants_is_repairable(
 
 
 def test_a_foreign_permissive_policy_stops_the_repair(
-    monkeypatch: pytest.MonkeyPatch, ready: None
+    monkeypatch: pytest.MonkeyPatch, ready: None, caplog: pytest.LogCaptureFixture
 ) -> None:
     written: list[list[str]] = []
 
@@ -142,7 +148,7 @@ def test_a_foreign_permissive_policy_stops_the_repair(
     assert not written
     ready_now, problem = app.analysis_state()
     assert ready_now is False
-    assert "bi_scope ON memory" in problem
+    _named_in_the_log_only(caplog, problem, "bi_scope ON memory")
 
 
 def test_ch_setup_refuses_a_new_key_beside_a_live_analyst_user(
@@ -231,16 +237,16 @@ def test_an_older_build_leaves_a_newer_builds_caps(
 
 
 def test_a_boot_writes_nothing_over_a_foreign_permissive_policy(
-    monkeypatch: pytest.MonkeyPatch, ready: None
+    monkeypatch: pytest.MonkeyPatch, ready: None, caplog: pytest.LogCaptureFixture
 ) -> None:
     written = _provisioning(monkeypatch, stored=None, caps="", foreign=["bi_scope ON memory"])
     asyncio.run(app.provision())
     assert written == []
-    assert "bi_scope ON memory" in app.analysis_state()[1]
+    _named_in_the_log_only(caplog, app.analysis_state()[1], "bi_scope ON memory")
 
 
 def test_a_foreign_policy_outlasts_a_clean_probe(
-    monkeypatch: pytest.MonkeyPatch, ready: None
+    monkeypatch: pytest.MonkeyPatch, ready: None, caplog: pytest.LogCaptureFixture
 ) -> None:
     # Such a policy widens another user, never the analyst, so the probe passes.
     monkeypatch.setattr(app, "_probe", _returns(("", False)))
@@ -250,17 +256,17 @@ def test_a_foreign_policy_outlasts_a_clean_probe(
     monkeypatch.setattr(app.store, "foreign_policies", _returns(["bi_scope ON memory"]))
     asyncio.run(app.reprobe())
     assert app.analysis_state()[0] is False
-    assert "bi_scope ON memory" in app.analysis_state()[1]
+    _named_in_the_log_only(caplog, app.analysis_state()[1], "bi_scope ON memory")
 
 
 def test_another_loom_database_on_the_server_stops_the_write(
-    monkeypatch: pytest.MonkeyPatch, ready: None
+    monkeypatch: pytest.MonkeyPatch, ready: None, caplog: pytest.LogCaptureFixture
 ) -> None:
     written = _provisioning(monkeypatch, stored=None, caps="", foreign=[])
     monkeypatch.setattr(app.store, "other_deployments", _returns(["loom_staging"]))
     asyncio.run(app.provision())
     assert written == []
-    assert "loom_staging" in app.analysis_state()[1]
+    _named_in_the_log_only(caplog, app.analysis_state()[1], "loom_staging")
 
 
 def test_an_org_past_its_concurrency_cap_is_rate_limited(
@@ -477,3 +483,24 @@ def test_ch_setups_analyst_line_advises_the_printed_sql_only_after_a_migration(
     line = capsys.readouterr().out.strip()
     assert line.startswith("· loom_analyst (insights.query): not written (")
     assert ("--print-analyst-sql" in line) is advised
+
+
+def test_a_driver_error_shows_as_its_kind_and_its_text_goes_to_the_log(
+    monkeypatch: pytest.MonkeyPatch, ready: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    driver = "Code: 210. Connection refused (ch-internal-7:9440) SELECT 1 AS one"
+    monkeypatch.setattr(app.store, "sealed_secrets", _failing(driver))
+    asyncio.run(app.reprobe())
+    ready_now, problem = app.analysis_state()
+    assert ready_now is False
+    assert "ch-internal-7" not in problem and problem.endswith("RuntimeError")
+    assert any("ch-internal-7" in r.message for r in caplog.records)
+
+
+def test_an_unavailable_answer_names_no_cause(monkeypatch: pytest.MonkeyPatch, ready: None) -> None:
+    # Every org's caller gets this answer: the cause is for `loom doctor`.
+    monkeypatch.setattr(app, "_ready", False)
+    monkeypatch.setattr(app, "_problem", "another Loom database on this ClickHouse writes it")
+    with pytest.raises(AnalysisUnavailableError) as caught:
+        asyncio.run(app.handle_insights_query(_query()))
+    assert "another Loom database" not in str(caught.value)

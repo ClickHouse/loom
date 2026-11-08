@@ -25,7 +25,12 @@ from uuid import UUID
 from server.core import leases
 from server.core.ch import statement_timeout
 from server.core.ch_errors import error_code, error_line
-from server.core.errors import AnalysisUnavailableError, RateLimitedError, ValidationError
+from server.core.errors import (
+    AnalysisUnavailableError,
+    RateLimitedError,
+    ValidationError,
+    error_kind,
+)
 from server.core.secrets_at_rest import seal, unseal
 from server.insights.api.models_analysis import (
     AnalysisColumn,
@@ -91,6 +96,11 @@ _STATEMENT_CODES = frozenset(
     }
 )
 
+
+class SetupRefused(RuntimeError):
+    """A refusal Loom wrote, safe to show as is; any other error shows as its kind."""
+
+
 _WRITE_LEASE = "analysis.entities"
 _LEASE_TTL_S = 60
 _SECRETS_PURPOSE = "analysis.secrets"
@@ -135,7 +145,7 @@ async def load_secrets(*, may_draw: bool) -> None:
     sealed = await store.sealed_secrets()
     if sealed is None:
         if not may_draw:
-            raise RuntimeError(
+            raise SetupRefused(
                 "loom.analysis_secrets has no row while the analyst user may exist; "
                 "`loom ch-setup` draws the secrets"
             )
@@ -144,7 +154,7 @@ async def load_secrets(*, may_draw: bool) -> None:
         sealed = await store.sealed_secrets()
     opened = _opened(sealed)
     if opened is None:
-        raise RuntimeError(
+        raise SetupRefused(
             "loom.analysis_secrets does not open with LOOM_JWT_SECRET (set "
             "LOOM_JWT_SECRET_PREVIOUS to the secret it was sealed under and run "
             "`loom secrets reseal`)"
@@ -225,7 +235,7 @@ async def provision() -> None:
         async with lease():
             await load_secrets(may_draw=await store.analyst_user_absent())
             foreign = await _foreign_problem() if await store.can_manage_access() else None
-            if foreign == "":
+            if foreign == ("", ""):
                 statements = await _current_statements()
                 stored = await store.stored_entities()
                 if boundary.needs_rewrite(stored, boundary.entity_digest(statements)):
@@ -238,50 +248,64 @@ async def provision() -> None:
                 ):
                     # The caps are deployment settings, written apart from the version.
                     await store.write_entities(boundary.caps_sql(caps()))
-        if foreign:
-            _set_problem(foreign)
+        if foreign and foreign[0]:
+            _set_problem(*foreign)
             return
         await reprobe()
     except Exception as e:  # noqa: BLE001 — a failed analyst setup is a reported problem, never fatal to boot
-        _set_problem(f"writing or probing {boundary.ANALYST_USER} failed: {error_line(e)}")
+        cause, detail = _cause(e)
+        _set_problem(f"writing or probing {boundary.ANALYST_USER} failed: {cause}", detail)
 
 
 async def _current_statements() -> list[str]:
     return entity_statements(await store.granted(), await store.granted_roles())
 
 
-async def _foreign_problem() -> str:
-    """Why nothing may be written while a permissive policy Loom did not write
-    sits on an allowlisted table, or '' when none does."""
+async def _foreign_problem() -> tuple[str, str]:
+    """Why nothing may be written, and the names behind it, or ('', '') when
+    nothing stops a write: a second Loom database writing the analyst user, or
+    a permissive policy Loom did not write on an allowlisted table. The names
+    go to the log and the CLI, never to `/v1/health`."""
     if others := await store.other_deployments():
         return (
-            f"the analyst user {boundary.ANALYST_USER} is also written by the Loom database "
-            f"{others[0]} on this ClickHouse; analysis needs one Loom per ClickHouse service"
+            "another Loom database on this ClickHouse writes the analyst user; analysis "
+            "needs one Loom per ClickHouse service",
+            f"databases: {', '.join(others)}",
         )
-    foreign = await store.foreign_policies()
-    if not foreign:
-        return ""
-    return (
-        f"row policies Loom did not write are on the analysis tables ({', '.join(foreign[:5])}); "
-        "Loom's policy for every other user would widen them, so an admin must drop them or "
-        "make them restrictive"
-    )
+    if foreign := await store.foreign_policies():
+        return (
+            "row policies Loom did not write are on the analysis tables; Loom's policy for "
+            "every other user would widen them, so an admin must drop them or make them "
+            "restrictive",
+            f"policies: {', '.join(foreign)}",
+        )
+    return "", ""
 
 
-async def _write_under_lease() -> str:
+def _cause(e: BaseException) -> tuple[str, str]:
+    """An error as the problem shows it, and its full text for the log: a
+    refusal Loom wrote as is, anything else as its kind, since a driver's text
+    can carry a statement or the server's address."""
+    if isinstance(e, SetupRefused):
+        return str(e), ""
+    return error_kind(e), error_line(e)
+
+
+async def _write_under_lease() -> tuple[str, str]:
     """Write the entities again to repair what the probe found, unless a newer
     build wrote them meanwhile; a replica whose first boot drew no secrets
-    draws them here. Returns why it wrote nothing, when a policy Loom did not
-    write is there."""
+    draws them here. Returns why it wrote nothing, and the names behind it,
+    when something stops a write."""
     async with lease():
         if _loaded is None:
             await load_secrets(may_draw=await store.analyst_user_absent())
-        if foreign := await _foreign_problem():
+        foreign = await _foreign_problem()
+        if foreign[0]:
             return foreign
         stored = await store.stored_entities()
         if stored is None or stored.version <= boundary.ENTITY_VERSION:
             await store.write_entities(await _current_statements())
-    return ""
+    return "", ""
 
 
 NOT_MIGRATED = (
@@ -301,14 +325,14 @@ async def load_for_print() -> None:
     exists, a lost row is refused as `rewrite` refuses it; where it cannot, a
     missing row is drawn again, which moves the key."""
     if not await store.secrets_table_exists():
-        raise RuntimeError(NOT_MIGRATED)
+        raise SetupRefused(NOT_MIGRATED)
     async with lease():
         if (
             await store.sealed_secrets() is None
             and await store.can_manage_access()
             and not await store.analyst_user_absent()
         ):
-            raise RuntimeError(_LOST_ROW)
+            raise SetupRefused(_LOST_ROW)
         await load_secrets(may_draw=True)
 
 
@@ -317,19 +341,20 @@ async def rewrite() -> None:
     the secrets only while no analyst user exists, so a lost row never puts
     a new key beside replicas that still hold the old one."""
     if not await store.secrets_table_exists():
-        raise RuntimeError(NOT_MIGRATED)
+        raise SetupRefused(NOT_MIGRATED)
     async with lease():
         if await store.sealed_secrets() is None and not await store.analyst_user_absent():
-            raise RuntimeError(_LOST_ROW)
+            raise SetupRefused(_LOST_ROW)
         await load_secrets(may_draw=True)
         stored = await store.stored_entities()
         if stored is not None and stored.version > boundary.ENTITY_VERSION:
-            raise RuntimeError(
+            raise SetupRefused(
                 f"the analyst user was written by a newer build (version {stored.version}, this "
                 f"one writes {boundary.ENTITY_VERSION}); run `loom ch-setup` from that build"
             )
-        if foreign := await _foreign_problem():
-            raise RuntimeError(foreign)
+        problem, names = await _foreign_problem()
+        if problem:
+            raise SetupRefused(f"{problem} ({names})")
         await store.write_entities(await _current_statements())
 
 
@@ -345,6 +370,7 @@ async def reprobe() -> None:
     a write repairs is written again under the lease, by a replica that
     writes the entities itself."""
     global _loaded
+    detail = ""
     try:
         stored = _opened(await store.sealed_secrets())
         if stored is not None and stored != _loaded and await _canary_reads(stored):
@@ -352,14 +378,16 @@ async def reprobe() -> None:
         problem, repairable = await _probe()
         manages = await store.can_manage_access()
         if problem and repairable and manages:
-            problem = await _write_under_lease() or (await _probe())[0]
+            blocked, detail = await _write_under_lease()
+            problem = blocked or (await _probe())[0]
         elif not problem and manages:
             # A policy added since the last write widens other users, not the
             # analyst, so only this check sees it.
-            problem = await _foreign_problem()
+            problem, detail = await _foreign_problem()
     except Exception as e:  # noqa: BLE001 — a failed probe is a reported problem
-        problem = f"probing {boundary.ANALYST_USER} failed: {error_line(e)}"
-    _set_problem(problem)
+        cause, detail = _cause(e)
+        problem = f"probing {boundary.ANALYST_USER} failed: {cause}"
+    _set_problem(problem, detail)
 
 
 def start_probe_loop() -> asyncio.Task[None]:
@@ -393,7 +421,10 @@ async def _canary_reads(secrets_: tuple[bytes, str]) -> bool:
     return bool(rows) and rows[0][0] == 1
 
 
-def _set_problem(problem: str) -> None:
+def _set_problem(problem: str, detail: str = "") -> None:
+    """Record the probe's answer. `problem` is Loom's own text, which
+    `/v1/health` shows without a token; `detail` (a driver's text, the names
+    of policies or databases) goes only to the log."""
     global _ready, _problem
     scrubbed = _scrubbed(problem)
     changed = scrubbed != _problem
@@ -401,7 +432,11 @@ def _set_problem(problem: str) -> None:
     _ready = not _problem
     if _problem and changed:
         # Once per change: health and `loom doctor` carry the standing state.
-        log.warning("insights.query is unavailable: %s", _problem)
+        log.warning(
+            "insights.query is unavailable: %s%s",
+            _problem,
+            f" ({_scrubbed(detail)})" if detail else "",
+        )
 
 
 _KEY_LITERAL = re.compile(r"unhex\('[0-9A-Fa-f]+'\)")
@@ -465,7 +500,7 @@ async def _probe() -> tuple[str, bool]:
         except Exception as e:  # noqa: BLE001 — a refusal is the expected answer
             if error_code(e) == _ACCESS_DENIED:
                 continue
-            return f"{boundary.ANALYST_USER} was not refused `{sql}`: {error_line(e)}", False
+            return f"{boundary.ANALYST_USER} was not refused `{sql}` ({error_kind(e)})", False
         return f"{boundary.ANALYST_USER} can run `{sql}`: its grants are too wide", True
     if await store.own_version(password=_password(), extra={}) != boundary.ENTITY_VERSION:
         # Another build's entities: the allowlist checks below are its to make.
@@ -543,9 +578,8 @@ async def handle_insights_query(input: InsightsQueryInput) -> InsightsQueryOutpu
         raise ValidationError("a namespace name cannot hold a comma")
     if _ready is not True:
         raise AnalysisUnavailableError(
-            "the analyst ClickHouse user is not ready on this replica"
-            + (f": {_problem}" if _problem else "")
-            + "; `loom doctor` names the fix"
+            "the analyst ClickHouse user is not ready on this replica; `loom doctor` names "
+            "the cause and the fix"
         )
     if _running.get(input.org, 0) >= int(settings.ch_analysis_max_concurrent_per_org):
         raise RateLimitedError(
