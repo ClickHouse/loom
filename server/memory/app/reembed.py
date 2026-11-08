@@ -325,7 +325,7 @@ async def reembed_table(
     # The rows the re-read skipped, in all pages and in this page.
     changed = page_changed = 0
 
-    async def read_again(read: dict[int, dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    async def reread_page(read: dict[int, dict[str, Any]]) -> dict[int, dict[str, Any]]:
         nonlocal page_changed
         kept, rewritten = await _read_again(
             ch, table, cols, read, where_clause, params, key_only=key_only
@@ -359,7 +359,7 @@ async def reembed_table(
             # memory row's vector follows its own sensitivity label instead.
             page = without_high(page, lambda r: str(r.get(cfg["text"]) or ""))
         held += len(rows) - len(page)
-        left = await _rewrite_page(ch, embedder, table, page, key_only, read_again)
+        left = await _rewrite_page(ch, embedder, table, page, key_only, reread_page)
         written += len(page) - sum(left.values()) - page_changed
         changed += page_changed
         if left:
@@ -425,7 +425,9 @@ async def _read_again(
     now = {key(r): r for r in stored}
     text = cfg["text"]
     present = {i: now[key(r)] for i, r in read.items() if key(r) in now}
-    # The text the vector is made from, and the row's agent and user.
+    # The text the vector is made from, and the row's agent and user: on
+    # conversation_embeddings none of them is a key column; on the other two tables a
+    # change to them moves the row to another key, which reads as gone.
     same = [text, "agent", "user_id"]
     kept = {
         i: read[i] | row for i, row in present.items() if all(row[c] == read[i][c] for c in same)
@@ -669,7 +671,7 @@ async def reembed_all(
         # during the run or by now, with a row the re-read found with other text or
         # identity, or named by the resume token.
         keep = frozenset(left_orgs | await customer.switched_off_orgs())
-        shown = sorted(keep & {org} if org else keep)  # the delete is scoped to --org
+        shown = sorted(keep & {org}) if org else sorted(keep)  # the delete's --org scope
         if shown:
             named = ", ".join(shown[:20]) + (", ..." if len(shown) > 20 else "")
             log(f"old-model rows kept for a later run in {len(shown)} org(s): {named}")
