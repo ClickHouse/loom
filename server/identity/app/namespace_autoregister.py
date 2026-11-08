@@ -6,18 +6,18 @@ retention policy and no kind.
 
 The first write a principal makes into an unregistered namespace inserts the registry row
 `namespace.register` would have written for it, with that op's defaults: owner = the token
-subject, or none when the name is already in use (`IdentityDirectory.in_use`), `kind = 'bench'`
-when the name is under one of `namespace_bench_prefixes` (else `memory`),
-`retention_days = 0`. The row is the only write: no TTL clause is touched (a
-per-namespace retention is a clause in eight tables' TTL expressions, and setting one
-re-issues `MODIFY TTL` on all of them), no ALTER is issued, and no grant is written. An
-owner row is not elevation: the register op's admin grant for its caller would have made a
-writer an admin of every namespace it touched (`memory.unlock` open to writers;
-`grants.revoke` refusing to remove "the only admin"), and `resolve_my_namespaces` unions a
-wildcard token's grants, so a subject's searches fanned out across every namespace it had
-ever written to. The owner named on an auto-registered row may complete its registration
-with `namespace.register` while nobody else holds a live grant on it; nothing
-else changes for the writer.
+subject, or none when the name is already in use (`IdentityDirectory.in_use`), `kind =
+'bench'` when the name is under one of `namespace_bench_prefixes` (else `memory`),
+`retention_days = 0`. The row is the only write: no TTL clause is touched (a per-namespace
+retention is a clause in eight tables' TTL expressions, and setting one re-issues `MODIFY
+TTL` on all of them), no ALTER is issued, and no grant is written. An owner row is not
+elevation: the register op's admin grant for its caller would have made a writer an admin
+of every namespace it touched (`memory.unlock` open to writers; `grants.revoke` refusing
+to remove "the only admin"), and `resolve_my_namespaces` unions a wildcard token's grants,
+so a subject's searches fanned out across every namespace it had ever written to. The
+owner named on an auto-registered row may complete its registration with
+`namespace.register` while nobody else holds a live grant on it; nothing else changes for
+the writer.
 
 The row also opts into nothing an absent row did not: every column reader
 treats "no row" and the register defaults alike.
