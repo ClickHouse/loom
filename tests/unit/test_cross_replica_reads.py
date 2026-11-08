@@ -18,6 +18,7 @@ from server.identity.app import policy_witness
 from server.identity.domain import policy_rules as R
 from server.observability.events import AgentEvent
 from server.settings import settings
+from tests.unit import clickhouse_local
 from tests.unit.cross_replica_fake import FakeCluster, in_request
 
 
@@ -67,6 +68,23 @@ def test_an_auto_row_carries_the_lowest_version() -> None:
     ((table, rows, _),) = ch.inserts
     assert table == "loom.namespaces" and rows[0]["updated_at"] == autoreg.AUTO_ROW_VERSION
     assert ch.sequential == [True, True]  # the registry read, the in-use read
+
+
+@pytest.mark.skipif(clickhouse_local.CLICKHOUSE is None, reason="clickhouse not installed")
+def test_an_owned_auto_row_beats_an_ownerless_one_whatever_lands_last() -> None:
+    def row(owner: str, version: datetime) -> str:
+        return (
+            "INSERT INTO loom.namespaces (org, namespace, owner_email, updated_at) VALUES"
+            f" ('o', 'n', '{owner}', toDateTime({int(version.timestamp())}, 'UTC'))"
+        )
+
+    setup = [
+        clickhouse_local.ddl("namespaces"),
+        row("w", autoreg.AUTO_ROW_VERSION),
+        row("", autoreg.OWNERLESS_ROW_VERSION),
+    ]
+    rows = clickhouse_local.run(setup, "SELECT owner_email FROM loom.namespaces FINAL")
+    assert rows == [{"owner_email": "w"}]
 
 
 # ---- history-policy witnesses land before the answer ------------------------

@@ -194,6 +194,23 @@ async def test_a_first_write_into_a_name_in_use_records_no_owner() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rows_a_read_left_do_not_take_the_name_from_its_first_writer() -> None:
+    from server.erasure.app import ledger_reads
+
+    class _TracedCH(_RecordingCH):
+        async def query_one(self, sql: str, params: dict[str, Any] | None = None):
+            self.statements.append(("query_one", sql, params))
+            traced = any(f"FROM {t} WHERE" in sql for t in ar.READ_TRACES)
+            return {"in_use": 1} if "AS in_use" in sql and traced else None
+
+    assert ar.READ_TRACES <= set(ledger_reads.namespace_tables())
+    ch = _TracedCH()
+    assert await ar.ensure_registered("o", "fresh", subject="w", op_name="memory.set", ch=ch)
+    [(_, [row])] = ch.inserts
+    assert row["owner_email"] == "w"
+
+
+@pytest.mark.asyncio
 async def test_existing_row_is_not_rewritten_and_is_cached() -> None:
     ch = _RecordingCH(existing=True)
     assert await ar.ensure_registered("o", "n", subject="s", op_name="memory.set", ch=ch) is False

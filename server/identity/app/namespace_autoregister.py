@@ -25,8 +25,8 @@ treats "no row" and the register defaults alike.
 Runs from both transports after authorization, before the handler.
 Best-effort: a registry failure never fails the write, and the process
 cache is filled only on success so the next write retries; a retry that finds
-the earlier write's data records no owner. One point read
-per (org, namespace) per process; the hot path is a set lookup.
+the earlier write's data records no owner. Two reads per (org, namespace) per
+process, the registry row and the in-use statement; the hot path is a set lookup.
 """
 
 from __future__ import annotations
@@ -54,6 +54,17 @@ AUTO_ROW_VERSION = datetime(1970, 1, 1, 0, 0, 1, tzinfo=UTC)
 # (its owned row) wins over one that already saw that write's data.
 OWNERLESS_ROW_VERSION = datetime(1970, 1, 1, tzinfo=UTC)
 _MISSING = ("", "-", "*")
+# Rows a read leaves under a name it may read: they are no one's content, so a writer who
+# searched before its first write still owns the name.
+READ_TRACES: Final = frozenset(
+    {
+        "loom.events",
+        "loom.memory_exposures",
+        "loom.search_trace_log",
+        "loom.code_search_trace",
+        "loom.code_search_outcome",
+    }
+)
 
 
 def _csv(value: str) -> tuple[str, ...]:
@@ -140,7 +151,7 @@ async def ensure_registered(
 
         # A name that already holds state (data written with auth off, a grant) is not its
         # first writer's to own: the row names no owner, so only an admin completes it.
-        in_use = await directory().in_use(org, namespace, ch=ch)
+        in_use = await directory().in_use(org, namespace, ch=ch, skip=READ_TRACES)
         kind = classify_kind(namespace)
         now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
         row = registry_row(
@@ -156,9 +167,9 @@ async def ensure_registered(
             None,
             now,
         )
-        # The lowest version: under FINAL any explicit row (a register, a restriction)
-        # wins over this one, even one written a moment earlier on another replica
-        # that this read could not see yet.
+        # Both versions sit below any explicit row (a register, a restriction), so under
+        # FINAL it wins, even one written a moment earlier on another replica that this
+        # read could not see yet; the ownerless one sits below the owned one.
         row["updated_at"] = OWNERLESS_ROW_VERSION if in_use else AUTO_ROW_VERSION
         await ch.insert("loom.namespaces", [row])
         _remember(org, namespace)

@@ -348,8 +348,8 @@ def _claimable_namespace(name: str) -> str:
 
 async def _refuse_empowered(ch: Any, org: str, name: str) -> None:
     """Refuse, as a taken name, a name a setting empowers, or one holding an unrevoked
-    grant, a namespace, an unrevoked token, a task inbox row (its owner, a poster, a
-    poster rule) or a task it posted in the org, read case-folded as grants are;
+    grant, a namespace, an unrevoked token, a task inbox's owner or poster, a poster
+    rule or a task it posted in the org, read case-folded as grants are;
     docs/architecture/security.md has why."""
     trusted = {s.lower() for s in settings.trusted_callers_set}
     if name in trusted or name in settings.platform_admins_set:

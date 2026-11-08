@@ -79,11 +79,18 @@ class NamespaceDirectory(Protocol):
         visibility is not."""
         ...
 
-    async def in_use(self, org: str, namespace: str, *, ch: _CHClient | None = None) -> bool:
+    async def in_use(
+        self,
+        org: str,
+        namespace: str,
+        *,
+        ch: _CHClient | None = None,
+        skip: frozenset[str] = frozenset(),
+    ) -> bool:
         """Whether (org, namespace) holds state a later owner would inherit, registered or
-        not: data (a memory only Postgres holds included), a live row of
-        `namespace_census.STATE_TABLES`, or a configured code-plane repository or tracker
-        namespace. Raises when it cannot be read."""
+        not: data (a memory only Postgres holds included) outside the census tables in
+        `skip`, a live row of `namespace_census.STATE_TABLES`, or a configured code-plane
+        repository or tracker namespace. Raises when it cannot be read."""
         ...
 
 
