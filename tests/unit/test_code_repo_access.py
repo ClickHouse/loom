@@ -19,6 +19,7 @@ from server.code.app.index import repo_registry as reg
 from server.code.domain.index import repos
 from server.core.errors import GrantBusyError, ValidationError
 from server.tracker.app import binding
+from tests.unit.claims_fake import MemoryClaims
 
 ORG = "clickhouse"
 
@@ -419,14 +420,19 @@ async def test_restricting_a_page_branch_revokes_the_copy_a_sibling_gave_it(monk
             yield
             held.remove(ns)
 
+    claims = MemoryClaims()
+
     async def insert(table: str, rows: list[dict[str, Any]], **_: Any) -> None:
-        # The restriction's directory row is written under the repository's admins
-        # claim, which a revoke holds, then the branch's, which a copy holds.
+        # The restriction's directory row is written under the account claim every
+        # writer of the row holds, the repository's admins claim, which a revoke
+        # holds, then the branch's, which a copy holds.
         if table == "loom.namespaces":
             assert held == ["repo:ClickHouse/weave", "code-weave-rc"]
+            assert grant_claims._account(ORG, "code-weave-rc")[0] in claims.held
         ch.inserts.append((table, rows))
 
     monkeypatch.setattr(grant_claims, "admins_change", admins)
+    monkeypatch.setattr(grant_claims, "take", claims.take)
     monkeypatch.setattr(h, "admins_change", admins)
     monkeypatch.setattr(ch, "insert", insert)
 

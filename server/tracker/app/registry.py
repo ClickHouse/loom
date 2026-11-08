@@ -90,6 +90,7 @@ async def ensure_configured_tracker_namespaces(*, ch: Any | None = None) -> list
     """Directory rows for every namespace in the QA configuration.
     Best effort per namespace; returns the ones registered
     or narrowed this call."""
+    from server.auth.grant_claims import account_change
     from server.tracker.domain.namespaces import configured_namespaces
     from server.tracker.store.source import qa_intel
 
@@ -97,11 +98,12 @@ async def ensure_configured_tracker_namespaces(*, ch: Any | None = None) -> list
         return []
     done: list[str] = []
     for ns, cfg in sorted(configured_namespaces().items()):
+        cls = "restricted" if cfg.restricted else "standard"
         try:
-            if await ensure_tracker_registered(
-                cfg.org, ns, classification="restricted" if cfg.restricted else "standard", ch=ch
-            ):
-                done.append(ns)
+            # The claim every writer of the directory row holds, as `tracker.source.add` does.
+            async with account_change(cfg.org, ns):
+                if await ensure_tracker_registered(cfg.org, ns, classification=cls, ch=ch):
+                    done.append(ns)
         except Exception as e:  # noqa: BLE001 — the directory is a convenience at boot
             logger.warning("qa namespace registration skipped for %s: %s", ns, e)
     return done

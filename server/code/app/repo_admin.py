@@ -165,7 +165,7 @@ async def _register(
             None,
         )
         if cfg is not None:
-            await ensure_registered(cfg, sync=False)  # synced below, after the claim
+            await ensure_registered(cfg, sync=False, account_held=True)  # synced after the claim
     if cfg is not None:  # outside the account claim, as the fan-out's own claims wait
         await sync_maintainers(cfg, get_client())
     code_repo = CodeRepo()
@@ -743,9 +743,10 @@ async def handle_code_repo_set_access(input: Any) -> Any:
     subject, _org = current_caller()
     from server.code.app.index import maintainers
 
-    # A fan-out write onto this branch holds these claims: it lands before the sync
-    # below, or sees both rows.
+    # The account claim every writer of the directory row holds; a fan-out write onto
+    # this branch holds the admins claims: it lands before the sync below, or sees both rows.
     async with (
+        account_change(input.org, input.namespace),
         admins_change(input.org, maintainers.repo_claim_key(str(cfg.repo))),
         admins_change(input.org, input.namespace),
     ):

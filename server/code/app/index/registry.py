@@ -51,11 +51,16 @@ async def sync_maintainers(cfg: Any, client: Any) -> None:
         _SYNCED.add((cfg.org, cfg.namespace))
 
 
-async def ensure_registered(cfg: Any, *, ch: Any | None = None, sync: bool = True) -> bool:
+async def ensure_registered(
+    cfg: Any, *, ch: Any | None = None, sync: bool = True, account_held: bool = False
+) -> bool:
     """Idempotent. Returns True when a row was inserted this call. `sync=False` leaves the
     maintainers' fan-out, whose claims wait, to a caller that runs `sync_maintainers` once
-    its own claim is released."""
-    from server.auth.grant_claims import admins_change
+    its own claim is released. `account_held`: the caller holds the namespace's account
+    claim."""
+    from contextlib import AsyncExitStack
+
+    from server.auth.grant_claims import account_change, admins_change
     from server.core.ch import get_client
 
     key = (cfg.org, cfg.namespace)
@@ -65,9 +70,13 @@ async def ensure_registered(cfg: Any, *, ch: Any | None = None, sync: bool = Tru
         return False
     client = ch or get_client()
     try:
-        # Under the claim `code.repo.set_access` restricts under, whose reads are
-        # sequential: a stale read must not open or widen a restricted row.
-        async with admins_change(cfg.org, cfg.namespace):
+        # Under the claims every writer of the directory row holds (`code.repo.set_access`,
+        # `namespace.register`), whose reads are sequential: a stale read must not open or
+        # widen a restricted row.
+        async with AsyncExitStack() as held:
+            if not account_held:
+                await held.enter_async_context(account_change(cfg.org, cfg.namespace))
+            await held.enter_async_context(admins_change(cfg.org, cfg.namespace))
             inserted = await _write_row(cfg, client)
         _DONE.add(key)
         if sync:
