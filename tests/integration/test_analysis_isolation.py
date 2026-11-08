@@ -494,26 +494,40 @@ def test_the_scope_key_stays_out_of_the_query_log(ch_client) -> None:
     """Every policy holds the key as hex literals, which the server's boot
     wrote and the probe's refused reads quote: no logged statement text or
     error carries one."""
-
+    start = ch_client.query("SELECT now()").result_rows[0][0]
     policy = ch_client.query(
         "SELECT select_filter FROM system.row_policies "
         "WHERE short_name = {p:String} AND database = 'loom' AND table = 'memory'",
         parameters={"p": boundary.POLICY_NAME},
     ).result_rows[0][0]
-    literals = re.findall(r"unhex\('([0-9a-f]+)'\)", policy)
+    secrets = re.findall(r"unhex\('([0-9a-f]+)'\)", policy)
     # The decrypt arguments, and the pads they evaluate to, which must never be printed.
-    key = bytes.fromhex(next(h for h in literals if len(h) == 64)).ljust(64, b"\0")
-    literals += [bytes(b ^ pad for b in key).hex() for pad in (0x36, 0x5C)]
-    ch_client.command("SYSTEM FLUSH LOGS")
-    refused, logged = ch_client.query(
-        "SELECT countIf(user = 'loom_analyst' AND exception LIKE '%UNKNOWN_SETTING%'), "
-        "countIf(multiSearchAny(query, {k:Array(String)}) "
+    padded = bytes.fromhex(next(h for h in secrets if len(h) == 64)).ljust(64, b"\0")
+    pads = [bytes(b ^ pad for b in padded) for pad in (0x36, 0x5C)]
+    secrets += [p.hex() for p in pads] + [p.hex().upper() for p in pads]
+    secrets += ["".join(f"\\x{b:02X}" for b in p[:8]) for p in pads]
+
+    def refused_since_start() -> bool:
+        ch_client.command("SYSTEM FLUSH LOGS")
+        return (
+            ch_client.query(
+                "SELECT count() FROM system.query_log WHERE event_time >= {start:DateTime} "
+                "AND user = 'loom_analyst' AND exception LIKE '%UNKNOWN_SETTING%'",
+                parameters={"start": start},
+                settings=boundary.TEXT_CUT_FROM_LOG,
+            ).result_rows[0][0]
+            > 0
+        )
+
+    # The probe's unsigned reads, which quote the policy in their errors, ran in this run.
+    wait_until(refused_since_start, max_wait=_PROBE_WAIT_S, interval=2, description="a probe")
+    logged = ch_client.query(
+        "SELECT count() FROM system.query_log WHERE multiSearchAny(query, {k:Array(String)}) "
         "OR multiSearchAny(formatted_query, {k:Array(String)}) "
-        "OR multiSearchAny(exception, {k:Array(String)})) FROM system.query_log",
-        parameters={"k": literals},
+        "OR multiSearchAny(exception, {k:Array(String)})",
+        parameters={"k": secrets},
         settings=boundary.TEXT_CUT_FROM_LOG,
-    ).result_rows[0]
-    assert refused > 0, "no refused read quoted a policy, so the errors were not checked"
+    ).result_rows[0][0]
     assert logged == 0
 
 

@@ -624,8 +624,8 @@ each statement the analyst runs without its text: its user, timing, rows read an
 settings, the scope and its signature among them. A signature reads rows only with the
 analyst's password, for its own query id, until its expiry. A statement ClickHouse
 refuses is logged with its error message, which can quote the whole statement (an
-unknown column quotes the scope it was looked up in, the caller's statement inside the
-wrapper), also for a restricted namespace whose ledger drops the text; ClickHouse Cloud
+unknown column's error quotes the query it was looked up in, the caller's statement
+inside the wrapper), also for a restricted namespace whose ledger drops the text; ClickHouse Cloud
 pins `log_queries_min_type`, so the error rows cannot be left out. The probe's own
 refused reads add a few error rows from the analyst at every probe. The deploy delta
 leaves the analyst's statements out of its shapes. The rows a statement returns are
