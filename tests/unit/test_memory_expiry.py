@@ -614,10 +614,10 @@ async def test_a_failed_mirror_is_recorded_per_writer_and_the_repair_applies_it(
     monkeypatch.setattr("server.memory.store.retire_vectors_for_keys", _retire_many_ok)
     heads = {r["memory_key"]: r for r in ch.inserts[0][1]}
 
-    async def _heads(keys, *, ch=None) -> dict[Any, int]:
-        return {k: heads[k[5]]["version"] for k in keys}
+    async def _heads(keys, *, ch=None, sequential=False) -> dict[Any, Any]:
+        return {k: SimpleNamespace(**heads[k[5]]) for k in keys}
 
-    monkeypatch.setattr("server.memory.store.clickhouse_head_versions", _heads)
+    monkeypatch.setattr("server.memory.store.memory_rows_by_identity_keys", _heads)
     no_erasure(monkeypatch)
     results = await pf.retry_failures([pf._row_from_ch(r) for r in recorded], ch=ch)
 
@@ -744,24 +744,42 @@ async def test_a_malformed_expiry_mirror_failure_is_abandoned(
         assert (result.abandoned, result.reason) == (True, "malformed_payload")
 
 
-async def test_a_replayed_demote_yields_to_a_later_head(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A touch after the sweep moves the head and copies the key's vectors at read + 1,
-    # below the sweep's version: a late demote copy would clear the expiry it set. The
-    # retire still runs, as the vectors below the version hold the key's old text.
+async def test_a_replayed_demote_copies_the_head_as_it_is_now(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Writes since the sweep moved the heads: a touch set a new expiry, a lock changed
+    # neither expiry nor confidence, and one key was deleted. Each demote copies its
+    # head's expiry and confidence at the head's version; the deleted key has nothing to
+    # copy. The retire runs as recorded.
     calls: list[Any] = []
 
     async def _apply(items, *, ch=None) -> int:
         calls.append(items)
         return 0
 
-    async def _heads(keys, *, ch=None) -> dict[Any, int]:
-        return {k: 300 for k in keys}  # the touch's version, above the sweep's 200
+    later = _REAL_NOW + timedelta(hours=1)
+    touched, locked, deleted, anonymized = (
+        ("o", "n", "a", "-", "-", k) for k in ("touched", "locked", "deleted", "anonymized")
+    )
+
+    async def _heads(keys, *, ch=None, sequential=False) -> dict[Any, Any]:
+        assert sequential
+        live = {
+            touched: SimpleNamespace(version=300, expires_at=later, confidence=0.4),
+            locked: SimpleNamespace(version=310, expires_at=None, confidence=0.4),
+        }
+        return {k: SimpleNamespace(**vars(live[k]), sensitivity="") for k in keys if k in live}
 
     monkeypatch.setattr(X, "apply_mirror", _apply)
-    monkeypatch.setattr("server.memory.store.clickhouse_head_versions", _heads)
-    demoted = ("o", "n", "a", "-", "-", "touched")
-    retired_key = ("o", "n", "a", "-", "-", "anonymized")
+    monkeypatch.setattr("server.memory.store.memory_rows_by_identity_keys", _heads)
+    demote = {"expires_at": None, "confidence": 0.4}
     await X.replay_mirror(
-        [(demoted, 200, {"expires_at": None, "confidence": 0.4}), (retired_key, 200, None)]
+        [(k, 200, demote) for k in (touched, locked, deleted)] + [(anonymized, 200, None)]
     )
-    assert calls == [[(retired_key, 200, None)]]
+    assert calls == [
+        [
+            (touched, 300, {"expires_at": later, "confidence": 0.4}),
+            (locked, 310, {"expires_at": None, "confidence": 0.4}),
+            (anonymized, 200, None),
+        ]
+    ]

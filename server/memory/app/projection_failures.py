@@ -116,7 +116,8 @@ EDGES_RESTORE = "entity_edges_restore"
 SENSITIVITY_FACTS = "sensitivity_facts_owed"
 # An expiry sweep's search mirror that failed after its memory rows landed: payload
 # items, each [identity key, the memory row's version, the demote's embedding overrides
-# or None for a retire]. The sweep never selects those keys again.
+# or None for a retire]; a replayed demote copies the key's head as it is then
+# (`replay_mirror`). The sweep never selects those keys again.
 EXPIRY_MIRROR = "memory_expiry_mirror"
 # Intents written (a waited async insert) right before the commit their writer then
 # settles itself: the repair leaves one this long, so the two never settle it side by side.

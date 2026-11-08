@@ -397,27 +397,27 @@ async def apply_mirror(items: list[MirrorItem], *, ch: Any | None = None) -> int
 
 async def replay_mirror(items: list[MirrorItem], *, ch: Any | None = None) -> int:
     """`apply_mirror` for a recorded failure, run after later writes may have landed. A
-    demote is replayed only while the key's head is still the sweep's version: a later
-    write (a touch's read + 1 copy sits below that version) owns the key's expiry and
-    confidence. A retire always runs: the key's vectors below the version are its old
-    text, which an anonymize or tombstone took out."""
+    retire runs as recorded: the key's vectors below the version hold the old text the
+    tombstone or anonymize took out. A demote copies the key's live head as it is now
+    (its expiry and confidence, at its version), so a write since the sweep that copied
+    the vectors at read + 1, below the sweep's version (a touch, a verify), keeps what it
+    set; a key with no live head, or a 'high' one, has nothing to copy."""
     import server.memory.store as memory_repo
-    from server.core import pg
-    from server.memory.store import pg_memory
 
     demoted = [key for key, _version, copy in items if copy is not None]
-    if demoted:
-        heads = (
-            await pg_memory.head_versions(demoted)
-            if pg.enabled()
-            else await memory_repo.clickhouse_head_versions(demoted, ch=ch)
-        )
-        items = [
-            (key, version, copy)
-            for key, version, copy in items
-            if copy is None or heads.get(key) == version
-        ]
-    return await apply_mirror(items, ch=ch)
+    heads = (
+        await memory_repo.memory_rows_by_identity_keys(demoted, ch=ch, sequential=True)
+        if demoted
+        else {}
+    )
+    replayed: list[MirrorItem] = []
+    for key, version, copy in items:
+        if copy is None:
+            replayed.append((key, version, None))
+        elif (head := heads.get(key)) is not None and head.sensitivity != "high":
+            current = {"expires_at": head.expires_at, "confidence": head.confidence}
+            replayed.append((key, head.version, current))
+    return await apply_mirror(replayed, ch=ch)
 
 
 async def _record_mirror_failures(items: list[MirrorItem], error: Exception) -> None:
