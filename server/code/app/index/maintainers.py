@@ -54,6 +54,7 @@ from typing import Any
 from server.core.datetimes import naive_utc_now
 from server.core.errors import GrantBusyError
 from server.core.grant_sql import LIVE_GRANT
+from server.operations.base import grant_rank
 
 log = logging.getLogger(__name__)
 
@@ -286,12 +287,12 @@ async def _mirror_wanted(
 
 
 async def _restricted_since(
-    client: Any, org: str, target: str, source: str, source_row: dict[str, Any] | None
+    client: Any, org: str, target: str, source: str, source_row: dict[str, Any]
 ) -> bool:
     """Re-reads the target's classification under the claims, unless the copy is of
     an admin grant given on an operator entry."""
     sources = _branches(org, repo_of(org, target) or "")
-    if sources.get(source) == "config" and source_row is not None and not _is_copy(source_row):
+    if sources.get(source) == "config" and not _is_copy(source_row):
         return False
     # A target the snapshot no longer places is read as one added from the page.
     return target in await _restricted(client, org, {target: sources.get(target, "registry")})
@@ -580,7 +581,7 @@ def _stray(row: dict[str, Any], config: list[str], held: _Seen) -> bool:
         source = held.get(key)
         if key in visited or source is None or not _live(source):
             return True
-        if row.get("role") == "admin" and source.get("role") != "admin":
+        if grant_rank(str(row.get("role"))) > grant_rank(str(source.get("role"))):
             return True
         visited.add(key)
         row = source

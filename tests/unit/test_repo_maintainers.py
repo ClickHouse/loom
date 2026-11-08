@@ -449,6 +449,27 @@ async def test_a_copy_planned_before_a_restriction_is_not_written_after_it(
     assert _on(ch, "code-z-26-5") == {"ops"}
 
 
+async def test_a_copy_is_traced_across_operator_entries_to_a_grant_of_its_role(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A copy named after code-z, whose row there is a copy of a grant given on
+    code-z-ops, stays; a copy above the role of the grant it leads to goes."""
+    two = [_Cfg("clickhouse", "code-z-ops", "Org/z"), *PRIVATE]
+    monkeypatch.setattr(repos, "configured_repos", lambda: two)
+    rows = [
+        _admin("code-z-ops", "ops"),
+        _copy("code-z", "ops", "code-z-ops"),
+        _copy("code-z-26-5", "ops", "code-z"),
+        _admin("code-z-ops", "carol", role="viewer"),
+        _copy("code-z", "carol", "code-z-ops") | {"role": "viewer"},
+        _copy("code-z-26-5", "carol", "code-z") | {"role": "writer"},
+    ]
+    ch = _FakeCH(rows)
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    on_it = [r for r in ch.inserted if r["namespace"] == "code-z-26-5"]
+    assert [(r["subject"], r["revoked_at"] is not None) for r in on_it] == [("carol", True)]
+
+
 async def test_a_lowering_from_an_operator_entry_stands_on_a_restricted_page_branch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
