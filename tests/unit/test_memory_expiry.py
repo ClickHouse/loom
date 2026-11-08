@@ -7,6 +7,7 @@ EXPIRED refusal with revive.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -167,8 +168,8 @@ async def test_sweep_writes_one_batched_insert_and_mirrors(monkeypatch: pytest.M
     assert sorted(tomb_keys) == ["a", "c"]  # tombstone + anonymize drop the embeddings
     assert ch.executes == []  # no UPDATE on the vector table
     assert sorted(_DEMOTE_REEMITS) == [  # demote mirror: expiry cleared, confidence lowered
-        ("b", {"expires_at": None, "confidence": 0.45}),
-        ("e", {"expires_at": None, "confidence": 0.4}),
+        ("b", {"expires_at": None, "confidence": 0.45, "version": written["b"]["version"]}),
+        ("e", {"expires_at": None, "confidence": 0.4, "version": written["e"]["version"]}),
     ]
     assert res.failures == [] and len(res.sample) == 4
     # One batched retire and one batched demote copy for the pass, never one per key;
@@ -557,3 +558,64 @@ async def test_a_failed_scan_records_the_error_class_for_the_registry(
     await X.run_pass(X.ExpiryConfig())
     got = get_registry().snapshot()["memory_expiry_sweep"]
     assert got["last_error_kind"] == "NotFoundError"
+
+
+async def test_a_failed_mirror_is_recorded_per_key_and_the_repair_applies_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The next pass never selects a key the sweep wrote, so the mirror it missed is
+    # recorded as a projection failure and replayed from there.
+    from server.memory.app import projection_failures as pf
+    from tests.unit.claims_fake import no_erasure
+
+    rows = [
+        _row(memory_key="a"),
+        _row(memory_key="b", on_expire="demote", confidence=0.9),
+        _row(memory_key="c", on_expire="demote", sensitivity="high"),  # keeps no vector
+    ]
+    ch, _ = _stub(monkeypatch, rows)
+
+    async def _down(items, *, ch=None) -> int:
+        raise ConnectionError("insert refused")
+
+    monkeypatch.setattr("server.memory.store.retire_vectors_for_keys", _down)
+    recorded: list[dict[str, Any]] = []
+
+    async def _record(rows, *, ch=None) -> None:
+        recorded.extend(rows)
+
+    monkeypatch.setattr(pf, "insert_projection_failures", _record)
+    res = await X.run_pass(X.ExpiryConfig())
+
+    assert res.failures == ["mirror:2 keys: ConnectionError"]
+    written = {r["memory_key"]: r["version"] for r in ch.inserts[0][1]}
+    assert [(r["projection"], r["memory_keys"]) for r in recorded] == [
+        (pf.EXPIRY_MIRROR, ["a"]),
+        (pf.EXPIRY_MIRROR, ["b"]),
+    ]
+    assert json.loads(recorded[0]["payload"]) == {
+        "key": ["test", "personal", "cursor", "-", "-", "a"],
+        "version": written["a"],
+        "demote": None,
+        "user_id": "-",
+    }
+
+    # The repair replays each at the memory row's version: a later write's vectors,
+    # at or above it, are left alone.
+    retired.clear()
+    _DEMOTE_REEMITS.clear()
+    monkeypatch.setattr("server.memory.store.retire_vectors_for_keys", _retire_many_ok)
+    no_erasure(monkeypatch)
+    results = await pf.retry_failures([pf._row_from_ch(r) for r in recorded], ch=ch)
+
+    assert [r.resolved for r in results] == [True, True]
+    assert retired == [("a", written["a"])]
+    assert _DEMOTE_REEMITS == [
+        ("b", {"expires_at": None, "confidence": 0.45, "version": written["b"]})
+    ]
+
+
+async def _retire_many_ok(items, *, ch=None) -> int:
+    for (_o, _n, _a, _u, _s, key), version in items:
+        retired.append((key, version))
+    return len(items)

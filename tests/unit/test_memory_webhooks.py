@@ -1033,7 +1033,7 @@ async def test_the_expiry_sweep_announces_its_tombstones_and_demotions(
 
     monkeypatch.setattr(memory_repo, "find_expired_candidates", find)
     monkeypatch.setattr(memory_repo, "insert_versions_over_heads", noop)
-    monkeypatch.setattr(expiry, "_mirror_embeddings_batch", noop)
+    monkeypatch.setattr(expiry, "apply_mirror", noop)
     await expiry.run_pass()
     assert len(announced) == 1  # one insert for the sweep's batch
     assert _events(announced) == {("memory.tombstoned", "gone"), ("memory.revised", "faded")}

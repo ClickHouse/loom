@@ -114,6 +114,10 @@ EDGES_RESTORE = "entity_edges_restore"
 # (`facts_owed_payload`). Closed once ClickHouse, which the graph is judged from, holds
 # the relabel; nothing is owed when it settled without it.
 SENSITIVITY_FACTS = "sensitivity_facts_owed"
+# An expiry sweep's search mirror that failed after its memory rows landed: payload
+# key (the identity key), version (the memory row's) and demote (the embedding
+# overrides, or None for a retire). The sweep never sees the key again.
+EXPIRY_MIRROR = "memory_expiry_mirror"
 # Intents written (a waited async insert) right before the commit their writer then
 # settles itself: the repair leaves one this long, so the two never settle it side by side.
 _GRACED = (FOLLOW_OWED, SENSITIVITY_FACTS)
@@ -507,6 +511,8 @@ async def _retry(failure: ProjectionFailureRow, *, ch: Any) -> ProjectionFailure
             reason = await _retry_edges_drop(failure, ch=ch)
         elif failure.projection == EDGES_RESTORE:
             reason = await _retry_edges_restore(failure, ch=ch)
+        elif failure.projection == EXPIRY_MIRROR:
+            await _retry_expiry_mirror(failure)
         elif failure.projection == SENSITIVITY_FACTS:
             outcome = await _retry_sensitivity_facts(failure, ch=ch)
             if outcome is None:
@@ -869,6 +875,15 @@ async def _retry_edges_restore(failure: ProjectionFailureRow, *, ch: Any) -> str
         failure.payload, _failure_scope(failure), ch=ch, op=failure.source_operation
     )
     return ""
+
+
+async def _retry_expiry_mirror(failure: ProjectionFailureRow) -> None:
+    """Apply the sweep's mirror again: it touches only rows below the recorded version."""
+    from server.memory.app.expiry import apply_mirror
+
+    p = failure.payload
+    key = cast(IdentityKey, tuple(str(c) for c in p["key"]))
+    await apply_mirror([(key, int(p["version"]), p.get("demote"))])
 
 
 async def _retry_sensitivity_facts(failure: ProjectionFailureRow, *, ch: Any) -> str | None:

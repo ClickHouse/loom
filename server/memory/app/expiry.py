@@ -273,17 +273,18 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
                 for row, (action, _r, _v) in zip(version_rows, mirrors, strict=True)
             ]
         )
+        items = mirror_items(mirrors, cfg=cfg)
         try:
-            await _mirror_embeddings_batch(mirrors, cfg=cfg)
+            await apply_mirror(items)
         except Exception as e:  # noqa: BLE001 — the memory rows are authoritative
-            # The memory-table rows are authoritative and their read filter
-            # already hid them; a stray embedding is the known, tolerated
-            # failure mode (same as memory.consolidate). The next pass that
-            # sees the key re-mirrors it.
+            # The memory rows already landed and the read filter hides an expired row,
+            # but the next pass never sees these keys again: each one's mirror is
+            # recorded as a projection failure that `projection_repair` replays.
             log.warning(
-                "memory_expiry_sweep: embeddings mirror failed for %d keys: %s", len(mirrors), e
+                "memory_expiry_sweep: embeddings mirror failed for %d keys: %s", len(items), e
             )
-            res.failures.append(f"mirror:{len(mirrors)} keys: {type(e).__name__}")
+            res.failures.append(f"mirror:{len(items)} keys: {type(e).__name__}")
+            await _record_mirror_failures(items, e)
     outcome = res.as_dict()
     outcome.pop("sample", None)
     get_registry().record_success(
@@ -357,33 +358,64 @@ def _leave(res: ExpiryResult, mirrors: list[tuple[str, Any, int]]) -> None:
     res.sampled = [(key, entry) for key, entry in res.sampled if key not in left]
 
 
-async def _mirror_embeddings_batch(
-    mirrors: list[tuple[str, Any, int]], *, cfg: ExpiryConfig
-) -> int:
+# One key's mirror: its identity key, the memory row's version, and the demote's
+# embedding overrides (None: retire the key's vectors).
+MirrorItem = tuple[IdentityKey, int, dict[str, Any] | None]
+
+
+def mirror_items(mirrors: list[tuple[str, Any, int]], *, cfg: ExpiryConfig) -> list[MirrorItem]:
+    """What each written row's post-action changes on the search side. A demoted 'high'
+    head keeps no vector, so it has nothing to mirror."""
+    items: list[MirrorItem] = []
+    for action, row, version in mirrors:
+        if action in ("tombstone", "anonymize"):
+            items.append((identity_key(row), version, None))
+        elif row.sensitivity != "high":
+            items.append((identity_key(row), version, _demote_overrides(row, cfg)))
+    return items
+
+
+async def apply_mirror(items: list[MirrorItem]) -> int:
     """Search reads loom.memory_embeddings, so the post-action lands there too:
     tombstone and anonymize retire the keys' vectors (memory_embeddings and
     entity_vectors, at the memory row's version, so an anonymized key keeps no entity
-    names in search either); demote clears their expiry and lowers confidence.
-    Batched as one keyed read and one insert per 500 keys, never one per key."""
+    names in search either); demote copies them at that version with the expiry
+    cleared and confidence lowered. Both touch only rows below the version, so a
+    replay leaves a later write's vectors alone. Batched as one keyed read and one
+    insert per 500 keys, never one per key."""
     import server.memory.store as memory_repo
 
-    if not mirrors:
-        return 0
-    retires = [
-        ((row.org, row.namespace, row.agent, row.user_id, row.session_id, row.memory_key), version)
-        for action, row, version in mirrors
-        if action in ("tombstone", "anonymize")
-    ]
-    copies = [
-        (
-            (row.org, row.namespace, row.agent, row.user_id, row.session_id, row.memory_key),
-            _demote_overrides(row, cfg),
-        )
-        for action, row, _version in mirrors
-        if action not in ("tombstone", "anonymize")
-        and row.sensitivity != "high"  # a 'high' head keeps no vector
-    ]
+    retires = [(key, version) for key, version, copy in items if copy is None]
+    copies = [(key, {**copy, "version": version}) for key, version, copy in items if copy]
     n = await memory_repo.retire_vectors_for_keys(retires) if retires else 0
     if copies:
         n += await memory_repo.reemit_embedding_rows_for_keys(copies)
     return n
+
+
+async def _record_mirror_failures(items: list[MirrorItem], error: Exception) -> None:
+    """One `memory_expiry_mirror` projection failure per key, for the repair to replay."""
+    from server.memory.app.projection_failures import (
+        EXPIRY_MIRROR,
+        insert_projection_failures,
+        projection_failure_row,
+    )
+
+    rows = [
+        projection_failure_row(
+            org=key[0],
+            namespace=key[1],
+            agent=key[2],
+            projection=EXPIRY_MIRROR,
+            source_operation="memory.sweep_expired",
+            memory_keys=[key[5]],
+            error=error,
+            payload={"key": list(key), "version": version, "demote": copy},
+            user_id=key[3],
+        )
+        for key, version, copy in items
+    ]
+    try:
+        await insert_projection_failures(rows)
+    except Exception:  # the pass reports the mirror failure either way
+        log.exception("memory_expiry_sweep: recording %d mirror failures failed", len(rows))
