@@ -980,9 +980,9 @@ Every release publishes a multi-arch image (linux/amd64 and linux/arm64) to
 `ghcr.io/clickhouse/loom`, tagged `X.Y.Z`, `X.Y` and, for a stable release, `latest`.
 Images include build provenance and an SBOM, and carry a keyless signature from the release
 workflow ([verifying one](../development/release-process.md#what-the-release-workflow-does)).
-The one-line installer pins `X.Y.Z` in its
-generated `.env`; pin an immutable version (or digest) in production rather than tracking
-`latest` ([release process](../development/release-process.md)).
+The one-line installer pins `X.Y.Z` in its generated `.env`; pin an immutable version (or
+digest) in production rather than tracking `latest`
+([release process](../development/release-process.md)).
 
 The document extractor service (the parsers, apart from the server: [document
 extraction](../architecture/document-extraction.md)) is an image of its own, built by

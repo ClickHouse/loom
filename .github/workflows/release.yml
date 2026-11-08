@@ -15,9 +15,9 @@ name: release
 # prerequisites, in seconds) -> clickhouse (the ClickHouse release the
 # installer bundle names, migrated and schema-checked) -> build -> verify
 # (inspect the exact files) -> docker (build and scan each image on each
-# architecture's own runner) -> docker-tag -> sign (keyless, on every run but
-# a dry run once the images are out) and docker-smoke (the quickstart and the installer rehearsal) ->
-# github-release -> release-check (tag push only),
+# architecture's own runner) -> docker-tag -> sign (keyless; every run except
+# a dry run, once the images are out) and docker-smoke (the quickstart and the
+# installer rehearsal) -> github-release -> release-check (tag push only),
 # and pypi, npm, mcp-registry (dispatch only). A re-run after a partial publish is
 # safe: the bundle keeps the ClickHouse release it was first published with,
 # the release is updated in place, PyPI skips files it already has, npm and the
@@ -603,10 +603,8 @@ jobs:
             echo "Pin $image with \`$pin: $digest\`" >> "$GITHUB_STEP_SUMMARY"
           done
 
-  # Every run but a dry run signs once the images are out, tagged now or before,
-  # so a run after one that tagged but did not sign (or a dispatch on the tag)
-  # signs what is out; a second signature on a digest is harmless. Nothing
-  # publishes unsigned: with Sigstore down, the release and the registries wait.
+  # Every run except a dry run signs what is out, so a run after one that did not
+  # sign repairs it. Nothing publishes unsigned: with Sigstore down, the release waits.
   sign:
     name: Sign both images
     if: ${{ !cancelled() && !inputs.dry_run && (needs.docker-tag.result == 'success' || needs.preflight.outputs.images_published == 'true') }}
@@ -619,7 +617,7 @@ jobs:
       id-token: write # the keyless signature's certificate names this workflow and tag
     steps:
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # The runner's Docker carries buildx, whose imagetools needs no builder.
       - name: Log in to ghcr.io
         uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:

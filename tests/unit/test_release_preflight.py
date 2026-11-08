@@ -169,16 +169,12 @@ def test_a_registry_outage_is_not_reported_as_a_missing_grant(tmp_path: Path) ->
 
 
 def test_the_workflow_runs_the_preflight_before_any_build() -> None:
-    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
-    jobs = workflow["jobs"]
+    jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
     assert jobs["preflight"]["needs"] == "version"
     assert "preflight" in jobs["clickhouse"]["needs"]
     (step,) = [s for s in jobs["preflight"]["steps"] if "preflight.sh" in s.get("run", "")]
     assert step["env"]["MODE"] == "${{ inputs.dry_run && 'report' || 'strict' }}"
     assert step["env"]["REPOSITORY_PRIVATE"] == "${{ github.event.repository.private }}"
-    # One list of images for the workflow, the docker matrix's.
-    matrix = jobs["docker"]["strategy"]["matrix"]["include"]
-    assert workflow["env"]["IMAGES"].split() == [i["image"] for i in matrix if "image" in i]
     (published,) = [s for s in jobs["preflight"]["steps"] if s.get("id") == "images"]
     assert '"$VERSION" $IMAGES)' in published["run"]
 
@@ -429,6 +425,12 @@ def test_the_registries_publish_after_a_release_that_skipped_its_image_jobs(name
     assert "github.event_name == 'workflow_dispatch'" in condition
 
 
+def test_the_workflow_images_are_the_docker_matrix_images() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    matrix = workflow["jobs"]["docker"]["strategy"]["matrix"]["include"]
+    assert workflow["env"]["IMAGES"].split() == [i["image"] for i in matrix if "image" in i]
+
+
 def test_only_sign_and_the_registries_get_an_oidc_token() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
     oidc = [name for name, job in jobs.items() if "id-token" in job.get("permissions", {})]
@@ -441,4 +443,5 @@ def test_the_release_signs_the_index_each_version_tag_names() -> None:
     assert "for image in $IMAGES; do" in step["run"]
     assert 'cosign sign --yes "$image@$digest"' in step["run"]
     assert '"$image:$VERSION"' in step["run"]  # the index the version tag names
+    assert step["env"]["VERSION"] == "${{ needs.version.outputs.version }}"
     assert "sign" in jobs["github-release"]["needs"]
