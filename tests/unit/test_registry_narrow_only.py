@@ -129,7 +129,6 @@ async def test_a_maintainer_s_widening_reaches_the_row_only_while_its_access_row
     the directory row is a restriction cut short before its access row was written."""
     from datetime import datetime
 
-    access = access if written == "after" else "standard"
     existing = {
         "org": "clickhouse",
         "namespace": "code-p",

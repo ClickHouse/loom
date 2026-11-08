@@ -837,8 +837,8 @@ async def sync_restricted_page_branches(
 
 
 async def sync_quietly(org: str, namespace: str, *, ch: Any | None = None) -> None:
-    """The fan-out is a consequence, never a reason for the op that caused it to fail."""
+    """The fan-out is a consequence of its caller's change and never fails it."""
     try:
         await sync_repo_maintainers(org, namespace, ch=ch)
-    except Exception:  # the fan-out never fails the op that caused it
+    except Exception:  # see the docstring
         log.warning("repo maintainers: sync failed for %s/%s", org, namespace, exc_info=True)
