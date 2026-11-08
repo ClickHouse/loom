@@ -117,12 +117,17 @@ def _is_copy(row: dict[str, Any]) -> bool:
     return str(row.get("granted_by") or "").startswith(GRANTED_BY_PREFIX)
 
 
+def _not_from_config(row: dict[str, Any], config: list[str]) -> bool:
+    """A copy, by its label, whose source is none of the operator entries in `config`."""
+    source = str(row.get("granted_by") or "").removeprefix(GRANTED_BY_PREFIX)
+    return _is_copy(row) and source not in config
+
+
 def _foreign(row: dict[str, Any], config: list[str]) -> bool:
     """A live copy, of any role (a lowering keeps the copy's source), whose source is
     none of the operator entries in `config`: one a restricted branch added from the
     page must not hold."""
-    source = str(row.get("granted_by") or "").removeprefix(GRANTED_BY_PREFIX)
-    return _live(row) and _is_copy(row) and source not in config
+    return _live(row) and _not_from_config(row, config)
 
 
 def repo_of(org: str, namespace: str) -> str | None:
@@ -844,8 +849,9 @@ async def sync_restricted_page_branches(
 
 async def holds_own_admin(client: Any, org: str, namespace: str, subject: str) -> bool:
     """`subject`, under any spelling the ADMIN gate accepts, holds a live admin row on
-    `namespace` that is not a copy a restricted branch does not keep (`_foreign`). Read
-    under the caller's claims: a copy revoked since the gate passed counts as none."""
+    `namespace` that is not a copy from outside the operator entries
+    (`_not_from_config`). Read under the caller's claims: a copy revoked since the gate
+    passed counts as none."""
     from server.auth.aliases import lowered, subject_aliases
 
     repo = repo_of(org, namespace)
@@ -859,7 +865,7 @@ async def holds_own_admin(client: Any, org: str, namespace: str, subject: str) -
         " AND role = 'admin' AND " + LIVE_GRANT,
         params={"org": org, "ns": namespace, "subs": spellings},
     )
-    return any(not _foreign(r, config) for r in rows)
+    return any(not _not_from_config(r, config) for r in rows)
 
 
 async def sync_quietly(org: str, namespace: str, *, ch: Any | None = None) -> None:

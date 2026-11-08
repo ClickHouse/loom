@@ -214,7 +214,7 @@ async def test_a_page_branch_restricted_by_its_directory_row_alone_drops_a_page_
         await _grant(client, org, "code-ord-dev", "admin", second, subject="mallory")
         await maintainers.sync_repo_maintainers(org, "code-ord", ch=client)
         assert await _state(client, org, "code-ord-rc", "mallory") == "none"
-        # A copy an earlier build or a standard spell left there.
+        # A copy an earlier build left there, or one made while the branch was standard.
         copy = {
             "org": org,
             "namespace": "code-ord-rc",
