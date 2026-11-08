@@ -208,10 +208,10 @@ Each op declares `required_role`.
   wrote it, since a grant to someone who has not signed up yet is the power a stranger
   typing that name would take. A namespace admin can therefore reserve names by granting
   them, a self-signup account on its own namespace included, so the names one account
-  holds back are bounded by the op rate limit on its grant writes, not by the sign-up
-  rate; each row names its `granted_by`, and revoking the grant frees the name. The
-  reservation covers the grants that exist when the sign-up reads them; a grant written to
-  a name while its sign-up runs lands on the new account.
+  holds back are bounded by the op rate limit on its grant and inbox writes, not by the
+  sign-up rate; each row names its `granted_by`, and revoking the grant frees the name.
+  The reservation covers the grants that exist when the sign-up reads them; a grant
+  written to a name while its sign-up runs lands on the new account.
 - `platform_admin` is written into the token at login for entries of
   `LOOM_PLATFORM_ADMINS` (`platform_roles` in `server/auth/login.py`). A handle matches a
   password account; an email matches only an OIDC-verified sign-in. Self-signup emails are
@@ -771,7 +771,8 @@ for a collection name outside the tree, a platform admin). The refusal is the on
 registered name's non-admin gets; the time it takes may still differ, as a registered name
 is answered before the in-use read. With auth off nobody is refused. An operator gives
 such a namespace an owner: `loom namespaces-adopt` registers the ones holding live memory,
-and an admin grant covers the rest, an ownerless auto-registered row included.
+and an admin grant covers the rest, an ownerless auto-registered row (`owner_email = ''`,
+tagged `auto-registered`) included.
 
 Two kinds of use leave nothing to find. A flat token minted for a name
 (`loom mint-token --namespaces <name>`) authorizes it without a row until its first

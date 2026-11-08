@@ -25,9 +25,9 @@ treats "no row" and the register defaults alike.
 Runs from both transports after authorization, before the handler.
 Best-effort: a registry failure never fails the write, and the process
 cache is filled only on success so the next write retries; a retry that finds
-the earlier write's data records no owner. Two reads per (org, namespace) per
-process, the registry row and the in-use check (one ClickHouse statement, plus a Postgres
-read under the Postgres authority); the hot path is a set lookup.
+the earlier write's data records no owner. One point read per (org, namespace) per
+process, plus the in-use check when no row exists (one ClickHouse statement, and a
+Postgres read under the Postgres authority); the hot path is a set lookup.
 """
 
 from __future__ import annotations
@@ -36,9 +36,9 @@ import logging
 from datetime import UTC, datetime
 from typing import Any, Final
 
-from server.auth.directory import directory
 from server.core.naming import reserved_for_sso
 from server.identity.api.models import NamespaceRegisterInput
+from server.identity.app.directory import IdentityDirectory
 from server.operations.base import Operation, Role
 from server.settings import settings
 
@@ -55,10 +55,11 @@ AUTO_ROW_VERSION = datetime(1970, 1, 1, 0, 0, 1, tzinfo=UTC)
 # race, the owned row of the one that found the name free wins.
 OWNERLESS_ROW_VERSION = datetime(1970, 1, 1, tzinfo=UTC)
 _MISSING = ("", "-", "*")
-# Rows a read leaves under a name it may read: they are no one's content, so a writer who
-# searched before its first write still owns the name.
+# The census tables a read writes under a name it may read: telemetry and the session's
+# implicit run, no one's content, so a writer who searched first still owns the name.
 READ_TRACES: Final = frozenset(
     {
+        "loom.agent_runs",
         "loom.events",
         "loom.memory_exposures",
         "loom.search_trace_log",
@@ -152,7 +153,7 @@ async def ensure_registered(
 
         # A name that already holds state (data written with auth off, a grant) is not its
         # first writer's to own: the row names no owner, so only an admin completes it.
-        in_use = await directory().in_use(org, namespace, ch=ch, skip=READ_TRACES)
+        in_use = await IdentityDirectory().in_use(org, namespace, ch=ch, skip=READ_TRACES)
         kind = classify_kind(namespace)
         now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
         row = registry_row(
