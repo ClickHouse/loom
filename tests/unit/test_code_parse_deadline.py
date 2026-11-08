@@ -271,3 +271,23 @@ def test_the_event_loop_runs_while_an_ingest_round_parses(
 
     asyncio.run(run())
     assert ticks >= 3  # a parse on the event loop would let it tick once
+
+
+def test_the_round_does_not_parse_a_timed_out_host_shell_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.code.app.index import ingest_chunks, round_models
+    from server.code.app.index.round_reads import RoundReads
+    from tests.unit.test_code_ingest_pass_budget import _ReadRepo
+
+    monkeypatch.setattr(settings, "code_host_islands", True)
+    monkeypatch.setattr(settings, "code_parse_timeout_seconds", 0.2)
+    sources = {"Makefile": b"build:\n\t" + b"a=(" * 30_000 + b"\n"}
+    reads = RoundReads(_ReadRepo(), "o", "code-ns")
+    asyncio.run(reads.prefetch(sources))
+    assert "ParseTimeout" in reads.parsed["Makefile"][1]
+
+    again: list[str] = []
+    monkeypatch.setattr(ingest_chunks, "host_units_of", lambda path, source: again.append(path))
+    asyncio.run(round_models._plans(reads, "o", "code-ns", sources, "m", 4000))
+    assert again == []  # the chunk plans did not parse the shell again
