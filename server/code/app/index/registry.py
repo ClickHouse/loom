@@ -21,6 +21,7 @@ mirror and checkouts to `repo_dir_mode`, not here.
 from __future__ import annotations
 
 import logging
+from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 from typing import Any
 
@@ -58,8 +59,6 @@ async def ensure_registered(
     maintainers' fan-out, whose claims wait, to a caller that runs `sync_maintainers` once
     its own claim is released. `account_held`: the caller holds the namespace's account
     claim."""
-    from contextlib import AsyncExitStack
-
     from server.auth.grant_claims import account_change, admins_change
     from server.core.ch import get_client
 
@@ -70,9 +69,9 @@ async def ensure_registered(
         return False
     client = ch or get_client()
     try:
-        # Under the account claim every writer of the directory row holds, then the admins
-        # claim a maintainer copy onto this branch holds, so a copy lands before a narrowing
-        # or sees it; reads are sequential: a stale read must not open or widen a restricted row.
+        # Account claim: every writer of the directory row holds it.
+        # Admins claim: a maintainer copy onto this branch holds it, so it lands before a
+        # narrowing or sees it.
         async with AsyncExitStack() as held:
             if not account_held:
                 await held.enter_async_context(account_change(cfg.org, cfg.namespace))
