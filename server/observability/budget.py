@@ -147,8 +147,7 @@ async def namespace_over_cap(
     under the cap (a budget-read blip never halts a request), or over it with
     `fail_open=False` (a background spender)."""
     try:
-        cap, spent, own = await _cap_and_spend(org, namespace, operation)
-        return cap > 0 and _over(cap, spent, own, operation, share)
+        return await operation_over_share(org, namespace, operation=operation, share=share)
     except Exception:  # the caller chose which way a failed read goes
         log.warning(
             "budget guard failed for %s/%s (%s)",
@@ -158,6 +157,15 @@ async def namespace_over_cap(
             exc_info=True,
         )
         return not fail_open
+
+
+async def operation_over_share(
+    org: str, namespace: str, *, operation: str = "", share: float = 1.0
+) -> bool:
+    """`namespace_over_cap` with no choice made for a failed read: it raises, for a
+    caller that answers an unreadable spend apart from a spent one."""
+    cap, spent, own = await _cap_and_spend(org, namespace, operation)
+    return cap > 0 and _over(cap, spent, own, operation, share)
 
 
 async def namespace_budget_ratio(org: str, namespace: str) -> float:

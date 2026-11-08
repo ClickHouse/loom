@@ -228,9 +228,10 @@ async def chat_completions(request: Request) -> Any:
         refused = _refusal(e)
         row.write(refused)  # a refused answer leaves its row, as a refused op does
         raise refused from e
-    except Exception as e:
+    except BaseException as e:
         slots.close()
-        row.write(e)  # INTERNAL_ERROR, as the op transport records it
+        # INTERNAL_ERROR as the op transport records it, or HTTP_499 for a cancellation.
+        row.write(e)
         raise
     held = _Held(ticket, row, slots)
     try:

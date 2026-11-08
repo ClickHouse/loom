@@ -30,6 +30,7 @@ from server.core.errors import (
     AssistantUnavailableError,
     AssistantUpstreamError,
     AuthInsufficientError,
+    BackendUnavailableError,
     LoomServerError,
     OverloadedError,
     RateLimitedError,
@@ -39,7 +40,7 @@ from server.core.errors import (
 from server.identity.domain.read_scope import request_read_narrowed
 from server.llm.customer import ModelCallsDisabled, switched_off
 from server.observability import cost_accumulator
-from server.observability.budget import namespace_over_cap
+from server.observability.budget import operation_over_share
 from server.observability.consumer import ASSISTANT_CONSUMER
 from server.observability.run_context import clean_run_id, set_ledger_run
 from server.operations.base import Role
@@ -58,6 +59,9 @@ _CONNECT_S = 10.0  # not a setting: LibreChat is on the same network
 
 # The answers this replica runs per (org, namespace), by slot id.
 _running: dict[tuple[str, str], set[int]] = {}
+# What of a refusal's body is read for its log line: far more than the 300 characters
+# logged, so a secret it echoes is whole when it is taken out.
+_REFUSAL_READ_BYTES = 8192  # not a setting: a log line's bound
 _slot_ids = itertools.count(1)
 
 
@@ -167,9 +171,15 @@ async def _afford(org: str, namespace: str) -> tuple[str, str]:
     if await switched_off(org):
         raise ModelCallsDisabled(f"model calls are switched off for org {org!r}")
     share = float(settings.assistant_budget_share)
-    if await namespace_over_cap(
-        org, namespace, operation=ASSISTANT_OP, share=share, fail_open=False
-    ):
+    try:
+        over = await operation_over_share(org, namespace, operation=ASSISTANT_OP, share=share)
+    except Exception as e:
+        log.warning("reading the assistant's spend in %s/%s failed: %s", org, namespace, e)
+        raise BackendUnavailableError(
+            f"the assistant's spend in {namespace!r} could not be read: ask again shortly",
+            operation=ASSISTANT_OP,
+        ) from e
+    if over:
         raise RateLimitedError(
             f"the assistant's share of {namespace!r}'s daily model cost cap is spent",
             retry_after_s=_CAP_RETRY_S,
@@ -262,7 +272,7 @@ async def stream(
                 )
             try:
                 if r.status_code != 200:
-                    _refused(ticket, r.status_code, _redacted(ticket, await r.aread()))
+                    _refused(ticket, r.status_code, _redacted(ticket, await _head(r)))
                 answer.started = True
                 lines = r.aiter_lines()
                 while True:
@@ -295,6 +305,17 @@ async def stream(
         if answer.started:
             _charge(answer)
     yield b"data: [DONE]\n\n"
+
+
+async def _head(r: httpx.Response) -> bytes:
+    """The start of a refusal's body, enough to log: a proxy's error page or a body that
+    never ends is not read whole."""
+    out = b""
+    async for part in r.aiter_bytes():
+        out += part
+        if len(out) >= _REFUSAL_READ_BYTES:
+            break
+    return out[:_REFUSAL_READ_BYTES]
 
 
 def _redacted(ticket: Ticket, text: bytes) -> str:

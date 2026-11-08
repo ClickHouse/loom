@@ -18,6 +18,7 @@ from server.core.errors import (
     AssistantUnavailableError,
     AssistantUpstreamError,
     AuthInsufficientError,
+    BackendUnavailableError,
     OverloadedError,
     RateLimitedError,
     ValidationError,
@@ -67,7 +68,8 @@ class _World:
         self.status = 200
         self.delegated: dict[str, Any] = {}
         self.cap_asked: dict[str, Any] = {}
-        self.over_cap = False
+        # True: the share is spent; None: the spend cannot be read.
+        self.over_cap: bool | None = False
         self.switched_off = False
         self.denied = False
         # Another answer for LibreChat to give, in place of the stream above.
@@ -95,6 +97,8 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
 
     async def over_cap(org: str, ns: str, **kw: Any) -> bool:
         w.cap_asked = kw
+        if w.over_cap is None:
+            raise ConnectionError("ClickHouse is down")
         return w.over_cap
 
     class _Delegated:
@@ -110,7 +114,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
     monkeypatch.setattr(service, "_answering", ("agent_1", "sk-service"))
     monkeypatch.setattr(bridge, "check_authorized", check_authorized)
     monkeypatch.setattr(bridge, "switched_off", switched_off)
-    monkeypatch.setattr(bridge, "namespace_over_cap", over_cap)
+    monkeypatch.setattr(bridge, "operation_over_share", over_cap)
     monkeypatch.setattr(bridge, "delegate", delegate)
     monkeypatch.setattr(bridge, "_running", {})
     monkeypatch.setattr(
@@ -234,8 +238,16 @@ def test_the_cap_check_is_the_assistants_share_and_fails_closed(world: _World) -
     assert world.cap_asked == {
         "operation": "assistant.ask",
         "share": settings.assistant_budget_share,
-        "fail_open": False,
     }
+    # A spend that cannot be read refuses too, as a short wait, not as a spent share.
+    world.over_cap = None
+    with pytest.raises(BackendUnavailableError) as refused:
+        asyncio.run(bridge.open_answer(_caller(), ORG, NS))
+    assert refused.value.extra["retry_after_s"] == 1 and "could not be read" in str(refused.value)
+    world.over_cap = True
+    with pytest.raises(RateLimitedError) as spent:
+        asyncio.run(bridge.open_answer(_caller(), ORG, NS))
+    assert spent.value.extra["retry_after_s"] > 60
 
 
 def test_a_sign_in_session_is_not_refused_for_its_short_access_token(world: _World) -> None:
@@ -736,6 +748,41 @@ def test_a_client_leaving_mid_stream_is_its_own_failure_and_releases_all(
     assert row["error_code"] == "HTTP_499" and row["run"] == "chatcmpl-7"
     assert row["cost"] == pytest.approx(settings.assistant_answer_ceiling_usd)
     assert bridge._running == {} and tenant_slots._IN_FLIGHT.get(ORG, 0) == 0
+
+
+def test_an_admission_cancelled_after_the_org_slot_frees_it_and_writes_its_row(
+    world: _World, client: tuple[Any, list[dict[str, Any]]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from starlette.requests import Request
+
+    from server.assistant.app import routes
+    from server.core import tenant_slots
+
+    _, rows = client
+    monkeypatch.setattr(settings, "tenant_max_concurrent_requests", 10)
+    held: list[int] = []
+
+    async def cancelled(*_: Any) -> bridge.Ticket:
+        held.append(tenant_slots._IN_FLIGHT.get(ORG, 0))  # the org slot is taken by now
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(bridge, "open_answer", cancelled)
+    body = json.dumps({"messages": QUESTION}).encode()
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": ROUTE,
+        "headers": [(k.lower().encode(), v.encode()) for k, v in HEADERS.items()],
+    }
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(routes.chat_completions(Request(scope, receive)))
+    assert held == [1] and tenant_slots._IN_FLIGHT.get(ORG, 0) == 0
+    (row,) = rows
+    assert row["error_code"] == "HTTP_499"
 
 
 def test_a_body_that_fails_to_close_still_frees_the_org_slot_and_writes_its_row(

@@ -272,8 +272,12 @@ curl -N "$LOOM_URL/v1/assistant/chat/completions" \
 
 An agent asks one question with `loom_assistant_ask` over MCP (called by name: no toolset
 lists it), or `assistant.ask` over HTTP and the SDKs' generated `ops.assistant.ask` /
-`loom.assistant.ask`, which answer whole. Each answer is ledgered as `assistant.ask` with its
-model spend, and its tool calls carry the answer's id as `run_id`.
+`loom.assistant.ask`, which answer whole. An answer may run up to
+`LOOM_ASSISTANT_ANSWER_TTL_S` (600 s), longer than the SDKs' default 60 s request timeout,
+and is never resent, so give the call a timeout that long (`timeout_s=600` in Python,
+`{ timeoutMs: 600_000 }` in TypeScript): a call that times out first leaves an answer the
+server finishes and charges. Each answer is ledgered as `assistant.ask` with its model
+spend, and its tool calls carry the answer's id as `run_id`.
 
 The qualification runs the same cases through Loom's assistant route
 (`POST /v1/assistant/chat/completions`), each with the person's own token, so Loom
