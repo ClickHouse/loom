@@ -190,7 +190,8 @@ def _parse_host(path: str, source: bytes) -> ParsedFile:
 @functools.lru_cache(maxsize=8)
 def host_units_of(path: str, source: bytes) -> HostUnits | None:
     """`host_units` of a host file's text, kept so the parse and chunk steps of its
-    ingest read its shell once. Callers copy what they change."""
+    ingest read its shell once while its round holds at most 8 host files (past that,
+    up to three times). Callers copy what they change."""
     return host_units(ParsedFile(path=path, lang="config", source=source))
 
 

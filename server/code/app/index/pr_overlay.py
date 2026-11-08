@@ -502,7 +502,7 @@ _FILE_FACTS: TtlCache[tuple[str, str], _Facts] = TtlCache(
 _RUNNING: defaultdict[tuple[str, str], dict[Any, asyncio.Future[Any]]] = defaultdict(dict)
 # Overlay parses run here, not in the default executor, so a pile of them never holds
 # back the process's other threaded work; two, so one slow namespace leaves room for
-# another without a parse per request
+# another without a parse per request (two slow ones leave the rest unreached)
 _PARSE_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="loom-overlay-parse")
 
 
