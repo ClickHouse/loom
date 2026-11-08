@@ -287,7 +287,7 @@ class Release(NamedTuple):
     env: dict[str, str]  # for the installer's container
     ca: Path | None = None
     # The previous release's install.sh and bundle (previous_release_files.sh);
-    # None in published mode (its one-liner installs it) or with no previous release.
+    # None in published mode (installed from github.com by version) or with no previous release.
     previous_files: Path | None = None
 
 
@@ -472,20 +472,18 @@ class Rehearsal:
         print(result.stdout, result.stderr, sep="\n", flush=True)
         return result.stdout
 
-    def one_liner(self, image: str, home: Path, port: int, url: str) -> str:
-        return self.container(image, home, port, f'curl -fsSL "{url}" | sh')
+    def one_liner(self, image: str, home: Path, port: int, url: str, sh: str = "sh") -> str:
+        return self.container(image, home, port, f'curl -fsSL "{url}" | {sh}')
 
     def install_previous(self, image: str, home: Path, port: int) -> None:
-        """The previous release by its own install.sh: published, the release's
-        copy naming its version (a copy from before releases stamped install.sh
-        installs `latest` otherwise; on a fresh home it lifts no guard); locally,
-        the tag's copy with the tag's bundle mounted."""
+        """The previous release by its own install.sh, naming its version (a release
+        tagged before the stamp installs latest); locally, the tag's copy with the
+        tag's bundle mounted."""
         release = self.release
         files = release.previous_files
         if files is None:
             url = f"{GITHUB_RELEASES}/download/v{release.previous}/install.sh"
-            script = f'curl -fsSL "{url}" | LOOM_VERSION={release.previous} sh'
-            self.container(image, home, port, script)
+            self.one_liner(image, home, port, url, sh=f"LOOM_VERSION={release.previous} sh")
             return
         self.container(
             image,
