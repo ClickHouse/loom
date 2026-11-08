@@ -98,7 +98,7 @@ USER_SUMMARIES = (
 )
 # The summaries built from the user's memories, from the current rows and the history: a
 # summary rebuilt without the user keeps under its key what its old text gave it, and
-# only the history names it then, merged or not.
+# only the history names it, whether or not `loom.memory` has merged its old version away.
 _SUMMARY_COLUMNS = "namespace, agent, user_id, session_id, memory_key, memory_id, tags"
 SUMMARY_ROWS_FROM = (
     f"FROM (SELECT {_SUMMARY_COLUMNS} FROM loom.memory FINAL WHERE org = {{org:String}} "

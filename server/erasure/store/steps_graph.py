@@ -426,21 +426,13 @@ async def _retire_summaries(
                 "loom.memory", org=org, scope_where=CONSOLIDATED_IN, params=params, ch=ch
             )
     # after the tombstones, as every link delete: a link written meanwhile for a row read
-    # as live goes too
-    rows: set[tuple[str, str]] = set()
-    for params in slices:
-        found = await ch.query_all(
-            "SELECT DISTINCT namespace, toString(memory_id) AS id FROM loom.memory "
-            f"WHERE org = {{org:String}} AND {CONSOLIDATED_IN}",
-            params={"org": org, **params},
-        )
-        rows.update((str(r["namespace"]), str(r["id"])) for r in found)
-    for part in chunks(sorted(rows)):
+    # as live goes too, and so does one a rebuilt summary's old text gave it
+    for part in chunks((await user_summary_rows(org, user_id, ch=ch)).ids):
         total += await delete_scoped(
             "loom.memory_code_links",
             org=org,
-            scope_where="(namespace, memory_id) IN {rows:Array(Tuple(String, UUID))}",
-            params={"rows": part},
+            scope_where=SUMMARY_IDS_IN,
+            params={"ids": part},
             ch=ch,
         )
     return total, slices
@@ -467,8 +459,8 @@ _SUMMARY_DERIVED_STEPS = (
 
 
 async def retire_memory_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
-    """After every step that finds rows by the user's memory keys. In a purge,
-    `_purge_memory_by_user`. Otherwise it retires what a write made live since the first
+    """After every step that finds rows by the user's memory keys. In a purge it runs
+    `_purge_memory_by_user`; otherwise it retires what a write made live since the first
     steps: the summaries built from the user's memories (while the user's rows still
     name them), their shared copies, the user's rows, then the cached answers and
     precedents that quote either."""

@@ -74,7 +74,8 @@ class _Recording:
         if "namespace, memory_key FROM" in sql:
             return [{"namespace": "mine", "memory_key": "prefs/editor"}]
         if "toString(memory_id) AS id" in sql:
-            return [{"namespace": "mine", "id": _SUMMARY}]
+            row = {"ns": "mine", "agent": "a", "user_id": "-", "session_id": "-"}
+            return [row | {"memory_key": "profile", "id": _SUMMARY}]
         # system.mutations poll: the mutation is done.
         return [{"mutation_id": "m.txt", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}]
 

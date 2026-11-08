@@ -313,6 +313,13 @@ async def test_tombstone_shared_embeddings_by_user_names_each_namespace_with_its
 
 
 @pytest.mark.asyncio
+def _summary_row(memory_id: str) -> dict[str, str]:
+    """A summary as `scope_reads.user_summary_rows` reads it."""
+    return {"ns": "ns", "agent": "a", "user_id": "-", "session_id": "-", "memory_key": "t"} | {
+        "id": memory_id
+    }
+
+
 async def test_consolidated_dependents_of_an_erased_user_are_tombstoned_in_both_tables() -> None:
     """A topic memory synthesised from an erased user's rows lives under
     another identity and carries the content verbatim (tag `src:<key>`); the
@@ -323,9 +330,7 @@ async def test_consolidated_dependents_of_an_erased_user_are_tombstoned_in_both_
     topic = "00000000-0000-0000-0000-0000000000c1"
     ch = StubCH()
     ch.reads.append(("namespace, memory_key FROM", [{"namespace": "ns", "memory_key": "k1"}]))
-    ch.reads.append(
-        ("toString(memory_id) AS id FROM loom.memory", [{"namespace": "ns", "id": topic}])
-    )
+    ch.reads.append(("toString(memory_id) AS id FROM (SELECT", [_summary_row(topic)]))
     ch.query_one_returns.extend([{"n": 2}, {"n": 2}, {"n": 1}])
     n = await graph_steps.tombstone_consolidated_dependents_by_user("o", "alice", ch=ch)
     assert n == 5
@@ -341,13 +346,15 @@ async def test_consolidated_dependents_of_an_erased_user_are_tombstoned_in_both_
         assert "{pairs:Array(Tuple(String, String))}" in sql
         assert params["src"] == ["src:k1"] and params["pairs"] == [("ns", "src:k1")]
         assert "UPDATE tombstoned_at = {now:DateTime}" in sql
-    # the topic rows are read after the tombstones, then bound with their namespace
+    # the topic rows (and their history) are read after the tombstones, then bound with
+    # their namespace
     ids_sql, ids_params = ch.read_calls[1]
-    assert "has(tags, 'consolidated')" in ids_sql and ids_params["pairs"] == [("ns", "src:k1")]
+    assert "has(tags, 'consolidated')" in ids_sql and "FROM loom.memory_versions" in ids_sql
+    assert ids_params == {"org": "o", "uid": "alice"}
     assert (
-        "DELETE" in links and "(namespace, memory_id) IN {rows:Array(Tuple(String, UUID))}" in links
+        "DELETE" in links and "(namespace, memory_id) IN {ids:Array(Tuple(String, UUID))}" in links
     )
-    assert link_params["rows"] == [("ns", topic)]
+    assert link_params["ids"] == [("ns", topic)]
     assert not [sql for sql, _ in ch.execute_calls if "SELECT" in sql]
 
 
@@ -383,9 +390,7 @@ async def test_a_user_purge_deletes_the_memory_rows_after_the_steps_that_read_th
         topic = "00000000-0000-0000-0000-0000000000c1"
         ch = StubCH()
         ch.reads.append(pairs)
-        ch.reads.append(
-            ("toString(memory_id) AS id FROM loom.memory", [{"namespace": "ns", "id": topic}])
-        )
+        ch.reads.append(("toString(memory_id) AS id FROM (SELECT", [_summary_row(topic)]))
         keys, one = {"keys": ["t"]}, {"n": 1}
         ch.query_one_returns.extend(
             [one, one, one, one, keys, one, keys, one, keys, one, one, {"n": 2}]
@@ -399,7 +404,7 @@ async def test_a_user_purge_deletes_the_memory_rows_after_the_steps_that_read_th
         (memory, memory_params), (own, own_params) = rest
         assert embeddings[0].startswith("DELETE FROM loom.memory_embeddings")
         assert summaries[0].startswith("ALTER TABLE loom.memory UPDATE tombstoned_at")
-        assert "loom.memory_code_links" in links and link_params["rows"] == [("ns", topic)]
+        assert "loom.memory_code_links" in links and link_params["ids"] == [("ns", topic)]
         assert "loom.llm_response_cache" in cache[0] and cache[1]["keys"] == ["t"]
         assert "loom.memory_ask_precedents" in precedents[0]
         assert "DELETE FROM loom.code_answers" in code[0] and code[1]["keys"] == ["t"]

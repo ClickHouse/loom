@@ -117,13 +117,13 @@ checkout.
     serves alone, request again each user erasure without `purge` that an older build
     completed, now or at any time before (the completed `user_id` rows of
     `loom.erasure_requests`, which keeps 90 days; an older one has no ledger row left).
+    An older build's saga left the summary's history, chunks, vectors, graph rows and
+    shared copies ([rolling upgrades](../architecture/rolling-upgrades.md), rule 37).
     The new saga also erases what the user wrote since: request it for a user with no
-    live memory row, or only where that is wanted. An older build's saga left the summary's history, chunks,
-    vectors, graph rows and shared copies
-    ([rolling upgrades](../architecture/rolling-upgrades.md), rule 37). A user purge an
-    older build completed left them too, and no later user erasure finds them: the
-    user's keys are gone. One it ran past `shared.tombstone` also left the search rows of
-    shared copies of the user's own memories, whichever build finished it.
+    live memory row, or only where that is wanted. A user purge an older build completed
+    left the same rows, and no later user erasure finds them: the user's keys are gone.
+    One it ran past `shared.tombstone` also left the search rows of shared copies of the
+    user's own memories, whichever build finished it.
 
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in
