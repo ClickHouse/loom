@@ -1253,9 +1253,9 @@ A maintainer sets a repository's access — its classification (`standard` | `re
 | `repo` | `str` | The repository's GitHub owner/name. |
 | `classification` | `str` | The classification as written (lower-cased). |
 | `join_policy` | `str` | The join policy as written (lower-cased). |
-| `previous_classification` | `str` | The entry's classification before this call: restricted when this process's snapshot or the directory row read under the call's claims said so. |
+| `previous_classification` | `str` | The entry's classification before this call: `restricted` when either its registry row or its directory row said so. |
 | `previous_join_policy` | `str` | The directory row's join policy before this call (when it had none: `open` for a public entry, else `approval`). |
-| `directory_updated` | `bool` | True when the namespace's directory row got the new access too (a branch added from the page with no row yet gets its first one); False for an operator entry with no directory row (only the registry row was written). |
+| `directory_updated` | `bool` | True when the namespace's directory row got the new access too, a branch added from the page with no row yet getting its first one; False for an operator entry with no directory row. |
 | `effective_within_s` | `int` | every process re-reads the access row within this many seconds |
 
 ## `code.repo.set_source`

@@ -106,6 +106,7 @@ async def grant_self_admin(org: str, namespace: str, subject: str) -> None:
 
 
 __all__ = [
+    "classifications",
     "grant_self_admin",
     "namespace_claimable",
     "namespace_retention_days",
