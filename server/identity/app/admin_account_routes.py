@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict
 from server.auth import agents, machines, oauth, revocation, subject_revocation
 from server.auth.grant_claims import NotClaimed
 from server.auth.jwt import AuthInfo
+from server.core.ch import set_query_tag
 from server.core.errors import GrantBusyError
 from server.core.principals import org_of_end_user_revocation
 from server.identity.app import account_admin
@@ -260,6 +261,7 @@ async def bots_provision_agent(input: ProvisionAgentInput, info: Admin) -> dict[
     workloads' claim will carry. The namespace counts against the trust's
     `max_agents`; a repeat changes nothing.
     """
+    set_query_tag("admin.bots_provision_agent")  # this route is not under the transports
     try:
         org, namespace = await account_admin.provision_agent(input.name, input.agent, by=_by(info))
     except ValueError as e:

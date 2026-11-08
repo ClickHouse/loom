@@ -450,6 +450,18 @@ def test_another_subjects_live_grant_holds_back_the_owners_completion() -> None:
             " {flag}, 1)",
             ("'in_progress'", "'completed'"),
         ),
+        (
+            "INSERT INTO loom.erasure_requests (id, org, scope_type, scope_value, requester,"
+            " status, version) VALUES (generateUUIDv4(), 'dev', 'namespace_list',"
+            " '[\"other\", \"team\"]', 'op', {flag}, 1)",
+            ("'failed'", "'completed'"),
+        ),
+        (
+            "INSERT INTO loom.erasure_requests (id, org, scope_type, scope_value, requester,"
+            " status, version) VALUES (generateUUIDv4(), 'dev', 'namespace_list',"
+            " '{{\"namespaces\": [\"team\"]}}', 'op', {flag}, 1)",
+            ("'queued'", "'completed'"),
+        ),
     ],
 )
 def test_a_state_row_counts_only_while_live(row: str, live: tuple[str, str]) -> None:
