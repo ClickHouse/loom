@@ -90,11 +90,15 @@ FAILING_FULL = tier_health.failed(None, "clang_full", "harness exit 1: x", T0).t
             "permission",
         ),
         ("PermissionError: [Errno 13] Permission denied: '/r/checkout/.git/index'", "permission"),
-        ("chmod: changing permissions of 'x': Operation not permitted", "permission"),
+        (
+            "fatal: Unable to create '/r/checkout/.git/index.lock': Permission denied",
+            "permission",
+        ),
+        ("bwrap: setting up uid map: Permission denied", "unknown"),
+        ("harness exit 1: ld: Operation not permitted", "harness"),
         ("git@github.com: Permission denied (publickey).", "credential"),
         ("git@h.example: Permission denied (publickey,password).", "credential"),
         ("git@h.example: Permission denied (password).", "credential"),
-        ("error: failed to open file: Permission denied (os error 13)", "permission"),
         (
             "error: insufficient permission for adding an object to repository database "
             "./objects\nfatal: failed to write object",
@@ -124,6 +128,13 @@ def test_an_os_error_without_a_file_is_recorded_by_its_kind_only() -> None:
     assert recorder.error_text(ConnectionRefusedError(111, "refused by 10.0.0.1")) == (
         "ConnectionRefusedError"
     )
+
+
+@pytest.mark.parametrize(
+    "text", ["git@h: Permission denied (publickey).", "git@h: Permission denied (password)."]
+)
+def test_an_ssh_refusal_gets_the_ssh_fix(text: str) -> None:
+    assert "ssh key" in tier_health.fix_for("credential", text)
 
 
 def test_a_credential_fix_names_the_host_the_submodule_and_the_setting() -> None:

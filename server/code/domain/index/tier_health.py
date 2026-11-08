@@ -153,6 +153,9 @@ def redact(text: str) -> str:
 
 # --- classification ----------------------------------------------------------------
 
+# ssh's refusal, which names the methods it offered: (publickey), (password,...)
+_SSH_REFUSED = re.compile(r"permission denied \([a-z-]+(?:,[a-z-]+)*\)", re.IGNORECASE)
+
 # The Go harness's line for a module it skipped because it would not build.
 _MODULE_FAILED = re.compile(r"go mod download failed|scip-go failed", re.IGNORECASE)
 
@@ -174,8 +177,7 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(
             r"could not read (?:username|password)|authentication failed|terminal prompts disabled"
             r"|invalid username or password"
-            # ssh's refusal names the methods it offered: (publickey), (password,...)
-            r"|permission denied \([a-z-]+(?:,[a-z-]+)*\)"
+            rf"|{_SSH_REFUSED.pattern}"
             r"|repository not found|support for password authentication"
             # git's own wording; a download step's 404 in a harness log is not a credential
             r"|unable to access '[^']*': the requested url returned error: 40[134]\b",
@@ -219,11 +221,11 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
             re.IGNORECASE,
         ),
     ),
-    # a file this tier's user cannot read or write; an ssh key refusal is a credential, above
+    # a file this tier's user cannot read or write: git's and Python's errors quote it
     (
         "permission",
         re.compile(
-            r"permission denied|operation not permitted|insufficient permission",
+            r"'[^'\n]*': permission denied|permission denied: '|insufficient permission",
             re.IGNORECASE,
         ),
     ),
@@ -289,7 +291,7 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
     `name_where=False` the same fix without the host, repository or submodule."""
     where = _where(text) if name_where else ""
     at = f" ({where})" if where else ""
-    if kind == "credential" and "publickey" in text.lower():
+    if kind == "credential" and _SSH_REFUSED.search(text):
         return (
             f"The ssh key was refused{at}: give this host's ssh key read access to the "
             "repository, or use its https remote with a token."
