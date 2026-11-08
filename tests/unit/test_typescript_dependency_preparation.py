@@ -107,8 +107,9 @@ def test_lockfile_selects_the_shipped_manager_and_disables_scripts(
 async def test_missing_package_manager_has_native_installation_instruction(
     checkout: Path, tmp_path: Path
 ) -> None:
-    with pytest.raises(RuntimeError, match="install-code-toolchains.sh"):
+    with pytest.raises(RuntimeError) as missing:
         await deps.prepare_dependencies(checkout, (), {"PATH": str(tmp_path)})
+    assert "install-code-toolchains.sh" in recorder.error_text(missing.value)
 
 
 @pytest.mark.asyncio
@@ -128,10 +129,10 @@ async def test_a_failed_install_is_recorded_with_the_installer_and_its_last_outp
 async def test_an_install_timeout_is_recorded_as_a_timeout(
     checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def hangs(*a: object, **k: object) -> None:
+    async def times_out(*a: object, **k: object) -> None:
         raise TimeoutError
 
-    monkeypatch.setattr(deps, "run_job", hangs)
+    monkeypatch.setattr(deps, "run_job", times_out)
     with pytest.raises(RuntimeError) as failed:
         await deps.prepare_dependencies(checkout, (), _installer(tmp_path))
     assert tier_health.classify(recorder.error_text(failed.value)) == "timeout"
