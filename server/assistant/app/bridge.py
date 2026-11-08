@@ -36,6 +36,7 @@ from server.core.errors import (
     ValidationError,
     error_kind,
 )
+from server.identity.domain.read_scope import request_read_narrowed
 from server.llm.customer import ModelCallsDisabled, switched_off
 from server.observability import cost_accumulator
 from server.observability.budget import namespace_over_cap
@@ -69,7 +70,6 @@ class Ticket:
     agent_id: str
     api_key: str
     token: str
-    subject: str
     slot: int
 
     def release(self) -> None:
@@ -135,7 +135,7 @@ async def authorize(auth: AuthInfo, org: str, namespace: str) -> None:
             "no LibreChat is configured for the assistant (LOOM_ASSISTANT_LIBRECHAT_URL)"
         )
     refuse_org_wide(auth)
-    if auth.read_scope in ("own_user", "own_session"):
+    if request_read_narrowed(auth):
         raise AuthInsufficientError(
             "a token whose reads are narrower than its namespace cannot ask the assistant"
         )
@@ -217,7 +217,7 @@ async def open_answer(auth: AuthInfo, org: str, namespace: str) -> Ticket:
     except BaseException:
         _give_back(org, namespace, slot)
         raise
-    return Ticket(org, namespace, agent_id, api_key, token, auth.subject, slot)
+    return Ticket(org, namespace, agent_id, api_key, token, slot)
 
 
 def _give_back(org: str, namespace: str, slot: int) -> None:
@@ -299,8 +299,11 @@ def _refused(ticket: Ticket, status: int, text: bytes) -> NoReturn:
     already did and this one only carried the key it replaced."""
     log.warning("LibreChat refused an answer (%s): %s", status, text)
     if status in (401, 403, 404):
-        if service.answering() == (ticket.agent_id, ticket.api_key):
-            service.forget_answering(f"LibreChat refused the stored key or agent ({status})")
+        stored = service.answering()
+        if stored is None or stored == (ticket.agent_id, ticket.api_key):
+            # Dropped by this answer, or by another that met the same stale key first.
+            if stored is not None:
+                service.forget_answering(f"LibreChat refused the stored key or agent ({status})")
             raise AssistantUpstreamError(
                 f"LibreChat refused the stored key or agent ({status}); this replica is "
                 "setting the assistant up again: ask again shortly"

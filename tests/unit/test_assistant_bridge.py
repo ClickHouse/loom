@@ -201,6 +201,8 @@ def test_a_refused_answer_names_no_librechat_text(world: _World) -> None:
         ({"answering": None}, AssistantUnavailableError),
         ({"auth": {"org": "*"}}, AuthInsufficientError),
         ({"auth": {"read_scope": "own_user"}}, AuthInsufficientError),
+        # Pinned to one end user with no `read_scope`: narrowed all the same.
+        ({"auth": {"read_user_id": "u1"}}, AuthInsufficientError),
         ({"auth": {"expires_at": int(time.time()) + 30}}, AuthInsufficientError),
         ({"denied": True}, AuthInsufficientError),
         ({"switched_off": True}, ModelCallsDisabled),
@@ -531,9 +533,11 @@ def test_a_key_librechat_no_longer_takes_is_set_up_again(
 ) -> None:
     forgotten: list[str] = []
     monkeypatch.setattr(service, "forget_answering", forgotten.append)
+    monkeypatch.setattr(settings, "assistant_concurrent_answers", 3)
     world.status = 401
     stale = asyncio.run(bridge.open_answer(_caller(), ORG, NS))
     refreshed_meanwhile = asyncio.run(bridge.open_answer(_caller(), ORG, NS))
+    again = asyncio.run(bridge.open_answer(_caller(), ORG, NS))
 
     async def run(ticket: bridge.Ticket) -> None:
         async for _ in bridge.stream(ticket, QUESTION, bridge.Answer()):
@@ -542,6 +546,11 @@ def test_a_key_librechat_no_longer_takes_is_set_up_again(
     with pytest.raises(AssistantUpstreamError, match="setting the assistant up again"):
         asyncio.run(run(stale))
     assert forgotten and "401" in forgotten[0]
+    # A second answer meets the same stale key while the setup still runs: told the same.
+    monkeypatch.setattr(service, "_answering", None)
+    with pytest.raises(AssistantUpstreamError, match="setting the assistant up again"):
+        asyncio.run(run(again))
+    assert len(forgotten) == 1
     # Another answer already replaced the key this one carried: it forgets nothing new.
     monkeypatch.setattr(service, "_answering", ("agent_1", "sk-new"))
     with pytest.raises(AssistantUpstreamError, match="already replaced"):
