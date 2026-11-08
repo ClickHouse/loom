@@ -138,5 +138,7 @@ __all__ = [
     "ref_of",
     "repo_namespaces",
     "restricted_namespaces",
+    "restricted_tracker_namespaces",
+    "is_restricted_tracker_namespace",
     "split_source_id",
 ]

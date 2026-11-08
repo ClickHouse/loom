@@ -12,7 +12,7 @@ from server.core.repo_base import _CHClient
 from server.erasure.app import ledger_reads
 from server.identity.app import namespace_classification, namespace_kinds, namespace_visibility
 from server.identity.store import namespace_census
-from server.tracker.domain.namespaces import tracker_namespace
+from server.tracker.domain.namespaces import restricted_tracker_namespaces, tracker_namespace
 
 
 class IdentityDirectory:
@@ -32,8 +32,6 @@ class IdentityDirectory:
         return repos.repo_for_namespace(org, namespace)
 
     def restricted_config_namespaces(self, org: str) -> set[str]:
-        from server.tracker.domain.namespaces import restricted_tracker_namespaces
-
         return {
             cfg.namespace
             for cfg in repos.configured_repos()
