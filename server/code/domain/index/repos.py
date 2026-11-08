@@ -308,6 +308,14 @@ def set_registry_repos(
 
 # Namespaces a member added from the page, active or removed (`set_registry_repos`).
 _page_namespaces: frozenset[tuple[str, str]] = frozenset()
+
+
+def page_namespaces() -> frozenset[tuple[str, str]]:
+    """(org, namespace) of every branch added from the page, removed ones too (no I/O);
+    empty while self-service is off."""
+    return _page_namespaces if settings.code_self_service_enabled else frozenset()
+
+
 # The operator entries skipped for a member's namespace, logged once each per process.
 _skipped_logged: set[str] = set()
 
@@ -337,7 +345,7 @@ def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:
     rows = {(c.org, c.namespace): c for c in registry_repos()}
     out: list[RepoConfig] = []
     for c in env_repos:
-        if (c.org, c.namespace) in _page_namespaces:
+        if (c.org, c.namespace) in page_namespaces():
             if c.label not in _skipped_logged:
                 _skipped_logged.add(c.label)
                 logger.warning(

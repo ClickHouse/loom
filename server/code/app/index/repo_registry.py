@@ -269,6 +269,24 @@ async def insert_entry(
     )
 
 
+async def live_row(cfg: Any, ch: Any | None = None) -> dict[str, Any] | None:
+    """`cfg`'s registry row read now, when active; None for an operator entry with no
+    active row, which gets a fresh access row. A branch added from the page whose row
+    is gone or inactive is refused with NOT_A_REPO: an operator entry is never listed
+    for its namespace either, since its member keeps their grants there."""
+    from server.code.store.index import CodeRepo
+    from server.core.ch import sequential_reads
+    from server.core.errors import ValidationError
+
+    with sequential_reads():  # a lagging read must not replace a row with a new one
+        current = await CodeRepo(ch).code_repo_row(cfg.org, cfg.namespace)
+    if current and current.get("active"):
+        return current
+    if cfg.source != "config" or (current or {}).get("row_kind") == "page":
+        raise ValidationError(f"{cfg.namespace} was removed", code="NOT_A_REPO")
+    return None
+
+
 async def upsert_access(
     cfg: Any,
     *,
@@ -286,21 +304,12 @@ async def upsert_access(
     from datetime import UTC, datetime
 
     from server.code.store.index import CodeRepo
-    from server.core.ch import sequential_reads
 
     repo = CodeRepo(ch)
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
-    with sequential_reads():  # a lagging read must not replace a row with a new one
-        current = await repo.code_repo_row(cfg.org, cfg.namespace)
-    # An inactive row (a removed branch) is not brought back to life.
-    if current and current.get("active"):
+    current = await live_row(cfg, ch)
+    if current:
         row = dict(current)
-    elif cfg.source != "config" or (current or {}).get("row_kind") == "page":
-        # A removed branch added from the page: an operator entry is never listed for
-        # its namespace, where that member keeps their grants.
-        from server.core.errors import ValidationError
-
-        raise ValidationError(f"{cfg.namespace} was removed", code="NOT_A_REPO")
     else:
         row = {
             "org": cfg.org,

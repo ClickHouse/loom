@@ -763,6 +763,8 @@ async def handle_code_repo_set_access(input: Any) -> Any:
         previous_policy = str(
             (row or {}).get("join_policy") or ("open" if cfg.public else "approval")
         )
+        # A removed branch is refused before either row is written.
+        await reg.live_row(cfg, ch)
         # The directory row first, which every replica reads now: a restriction cut short
         # after it still stops copies, and the registrar widens no row newer than the
         # access row.

@@ -100,11 +100,11 @@ Rules:
   A registry row that records no kind is read as the entry's access row, and while
   self-service is off the registry is not read: review a namespace's grants before
   listing it in either case.
-- The access row `code.repo.set_access` writes for an operator entry is no longer
-  listed once the entry leaves the configuration, so the namespace is not indexed; it
+- The access row `code.repo.set_access` writes for an operator entry is not listed
+  while the entry is out of the configuration, so the namespace is not indexed; it
   applies again if the entry returns, and it does not count against the org's
-  repository quota. A registry row that records no kind
-  is listed as a branch added here once its entry is gone.
+  repository quota. A registry row that records no kind is listed as a branch added
+  here once its entry is gone.
 - A copy on an operator namespace whose `granted_by` is `repo-maintainers:<namespace>`
   naming a branch added here, or a namespace no longer configured, stays until revoked:
   list those grants and revoke the ones that should not stand.

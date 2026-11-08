@@ -81,4 +81,10 @@ async def test_a_removed_page_branch_keeps_its_namespace_from_the_operator(org: 
         ("code-entry", "config"),
         ("code-live", "registry"),
     ]
+    # The access row wins for its entry.
+    (mine,) = [c for c in listed if c.namespace == "code-entry"]
+    assert (mine.classification, mine.access_source) == ("restricted", "registry")
+    # The access row wins for its entry.
+    (mine,) = [c for c in listed if c.namespace == "code-entry"]
+    assert (mine.classification, mine.access_source) == ("restricted", "registry")
     assert await reg.active_count(org) == 1  # the access row is not counted

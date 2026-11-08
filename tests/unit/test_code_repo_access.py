@@ -106,10 +106,14 @@ def test_an_access_row_whose_entry_is_gone_is_not_a_branch(monkeypatch) -> None:
     assert [c.namespace for c in repos._with_registry([])] == ["code-added"]
 
 
+# The registry row of a branch added from the page, as a live one reads.
+_LIVE = {"active": True, "row_kind": "page"}
+
+
 class _CH:
     """`row` answers the directory read, `registry` the loom.code_repos one."""
 
-    def __init__(self, row: dict[str, Any] | None, registry: dict[str, Any] | None = None) -> None:
+    def __init__(self, row: dict[str, Any] | None, registry: dict[str, Any] | None = _LIVE) -> None:
         self.row, self.registry = row, registry
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
         self.queries: list[str] = []
@@ -253,6 +257,28 @@ async def test_set_access_writes_registry_and_directory_and_needs_confirm_to_wid
         )
     )
     assert out.classification == "restricted" and noted == ["code-weave"]
+
+
+@pytest.mark.asyncio
+async def test_set_access_on_a_removed_page_branch_writes_nothing(monkeypatch) -> None:
+    # Its row went inactive after this process's snapshot: no directory row either.
+    from server.code.app import repo_admin as h
+
+    async def refresh(*a, **k):
+        return []
+
+    cfg = _cfg("code-weave-dev", classification="standard", source="registry")
+    ch = _CH({"org": ORG, "namespace": "code-weave-dev"}, registry=_LIVE | {"active": False})
+    monkeypatch.setattr(reg, "refresh_db_repos", refresh)
+    monkeypatch.setattr("server.code.domain.index.repos.repo_for_namespace", lambda o, n: cfg)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr(h, "current_caller", lambda: ("alice", ORG))
+    inp = SimpleNamespace(
+        org=ORG, namespace="code-weave-dev", classification="restricted", join_policy="approval"
+    )
+    with pytest.raises(ValidationError) as e:
+        await h.handle_code_repo_set_access(inp)
+    assert e.value.to_detail()["code"] == "NOT_A_REPO" and ch.inserts == []
 
 
 @pytest.mark.asyncio
