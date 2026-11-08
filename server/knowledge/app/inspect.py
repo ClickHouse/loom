@@ -147,8 +147,8 @@ _CHECKS: dict[str, tuple[RuleContract, str, str, str, list[str]]] = {
         "mixed_versions",
         "Live documents with live chunks of more than one version under the server's "
         "model: search serves both texts. Adding a document at a source that already has "
-        "one keeps the earlier version beside it; an upsert retires it.",
-        "Write a changed text document again with an upsert. For an ingested one, an "
+        "one keeps the earlier version beside it; writing it again replaces it.",
+        "Write a changed text document again. For an ingested one, an "
         "ingestion of the source still at its publish stage settles this state on its next "
         "run (its status, by the id the ingestion returned, shows the stage); only when no "
         "ingestion of the source is open, upload its original again and ingest it.",
@@ -194,10 +194,11 @@ _INGEST_CHECKS: dict[str, tuple[RuleContract, str, str, list[str]]] = {
         ),
         "Sources with an ingestion job waiting or running: queued, running within its "
         "lease, stalled past it (the worker stopped; a later pass runs it again from its "
-        "first stage), put back to retry after a store or embedder outage, or running again "
-        "after any outage (it keeps the last attempt's error code until the run ends). A "
-        "waiting job with a cancel requested is cancelled, not counted. Search serves the "
-        "source's earlier revision, or nothing for a first ingestion, until it publishes.",
+        "first stage), put back to retry after a store or embedder outage (reported as "
+        "retrying), or running again after any outage (it keeps the last attempt's error "
+        "code until the run ends). A waiting job with a cancel requested is cancelled, not "
+        "counted. Search serves the source's earlier revision, or nothing for a first "
+        "ingestion, until it publishes.",
         "Wait for the worker: it runs while document ingestion is turned on (this report "
         "says whether it is on the server that answered), and it retries a store or "
         "embedder outage up to the attempt limit." + _STATUS + " Cancel a job that is not wanted.",
@@ -316,9 +317,10 @@ _INGEST_CHECKS: dict[str, tuple[RuleContract, str, str, list[str]]] = {
             exceptions="An outage of the extractor, or a credential it refused, is that finding's.",
         ),
         "Sources whose job failed on the server's side: a store or embedder outage that used "
-        "up the attempt limit, runs cut off before they finished (a pass past its time "
-        "limit, a process that stopped), or a server defect. Neither the file nor the "
-        "extractor is known to be at fault.",
+        "up the attempt limit, or runs cut off before they finished (a pass past its time "
+        "limit, a process that stopped), both reported as retries exhausted; or a server "
+        "defect, reported as internal. Neither the file nor the extractor is known to be at "
+        "fault.",
         "Once the store and embedder answer (or, for runs cut off, with the pass time limit "
         "above the server's extractor timeout plus the source's embedding), " + _REINGEST + ". For "
         "a server defect, the server log names the job's id with its traceback." + _STATUS,
