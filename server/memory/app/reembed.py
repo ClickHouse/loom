@@ -665,7 +665,8 @@ async def reembed_all(
         log(f"{waiting} rows of {len(off)} switched-off org(s) left for a later run")
     if delete_old and not dry_run:
         # Every org whose rows wait keeps its old vectors: off at the start, off
-        # during the run or by now, or with a row the re-read found with other text or identity.
+        # during the run or by now, or with a row the re-read found with other text or identity, or named by the
+        # resume token.
         keep = frozenset(left_orgs | await customer.switched_off_orgs())
         if keep:
             named = ", ".join(sorted(keep)[:20]) + (", ..." if len(keep) > 20 else "")
