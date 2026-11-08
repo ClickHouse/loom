@@ -365,7 +365,11 @@ async def delete_graph_links_by_user(org: str, user_id: str, *, ch: _CHClient | 
         total += await delete_scoped(t, org=org, scope_where=UID, params={"uid": user_id}, ch=ch)
         for ids in chunks(summaries.ids):
             total += await delete_scoped(
-                t, org=org, scope_where="memory_id IN {ids:Array(UUID)}", params={"ids": ids}, ch=ch
+                t,
+                org=org,
+                scope_where="(namespace, memory_id) IN {ids:Array(Tuple(String, UUID))}",
+                params={"ids": ids},
+                ch=ch,
             )
     for t in _KEY_LINK_TABLES:
         for part in chunks(keys):

@@ -49,7 +49,7 @@ class SummaryRows(NamedTuple):
 
     keys: list[tuple[str, str]]  # (namespace, memory_key)
     identities: list[tuple[str, str, str, str]]  # (namespace, agent, user_id, memory_key)
-    ids: list[str]  # memory_id
+    ids: list[tuple[str, str]]  # (namespace, memory_id)
 
 
 async def user_summary_rows(org: str, user_id: str, *, ch: _CHClient) -> SummaryRows:
@@ -65,7 +65,7 @@ async def user_summary_rows(org: str, user_id: str, *, ch: _CHClient) -> Summary
     return SummaryRows(
         keys=sorted({(ns, key) for ns, _, _, key, _ in found}),
         identities=sorted({(ns, a, u, key) for ns, a, u, key, _ in found}),
-        ids=sorted({i for *_, i in found}),
+        ids=sorted({(ns, i) for ns, *_, i in found}),
     )
 
 

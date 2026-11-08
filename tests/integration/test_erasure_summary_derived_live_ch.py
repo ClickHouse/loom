@@ -80,6 +80,9 @@ def _seed(ch_client: Any, org: str) -> None:
     tags = ["consolidated", "src:user_diet", "src:bob-diet"]
     memory("-", "topic-diets", "alice is vegetarian; bob eats fish", tags, _SUMMARY_ID)
     memory("-", "topic-bob", "bob eats fish", ["consolidated", "src:bob-diet"], _BOB_SUMMARY_ID)
+    # a copy restored into ns2, where alice holds no key: same id, not hers there
+    copy = [org, "ns2", "a", "-", "-", "topic-diets", "fact", "alice is vegetarian", 1, tags]
+    _insert(ch_client, "loom.memory", _MEMORY_COLS, [[*copy, _SUMMARY_ID]])
     # rebuilt under the same key from bob's fact alone: the newer version stays
     rebuilt = "00000000-0000-4000-8000-000000000003"
     memory("-", "topic-rebuilt", "alice is vegetarian", ["consolidated", "src:user_diet"], rebuilt)
@@ -125,6 +128,7 @@ def _seed(ch_client: Any, org: str) -> None:
         [
             [org, "ns", _SUMMARY_ID, "-", "diets", "differ", "by person"],
             [org, "ns", _BOB_SUMMARY_ID, "-", "bob", "eats", "fish"],
+            [org, "ns2", _SUMMARY_ID, "-", "diets", "differ", "by person"],
         ],
     )
     edges = [
@@ -200,6 +204,7 @@ async def test_what_a_summary_of_the_users_memories_fed_leaves_with_it(
     history = "SELECT concat(user_id, ':', memory_key, ':', toString(version))"
     assert _column(ch_client, org, f"{history} FROM loom.memory_versions{_WHERE}") == [
         "-:topic-bob:1",
+        "-:topic-diets:1",  # the copy in ns2
         "-:topic-rebuilt:2",
         "bob:bob-diet:1",
         "carol:topic-diets:1",
@@ -210,8 +215,10 @@ async def test_what_a_summary_of_the_users_memories_fed_leaves_with_it(
     assert _column(ch_client, org, f"SELECT subject FROM loom.entity_triples{_WHERE}") == ["bob"]
     links = f"SELECT memory_key FROM loom.entity_triple_memories{_WHERE}"
     assert _column(ch_client, org, links) == ["bob-diet"]
-    rows = f"SELECT toString(memory_id) FROM loom.entity_triple_rows{_WHERE}"
-    assert _column(ch_client, org, rows) == [_BOB_SUMMARY_ID]
+    rows = (
+        f"SELECT concat(namespace, ':', toString(memory_id)) FROM loom.entity_triple_rows{_WHERE}"
+    )
+    assert _column(ch_client, org, rows) == [f"ns2:{_SUMMARY_ID}", f"ns:{_BOB_SUMMARY_ID}"]
     assert _column(ch_client, org, f"SELECT entity_a FROM loom.entity_edges{_WHERE}") == ["bob"]
     links = f"SELECT memory_key FROM loom.entity_edge_memories{_WHERE}"
     assert _column(ch_client, org, links) == ["bob-diet"]

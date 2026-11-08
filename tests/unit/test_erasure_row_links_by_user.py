@@ -25,7 +25,7 @@ async def test_a_users_row_links_are_deleted_by_the_user_they_carry(
         return [("ns", "k")]
 
     async def user_summary_rows(org: str, user_id: str, *, ch: Any) -> SummaryRows:
-        return SummaryRows(keys=[("ns", "topic")], identities=[], ids=["s1"])
+        return SummaryRows(keys=[("ns", "topic")], identities=[], ids=[("ns", "s1")])
 
     async def no_graph_rows(org: str, user_id: str, *, ch: Any) -> int:
         return 0
@@ -43,7 +43,7 @@ async def test_a_users_row_links_are_deleted_by_the_user_they_carry(
     for table in ("loom.entity_triple_rows", "loom.entity_edge_rows"):
         assert by_table[table] == [
             ("user_id = {uid:String}", {"uid": "u1"}),
-            ("memory_id IN {ids:Array(UUID)}", {"ids": ["s1"]}),
+            ("(namespace, memory_id) IN {ids:Array(Tuple(String, UUID))}", {"ids": [("ns", "s1")]}),
         ], table
     for table in ("loom.entity_triple_memories", "loom.entity_edge_memories"):
         ((where, params),) = by_table[table]

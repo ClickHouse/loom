@@ -107,7 +107,6 @@
 0c999f060efc	SELECT proposal_policy FROM loom.namespaces FINAL WHERE org = {org:String} AND namespace = {ns:String} LIMIT ?
 0cfc88297bf0	SELECT count() AS n FROM loom.knowledge_ingestions WHERE org = {org:String} AND namespace = {ns:String}
 0d0074d068cf	SELECT queue_id, agent, user_id, session_id, status, attempts, message_count, content_chars, written, last_error, enqueued_at, updated_at FROM loom.memory_extraction_queue FINAL PREWHERE org = {org:St
-0d1189d92037	SELECT count() AS n FROM loom.entity_edge_rows WHERE org = {org:String} AND (user_id = {uid:String} OR memory_id IN (SELECT memory_id FROM (SELECT namespace, agent, user_id, memory_key, memory_id, tag
 0d722791e395	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 0d7b666e8f66	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.agent AS agent, c.user
 0d8bcca925ff	SELECT sum(upstream_cost_usd) AS spent FROM loom.agent_events WHERE org = {org:String} AND namespace = {ns:String} AND ts > now() - INTERVAL ? DAY
@@ -134,6 +133,7 @@
 109db307d85f	SELECT count() AS n FROM loom.chunks WHERE org = {org:String} AND user_id = {uid:String} AND doc_superseded_at IS NULL
 10ff90cbf7b6	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 11073f58b15c	SELECT tag, count() AS rows FROM (SELECT arrayJoin(tags) AS tag FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL AND agent != {id:String} AND user_
+11238f98288d	SELECT count() AS n FROM loom.entity_triple_rows WHERE org = {org:String} AND (user_id = {uid:String} OR (namespace, memory_id) IN (SELECT toString(namespace), memory_id FROM (SELECT namespace, agent,
 1150f6c7a8f5	SELECT * FROM loom.memory_embeddings FINAL PREWHERE (org, namespace, agent, user_id, session_id, memory_key) IN arrayZip( {o:Array(String)}, {n:Array(String)}, {a:Array(String)}, {u:Array(String)}, {s
 1151127d54f9	SELECT ? AS present FROM loom.code_summaries WHERE org = {org:String} AND namespace = {ns:String} AND scope_type = ? AND pagerank > ? AND tombstoned_at IS NULL LIMIT ?
 118b55a24b40	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
@@ -282,7 +282,6 @@
 231c46b9c69e	SELECT count() AS n FROM loom.search_trace_log WHERE org = {org:String} AND namespace IN {ns:Array(String)}
 232204b29bcb	ALTER TABLE loom.document_blobs DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 2347071a201b	SELECT chunk_id, path, cosineDistance(embedding, {q:Array(Float32)}) AS distance FROM loom.code_chunks FINAL WHERE org = {org:String} AND namespace = {ns:String} AND embedding_model = {model:String} A
-23a7d6810bda	SELECT count() AS n FROM loom.entity_triple_rows WHERE org = {org:String} AND (user_id = {uid:String} OR memory_id IN (SELECT memory_id FROM (SELECT namespace, agent, user_id, memory_key, memory_id, t
 23c7e58243f2	SELECT count() AS n FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String}
 241610b30143	SELECT count() AS n FROM loom.session_briefs WHERE org = {org:String} AND namespace = {ns:String}
 241769ad1a52	SELECT count() AS n FROM loom.datasets WHERE org = {org:String} AND namespace = {ns:String}
@@ -1611,6 +1610,7 @@ c1434f6b0ebe	SELECT count() AS n FROM loom.knowledge_uploads WHERE org = {org:St
 c146115aa642	SELECT label, uniqExact(pr_number) AS prs FROM loom.code_pr_history FINAL ARRAY JOIN labels AS label WHERE org = {org:String} AND namespace = {ns:String} AND merged_at > now() - INTERVAL {days:UInt32}
 c16434c88b3c	SELECT tag, count() AS rows FROM (SELECT arrayJoin(tags) AS tag FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL AND user_id = {scope_uid:String})
 c169a496882f	SELECT count() AS n FROM loom.llm_response_cache WHERE org = {org:String} AND namespace = {ns:String}
+c185216f2188	SELECT count() AS n FROM loom.entity_edge_rows WHERE org = {org:String} AND (user_id = {uid:String} OR (namespace, memory_id) IN (SELECT toString(namespace), memory_id FROM (SELECT namespace, agent, u
 c1aa2dbb7a43	SELECT count() AS n FROM loom.llm_response_cache WHERE org = {org:String} AND hasAny(window_keys, {keys:Array(String)})
 c1ad00d9e230	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 c1dd61e21ceb	SELECT window_start, window_end, row_count, toString(rows_digest) AS rows_digest, toString(prev_checkpoint_hash) AS prev_checkpoint_hash, toString(checkpoint_hash) AS checkpoint_hash FROM loom.audit_c

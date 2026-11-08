@@ -87,8 +87,8 @@ USER_KEY_LIST = (
 # verbatim by design, tagged `src:<key>`. A user_id match never reaches it. A `src:`
 # tag names a key of the summary's own namespace, as consolidation writes it (a copy
 # into another namespace keeps the tags, and is not the user's there); the next dense
-# pass rebuilds a retired summary from the surviving sources. The user's tags let a
-# tags skip index prune; their (namespace, tag) pairs decide, on each version.
+# pass rebuilds a retired summary from the surviving sources. The user's tags let the
+# skip index prune; their (namespace, tag) pairs decide, on each version.
 # `scope_reads.summary_slices` binds them; `USER_SUMMARIES` is the same match as a read.
 CONSOLIDATED_IN = (
     "has(tags, 'consolidated') AND hasAny(tags, {src:Array(String)}) "
@@ -135,7 +135,10 @@ USER_SUMMARY_CHUNKS = (
     f"(namespace, agent, user_id, parent_memory_key) IN {_USER_SUMMARY_IDENTITIES}"
 )
 USER_SUMMARY_VECTORS = f"(namespace, agent, user_id, memory_key) IN {_USER_SUMMARY_IDENTITIES}"
-USER_SUMMARY_IDS = f"memory_id IN (SELECT memory_id {SUMMARY_ROWS_FROM})"
+# by (namespace, id): a namespace restored from another keeps the ids
+USER_SUMMARY_IDS = (
+    f"(namespace, memory_id) IN (SELECT toString(namespace), memory_id {SUMMARY_ROWS_FROM})"
+)
 USER_GRAPH_KEYS = (
     f"((namespace, memory_key) IN {USER_KEYS_SUBQ} "
     f"OR (namespace, memory_key) IN {USER_SUMMARY_KEYS_SUBQ})"
