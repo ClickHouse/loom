@@ -31,8 +31,10 @@ const row = (key: string) => ({
   excerpt: "Invoices go out on Fridays, and a reminder goes to the account owner two days before.",
 });
 
+// server/memory/app/inspect.py _DEFINITION_REFS["user"].
 const view = (definition: string, keys: string[]) => ({
   definition,
+  refs: ["user_id", "read_scope own_user", "memory.promote"],
   live_rows: keys.length,
   by_type: keys.length ? [{ name: "semantic", rows: keys.length }] : [],
   by_status: keys.length ? [{ name: "active", rows: keys.length }] : [],
@@ -68,6 +70,7 @@ const INSPECTION = {
     extraction_policy_unavailable: "",
     extraction_instructions:
       "Each request that extracts memories from messages may send extraction instructions; no user, agent or session setting stores them.",
+    extraction_instructions_refs: ["memory.set_from_messages", "extraction_instructions"],
   },
   skipped: [],
 };
@@ -164,7 +167,15 @@ const REJECTED_URI = longUri("corrupt-export.pdf");
 const DETAIL =
   "What the check matches, as the server words it: which documents or sources, and why search does or does not serve them now.";
 const REMEDY =
-  "What to do about it, as the server words it: the setting to change (LOOM_DOCUMENT_EXTRACTORS_JSON), or the original to upload again and ingest.";
+  "What to do about it, as the server words it: the setting to change, or the original to upload again and ingest.";
+// The exact names a remedy says in words, as long as the server's longest (the rechunk command).
+const REFS = [
+  "loom rechunk --org <org> --namespace <namespace> --source-uri <uri> --apply",
+  "LOOM_DOCUMENT_EXTRACTORS_JSON",
+  "GET /v1/knowledge.download",
+  "POST /v1/knowledge.upload",
+  "knowledge.ingest",
+];
 
 const contract = (code: string, kind: string) => ({
   code,
@@ -175,6 +186,7 @@ const contract = (code: string, kind: string) => ({
   samples_complete: true,
   detail: DETAIL,
   remedy: REMEDY,
+  refs: REFS,
   exceptions: "",
   uncertainty: "",
 });
@@ -285,6 +297,13 @@ const KNOWLEDGE = {
   decisions: {
     definition:
       "Live decisions in this namespace that cite a section of one of its documents, as decision extraction and decision recording write them, within what your token reads, by stage: decided, or proposed. Decisions written into another namespace (a repository's) are not counted.",
+    refs: [
+      "source_resource_id",
+      "knowledge:<namespace>/<source_uri>#<section>",
+      "loom decisions extract",
+      "decision.record",
+      "decision:proposed",
+    ],
     all_documents: { decided: stage, proposed: stage },
   },
   listed: [
@@ -603,8 +622,10 @@ async function openWithEveryPanel(page: Page) {
   await expect(page.getByTestId("assistant-inspection")).toBeVisible();
   await page.getByRole("button", { name: "Draft improvements" }).click();
   await expect(page.getByTestId("assistant-review")).toBeVisible();
-  // A draft's exact names are part of what must fit and pass the checks.
+  // Exact names on every tab are part of what must fit and pass the checks.
   await expect(page.getByTestId("assistant-review").getByTestId("exact-names").first()).toBeVisible();
+  await expect(page.getByTestId("assistant-documents").getByTestId("exact-names").first()).toBeVisible();
+  await expect(page.getByTestId("assistant-inspection").getByTestId("exact-names").first()).toBeVisible();
   await page.waitForTimeout(300); // entry animations
 }
 
