@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -22,17 +23,12 @@ class _Driver:
 
     async def query(self, _sql: str, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
-        column_type = type("T", (), {"name": "UInt64"})()
-        return type(
-            "R",
-            (),
-            {
-                "result_rows": [(1,)],
-                "column_names": ["n"],
-                "column_types": [column_type],
-                "summary": {},
-            },
-        )()
+        return SimpleNamespace(
+            result_rows=[(1,)],
+            column_names=["n"],
+            column_types=[SimpleNamespace(name="UInt64")],
+            summary={},
+        )
 
 
 def _client(driver: _Driver) -> ch.CHClient:
