@@ -110,15 +110,15 @@ a pass that runs twice converges.
 
 ## Repair workers
 
-| Worker                    | Repairs                                                                                                                | Guarantee                                                                          |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `projection_repair`       | Replays failed projections (evidence links, chunks, graph side tables) logged in `loom.memory_projection_failures`.    | Unsupported entries stay for inspection.                                           |
-| `entity_extractor`        | Extracts entities onto rows that have none; re-emits `memory_embeddings` rows whose `entities` diverge from `memory`.  | Every searchable row eventually carries its entities.                              |
-| `orphan_vector_reconcile` | Tombstones embedding and entity-vector rows whose memory is tombstoned or gone, after a grace period.                  | No vector outlives its fact.                                                       |
-| `embedding_worker`        | Embeds `embedding_dim = 0` stubs newest first and memories with no embedding row; re-embeds stubs from an older model. | A row that fails 5 times is marked `embed_failed_at` and skipped.                  |
-| `erasure_recovery`        | Resumes sagas stuck `in_progress` or `failed` from `steps_completed`.                                                  | After `max_attempts` (5): terminal `failed` plus an `erasure.abandoned` audit row. |
-| `task_lease_sweep`        | Returns expired leases to `todo`, or `blocked` after their attempts; resumes deferred tasks.                           | A crashed agent's task is not lost.                                                |
-| `audit_verifier`          | Recomputes audit hashes and verifies the checkpoint chain.                                                             | Tampering is reported, not repaired.                                               |
+| Worker                    | Repairs                                                                                                                                               | Guarantee                                                                          |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `projection_repair`       | Replays failed projections (evidence links, chunks, graph side tables, the expiry sweep's search mirror) logged in `loom.memory_projection_failures`. | Unsupported entries stay for inspection.                                           |
+| `entity_extractor`        | Extracts entities onto rows that have none; re-emits `memory_embeddings` rows whose `entities` diverge from `memory`.                                 | Every searchable row eventually carries its entities.                              |
+| `orphan_vector_reconcile` | Tombstones embedding and entity-vector rows whose memory is tombstoned or gone, after a grace period.                                                 | No vector outlives its fact.                                                       |
+| `embedding_worker`        | Embeds `embedding_dim = 0` stubs newest first and memories with no embedding row; re-embeds stubs from an older model.                                | A row that fails 5 times is marked `embed_failed_at` and skipped.                  |
+| `erasure_recovery`        | Resumes sagas stuck `in_progress` or `failed` from `steps_completed`.                                                                                 | After `max_attempts` (5): terminal `failed` plus an `erasure.abandoned` audit row. |
+| `task_lease_sweep`        | Returns expired leases to `todo`, or `blocked` after their attempts; resumes deferred tasks.                                                          | A crashed agent's task is not lost.                                                |
+| `audit_verifier`          | Recomputes audit hashes and verifies the checkpoint chain.                                                                                            | Tampering is reported, not repaired.                                               |
 
 ## Fail-closed choices
 

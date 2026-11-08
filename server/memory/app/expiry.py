@@ -48,6 +48,8 @@ log = logging.getLogger(__name__)
 ACTIONS: tuple[str, ...] = ("tombstone", "demote", "anonymize")
 DEFAULT_ACTION = "tombstone"
 ANONYMIZED_VALUE = "[EXPIRED]"
+_ANONYMIZED_SHA = _sha(ANONYMIZED_VALUE)
+_ANONYMIZED_REASON = "expired:anonymize"
 
 # Which lock class each action is, for memory_lock.assert_unlocked.
 _LOCK_CLASS: dict[str, str] = {"tombstone": "delete", "demote": "value", "anonymize": "value"}
@@ -128,12 +130,12 @@ def plan(row: Any, *, now: datetime, cfg: ExpiryConfig) -> dict[str, Any]:
     return {
         "value": json.dumps(ANONYMIZED_VALUE),
         "value_json": "{}",
-        "content_sha256": _sha(ANONYMIZED_VALUE),
+        "content_sha256": _ANONYMIZED_SHA,
         "entities": [],
         "expires_at": None,
         "on_expire": "",
         "redacted_at": now,
-        "redaction_reason": (f"expired:anonymize|{reason}" if reason else "expired:anonymize")[
+        "redaction_reason": (f"{_ANONYMIZED_REASON}|{reason}" if reason else _ANONYMIZED_REASON)[
             :512
         ],
     }
@@ -247,8 +249,8 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
             res.anonymized += 1
         if cfg.dry_run:
             continue
-        # One version for the memory row and its vector retire, so a late copy of an
-        # older read (read + 1) stays below the retire.
+        # One version for the memory row and its vector retire or demote copy, so a late
+        # copy of an older read (read + 1) stays below it.
         version = memory_repo.version_over(row)
         version_rows.append(memory_repo.build_memory_version_row(row, version=version, **overrides))
         mirrors.append((action, row, version))
@@ -273,17 +275,16 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
                 for row, (action, _r, _v) in zip(version_rows, mirrors, strict=True)
             ]
         )
+        items, demoted = _mirror_items(mirrors, cfg=cfg)
         try:
-            await _mirror_embeddings_batch(mirrors, cfg=cfg)
+            await apply_mirror(items, demoted, ch=ch)
         except Exception as e:  # noqa: BLE001 — the memory rows are authoritative
-            # The memory-table rows are authoritative and their read filter
-            # already hid them; a stray embedding is the known, tolerated
-            # failure mode (same as memory.consolidate). The next pass that
-            # sees the key re-mirrors it.
+            # The next pass never selects these keys: the repair replays the record.
             log.warning(
-                "memory_expiry_sweep: embeddings mirror failed for %d keys: %s", len(mirrors), e
+                "memory_expiry_sweep: embeddings mirror failed for %d keys: %s", len(items), e
             )
-            res.failures.append(f"mirror:{len(mirrors)} keys: {type(e).__name__}")
+            res.failures.append(f"mirror:{len(items)} keys: {type(e).__name__}")
+            await _record_mirror_failures(items, e)
     outcome = res.as_dict()
     outcome.pop("sample", None)
     get_registry().record_success(
@@ -295,8 +296,8 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
 
 
 def _demote_overrides(row: Any, cfg: ExpiryConfig) -> dict[str, Any]:
-    """What demote changes on the key's embedding rows: a metadata copy (read + 1).
-    Tombstone and anonymize retire through `retire_vectors_for_keys` instead."""
+    """What demote changes on the key's embedding rows, copied at the memory row's
+    version by `apply_mirror`. Tombstone and anonymize retire the vectors instead."""
     conf = max(cfg.demote_floor, min(1.0, float(row.confidence or 0.0) * cfg.demote_factor))
     return {"expires_at": None, "confidence": round(conf, 4)}
 
@@ -357,33 +358,133 @@ def _leave(res: ExpiryResult, mirrors: list[tuple[str, Any, int]]) -> None:
     res.sampled = [(key, entry) for key, entry in res.sampled if key not in left]
 
 
-async def _mirror_embeddings_batch(
+# One key's mirror: its identity key, the memory row's version, the action.
+MirrorItem = tuple[IdentityKey, int, str]
+
+
+def _mirror_items(
     mirrors: list[tuple[str, Any, int]], *, cfg: ExpiryConfig
-) -> int:
-    """Search reads loom.memory_embeddings, so the post-action lands there too:
-    tombstone and anonymize retire the keys' vectors (memory_embeddings and
-    entity_vectors, at the memory row's version, so an anonymized key keeps no entity
-    names in search either); demote clears their expiry and lowers confidence.
-    Batched as one keyed read and one insert per 500 keys, never one per key."""
+) -> tuple[list[MirrorItem], dict[IdentityKey, dict[str, Any]]]:
+    """What each written row's post-action changes on the search side, and each demoted
+    key's embedding overrides. A demoted 'high' head keeps no vector, so it has nothing
+    to mirror."""
+    items: list[MirrorItem] = []
+    demoted: dict[IdentityKey, dict[str, Any]] = {}
+    for action, row, version in mirrors:
+        if action == "demote":
+            if row.sensitivity == "high":
+                continue
+            demoted[identity_key(row)] = _demote_overrides(row, cfg)
+        items.append((identity_key(row), version, action))
+    return items, demoted
+
+
+async def apply_mirror(
+    items: list[MirrorItem], demoted: dict[IdentityKey, dict[str, Any]], *, ch: Any | None = None
+) -> None:
+    """Search reads loom.memory_embeddings, so the post-action lands there too, at the
+    memory row's version, on rows below it only: tombstone retires the key's vectors,
+    keeping the vector for `memory.restore`; anonymize retires them bare; demote copies
+    them with `demoted`'s overrides (the expiry cleared, confidence lowered). One
+    batched call per action."""
     import server.memory.store as memory_repo
 
-    if not mirrors:
-        return 0
-    retires = [
-        ((row.org, row.namespace, row.agent, row.user_id, row.session_id, row.memory_key), version)
-        for action, row, version in mirrors
-        if action in ("tombstone", "anonymize")
-    ]
-    copies = [
-        (
-            (row.org, row.namespace, row.agent, row.user_id, row.session_id, row.memory_key),
-            _demote_overrides(row, cfg),
+    def pins(action: str) -> list[tuple[IdentityKey, int]]:
+        return [(key, version) for key, version, a in items if a == action]
+
+    if tombstoned := pins("tombstone"):
+        await memory_repo.retire_vectors_for_keys(tombstoned, ch=ch)
+    if anonymized := pins("anonymize"):
+        await memory_repo.retire_vectors_for_keys(anonymized, ch=ch, bare=True)
+    if copies := [(key, {**demoted[key], "version": v}) for key, v in pins("demote")]:
+        await memory_repo.reemit_embedding_rows_for_keys(copies, ch=ch)
+
+
+def _is_anonymized_shell(head: Any) -> bool:
+    """A head the sweep anonymized and nothing has rewritten since: its marker value
+    and the sweep's redaction reason (a write of the marker text has no reason)."""
+    reason = str(head.redaction_reason or "")
+    return head.content_sha256 == _ANONYMIZED_SHA and reason.startswith(_ANONYMIZED_REASON)
+
+
+async def replay_mirror(recorded: list[MirrorItem], *, ch: Any | None = None) -> None:
+    """The mirror of a recorded failure, run after later writes may have landed, from
+    the keys' live heads as they are now.
+
+    A tombstone runs as recorded, bare: the key's vectors below the version hold the
+    text it took out, and a late copy of that text could land after a redaction's
+    purge. A restore of the key then rebuilds its vector from scratch (the embedding
+    worker), not from the tombstone. An anonymize whose head is still the anonymized shell
+    (`_is_anonymized_shell`), which keeps no vector, retires bare every live vector up
+    to that head: a status write since the sweep (a supersede) may have copied the old
+    text above the recorded version, and a metadata copy of that (an entity heal) one
+    above the head. The pin is the head's version + 2, above every vector-only copy of
+    the head (`reemit_version`); a write drawn over the head (`version_over`) lands there
+    only when its clock trails the head's, and then the later insert of the two wins.
+    Any other head (rewritten or deleted since) takes the recorded version.
+
+    A demote copies the key's live head, its expiry and confidence, onto the key's live
+    vectors as a metadata copy at read + 1: a write since the sweep (a touch, a verify, a
+    tag edit) keeps what it set, and a row a writer that draws its own version
+    (`memory.set`, `update_by_id`) lands after the read is newer than the copy. A key
+    with no live head, or a 'high' one, has nothing to copy.
+
+    Every read is sequentially consistent, so it sees a row that landed on another
+    replica."""
+    import server.memory.store as memory_repo
+    from server.core.ch import sequential_reads
+
+    with sequential_reads():
+        keys = [key for key, _version, action in recorded if action != "tombstone"]
+        heads = await memory_repo.memory_rows_by_identity_keys(keys, ch=ch)
+        retires: list[tuple[IdentityKey, int]] = []
+        copies = []
+        for key, version, action in recorded:
+            head = heads.get(key)
+            if action == "tombstone":
+                retires.append((key, version))
+            elif action == "anonymize":
+                pin = version
+                if head is not None and _is_anonymized_shell(head):
+                    pin = head.version + 2  # above a vector-only copy of the head
+                retires.append((key, pin))
+            elif head is not None and head.sensitivity != "high":
+                copies.append((key, {"expires_at": head.expires_at, "confidence": head.confidence}))
+        if retires:
+            await memory_repo.retire_vectors_for_keys(retires, ch=ch, bare=True)
+        if copies:
+            await memory_repo.reemit_embedding_rows_for_keys(copies, ch=ch)
+
+
+async def _record_mirror_failures(items: list[MirrorItem], error: Exception) -> None:
+    """One `memory_expiry_mirror` projection failure per writer (org, namespace, agent,
+    user_id), its items in the payload, so the repair replays each as one batch and a
+    user erasure finds it by `user_id`."""
+    from server.memory.app.projection_failures import (
+        EXPIRY_MIRROR,
+        insert_projection_failures,
+        projection_failure_row,
+    )
+
+    by_writer: dict[tuple[str, ...], list[MirrorItem]] = {}
+    for item in items:
+        by_writer.setdefault(item[0][:4], []).append(item)  # org, namespace, agent, user_id
+    rows = []
+    for (org, namespace, agent, user_id), group in by_writer.items():
+        rows.append(
+            projection_failure_row(
+                org=org,
+                namespace=namespace,
+                agent=agent,
+                projection=EXPIRY_MIRROR,
+                source_operation="memory.sweep_expired",
+                memory_keys=[key[5] for key, *_rest in group],
+                error=error,
+                payload={"items": [[list(key), version, action] for key, version, action in group]},
+                user_id=user_id,
+            )
         )
-        for action, row, _version in mirrors
-        if action not in ("tombstone", "anonymize")
-        and row.sensitivity != "high"  # a 'high' head keeps no vector
-    ]
-    n = await memory_repo.retire_vectors_for_keys(retires) if retires else 0
-    if copies:
-        n += await memory_repo.reemit_embedding_rows_for_keys(copies)
-    return n
+    try:
+        await insert_projection_failures(rows)
+    except Exception as e:  # noqa: BLE001 — the pass reports the mirror failure either way
+        log.warning("memory_expiry_sweep: recording %d mirror failures failed: %s", len(rows), e)

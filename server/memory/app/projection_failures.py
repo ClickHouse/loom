@@ -114,6 +114,10 @@ EDGES_RESTORE = "entity_edges_restore"
 # (`facts_owed_payload`). Closed once ClickHouse, which the graph is judged from, holds
 # the relabel; nothing is owed when it settled without it.
 SENSITIVITY_FACTS = "sensitivity_facts_owed"
+# An expiry sweep's search mirror that failed after its memory rows landed: payload
+# items, each [identity key, the memory row's version, the `on_expire` action]
+# (`replay_mirror`).
+EXPIRY_MIRROR = "memory_expiry_mirror"
 # Intents written (a waited async insert) right before the commit their writer then
 # settles itself: the repair leaves one this long, so the two never settle it side by side.
 _GRACED = (FOLLOW_OWED, SENSITIVITY_FACTS)
@@ -507,6 +511,8 @@ async def _retry(failure: ProjectionFailureRow, *, ch: Any) -> ProjectionFailure
             reason = await _retry_edges_drop(failure, ch=ch)
         elif failure.projection == EDGES_RESTORE:
             reason = await _retry_edges_restore(failure, ch=ch)
+        elif failure.projection == EXPIRY_MIRROR:
+            reason = await _retry_expiry_mirror(failure, ch=ch)
         elif failure.projection == SENSITIVITY_FACTS:
             outcome = await _retry_sensitivity_facts(failure, ch=ch)
             if outcome is None:
@@ -868,6 +874,32 @@ async def _retry_edges_restore(failure: ProjectionFailureRow, *, ch: Any) -> str
     await restore_kept_links(
         failure.payload, _failure_scope(failure), ch=ch, op=failure.source_operation
     )
+    return ""
+
+
+async def _retry_expiry_mirror(failure: ProjectionFailureRow, *, ch: Any) -> str:
+    """Apply the sweep's mirror again (`replay_mirror`)."""
+    from server.memory.app.expiry import ACTIONS, replay_mirror
+
+    items = failure.payload.get("items")
+    if not isinstance(items, list) or not items:
+        return "malformed_payload"
+    recorded = []
+    for item in items:
+        if not isinstance(item, list) or len(item) != 3:
+            return "malformed_payload"
+        key, version, action = item
+        if (
+            not isinstance(key, list)
+            or len(key) != 6
+            or not all(isinstance(c, str) for c in key)
+            or not isinstance(version, int)
+            or isinstance(version, bool)
+            or action not in ACTIONS
+        ):
+            return "malformed_payload"
+        recorded.append((cast(IdentityKey, tuple(key)), version, action))
+    await replay_mirror(recorded, ch=ch)
     return ""
 
 
