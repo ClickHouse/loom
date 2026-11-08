@@ -267,20 +267,21 @@ _Seen = dict[tuple[str, str], dict[str, Any]]
 
 async def _mirror_wanted(
     client: Any, org: str, row: dict[str, Any], now: dict[str, Any] | None, seen: _Seen
-) -> bool:
+) -> dict[str, Any] | None:
     """A mirror is written only over the grant it was planned from (one changed
     since, an admin's lowering say, is left to the next sync), and only while
     its source is still the admin grant it copies: a revoke that landed since
     the plan read must not be copied back."""
     subject, source_ns = row["subject"], row["granted_by"].removeprefix(GRANTED_BY_PREFIX)
     if _version(now) != _version(seen.get((row["namespace"], subject))):
-        return False
+        return None
     if await _restricted_since(client, org, row["namespace"], source_ns):
-        return False
+        return None
     source = await client.query_one(
         _GRANT_ROW_SQL, params={"org": org, "ns": source_ns, "sub": subject}
     )
-    return _live_admin(source) and _version(source) == _version(seen.get((source_ns, subject)))
+    unchanged = _version(source) == _version(seen.get((source_ns, subject)))
+    return row if _live_admin(source) and unchanged else None
 
 
 async def _restricted_since(client: Any, org: str, target: str, source: str) -> bool:
@@ -295,44 +296,44 @@ async def _restricted_since(client: Any, org: str, target: str, source: str) -> 
 
 async def _copy_unchanged(
     client: Any, org: str, row: dict[str, Any], now: dict[str, Any] | None, seen: _Seen
-) -> bool:
+) -> dict[str, Any] | None:
     """A copy a restricted branch must not hold is revoked while it is still the
     row the plan read, even as the branch's only admin: it never was one."""
     read = seen.get((row["namespace"], row["subject"]))
-    return read is not None and _live(now) and _version(now) == _version(read)
+    return row if read is not None and _live(now) and _version(now) == _version(read) else None
 
 
 async def _rewrite_wanted(
     client: Any, org: str, row: dict[str, Any], now: dict[str, Any] | None, seen: _Seen
-) -> bool:
+) -> dict[str, Any] | None:
     """A stray copy planned to become a copy of the operator grant. When that grant
-    changed since the plan, the stray is revoked instead: the restricted branch must
-    not keep it."""
+    changed since the plan, the stray's revoke is written instead: the restricted
+    branch must not keep it."""
     if await _mirror_wanted(client, org, row, now, seen):
-        return True
+        return row
     if now is None or not await _copy_unchanged(client, org, row, now, seen):
-        return False
+        return None
     _log_stray(org, now)
-    row.clear()
-    row.update(_revoke_row(org, now))
-    return True
+    return _revoke_row(org, now)
 
 
 async def _still_admin(
     client: Any, org: str, row: dict[str, Any], now: dict[str, Any] | None, seen: _Seen
-) -> bool:
+) -> dict[str, Any] | None:
     """A revocation stands while the subject still holds the admin grant it
     was planned against (one granted again since is newer and stays) and is
     not the branch's only admin, counted under its admins claim."""
     read = seen.get((row["namespace"], row["subject"]))
     if read is None or not _live_admin(now) or _version(now) != _version(read):
-        return False
+        return None
     admins = await client.query_one(_ADMINS_SQL, params={"org": org, "ns": row["namespace"]})
-    return int((admins or {}).get("n") or 0) > 1
+    return row if int((admins or {}).get("n") or 0) > 1 else None
 
 
-# (client, org, planned row, current row, the plan's rows) -> write it?
-_Wanted = Callable[[Any, str, dict[str, Any], dict[str, Any] | None, _Seen], Awaitable[bool]]
+# (client, org, planned row, current row, the plan's rows) -> the row to write, or None.
+_Wanted = Callable[
+    [Any, str, dict[str, Any], dict[str, Any] | None, _Seen], Awaitable[dict[str, Any] | None]
+]
 
 
 async def _write_under_claims(
@@ -400,8 +401,9 @@ async def _write_subject(
             now = await client.query_one(
                 _GRANT_ROW_SQL, params={"org": org, "ns": ns, "sub": subject}
             )
-            if await still_wanted(client, org, row, now, seen):
-                wanted.append(row)
+            write = await still_wanted(client, org, row, now, seen)
+            if write is not None:
+                wanted.append(write)
         if wanted:
             try:
                 await client.insert(
@@ -506,6 +508,7 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
         read = [ns for ns in branches if _reaches(sources[ns], kind)]
         if targets:
             inserts += _plan_mirrors(org, rows, read, targets, branches)
+    held = {(str(r["namespace"]), str(r["subject"])): r for r in rows}
     for ns in sorted(restricted):
         # A copy it must not hold does not count, so an operator admin's is rewritten;
         # a lowered one still does, so the lowering stands. A foreign copy on an
@@ -513,14 +516,15 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
         kept = [
             r
             for r in rows
-            if not _foreign(r, config) or (r["namespace"] == ns and not _live_admin(r))
+            if not (r["namespace"] == ns and _live_admin(r) and _stray(r, config, held))
+            and not (r["namespace"] in config and _foreign(r, config))
         ]
         inserts += _plan_mirrors(org, kept, [*config, ns], [ns], branches)
     planned = {(r["namespace"], r["subject"]) for r in inserts}
     revokes, strays = [], set()
     for r in rows:
         key = (r["namespace"], r["subject"])
-        if r["namespace"] in restricted and _foreign(r, config):
+        if r["namespace"] in restricted and _stray(r, config, held):
             strays.add(key)
             if key not in planned:
                 _log_stray(org, r)
@@ -536,9 +540,12 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
         except GrantBusyError as e:  # the copies below are still written; a later sync retries
             busy = e
     if rewrites:
-        written += await _write_under_claims(
-            client, org, rewrites, _rewrite_wanted, rows, hold_repo=repo
-        )
+        try:
+            written += await _write_under_claims(
+                client, org, rewrites, _rewrite_wanted, rows, hold_repo=repo
+            )
+        except GrantBusyError as e:
+            busy = busy or e
     if inserts:
         written += await _write_under_claims(
             client, org, inserts, _mirror_wanted, rows, hold_repo=repo
@@ -554,6 +561,20 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
             len(branches),
         )
     return written
+
+
+def _stray(row: dict[str, Any], config: list[str], held: _Seen) -> bool:
+    """On a restricted branch added from the page: a live copy that is no copy of a
+    live operator admin grant. Its source is no operator entry (`_foreign`), or the
+    subject's row there is no live admin or is itself such a copy, as a mirror
+    standing in for a gone source is written with its holder's name."""
+    if _foreign(row, config):
+        return True
+    if not (_live(row) and _is_copy(row)):
+        return False
+    source = str(row["granted_by"]).removeprefix(GRANTED_BY_PREFIX)
+    there = held.get((source, str(row["subject"])))
+    return there is None or not _live_admin(there) or _foreign(there, config)
 
 
 def _log_stray(org: str, row: dict[str, Any]) -> None:

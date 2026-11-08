@@ -403,7 +403,9 @@ async def test_restricting_a_page_branch_revokes_the_copy_a_sibling_gave_it(monk
             held.remove(ns)
 
     async def insert(table: str, rows: list[dict[str, Any]], **_: Any) -> None:
-        if table == "loom.namespaces":  # a copy reads the classification under this claim
+        if (
+            table == "loom.namespaces"
+        ):  # the restriction's directory row is written under the branch's admins claim
             assert held == ["code-weave-rc"]
         ch.inserts.append((table, rows))
 

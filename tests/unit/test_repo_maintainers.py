@@ -355,6 +355,45 @@ async def test_a_lone_restricted_page_branch_is_cleaned_too(
     assert [(r["subject"], r["revoked_at"] is not None) for r in ch.inserted] == [("mallory", True)]
 
 
+async def test_a_copy_relayed_by_an_operator_entry_s_stand_in_goes_once_restricted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """mallory's copy on code-z stands in for a removed page branch, and a sync wrote
+    it onto code-z-26-5 while that was standard, named after code-z. Restricted, the
+    branch does not keep it: mallory holds no operator admin grant there."""
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    ch = _FakeCH(
+        [
+            _admin("code-z", "ops"),
+            _copy("code-z", "mallory", "code-z-gone"),
+            _copy("code-z-26-5", "mallory", "code-z"),
+            _copy("code-z-26-5", "ops", "code-z"),
+        ]
+    )
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    on_it = [r for r in ch.inserted if r["namespace"] == "code-z-26-5"]
+    assert [(r["subject"], r["revoked_at"] is not None) for r in on_it] == [("mallory", True)]
+
+
+async def test_a_busy_rewrite_does_not_stop_the_copies(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.auth import grant_claims
+
+    held = grant_claims.grant_change
+
+    def _ops_busy(org: str, ns: str, subject: str) -> Any:
+        if subject == "ops":
+            raise GrantBusyError("busy")
+        return held(org, ns, subject)
+
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    monkeypatch.setattr(grant_claims, "grant_change", _ops_busy)
+    rows = [_admin("code-z", "ops"), _admin("code-z", "carol")]
+    ch = _FakeCH([*rows, _copy("code-z-26-5", "ops", "code-z-dev")])
+    with pytest.raises(GrantBusyError):
+        await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    assert _on(ch, "code-z-26-5") == {"carol"}
+
+
 async def test_a_stray_whose_rewrite_is_refused_is_revoked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
