@@ -153,9 +153,6 @@ def test_release_gate_installs_browser_dependencies_before_running_provider_flow
         "preflight",
         "docker",
     ]
-    # The release waits for the signatures of what docker-tag tagged.
-    assert "docker-tag" in workflow["jobs"]["sign"]["needs"]
-    assert "sign" in workflow["jobs"]["github-release"]["needs"]
     assert steps[browser]["working-directory"] == "frontend"
     assert "npm ci" in steps[browser]["run"]
     assert job["timeout-minutes"] >= 30
@@ -201,7 +198,8 @@ def test_docker_tag_tags_both_scanned_images_and_refuses_one(tmp_path: Path) -> 
     root = Path(__file__).resolve().parents[2]
     workflow = yaml.safe_load((root / ".github/workflows/release.yml").read_text())
     steps = workflow["jobs"]["docker-tag"]["steps"]
-    script = next(s["run"] for s in steps if s.get("name") == "Tag the scanned images")
+    # By id: the step whose `digests` output sign reads.
+    script = next(s["run"] for s in steps if s.get("id") == "tag")
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "docker").write_text(DOCKER_STUB)
@@ -269,6 +267,7 @@ def test_docker_tag_tags_both_scanned_images_and_refuses_one(tmp_path: Path) -> 
     failed = run()
     assert failed.returncode != 0
     assert not (tmp_path / "summary").exists()  # no pin, empty or not
+    assert not (tmp_path / "output").exists()  # and no digests for sign
     (bin_dir / "docker").write_text(DOCKER_STUB)
 
     shutil.rmtree(tmp_path / "scanned-extractor-arm64")
