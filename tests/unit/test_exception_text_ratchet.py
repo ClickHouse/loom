@@ -122,6 +122,7 @@ BASELINE = {
     "server/memory/app/reembed.py": 1,
     "server/memory/app/reextract.py": 1,
     "server/memory/app/rerank.py": 1,
+    "server/memory/app/search/pg_validation.py": 1,
     "server/memory/app/sensitivity_sweep.py": 1,
     "server/memory/app/session_outcomes.py": 2,
     "server/memory/app/trajectory_notes.py": 5,
