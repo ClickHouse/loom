@@ -238,7 +238,7 @@ class RegistrationHit:
 
 
 # Read from each word's first letter and each blank run once; a line of many
-# unclosed `<` still rescans (code chunks are at most 6,000 characters).
+# `<` (closed or not) still rescans (code chunks are at most 6,000 characters).
 _STATED_CLASS_RE = re.compile(r"(?<!\w)[^\WA-Za-z_]*+([A-Za-z_]\w*+)\s*+(?:<[^;]*>)?\s*::\s*$")
 
 
