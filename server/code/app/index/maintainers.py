@@ -30,8 +30,9 @@ gives no grant on the operator's namespaces.
   own guard). From an operator entry it takes off a branch added from the page
   only a mirror, and none from a standard one while the subject holds an admin
   grant given on one. On a restricted branch added from the page it takes only
-  copies: one whose source is not an operator entry (``_foreign``) on any
-  revoke, without the guard; an operator copy only on an operator revoke, under
+  copies: one whose source is not an operator entry (``_foreign``) without the
+  guard (a page revoke leaves an operator admin's for the sync to rewrite); an
+  operator copy only on an operator revoke, under
   the guard, a copy it keeps going at a later sync once it no longer traces to
   an operator grant.
 
@@ -695,8 +696,9 @@ async def revoke_repo_maintainer(
     (`_reaches`); one on an operator entry takes off a branch added from the page
     only a mirror, and none from a standard one while the subject holds an admin
     grant given on a branch added from the page. On a restricted branch added from
-    the page, any revoke takes a copy whose source is not an operator entry
-    (`_foreign`), even as that branch's last admin; a revoke from an operator entry
+    the page, a revoke takes a copy whose source is not an operator entry
+    (`_foreign`), even as that branch's last admin (a page revoke leaves an operator
+    admin's for the sync to rewrite); a revoke from an operator entry
     also takes an operator copy, under the guard.
 
     The registry is read again under the claims: a branch added after
