@@ -23,14 +23,14 @@ describe("AgentSpend", () => {
         { model: "local-y", turns: 2, sessions: 1, cost_usd: 0, unpriced_turns: 2 },
       ],
       total_cost_usd: 1.5,
-      total_turns: 40,
+      total_turns: 42,
       unpriced_turns: 2,
     });
     render(<AgentSpend />);
     expect(await screen.findByText("claude-x")).toBeInTheDocument();
     expect(screen.getByText("$1.5000 over the last 7 days, 2 turns unpriced")).toBeInTheDocument();
     expect(screen.getByText("$1.5000")).toBeInTheDocument();
-    // A model with no price reads as unpriced, not free.
+    // A model none of whose turns has a price reads as unpriced, not free.
     expect(screen.getByText("—")).toBeInTheDocument();
     expect(api.getAgentSpend).toHaveBeenCalledWith(
       expect.objectContaining({ namespace: "team" }),

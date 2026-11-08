@@ -58,10 +58,10 @@ export function AgentSpend() {
                 { label: <span className="tabular">{r.sessions.toLocaleString()}</span> },
                 {
                   label:
-                    r.cost_usd > 0 ? (
-                      <span className="tabular">${r.cost_usd.toFixed(4)}</span>
-                    ) : (
+                    r.unpriced_turns === r.turns ? (
                       <span className="text-text-muted">—</span>
+                    ) : (
+                      <span className="tabular">${r.cost_usd.toFixed(4)}</span>
                     ),
                 },
               ],
