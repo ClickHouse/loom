@@ -437,11 +437,18 @@ class Rehearsal:
         return tag
 
     def container(
-        self, image: str, home: Path, port: int, script: str, mounts: tuple[str, ...] = ()
+        self,
+        image: str,
+        home: Path,
+        port: int,
+        script: str,
+        mounts: tuple[str, ...] = (),
+        env: dict[str, str] | None = None,
     ) -> str:
-        """`script` in a fresh container of `image`, as this host's user."""
+        """`script` in a fresh container of `image`, as this host's user, with
+        `env` added to the release's."""
         # A fresh HOME: the Docker client inside is signed in to nothing.
-        env = {**self.release.env, "HOME": str(home), "LOOM_PORT": str(port)}
+        env = {**self.release.env, **(env or {}), "HOME": str(home), "LOOM_PORT": str(port)}
         # Named, so a container that outlives its `docker run` (a timeout) is removed.
         self.container_count += 1
         name = f"loom-rehearsal-{self.run_id}-{self.container_count}"
@@ -472,18 +479,20 @@ class Rehearsal:
         print(result.stdout, result.stderr, sep="\n", flush=True)
         return result.stdout
 
-    def one_liner(self, image: str, home: Path, port: int, url: str, sh: str = "sh") -> str:
-        return self.container(image, home, port, f'curl -fsSL "{url}" | {sh}')
+    def one_liner(
+        self, image: str, home: Path, port: int, url: str, env: dict[str, str] | None = None
+    ) -> str:
+        return self.container(image, home, port, f'curl -fsSL "{url}" | sh', env=env)
 
     def install_previous(self, image: str, home: Path, port: int) -> None:
-        """The previous release by its own install.sh, naming its version (a release
-        tagged before the stamp installs latest); locally, the tag's copy with the
-        tag's bundle mounted."""
+        """The previous release by its own install.sh: published, with LOOM_VERSION
+        set, since a copy from before releases stamped install.sh installs latest;
+        locally, the tag's copy with the tag's bundle mounted."""
         release = self.release
         files = release.previous_files
         if files is None:
             url = f"{GITHUB_RELEASES}/download/v{release.previous}/install.sh"
-            self.one_liner(image, home, port, url, sh=f"LOOM_VERSION={release.previous} sh")
+            self.one_liner(image, home, port, url, env={"LOOM_VERSION": release.previous})
             return
         self.container(
             image,
