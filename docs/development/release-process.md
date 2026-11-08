@@ -162,7 +162,7 @@ in seconds, before any build, and names the fix for each one it finds missing:
 | A `pypi` environment and a PyPI trusted publisher for `release.yml`              | the `pypi` job                                       |
 | An `npm` environment, and npm trusted publishing or an `NPM_TOKEN` secret        | the `npm` job                                        |
 | An `mcp-registry` environment with the same protection rules as `pypi` and `npm` | the `mcp-registry` job                               |
-| The repository's artifact retention is at least 30 days                          | nothing (Settings > Actions > General)               |
+| The repository's artifact retention is at least 30 days (Settings > Actions)     | nothing                                              |
 
 Only a push creates a ghcr.io package, and it creates it private. For an image no release has pushed
 yet, `preflight` warns instead of failing, and that run's `docker-smoke` jobs fail to pull it: set
@@ -248,8 +248,8 @@ there costs a candidate number, not a final version.
    `gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=clickhouse/clickhouse-server:A.B.C.D`;
    or accepting the downgrade:
    `gh workflow run release.yml --ref vX.Y.Z -f allow_clickhouse_downgrade=true`.
-   When neither is taken, move `:latest` back to the previous release on both images, as in
-   [a failed tag or signature](#a-failed-tag-or-signature);
+   When neither is taken, move `:latest` (if it moved) and `:X.Y` back to the previous release on
+   both images, as in [a failed tag or signature](#a-failed-tag-or-signature);
 9. `release-check` (on a tag push) runs `.github/workflows/release-check.yml` against what
    was just published, signed in to nothing: the one-liner from github.com in the same clean
    containers, pulling both images anonymously, and verifies both images' signatures, which
@@ -306,10 +306,12 @@ A failed `docker-tag` (one image tagged, not the other) or a failed `sign` (Sigs
   run can tag or sign that build: a run on a half-tagged version fails its `preflight`, and a run
   on a published tag verifies signatures but cannot make them. Release a new version. Until it is
   out, the unsigned build's moving tags still name it: point `:latest` (if it moved) and, for a
-  final, `:X.Y` back at the previous release that carried them, for both images, by digest:
+  final, `:X.Y` back at the previous release that carried each, for both images, by digest. An
+  `X.Y.0` has no earlier release carrying `:X.Y`, which names the unsigned build until `X.Y.1` is
+  out.
 
   ```bash
-  digest=$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:<previous X.Y.Z> --format '{{json .Manifest}}' | jq -re .digest)
+  digest=$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:<previous release carrying that tag> --format '{{json .Manifest}}' | jq -re .digest)
   docker buildx imagetools create -t ghcr.io/clickhouse/<image>:<tag> "ghcr.io/clickhouse/<image>@$digest"
   [ "$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:<tag> --format '{{json .Manifest}}' | jq -re .digest)" = "$digest" ] \
     || { echo "<tag> does not name $digest" >&2; false; }
@@ -320,7 +322,7 @@ A failed `docker-tag` (one image tagged, not the other) or a failed `sign` (Sigs
 
   ```bash
   cosign verify "ghcr.io/clickhouse/<image>@$digest" \
-    --certificate-identity https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v<previous X.Y.Z> \
+    --certificate-identity https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v<that release> \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com
   ```
 
