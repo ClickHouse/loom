@@ -167,6 +167,7 @@ Caps for insights.query statements, each pinned as a MAX in the loom_analyst use
 | `LOOM_CH_ANALYSIS_MAX_CONCURRENT` | `int` | `8` |  | Statements the analyst user runs at once across every org and replica. |
 | `LOOM_CH_ANALYSIS_MAX_THREADS` | `int` | `4` |  | Threads one statement may use (pinned as a MAX, so a statement cannot take the host). |
 | `LOOM_CH_ANALYSIS_MAX_CONCURRENT_PER_ORG` | `int` | `2` |  | Statements one org runs at once on one replica; past it a call answers RATE_LIMITED. |
+| `LOOM_CH_ANALYSIS_PROBE_INTERVAL_S` | `float` | `60.0` | live | Seconds between two probes of the analyst user in each web process; a problem an admin fixes, or a repair a write makes, shows within one interval. |
 
 ### Traffic classes
 

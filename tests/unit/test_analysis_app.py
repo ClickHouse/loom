@@ -557,3 +557,63 @@ def test_a_failed_stamp_read_raises() -> None:
     read = app.store.own_version(password="pw", extra={}, ch=_FailingRead("Code: 159."))
     with pytest.raises(RuntimeError, match="159"):
         asyncio.run(read)
+
+
+def test_each_cap_setting_reaches_the_caps_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.settings import settings
+
+    for name, value in {
+        "ch_analysis_max_execution_s": 7.5,
+        "ch_analysis_max_rows_to_read": 1234,
+        "ch_analysis_max_memory_bytes": 5678,
+        "ch_analysis_max_result_rows": 9,
+        "ch_analysis_max_result_bytes": 4321,
+        "ch_analysis_max_concurrent": 3,
+        "ch_analysis_max_threads": 2,
+    }.items():
+        monkeypatch.setattr(settings, name, value)
+    profile = " ".join(boundary.caps_sql(app.caps()))
+    for pinned in (
+        "max_execution_time = 7.5 MIN 0.1 MAX 7.5",
+        "max_rows_to_read = 1234 MIN 1 MAX 1234",
+        "max_memory_usage = 5678 MIN 1 MAX 5678",
+        "max_result_rows = 10 MIN 1 MAX 10",
+        "max_result_bytes = 4321 MIN 1 MAX 4321",
+        "max_concurrent_queries_for_user = 3 CONST",
+        "max_threads = 2 MIN 1 MAX 2",
+    ):
+        assert pinned in profile, pinned
+
+
+def test_the_per_org_cap_setting_bounds_one_orgs_statements(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "ch_analysis_max_concurrent_per_org", 1)
+    monkeypatch.setattr(app, "_running", {"acme": 1})
+    with pytest.raises(RateLimitedError):
+        asyncio.run(app.handle_insights_query(_query()))
+
+
+def test_the_probe_loop_waits_ch_analysis_probe_interval_s(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    waits: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        waits.append(seconds)
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(settings, "ch_analysis_probe_interval_s", 17.0)
+    monkeypatch.setattr(app, "provision", _returns(None))
+    monkeypatch.setattr(app.asyncio, "sleep", sleep)
+
+    async def run() -> None:
+        with pytest.raises(asyncio.CancelledError):
+            await app.start_probe_loop()
+
+    asyncio.run(run())
+    assert waits == [17.0]

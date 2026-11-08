@@ -468,8 +468,9 @@ keeps:
   the length of the run; a replica that still holds the old password gets an
   authentication failure, which answers `ANALYSIS_UNAVAILABLE` too.
 
-A replica probes the analyst user at boot and then a minute after each probe, in the
-background, as the analyst itself, so the probe needs no access management:
+A replica probes the analyst user at boot and then every `ch_analysis_probe_interval_s`
+(a minute by default), in the background, as the analyst itself, so the probe needs no
+access management:
 
 - a signed read of `loom.analysis_canary`, whose one row sits in a reserved scope (the
   empty org and namespace, which `insights.query` refuses as a request's scope) under a

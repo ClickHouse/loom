@@ -783,7 +783,7 @@ def _analysis_problems(settings: Any, state: HealthState) -> list[Problem]:
             f"insights.query is unavailable: {state.analysis_error}",
             "Act on the cause above. Where it names a write the analyst user needs, give "
             "LOOM_CH_USER access management (the bundled ClickHouse's loom user has it), which the "
-            "next probe uses within a minute, or run `loom ch-setup` as a user that has it, or "
+            "next probe uses, or run `loom ch-setup` as a user that has it, or "
             "have an admin run the SQL `loom ch-setup --print-analyst-sql` prints.",
             source="runtime",
         )

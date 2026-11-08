@@ -663,6 +663,9 @@ class ClickHouseSettings(BaseModel):
     ch_analysis_max_threads: int = Field(default=4, ge=1, le=64)
     # Statements one org runs at once on one replica; past it a call answers RATE_LIMITED.
     ch_analysis_max_concurrent_per_org: int = Field(default=2, ge=1, le=64)
+    # Seconds between two probes of the analyst user in each web process; a problem
+    # an admin fixes, or a repair a write makes, shows within one interval.
+    ch_analysis_probe_interval_s: Annotated[float, LIVE] = Field(default=60.0, ge=5, le=3600)
 
     # --- traffic classes ---
     # JSON map {traffic class: ClickHouse settings} applied by

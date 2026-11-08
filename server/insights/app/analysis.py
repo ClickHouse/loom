@@ -49,7 +49,7 @@ from server.settings import settings
 log = logging.getLogger(__name__)
 
 # How long a signed scope is good for: one statement's run and its retries.
-_SCOPE_TTL_S = 60
+_SCOPE_TTL_S = 60  # not a setting: a signature lives one statement and its retries
 
 # The ClickHouse codes a statement's own shape causes, answered as a 422 that
 # quotes ClickHouse: a refused table, column or function, bad SQL, a missing
@@ -57,7 +57,7 @@ _SCOPE_TTL_S = 60
 _ACCESS_DENIED = 497
 _AUTHENTICATION_FAILED = 516
 _TOO_MANY_SIMULTANEOUS_QUERIES = 202
-_MEMORY_LIMIT_EXCEEDED = 241
+_MEMORY_LIMIT_EXCEEDED = 241  # not a setting: ClickHouse's error code
 _STATEMENT_CODES = frozenset(
     {
         _ACCESS_DENIED,
@@ -102,10 +102,9 @@ class SetupRefused(RuntimeError):
 
 
 _WRITE_LEASE = "analysis.entities"
-_LEASE_TTL_S = 60
+_LEASE_TTL_S = 60  # not a setting: each write statement times out well inside it
 _SECRETS_PURPOSE = "analysis.secrets"
 _loaded: tuple[bytes, str] | None = None
-_REPROBE_S = 60.0
 
 # Whether this process's last probe passed: None = not probed yet.
 _ready: bool | None = None
@@ -386,8 +385,8 @@ async def reprobe() -> None:
 
 
 def start_probe_loop() -> asyncio.Task[None]:
-    """Provision once, then probe every minute, in this process's background,
-    so no request waits on the lease or on a repair."""
+    """Provision once, then probe every `ch_analysis_probe_interval_s`, in this
+    process's background, so no request waits on the lease or on a repair."""
 
     async def _run() -> None:
         from server.core.ch import set_query_tag
@@ -395,7 +394,7 @@ def start_probe_loop() -> asyncio.Task[None]:
         set_query_tag("analysis.probe")  # every process runs it, not a worker
         await provision()
         while True:
-            await asyncio.sleep(_REPROBE_S)
+            await asyncio.sleep(float(settings.ch_analysis_probe_interval_s))
             await reprobe()
 
     return asyncio.get_running_loop().create_task(_run(), name="loom-analysis-probe")
