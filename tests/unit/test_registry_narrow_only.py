@@ -317,3 +317,20 @@ async def test_a_restricted_first_row_is_never_open() -> None:
     assert await registry.ensure_registered(_cfg("standard"), ch=client)
     ((_table, (row,)),) = client.inserted
     assert (row["classification"], row["join_policy"]) == ("restricted", "approval")
+
+
+@pytest.mark.asyncio
+async def test_an_inactive_registry_row_decides_nothing() -> None:
+    """A removed branch added from the page leaves its registry row inactive: the
+    operator's entry for the same namespace decides."""
+
+    class _Removed(_Client):
+        async def query_one(self, sql, params=None):
+            if "loom.code_repos" in sql:
+                return {"classification": "standard", "join_policy": "open", "active": False}
+            return None
+
+    client = _Removed()
+    assert await registry.ensure_registered(_cfg("restricted"), ch=client)
+    ((_table, (row,)),) = client.inserted
+    assert (row["classification"], row["join_policy"]) == ("restricted", "approval")

@@ -104,13 +104,21 @@ async def insert_first_row(cfg: Any, client: Any, *, restricted: bool, join_poli
     await client.insert("loom.namespaces", [row])
 
 
+async def _access_row(cfg: Any, client: Any) -> dict[str, Any] | None:
+    """The namespace's registry row read now; None for an inactive one, which a removed
+    branch added from the page leaves behind and which decides nothing."""
+    from server.code.store.index import CodeRepo
+
+    row = await CodeRepo(client).code_repo_row(cfg.org, cfg.namespace)
+    return row if row is not None and row.get("active") is not False else None
+
+
 async def _register_first_row(cfg: Any, client: Any, *, restricted: bool, public: bool) -> None:
     """The first directory row: the registry row read now decides over this process's
     snapshot of it (`restricted`, `public`), which decides only when there is none."""
-    from server.code.store.index import CodeRepo
     from server.identity.app.namespace_classification import note_restricted
 
-    access = await CodeRepo(client).code_repo_row(cfg.org, cfg.namespace)
+    access = await _access_row(cfg, client)
     join_policy = "open" if public else "approval"
     if access is not None:
         restricted = str(access.get("classification")) == "restricted"
@@ -130,7 +138,6 @@ async def _register_first_row(cfg: Any, client: Any, *, restricted: bool, public
 
 async def _write_row(cfg: Any, client: Any) -> bool:
     """`ensure_registered`'s directory write; True when a row was inserted."""
-    from server.code.store.index import CodeRepo
     from server.identity.app.namespace_classification import note_restricted
     from server.identity.app.registration import namespace_row
 
@@ -151,7 +158,7 @@ async def _write_row(cfg: Any, client: Any) -> bool:
         return False
     # Each follows the registry row read now: this process's snapshot of it may
     # predate a maintainer's change. With no registry row the operator's entry decides.
-    access = await CodeRepo(client).code_repo_row(cfg.org, cfg.namespace)
+    access = await _access_row(cfg, client)
     access_restricted = access is not None and str(access.get("classification")) == "restricted"
     # A standard access row newer than the directory row: a maintainer's decision the
     # directory has not taken yet.

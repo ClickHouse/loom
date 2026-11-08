@@ -843,7 +843,8 @@ async def sync_restricted_page_branches(
 
 
 async def sync_quietly(org: str, namespace: str, *, ch: Any | None = None) -> None:
-    """Run the sync; a failure is logged with its traceback."""
+    """The fan-out is a consequence and never fails the op or pass that runs it: a
+    failure is logged with its traceback."""
     try:
         await sync_repo_maintainers(org, namespace, ch=ch)
     except Exception:  # the fan-out never fails the op or pass that runs it
