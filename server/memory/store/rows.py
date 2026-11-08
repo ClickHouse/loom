@@ -930,7 +930,9 @@ def reemit_version(row: dict[str, Any]) -> int:
       above any earlier read + 1. A copy lifted over a head (`version_over`) goes two
       above it, so a writer of vector-only copies writes at most one above a head.
     - a retire with no causing row (a reconcile or a sweep) uses one next_version()
-      drawn before its scan."""
+      drawn before its scan.
+    - the expiry sweep's demote is a metadata copy pinned like a retire, at the version
+      of the memory row it wrote, so it skips a later write's vectors."""
     return int(row.get("version") or 0) + 1
 
 

@@ -668,6 +668,7 @@ async def test_a_late_mirror_leaves_a_later_writes_vectors_alone(
         _emb("gone", 100),
         _emb("kept", 300),
         _emb("deleted", 100),
+        _emb("superseded", 350),  # a supersede's copy of the old text, above 200
     ]
 
     async def _live(ch, keys, **_: Any) -> list[dict[str, Any]]:
@@ -705,11 +706,13 @@ async def test_a_late_mirror_leaves_a_later_writes_vectors_alone(
             (key("gone"), 200, "anonymize", None),
             (key("kept"), 200, "anonymize", None),
             (key("deleted"), 200, "tombstone", None),
+            (key("superseded"), 351, "anonymize", None),  # a shell's replay pin
         ]
     )
 
     got = {r["memory_key"]: r for r in inserted}
-    assert set(got) == {"old", "gone", "deleted"}
+    assert set(got) == {"old", "gone", "deleted", "superseded"}
+    assert got["superseded"]["version"] == 351 and not got["superseded"]["content_excerpt"]
     assert got["old"]["version"] == 200 and got["old"]["confidence"] == 0.4
     assert got["old"]["expires_at"] is None and got["old"]["tombstoned_at"] is None
     assert got["gone"]["version"] == 200 and got["gone"]["tombstoned_at"] is not None
@@ -721,7 +724,14 @@ async def test_a_late_mirror_leaves_a_later_writes_vectors_alone(
     # entity_vectors has no version: a retired key keeps the rows created after the
     # second of the memory row's version, a later write's.
     second = embeddings.version_second(200)
-    assert cutoffs == [{key("deleted"): second}, {key("gone"): second, key("kept"): second}]
+    assert cutoffs == [
+        {key("deleted"): second},
+        {
+            key("gone"): second,
+            key("kept"): second,
+            key("superseded"): embeddings.version_second(351),
+        },
+    ]
 
 
 @pytest.mark.asyncio
@@ -770,22 +780,30 @@ async def test_a_replay_mirrors_the_heads_as_they_are_now(
     applied: list[Any] = []
     copied: list[Any] = []
 
-    async def _apply(items, *, ch=None) -> int:
+    async def _apply(items, *, ch=None) -> None:
         applied.append(items)
-        return 0
 
     async def _reemit(items, *, ch=None) -> int:
         copied.append(items)
         return 0
 
     later = _REAL_NOW + timedelta(hours=1)
-    touched, locked, deleted, relabelled, shell, rewritten, gone = (
+    touched, locked, deleted, relabelled, shell, rewritten, marker, gone = (
         ("o", "n", "a", "-", "-", k)
-        for k in ("touched", "locked", "deleted", "relabelled", "shell", "rewritten", "gone")
+        for k in (
+            "touched",
+            "locked",
+            "deleted",
+            "relabelled",
+            "shell",
+            "rewritten",
+            "marker",
+            "gone",
+        )
     )
 
     def head(version: int, *, sha: str = "c" * 64, **kw: Any) -> SimpleNamespace:
-        base = {"expires_at": None, "confidence": 0.4, "sensitivity": ""}
+        base = {"expires_at": None, "confidence": 0.4, "sensitivity": "", "redaction_reason": ""}
         return SimpleNamespace(version=version, content_sha256=sha, **(base | kw))
 
     live = {
@@ -793,9 +811,11 @@ async def test_a_replay_mirrors_the_heads_as_they_are_now(
         locked: head(310),
         relabelled: head(320, sensitivity="high"),
         # Still the anonymized shell, its head moved by a supersede at 350.
-        shell: head(350, sha=X._ANONYMIZED_SHA),
+        shell: head(350, sha=X._ANONYMIZED_SHA, redaction_reason="expired:anonymize|gdpr"),
         # Rewritten by a memory.set since: its vectors hold the new text.
         rewritten: head(360),
+        # A memory.set of the marker text itself is not the sweep's shell.
+        marker: head(370, sha=X._ANONYMIZED_SHA),
     }
 
     async def _heads(keys, *, ch=None, sequential=False) -> dict[Any, Any]:
@@ -807,7 +827,7 @@ async def test_a_replay_mirrors_the_heads_as_they_are_now(
     monkeypatch.setattr("server.memory.store.memory_rows_by_identity_keys", _heads)
     await X.replay_mirror(
         [(k, 200, "demote") for k in (touched, locked, deleted, relabelled)]
-        + [(k, 200, "anonymize") for k in (shell, rewritten)]
+        + [(k, 200, "anonymize") for k in (shell, rewritten, marker)]
         + [(gone, 200, "tombstone")]
     )
     # The shell's vectors are retired up to its head (a supersede may have copied the
@@ -816,6 +836,7 @@ async def test_a_replay_mirrors_the_heads_as_they_are_now(
         [
             (shell, 351, "anonymize", None),
             (rewritten, 200, "anonymize", None),
+            (marker, 200, "anonymize", None),
             (gone, 200, "tombstone", None),
         ]
     ]

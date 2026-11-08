@@ -447,8 +447,9 @@ async def _live_rows_for_keys(
 
 def _copy_row(r: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any] | None:
     """A new version of read row `r` with `overrides`: at read + 1, or at the `version`
-    the overrides pin (a retire's). None when the row is at or above that pin: it is a
-    newer write's, and an older retire must not touch it."""
+    the overrides pin (a retire's, or the expiry sweep's demote). None when the row is
+    at or above that pin: it is a newer write's, and an older retire must not touch
+    it."""
     pinned = overrides.get("version")
     if pinned is not None and int(r.get("version") or 0) >= int(pinned):
         return None

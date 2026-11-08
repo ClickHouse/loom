@@ -49,6 +49,7 @@ ACTIONS: tuple[str, ...] = ("tombstone", "demote", "anonymize")
 DEFAULT_ACTION = "tombstone"
 ANONYMIZED_VALUE = "[EXPIRED]"
 _ANONYMIZED_SHA = _sha(ANONYMIZED_VALUE)
+_ANONYMIZED_REASON = "expired:anonymize"
 
 # Which lock class each action is, for memory_lock.assert_unlocked.
 _LOCK_CLASS: dict[str, str] = {"tombstone": "delete", "demote": "value", "anonymize": "value"}
@@ -134,7 +135,7 @@ def plan(row: Any, *, now: datetime, cfg: ExpiryConfig) -> dict[str, Any]:
         "expires_at": None,
         "on_expire": "",
         "redacted_at": now,
-        "redaction_reason": (f"expired:anonymize|{reason}" if reason else "expired:anonymize")[
+        "redaction_reason": (f"{_ANONYMIZED_REASON}|{reason}" if reason else _ANONYMIZED_REASON)[
             :512
         ],
     }
@@ -374,7 +375,7 @@ def _mirror_items(mirrors: list[tuple[str, Any, int]], *, cfg: ExpiryConfig) -> 
     return items
 
 
-async def apply_mirror(items: list[MirrorItem], *, ch: Any | None = None) -> int:
+async def apply_mirror(items: list[MirrorItem], *, ch: Any | None = None) -> None:
     """Search reads loom.memory_embeddings, so the post-action lands there too, at the
     memory row's version: only rows below it change, never one a later write landed
     above it (entity_vectors has no version: its cutoff is that version's second).
@@ -395,28 +396,34 @@ async def apply_mirror(items: list[MirrorItem], *, ch: Any | None = None) -> int
         for key, version, action, copy in items
         if action == "demote" and copy is not None
     ]
-    n = 0
     if tombstoned := pins("tombstone"):
-        n += await memory_repo.retire_vectors_for_keys(tombstoned, ch=ch)
+        await memory_repo.retire_vectors_for_keys(tombstoned, ch=ch)
     if anonymized := pins("anonymize"):
-        n += await memory_repo.retire_vectors_for_keys(anonymized, ch=ch, bare=True)
+        await memory_repo.retire_vectors_for_keys(anonymized, ch=ch, bare=True)
     if copies:
-        n += await memory_repo.reemit_embedding_rows_for_keys(copies, ch=ch)
-    return n
+        await memory_repo.reemit_embedding_rows_for_keys(copies, ch=ch)
+
+
+def _is_anonymized_shell(head: Any) -> bool:
+    """A head the sweep anonymized and nothing has rewritten since: its marker value
+    and the sweep's redaction reason (a write of the marker text has no reason)."""
+    reason = str(head.redaction_reason or "")
+    return head.content_sha256 == _ANONYMIZED_SHA and reason.startswith(_ANONYMIZED_REASON)
 
 
 # A recorded mirror: identity key, the memory row's version, the action.
 RecordedMirror = tuple[IdentityKey, int, str]
 
 
-async def replay_mirror(recorded: list[RecordedMirror], *, ch: Any | None = None) -> int:
+async def replay_mirror(recorded: list[RecordedMirror], *, ch: Any | None = None) -> None:
     """The mirror of a recorded failure, run after later writes may have landed, from
     the keys' live heads as they are now.
 
     A tombstone runs as recorded: the key's vectors below the version hold the text it
-    took out. An anonymize whose head is still the anonymized shell, which keeps no
-    vector, retires bare every live vector up to that head: a status write since the
-    sweep (a supersede) may have copied the old text above the recorded version. The
+    took out. An anonymize whose head is still the anonymized shell
+    (`_is_anonymized_shell`), which keeps no vector, retires bare every live vector up
+    to that head: a status write since the sweep (a supersede) may have copied the old
+    text above the recorded version. The
     pin is the head's version + 1, the highest no write drawn from the head can tie with
     (`version_over`). Any other head (rewritten since) takes the recorded version.
 
@@ -439,15 +446,14 @@ async def replay_mirror(recorded: list[RecordedMirror], *, ch: Any | None = None
             retires.append((key, version, action, None))
         elif action == "anonymize":
             pin = version
-            if head is not None and head.content_sha256 == _ANONYMIZED_SHA:
+            if head is not None and _is_anonymized_shell(head):
                 pin = max(version, head.version + 1)
             retires.append((key, pin, action, None))
         elif head is not None and head.sensitivity != "high":
             copies.append((key, {"expires_at": head.expires_at, "confidence": head.confidence}))
-    n = await apply_mirror(retires, ch=ch)
+    await apply_mirror(retires, ch=ch)
     if copies:
-        n += await memory_repo.reemit_embedding_rows_for_keys(copies, ch=ch)
-    return n
+        await memory_repo.reemit_embedding_rows_for_keys(copies, ch=ch)
 
 
 async def _record_mirror_failures(items: list[MirrorItem], error: Exception) -> None:
