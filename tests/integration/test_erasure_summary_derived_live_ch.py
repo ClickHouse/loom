@@ -296,8 +296,8 @@ async def test_a_reopened_link_delete_takes_the_triples_its_links_alone_held(ch_
 
 async def test_a_purge_takes_what_a_summary_written_late_fed(ch_client, ch) -> None:
     """A summary of alice's memory written after the steps that delete what summaries
-    fed: in a purge `memory.retire` deletes the rows that name it, so it takes its
-    history and chunks first."""
+    fed: in a purge `memory.retire` deletes the rows that name it, so it takes what it
+    fed first."""
     org = unique_org("ersumlt")
     _seed(ch_client, org)
     late = "00000000-0000-4000-8000-000000000004"
@@ -317,11 +317,38 @@ async def test_a_purge_takes_what_a_summary_written_late_fed(ch_client, ch) -> N
                 + ["topic-late", _VECTOR]
             ],
         )
+        _insert(
+            ch_client,
+            "loom.entity_vectors",
+            ["org", "namespace", "agent", "user_id", "entity_text", "memory_key"]
+            + ["entity_embedding"],
+            [[org, "ns", "a", "-", "late", "topic-late", _VECTOR]],
+        )
+        _insert(
+            ch_client,
+            "loom.entity_triple_memories",
+            ["org", "namespace", "subject", "relation", "object", "memory_key"],
+            [[org, "ns", "late", "is", "late", "topic-late"]],
+        )
+        _insert(
+            ch_client,
+            "loom.entity_triple_rows",
+            ["org", "namespace", "memory_id", "user_id", "subject", "relation", "object"],
+            [[org, "ns", late, "-", "late", "is", "late"]],
+        )
+        _seed_shared(ch_client, org, ("topic-late",))
         await _run(_STEPS[-1:], org, ch)
-    history = f"SELECT memory_key FROM loom.memory_versions{_WHERE}"
-    assert "topic-late" not in _column(ch_client, org, history)
-    chunks = f"SELECT parent_memory_key FROM loom.memory_chunks{_WHERE}"
-    assert "topic-late" not in _column(ch_client, org, chunks)
+    for sql in (
+        f"SELECT memory_key FROM loom.memory_versions{_WHERE}",
+        f"SELECT parent_memory_key FROM loom.memory_chunks{_WHERE}",
+        f"SELECT memory_key FROM loom.entity_vectors{_WHERE}",
+        f"SELECT memory_key FROM loom.entity_triple_memories{_WHERE}",
+        f"SELECT memory_key FROM loom.shared{_WHERE}",
+        f"SELECT memory_key FROM loom.memory_embeddings{_WHERE} AND scope = 'shared'",
+    ):
+        assert "topic-late" not in _column(ch_client, org, sql), sql
+    rows = f"SELECT toString(memory_id) FROM loom.entity_triple_rows{_WHERE}"
+    assert late not in _column(ch_client, org, rows)
 
 
 async def test_outside_a_purge_a_late_summary_reopens_its_steps(ch_client, ch) -> None:

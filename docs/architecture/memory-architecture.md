@@ -1313,8 +1313,11 @@ treat those summaries as the user's rows, and the census counts them the same wa
   reopens leaves none unlinked.
 - `memory_versions.delete` runs after the cache steps, which find an answer that quoted a
   summary by its history.
-- A purge's `memory.retire` runs those steps again before it deletes the rows that name a
-  summary written since.
+- `shared_embeddings.tombstone` runs before `shared.tombstone`: it finds the search rows
+  through the shared rows, which a purge deletes.
+- `memory.retire` retires a summary written since, its shared copies and the answers that
+  quoted it; in a purge it also runs the chunk, vector, graph-link and history steps again
+  before it deletes the rows that name the summary.
 
 A `src:` tag names a key, not its writer: where two users of a namespace hold the same
 key, erasing one also takes a summary built from the other's row, with its history,
@@ -1330,7 +1333,8 @@ Under the Postgres authority the journal's revisions of a summary go with it whe
 current head names the user; a summary rebuilt without the user keeps its older
 revisions there. The user-scope census counts a summary's row, not its
 `loom.memory_embeddings` or `loom.memory_code_links` rows or its `loom.shared` copies,
-which `consolidated.tombstone`, `shared.tombstone` and `memory.retire` retire with it.
+which `consolidated.tombstone`, `shared_embeddings.tombstone`, `shared.tombstone` and
+`memory.retire` retire with it.
 
 An erasure in an org, at any scope, deletes the whole org's cached query vectors in
 `loom.embedding_cache`, not only the erased scope's: the rows carry the org but no
