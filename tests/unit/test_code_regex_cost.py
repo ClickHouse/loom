@@ -185,6 +185,7 @@ def test_a_pattern_costs_linear_time(name: str, pattern: re.Pattern) -> None:
 # grows more than 8 times, so a cubic pattern stops at 8,000 characters, not hours later.
 _SIZES = (500, 2_000, 8_000, 32_000)
 _PREFIXES = ("a", "- a", "a:a", "a = a", "export default a", "'a")
+_SEPS = ("", "a=", "a(", "a ", "#a ")  # after an opener: `*a=`, `@if(`, `{#if `
 
 
 def _composites(p: re.Pattern) -> list[tuple[str, str, str]]:
@@ -198,9 +199,10 @@ def _composites(p: re.Pattern) -> list[tuple[str, str, str]]:
     units = [w + " a " for w in words] + [w + " a(" for w in words] + [",a(", ",a{"]
     units += [f"{a} {b} a(" for a, b in zip(words, words[1:], strict=False)]
     openers = _openers(p)
-    shapes += [(o, " ", end) for o in openers for end in ("b", "\n")]
+    shapes += [(o + sep, " ", end) for o in openers for sep in _SEPS for end in ("b", "\n")]
     units += [o + "a" for o in openers]
-    return shapes + [(" ".join(words) + " a ", unit, "b") for unit in units]
+    keyed = [(o + "{", w + ":'a',", "b") for o in openers for w in words]
+    return shapes + keyed + [(" ".join(words) + " a ", unit, "b") for unit in units]
 
 
 def _slow(cost: Callable[[int], float]) -> tuple[int, float, float] | None:

@@ -65,7 +65,7 @@ _NAMED_RE = re.compile(r'^(define|block)\s+"([^"]+)"')
 _INCLUDE_RE = re.compile(r'(?<![\w.$])(?:include|template)\s+"([^"]+)"')
 _OPENERS: frozenset[str] = frozenset({"if", "range", "with", "define", "block"})
 _KIND_RE = re.compile(r"^kind:\s*([A-Za-z][\w.-]*)\s*$", re.M)
-_NAME_RE = re.compile(r"^  name:\s*(.+?)\s*$")
+_NAME_RE = re.compile(r"^  name:\s*+(.*\S)\s*$")
 
 
 @dataclass

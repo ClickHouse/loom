@@ -34,7 +34,7 @@ FACET_KIND = "http_route"
 # Each body stops at the next `@Controller(` / `.route(`: an unclosed one is not read to
 # the end of the file again from every opener before it.
 _CONTROLLER_RE = re.compile(
-    r"""@Controller\(\s*+(?:['"`]([^'"`\n]*)['"`]|\{(?:(?!@Controller\()[^}])*?\bpath:\s*"""
+    r"""@Controller\(\s*+(?:['"`]([^'"`\n]*)['"`]|\{(?:(?!@Controller\(|\bpath:)[^}])*\bpath:\s*"""
     r"""['"`]([^'"`\n]*)['"`](?:(?!@Controller\()[^}])*\})?(?:(?!@Controller\()[^)])*\)""",
     re.S,
 )
