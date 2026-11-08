@@ -137,15 +137,16 @@ nothing: no image push, GitHub Release or registry upload.
 gh workflow run release.yml --ref <branch> -f dry_run=true
 ```
 
-It runs at the version `server/__init__.py` names. Its images go to run artifacts instead of
-ghcr.io, without the provenance and SBOM attestations that only a registry keeps, and
-`docker-smoke` loads them from there. The `preflight` job reports each missing
-[prerequisite](#before-the-first-release) as a warning instead of failing. What only a published
-release exercises, a dry run does not: `docker-tag` (joining each image's two digests, the Latest
-decision, `:latest`), `sign`, the GitHub Release, the registry publishes, `release-check`, the
-published-images check (`scripts/release/published_images.sh`) with the skipped-build path it
-selects, the candidate-order check (`prepare.py check-tag`, which a dry run of a branch skips with
-a notice), and the chart check when the version is already tagged on another commit.
+It runs at the version `server/__init__.py` names, and keeps its artifacts one day (a release keeps
+its 30, for re-runs). Its images go to run artifacts instead of ghcr.io, without the provenance and
+SBOM attestations that only a registry keeps, and `docker-smoke` loads them from there. The
+`preflight` job reports each missing [prerequisite](#before-the-first-release) as a warning instead
+of failing. What only a published release exercises, a dry run does not: `docker-tag` (joining each
+image's two digests, the Latest decision, `:latest`), `sign`, the GitHub Release, the registry
+publishes, `release-check`, the published-images check (`scripts/release/published_images.sh`) with
+the skipped-build path it selects, the candidate-order check (`prepare.py check-tag`, which a dry
+run of a branch skips with a notice), and the chart check when the version is already tagged on
+another commit.
 
 ## Before the first release
 
@@ -289,7 +290,8 @@ installer, and creating the signed release tag is its review gate.
 A failed `docker-tag` (one image tagged, not the other) or a failed `sign` (Sigstore down, say):
 
 - Use "Re-run failed jobs" on the run that tagged the images (the tag push, or the dispatch that
-  built and tagged them), within 30 days of it, as long as its artifacts are kept. That attempt
+  built and tagged them), within 30 days of it; the run's artifacts are kept as long, unless the
+  repository's artifact retention limit is shorter. That attempt
   keeps its `preflight` result and `docker-tag`'s digests, so it tags the same build and signs
   what it tagged. Another run on the tag (a dispatch, a second push) is a run of its own: re-run
   that run's failed jobs, or dispatch the tag again, once the tagging run has signed.
@@ -305,8 +307,8 @@ A failed `docker-tag` (one image tagged, not the other) or a failed `sign` (Sigs
   ```bash
   digest=$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:<previous X.Y.Z> --format '{{json .Manifest}}' | jq -re .digest)
   docker buildx imagetools create -t ghcr.io/clickhouse/<image>:latest "ghcr.io/clickhouse/<image>@$digest"
-  [ "$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:latest --format '{{json .Manifest}}' | jq -re .digest)" = "$digest" ] || echo "latest does not name $digest"
-  cosign verify ghcr.io/clickhouse/<image>:latest \
+  [ "$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:latest --format '{{json .Manifest}}' | jq -re .digest)" = "$digest" ] || { echo "latest does not name $digest" >&2; false; }
+  cosign verify "ghcr.io/clickhouse/<image>@$digest" \
     --certificate-identity https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v<previous X.Y.Z> \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com
   ```

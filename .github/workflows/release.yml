@@ -635,7 +635,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # The index docker-tag made for each image, which X.Y.Z, X.Y and latest name.
       - name: Sign each image's index
         id: sign
         if: ${{ needs.docker-tag.result == 'success' }}
@@ -644,7 +643,6 @@ jobs:
         run: |
           # shellcheck disable=SC2086 # one argument per image
           for ref in $DIGESTS; do cosign sign --yes "$ref"; done
-      # Runs on every run, signed here or earlier: the check users and release-check make.
       - name: Verify both images' signatures
         id: verify
         env:
