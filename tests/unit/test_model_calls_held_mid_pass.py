@@ -111,7 +111,9 @@ def test_the_titler_counts_a_held_thread_as_no_error(monkeypatch, error) -> None
 def test_code_summaries_record_no_error_for_a_held_repository_or_file(monkeypatch, error) -> None:
     from server.code.workers import summary as w
 
-    repos = [SimpleNamespace(org="acme", namespace="code-a")]
+    repos = [
+        SimpleNamespace(org="acme", namespace="code-a", source="config", classification="standard")
+    ]
     monkeypatch.setattr("server.code.domain.index.repos.configured_repos", lambda: repos)
     monkeypatch.setattr(w, "_summarize_repo", _raise(error))
     result = w.CodeSummaryResult()
@@ -357,7 +359,11 @@ def test_code_ingest_records_no_error_for_a_held_repository_or_leg(monkeypatch, 
     async def nothing(*a: Any, **k: Any) -> Any:
         return set()
 
-    repos = [SimpleNamespace(org="acme", namespace="code-a", label="a")]
+    repos = [
+        SimpleNamespace(
+            org="acme", namespace="code-a", label="a", source="config", classification="standard"
+        )
+    ]
     monkeypatch.setattr("server.code.app.index.repo_registry.refresh_db_repos", nothing)
     monkeypatch.setattr(ip, "_inactive_namespaces", nothing)
     monkeypatch.setattr(ip, "selected_repos", lambda org, ns: repos)

@@ -755,7 +755,9 @@ def test_code_ingest_names_each_repos_org_in_its_commits_bootstrap_and_walk(
     from server.code.app.index import pass_budget, repo_registry
 
     seen: list[str] = []
-    cfg = SimpleNamespace(org="acme", namespace="code-a", label="code-a")
+    cfg = SimpleNamespace(
+        org="acme", namespace="code-a", label="code-a", source="config", classification="standard"
+    )
 
     async def nothing(*a: Any, **k: Any) -> Any:
         return set()

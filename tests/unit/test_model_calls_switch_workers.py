@@ -709,10 +709,20 @@ def test_code_ingest_runs_no_repository_of_a_switched_off_org(monkeypatch) -> No
     async def nothing(*a: Any, **k: Any) -> Any:
         return set()
 
+    synced: list[str] = []
+
+    async def sync(org: str, ns: str, **_: Any) -> None:
+        synced.append(ns)
+
+    # acme's restricted page branch: its maintainers are synced though its org is off.
+    page = {"source": "registry", "classification": "restricted", "repo": "Org/a"}
     repos = [
-        SimpleNamespace(org="acme", namespace="code-a", label="a"),
-        SimpleNamespace(org="beta", namespace="code-b", label="b"),
+        SimpleNamespace(org="acme", namespace="code-a", label="a", **page),
+        SimpleNamespace(
+            org="beta", namespace="code-b", label="b", source="config", classification="standard"
+        ),
     ]
+    monkeypatch.setattr("server.code.app.index.maintainers.sync_quietly", sync)
     monkeypatch.setattr("server.code.app.index.repo_registry.refresh_db_repos", nothing)
     monkeypatch.setattr(ip, "_inactive_namespaces", nothing)
     monkeypatch.setattr(ip, "selected_repos", lambda org, ns: repos)
@@ -724,6 +734,7 @@ def test_code_ingest_runs_no_repository_of_a_switched_off_org(monkeypatch) -> No
     result = ip.CodeIngestResult()
     asyncio.run(ip._run(result))
     assert ran == ["beta"] and not result.errors  # acme's watermark is never read
+    assert synced == ["code-a"]
 
 
 def test_tracker_links_scores_no_namespace_of_a_switched_off_org(monkeypatch) -> None:

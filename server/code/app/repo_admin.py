@@ -728,6 +728,14 @@ async def handle_code_repo_set_access(input: Any) -> Any:
         admins_change(input.org, input.namespace),
     ):
         row = await _directory_row(ch, input.org, input.namespace)
+        # The row read here may be newer than the snapshot `widening` read.
+        restricted_now = row is not None and row.get("classification") == "restricted"
+        if restricted_now and cls == "standard" and input.confirm.strip() != input.namespace:
+            raise ValidationError(
+                f"opening a restricted repository: type the namespace ({input.namespace}) "
+                "in `confirm`",
+                code="CONFIRM_REQUIRED",
+            )
         if row is None and cls == "restricted" and cfg.source == "registry":
             # Without one, the restriction reaches other replicas only through their
             # snapshots.

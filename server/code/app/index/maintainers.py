@@ -21,8 +21,8 @@ gives no grant on the operator's namespaces.
   after an admin grant is created or approved on a code namespace, when a branch
   is added or restricted, and by the registrar on each pass until the self-service
   registry is read, then once per process per namespace (so environment-registered
-  branches inherit) and on every pass for a restricted branch added from the
-  page. Each pass also revokes, on a restricted branch added from
+  branches inherit), and by the ingest pass on every pass for a repository with a
+  restricted branch added from the page. Each pass also revokes, on a restricted branch added from
   the page, every copy whose source is not an operator entry, or rewrites it as a
   copy of the subject's operator grant.
 * ``revoke_repo_maintainer`` — a revoked admin leaves the branches the revoke
@@ -585,7 +585,7 @@ def _stray(row: dict[str, Any], config: list[str], held: _Seen) -> bool:
 
 def _log_stray(org: str, row: dict[str, Any]) -> None:
     log.warning(
-        "repo maintainers: %s/%s plans to revoke %r — copied from %s, not an operator entry here",
+        "repo maintainers: %s/%s plans to revoke %r — %s does not trace to an operator grant here",
         org,
         row["namespace"],
         row["subject"],

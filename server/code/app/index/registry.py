@@ -44,6 +44,21 @@ async def sync_maintainers(cfg: Any, client: Any) -> None:
         _SYNCED.add((cfg.org, cfg.namespace))
 
 
+async def sync_restricted_page_branches(entries: list[Any]) -> None:
+    """Sync, once each, the repositories among `entries` with a restricted branch added
+    from the page: the copies it must not hold go on every pass, even when the sync
+    after its restriction failed."""
+    from server.code.app.index import maintainers
+
+    done: set[tuple[str, str]] = set()
+    for cfg in entries:
+        if cfg.source != "registry" or cfg.classification != "restricted":
+            continue
+        if (cfg.org, cfg.repo) not in done:
+            done.add((cfg.org, cfg.repo))
+            await maintainers.sync_quietly(cfg.org, cfg.namespace)
+
+
 async def ensure_registered(cfg: Any, *, ch: Any | None = None, sync: bool = True) -> bool:
     """Idempotent. Returns True when a row was inserted this call. `sync=False` leaves the
     maintainers' fan-out, whose claims wait, to a caller that runs `sync_maintainers` once
@@ -53,10 +68,7 @@ async def ensure_registered(cfg: Any, *, ch: Any | None = None, sync: bool = Tru
 
     key = (cfg.org, cfg.namespace)
     if key in _DONE:
-        # A restricted branch added from the page is synced on every pass, so the copies
-        # it must not hold go even when the sync after its restriction failed.
-        restricted_page = cfg.source == "registry" and cfg.classification == "restricted"
-        if sync and (key not in _SYNCED or restricted_page):
+        if sync and key not in _SYNCED:
             await sync_maintainers(cfg, ch or get_client())
         return False
     client = ch or get_client()
@@ -167,16 +179,15 @@ async def _write_row(cfg: Any, client: Any) -> bool:
 
 
 async def _access_still_open(cfg: Any, client: Any) -> bool:
-    """The registry row read now still opens the repository, when one sets its access:
-    this process's snapshot of it may predate a maintainer's change."""
+    """The registry row read now still opens the repository; with none, the operator's
+    entry decides. This process's snapshot of it may predate a maintainer's change."""
     from server.code.store.index import CodeRepo
 
-    if cfg.source != "registry" and cfg.access_source != "registry":
-        return True  # the operator's entry alone says public
     access = await CodeRepo(client).code_repo_row(cfg.org, cfg.namespace)
+    if access is None:
+        return str(cfg.source) != "registry"  # the operator's entry alone says public
     return (
-        access is not None
-        and str(access.get("classification")) != "restricted"
+        str(access.get("classification")) != "restricted"
         and str(access.get("join_policy")) == "open"
     )
 

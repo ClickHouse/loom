@@ -484,3 +484,32 @@ async def test_a_page_branch_with_no_directory_row_is_not_restricted_yet(
             )
         )
     assert ch.inserts == []
+
+
+@pytest.mark.asyncio
+async def test_widening_needs_confirm_when_the_row_read_now_says_restricted(monkeypatch) -> None:
+    """This replica's snapshot may still say standard after another restricted it."""
+    from server.code.app import repo_admin as h
+
+    async def refresh(*a, **k):
+        return []
+
+    monkeypatch.setattr(reg, "refresh_db_repos", refresh)
+    monkeypatch.setattr(
+        "server.code.domain.index.repos.repo_for_namespace",
+        lambda org, ns: _cfg("code-weave", classification="standard", source="registry"),
+    )
+    ch = _CH({"org": ORG, "namespace": "code-weave", "classification": "restricted"})
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr(h, "current_caller", lambda: ("alice", ORG))
+    with pytest.raises(ValidationError) as e:
+        await h.handle_code_repo_set_access(
+            SimpleNamespace(
+                org=ORG,
+                namespace="code-weave",
+                classification="standard",
+                join_policy="approval",
+                confirm="",
+            )
+        )
+    assert e.value.to_detail()["code"] == "CONFIRM_REQUIRED" and ch.inserts == []

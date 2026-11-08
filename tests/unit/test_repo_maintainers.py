@@ -891,14 +891,22 @@ async def test_the_registrar_syncs_a_branch_once_the_registry_is_read(
     await registry.ensure_registered(cfg, ch=object())
     await registry.ensure_registered(cfg, ch=object())
     assert synced == ["code-x", "code-x"]  # once while unread, once after, then done
-    # A restricted branch added from the page, on every pass: a restriction whose own
-    # sync failed still has its stray copies revoked.
-    cfg = SimpleNamespace(
-        org="clickhouse", namespace="code-x", source="registry", classification="restricted"
-    )
-    await registry.ensure_registered(cfg, ch=object())
-    await registry.ensure_registered(cfg, ch=object())
-    assert synced == ["code-x"] * 4
+    # The ingest pass syncs a repository with a restricted branch added from the page
+    # on every pass, once: a restriction whose own sync failed still has its strays go.
+    entries = [
+        SimpleNamespace(
+            org="clickhouse", namespace=ns, repo="Org/z", source="registry", classification=c
+        )
+        for ns, c in (
+            ("code-z-1", "restricted"),
+            ("code-z-2", "restricted"),
+            ("code-z-3", "standard"),
+        )
+    ]
+    synced.clear()
+    await registry.sync_restricted_page_branches(entries)
+    await registry.sync_restricted_page_branches(entries)
+    assert synced == ["code-z-1", "code-z-1"]
 
 
 async def test_code_init_reads_the_registry_before_it_registers(

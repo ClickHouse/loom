@@ -178,12 +178,14 @@ async def test_the_registrar_reads_and_writes_the_row_under_the_admins_claim(
     class _Fresh(_Client):
         async def query_one(self, sql, params=None):
             reads.append(sequential_reads_active())
+            if "loom.code_repos" in sql:
+                return None  # no access row: the operator's entry says public
             return dict(self.existing) if self.existing else None
 
     client = _Fresh(existing=existing)
     held = _hold_admins(monkeypatch, client)
     await registry.ensure_registered(dataclasses.replace(_cfg("standard"), public=True), ch=client)
-    assert reads == [True]
+    assert reads == ([True] if existing is None else [True, True])
     assert [r["join_policy"] for _, rows in client.inserted for r in rows] == ["open"]
     assert held == ["code-p"]
 
