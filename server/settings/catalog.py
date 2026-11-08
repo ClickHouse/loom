@@ -62,8 +62,9 @@ class AssistantSettings(BaseModel):
     # The share of a namespace's daily model cost cap the assistant may spend, so
     # questions cannot spend what extraction and the conflict resolver need.
     assistant_budget_share: float = Field(default=0.5, gt=0, le=1)
-    # Answers one replica runs at once per namespace; bounds how far answers that
-    # each passed the cap check can overshoot it.
+    # Answers one web process runs at once per namespace (a replica runs its web
+    # workers' count times this); bounds how far answers that each passed the cap check
+    # can overshoot it.
     assistant_concurrent_answers: int = Field(default=2, ge=1, le=50)
     # USD charged for an answer cut before LibreChat reported its usage (a
     # disconnect, a timeout) or on a model with no price, so no answer is free.

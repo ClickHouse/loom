@@ -57,7 +57,8 @@ _CAP_RETRY_S = 3600  # not a setting: a hint; the cap's own window is the settin
 # Seconds to reach LibreChat; an answer then runs up to LOOM_ASSISTANT_ANSWER_TTL_S.
 _CONNECT_S = 10.0  # not a setting: LibreChat is on the same network
 
-# The answers this replica runs per (org, namespace), by slot id.
+# The answers this web process runs per (org, namespace), by slot id: a replica with
+# several web workers runs that many times LOOM_ASSISTANT_CONCURRENT_ANSWERS.
 _running: dict[tuple[str, str], set[int]] = {}
 _slot_ids = itertools.count(1)
 

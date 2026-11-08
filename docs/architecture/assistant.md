@@ -845,9 +845,9 @@ spend to the same budget as its own model calls:
   spend what extraction and the conflict resolver need. Both surfaces record their
   spend under one operation, `assistant.ask`, which the share check sums.
 - The check reads spend already recorded, so answers running at once could each pass it;
-  each replica runs at most a set number of answers per namespace at once
+  each web process runs at most a set number of answers per namespace at once
   (`LOOM_ASSISTANT_CONCURRENT_ANSWERS`, default 2), which bounds the overshoot to that
-  many answers per replica. One answer's cost is its own usage: a request carries at
+  many answers per web process: replicas × `LOOM_WEB_WORKERS` × the setting in all. One answer's cost is its own usage: a request carries at
   most 50 turns of history and a question, each at most 20,000 characters, and runs for
   at most `LOOM_ASSISTANT_ANSWER_TTL_S`.
 - When the answer ends, the bridge prices the token usage of the agents API's final

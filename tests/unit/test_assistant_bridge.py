@@ -373,6 +373,11 @@ def client(world: _World, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, list[di
         return world.traffic_class, "namespace"
 
     monkeypatch.setattr(routes, "classify", classified)
+    # A limiter of this test's own: the route draws real buckets, which the process keeps.
+    from server.core import ratelimit
+
+    limiter = ratelimit.Limiter()
+    monkeypatch.setattr(ratelimit, "get_limiter", lambda: limiter)
     monkeypatch.setattr(routes, "verify_bearer_header", lambda *_a, **_k: _caller())
     monkeypatch.setattr(routes, "check_acted_for", nothing)
     monkeypatch.setattr(routes, "note_restricted_access", nothing)
@@ -986,7 +991,16 @@ def test_an_org_wide_token_is_refused_with_a_row_naming_no_org(
     assert row["identity"]["org"] == "-"
 
 
-def test_answers_draw_a_rate_limit_bucket_of_their_own() -> None:
-    from server.core.ratelimit import DEFAULT_LIMITS, op_class_for
+def test_answers_draw_a_rate_limit_bucket_of_their_own(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.core import ratelimit
 
-    assert op_class_for("assistant.ask") == "assistant.ask" in DEFAULT_LIMITS
+    assert ratelimit.op_class_for("assistant.ask") == "assistant.ask"
+    limiter = ratelimit.Limiter()
+    monkeypatch.setattr(ratelimit, "get_limiter", lambda: limiter)
+    burst = ratelimit.DEFAULT_LIMITS["assistant.ask"].capacity
+    for _ in range(burst):
+        ratelimit.admit_route("assistant.ask", NS, org=ORG, actor="alice")
+    with pytest.raises(RateLimitedError):
+        ratelimit.admit_route("assistant.ask", NS, org=ORG, actor="alice")
+    # The namespace's default bucket keeps its tokens: answers spent none of them.
+    assert limiter.check(NS, "namespace.summary", org=ORG, actor="alice").allowed

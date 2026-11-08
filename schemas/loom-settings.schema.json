@@ -72,7 +72,7 @@
           "maximum": 50,
           "minimum": 1,
           "type": "integer",
-          "description": "Answers one replica runs at once per namespace; bounds how far answers that each passed the cap check can overshoot it."
+          "description": "Answers one web process runs at once per namespace (a replica runs its web workers' count times this); bounds how far answers that each passed the cap check can overshoot it."
         },
         "assistant_librechat_url": {
           "default": "",
