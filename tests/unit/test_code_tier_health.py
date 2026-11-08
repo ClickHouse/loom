@@ -90,6 +90,7 @@ FAILING_FULL = tier_health.failed(None, "clang_full", "harness exit 1: x", T0).t
             "permission",
         ),
         ("PermissionError: [Errno 13] Permission denied: '/r/checkout/.git/index'", "permission"),
+        ("PermissionError: [Errno 1] Operation not permitted: '/r/checkout'", "permission"),
         (
             "fatal: Unable to create '/r/checkout/.git/index.lock': Permission denied",
             "permission",

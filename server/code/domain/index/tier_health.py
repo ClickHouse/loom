@@ -221,12 +221,13 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
             re.IGNORECASE,
         ),
     ),
-    # a file this tier's user cannot read or write: git's and Python's errors quote it
+    # a file this tier's user cannot read or write: git quotes it; a Python file error
+    # is recorded with it (`error_text`)
     (
         "permission",
         re.compile(
-            r"'[^'\n]*': permission denied|permission denied: '|insufficient permission",
-            re.IGNORECASE,
+            r"'[^'\n]*': permission denied|insufficient permission|^PermissionError: ",
+            re.IGNORECASE | re.MULTILINE,
         ),
     ),
     ("harness", re.compile(r"^(?:\w+: )?harness exit", re.IGNORECASE | re.MULTILINE)),
