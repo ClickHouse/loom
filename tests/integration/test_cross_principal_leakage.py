@@ -46,7 +46,8 @@ sys.path.insert(0, str(ROOT))
 _SKIP_OPS = {
     # Not a read: a model-backed answer on the caller's behalf, which spends from the
     # namespace's daily model cost cap (and, with no LibreChat, answers its
-    # configuration refusal). Its isolation is the answer token's: tests/unit.
+    # configuration refusal). Its isolation, the caller's `viewer` check before anything
+    # runs and the answer token's reads after, is tested in tests/unit.
     "assistant.ask",
     "namespace.register",
     "namespace.join",

@@ -336,7 +336,7 @@ def test_a_ticket_prints_neither_secret() -> None:
 def test_a_failure_mid_stream_is_an_error_event() -> None:
     event = bridge.error_event(AssistantUpstreamError("LibreChat failed"))
     assert event.startswith(b"data: ") and event.endswith(b"\n\n")
-    # Classed as the HTTP error for it is: whose move it is, and whether asking again helps.
+    # Classed as its HTTP error is: whose move it is, and whether asking again helps.
     error = json.loads(event[6:])["error"]
     assert error["code"] == "ASSISTANT_UPSTREAM_FAILED"
     assert error["category"] == "dependency" and error["retryable"] is True
