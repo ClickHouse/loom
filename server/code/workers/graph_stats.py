@@ -244,9 +244,8 @@ def _path_convention_rows(org: str, ns: str, known: set[str]) -> list[dict[str, 
     for p in known:
         if p.startswith("src/") and "/tests/" not in p:
             src_by_stem.setdefault(_stem(p), []).append(p)
-    # Insertion order, so a test's rows come out in source-stem order.
-    order = {s: i for i, s in enumerate(src_by_stem)}
-    mappable = {s: paths for s, paths in src_by_stem.items() if s and len(paths) <= 3}
+    # A substring is never empty, so an empty stem never matches.
+    mappable = {s: paths for s, paths in src_by_stem.items() if len(paths) <= 3}
     longest = max((len(s) for s in mappable), default=0)
     rows = []
     for t in known:
@@ -255,7 +254,7 @@ def _path_convention_rows(org: str, ns: str, known: set[str]) -> list[dict[str, 
         t_stem = _stem(t)
         n = len(t_stem)
         subs = {t_stem[i:j] for i in range(n) for j in range(i + 1, min(n, i + longest) + 1)}
-        for s_stem in sorted(subs & mappable.keys(), key=order.__getitem__):
+        for s_stem in sorted(subs & mappable.keys()):
             paths = mappable[s_stem]
             for src_path in paths:
                 rows.append(
