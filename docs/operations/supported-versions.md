@@ -50,10 +50,5 @@ learns of the change without failing.
 
 Every release image is built on the architecture it runs on, scanned for critical vulnerabilities
 with a fix, and published with its provenance and an SBOM, and signed with a keyless signature from
-the release workflow. Check one with cosign 3 or later:
-
-```bash
-cosign verify ghcr.io/clickhouse/loom:X.Y.Z \
-  --certificate-identity https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/vX.Y.Z \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
-```
+the release workflow, on each image's multi-arch index; [container
+images](./deployment.md#container-images) gives the `cosign verify` command.

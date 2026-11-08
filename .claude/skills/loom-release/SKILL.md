@@ -66,7 +66,7 @@ gh workflow run release.yml -R ClickHouse/loom --ref vX.Y.Z   # the owner's go-a
 git push origin "vX.Y.Z^{commit}:refs/heads/release/X.Y"      # the line's patch branch
 ```
 
-The final's bundle keeps the ClickHouse release its candidate soaked with. GitHub generates the Release's notes from the previous final (`prepare.py previous`); paste the release pull request's notes above them (release process, step 6). The tag run ends with `release-check` on the published installer. A failed job: `loom-investigate-ci`; the workflow's own recovery paths (a package first pushed private, a half-tagged version, a refused ClickHouse downgrade) are in the release process, "What the release workflow does".
+The final's bundle keeps the ClickHouse release its candidate soaked with. GitHub generates the Release's notes from the previous final (`prepare.py previous`); paste the release pull request's notes above them (release process, step 6). The tag run ends with `release-check` on the published installer. A failed job: `loom-investigate-ci`; the workflow's own recovery paths (a package first pushed private, a refused ClickHouse downgrade, and [a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)) are in the release process.
 
 ## 5. Check it from outside
 
@@ -80,11 +80,7 @@ It runs the one-line installer (`curl -fsSL https://github.com/ClickHouse/loom/r
 
 ```bash
 curl -fsSI https://github.com/ClickHouse/loom/releases/latest/download/install.sh | grep -i '^location:'   # names vX.Y.Z
-for image in loom loom-extractor; do
-  cosign verify "ghcr.io/clickhouse/$image:X.Y.Z" \
-    --certificate-identity "https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/vX.Y.Z" \
-    --certificate-oidc-issuer https://token.actions.githubusercontent.com
-done
+bash scripts/release/verify_signatures.sh X.Y.Z ghcr.io/clickhouse/loom ghcr.io/clickhouse/loom-extractor   # cosign 3
 curl -fsS "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.ClickHouse/loom" | jq '.servers[].server.version'
 ```
 
@@ -92,14 +88,7 @@ The plugins, in a throwaway `HOME`: `claude plugin marketplace add ClickHouse/lo
 
 ## 6. Something is wrong
 
-- **The installer or an image is bad**: point Latest back, on the release and both images, then ship a patch:
-
-  ```bash
-  gh release edit v<previous> -R ClickHouse/loom --latest
-  for image in loom loom-extractor; do
-    docker buildx imagetools create -t "ghcr.io/clickhouse/$image:latest" "ghcr.io/clickhouse/$image:<previous>"
-  done
-  ```
+- **The installer or an image is bad**: point Latest back with `gh release edit v<previous> -R ClickHouse/loom --latest`, move both images' `:latest` (and, for a final, `:X.Y`) back by digest after checking the previous release's signature ([a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature) has the commands), then ship a patch.
 
   Never delete a release's assets or tag: an installed version reruns its installer from them. A host already on the bad release keeps it until the patch: the older installer refuses to run over a newer install unless `LOOM_VERSION=<previous>` names it.
 - **An SDK is bad**: yank it on PyPI (the project's settings: the release, Yank, with the reason), which keeps pinned installs working; `npm deprecate @clickhouse/loom@X.Y.Z "<reason>; use <fixed version>"` and, if `latest` names it, `npm dist-tag add @clickhouse/loom@<previous> latest`. A version number is never reused: the fix is a new patch.
