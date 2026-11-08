@@ -355,6 +355,29 @@ async def test_a_lone_restricted_page_branch_is_cleaned_too(
     assert [(r["subject"], r["revoked_at"] is not None) for r in ch.inserted] == [("mallory", True)]
 
 
+async def test_a_stray_whose_rewrite_is_refused_is_revoked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ops's operator grant is revoked after the plan: the stray is not rewritten from
+    it, and does not stay either."""
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    revoked = _admin("code-z", "ops", revoked_at=T0 + timedelta(hours=1))
+
+    class _RevokedMeanwhile(_FakeCH):
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            planned = await super().query_all(sql, params)
+            if "loom.namespaces" not in sql:
+                self.rows = [revoked, *self.rows[1:]]
+            return planned
+
+    stray = _copy("code-z-26-5", "ops", "code-z-dev")
+    ch = _RevokedMeanwhile([_admin("code-z", "ops"), stray])
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    assert [(r["granted_by"], r["revoked_at"] is not None) for r in ch.inserted] == [
+        ("repo-maintainers:code-z-dev", True)
+    ]
+
+
 async def test_a_page_copy_an_operator_entry_kept_never_reaches_a_restricted_page_branch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

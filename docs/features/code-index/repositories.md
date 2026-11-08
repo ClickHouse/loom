@@ -77,9 +77,9 @@ Rules:
   entries pass their admins to every branch of the repository, and a branch added here
   passes its admins only to other standard branches added here. A restricted branch
   added here takes the operator's admins only. Every sync revokes the other copies it
-  holds, or makes an operator admin's one a copy of the operator grant; a copy of an
-  entry the replica does not configure is revoked too (a retired entry,
-  or a new one a rolling deploy has not reached: grant admin on that entry again). A
+  holds, or makes an operator admin's one a copy of the operator grant; a copy whose
+  `granted_by` names an entry the replica does not configure is revoked too (a retired
+  entry, or a new one a rolling deploy has not reached: grant admin on that entry again). A
   branch whose admins were all such copies is left with none, and only an admin grant
   on one of the repository's operator entries reaches it. A member who held such a copy
   may have granted or approved others there, themselves included: review its grants.

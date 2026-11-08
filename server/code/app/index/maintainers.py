@@ -302,6 +302,22 @@ async def _copy_unchanged(
     return read is not None and _live(now) and _version(now) == _version(read)
 
 
+async def _rewrite_wanted(
+    client: Any, org: str, row: dict[str, Any], now: dict[str, Any] | None, seen: _Seen
+) -> bool:
+    """A stray copy planned to become a copy of the operator grant. When that grant
+    changed since the plan, the stray is revoked instead: the restricted branch must
+    not keep it."""
+    if await _mirror_wanted(client, org, row, now, seen):
+        return True
+    if now is None or not await _copy_unchanged(client, org, row, now, seen):
+        return False
+    _log_stray(org, now)
+    row.clear()
+    row.update(_revoke_row(org, now))
+    return True
+
+
 async def _still_admin(
     client: Any, org: str, row: dict[str, Any], now: dict[str, Any] | None, seen: _Seen
 ) -> bool:
@@ -501,12 +517,16 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
         ]
         inserts += _plan_mirrors(org, kept, [*config, ns], [ns], branches)
     planned = {(r["namespace"], r["subject"]) for r in inserts}
-    revokes = []
+    revokes, strays = [], set()
     for r in rows:
         key = (r["namespace"], r["subject"])
-        if r["namespace"] in restricted and _foreign(r, config) and key not in planned:
-            _log_stray(org, r)
-            revokes.append(_revoke_row(org, r))
+        if r["namespace"] in restricted and _foreign(r, config):
+            strays.add(key)
+            if key not in planned:
+                _log_stray(org, r)
+                revokes.append(_revoke_row(org, r))
+    rewrites = [r for r in inserts if (r["namespace"], r["subject"]) in strays]
+    inserts = [r for r in inserts if (r["namespace"], r["subject"]) not in strays]
     written, busy = 0, None
     if revokes:
         try:
@@ -515,6 +535,10 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
             )
         except GrantBusyError as e:  # the copies below are still written; a later sync retries
             busy = e
+    if rewrites:
+        written += await _write_under_claims(
+            client, org, rewrites, _rewrite_wanted, rows, hold_repo=repo
+        )
     if inserts:
         written += await _write_under_claims(
             client, org, inserts, _mirror_wanted, rows, hold_repo=repo
@@ -624,7 +648,7 @@ async def revoke_repo_maintainer(
         return 0
     restricted = await _restricted(client, org, {b: sources[b] for b in branches})
     config = [b for b, source in sources.items() if source == "config"]
-    # The operator entries a page revoke does not reach are read too, for the line below.
+    # The operator entries a page revoke does not reach are read too, for `operator_admin`.
     rows = await _grant_rows(client, org, list(dict.fromkeys([*branches, *config])))
     admins: dict[str, dict[str, dict[str, Any]]] = {ns: {} for ns in branches}
     for r in rows:

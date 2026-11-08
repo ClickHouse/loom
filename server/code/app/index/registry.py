@@ -66,7 +66,7 @@ async def ensure_registered(cfg: Any, *, ch: Any | None = None, sync: bool = Tru
         if sync:
             await sync_maintainers(cfg, client)
         return inserted
-    except Exception as e:  # noqa: BLE001 — directory is a convenience, never block indexing
+    except Exception as e:  # noqa: BLE001 — the next ingest pass retries; indexing must not stop
         logger.warning(
             "code namespace registration skipped for %s/%s: %s", cfg.org, cfg.namespace, e
         )
