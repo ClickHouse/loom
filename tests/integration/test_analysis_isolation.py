@@ -378,10 +378,7 @@ def test_a_statement_during_a_policy_rewrite_reads_the_right_rows(
     from server.insights.domain import analysis as boundary
 
     policies = [
-        # SHOW CREATE answers in TSV, which escapes the quotes.
-        str(ch_client.command(f"SHOW CREATE ROW POLICY `{boundary.POLICY_NAME}` ON loom.{t.name}"))
-        .replace("\\'", "'")
-        .replace("CREATE ROW POLICY", "CREATE ROW POLICY OR REPLACE", 1)
+        _policy(ch_client, t.name).replace("CREATE ROW POLICY", "CREATE ROW POLICY OR REPLACE", 1)
         for t in boundary.TABLES
     ]
     done = threading.Event()
@@ -392,7 +389,7 @@ def test_a_statement_during_a_policy_rewrite_reads_the_right_rows(
         try:
             while not done.is_set():
                 for stmt in policies:
-                    ch_client.command(stmt, settings={"log_queries": 0})
+                    ch_client.command(stmt, settings=boundary.UNLOGGED_TEXT)
                 rewrites.append(1)
         except BaseException as e:  # noqa: BLE001 — reported to the test below
             failures.append(e)
@@ -442,9 +439,39 @@ def test_the_statement_text_stays_out_of_the_query_log(
     r = _query(control_plane_url, seed, f"SELECT '{marker}' AS m, count() FROM loom.memory")
     assert r.status_code == 200, r.text
     ch_client.command("SYSTEM FLUSH LOGS")
-    logged = ch_client.query(
-        "SELECT count() FROM system.query_log WHERE user = 'loom_analyst' OR query LIKE {m:String}",
+    # The analyst's statements are logged, as on a server that pins log_queries,
+    # but never their text; this read cuts its own, which holds the marker.
+    analyst, quoted = ch_client.query(
+        "SELECT countIf(user = 'loom_analyst'), countIf(query LIKE {m:String}) "
+        "FROM system.query_log",
         parameters={"m": f"%{marker}%"},
+        settings={"log_queries_cut_to_length": 1},
+    ).result_rows[0]
+    assert analyst > 0
+    assert quoted == 0
+
+
+def test_the_scope_key_stays_out_of_the_query_log(ch_client) -> None:
+    """Every policy holds the key as hex literals, which the server's boot
+    wrote and the probe's refused reads quote: no logged statement text or
+    error carries one."""
+    import re
+
+    from server.insights.domain import analysis as boundary
+
+    policy = ch_client.query(
+        "SELECT select_filter FROM system.row_policies "
+        "WHERE short_name = {p:String} AND database = currentDatabase() AND table = 'memory'",
+        parameters={"p": boundary.POLICY_NAME},
+    ).result_rows[0][0]
+    literals = re.findall(r"unhex\('([0-9a-f]+)'\)", policy)
+    assert literals
+    ch_client.command("SYSTEM FLUSH LOGS")
+    logged = ch_client.query(
+        "SELECT count() FROM system.query_log "
+        "WHERE multiSearchAny(query, {k:Array(String)}) OR multiSearchAny(exception, {k:Array(String)})",
+        parameters={"k": literals},
+        settings={"log_queries_cut_to_length": 1},
     ).result_rows[0][0]
     assert logged == 0
 
@@ -456,7 +483,7 @@ def test_the_statement_text_stays_out_of_the_query_log(
 _PROBE_INTERVAL_S = float(os.environ.get("LOOM_CH_ANALYSIS_PROBE_INTERVAL_S") or 60)
 _PROBE_WAIT_S = 2 * _PROBE_INTERVAL_S + 30
 # A policy statement holds the key: it stays out of system.query_log.
-_UNLOGGED = {"log_queries": 0}
+_UNLOGGED = {"log_queries_cut_to_length": 1}
 
 
 def _probed_until(base: str, s: _Seed, done, description: str) -> None:
@@ -501,11 +528,19 @@ def _rows_hidden_without_a_policy(ch_client, nonce: str) -> bool:
 
 
 def _policy(ch_client, table: str) -> str:
+    """The analyst's scope policy on `table` as a CREATE statement. Built from
+    system.row_policies: SHOW CREATE prints the key's literals as [HIDDEN]."""
     from server.insights.domain import analysis as boundary
 
-    return str(
-        ch_client.command(f"SHOW CREATE ROW POLICY `{boundary.POLICY_NAME}` ON loom.{table}")
-    ).replace("\\'", "'")
+    using = ch_client.query(
+        "SELECT select_filter FROM system.row_policies WHERE short_name = {p:String} "
+        "AND database = currentDatabase() AND table = {t:String}",
+        parameters={"p": boundary.POLICY_NAME, "t": table},
+    ).result_rows[0][0]
+    return (
+        f"CREATE ROW POLICY `{boundary.POLICY_NAME}` ON loom.{table} AS permissive "
+        f"FOR SELECT USING {using} TO `{boundary.ANALYST_USER}`"
+    )
 
 
 def test_an_extra_grant_is_revoked_by_the_probe(
@@ -566,7 +601,7 @@ def test_a_canary_under_another_key_is_written_again(
     from server.insights.domain import analysis as boundary
 
     statement = _policy(ch_client, boundary.CANARY_TABLE)
-    # The key's padded forms are the policy's only hex literals.
+    # The key's hex forms are the policy's only hex literals.
     keyed = re.compile(r"unhex\('([0-9A-Fa-f]+)'\)")
     padded = keyed.findall(statement)
     assert padded, "the canary policy names no key"

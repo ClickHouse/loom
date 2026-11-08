@@ -29,7 +29,7 @@ from server.core.sql_literal import sql_string
 # profile carries it, and a build writes the entities only when its version is
 # at least the stored one, so during a rolling upgrade build N-1 never puts
 # back its narrower grants over N's (`needs_rewrite`).
-ENTITY_VERSION = 1
+ENTITY_VERSION = 2
 
 ANALYST_USER = "loom_analyst"
 POLICY_NAME = "loom_analyst_scope"
@@ -56,6 +56,12 @@ VERSION_SETTING = "SQL_loom_analyst_version"
 DIGEST_SETTING = "SQL_loom_analyst_digest"
 # The caps profile's own stamp: the digest of the caps it holds.
 CAPS_DIGEST_SETTING = "SQL_loom_analyst_caps_digest"
+
+# A statement's text in system.query_log and the server log is cut to this
+# many bytes, and a text cut that short is logged as only its length. Loom
+# cannot turn query logging off everywhere (ClickHouse Cloud pins
+# `log_queries` for its users), but any user may set this one.
+UNLOGGED_TEXT = {"log_queries_cut_to_length": 1}
 
 _BLOCK = 64  # SHA-256 block size, for HMAC's inner and outer pads
 
@@ -268,14 +274,30 @@ def _setting(name: str) -> str:
     return f"toString(getSetting('{name}'))"
 
 
+def _hidden(key: bytes, data: bytes) -> str:
+    """`data` as a ClickHouse expression that writes neither it nor `key`
+    out: ClickHouse prints `decrypt`'s arguments as [HIDDEN] in an error
+    message and in SHOW CREATE. A read the policy refuses (the probe's
+    unsigned read) quotes the policy in its error, which ClickHouse logs in
+    system.query_log wherever it logs queries."""
+    from cryptography.hazmat.primitives import padding
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    padder = padding.PKCS7(128).padder()
+    # ECB: one fixed value under one key, hidden from the log, not a message to keep secret.
+    encryptor = Cipher(algorithms.AES(key), modes.ECB()).encryptor()
+    sealed = encryptor.update(padder.update(data) + padder.finalize()) + encryptor.finalize()
+    return f"decrypt('aes-256-ecb', unhex('{sealed.hex()}'), unhex('{key.hex()}'))"
+
+
 def _hmac_sql(key: bytes, payload: str) -> str:
     """HMAC-SHA256 of `payload` under `key` as ClickHouse computes it, spelled
     as the key's inner and outer pads."""
     padded = key.ljust(_BLOCK, b"\0")
-    ipad = bytes(b ^ 0x36 for b in padded).hex()
-    opad = bytes(b ^ 0x5C for b in padded).hex()
-    inner = f"SHA256(concat(unhex('{ipad}'), {payload}))"
-    return f"hex(SHA256(concat(unhex('{opad}'), {inner})))"
+    ipad = _hidden(key, bytes(b ^ 0x36 for b in padded))
+    opad = _hidden(key, bytes(b ^ 0x5C for b in padded))
+    inner = f"SHA256(concat({ipad}, {payload}))"
+    return f"hex(SHA256(concat({opad}, {inner})))"
 
 
 def signature_filter(key: bytes) -> str:
@@ -318,7 +340,7 @@ def profile_settings() -> list[str]:
         "final = 1 CONST",
         "apply_row_policy_after_final = 1 CONST",
         # The statement text stays out of system.query_log; the ledger keeps its digest.
-        "log_queries = 0 CONST",
+        *(f"{name} = {value} CONST" for name, value in UNLOGGED_TEXT.items()),
         "read_overflow_mode = 'throw' CONST",
         "result_overflow_mode = 'throw' CONST",
         "timeout_overflow_mode = 'throw' CONST",

@@ -46,10 +46,12 @@ docker run -d --pull "$PULL" --name "$NAME" \
   -v "$CFG/nlp_user_settings.xml:/etc/clickhouse-server/users.d/nlp_user_settings.xml:ro" \
   -v "$CFG/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro" \
   -v "$CFG/access_control.xml:/etc/clickhouse-server/config.d/access_control.xml:ro" \
+  -v "$ROOT/dev/clickhouse-ci/log_queries_readonly.xml:/etc/clickhouse-server/users.d/log_queries_readonly.xml:ro" \
   "$IMAGE"
 # named_collections.xml is intentionally omitted: it's gitignored (built from a
 # template against an operator secret) and only powers CH SQL ai* functions,
-# which the test suite doesn't exercise.
+# which the test suite doesn't exercise. log_queries_readonly.xml is CI's
+# own: it pins log_queries as ClickHouse Cloud does.
 
 echo "Waiting for ClickHouse to accept connections…"
 for _ in $(seq 1 40); do

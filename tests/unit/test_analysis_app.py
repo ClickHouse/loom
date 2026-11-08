@@ -431,6 +431,21 @@ def test_print_sql_is_not_gated_on_the_reader_users_settings(
     assert capsys.readouterr().out.rstrip().endswith("SELECT 1;")
 
 
+def test_printed_analyst_sql_cuts_its_own_text_from_the_log_first(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import argparse
+
+    from server.cli import ch_setup
+
+    monkeypatch.setattr(ch_setup, "_analyst_sql", lambda: ["CREATE USER x", "SELECT 1"])
+    monkeypatch.setattr(app.store, "database", lambda: "loom")
+    args = argparse.Namespace(print_analyst_sql=True, print_sql=False)
+    assert ch_setup._cmd_ch_setup(args) == 0
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if not ln.startswith("--")]
+    assert lines == ["SET log_queries_cut_to_length = 1;", "CREATE USER x;", "SELECT 1;"]
+
+
 @pytest.mark.parametrize("path", ["rewrite", "load_for_print"])
 def test_before_the_first_boot_migrates_both_paths_say_to_run_again(
     monkeypatch: pytest.MonkeyPatch, path: str

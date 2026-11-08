@@ -7,8 +7,12 @@ import hashlib
 import hmac
 import re
 
+import pytest
+
+from server.core.sql_literal import sql_string
 from server.erasure.store import census
 from server.insights.domain import analysis as boundary
+from tests.unit import clickhouse_local
 
 CAPS = boundary.Caps(
     max_execution_s=10,
@@ -51,7 +55,7 @@ def test_a_version_names_one_set_of_grants_and_policies() -> None:
     # Changing a grant, a policy, a live predicate or a retired table changes
     # this digest: bump ENTITY_VERSION and record the new digest here.
     assert {boundary.ENTITY_VERSION: boundary.structure_digest()} == {
-        1: "7298189ddfc0ab437dc5766b5866c515"
+        2: "54f17f7b202ff38e8d89640dc320b263"
     }
 
 
@@ -178,6 +182,29 @@ def test_every_allowlisted_table_is_reached_by_erasure() -> None:
     assert classified["loom.analysis_secrets"] == "no_memory_content"
 
 
+def test_no_entity_statement_changes_log_queries() -> None:
+    # ClickHouse Cloud pins log_queries for its users and refuses a profile or
+    # a statement that changes it; the text is cut from the log instead.
+    assert not any(re.search(r"\blog_queries\s*=", stmt) for stmt in SQL)
+    assert "log_queries" not in boundary.UNLOGGED_TEXT
+
+
+def test_entity_statements_are_sent_with_their_text_cut_from_the_log() -> None:
+    import asyncio
+
+    from server.insights.store import analysis as store
+
+    sent: list[tuple[str, dict[str, object]]] = []
+
+    class _Client:
+        async def execute(self, sql: str, settings: dict[str, object], **_: object) -> None:
+            sent.append((sql, settings))
+
+    asyncio.run(store.write_entities(SQL, ch=_Client()))  # type: ignore[arg-type]
+    assert [sql for sql, _ in sent] == SQL
+    assert all(settings == {"log_queries_cut_to_length": 1} for _, settings in sent)
+
+
 def test_profile_pins_what_a_statement_could_widen() -> None:
     # The pins live in the main profile, the caps in the caps profile it carries.
     profile = " ".join(s for s in SQL if "SETTINGS PROFILE" in s)
@@ -186,7 +213,7 @@ def test_profile_pins_what_a_statement_could_widen() -> None:
         "readonly = 2 CONST",
         "final = 1 CONST",
         "apply_row_policy_after_final = 1 CONST",
-        "log_queries = 0 CONST",
+        "log_queries_cut_to_length = 1 CONST",
         "use_query_cache = 0 CONST",
         "read_overflow_mode = 'throw' CONST",
         "result_overflow_mode = 'throw' CONST",
@@ -204,7 +231,7 @@ def test_one_password_and_one_key() -> None:
     user = next(s for s in SQL if s.startswith("ALTER USER"))
     assert "IDENTIFIED WITH sha256_password BY 'pw-current' SETTINGS" in user
     policy = _policies(boundary.POLICY_NAME)["memory"]
-    assert policy.count("hex(SHA256(concat(unhex(") == 1
+    assert policy.count("hex(SHA256(concat(decrypt(") == 1
 
 
 def test_the_digest_leaves_out_the_key_which_never_changes() -> None:
@@ -247,6 +274,33 @@ def test_wrapper_drops_one_semicolon_ends_a_comment_and_asks_one_row_more() -> N
     assert boundary.wrap_statement("SELECT 1 -- note;", 10) == (
         "SELECT * FROM (\nSELECT 1 -- note\n) LIMIT 11"
     )
+
+
+def _local_error(sql: str) -> str:
+    with pytest.raises(AssertionError) as raised:
+        clickhouse_local.run([], sql)
+    return str(raised.value)
+
+
+@pytest.mark.skipif(clickhouse_local.CLICKHOUSE is None, reason="needs the clickhouse binary")
+def test_the_policy_computes_the_signature_loom_signs() -> None:
+    payload = boundary.scope_payload("acme", "a,b", 123, "qid-1")
+    rows = clickhouse_local.run([], f"SELECT {boundary._hmac_sql(KEY, sql_string(payload))} AS s")
+    assert rows == [{"s": boundary.sign_scope(KEY, "acme", "a,b", 123, "qid-1")}]
+
+
+@pytest.mark.skipif(clickhouse_local.CLICKHOUSE is None, reason="needs the clickhouse binary")
+def test_an_error_that_quotes_the_policy_quotes_no_key() -> None:
+    # The probe's unsigned read is refused with an error quoting the policy,
+    # and ClickHouse logs that error in system.query_log.
+    rows = "SELECT 'acme' AS org, 'a' AS namespace"
+    error = _local_error(f"SELECT 1 FROM ({rows}) WHERE {boundary.policy_filter(KEY)}")
+    assert "UNKNOWN_SETTING" in error
+    assert "[HIDDEN]" in error
+    padded = KEY.ljust(64, b"\0")
+    for secret in (KEY, bytes(b ^ 0x36 for b in padded), bytes(b ^ 0x5C for b in padded)):
+        assert secret.hex() not in error.lower()
+    assert "unhex(" not in error
 
 
 def test_policy_reads_every_setting_as_a_string() -> None:

@@ -334,14 +334,33 @@ write](#provisioning). The first write draws them under the lease below and ever
 replica reads the same row. A root-secret rotation only reseals them, so the policies
 never change key; when the key cannot be read, [provisioning](#provisioning) says what
 happens. The analyst user cannot read the key: it has no grant on `system.row_policies`
-or on `loom.analysis_secrets`, and it cannot run `EXPLAIN`. Every statement that carries
-the key runs with `log_queries = 0`, so the key is not in `system.query_log`. It is in
-ClickHouse's own access storage (on disk, or in Keeper when access is replicated), in a
-backup of the access entities, in the distributed DDL queue of a cluster that writes
-access `ON CLUSTER`, in `system.row_policies` and in the server log at `debug` level:
-all read only by whoever administers the ClickHouse host, who can read every row anyway,
-and by Loom's own user where it has `SHOW ROW POLICIES`; that user can already open the
-sealed row.
+or on `loom.analysis_secrets`, and it cannot run `EXPLAIN`.
+
+**What the query log holds.** Loom never turns query logging off: ClickHouse Cloud pins
+`log_queries` for the service's users and refuses a statement or a settings profile that
+changes it. It keeps the secrets out of what is logged instead:
+
+- Every statement that carries the key or the password runs with
+  `log_queries_cut_to_length = 1` (`UNLOGGED_TEXT` in
+  `server/insights/domain/analysis.py`), which any user may set. ClickHouse then logs
+  the statement, in `system.query_log` and in its server log, as only the number of
+  characters it removed. The printed SQL sets it first, for the session it runs in.
+- ClickHouse itself leaves the password out of a logged `IDENTIFIED BY`.
+- An error raised inside a row policy quotes the policy, and ClickHouse logs that error
+  in `system.query_log`'s `exception` column; the probe's unsigned read raises one on
+  every table by design. So the key's two padded forms, the only places the key enters
+  the HMAC, are written in the policy as `decrypt('aes-256-ecb', …)` of themselves
+  sealed under the key, which ClickHouse prints as `[HIDDEN]` in an error message and in
+  `SHOW CREATE ROW POLICY`. The HMAC is the same, so the signature Loom computes does not
+  change, and a build that wrote the pads in clear signs statements those policies
+  accept.
+
+The key is in ClickHouse's own access storage (on disk, or in Keeper when access is
+replicated), in a backup of the access entities, in the distributed DDL queue of a
+cluster that writes access `ON CLUSTER` and in `system.row_policies`, which shows the
+policy's arguments in full: all read only by whoever administers the ClickHouse host, who
+can read every row anyway, and by Loom's own user where it has `SHOW ROW POLICIES`; that
+user can already open the sealed row.
 
 **Why not ClickHouse credentials in LibreChat.** A ClickHouse login in the agent would
 read every org, skip the request ledger and the exposure records, and keep no link to
@@ -376,7 +395,7 @@ stored key. Elsewhere an admin uses one of two commands:
   With [part 2](#build-order) it proves its `LOOM_JWT_SECRET` as the rotation below
   does, draws a fresh key and password, and prints a complete rotation, in the order of
   a write, with the command that runs it in one session
-  (`clickhouse-client --log_queries=0 --distributed_ddl_output_mode=throw --multiquery --queries-file <file>`):
+  (`clickhouse-client --distributed_ddl_output_mode=throw --multiquery --queries-file <file>`, after the `SET` that cuts the text of the rest from the log):
   the delete, the new password, the `KILL QUERY`, the rest of the entity set under the
   new key, a settle of `SELECT sleep(...)` statements, the `KILL QUERY` again, and last
   the `INSERT` of the new sealed row at a version from ClickHouse's clock in
@@ -385,9 +404,10 @@ stored key. Elsewhere an admin uses one of two commands:
   so it is printed by the newest build's CLI, and it is run, not kept.
 
 A printed rotation run only in part leaves analysis unavailable, by the order of a write
-below. Its statements must run in that one session: ClickHouse takes no per-statement
-settings on an access statement, and a console that sends them one by one would log the
-key in `system.query_log`.
+below. Its statements must run in that one session, after its first statement,
+`SET log_queries_cut_to_length = 1`: ClickHouse takes no per-statement settings on an
+access statement, and a console that sends them one by one would log the key in
+`system.query_log`.
 
 The allowlist lives in code with the column comments that become the agent's catalog, so
 the grants, the policies and the catalog come from one definition. The rules a write
@@ -598,9 +618,12 @@ in `server/observability/event_args.py`) and the statement's digest and length. 
 `sql` argument joins the ledger's text keys, which record a digest, never the text; a
 restricted namespace drops text keys from the ledger, so the op also records the digest
 as `sql_digest`, an identifier key, which the citation check reads. The profile holds
-`log_queries = 0` `CONST`, so the statement text is not in `system.query_log` either;
-ClickHouse's server log records it at its `debug` level, as it records every statement.
-The rows are stored nowhere.
+`log_queries_cut_to_length = 1` `CONST`, so `system.query_log` and the server log record
+each statement the analyst runs without its text: its user, timing, rows read and
+settings, the scope and its signature among them. A signature reads rows only with the
+analyst's password, for its own query id, until its expiry. A statement ClickHouse
+refuses logs its error message, which can quote part of the caller's statement. The rows
+are stored nowhere.
 
 ## Isolation proof
 
