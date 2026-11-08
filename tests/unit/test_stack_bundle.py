@@ -192,8 +192,6 @@ def _run_step(tmp_path: Path, script: str, **env: str):
 
     work = tmp_path / "work"
     work.mkdir(exist_ok=True)
-    (work / "scripts").symlink_to(ROOT / "scripts")
-    other, _ = build_stack_bundle.build(
     # A copy, not a link: through a link, the script's ../../dev would be the
     # real dev/, not the stub written beside it.
     shutil.copytree(ROOT / "scripts" / "release", work / "scripts" / "release")
@@ -371,3 +369,20 @@ def test_a_bundle_that_cannot_be_read_is_one_error_line(
     assert run.returncode == 1
     assert run.stderr.startswith("::error::") and error in run.stderr, run.stderr
     assert "Traceback" not in run.stderr
+
+
+@pytest.mark.parametrize(
+    "version",
+    ["1.2.0", "1.2.0-rc.1", "1.2.0-rc.10", "1.2.0-beta.1", "1.2", "1.2.0-rc", "1.2.0-rc.1.2"],
+)
+def test_a_bundle_takes_the_versions_the_release_takes(tmp_path: Path, version: str) -> None:
+    """release.yml's tag parse and build() accept the same versions, so a tag the
+    release runs never fails late, at the bundle."""
+    (parse,) = [
+        s for s in _release_workflow()["jobs"]["version"]["steps"] if s.get("id") == "parse"
+    ]
+    env = {"PATH": "/usr/bin:/bin", "REF": f"refs/tags/v{version}", "DRY_RUN": "false"}
+    env["GITHUB_OUTPUT"] = str(tmp_path / "output")
+    released = subprocess.run(["bash", "-e", "-c", parse["run"]], env=env, capture_output=True)
+    taken = build_stack_bundle.VERSION_PATTERN.fullmatch(version) is not None
+    assert (released.returncode == 0) is taken
