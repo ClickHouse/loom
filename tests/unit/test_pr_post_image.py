@@ -424,4 +424,43 @@ def test_a_file_whose_parse_runs_past_the_deadline_is_counted(
 
     asyncio.run(po._parse_post_image(_Repo(), "acme", "code-ch", ov, read=read, path_prefixes=()))
     assert "checkPartsLimit" in {s.name for s in ov.symbols}
-    assert "changed file(s) not fully read" in ov.note
+    assert any(e.to_qualified_name.endswith("checkPartsLimit") for e in ov.edges)
+    assert ov.note.startswith("1 changed file(s) not fully read")
+
+
+def test_an_open_brief_over_a_partial_overlay_is_served_unstored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.code.app.index import review_brief_build as rbb
+
+    note = "1 changed file(s) not fully read: the overlay's parse time was spent"
+
+    async def build_brief(inp: Any, **kw: Any) -> dict[str, Any]:
+        return {"pr_number": inp.pr_number, "overlay_note": note}
+
+    class Repo:
+        inserted: list[Any] = []
+
+        async def get_state(self, *a: Any) -> str:
+            return ""
+
+        async def insert_rows(self, table: str, rows: list[Any]) -> None:
+            self.inserted.append(table)
+
+    monkeypatch.setattr(rbb, "build_brief", build_brief)
+    repo = Repo()
+    payload = asyncio.run(
+        rbb.build_for_open(
+            repo,
+            "acme",
+            "code-ch",
+            git_dir="",
+            pr_number=7,
+            title="",
+            head_sha="cd" * 20,
+            base_sha="ef" * 20,
+            call=None,
+            diff=DIFF,  # type: ignore[arg-type]
+        )
+    )
+    assert repo.inserted == [] and payload["overlay_note"] == note

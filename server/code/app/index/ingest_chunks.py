@@ -17,13 +17,13 @@ from server.code.app.index.ingest_parse import (
     _py_islands_on,
     _shell_islands_on,
     _statement_records_on,
+    host_units_of,
 )
 from server.code.app.index.ingest_resolve import _PY_LAYOUT_CACHE
 from server.code.domain.extract.bounded_parse import ParseTimeout
 from server.code.domain.extract.chunker import Chunk, chunk_file
 from server.code.domain.extract.context_text import build_context_text
 from server.code.domain.extract.edges_treesitter import call_sites
-from server.code.domain.extract.lang_hosts import host_units
 from server.code.domain.extract.lang_py_islands import py_sql_units
 from server.code.domain.extract.lang_reference import REFERENCE_LANG, reference_chunk
 from server.code.domain.extract.lang_shell_islands import shell_units
@@ -232,11 +232,11 @@ def _chunks_for(
         # The host's shell islands as facet rows (programs, dialects, statement facets);
         # chunks stay the line windows. Not read again when the parse step failed on them.
         try:
-            hu = host_units(pf)
+            hu = host_units_of(path, source)
         except ParseTimeout:
             return chunks, {}, []  # its shell ran past the parse deadline: the line windows stand
         if hu is not None:
-            return chunks, {}, hu.facets
+            return chunks, {}, list(hu.facets)
     if pf.lang == "python" and _py_islands_on():
         # The SQL the file runs as facet rows; chunks stay the AST chunker's (the
         # statement symbols joined the parse already)

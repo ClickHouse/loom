@@ -3,13 +3,14 @@ language's islands, or a line-window lane) and the facts that ride its symbols."
 
 from __future__ import annotations
 
+import functools
 import logging
 from typing import Any
 
 from server.code.app.index.denylist import Denylist, default_denylist
 from server.code.app.index.ingest_stats import error_text
 from server.code.domain.extract.lang_detect import detect_by_extension, detect_shell, is_bats_path
-from server.code.domain.extract.lang_hosts import detect_host, host_kind, host_units
+from server.code.domain.extract.lang_hosts import HostUnits, detect_host, host_kind, host_units
 from server.code.domain.extract.lang_py_islands import py_sql_units
 from server.code.domain.extract.lang_reference import REFERENCE_MAX_BYTES, reference_lang_for_path
 from server.code.domain.extract.lang_shell_islands import include_targets
@@ -173,11 +174,18 @@ def _parse_host(path: str, source: bytes) -> ParsedFile:
     as symbols and the repository scripts its shell islands invoke as include targets —
     set at parse so the full ingest and the edges-only pass derive the same edges."""
     pf = ParsedFile(path=path, lang="config", source=source)
-    hu = host_units(pf)
+    hu = host_units_of(path, source)
     if hu is not None:
-        pf.symbols = hu.symbols
-        pf.includes = hu.includes
+        pf.symbols = list(hu.symbols)
+        pf.includes = list(hu.includes)
     return pf
+
+
+@functools.lru_cache(maxsize=8)
+def host_units_of(path: str, source: bytes) -> HostUnits | None:
+    """`host_units` of a host file's text, kept so the parse and chunk steps of its
+    ingest read its shell once. Callers copy what they change."""
+    return host_units(ParsedFile(path=path, lang="config", source=source))
 
 
 def _parse_bats(path: str, source: bytes) -> ParsedFile:

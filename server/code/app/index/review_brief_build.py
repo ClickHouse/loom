@@ -115,6 +115,8 @@ async def build_brief(
     extra: dict[str, Any] = {}
     if impact is not None and impact.get("overlay"):
         extra["overlay_added"] = int(impact.get("overlay_added") or 0)
+        if impact.get("overlay_note"):
+            extra["overlay_note"] = str(impact["overlay_note"])  # what the overlay left out
     return {
         **extra,
         "v": PAYLOAD_VERSION,
@@ -760,7 +762,10 @@ async def build_for_open(
     payload["overlay"] = True
     payload["head_sha"] = head_sha
     payload["base_sha"] = base_sha
-    if store:
+    if store and payload.get("overlay_note"):
+        # served, never stored: every later read would serve the partial overlay
+        logger.info("review_brief: open PR %s served unstored, its overlay is partial", pr_number)
+    elif store:
         try:
             await repo.insert_rows(
                 "code_review_briefs", [brief_row(org, ns, {**payload, "merge_sha": head_sha})]

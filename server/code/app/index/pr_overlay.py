@@ -432,7 +432,8 @@ async def load_pr_overlay(
             return None  # not parsed either way
 
     await _parse_post_image(repo, org, ns, ov, read=from_mirror, path_prefixes=path_prefixes)
-    _CACHE.put(key, (head, ov))
+    if not ov.note:  # a partial overlay is finished by the next request
+        _CACHE.put(key, (head, ov))
     return ov
 
 
@@ -470,7 +471,8 @@ async def load_posted_overlay(
         return None if text is None else text.encode()
 
     await _parse_post_image(repo, org, ns, ov, read=from_request, path_prefixes=path_prefixes)
-    _CACHE.put(key, (digest, ov))
+    if not ov.note:
+        _CACHE.put(key, (digest, ov))
     return ov
 
 
@@ -567,15 +569,23 @@ def _parsed_facts(path: str, source: bytes) -> tuple[Any, _Facts]:
     return pf, (tuple(pf.symbols), frozenset(names), timed_out)
 
 
+def _store_edges(key: tuple[str, str, str], edges: tuple[OverlayEdge, ...] | None) -> None:
+    if edges is not None:
+        _FILE_EDGES.put(key, edges)
+
+
 def _file_edges(
     pf: Any, path: str, source: bytes, table: dict[str, list[tuple[str, str, str]]]
-) -> tuple[OverlayEdge, ...]:
+) -> tuple[OverlayEdge, ...] | None:
     """The calls and inherits edges of one post-image file; `pf` is its parse when this
-    request already holds it."""
+    request already holds it. None when parsing it again ran past the deadline."""
     from server.code.app.index.ingest_parse import parse_for_ingest
     from server.code.domain.extract.edges_treesitter import extract_edges_and_misses
 
-    pf = pf or parse_for_ingest(path, source)[0]
+    if pf is None:
+        pf, err = parse_for_ingest(path, source)
+        if ParseTimeout.__name__ in err:
+            return None
     try:
         edges, _misses = extract_edges_and_misses(pf, table, None)
     except Exception as e:  # noqa: BLE001 — per file, never the overlay
@@ -612,8 +622,8 @@ async def _parse_post_image(
     # path -> (source, digest, parsed file this request already holds, symbols, names)
     files: dict[str, tuple[bytes, str, Any, tuple[Any, ...], frozenset[str]]] = {}
     names: set[str] = set()
-    # One overlay starts no parse after `code_parse_timeout_seconds` from its first, so
-    # a request parses for a few deadlines at most
+    # An overlay starts no parse once `code_parse_timeout_seconds` have passed since it
+    # began, so a request parses for a few deadlines at most
     deadline = time.monotonic() + settings.code_parse_timeout_seconds
     left_out = 0
     for p in paths:
@@ -645,11 +655,15 @@ async def _parse_post_image(
     for p, (source, digest, pf, _, file_names) in files.items():
         key = (p, digest, _binding_digest(file_names, table))
         edges = _FILE_EDGES.get(key)
-        if edges is None:
+        if edges is None and pf is not None:
+            # binding the tree in hand is no parse: in a thread, outside the turn
+            edges = await asyncio.to_thread(_file_edges, pf, p, source, table)
+            _store_edges(key, edges)
+        elif edges is None:
             edges = await _in_turn(
                 key,
                 deadline,
-                functools.partial(_FILE_EDGES.put, key),
+                functools.partial(_store_edges, key),
                 _file_edges,
                 pf,
                 p,
