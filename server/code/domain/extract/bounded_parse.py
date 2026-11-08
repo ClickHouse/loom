@@ -5,8 +5,7 @@ a worker or a serving replica for hours. Every parse of repository text goes thr
 `parse`, which stops reading the source after `code_parse_timeout_seconds` of the
 parsing thread's CPU time and raises `ParseTimeout`; each caller takes its parse
 failure path (an indexed file is then chunks without symbols). The deadline is CPU
-time, not wall-clock time, so a busy host does not time out a file that parses in
-time on an idle one.
+time, not wall-clock time, so waiting for the GIL, the lock or a CPU costs none of it.
 
 The parser's own progress callback cannot be used: the binding builds its arguments
 with a format code Python 3.12 rejects and crashes. The parser instead reads the

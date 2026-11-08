@@ -709,7 +709,8 @@ def _reexport_facts(
     without the cache a package's `__init__` is re-parsed hundreds of times per
     file (pandas: 1,412 re-parses for 150 files; the ingest prefetches the same
     texts per file). A module whose parse runs past the deadline reads as
-    defining and importing nothing, and is not parsed again."""
+    defining and importing nothing, and is not parsed again while it stays
+    in the cache."""
     try:
         pf = parse_python(path, text.encode("utf-8", "replace"))
     except bounded_parse.ParseTimeout:

@@ -1352,7 +1352,7 @@
           "default": 3.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "CPU seconds after which a tree-sitter parse stops reading its file; the file then takes its reader's parse-failure path until it is ingested again (raising it re-reads none; `code.index_errors` lists the files whose own parse timed out)."
+          "description": "CPU seconds after which a tree-sitter parse stops reading its file; the file then takes its reader's parse-failure path until its text changes or that result leaves its cache (raising it re-reads none; `code.index_errors` lists indexed files)."
         },
         "code_path_prefixes": {
           "default": "",

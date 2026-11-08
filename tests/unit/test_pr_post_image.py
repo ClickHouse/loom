@@ -651,9 +651,11 @@ def test_an_edge_parse_that_times_out_is_counted(monkeypatch: pytest.MonkeyPatch
 
     asyncio.run(po._parse_post_image(_Repo(), "acme", "code-ch", ov, read=read, path_prefixes=()))
     po._FILE_EDGES.clear()  # the facts stay cached: the edges need a parse again
-    monkeypatch.setattr(
-        ingest_parse, "parse_for_ingest", lambda path, src: (None, "parse: ParseTimeout")
-    )
+    from server.code.app.index.ingest_stats import error_text
+    from server.code.domain.extract.bounded_parse import ParseTimeout
+
+    err = error_text("parse", ParseTimeout("stopped"))
+    monkeypatch.setattr(ingest_parse, "parse_for_ingest", lambda path, src: (None, err))
     again = po.PrOverlay(pr_number=7, changed_paths=[PATH], hunks={PATH: [(1, 1)]})
     asyncio.run(
         po._parse_post_image(_Repo(), "acme", "code-ch", again, read=read, path_prefixes=())
