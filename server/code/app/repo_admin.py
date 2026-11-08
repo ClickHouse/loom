@@ -683,8 +683,8 @@ async def handle_code_repo_set_access(input: Any) -> Any:
     process re-reads the row
     within `code_repos_refresh_seconds`. Widening restricted → standard
     needs `confirm` = namespace; a restricted index is never `open`. The change
-    then syncs the repository's maintainers, quietly: a sync that fails is finished
-    by the ingest pass."""
+    then syncs the repository's maintainers, quietly: a restriction's failed sync is
+    finished by the ingest pass, a widening's by the next sync of the repository."""
     require_code_intel()
     from server.code.domain.index.repos import repo_for_namespace
     from server.core.ch import get_client
@@ -772,8 +772,8 @@ async def handle_code_repo_set_access(input: Any) -> Any:
     else:
         nc.reset()  # a widening drops the stale restricted entry
     # A restriction revokes the copies its siblings added from the page gave it; a
-    # widening copies the siblings' admins it never held. A failure is the ingest
-    # pass's to finish, as the decision itself is written and audited.
+    # widening copies the siblings' admins it never held. The decision is written and
+    # audited either way; a restriction's failed sync is the ingest pass's to finish.
     await maintainers.sync_quietly(input.org, input.namespace, ch=ch)
     return CodeRepoSetAccessOutput(
         org=input.org,

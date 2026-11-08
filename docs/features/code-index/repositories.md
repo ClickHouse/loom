@@ -88,7 +88,9 @@ Rules:
 - A revoke follows the same path. One made on an operator entry removes from a branch
   added here only a copied grant, and none from a standard one while the subject holds
   an admin grant given on a branch added here. A copy that is a branch's only admin
-  stays; on a restricted branch the next sync takes it once its operator grant is gone.
+  stays, except on a restricted branch added here, where a copy from a page branch goes
+  on any revoke; an operator copy kept there goes at the next sync once its operator
+  grant is gone.
 - An operator entry that names a namespace already added here keeps that namespace's
   admins, who then reach the repository's other operator entries, and its access row,
   whose classification and join policy win over the entry's: review both before
