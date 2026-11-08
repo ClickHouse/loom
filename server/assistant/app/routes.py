@@ -192,7 +192,7 @@ async def chat_completions(request: Request) -> Any:
     `stream`); any `model`, `conversation_id`, system message, tool or file is ignored.
     The caller needs `viewer` on the namespace."""
     bearer = _bearer(request)
-    # An org-wide token's `*` is no org a row can name.
+    # An org-wide token's `*` is no org a row can name, as the op transport keeps it out.
     org_seen = "-" if bearer.org == "*" else bearer.org
     row = _Row(bearer, org_seen, request.headers.get("X-Loom-Namespace") or "")
     slots = contextlib.ExitStack()
@@ -203,13 +203,7 @@ async def chat_completions(request: Request) -> Any:
             raise _refusal(e) from e
         set_current_auth(auth)
         row.auth = auth
-        if auth.org == "*":
-            # Refused before anything reads under the org: an answer reads one org, and
-            # the row names none, as the op transport keeps `*` out of its rows.
-            row.org = "-"
-            raise AuthInsufficientError(
-                "an org-wide token cannot ask the assistant: an answer reads one org"
-            )
+        bridge.refuse_org_wide(auth)  # before anything reads under the org
         try:
             payload = await request.json()
         except ValueError as e:

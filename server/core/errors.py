@@ -376,8 +376,9 @@ class AnalysisUnavailableError(LoomServerError):
 
 class AssistantUnavailableError(LoomServerError):
     """The assistant cannot answer on this replica: no LibreChat is configured
-    (`LOOM_ASSISTANT_LIBRECHAT_URL`), or the boot has not set up its service user
-    and agent yet. `/v1/health` names the cause (`assistant_service_failing`)."""
+    (`LOOM_ASSISTANT_LIBRECHAT_URL`), auth is off (an answer is delegated from its
+    caller's token), or the boot has not set up its service user and agent yet, which
+    `/v1/health` names once a try failed (`assistant_service_failing`)."""
 
     code = "ASSISTANT_UNAVAILABLE"
     status_code = 503

@@ -118,6 +118,14 @@ def admitted_messages(messages: Any) -> list[dict[str, str]]:
     return kept
 
 
+def refuse_org_wide(auth: AuthInfo) -> None:
+    """An org-wide (`*`) token cannot ask: an answer reads one org."""
+    if auth.org == "*":
+        raise AuthInsufficientError(
+            "an org-wide token cannot ask the assistant: an answer reads one org"
+        )
+
+
 async def authorize(auth: AuthInfo, org: str, namespace: str) -> None:
     """The refusals that need no model spend read: no assistant here, a token that may
     not ask, a caller without `viewer`. A caller's rate-limit buckets are drawn after
@@ -126,10 +134,7 @@ async def authorize(auth: AuthInfo, org: str, namespace: str) -> None:
         raise AssistantUnavailableError(
             "no LibreChat is configured for the assistant (LOOM_ASSISTANT_LIBRECHAT_URL)"
         )
-    if auth.org == "*":
-        raise AuthInsufficientError(
-            "an org-wide token cannot ask the assistant: an answer reads one org"
-        )
+    refuse_org_wide(auth)
     if auth.read_scope in ("own_user", "own_session"):
         raise AuthInsufficientError(
             "a token whose reads are narrower than its namespace cannot ask the assistant"
@@ -369,6 +374,7 @@ __all__ = [
     "Answer",
     "Ticket",
     "authorize",
+    "refuse_org_wide",
     "admitted_messages",
     "answer_token",
     "ask",
