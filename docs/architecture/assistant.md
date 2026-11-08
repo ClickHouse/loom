@@ -147,8 +147,8 @@ Setting the service up is one step that a boot runs holding the cluster lease
 `assistant.service` (`server/core/leases.py`), so two boots never run it at once; the
 holder re-reads the row (as every read of it, with the read-your-writes setting
 `own_write_reads` in `server/core/ch.py`) and does only what is missing, storing each
-result on the row before the next, and signs in once, at the first step that needs
-LibreChat:
+result on the row before the next, and signs in at most once (twice when it registers
+the user), at the first step that needs LibreChat:
 
 1. No row: write the email and a sealed random password.
 2. No key: sign in, registering first only when LibreChat answers that the email does
