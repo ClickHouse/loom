@@ -513,11 +513,8 @@ _NAMES: TtlCache[tuple[str, str, str, str], tuple[tuple[str, str, str], ...]] = 
 )
 # (org, ns) -> (cache key, future) of the one overlay parse in progress for it
 _RUNNING: dict[tuple[str, str], tuple[Any, asyncio.Future[Any]]] = {}
-# Overlay parses run here, not in the default executor, so a pile of them never holds
-# back the process's other threaded work; two, so one slow namespace leaves room for
-# another without a parse per request. Parses of one grammar still wait for each other
-# across namespaces, so one namespace's slow parses of it delay the others' by up to a
-# deadline each
+# Overlay parses run here, not in the default executor, so they never hold back other
+# threaded work; two threads, so one slow namespace leaves room for another
 _PARSE_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="loom-overlay-parse")
 
 

@@ -1198,10 +1198,9 @@ settings:
   # heal on the next backfill. [restart]
   # code_ingest_max_files_per_commit: 500
 
-  # CPU seconds after which a tree-sitter parse stops reading its file; the file then
-  # takes its reader's parse-failure path until its text changes or that result leaves
-  # its cache (raising it re-reads nothing; `code.index_errors` lists the indexed files
-  # that timed out). [live]
+  # CPU seconds after which a tree-sitter parse stops reading its file, which is then
+  # read as unparsed (`code.index_errors` lists the indexed ones); raising it re-reads
+  # nothing. [live]
   # code_parse_timeout_seconds: 3.0
 
   # The ingest pass's own deadline (seconds), kept at the supervisor's cap;
