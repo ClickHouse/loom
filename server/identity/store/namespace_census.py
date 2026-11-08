@@ -104,11 +104,10 @@ async def in_use(
     org: str, namespace: str, tables: list[str], *, ch: _CHClient | None = None
 ) -> bool:
     """Whether (org, namespace) holds a row in any of `tables` or a live row in
-    `STATE_TABLES`, registered or not. One statement: each branch
-    filters on (org, namespace) and stops at one row, a key-range read where the table's
-    sort key starts with them. A data row counts whether or not it is tombstoned, as a
-    stored row of the name; a grant counts only live, read with FINAL so a revoked one
-    is not."""
+    `STATE_TABLES`, registered or not. One statement, each branch stopping at one row: a
+    census branch filters on (org, namespace), a state branch on its own live condition
+    (the few not keyed by (org, namespace) are listed in the sort-key test). A data row
+    counts whether or not it is tombstoned, as a stored row of the name."""
     ch = ch or _default_client()
     branches = [f"(SELECT 1 FROM {t} {cond} LIMIT 1)" for t, cond in STATE_TABLES.items()]
     # The table names come from the erasure registry (census.namespace_tables), never
