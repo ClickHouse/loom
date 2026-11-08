@@ -36,6 +36,12 @@ describe("ThreadActions", () => {
   });
 
   it("renames a thread and deletes one with the thread id confirmed", async () => {
+    vi.mocked(api.getConversationThread).mockResolvedValueOnce({
+      found: true,
+      msg_count: 3,
+      agent: "claude-code",
+      created_at: "2000-01-01 00:00:00",
+    } as never);
     const onChanged = vi.fn();
     render(<ThreadActions identity={identity} thread={thread} canRename canDelete onChanged={onChanged} />);
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
@@ -63,6 +69,40 @@ describe("ThreadActions", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
     await waitFor(() =>
       expect(api.createThreadRow).toHaveBeenCalledWith(identity, "claude-code", "t1", "Release plan"),
+    );
+  });
+
+  it("renames as the agent that owns the thread's row, not the last writer", async () => {
+    vi.mocked(api.getConversationThread).mockResolvedValueOnce({
+      found: true,
+      msg_count: 3,
+      agent: "codex",
+      created_at: "2000-01-01 00:00:00",
+    } as never);
+    render(<ThreadActions identity={identity} thread={thread} canRename canDelete={false} onChanged={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename conversation" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
+    await waitFor(() => expect(api.renameThread).toHaveBeenCalledWith(identity, "codex", "t1", "Deploy plan"));
+    expect(api.createThreadRow).not.toHaveBeenCalled();
+  });
+
+  it("deletes the row an agent without turns owns, and says when a part fails", async () => {
+    vi.mocked(api.getConversationThread)
+      .mockResolvedValueOnce({ found: true, msg_count: 0, agent: "codex" } as never)
+      .mockResolvedValueOnce({ found: false, msg_count: 0, agent: "" } as never);
+    render(<ThreadActions identity={identity} thread={thread} canRename={false} canDelete onChanged={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith('Deleted "Deploy plan"', "ok"));
+    expect(vi.mocked(api.deleteThread).mock.calls.map((c) => c[1])).toEqual(["claude-code", "codex"]);
+    vi.mocked(api.getConversationThread).mockResolvedValueOnce({ found: true, msg_count: 2, agent: "codex" } as never);
+    vi.mocked(api.deleteThread).mockResolvedValueOnce({ total: 1 }).mockRejectedValueOnce(new Error("down"));
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith('Deleted part of "Deploy plan", then failed: down', "error"),
     );
   });
 

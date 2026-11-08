@@ -41,12 +41,12 @@ export function ThreadActions({
       danger: true,
     });
     if (!ok) return;
-    try {
-      const left = await deleteEveryAgent(identity, thread);
-      toast(left ? `Deleted part of "${name}"; ${left} messages are left` : `Deleted "${name}"`, left ? "info" : "ok");
-    } catch (e) {
-      toast(`Delete failed: ${humanizeError(e)}`, "error");
-    }
+    const r = await deleteEveryAgent(identity, thread);
+    if (r.error) {
+      const why = humanizeError(r.error);
+      toast(r.parts ? `Deleted part of "${name}", then failed: ${why}` : `Delete failed: ${why}`, "error");
+    } else if (r.left) toast(`Deleted part of "${name}"; ${r.left} messages are left`, "info");
+    else toast(`Deleted "${name}"`, "ok");
     onChanged();
   };
 
@@ -87,9 +87,11 @@ function RenameDialog({
   const submit = async () => {
     setBusy(true);
     try {
-      const r = await renameThread(identity, thread.agent, thread.thread_id, title.trim());
-      // A thread built by appends has no row to update yet: write one with the title.
-      if (!r.updated) await createThreadRow(identity, thread.agent, thread.thread_id, title.trim());
+      // The row belongs to the agent that opened the thread, not always the last writer;
+      // a thread built by appends has none yet, so one is written with the title.
+      const head = await getConversationThread(identity, "*", thread.thread_id, { limit: 1 });
+      if (head.created_at) await renameThread(identity, head.agent, thread.thread_id, title.trim());
+      else await createThreadRow(identity, thread.agent, thread.thread_id, title.trim());
       toast("Renamed", "ok");
       onClose(true);
     } catch (e) {
@@ -123,19 +125,29 @@ function RenameDialog({
 // A thread's turns are deleted per agent; one thread is unlikely to hold more agents.
 const MAX_AGENTS = 20;
 
-/** Delete each agent's part of the thread, the last writer first, until no turn is left.
- *  Answers how many messages are left when it stopped early. */
-async function deleteEveryAgent(id: Pick<Identity, "org" | "namespace">, thread: Thread): Promise<number> {
+/** Delete the thread one agent at a time, the list's agent first, until nothing of it is
+ *  left: no turn and no row. Answers how many parts it deleted, the messages left when it
+ *  stopped early, and the error that stopped it. */
+async function deleteEveryAgent(
+  id: Pick<Identity, "org" | "namespace">,
+  thread: Thread,
+): Promise<{ parts: number; left: number; error?: unknown }> {
   let agent = thread.agent;
+  let parts = 0;
   let left = 0;
-  for (let i = 0; i < MAX_AGENTS; i++) {
-    await deleteThread(id, agent, thread.thread_id);
-    const rest = await getConversationThread(id, "*", thread.thread_id, { limit: 1 });
-    if (!rest.found || rest.msg_count === 0) return 0;
-    left = rest.msg_count;
-    // The next agent is the latest writer of what is left; the same one again means nothing moved.
-    if (!rest.agent || rest.agent === agent) return left;
-    agent = rest.agent;
+  try {
+    for (; parts < MAX_AGENTS; parts++) {
+      await deleteThread(id, agent, thread.thread_id);
+      const rest = await getConversationThread(id, "*", thread.thread_id, { limit: 1 });
+      if (!rest.found) return { parts: parts + 1, left: 0 };
+      left = rest.msg_count;
+      // Next: the row's owner while a row is left, else the oldest remaining turn's writer.
+      // The same agent again means its delete took nothing more.
+      if (!rest.agent || rest.agent === agent) return { parts: parts + 1, left };
+      agent = rest.agent;
+    }
+  } catch (error) {
+    return { parts, left, error };
   }
-  return left;
+  return { parts, left };
 }

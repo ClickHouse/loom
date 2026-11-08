@@ -272,7 +272,7 @@ function GuideHistory({ org, namespace, current }: { org: string; namespace: str
             </ul>
           )}
           {!error && revisions?.length === GUIDE_HISTORY_LIMIT && (
-            <p className="mt-1 text-xs text-text-muted">The newest {GUIDE_HISTORY_LIMIT} revisions.</p>
+            <p className="mt-1 text-xs text-text-muted">Only the newest {GUIDE_HISTORY_LIMIT} revisions are read.</p>
           )}
         </div>
       )}
