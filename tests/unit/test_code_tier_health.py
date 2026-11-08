@@ -96,6 +96,8 @@ FAILING_FULL = tier_health.failed(None, "clang_full", "harness exit 1: x", T0).t
             "permission",
         ),
         ("bwrap: setting up uid map: Permission denied", "unknown"),
+        ("harness exit 1: x\nPermissionError: [Errno 1] Operation not permitted", "harness"),
+        ("harness exit 1: registry: insufficient permissions for this scope", "harness"),
         ("harness exit 1: ld: Operation not permitted", "harness"),
         ("git@github.com: Permission denied (publickey).", "credential"),
         ("git@h.example: Permission denied (publickey,password).", "credential"),

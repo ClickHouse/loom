@@ -226,7 +226,8 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "permission",
         re.compile(
-            r"'[^'\n]*': permission denied|insufficient permission|^PermissionError: ",
+            r"'[^'\n]*': permission denied|insufficient permission for adding an object"
+            r"|^PermissionError: \[Errno \d+\] [^\n]*: '[^'\n]*'",
             re.IGNORECASE | re.MULTILINE,
         ),
     ),
