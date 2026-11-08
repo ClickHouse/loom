@@ -391,6 +391,37 @@ async def test_remove_retires_sources_and_registry_row_under_one_lease(plane) ->
 
 
 @pytest.mark.asyncio
+async def test_remove_deactivates_the_registry_row_under_the_account_claim(
+    plane, monkeypatch
+) -> None:
+    # code.repo.set_access holds it from its read of the row to its write.
+    from contextlib import asynccontextmanager
+
+    from server.code.app.index import retire
+
+    held: list[str] = []
+    real, deactivate = admin.account_change, retire.deactivate_registry_row
+
+    @asynccontextmanager
+    async def account(org: str, ns: str, **k: Any) -> Any:
+        async with real(org, ns, **k):
+            held.append(ns)
+            yield
+            held.remove(ns)
+
+    async def _deactivate(ch: Any, org: str, ns: str) -> bool:
+        assert held == [ns]
+        return await deactivate(ch, org, ns)
+
+    monkeypatch.setattr(admin, "account_change", account)
+    monkeypatch.setattr(retire, "deactivate_registry_row", _deactivate)
+    await admin.handle_code_repo_remove(
+        CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+    )
+    assert plane.registry_active_under_lease == [False]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("lease", ["busy", "down"])
 async def test_remove_refuses_without_the_lease_and_writes_nothing(
     plane, monkeypatch, lease: str

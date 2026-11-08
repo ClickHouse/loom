@@ -488,7 +488,10 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
         # First, so a failed clear stops the removal while it can be retried.
         await _empty_tracker_links(input.org, input.namespace, detail="repository removed")
         sources_off = await deactivate_namespace_sources(input.org, input.namespace)
-        registry_off = await retire.deactivate_registry_row(ch, input.org, input.namespace)
+        # Under the account claim `code.repo.set_access` holds from its read of the row
+        # to its write, so it cannot write the row back to life.
+        async with account_change(input.org, input.namespace):
+            registry_off = await retire.deactivate_registry_row(ch, input.org, input.namespace)
     await reg.refresh_db_repos(force=True)
     from server.identity.app.namespace import handle_namespace_delete
 
@@ -764,7 +767,7 @@ async def handle_code_repo_set_access(input: Any) -> Any:
             (row or {}).get("join_policy") or ("open" if cfg.public else "approval")
         )
         # A removed branch is refused before either row is written.
-        await reg.live_row(cfg, ch)
+        current = await reg.live_row(cfg, ch)
         # The directory row first, which every replica reads now: a restriction cut short
         # after it still stops copies, and the registrar widens no row newer than the
         # access row.
@@ -789,7 +792,12 @@ async def handle_code_repo_set_access(input: Any) -> Any:
             await ch.insert("loom.namespaces", [new_row])
             directory_updated = True
         await reg.upsert_access(
-            cfg, classification=cls, join_policy=pol, created_by=subject or "maintainer", ch=ch
+            cfg,
+            classification=cls,
+            join_policy=pol,
+            created_by=subject or "maintainer",
+            current=current,
+            ch=ch,
         )
     with sequential_reads():  # the sync below reads this snapshot
         await reg.refresh_db_repos(force=True, ch=ch)

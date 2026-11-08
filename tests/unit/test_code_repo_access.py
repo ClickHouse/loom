@@ -85,6 +85,8 @@ def test_an_access_row_wins_over_the_entry_but_keeps_its_other_fields(monkeypatc
 def test_an_entry_whose_namespace_a_member_added_is_skipped(monkeypatch, caplog) -> None:
     # The member's branch is listed as it was, and the entry is logged once.
     row = dataclasses.replace(_cfg("code-weave", source="registry"), row_kind="page")
+    for name in ("_registry_repos", "_registry_namespaces", "_page_namespaces"):
+        monkeypatch.setattr(repos, name, getattr(repos, name))  # restored after the test
     monkeypatch.setattr(repos, "registry_repos", lambda: [row])
     repos.set_registry_repos([row], frozenset({(ORG, "code-weave")}))
     monkeypatch.setattr(repos, "_skipped_logged", set())
@@ -165,7 +167,7 @@ async def test_set_access_writes_registry_and_directory_and_needs_confirm_to_wid
     async def refresh(*a, **k):
         return []
 
-    async def upsert(c, *, classification, join_policy, created_by, ch=None):
+    async def upsert(c, *, classification, join_policy, created_by, current, ch=None):
         written.append(
             {
                 "ns": c.namespace,
@@ -393,7 +395,12 @@ async def test_upsert_access_copies_an_existing_registry_row_and_builds_one_for_
     }
     ch = _CH2(existing)
     await reg.upsert_access(
-        _cfg("code-x"), classification="standard", join_policy="open", created_by="alice", ch=ch
+        _cfg("code-x"),
+        classification="standard",
+        join_policy="open",
+        created_by="alice",
+        current=await reg.live_row(_cfg("code-x"), ch),
+        ch=ch,
     )
     ((table, rows),) = ch.inserts
     row = rows[0]
@@ -414,6 +421,7 @@ async def test_upsert_access_copies_an_existing_registry_row_and_builds_one_for_
         classification="standard",
         join_policy="open",
         created_by="alice",
+        current=await reg.live_row(_cfg("code-weave"), ch2),
         ch=ch2,
     )
     row = ch2.inserts[0][1][0]
@@ -428,26 +436,19 @@ async def test_upsert_access_copies_an_existing_registry_row_and_builds_one_for_
     # An inactive access row is not copied back: the entry gets a fresh one.
     ch3 = _CH2(existing | {"active": False, "row_kind": "access"})
     await reg.upsert_access(
-        _cfg("code-x"), classification="restricted", join_policy="approval", created_by="a", ch=ch3
+        _cfg("code-x"),
+        classification="restricted",
+        join_policy="approval",
+        created_by="a",
+        current=await reg.live_row(_cfg("code-x"), ch3),
+        ch=ch3,
     )
     row = ch3.inserts[0][1][0]
     assert row["row_kind"] == "access" and row["repo"] == "ClickHouse/weave"
     with pytest.raises(ValidationError):  # a member's removed branch keeps its namespace
-        await reg.upsert_access(
-            _cfg("code-x"),
-            classification="restricted",
-            join_policy="approval",
-            created_by="a",
-            ch=_CH2(existing | {"active": False}),
-        )
+        await reg.live_row(_cfg("code-x"), _CH2(existing | {"active": False}))
     with pytest.raises(ValidationError):  # a removed branch added from the page
-        await reg.upsert_access(
-            _cfg("code-x", source="registry"),
-            classification="restricted",
-            join_policy="approval",
-            created_by="a",
-            ch=_CH2(existing | {"active": False}),
-        )
+        await reg.live_row(_cfg("code-x", source="registry"), _CH2(existing | {"active": False}))
 
 
 @pytest.mark.asyncio

@@ -288,6 +288,8 @@ def registry_repos() -> list[RepoConfig]:
 
 
 _registry_namespaces: frozenset[tuple[str, str]] = frozenset()
+# Namespaces a member added from the page, active or removed (`set_registry_repos`).
+_page_namespaces: frozenset[tuple[str, str]] = frozenset()
 
 
 def registry_namespaces() -> frozenset[tuple[str, str]]:
@@ -304,10 +306,6 @@ def set_registry_repos(
     _registry_repos = list(entries)
     _registry_namespaces = frozenset((c.org, c.namespace) for c in _registry_repos)
     _page_namespaces = page_namespaces
-
-
-# Namespaces a member added from the page, active or removed (`set_registry_repos`).
-_page_namespaces: frozenset[tuple[str, str]] = frozenset()
 
 
 def page_namespaces() -> frozenset[tuple[str, str]]:

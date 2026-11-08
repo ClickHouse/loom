@@ -68,11 +68,15 @@ async def test_a_removed_page_branch_keeps_its_namespace_from_the_operator(org: 
     await _add(org, "code-live")
     entry = _entry(org, "code-entry")
     await reg.upsert_access(
-        entry, classification="restricted", join_policy="approval", created_by="o"
+        entry,
+        classification="restricted",
+        join_policy="approval",
+        created_by="o",
+        current=await reg.live_row(entry),
     )
     assert await reg.read_registry()
-    mine = [c for c in repos.registry_repos() if c.org == org]
-    assert {(c.namespace, c.row_kind) for c in mine} == {
+    read = [c for c in repos.registry_repos() if c.org == org]
+    assert {(c.namespace, c.row_kind) for c in read} == {
         ("code-live", "page"),
         ("code-entry", "access"),
     }
@@ -82,9 +86,9 @@ async def test_a_removed_page_branch_keeps_its_namespace_from_the_operator(org: 
         ("code-live", "registry"),
     ]
     # The access row wins for its entry.
-    (mine,) = [c for c in listed if c.namespace == "code-entry"]
-    assert (mine.classification, mine.access_source) == ("restricted", "registry")
-    # The access row wins for its entry.
-    (mine,) = [c for c in listed if c.namespace == "code-entry"]
-    assert (mine.classification, mine.access_source) == ("restricted", "registry")
+    (listed_entry,) = [c for c in listed if c.namespace == "code-entry"]
+    assert (listed_entry.classification, listed_entry.access_source) == (
+        "restricted",
+        "registry",
+    )
     assert await reg.active_count(org) == 1  # the access row is not counted

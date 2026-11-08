@@ -271,9 +271,8 @@ async def insert_entry(
 
 async def live_row(cfg: Any, ch: Any | None = None) -> dict[str, Any] | None:
     """`cfg`'s registry row read now, when active; None for an operator entry with no
-    active row, which gets a fresh access row. A branch added from the page whose row
-    is gone or inactive is refused with NOT_A_REPO: an operator entry is never listed
-    for its namespace either, since its member keeps their grants there."""
+    active row. NOT_A_REPO for a branch added from the page whose row is gone or
+    inactive."""
     from server.code.store.index import CodeRepo
     from server.core.ch import sequential_reads
     from server.core.errors import ValidationError
@@ -293,21 +292,22 @@ async def upsert_access(
     classification: str,
     join_policy: str,
     created_by: str,
+    current: dict[str, Any] | None,
     ch: Any | None = None,
 ) -> None:
-    """A maintainer's access row for `cfg`'s namespace — a new version of the registry
-    row carrying the chosen classification and join policy. An existing registry row is
-    copied whole (every column, including ones added by later migrations) with only
-    those two fields, `created_by` and the stamps changed, so a member's add stays one.
-    An operator entry with no active row gets an access row built from the repository
-    as configured, which `_with_registry` lets win over the entry."""
+    """A maintainer's access row for `cfg`'s namespace: a new version of the registry
+    row carrying the chosen classification and join policy. `current` is the row
+    `live_row` read under the caller's account claim. It is copied whole (every column,
+    including ones added by later migrations) with only those two fields, `created_by`
+    and the stamps changed, so a member's add stays one. An operator entry with no
+    active row gets an access row built from the repository as configured, which
+    `_with_registry` lets win over the entry."""
     from datetime import UTC, datetime
 
     from server.code.store.index import CodeRepo
 
     repo = CodeRepo(ch)
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
-    current = await live_row(cfg, ch)
     if current:
         row = dict(current)
     else:
