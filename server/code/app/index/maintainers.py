@@ -27,12 +27,13 @@ gives no grant on the operator's namespaces.
   operator grant (``_stray``), or rewrites it as a copy of the subject's one.
 * ``revoke_repo_maintainer`` — a revoked admin leaves the branches the revoke
   reaches, except a branch where they are the only active admin (the handler's
-  own guard), until a sync takes such a copy off a restricted branch added from
-  the page once it no longer traces to an operator grant. From an operator entry
-  it takes off a branch added from the page only a mirror, and none from a
-  standard one while the subject holds an admin grant given on one. On a
-  restricted branch added from the page it takes only copies, and a page
-  branch's revoke only those whose source is not an operator entry.
+  own guard). From an operator entry it takes off a branch added from the page
+  only a mirror, and none from a standard one while the subject holds an admin
+  grant given on one. On a restricted branch added from the page it takes only
+  copies: one whose source is not an operator entry (``_foreign``) on any
+  revoke, without the guard; an operator copy only on an operator revoke, under
+  the guard, a copy it keeps going at a later sync once it no longer traces to
+  an operator grant.
 
 Readers stay per branch: the approval fan-out already turns a person's branch requests
 into one decision. Restricted branches also need the token to name them — a person's
@@ -694,9 +695,9 @@ async def revoke_repo_maintainer(
     (`_reaches`); one on an operator entry takes off a branch added from the page
     only a mirror, and none from a standard one while the subject holds an admin
     grant given on a branch added from the page. On a restricted branch added from
-    the page, a revoke from an operator entry takes only a copy, one from a page
-    branch only a copy whose source is not an operator entry (`_foreign`), which
-    goes even as that branch's last admin.
+    the page, any revoke takes a copy whose source is not an operator entry
+    (`_foreign`), even as that branch's last admin; a revoke from an operator entry
+    also takes an operator copy, under the guard.
 
     The registry is read again under the claims: a branch added after
     `read_repo` read it, and given a copy by a sync that held the claims
