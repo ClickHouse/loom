@@ -5,7 +5,8 @@ namespaces would be invisible to the dashboard's sidebar, un-mintable from Setup
 indistinguishable from memory namespaces. Each ingest pass calls
 ensure_registered() once per process per repo entry: if no directory row exists, insert
 one with kind='code' and visibility='private' (read access stays grant-driven — see
-docs). An existing row is re-inserted in full in three cases only: the config says the
+docs), restricted when either the registry row read then or the snapshot says so. An
+existing row is re-inserted in full in three cases only: the config says the
 repository is public and the row is a standard one not yet open (join_policy=open); the
 config classifies the entry `restricted` and the row does not (narrowed); a maintainer's
 access row says `standard` and the row says restricted (widened, the maintainer's own
@@ -172,7 +173,7 @@ async def _write_row(cfg: Any, client: Any) -> bool:
             cfg.namespace,
             row.get("classification"),
         )
-    if widening and follows_access and access is not None:
+    if widening and follows_access and access is not None:  # `access` for the type checker
         # A maintainer opened the repository; the directory follows the access
         # row, not the entry's default
         widened = dict(row)
@@ -191,8 +192,9 @@ async def _write_row(cfg: Any, client: Any) -> bool:
 
 def _newer(access: dict[str, Any], row: dict[str, Any]) -> bool:
     """The access row was written after the directory row. `code.repo.set_access`
-    writes the directory row first, so one as new or newer than the access row is a
-    change whose access row is not written yet; the registrar leaves it alone."""
+    writes the directory row first, so a directory row as new as or newer than the
+    access row belongs to a change whose access row is not written yet; the registrar
+    leaves it alone."""
     written, seen = access.get("updated_at"), row.get("updated_at")
     return written is not None and seen is not None and written > seen
 
