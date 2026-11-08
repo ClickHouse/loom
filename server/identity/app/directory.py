@@ -61,8 +61,8 @@ class IdentityDirectory:
     ) -> bool:
         """A configured code-plane entry or tracker namespace is in use before its
         registry row or first row lands; any other name when Postgres holds a memory of it
-        or `namespace_census.in_use` finds a row, read sequentially: one another replica
-        wrote a moment ago counts."""
+        or `namespace_census.in_use` finds a row (in the census tables not in `skip`), read
+        sequentially: one another replica wrote a moment ago counts."""
         if self.code_entry(org, namespace) is not None:
             return True
         if tracker_namespace(org, namespace) is not None:

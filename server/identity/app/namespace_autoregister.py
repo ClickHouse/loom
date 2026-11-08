@@ -6,7 +6,7 @@ retention policy and no kind.
 
 The first write a principal makes into an unregistered namespace inserts the registry row
 `namespace.register` would have written for it, with that op's defaults: owner = the token
-subject, or none when the name is already in use (`directory().in_use`), `kind = 'bench'`
+subject, or none when the name is already in use (`IdentityDirectory.in_use`), `kind = 'bench'`
 when the name is under one of `namespace_bench_prefixes` (else `memory`),
 `retention_days = 0`. The row is the only write: no TTL clause is touched (a
 per-namespace retention is a clause in eight tables' TTL expressions, and setting one
@@ -55,8 +55,9 @@ AUTO_ROW_VERSION = datetime(1970, 1, 1, 0, 0, 1, tzinfo=UTC)
 # race, the owned row of the one that found the name free wins.
 OWNERLESS_ROW_VERSION = datetime(1970, 1, 1, tzinfo=UTC)
 _MISSING = ("", "-", "*")
-# The census tables a read writes under a name it may read: telemetry and the session's
-# implicit run, no one's content, so a writer who searched first still owns the name.
+# The census tables a read or a run writes under a name (telemetry, a query, a run's
+# metadata), so a writer who searched first still owns the name; a name holding only
+# these rows goes to its first writer.
 READ_TRACES: Final = frozenset(
     {
         "loom.agent_runs",

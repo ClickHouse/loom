@@ -193,6 +193,22 @@ async def test_a_first_write_into_a_name_in_use_records_no_owner() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_memory_only_postgres_holds_makes_the_name_in_use(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.erasure.app import ledger_reads
+
+    async def held(org: str, namespace: str) -> bool:
+        return True
+
+    monkeypatch.setattr(ledger_reads, "pg_holds_namespace", held)
+    ch = _RecordingCH()
+    assert await ar.ensure_registered("o", "legacy", subject="w", op_name="memory.set", ch=ch)
+    [(_, [row])] = ch.inserts
+    assert row["owner_email"] == ""
+
+
+@pytest.mark.asyncio
 async def test_rows_a_read_left_do_not_take_the_name_from_its_first_writer() -> None:
     from server.erasure.app import ledger_reads
 

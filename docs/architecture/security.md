@@ -760,7 +760,7 @@ the account's (`account_change`, which `namespace.register` and `namespace.resto
 too) with sequential consistency; when it cannot be read the sign-up fails and nothing is
 provisioned. The personal-namespace auto-claim passes over a name in use to its fallback
 name, a workload trust's exchange refuses an agent name in use, and a first write's
-auto-registration names no owner on a name in use (rows a read leaves aside,
+auto-registration names no owner on a name in use (rows a read or a run leaves aside,
 `namespace_autoregister.READ_TRACES`), so its writer cannot complete the registration.
 Every other path that registers a name as new and makes its caller admin
 (`namespace.register`, `namespace.restore` into a fresh target, `collection.create`, a
