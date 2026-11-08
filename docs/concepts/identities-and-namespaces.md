@@ -110,14 +110,15 @@ On an `open` namespace a `viewer` join is active at once and a `writer` or `admi
 is pending until an admin approves it; on `approval` every join is pending; `closed`
 refuses joins.
 
-A **restricted** namespace (`classification=restricted` on its directory row, on its
-entry in `LOOM_CODE_REPOS_JSON`, or `restricted` on its tracker source entry) admits a call only when the token belongs to the
-namespace's org, names the namespace literally (not through `*`), holds a role there that
-reaches the operation's role, and the token's own subject holds a live direct grant. No
-org-readable rule, public visibility, wildcard, inherited service-account grant,
-`org_admin` or `platform_admin` bypasses it, and a refusal does not reveal whether the
-namespace exists. Fan-outs, context packs and rollups skip restricted namespaces the
-caller cannot read, and each admitted request is audited. The step-by-step setup is in
+A **restricted** namespace (`classification=restricted` on its directory row, on its entry
+in `LOOM_CODE_REPOS_JSON`, or `restricted` on its tracker source entry) admits a call only
+when the token belongs to the namespace's org, names the namespace literally (not through
+`*`), holds a role there that reaches the operation's role, and the token's own subject
+holds a live direct grant. No org-readable rule, public visibility, wildcard, inherited
+service-account grant, `org_admin` or `platform_admin` bypasses it, and a refusal does not
+reveal whether the namespace exists. Fan-outs, context packs and rollups skip restricted
+namespaces the caller cannot read, and each admitted request is audited. The step-by-step
+setup is in
 [Tokens and grants](../guides/tokens-and-grants.md#restricted-namespaces-classificationrestricted).
 
 ## Roles

@@ -64,8 +64,9 @@ class NamespaceDirectory(Protocol):
         """The configured code-plane entry for (org, namespace). No I/O."""
         ...
 
-    def restricted_code_namespaces(self, org: str) -> set[str]:
-        """The configured code-plane entries of `org` classified restricted. No I/O."""
+    def restricted_config_namespaces(self, org: str) -> set[str]:
+        """The namespaces of `org` the configuration classifies restricted: code-plane
+        entries and tracker namespaces. No I/O."""
         ...
 
     async def fanout_namespaces(

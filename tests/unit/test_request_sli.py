@@ -1390,7 +1390,7 @@ def test_an_answer_hidden_whole_for_want_of_the_classification_is_the_server_s(
     from server.core import request_work
 
     class _Down:
-        def restricted_code_namespaces(self, org: str) -> set[str]:
+        def restricted_config_namespaces(self, org: str) -> set[str]:
             raise ClassificationUnavailable(org)
 
     monkeypatch.setattr(context, "directory", lambda: _Down())
@@ -1414,7 +1414,7 @@ def test_an_org_rollup_is_marked_only_when_emptied_whole_for_want_of_a_read(
     from server.core import request_work
 
     class _Directory:
-        def restricted_code_namespaces(self, org: str) -> set[str]:
+        def restricted_config_namespaces(self, org: str) -> set[str]:
             return {"a-allowed", "b-secret"}
 
         async def restricted_set(self, org: str) -> list[str]:

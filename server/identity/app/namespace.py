@@ -699,7 +699,7 @@ async def _restricted_names(org: str) -> set[str] | None:
         names = set(await directory().restricted_set(org))
     except ClassificationUnavailable:
         return None
-    return names | directory().restricted_code_namespaces(org)
+    return names | directory().restricted_config_namespaces(org)
 
 
 def _guide_shown(

@@ -70,10 +70,9 @@ def config_classification(org: str, namespace: str) -> str:
     `standard` when the namespace is neither a configured code entry nor a restricted
     tracker namespace. No I/O."""
     from server.code.domain.index.repos import repo_for_namespace
-    from server.tracker.domain.namespaces import tracker_namespace
+    from server.tracker.domain.namespaces import is_restricted_tracker_namespace
 
-    tracker = tracker_namespace(org, namespace)
-    if tracker is not None and tracker.restricted:
+    if is_restricted_tracker_namespace(org, namespace):
         return RESTRICTED
     cfg = repo_for_namespace(org, namespace)
     if cfg is None:

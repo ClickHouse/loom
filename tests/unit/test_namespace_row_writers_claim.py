@@ -137,12 +137,13 @@ async def test_a_namespace_skipped_at_boot_is_registered_on_a_later_try(
 
 
 def test_the_gate_reads_a_restricted_tracker_namespace_from_its_config(monkeypatch) -> None:
-    """A narrowing still waiting for its claim leaves the row standard; the gate fails
-    closed from the configuration meanwhile. An entry it cannot read is dropped, never
-    an error on every call of the org."""
+    """A narrowing still waiting for its claim leaves the row standard; the gate and the
+    org-wide restricted set fail closed from the configuration meanwhile. An entry whose
+    repositories cannot be read stays restricted, serving none, and errors no call."""
     import server.tracker.domain.sources as tracker_sources
     import server.tracker.store.source as tracker_store
     from server.identity.app import namespace_classification as nc
+    from server.identity.app.directory import IdentityDirectory
     from server.settings import settings
     from tests.unit._tracker_config import tracker_sources_json
 
@@ -160,6 +161,8 @@ def test_the_gate_reads_a_restricted_tracker_namespace_from_its_config(monkeypat
         assert not nc.is_restricted_cached(ORG, "qa-open")
         assert not nc.is_restricted_cached("other-org", "qa-p")
         assert nc.config_classification(ORG, "memory-ns") == "standard"
-        assert "qa-bad" not in tracker_sources.namespace_entries()  # serves nothing
+        assert nc.config_classification(ORG, "qa-bad") == "restricted"
+        assert tracker_sources.namespace_entries()["qa-bad"].repos == ()
+        assert IdentityDirectory().restricted_config_namespaces(ORG) >= {"qa-p", "qa-bad"}
     finally:
         tracker_store.reset_cache_for_tests()

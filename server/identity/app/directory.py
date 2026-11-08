@@ -31,12 +31,14 @@ class IdentityDirectory:
     def code_entry(self, org: str, namespace: str) -> RepoConfig | None:
         return repos.repo_for_namespace(org, namespace)
 
-    def restricted_code_namespaces(self, org: str) -> set[str]:
+    def restricted_config_namespaces(self, org: str) -> set[str]:
+        from server.tracker.domain.namespaces import restricted_tracker_namespaces
+
         return {
             cfg.namespace
             for cfg in repos.configured_repos()
             if cfg.org == org and cfg.classification == "restricted"
-        }
+        } | restricted_tracker_namespaces(org)
 
     async def fanout_namespaces(
         self, org: str, namespaces: list[str], kinds: str | None = None
