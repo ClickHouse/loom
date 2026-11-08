@@ -141,8 +141,8 @@ class _LibreChat:
         if r.status_code != 200:
             raise ServiceRefused(
                 f"LibreChat refused the service user's sign-in ({r.status_code}): empty "
-                "LibreChat's database and drop loom.assistant_service; the next boot "
-                "recreates both"
+                "LibreChat's database and run `TRUNCATE TABLE loom.assistant_service`; "
+                "the next boot recreates both"
             )
         return str(r.json()["token"])
 
@@ -280,9 +280,9 @@ def _record_failure(e: BaseException) -> None:
 def start_setup_loop() -> asyncio.Task[None] | None:
     """Set the service up in this process's background until a try succeeds, waiting
     LOOM_ASSISTANT_SETUP_RETRY_S after the first failure and twice as long after each
-    next, up to 16 times as long; None when no LibreChat is configured. Each try signs
-    in at most once, and every process of a replica shares one address in LibreChat's
-    sign-in limit (seven in five minutes), so the waits grow."""
+    next, up to 16 times as long; None when no LibreChat is configured. Every process of
+    a replica shares one address in LibreChat's sign-in limit (seven in five minutes),
+    so the waits grow."""
     if not configured():
         return None
 

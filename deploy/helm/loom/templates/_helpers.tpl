@@ -171,7 +171,9 @@ LOOM_KEEP_ALIVE_S: {{ .Values.keepAliveSeconds | quote }}
 # The release's extractor (extractor.yaml); its token is in the release Secret.
 LOOM_DOCUMENT_EXTRACTOR_URL: {{ printf "http://%s:8790" (include "loom.extractorName" .) | quote }}
 {{- end }}
-{{- if and .Values.assistant.enabled (not (hasKey .Values.env "LOOM_ASSISTANT_LIBRECHAT_URL")) }}
+{{- $ownAssistant := hasKey .Values.env "LOOM_ASSISTANT_LIBRECHAT_URL" }}
+{{- range .Values.extraEnv }}{{ if eq .name "LOOM_ASSISTANT_LIBRECHAT_URL" }}{{ $ownAssistant = true }}{{ end }}{{ end }}
+{{- if and .Values.assistant.enabled (not $ownAssistant) }}
 # The release's LibreChat (assistant.yaml), which runs the agent Loom seeds.
 LOOM_ASSISTANT_LIBRECHAT_URL: {{ printf "http://%s:3080" (include "loom.assistantName" .) | quote }}
 {{- end }}

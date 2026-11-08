@@ -65,15 +65,15 @@ def test_when_a_boot_writes_the_definition(
 
 
 def test_a_version_names_one_definition() -> None:
-    # The name, provider, instructions and tools (the assistant toolset) are the
-    # definition: a change to any needs a new version in agent.yaml, and its digest here.
+    # Everything LibreChat is sent but the model (a changed model is written at the same
+    # version): a change to any of it needs a new version in agent.yaml, and its digest.
     defn = service.current_definition()
-    named = [defn.name, defn.provider, defn.instructions, list(defn.tools)]
-    digest = hashlib.sha256(json.dumps(named).encode()).hexdigest()[:16]
+    body = {k: v for k, v in defn.agent_body().items() if k != "model"}
+    digest = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:16]
     assert {defn.version: digest} == {1: DEFINITION_DIGEST}
 
 
-DEFINITION_DIGEST = "3f5e0e4efdb7e2dd"
+DEFINITION_DIGEST = "281ba2b78ae19c1d"
 
 
 class _Row:

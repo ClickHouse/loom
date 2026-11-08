@@ -51,14 +51,11 @@ class AssistantSettings(BaseModel):
     # LibreChat's internal address (http://librechat:3080), reachable only from Loom. ""
     # = no assistant: no service setup at boot.
     assistant_librechat_url: str = ""
-    # Email of the LibreChat service user that owns the agent; LibreChat sends it no mail.
-    # Read once, when the first boot writes loom.assistant_service: changing it later
-    # changes nothing.
+    # Email of the LibreChat service user that owns the agent, read once, when the first
+    # boot writes loom.assistant_service; LibreChat sends it no mail.
     assistant_service_email: str = "loom-assistant@loom.invalid"
-    # Seconds before the service setup is tried again after its first failure
-    # (LibreChat still starting, its database restored from elsewhere); each next
-    # failure doubles the wait, up to 16 times this. A try signs in at most once, and
-    # LibreChat allows 7 sign-ins per address in 5 minutes, hence the floor of 60.
+    # Seconds before a failed assistant setup is tried again; each next failure doubles
+    # the wait, up to 16 times (docs/architecture/assistant.md#deployment).
     assistant_setup_retry_s: float = Field(default=60.0, ge=60, le=3600)
 
 

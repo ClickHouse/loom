@@ -25,7 +25,7 @@ deploys it: the one agent Loom seeds under its LibreChat service user
 answer token sent as the request's `parent_message_id`, which the agent's MCP server
 sends back to Loom (`assistant.librechat.yaml`). It reads the agent id and key from
 `loom.assistant_service`, so it runs from a checkout with the server's LOOM_CH_* and
-LOOM_JWT_SECRET, and mints each answer token as the bridge does (viewer on the person's
+LOOM_JWT_SECRET, and mints each answer token as the bridge will (viewer on the person's
 namespace alone); it registers nobody. Run it before `revoke`.
 """
 
@@ -333,7 +333,7 @@ def cmd_setup_deployed(args: argparse.Namespace) -> None:
         sys.exit("loom.assistant_service has no agent yet: start Loom with LibreChat beside it")
     st = state()
     st["deployed"] = {"agent_id": row.agent_id, "api_key": opened["api_key"]}
-    # Each answer's token, as the bridge's is: viewer on the person's namespace alone, so
+    # Each answer's token, as the bridge's will be: viewer on the person's namespace alone, so
     # a call that names no namespace reads that one. `revoke` revokes it with the person's.
     for person in load("fixture.json")["people"]:
         name = person["name"]

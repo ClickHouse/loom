@@ -167,7 +167,8 @@ on the stored key whatever a sign-in does. Two failures need an operator, and
 `/v1/health` names each as `assistant_service_failing`: a row whose sealed value opens
 with neither `LOOM_JWT_SECRET` nor `LOOM_JWT_SECRET_PREVIOUS` (set the previous secret and
 run `loom secrets reseal`), and a refused sign-in (LibreChat's database restored from
-another deployment, say: empty it and drop the row, which the next boot recreates).
+another deployment, say: empty it and run `TRUNCATE TABLE loom.assistant_service`, and
+the next boot recreates both).
 Until the row has its key and agent id, the assistant answers `ASSISTANT_UNAVAILABLE`.
 
 **Conversations live with the caller.** LibreChat's agents API (the OpenAI-compatible
@@ -213,8 +214,9 @@ toolset's, listed by Loom. Loom seeds it at boot under the service user, which o
 it, so nothing is shared. It writes the definition when its version is newer than the
 stored one, or the same with another model, so during a rolling upgrade a build N-1
 never overwrites N's definition and a changed `LOOM_ASSISTANT_MODEL` takes effect at the
-next boot. After a rollback N's definition stays, and a tool call it names that N-1 does
-not serve answers `UNKNOWN_OP` until the roll forward.
+next boot. While N rolls out, and after a rollback, N's definition stays, and a tool
+call it names that an N-1 pod does not serve answers `UNKNOWN_OP` there until every pod
+runs N.
 
 The tool list is the assistant toolset's reads and `insights.query`, so the agent writes
 nothing; a change it suggests is a draft a person applies elsewhere, as the Assistant
@@ -229,10 +231,10 @@ namespace's guide (`namespace.guide_get`), or Loom's own writing guide
 (`mentor.guide`, on the toolset for that reason).
 
 The agent names no namespace on its calls: on the assistant toolset a call that names
-none reads the first namespace its token names
-([the assistant toolset](../reference/mcp.md#the-assistant-toolset)), which for an
-answer's token is the request's. A test pins a digest of the name, provider, instructions and tools to
-the version, so a change to either bumps it.
+none reads the first namespace its token names ([the assistant
+toolset](../reference/mcp.md#the-assistant-toolset)), which for an answer's token is the
+request's. A test pins a digest of the name, provider, model parameters, instructions
+and tools to the version, so a change to any of them bumps it.
 
 ## The analysis op
 
@@ -762,7 +764,8 @@ agent step, so the next boot repairs either. A failed try is tried again after
 `LOOM_ASSISTANT_SETUP_RETRY_S`, the wait doubling after each next failure up to 16 times
 as long; from the first failed try until one succeeds `/v1/health` shows
 `assistant_service_failing`, with the failure's kind and the text in the log only. Each
-try signs in at most once, every process of a replica counts toward LibreChat's limit of
+try signs in at most once (twice on the boot that registers the service user), every
+process of a replica counts toward LibreChat's limit of
 seven sign-ins per address in five minutes, and a sign-in refused for that limit is named
 as such. LibreChat's signed-in routes refuse a client that is not a browser (they answer
 status 200 with an `Illegal request` event), so the setup sends a browser user agent,

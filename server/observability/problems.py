@@ -787,8 +787,8 @@ def _assistant_problems(settings: Any, state: HealthState) -> list[Problem]:
             f"The assistant is unavailable: {state.assistant_error}",
             "Check that LibreChat answers at LOOM_ASSISTANT_LIBRECHAT_URL; the next try "
             "of the setup clears this. A sign-in refused for any reason but its limit means "
-            "LibreChat's database came from elsewhere: empty it and drop "
-            "loom.assistant_service.",
+            "LibreChat's database came from elsewhere: empty it and run "
+            "`TRUNCATE TABLE loom.assistant_service`.",
             source="runtime",
         )
     ]
