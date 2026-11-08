@@ -591,3 +591,103 @@ def test_every_roster_read_of_one_writer_is_named() -> None:
         exact = field is not None and field.is_required()
         exempt = name in mcp_call._MCP_CROSS_AGENT_READS or name == "memory.get"
         assert (exact and not exempt) == (name in ASSISTANT_NAMED_AGENT_OPS), name
+
+
+@pytest.mark.parametrize(
+    ("assistant", "claimed", "namespace"),
+    [
+        (True, ["acme-handbook"], "acme-handbook"),  # the answer token's one namespace
+        (True, [], "personal-alice"),  # a token naming none keeps the home pick
+        (False, ["acme-handbook"], "personal-alice"),  # every other toolset: unchanged
+    ],
+)
+def test_an_assistant_call_reads_the_namespace_its_token_names(
+    monkeypatch: pytest.MonkeyPatch, assistant: bool, claimed: list[str], namespace: str
+) -> None:
+    # The home pick prefers a namespace the token may write: its subject's personal one,
+    # never where a viewer token minted for one namespace reads.
+    from server.transport import mcp_identity
+
+    async def _home(*_: Any) -> tuple[str, list[str]]:
+        return "personal-alice", []
+
+    async def _claims(*_: Any) -> list[str]:
+        return claimed
+
+    monkeypatch.setattr(mcp_identity, "caller_org", lambda _: "acme")
+    monkeypatch.setattr(mcp_identity, "default_and_readable", _home)
+    monkeypatch.setattr(mcp_identity, "readable_named_claims", _claims)
+    defaults = asyncio.run(mcp_identity._caller_defaults(object(), assistant=assistant))
+    assert defaults is not None and defaults["namespace"] == namespace
+
+
+def test_an_assistant_call_reads_its_first_claim_the_gate_admits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Through the call's own connection (no `assistant=`), with the real claim filter: a
+    # claim the gate refuses is skipped, and a token never reads past what it names.
+    from server.auth import authz
+    from server.auth.jwt import AuthInfo
+    from server.operations.base import Role
+    from server.transport import mcp_identity
+    from server.transport.assistant_call import set_assistant_call
+
+    async def _home(*_: Any) -> tuple[str, list[str]]:
+        return "personal-alice", []
+
+    async def _admits(self: Any, namespace: str, role: Role) -> bool:
+        return namespace != "revoked-ns"
+
+    monkeypatch.setattr(mcp_identity, "default_and_readable", _home)
+    monkeypatch.setattr(authz.CachedGate, "admits", _admits)
+    auth = AuthInfo(
+        subject="alice",
+        org="acme",
+        namespaces=("revoked-ns", "acme-handbook"),
+        roles=(Role.VIEWER,),
+        is_service_account=True,
+    )
+
+    async def _run() -> dict[str, Any] | None:
+        set_assistant_call(True)
+        return await mcp_identity._caller_defaults(auth)
+
+    defaults = asyncio.run(_run())
+    assert defaults is not None and defaults["namespace"] == "acme-handbook"
+
+
+def test_an_assistant_tool_call_naming_no_namespace_is_filled_with_the_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The whole fill of a tools/call's arguments, as the assistant's agent sends them.
+    from server.auth import authz
+    from server.auth.jwt import AuthInfo
+    from server.operations.base import Role
+    from server.transport import mcp_identity
+    from server.transport.assistant_call import set_assistant_call
+
+    async def _home(*_: Any) -> tuple[str, list[str]]:
+        return "personal-alice", []
+
+    async def _admits(self: Any, namespace: str, role: Role) -> bool:
+        return True
+
+    monkeypatch.setattr(mcp_identity, "default_and_readable", _home)
+    monkeypatch.setattr(authz.CachedGate, "admits", _admits)
+    auth = AuthInfo(
+        subject="alice",
+        org="acme",
+        namespaces=("acme-handbook",),
+        roles=(Role.VIEWER,),
+        is_service_account=True,
+    )
+    arguments: dict[str, Any] = {"query": "when is the deploy window?"}
+
+    async def _run() -> None:
+        set_assistant_call(True)
+        await mcp_call._bind_caller_identity(
+            OPERATIONS_BY_NAME["memory.search"], arguments, auth, None
+        )
+
+    asyncio.run(_run())
+    assert arguments["org"] == "acme" and arguments["namespace"] == "acme-handbook"

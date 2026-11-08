@@ -12,12 +12,14 @@ import uuid
 from contextvars import ContextVar
 from typing import Any
 
+from server.auth.context import readable_named_claims
 from server.core.naming import slugify
 from server.identity.app.caller_home import (
     caller_org,
     default_and_readable,
     home_subject,
 )
+from server.transport.assistant_call import assistant_call
 from server.transport.mcp_config import _DEFAULT_MCP_AGENT, _MCP_SESSION_AGENT_CAP
 
 # Bounded session→agent cache (sessions are short-lived; cap so a churning
@@ -123,6 +125,8 @@ def default_namespace_note() -> dict[str, str]:
 async def _caller_defaults(
     auth: Any,
     client_name: str | None = None,
+    *,
+    assistant: bool | None = None,
 ) -> dict[str, Any] | None:
     """Resolve the caller's default (org, namespace, agent), plus `readable`
     (the namespaces the token can name) when it has no default namespace.
@@ -132,11 +136,21 @@ async def _caller_defaults(
     the one the token mint answers as `saves_to`. ``client_name`` (the MCP `clientInfo.name`)
     becomes the agent default when present. None when no caller can be
     identified — falls back to handler-level validation errors.
+
+    On the assistant toolset (`assistant`, the call's own connection when None) the
+    namespace is the first the token names and may read: an answer's token names the
+    one it was minted for, and the assistant writes nothing, so the first namespace the
+    token may write (its subject's personal one, say) is not where it reads.
     """
     org = caller_org(auth)
     if org is None:
         return None
     namespace, readable = await default_and_readable(auth, org)
+    on_assistant = assistant_call() if assistant is None else assistant
+    if on_assistant:
+        claimed = await readable_named_claims(auth, org)
+        if claimed:
+            namespace = claimed[0]
     defaults: dict[str, Any] = {
         "org": org,
         "namespace": namespace,

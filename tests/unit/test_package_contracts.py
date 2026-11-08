@@ -26,7 +26,17 @@ SERVER = ROOT / "server"
 ALLOWLIST = Path(__file__).with_name("package_contract_allowlist.txt")
 
 DOMAINS = frozenset(
-    {"memory", "code", "tracker", "erasure", "tasks", "knowledge", "identity", "insights"}
+    {
+        "memory",
+        "code",
+        "tracker",
+        "erasure",
+        "tasks",
+        "knowledge",
+        "identity",
+        "insights",
+        "assistant",
+    }
 )
 LAYERS = ("api", "app", "domain", "store", "workers")
 # Platform packages: shared services every domain may use.

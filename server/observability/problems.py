@@ -90,6 +90,10 @@ class HealthState:
     # finding, None = no probe answer (`analysis_error` set once that lasts).
     analysis_ok: bool | None = None
     analysis_error: str = ""
+    # The assistant's LibreChat service: None = not set up yet or no LibreChat
+    # configured, False = its setup failed (`assistant_error` says why).
+    assistant_ok: bool | None = None
+    assistant_error: str = ""
     # Whether a sign-in lately found loom.oauth_signin_state at its key limit.
     oauth_signin_state_full: bool = False
     # Provider participants this process's last sweep could not retire
@@ -770,6 +774,27 @@ def _reader_user_problems(settings: Any, state: HealthState) -> list[Problem]:
     ]
 
 
+def _assistant_problems(settings: Any, state: HealthState) -> list[Problem]:
+    """The assistant needs its LibreChat service user and agent; until a boot sets them
+    up, the assistant is unavailable."""
+    del settings
+    if state.assistant_ok is not False:
+        return []
+    return [
+        Problem(
+            "assistant_service_failing",
+            "warn",
+            f"The assistant is unavailable: {state.assistant_error}",
+            "Check that LibreChat answers at LOOM_ASSISTANT_LIBRECHAT_URL; the next try "
+            "of the setup clears this. A sign-in LibreChat refuses (a 4xx other than its "
+            "429 limit) means its database came from elsewhere: empty it and run "
+            "`TRUNCATE TABLE loom.assistant_service`. A 5xx is LibreChat or its database "
+            "being unavailable: nothing to delete.",
+            source="runtime",
+        )
+    ]
+
+
 def _analysis_problems(settings: Any, state: HealthState) -> list[Problem]:
     """insights.query runs as the analyst user. A finding (the user missing or
     wider than the allowlist) answers ANALYSIS_UNAVAILABLE; a probe that has had
@@ -917,6 +942,7 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _sandbox_problems(settings, st)
         + _reader_user_problems(settings, st)
         + _analysis_problems(settings, st)
+        + _assistant_problems(settings, st)
         + _oauth_claim_problems(settings, st)
         + _participant_problems(st)
         + _code_tier_problems(st)

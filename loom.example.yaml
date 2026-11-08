@@ -255,6 +255,11 @@ settings:
   # default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1). [restart]
   # llm_model: ""
 
+  # The assistant agent's model, which LibreChat runs on its own Anthropic key and Loom
+  # writes into the agent definition at boot. "" = the definition's own
+  # (integrations/librechat/agent.yaml), not llm_model. [restart]
+  # assistant_model: ""
+
   # Model to answer with when a client's provider is still unavailable after its retries
   # (429 / 5xx / transport / timeout) or rejected the request (400 / 413 / 422). Counted
   # in `loom.llm.fallback`. 401 / 403 / 404 are configuration and never fall back. "" =
@@ -832,6 +837,21 @@ settings:
 
   # Seconds the identity provider's OpenID configuration is cached. [live]
   # auth_oidc_discovery_ttl_s: 3600.0
+
+  # ===== The assistant: LibreChat run headless beside Loom, and the agent Loom seeds in it =====
+
+  # LibreChat's internal address (http://librechat:3080), reachable only from Loom. "" =
+  # no assistant: no service setup at boot. [restart]
+  # assistant_librechat_url: ""
+
+  # Email of the LibreChat service user that owns the agent, read once, when the first
+  # boot writes loom.assistant_service; LibreChat sends it no mail. [restart]
+  # assistant_service_email: "loom-assistant@loom.invalid"
+
+  # Seconds before a failed assistant setup is tried again; each next failure doubles
+  # the wait, up to 16 times as long (docs/architecture/assistant.md#deployment).
+  # [restart]
+  # assistant_setup_retry_s: 60.0
 
   # ===== The code plane: ingest, indexes, search, ask, review =====
 

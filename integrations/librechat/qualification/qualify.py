@@ -18,6 +18,15 @@ mint the fixture's tokens. It is not a test and never runs in CI.
     python integrations/librechat/qualification/qualify.py revoke
     python integrations/librechat/qualification/qualify.py run
     python integrations/librechat/qualification/qualify.py rescore
+
+`setup-deployed`, in place of `setup`, runs the same cases through the assistant as Loom
+deploys it: the one agent Loom seeds under its LibreChat service user
+(`integrations/librechat/agent.yaml`), run with that user's key, with each person's
+answer token sent as the request's `parent_message_id`, which the agent's MCP server
+sends back to Loom (`deploy/librechat/assistant.librechat.yaml`). It reads the agent id
+and key from `loom.assistant_service`, so it runs from a checkout with the server's
+LOOM_CH_* and LOOM_JWT_SECRET, and mints each answer token as the bridge will (viewer on
+the person's namespace alone); it registers nobody. Run it before `revoke`.
 """
 
 from __future__ import annotations
@@ -40,7 +49,7 @@ STATE = HERE / ".state.json"  # tokens, LibreChat ids and keys of one local run;
 MCP_SERVER = "loom"
 
 # Anthropic list price per million tokens, for the cost line of the report.
-PRICE_PER_MTOK = {"claude-haiku-4-5-20251001": (1.0, 5.0)}
+PRICE_PER_MTOK = {"claude-haiku-4-5-20251001": (1.0, 5.0), "claude-haiku-4-5": (1.0, 5.0)}
 
 ABSTAIN_PATTERNS = (
     r"\bno (stored |recorded )?(memor|record|information|evidence|entr)",
@@ -63,11 +72,12 @@ REFUSAL_PATTERNS = (
     r"\b(can ?not|unable to|could ?n[o']t) (access|read|reach|connect)",
 )
 KEY_RE = re.compile(r"\b[a-z][a-z0-9-]*/[a-z][a-z0-9-]*/[a-z0-9][a-z0-9-]*\b")
-# A document citation as INSTRUCTIONS asks for it: `[source_uri § A > B, revision N]`, the
+# A document citation as INSTRUCTIONS asks for it: `[source_uri § A > B, revision N]` (the
+# deployed agent writes `[doc:source_uri § ...]`), the
 # section and the revision optional. A source_uri here holds a `/`, so `[1]` is no citation;
 # a heading may hold a comma; a revision that is no number (`revision unknown`) names none.
 DOC_CITE_RE = re.compile(
-    r"\[(?P<uri>[^\[\]\s§,]*/[^\[\]\s§,]*)\s*(?:§\s*(?P<section>[^\[\]]*?))?\s*"
+    r"\[(?:doc:)?(?P<uri>[^\[\]\s§,]*/[^\[\]\s§,]*)\s*(?:§\s*(?P<section>[^\[\]]*?))?\s*"
     r"(?:,\s*rev(?:ision)?\b\.?\s*(?P<revision>[^\[\],]*?))?\s*\]"
 )
 
@@ -196,20 +206,17 @@ def cmd_revoke(args: argparse.Namespace) -> None:
     """Revoke the tokens of the people the fixture marks revoked, after setup stored them."""
     st = state()
     for person in load("fixture.json")["people"]:
-        if person["revoked"]:
-            subprocess.run(
-                [
-                    args.loom_bin,
-                    "revoke-token",
-                    "--jti",
-                    st["tokens"][f"{person['name']}:jti"],
-                    "--reason",
-                    "qualify",
-                ],
-                check=True,
-                capture_output=True,
-            )
-            print(f"revoked {person['name']}")
+        if not person["revoked"]:
+            continue
+        name = person["name"]
+        for jti in (st["tokens"][f"{name}:jti"], st["tokens"].get(f"answer:{name}:jti")):
+            if jti:
+                subprocess.run(
+                    [args.loom_bin, "revoke-token", "--jti", jti, "--reason", "qualify"],
+                    check=True,
+                    capture_output=True,
+                )
+        print(f"revoked {name}")
     # A server rereads the revocation list every LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS.
     print(f"waiting {args.settle:.0f} s for the revocation to reach the server")
     time.sleep(args.settle)
@@ -304,19 +311,65 @@ def cmd_setup(args: argparse.Namespace) -> None:
     save_state(st)
 
 
+def cmd_setup_deployed(args: argparse.Namespace) -> None:
+    """Read the agent Loom seeded and its key from loom.assistant_service."""
+    import asyncio
+
+    sys.path.insert(0, str(HERE.parents[2]))
+    from server.assistant.app.service import opened as open_sealed
+    from server.assistant.store import service
+    from server.core.ch import get_client
+
+    async def _read() -> Any:
+        await get_client().connect()
+        try:
+            return await service.read()
+        finally:
+            await get_client().disconnect()
+
+    row = asyncio.run(_read())
+    opened = open_sealed(row.sealed) if row else None
+    if not row or not row.agent_id or not opened or not opened.get("api_key"):
+        sys.exit("loom.assistant_service has no agent yet: start Loom with LibreChat beside it")
+    st = state()
+    st["deployed"] = {"agent_id": row.agent_id, "api_key": opened["api_key"]}
+    # Each answer's token, as the bridge's will be: viewer on the person's namespace alone, so
+    # a call that names no namespace reads that one. `revoke` revokes it with the person's.
+    for person in load("fixture.json")["people"]:
+        name = person["name"]
+        minted = mint(
+            args.loom_bin,
+            subject=name,
+            org=person["org"],
+            namespace=person["namespace"],
+            role="viewer",
+        )
+        st["tokens"][f"answer:{name}"] = minted["token"]
+        st["tokens"][f"answer:{name}:jti"] = minted["jti"]
+    st["librechat_url"] = args.librechat_url
+    st["model"] = row.definition_model
+    save_state(st)
+    print(f"deployed agent {row.agent_id}, definition v{row.definition_version}")
+
+
 # ---------------------------------------------------------------- one answer
 
 
 def ask_librechat(
     st: dict[str, Any], person: str, question: str, *, cancel_after_first: bool = False
 ) -> dict[str, Any]:
-    lc = st["librechat"][person]
-    body = {
-        "model": lc["agent_id"],
+    body: dict[str, Any] = {
         "stream": True,
         "stream_options": {"include_usage": True},
         "messages": [{"role": "user", "content": question}],
     }
+    if "deployed" in st:
+        # The deployed shape: one agent and key, and the person's token as the answer's.
+        lc = st["deployed"]
+        body["parent_message_id"] = st["tokens"][f"answer:{person}"]
+    else:
+        lc = st["librechat"][person]
+    body["model"] = lc["agent_id"]
     started = time.perf_counter()
     first_delta = first_text = None
     text: list[str] = []
@@ -434,7 +487,8 @@ def check_citations(
             continue
         # Every mention is checked: a version belongs to the key before it, up to the next key.
         end = min(m.end() + 80, found[i + 1].start() if i + 1 < len(found) else len(text))
-        near = re.search(r"\b(\d{16,20})\b", text[m.end() : end])
+        # A bare version, or the deployed agent's `[memory:<key>@v<version>]`.
+        near = re.search(r"(?:\b|@v)(\d{16,20})\b", text[m.end() : end])
         if near and int(near.group(1)) != current[key]:
             stale = f"{key}@{near.group(1)}"
             if stale not in invalid:
@@ -608,6 +662,11 @@ def native_score(case: dict[str, Any], code: int, out: dict[str, Any]) -> dict[s
         correct = correct and case["kind"] != "refusal"
     elif spec["op"] == "knowledge.search":
         return native_document_score(case, out)
+    elif "findings" in spec:
+        # A recommendation's direct path: the audit names each labeled finding on rows.
+        found = {f["code"] for f in out.get("findings", []) if f.get("count")}
+        text = json.dumps(sorted(found))
+        correct = set(spec["findings"]) <= found
     else:
         value: Any = out
         for step in spec.get("path", []):
@@ -615,7 +674,11 @@ def native_score(case: dict[str, Any], code: int, out: dict[str, Any]) -> dict[s
         if spec.get("count"):
             value = len(value)
         text = json.dumps(value)
-        correct = value == spec["equals"]
+        if "min_chars" in spec:
+            # A row the guide calls a document: past ~2 KB of text.
+            correct = len(str(value)) >= spec["min_chars"]
+        else:
+            correct = value == spec["equals"]
     return {
         "correct": correct,
         "abstained": abstained,
@@ -938,6 +1001,10 @@ def main() -> None:
     sub.add_parser(
         "setup", help="register the fixture's people in LibreChat with their own Loom tokens"
     )
+    sub.add_parser(
+        "setup-deployed",
+        help="run the cases through the agent Loom seeded instead (reads loom.assistant_service)",
+    )
     revoke = sub.add_parser("revoke", help="revoke the tokens the fixture marks revoked")
     revoke.add_argument(
         "--settle",
@@ -968,6 +1035,7 @@ def main() -> None:
     commands = {
         "seed": cmd_seed,
         "setup": cmd_setup,
+        "setup-deployed": cmd_setup_deployed,
         "revoke": cmd_revoke,
         "run": cmd_run,
         "rescore": cmd_rescore,

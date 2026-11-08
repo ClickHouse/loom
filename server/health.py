@@ -62,6 +62,7 @@ def _health_provider_fields(
     `NOT_DEPLOYMENT_FAULTS` is an error — a configured fake is a warn unless
     LOOM_REQUIRE_REAL_PROVIDERS.
     """
+    from server.assistant.app.service import assistant_state
     from server.auth import claims as signin_claims
     from server.auth import keyring, revocation
     from server.code.app.index import tier_health
@@ -84,6 +85,7 @@ def _health_provider_fields(
     width_mismatches = codes_state.width_mismatches(probed_dim)
     lease = _leader.current()
     analysis_ok, analysis_error = analysis_state()
+    assistant_ok, assistant_error = assistant_state()
     from server.core import deployment_config, rmt_carry
     from server.insights.app import provider_barrier
 
@@ -110,6 +112,8 @@ def _health_provider_fields(
             ch_reader_error=reader_user_error(),
             analysis_ok=analysis_ok,
             analysis_error=analysis_error,
+            assistant_ok=assistant_ok,
+            assistant_error=assistant_error,
             oauth_signin_state_full=signin_claims.keeper_full(),
             stale_participants=provider_barrier.stale_participants(),
             carry_pinned=tuple(rmt_carry.pinned_overdue()),

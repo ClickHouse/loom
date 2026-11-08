@@ -3,6 +3,7 @@
 #   COMPOSE_PROFILES=bundled   start the clickhouse service below (the default)
 #   COMPOSE_PROFILES=          use the ClickHouse that LOOM_CH_* in .env names:
 #                              a self-managed server or ClickHouse Cloud
+#   ...,assistant              also run the assistant's LibreChat (librechat below)
 #
 # install.sh writes .env for either choice, and docs/operations/deployment.md
 # covers both. The release bundle ships this file with the repository's layout,
@@ -97,9 +98,11 @@ services:
       # this host and the container has no limits, so the image's own default
       # (one per host CPU and GiB) could leave it no room.
       LOOM_WEB_WORKERS: "${LOOM_WEB_WORKERS:-2}"
+      # The assistant profile's LibreChat; unset, the server sets no assistant up.
+      LOOM_ASSISTANT_LIBRECHAT_URL: "${LOOM_ASSISTANT_LIBRECHAT_URL:-}"
     volumes:
       - loom-code-repos:/app/var/code_repos
-    networks: [default, extractor]
+    networks: [default, extractor, assistant]
     healthcheck:
       test:
         [
@@ -137,10 +140,60 @@ services:
     cpus: 1
     pids_limit: 64
 
+  # The assistant (`assistant` in COMPOSE_PROFILES): LibreChat runs the agent Loom seeds,
+  # headless.
+  # Neither it nor its MongoDB publishes a port. The internal `assistant` network
+  # joins LibreChat to the loom service alone, and `assistant-db` to its MongoDB
+  # alone, so the loom container (which builds repository code) cannot reach that
+  # database; LibreChat also has `assistant-egress`, a network of its own, to reach
+  # its model provider, so it reaches neither ClickHouse nor the extractor
+  # (docs/architecture/assistant.md#deployment).
+  librechat:
+    profiles: [assistant]
+    image: registry.librechat.ai/librechat-ai/librechat:v0.8.8@sha256:5b706bcee1ca154a1e2987303aaeca0eb27f97919cccee4bb604226c2f8abf61
+    restart: unless-stopped
+    depends_on: [librechat-mongo]
+    environment:
+      # Its secrets and model key, from .env beside this file
+      # (docs/features/integrations/librechat.md#the-deployed-assistant).
+      CREDS_KEY: "${LIBRECHAT_CREDS_KEY:-}"
+      CREDS_IV: "${LIBRECHAT_CREDS_IV:-}"
+      JWT_SECRET: "${LIBRECHAT_JWT_SECRET:-}"
+      JWT_REFRESH_SECRET: "${LIBRECHAT_JWT_REFRESH_SECRET:-}"
+      # A name of its own: the loom service loads all of .env, and an ANTHROPIC_API_KEY
+      # there would become Loom's own model key.
+      ANTHROPIC_API_KEY: "${LIBRECHAT_ANTHROPIC_API_KEY:-}"
+      HOST: 0.0.0.0
+      PORT: "3080"
+      MONGO_URI: mongodb://librechat-mongo:27017/LibreChat
+      CONFIG_PATH: /app/librechat.yaml
+      SEARCH: "false"
+      ALLOW_REGISTRATION: "true"
+      ALLOW_UNVERIFIED_EMAIL_LOGIN: "true"
+      BAN_VIOLATIONS: "false"
+    volumes:
+      - ./deploy/librechat/assistant.librechat.yaml:/app/librechat.yaml:ro
+    networks: [assistant, assistant-db, assistant-egress]
+
+  librechat-mongo:
+    profiles: [assistant]
+    image: mongo:8.0.20@sha256:098862b1339f031900ca66cf8fef799e616d6324fa41b9a263f2ec899552c1ef
+    restart: unless-stopped
+    command: mongod --noauth --quiet
+    volumes:
+      - librechat-mongo:/data/db
+    networks: [assistant-db]
+
 networks:
   extractor:
     internal: true
+  assistant:
+    internal: true
+  assistant-db:
+    internal: true
+  assistant-egress: {}
 
 volumes:
   loom-ch-data:
   loom-code-repos:
+  librechat-mongo:

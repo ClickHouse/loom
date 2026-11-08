@@ -141,6 +141,7 @@ def test_the_journal_files() -> None:
         "085_storage_authority.sql",
         "086_code_answer_memory_scope.sql",
         "087_analysis_secrets.sql",
+        "088_assistant_service.sql",
     ]
 
 

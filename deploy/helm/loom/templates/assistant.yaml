@@ -1,0 +1,274 @@
+{{- /* The assistant: LibreChat runs, headless, the agent Loom seeds, with a MongoDB of
+its own. Neither is exposed. LibreChat admits only the release's Loom pods and
+reaches DNS, its MongoDB, the Loom pods (the agent's tools) and TCP 443 for its model
+provider; MongoDB admits only LibreChat and reaches nothing. Both run non-root on a
+read-only root filesystem. */}}
+{{- with .Values.assistant }}
+{{- if .enabled }}
+{{- if not .existingSecret }}
+{{- fail "assistant.existingSecret is required: a Secret with CREDS_KEY, CREDS_IV, JWT_SECRET, JWT_REFRESH_SECRET and ANTHROPIC_API_KEY" }}
+{{- end }}
+{{- $name := include "loom.assistantName" $ }}
+{{- $mongo := include "loom.assistantMongoName" $ }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "loom.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: assistant
+spec:
+  # LibreChat keeps its run bookkeeping in memory (no Redis): one replica, never two
+  # during a rollout.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "loom.assistantSelectorLabels" $ | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "loom.assistantSelectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: assistant
+      annotations:
+        # LibreChat reads its configuration at start: a changed one restarts it.
+        checksum/config: {{ include (print $.Template.BasePath "/assistant-config.yaml") $ | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: librechat
+          image: {{ if .image.digest }}{{ printf "%s:%s@%s" .image.repository .image.tag .image.digest }}{{ else }}{{ printf "%s:%s" .image.repository .image.tag }}{{ end }}
+          imagePullPolicy: {{ .image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          envFrom:
+            - secretRef:
+                name: {{ .existingSecret }}
+          env:
+            - { name: HOST, value: "0.0.0.0" }
+            - { name: PORT, value: "3080" }
+            - { name: MONGO_URI, value: {{ printf "mongodb://%s:27017/LibreChat" $mongo | quote }} }
+            - { name: CONFIG_PATH, value: /config/librechat.yaml }
+            - { name: SEARCH, value: "false" }
+            - { name: ALLOW_REGISTRATION, value: "true" }
+            - { name: ALLOW_UNVERIFIED_EMAIL_LOGIN, value: "true" }
+            - { name: BAN_VIOLATIONS, value: "false" }
+          ports:
+            - name: http
+              containerPort: 3080
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+          resources:
+            {{- toYaml .resources | nindent 12 }}
+          volumeMounts:
+            - { name: config, mountPath: /config, readOnly: true }
+            - { name: logs, mountPath: /app/logs }
+            - { name: uploads, mountPath: /app/uploads }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $name }}
+        - { name: logs, emptyDir: {} }
+        - { name: uploads, emptyDir: {} }
+        - { name: tmp, emptyDir: {} }
+      {{- with .nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "loom.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: assistant
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "loom.assistantSelectorLabels" $ | nindent 4 }}
+  ports:
+    - name: http
+      port: 3080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $mongo }}
+  labels:
+    {{- include "loom.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: assistant-mongo
+spec:
+  serviceName: {{ $mongo }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "loom.assistantMongoSelectorLabels" $ | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "loom.assistantMongoSelectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: assistant-mongo
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mongo
+          image: {{ if .mongo.image.digest }}{{ printf "%s:%s@%s" .mongo.image.repository .mongo.image.tag .mongo.image.digest }}{{ else }}{{ printf "%s:%s" .mongo.image.repository .mongo.image.tag }}{{ end }}
+          imagePullPolicy: {{ .mongo.image.pullPolicy }}
+          args: ["mongod", "--noauth", "--quiet", "--bind_ip_all"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          ports:
+            - name: mongo
+              containerPort: 27017
+          resources:
+            {{- toYaml .mongo.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /data/db }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .mongo.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .mongo.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $mongo }}
+  labels:
+    {{- include "loom.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: assistant-mongo
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "loom.assistantMongoSelectorLabels" $ | nindent 4 }}
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: mongo
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "loom.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: assistant
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "loom.assistantSelectorLabels" $ | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "loom.selectorLabels" $ | nindent 14 }}
+      ports:
+        - port: http
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        - ipBlock: { cidr: 169.254.20.10/32 }
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "loom.assistantMongoSelectorLabels" $ | nindent 14 }}
+      ports:
+        - port: 27017
+    # The agent's tools: Loom's MCP server.
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "loom.selectorLabels" $ | nindent 14 }}
+      ports:
+        - port: 7777
+    # The model provider, which has no fixed range.
+    - to:
+        {{- include "loom.anywhereBut" $ | nindent 8 }}
+      ports:
+        - port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $mongo }}
+  labels:
+    {{- include "loom.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: assistant-mongo
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "loom.assistantMongoSelectorLabels" $ | nindent 6 }}
+  # Egress listed with no rule: MongoDB reaches nothing.
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "loom.assistantSelectorLabels" $ | nindent 14 }}
+      ports:
+        - port: mongo
+{{- end }}
+{{- end }}

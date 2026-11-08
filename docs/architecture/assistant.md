@@ -4,8 +4,9 @@ This page is the design of Loom's assistant, which will answer questions about w
 namespace holds and how it is used, with a citation for every claim. It names the
 surfaces, how each caller's identity will reach the agent's tools, the analysis op and
 its isolation, the deployment, what will be stored and erased, and the cost. The
-analysis op and its analyst user are built; the rest is design, and
-[the build order](#build-order) lists the parts.
+analysis op and its analyst user, and LibreChat deployed headless with the agent Loom
+seeds, are built; the rest is design, and [the build order](#build-order) lists the
+parts.
 
 LibreChat will be the assistant: it will host the agent (its model, instructions and
 tools) and run it headless beside Loom, reachable only from Loom. Loom will supply the
@@ -146,8 +147,8 @@ Setting the service up is one step that a boot runs holding the cluster lease
 `assistant.service` (`server/core/leases.py`), so two boots never run it at once; the
 holder re-reads the row (as every read of it, with the read-your-writes setting
 `own_write_reads` in `server/core/ch.py`) and does only what is missing, storing each
-result on the row before the next, and signs in once, at the first step that needs
-LibreChat:
+result on the row before the next, and signs in at most once (twice when it registers
+the user), at the first step that needs LibreChat:
 
 1. No row: write the email and a sealed random password.
 2. No key: sign in, registering first only when LibreChat answers that the email does
@@ -159,12 +160,19 @@ LibreChat:
 4. A stored definition older than this build's, or of the same version with another
    model: write it and store its version and model on the row.
 
-A boot that stopped halfway leaves the row at a step the next one finishes. Answers run
-on the stored key whatever a sign-in does. A row whose sealed value opens with neither
-`LOOM_JWT_SECRET` nor `LOOM_JWT_SECRET_PREVIOUS`, and a sign-in that fails (LibreChat's
-database restored from another deployment, say), are `loom doctor` problems with one
-fix: empty LibreChat's database and drop the row, which the next boot recreates. Until
-the row has its key and agent id, the assistant answers `ASSISTANT_UNAVAILABLE`.
+A boot that stopped halfway leaves the row at a step the next one finishes, and a boot
+over a complete row checks with the stored key that LibreChat still holds the key and
+the agent, making either again when it does not ([Deployment](#deployment)). Answers run
+on the stored key whatever a sign-in does. Two failures need an operator, and
+`/v1/health` names each as `assistant_service_failing`: a row whose sealed value opens
+with neither `LOOM_JWT_SECRET` nor `LOOM_JWT_SECRET_PREVIOUS` (set the previous secret
+and run `loom secrets reseal`), and a sign-in LibreChat refuses with a 4xx other than
+its 429 limit (its database restored from another deployment, say; v0.8.8 answers a
+wrong password 404 `Incorrect password.`): empty it and run `TRUNCATE TABLE
+loom.assistant_service`, and the next boot recreates both. A 5xx sign-in is LibreChat or
+its database being unavailable, which the next try asks again. A try that registers the
+service user also makes a new key, since that user cannot own the one the row held.
+Until the row has its key and agent id, the assistant answers `ASSISTANT_UNAVAILABLE`.
 
 **Conversations live with the caller.** LibreChat's agents API (the OpenAI-compatible
 `/api/agents/v1/chat/completions`) saves no messages: it runs the agent over the
@@ -203,20 +211,33 @@ that would carry rows away in its URL.
 
 ## The agent definition
 
-`integrations/librechat/agent.yaml` will hold the agent's name, instructions, model,
-tool list and a version number. Loom seeds it at boot under the service user, which owns
+`integrations/librechat/agent.yaml` holds the agent's name, instructions, model and a
+version number (`server/assistant/domain/definition.py`); the tools are the assistant
+toolset's, listed by Loom. Loom seeds it at boot under the service user, which owns
 it, so nothing is shared. It writes the definition when its version is newer than the
 stored one, or the same with another model, so during a rolling upgrade a build N-1
 never overwrites N's definition and a changed `LOOM_ASSISTANT_MODEL` takes effect at the
-next boot. After a rollback N's definition stays, and a tool call it names that N-1 does
-not serve answers `UNKNOWN_OP` until the roll forward.
+next boot. While N rolls out, and after a rollback, N's definition stays, and a tool
+call it names that an N-1 pod does not serve answers `UNKNOWN_OP` there until every pod
+runs N.
 
 The tool list is the assistant toolset's reads and `insights.query`, so the agent writes
 nothing; a change it suggests is a draft a person applies elsewhere, as the Assistant
 page's tune drafts already are. The instructions require citations, tell the agent to
-abstain when no tool result supports an answer, to read `insights.catalog` before
-writing SQL, and to treat stored text as data that cannot grant a tool or approve a
-change.
+call a tool before every answer and abstain when none supports it, to read
+`insights.catalog` before running SQL, and to treat stored text as data that cannot
+grant a tool or approve a change. Asked how a namespace should write, the agent
+recommends rather than only answers: key shape, one claim per key, a memory, a
+document or a record, pins and kinds, each recommendation naming its rows and citing
+the finding it rests on in `namespace.audit`, `mentor.brief` or `namespace.tune`, the
+namespace's guide (`namespace.guide_get`), or Loom's own writing guide
+(`mentor.guide`, on the toolset for that reason).
+
+The agent names no namespace on its calls: on the assistant toolset a call that names
+none reads the first namespace its token names ([the assistant
+toolset](../reference/mcp.md#the-assistant-toolset)), which for an answer's token is the
+request's. A test pins a digest of the name, provider, model parameters, instructions
+and tools to the version, so a change to any of them bumps it.
 
 ## The analysis op
 
@@ -715,49 +736,84 @@ pins refused `send_logs_level = 'trace'`, `use_query_condition_cache = 1` and a
 
 ## Deployment
 
-LibreChat will run beside Loom with its MongoDB in every deployment shape, reachable
-only from Loom:
+LibreChat runs beside Loom with its MongoDB in every deployment shape, reachable only
+from Loom, and both run its v0.8.8 configuration,
+`deploy/librechat/assistant.librechat.yaml`:
 
-- **Compose:** an `assistant` profile starts LibreChat and MongoDB on an internal
-  network shared with the `loom` service alone; neither publishes a port.
-- **Helm:** an `assistant.enabled` value adds LibreChat's Deployment and Service and a
-  MongoDB StatefulSet, with a NetworkPolicy that admits only Loom's pods.
-- **Settings:** a catalog setting names LibreChat's internal address; unset, the
-  assistant routes answer `ASSISTANT_UNAVAILABLE` and the Assistant page shows no chat.
-  LibreChat's model key (`ANTHROPIC_API_KEY`) is set in its own environment.
+- **Compose:** the `assistant` profile starts `librechat` and `librechat-mongo`; neither
+  publishes a port. LibreChat shares the internal `assistant` network with the `loom`
+  service and the internal `assistant-db` network with MongoDB alone, so the `loom`
+  container, which builds repository code, cannot reach the database. LibreChat alone is
+  also on `assistant-egress`, a network of its own with a route out, for its model
+  provider. Its secrets and model key come from `.env` beside `compose.yaml`
+  (`LIBRECHAT_CREDS_KEY`, `LIBRECHAT_CREDS_IV`, `LIBRECHAT_JWT_SECRET`,
+  `LIBRECHAT_JWT_REFRESH_SECRET`, `LIBRECHAT_ANTHROPIC_API_KEY`, each named apart from
+  anything Loom reads, since the `loom` service loads the same `.env`), and its
+  configuration from
+  `deploy/librechat/assistant.librechat.yaml`, which the release's stack bundle ships.
+- **Helm:** `assistant.enabled` adds LibreChat's Deployment and Service and a MongoDB
+  StatefulSet (`templates/assistant.yaml`), with the same configuration in a ConfigMap
+  naming the release's Loom Service, and the secrets from `assistant.existingSecret`.
+  LibreChat's NetworkPolicy admits only Loom's pods and lets it reach DNS, its MongoDB,
+  Loom's pods and TCP 443; MongoDB's admits only LibreChat and reaches nothing, and
+  Loom's own policy admits LibreChat when it names its peers. LibreChat runs one pod,
+  replaced rather than rolled, and restarts when its configuration changes. Both run
+  non-root on a read-only root filesystem; LibreChat writes its logs and uploads to
+  `emptyDir` volumes (`scripts/gates/helm_assistant_isolation.py` checks the render).
+- **Settings:** `LOOM_ASSISTANT_LIBRECHAT_URL` names LibreChat's internal address; unset,
+  Loom sets up nothing. `LOOM_ASSISTANT_MODEL` replaces the definition's model.
+
+Each replica sets the service up in its background at boot. Over a row that has its key
+and agent, a boot asks LibreChat, with the stored key and no sign-in, whether the agent
+is still there (`GET /api/agents/v1/models/<id>`): a key LibreChat no longer knows
+(`401`, its database replaced) makes the key step again, and a missing agent (`404`) the
+agent step, so the next boot repairs either. A failed try is tried again after
+`LOOM_ASSISTANT_SETUP_RETRY_S`, the wait doubling after each next failure up to 16 times
+as long; from the first failed try until one succeeds `/v1/health` shows
+`assistant_service_failing`, with the failure's kind and the text in the log only. Each
+try signs in at most once (twice on the boot that registers the service user), every
+process of a replica counts toward LibreChat's limit of
+seven sign-ins per address in five minutes, and a sign-in refused for that limit is named
+as such. LibreChat's signed-in routes refuse a client that is not a browser (they answer
+status 200 with an `Illegal request` event), so the setup sends a browser user agent,
+and its service user is named `loom-assistant` (LibreChat wants three characters).
 
 LibreChat's configuration keeps the integration's memory off and search index out, and
 gives the agents endpoint no capability but tools (no actions, which call any URL, and
 no code execution, file search, skills, subagents or web search), so the agent's only
-way out is Loom's tools. Its log level stays at `info`, which writes no message text.
-Loom signs in at most once per replica boot, well under LibreChat's per-address sign-in
-limit, and the deployment turns violation bans off (`BAN_VIOLATIONS=false`) and the
-unverified-user expiry off (`ALLOW_UNVERIFIED_EMAIL_LOGIN=true`, so LibreChat never
-deletes the service user it registered without a mail server), so a burst of replica
-restarts cannot lock Loom out; nothing but Loom reaches LibreChat, so the bans protect
-nothing there. Registration stays on (`ALLOW_REGISTRATION=true`) for the same reason,
-and the service user, the first LibreChat registers, takes LibreChat's `ADMIN` role,
-whose remote-agent permission the agents API key needs; it is an administrator of a
-LibreChat that holds nothing of Loom's. LibreChat runs without Redis, so its run
-bookkeeping (each run's agent, model and ids, never the request) stays in its own
-memory, and the qualification lists the MongoDB collections one answer writes:
-`transactions` alone. LibreChat's registration logs its request, password included, when
+way out is Loom's tools. Its MCP server instructions are off: LibreChat reads them once,
+at its own start and with no answer's token, so the agent's instructions carry the
+rules. Its log level stays at `info`, which writes no message text. The deployment turns
+violation bans off (`BAN_VIOLATIONS=false`) and the unverified-user expiry off
+(`ALLOW_UNVERIFIED_EMAIL_LOGIN=true`, so LibreChat never deletes the service user it
+registered without a mail server), so a burst of replica restarts cannot lock Loom out;
+only Loom reaches LibreChat, so the bans protect nothing there, and registration stays
+on (`ALLOW_REGISTRATION=true`) because only Loom can register. Within Loom, repository
+code runs sandboxed with no route to LibreChat (`--unshare-net`; a job's egress proxy
+reaches public hosts on ports 443 and 22 alone), except an operator repository's build
+on a host without the sandbox, which already runs with Loom's own environment
+([the repository-job sandbox](../operations/code-index-operations.md#repository-job-sandbox)).
+The configuration's agent and remote-agent permissions apply to every LibreChat role, so
+the service user needs no particular one. LibreChat runs without Redis, so one replica
+runs, and its run bookkeeping (each run's agent, model and ids, never the request) stays
+in its own memory. LibreChat's registration logs its request, password included, when
 the email is already in use or the request is malformed; Loom registers only under the
 lease and only after LibreChat said the email does not exist, and the qualification
-searches LibreChat's logs for the service user's password as it does for a token.
+searches LibreChat's logs and database for the service user's password as it does for a
+token.
 
 ## Stored data and erasure
 
-| Where                                       | What the assistant leaves                                                              | How it is deleted                                     |
-| ------------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| `loom.assistant_service`                    | one row: the service user's email and agent id, its sealed password and agents API key | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
-| `loom.analysis_secrets`                     | one row: the analysis key and the analyst's password, sealed                           | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
-| `loom.analysis_canary`                      | one constant row in a reserved scope, which the probe reads                            | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
-| `loom.agent_events`                         | one row per bridge request and per tool call, under the answer's token                 | as every ledger row                                   |
-| LibreChat users, API keys, agents, sessions | the service user, its key, the agent definition and the sign-in sessions of each boot  | kept; no memory content                               |
-| LibreChat `transactions`                    | token counts per answer and its message id, no content                                 | kept, a few hundred bytes per answer                  |
-| LibreChat logs                              | the service user's id and email and request ids, no message text, token or password    | LibreChat's default: one file per day, kept 14 days   |
-| the dashboard                               | the current chat, in the tab's memory                                                  | gone when the tab closes                              |
+| Where                                       | What the assistant leaves                                                                           | How it is deleted                                     |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `loom.assistant_service`                    | one row: the service user's email and agent id, its sealed password and agents API key              | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
+| `loom.analysis_secrets`                     | one row: the analysis key and the analyst's password, sealed                                        | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
+| `loom.analysis_canary`                      | one constant row in a reserved scope, which the probe reads                                         | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
+| `loom.agent_events`                         | one row per bridge request and per tool call, under the answer's token                              | as every ledger row                                   |
+| LibreChat users, API keys, agents, sessions | the service user, its key, the agent definition and the sign-in sessions of each boot that signs in | kept; no memory content                               |
+| LibreChat `transactions`                    | token counts per answer and its message id, no content                                              | kept, a few hundred bytes per answer                  |
+| LibreChat logs                              | the service user's id and email and request ids, no message text, token or password                 | LibreChat's default: one file per day, kept 14 days   |
+| the dashboard                               | the current chat, in the tab's memory                                                               | gone when the tab closes                              |
 
 The agents API stores no questions, answers or tool outputs, so LibreChat holds nothing
 an erasure must reach. An answer is computed from the rows the answer's token reads at
@@ -767,7 +823,7 @@ goes to its caller only and is stored nowhere, as any read in flight.
 
 ## Model and cost
 
-The model will be the agent definition's: `LOOM_ASSISTANT_MODEL` when set (Loom writes
+The model is the agent definition's: `LOOM_ASSISTANT_MODEL` when set (Loom writes
 it into the definition when it seeds), `claude-haiku-4-5` otherwise. The model runs in
 LibreChat on its own key, so Loom's provider layer does not call it, but Loom holds its
 spend to the same budget as its own model calls:
@@ -793,8 +849,9 @@ spend to the same budget as its own model calls:
 At the default cap of $1 a day, half of it buys about 15 answers at the mean of $0.033
 per answer that the [qualification](../features/integrations/librechat.md#qualification)
 of the assistant toolset measured on that model, and 11 at its maximum of $0.043; a
-namespace that asks more raises its `daily_cost_cap_usd`. The deployed agent is
-re-qualified with analysis questions before it ships.
+namespace that asks more raises its `daily_cost_cap_usd`. The deployed agent's
+qualification measured a mean of $0.033 and a maximum of $0.048 per answer over its 28
+cases ([the deployed assistant](../features/integrations/librechat.md#the-deployed-assistant)).
 
 ## Who can use it
 
@@ -829,7 +886,9 @@ by an older build.
    for a Loom user without access management, with CI running the dropped-policy case
    on a second ClickHouse with the server default.
 3. LibreChat deployed headless, the seeded agent definition, re-qualified with analysis
-   questions.
+   and recommendation questions
+   ([the deployed assistant](../features/integrations/librechat.md#the-deployed-assistant)).
+   Built.
 4. The bridge: the chat route, `assistant.ask`, the SDK clients.
 5. The chat on the dashboard's Assistant page.
 
@@ -848,7 +907,11 @@ built.
   caller's and inherits its revocation.
 - `server/observability/budget.py`: the namespace cost cap the assistant's spend counts
   toward.
-- `integrations/librechat/`: the LibreChat configuration and qualification harness.
+- `server/assistant/app/service.py`: the service user and agent set up at boot;
+  `server/assistant/store/service.py`: `loom.assistant_service`.
+- `integrations/librechat/`: the agent definition (`agent.yaml`) and the qualification
+  harness.
+- `deploy/librechat/assistant.librechat.yaml`: the deployed LibreChat's configuration.
 
 ## Invariants
 

@@ -25,6 +25,7 @@ from server.settings._file import SettingsFileSource
 from server.settings._loaded import LOADING, Recorded
 from server.settings.catalog import (
     BUILTIN_COHERE,
+    AssistantSettings,
     AuthSettings,
     ClickHouseSettings,
     CodeSettings,
@@ -66,6 +67,7 @@ DOCUMENT_UPLOAD_BUDGET_S = 300  # not a setting: a bound the min-age floor relie
 
 
 class Settings(
+    AssistantSettings,
     ClickHouseSettings,
     ProviderSettings,
     ModelSettings,

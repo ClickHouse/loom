@@ -46,6 +46,28 @@
           "type": "string",
           "description": "Anthropic's API root (the Messages API is <root>/v1/messages): point it at a gateway in front of Anthropic. Off the default, the key also goes as a bearer, the scheme gateways take."
         },
+        "assistant_librechat_url": {
+          "default": "",
+          "type": "string",
+          "description": "LibreChat's internal address (http://librechat:3080), reachable only from Loom. \"\" = no assistant: no service setup at boot."
+        },
+        "assistant_model": {
+          "default": "",
+          "type": "string",
+          "description": "The assistant agent's model, which LibreChat runs on its own Anthropic key and Loom writes into the agent definition at boot. \"\" = the definition's own (integrations/librechat/agent.yaml), not llm_model."
+        },
+        "assistant_service_email": {
+          "default": "loom-assistant@loom.invalid",
+          "type": "string",
+          "description": "Email of the LibreChat service user that owns the agent, read once, when the first boot writes loom.assistant_service; LibreChat sends it no mail."
+        },
+        "assistant_setup_retry_s": {
+          "default": 60.0,
+          "maximum": 3600,
+          "minimum": 60,
+          "type": "number",
+          "description": "Seconds before a failed assistant setup is tried again; each next failure doubles the wait, up to 16 times as long (docs/architecture/assistant.md#deployment)."
+        },
         "audit_checkpoint_grace_seconds": {
           "default": 600,
           "type": "integer",

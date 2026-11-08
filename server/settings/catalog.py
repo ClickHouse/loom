@@ -42,6 +42,23 @@ from server.settings._env import (
 )
 from server.settings._live import LIVE
 
+# ===== Assistant ==============================================================
+
+
+class AssistantSettings(BaseModel):
+    """The assistant: LibreChat run headless beside Loom, and the agent Loom seeds in it."""
+
+    # LibreChat's internal address (http://librechat:3080), reachable only from Loom. ""
+    # = no assistant: no service setup at boot.
+    assistant_librechat_url: str = ""
+    # Email of the LibreChat service user that owns the agent, read once, when the first
+    # boot writes loom.assistant_service; LibreChat sends it no mail.
+    assistant_service_email: str = "loom-assistant@loom.invalid"
+    # Seconds before a failed assistant setup is tried again; each next failure doubles
+    # the wait, up to 16 times as long (docs/architecture/assistant.md#deployment).
+    assistant_setup_retry_s: float = Field(default=60.0, ge=60, le=3600)
+
+
 # ===== Auth ===================================================================
 
 
@@ -3663,6 +3680,10 @@ class ModelSettings(BaseModel):
     # setting (the other *_model settings) is left "". Empty takes the resolved
     # provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1).
     llm_model: str = ""
+    # The assistant agent's model, which LibreChat runs on its own Anthropic key and Loom
+    # writes into the agent definition at boot. "" = the definition's own
+    # (integrations/librechat/agent.yaml), not llm_model.
+    assistant_model: str = ""
     # Model to answer with when a client's provider is still unavailable after
     # its retries (429 / 5xx / transport / timeout) or rejected the request
     # (400 / 413 / 422). Counted in `loom.llm.fallback`. 401 / 403 / 404 are

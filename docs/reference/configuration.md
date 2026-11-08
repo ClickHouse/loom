@@ -48,6 +48,16 @@ Every change to a setting's default, from `server/settings/_history.py`. A deplo
 | 1.2.0 | `LOOM_CLICKSTACK_USER_ID_KEYS` | `'user_id,user.id,enduser.id'` | `'user_id,user.id,enduser.id,loom.user_id,langfuse.user.id'` | A user-scoped ClickStack erasure also matches the user-id keys Loom's own child spans carry, so they are erased with the request span. A deployment that sets the variable keeps its own list and should add both keys. |
 | 1.0.0 | `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` | `3` | `8` | A failed replay now waits 15 s, 1, 5, then 30 minutes before the next attempt, and an unreachable provider spends none: eight attempts span about two hours instead of three back to back. |
 
+## Assistant
+
+The assistant: LibreChat run headless beside Loom, and the agent Loom seeds in it.
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_ASSISTANT_LIBRECHAT_URL` | `str` | `''` |  | LibreChat's internal address (http://librechat:3080), reachable only from Loom. "" = no assistant: no service setup at boot. |
+| `LOOM_ASSISTANT_SERVICE_EMAIL` | `str` | `'loom-assistant@loom.invalid'` |  | Email of the LibreChat service user that owns the agent, read once, when the first boot writes loom.assistant_service; LibreChat sends it no mail. |
+| `LOOM_ASSISTANT_SETUP_RETRY_S` | `float` | `60.0` |  | Seconds before a failed assistant setup is tried again; each next failure doubles the wait, up to 16 times as long (docs/architecture/assistant.md#deployment). |
+
 ## Auth
 
 Authentication, tokens and identity providers.
@@ -1427,6 +1437,7 @@ Models: which model does each job.
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_LLM_MODEL` | `str` | `''` |  | The deployment's LLM: memory extraction, rerank and every job whose own model setting (the other *_model settings) is left "". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1). |
+| `LOOM_ASSISTANT_MODEL` | `str` | `''` |  | The assistant agent's model, which LibreChat runs on its own Anthropic key and Loom writes into the agent definition at boot. "" = the definition's own (integrations/librechat/agent.yaml), not llm_model. |
 | `LOOM_LLM_FALLBACK_MODEL` | `str` | `''` |  | Model to answer with when a client's provider is still unavailable after its retries (429 / 5xx / transport / timeout) or rejected the request (400 / 413 / 422). Counted in `loom.llm.fallback`. 401 / 403 / 404 are configuration and never fall back. "" = fail the op. |
 | `LOOM_EMBEDDING_MODEL` | `str` | `'fake-ngram-3072'` |  | Embeddings for memories, queries and code chunks. fake-ngram-3072 needs no network or key; production uses text-embedding-3-* (OPENAI_API_KEY). Change it together with `embedding_dim`; a new embedding space needs a full re-embed. |
 | `LOOM_LOCAL_EMBEDDING_MODEL_DIR` | `str` | `'var/models'` |  | Where `local` models live (relative: under the working directory), one directory per alias and revision; a missing file is fetched there. The image sets it by env. |

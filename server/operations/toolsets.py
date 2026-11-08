@@ -361,6 +361,8 @@ MCP_ASSISTANT_OPS: frozenset[str] = frozenset(
         "namespace.guide_history",
         "namespace.list_categories",
         "mentor.brief",
+        # Loom's own guide to writing memory, which recommendations cite.
+        "mentor.guide",
         "grants.list",
         # Cited questions over memory, documents and code.
         "memory.search",
@@ -401,6 +403,14 @@ ASSISTANT_NAMED_AGENT_OPS: frozenset[str] = frozenset({"memory.aggregate", "memo
 def is_assistant(toolset: str | None) -> bool:
     """Whether a connection's ``?toolset=`` is the assistant toolset."""
     return toolset_parts(toolset) == (ASSISTANT_TOOLSET,)
+
+
+def assistant_ops() -> list[Operation]:
+    """The ops the assistant toolset lists, in registry order: its fixed set of reads,
+    whatever their maturity or the code tools flag. The agent definition names these."""
+    from server.operations.registry import ALL_OPERATIONS
+
+    return [op for op in ALL_OPERATIONS if op.name in MCP_ASSISTANT_OPS and op.read_only]
 
 
 # The tiers whose roster is a fixed frozenset (everything else is `all`).

@@ -530,6 +530,10 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "One row: insights.query's sealed scope key and analyst password; no org, "
         "namespace or content."
     ),
+    "loom.assistant_service": (
+        "One row: the assistant's LibreChat service user (its email and agent id) and its "
+        "sealed password and API key; no org, namespace or content."
+    ),
     "loom.chunk_supersessions": (
         "One row per retired knowledge ingestion — (org, namespace, "
         "embedding_model, source_uri, doc_version, superseded_at), each a copy of a "

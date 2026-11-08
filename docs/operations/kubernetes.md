@@ -17,6 +17,7 @@ it on a laptop.
 | Optional `<release>-publish`          | A pre-upgrade Job for a change that cannot roll ([below](#changing-what-cannot-roll)).                                                                        |
 | Optional `<release>-analytics-export` | A daily CronJob and its own ServiceAccount (`analyticsExport.enabled`, [below](#analytics-export)).                                                           |
 | Optional `<release>-extractor`        | The document extractor's Deployment, Service and NetworkPolicy (`extractor.enabled`, [below](#document-extractor)).                                           |
+| Optional `<release>-librechat`        | The assistant: LibreChat's Deployment, Service, ConfigMap and NetworkPolicy, and its MongoDB (`-librechat-mongo`) (`assistant.enabled`, [below](#assistant)). |
 | NetworkPolicy `<release>`             | Full policy with `networkPolicy.enabled`; else all egress but [`egressExcept`](#instance-metadata-service), unless it is `[]` or `guardMetadata: false`.      |
 | Optional `<release>-code-tiers`       | A PrometheusRule on the failing code-index tiers (`alerts.prometheusRule.enabled`, [below](#alert-rules)).                                                    |
 | Optional dev ClickHouse               | `devClickhouse.enabled`: one ClickHouse pod with embedded Keeper. For test clusters only.                                                                     |
@@ -150,7 +151,9 @@ helm install loom deploy/helm/loom -n loom -f deploy/helm/loom/values-eks.yaml
   `networkPolicy.extraEgress: [{to: [{namespaceSelector: …, podSelector: …}], ports: [{port: 8123}]}]`.
 - **ClickHouse Cloud's IP access list** must allow the cluster's NAT gateway addresses.
 - **Image.** Pin `image.digest`, and `extractor.image.digest` with `extractor.enabled`;
-  each release's run summary prints both, after each image passed a CVE scan.
+  each release's run summary prints both, after each image passed a CVE scan. The
+  assistant's LibreChat and MongoDB images are pinned by digest in `values.yaml`
+  (`assistant.image.digest`, `assistant.mongo.image.digest`).
 
 ## Upgrades and scaling
 
@@ -420,6 +423,22 @@ Each side holds one token, so changing `secrets.extractorToken` restarts the Loo
 Deployments (web, and workers when enabled) and the extractor's, and while they roll, a
 Loom pod and an extractor pod may hold different tokens: extraction answers unavailable
 until every roll finishes.
+
+## Assistant
+
+`assistant.enabled: true` runs LibreChat headless beside Loom with a MongoDB of its own
+([deployment](../architecture/assistant.md#deployment)): a Deployment of one pod,
+replaced rather than rolled and restarted when its configuration changes, its Service
+and ConfigMap, and a MongoDB StatefulSet with `assistant.mongo.storage` of disk. It
+needs `assistant.existingSecret`, a Secret with `CREDS_KEY`, `CREDS_IV`, `JWT_SECRET`,
+`JWT_REFRESH_SECRET` and `ANTHROPIC_API_KEY`; the chart refuses to render without it.
+The Loom pods get `LOOM_ASSISTANT_LIBRECHAT_URL` pointing at it, unless `env` or
+`extraEnv` sets one, and set the service user and agent up at boot. LibreChat's
+NetworkPolicy admits only the release's Loom pods and lets it reach DNS, its MongoDB,
+the Loom pods and TCP 443 for its model provider; MongoDB's admits only LibreChat and
+reaches nothing, and Loom's own policy admits LibreChat when it names its peers. Both
+run non-root on a read-only root filesystem. `assistant.nodeSelector`,
+`assistant.tolerations` and `imagePullSecrets` apply to both pods.
 
 ## Analytics export
 

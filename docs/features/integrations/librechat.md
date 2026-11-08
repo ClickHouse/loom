@@ -205,3 +205,111 @@ The five documents make a small corpus, so rank 1 for every labeled section says
 breadcrumbs reach the hits, not that retrieval holds up at scale. No citation names a
 revision: the hits of the measured build carry none, and the model read `knowledge.get`
 only on the two unanswerable questions.
+
+## The deployed assistant
+
+Loom can also run LibreChat itself, headless, with one agent it seeds: the shape the
+[assistant design](../../architecture/assistant.md#deployment) describes. Nobody signs in
+to that LibreChat; each answer's tools read under a token Loom mints for that answer and
+sends as the request's `parent_message_id`, which the agent's MCP server sends back to
+Loom as its `Authorization` header (`deploy/librechat/assistant.librechat.yaml`).
+
+With Compose, add LibreChat's secrets, its model key and Loom's pointer at it to the
+`.env` beside `compose.yaml`, then start the `assistant` profile beside the profiles the
+stack already runs:
+
+```bash
+echo "LIBRECHAT_CREDS_KEY=$(openssl rand -hex 32)" >> .env
+echo "LIBRECHAT_CREDS_IV=$(openssl rand -hex 16)" >> .env
+echo "LIBRECHAT_JWT_SECRET=$(openssl rand -hex 32)" >> .env
+echo "LIBRECHAT_JWT_REFRESH_SECRET=$(openssl rand -hex 32)" >> .env
+echo "LIBRECHAT_ANTHROPIC_API_KEY=<your key>" >> .env
+echo "LOOM_ASSISTANT_LIBRECHAT_URL=http://librechat:3080" >> .env
+```
+
+An installed stack runs the profiles `COMPOSE_PROFILES` names (`bundled` with its own
+ClickHouse, none with yours), so add `assistant` there and start it:
+
+```bash
+sed -i.bak 's/^COMPOSE_PROFILES=\(.\{1,\}\)$/COMPOSE_PROFILES=\1,assistant/; s/^COMPOSE_PROFILES=$/COMPOSE_PROFILES=assistant/' .env && rm .env.bak
+docker compose up -d
+```
+
+The `sed` reads the line as `install.sh` writes it: unquoted, with no comment after it.
+Stop the stack with `docker compose --profile bundled --profile assistant down`: the
+installer's printed `--profile bundled down` leaves LibreChat running, and naming
+`bundled` also stops a bundled ClickHouse a switch left running.
+Re-running `install.sh` to switch ClickHouse (`--clickhouse`, `--bundled`) rewrites
+`COMPOSE_PROFILES`: run the `sed` again afterwards.
+
+A checkout runs this build through `make dev`, whose `--profile bundled` takes the place
+of `COMPOSE_PROFILES`; pass the assistant's profile beside it. The assistant runs only on
+that stack: `make server` and `make dev-cloud` read the same `.env` but reach no
+`librechat`, so remove `LOOM_ASSISTANT_LIBRECHAT_URL` before using them. `make down`
+names only `--profile bundled` and leaves LibreChat running; stop it with the same
+command and `down` in place of `up -d --build`.
+
+```bash
+LOOM_BUILD_COMMIT=$(git rev-parse --short HEAD) \
+  docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml \
+    --profile bundled --profile assistant up -d --build
+```
+
+At boot Loom registers its service user, creates the agents API key and the agent from
+`integrations/librechat/agent.yaml`, and stores them sealed in `loom.assistant_service`;
+a boot over a set-up row checks with the stored key that LibreChat still holds them.
+From a failed try until one succeeds, `/v1/health` shows `assistant_service_failing`.
+The chart's `assistant.enabled` does the same on Kubernetes.
+
+The qualification runs the same cases through that agent. `setup-deployed` reads the
+agent and its key from `loom.assistant_service`, so it runs from a Loom checkout with
+the server's `LOOM_CH_*` and `LOOM_JWT_SECRET` in its environment, and mints each
+person's answer token (`viewer` on their namespace alone); `run` then sends each case to
+the agent with that token as `parent_message_id`. LibreChat publishes no port, so
+publish one for the run with an override file and pass it as `--librechat-url`:
+
+```yaml
+# compose.qualify.yaml, beside compose.yaml
+services:
+  librechat:
+    ports: ["127.0.0.1:3080:3080"]
+```
+
+```bash
+LOOM_BUILD_COMMIT=$(git rev-parse --short HEAD) \
+  docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml \
+    -f compose.qualify.yaml --profile bundled --profile assistant up -d --build
+Q=integrations/librechat/qualification/qualify.py
+python $Q seed
+python $Q --librechat-url http://localhost:3080 setup-deployed
+python $Q revoke
+python $Q run --cancel-probe
+```
+
+Beside every earlier case it runs three analysis cases (`insights.query` over the
+namespace, one asking for every org's counts, whose answer must name no other tenant's
+rows) and two recommendation cases over `acme-notes`, a namespace written badly on
+purpose (hash-named keys, a JSON value encoded twice, a 6.5 KB runbook stored as a
+memory).
+
+| Measured on v0.8.8, 28 cases, `claude-haiku-4-5`, fake embedder   | The deployed agent                                              |
+| ----------------------------------------------------------------- | --------------------------------------------------------------- |
+| Correct answers                                                   | 28 of 28, in one run                                            |
+| Analysis cases / recommendation cases                             | 3 of 3 / 2 of 2                                                 |
+| Cross-tenant, revoked and other-org SQL cases, no leak            | 3 of 3                                                          |
+| Should-abstain cases that abstain                                 | 4 of 4, no false abstention                                     |
+| Memory citations valid                                            | 13 of 16                                                        |
+| Document citations valid                                          | 8 of 9                                                          |
+| End-to-end latency p50 / p95                                      | 3.4 s / 10.7 s; the recommendation cases 10.7 s and 14.5 s      |
+| Tool calls per question                                           | at most 6 (a recommendation reads the audit, mentor and guides) |
+| Model cost per answer, every prompt token at list price           | mean $0.033, max $0.048                                         |
+| Loom calls after a client disconnects mid-answer                  | 0                                                               |
+| Answer tokens or service password in LibreChat's logs or database | none                                                            |
+| What LibreChat stored                                             | `transactions` only: no messages, conversations or tool calls   |
+
+A model's answers vary from run to run, so one run of 28 cases is a sample, not a
+bound. The invalid memory citations are two hash keys the answer shortened and one key
+it proposed as a replacement; the invalid document citation names a section the
+contract does not have. The fake embedder ranks by character overlap, so
+these numbers say the deployed path, its tokens and its instructions work, not how
+retrieval ranks.
