@@ -66,7 +66,7 @@ async def test_the_copy_names_the_row_it_was_read_from(monkeypatch: pytest.Monke
     rows: list[dict[str, Any]] = []
 
     async def _get(*_a: Any, **_k: Any) -> MemoryRow:
-        return _row("")
+        return _row("").model_copy(update={"user_id": "alice", "session_id": "s1"})
 
     async def _write(row: dict[str, Any]) -> None:
         rows.append(row)
@@ -77,4 +77,4 @@ async def test_the_copy_names_the_row_it_was_read_from(monkeypatch: pytest.Monke
     await promote.handle_memory_promote(
         MemoryPromoteInput(org="o", namespace="n", agent="*", memory_key="k")
     )
-    assert rows[0]["promoted_from"] == ["o/n/a/-/-/k"]
+    assert rows[0]["promoted_from"] == ["o/n/a/alice/s1/k"]

@@ -123,7 +123,8 @@ checkout.
     live memory row, or only where that is wanted. A user purge an older build completed
     left the same rows, and no later user erasure finds them: the user's keys are gone.
     One it ran past `shared.tombstone` also left the search rows of shared copies of the
-    user's own memories, whichever build finished it.
+    user's own memories, whichever build finished it. A shared copy an older build
+    promoted with `agent="*"` names no source an erasure matches, and stays.
 
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in
