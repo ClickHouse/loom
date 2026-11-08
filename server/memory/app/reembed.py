@@ -325,7 +325,9 @@ async def reembed_table(
 
     async def reread(read: dict[int, dict[str, Any]]) -> dict[int, dict[str, Any]]:
         nonlocal page_changed
-        kept, rewritten = await _still_stored(ch, table, cols, read, where_clause, params)
+        kept, rewritten = await _still_stored(
+            ch, table, cols, read, where_clause, params, key_only=key_only
+        )
         page_changed = len(read) - len(kept)
         if left_orgs is not None:  # an off-model row rewritten since has no new-model copy yet
             left_orgs.update(
@@ -388,14 +390,18 @@ async def _still_stored(
     read: dict[int, dict[str, Any]],
     where_clause: str,
     params: dict[str, Any],
+    *,
+    key_only: bool = False,
 ) -> tuple[dict[int, dict[str, Any]], list[int]]:
     """The rows of `read` as stored now, read FINAL by their keys under the run's filter,
-    each with the vectors it was read with, and the positions of the rows still stored
-    with other text. A row a redaction deleted, an erasure tombstoned or a write gave
-    other text while the page was embedded is left out; any other change (a save, a
+    each with the vectors being rebuilt as it was read (with `key_only` the key vector
+    alone: the value vector kept is the stored one), and the positions of the rows still
+    stored with other text. A row a redaction deleted, an erasure tombstoned or a write
+    gave other text while the page was embedded is left out; any other change (a save, a
     status, a hand-off) is written forward, not over."""
     cfg, keys = _TABLES[table], _KEY_COLUMNS[table]
-    vectors = {cfg["vec"], cfg.get("key_vec")} - {None}  # no key axis on two of the tables
+    rebuilt = {cfg.get("key_vec")} if key_only else {cfg["vec"], cfg.get("key_vec")}
+    vectors = rebuilt - {None}  # no key axis on two of the tables
     others = [c for c in cols if c not in vectors]
 
     def key(r: dict[str, Any]) -> tuple[str, ...]:
@@ -513,9 +519,11 @@ def decode_resume(token: str) -> tuple[str, list[str], list[str]]:
     try:
         data = json.loads(base64.urlsafe_b64decode(token.encode("ascii")).decode("utf-8"))
         table, key = str(data["table"]), [str(x) for x in data["key"]]
-        keep = [str(x) for x in data.get("keep") or []]
-    except (ValueError, KeyError, TypeError, AttributeError) as e:
+        keep = data.get("keep") or []
+    except (ValueError, KeyError, TypeError) as e:
         raise ValueError(f"not a reembed resume token: {e}") from None
+    if not isinstance(keep, list) or not all(isinstance(x, str) for x in keep):
+        raise ValueError("not a reembed resume token: keep is not a list of orgs")
     if table not in _TABLES or len(key) != len(_KEYS[table]):
         raise ValueError(f"not a reembed resume token for a known table: {table!r}")
     return table, key, keep

@@ -94,6 +94,8 @@ def test_a_bad_token_is_refused() -> None:
         rb.decode_resume("not-a-token")
     with pytest.raises(ValueError):
         rb.decode_resume(rb.encode_resume("memory_embeddings", ["only-one"]))
+    with pytest.raises(ValueError):
+        rb.decode_resume(rb.encode_resume("conversation_embeddings", ["o"] * 5, "acme"))  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
@@ -355,3 +357,47 @@ async def test_a_resume_token_carries_the_orgs_delete_old_keeps(monkeypatch) -> 
     monkeypatch.setattr("server.core.vectors.codes_state.refuse_width", width)
     await rb.reembed_all(ch, _Emb(), resume=token, delete_old=True, log=lambda *_: None)
     assert ch.inserted == ["002"] and deletes and all(p.get("off") == ["o"] for p in deletes)
+
+
+@pytest.mark.asyncio
+async def test_a_key_only_rewrite_keeps_the_value_vector_stored_now() -> None:
+    """Only the key vector is rebuilt: a write that landed since the page was read keeps
+    its own value vector."""
+    row = {
+        "org": "o",
+        "namespace": "ns",
+        "agent": "a",
+        "user_id": "-",
+        "session_id": "-",
+        "scope": "private",
+        "embedding_model": "m2",
+        "memory_key": "k",
+        "content_excerpt": "x",
+        "embedding": [0.0, 0.0],
+        "embedding_dim": 2,
+        "memory_key_embedding": [0.0, 0.0],
+        "memory_key_embedding_dim": 2,
+        "version": 1,
+    }
+    written: list[dict[str, Any]] = []
+
+    class _KeyCH:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict]:
+            if "system.columns" in sql:
+                return [{"name": c} for c in row]
+            if "keys" in (params or {}):
+                assert "memory_key_embedding," not in sql and " embedding," in sql
+                return [{**row, "embedding": [0.5, 0.5], "version": 7}]
+            return [] if "k0" in (params or {}) else [{**row, "_k": tuple(row.values())[:8]}]
+
+        async def query_one(self, sql: str, params: Any = None) -> dict:
+            return {"n": 1}
+
+        async def insert(self, table: str, rows: list[dict], settings: Any = None) -> None:
+            written.extend(rows)
+
+    n = await rb.reembed_table(
+        _KeyCH(), _Emb(), "memory_embeddings", key_only=True, log=lambda *_: None
+    )
+    assert n == 1 and written[0]["embedding"] == [0.5, 0.5] and written[0]["version"] == 8
+    assert written[0]["memory_key_embedding"] == [0.1, 0.2]
