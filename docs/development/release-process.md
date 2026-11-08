@@ -211,12 +211,13 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    they are that day), with provenance and an SBOM, pushes each by digest and scans it;
    `docker-tag` joins each image's two digests under its tags, and tags neither image until
    all four have passed (a failure there can leave one tagged, and re-running it tags both);
-   `sign` then signs the index each image's version tag names with a keyless signature
-   (cosign, with the run's GitHub identity, so the certificate names `release.yml` and the
-   tag), on every run except a dry run, once the images are out, so a run after one that
-   tagged without signing repairs it. The images are tagged before `sign`, so with Sigstore
-   down they are out unsigned until a run signs them; the GitHub Release, PyPI, npm and the
-   MCP Registry wait for it;
+   `sign` then signs, by digest, the index `docker-tag` made for each image, with a keyless
+   signature (cosign, with the run's GitHub identity, so the certificate names `release.yml`
+   and the tag). A run on a tag whose images are out signs nothing: it verifies those
+   signatures, so a tag moved since, or a run that tagged without signing, fails before
+   anything publishes (re-running the tag run's failed jobs signs what it tagged). The images
+   are tagged before `sign`, so with Sigstore down they are out unsigned until that re-run;
+   the GitHub Release, PyPI, npm and the MCP Registry wait for `sign`;
 7. `docker-smoke` installs the bundle with those images, on the ClickHouse release it
    names, on amd64 and arm64, then runs the release's own `install.sh` and bundle as the
    one-liner in clean Debian, Ubuntu and Alpine containers (install, round trip, re-run, a

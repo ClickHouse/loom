@@ -979,8 +979,14 @@ changed).
 Every release publishes a multi-arch image (linux/amd64 and linux/arm64) to
 `ghcr.io/clickhouse/loom`, tagged `X.Y.Z`, `X.Y` and, for a stable release, `latest`.
 Both images (`loom` and `loom-extractor`, below) include build provenance and an SBOM, and
-carry a keyless signature from the release workflow; the `cosign verify` command is in step 9
-of [what the release workflow does](../development/release-process.md#what-the-release-workflow-does).
+carry a keyless signature from the release workflow. Check one with cosign 3 or later:
+
+```bash
+cosign verify ghcr.io/clickhouse/loom:X.Y.Z \
+  --certificate-identity https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/vX.Y.Z \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
 The one-line installer pins `X.Y.Z` in its generated `.env`; pin an immutable version (or
 digest) in production rather than tracking `latest`
 ([release process](../development/release-process.md)).

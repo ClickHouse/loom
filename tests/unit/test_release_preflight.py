@@ -438,11 +438,18 @@ def test_only_sign_and_the_registries_get_an_oidc_token() -> None:
     assert set(oidc) == {"sign", "pypi", "npm", "mcp-registry"}
 
 
-def test_the_release_signs_the_index_each_version_tag_names() -> None:
+def test_the_tag_run_signs_the_digests_it_made_and_a_later_run_verifies_them() -> None:
     jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
-    (step,) = [s for s in jobs["sign"]["steps"] if "cosign sign" in s.get("run", "")]
-    assert "for image in $IMAGES; do" in step["run"]
-    assert 'cosign sign --yes "$image@$digest"' in step["run"]
-    assert '"$image:$VERSION"' in step["run"]  # the index the version tag names
-    assert step["env"]["VERSION"] == "${{ needs.version.outputs.version }}"
-    assert "sign" in jobs["github-release"]["needs"]
+    tag = jobs["docker-tag"]
+    assert tag["outputs"]["digests"] == "${{ steps.tag.outputs.digests }}"
+    (tagging,) = [s for s in tag["steps"] if s.get("id") == "tag"]
+    assert 'digests+=("$image@$digest")' in tagging["run"]
+    steps = {s.get("name"): s for s in jobs["sign"]["steps"]}
+    sign = steps["Sign each image's index"]
+    assert sign["if"] == "${{ needs.docker-tag.result == 'success' }}"
+    assert sign["env"]["DIGESTS"] == "${{ needs.docker-tag.outputs.digests }}"
+    assert 'cosign sign --yes "$ref"' in sign["run"]
+    verify = steps["Verify the published images' signatures"]
+    assert verify["if"] == "${{ needs.preflight.outputs.images_published == 'true' }}"
+    assert "cosign sign" not in verify["run"]
+    assert "release.yml@refs/tags/v$VERSION" in verify["run"]
