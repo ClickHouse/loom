@@ -3,12 +3,11 @@ fan-out narrows by (kind, visibility), and whether a name a path would register
 as new is already in use.
 
 The gate is platform code; what it decides on belongs to the domains: which
-namespaces of an org are restricted (the directory rows, the code-plane
-repo config and the tracker sources), which are configured code-plane
-entries, and what kind each one is. The identity domain answers through a
-`NamespaceDirectory`; the
-composition root (`server/wiring.py`) hands it in with `use_directory`
-before the process serves.
+namespaces of an org are restricted (the directory rows, the code-plane repo
+config and the tracker sources), which are configured code-plane entries, and
+what kind each one is. The identity domain answers through a
+`NamespaceDirectory`; the composition root (`server/wiring.py`) hands it in
+with `use_directory` before the process serves.
 
 A process nobody wired has no directory: every lookup raises
 `DirectoryNotWired`, a `ClassificationUnavailable`, so each gate that denies

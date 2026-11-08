@@ -419,8 +419,8 @@ See [code index repositories](../features/code-index/repositories.md).
 Everything above widens access. `classification` narrows it: a namespace whose
 `loom.namespaces.classification` is `restricted`, whose `LOOM_CODE_REPOS_JSON` entry says
 `"classification": "restricted"`, or whose tracker source entry says `"restricted": true`
-(any input restricts), switches every default off. A
-read or write passes only when **all** hold:
+(any input restricts), switches every default off. A read or write passes only when
+**all** hold:
 
 1. the token belongs to the namespace's org (`org="*"` does not count);
 2. the token names the namespace literally, in `namespaces` or `ns_roles`

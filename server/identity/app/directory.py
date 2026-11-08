@@ -1,6 +1,7 @@
 """The identity domain's answers to the authorization gate's namespace
 questions (`server.auth.directory.NamespaceDirectory`): the classification
-cache, the code-plane repo config and the kind directory, read at call time; and
+cache, the code-plane repo config, the tracker sources and the kind directory, read at
+call time; and
 whether a name a path would register as new already holds data or grants."""
 
 from __future__ import annotations
