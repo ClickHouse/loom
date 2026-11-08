@@ -61,6 +61,10 @@ def test_an_external_template_is_its_modules_unit_and_binds_by_selector_and_meth
         and (3, "fmt", "handler") in sites
         and (4, "articles", "handler") in sites
     )
+    assert [n for _, n, _ in template_sites('{{ $any(x) }}<a *ngIf="a.$emit(x)">')] == [
+        "$any",
+        "$emit",
+    ]
     selectors = {
         "app-layout-header": ("h1", "src.app.core.layout.header.component::HeaderComponent")
     }

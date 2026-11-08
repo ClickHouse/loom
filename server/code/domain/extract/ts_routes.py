@@ -48,7 +48,7 @@ _REGISTRATION_RE = re.compile(
 )
 _FASTIFY_ROUTE_RE = re.compile(
     r"""\.route\(\s*\{(?:(?!\.route\()[^}])*?\bmethod\s*:\s*['"`]([A-Za-z]+)['"`]"""
-    r"""(?:(?!\.route\(|\bmethod\b)[^}])*?\burl\s*:\s*['"`]([^'"`]+)['"`]""",
+    r"""(?:(?!\.route\(|\bmethod\s*:)[^}])*?\burl\s*:\s*['"`]([^'"`]+)['"`]""",
     re.S,
 )
 _APP_HANDLER_RE = re.compile(

@@ -1102,7 +1102,10 @@ async def _capped_blob(git_dir: str, sha: str, path: str, max_bytes: int) -> byt
             proc.stdin.write(f"{spec}\n".encode())
             await proc.stdin.drain()
             proc.stdin.close()
-            parts = (await proc.stdout.readline()).split()
+            try:
+                parts = (await proc.stdout.readline()).split()
+            except ValueError:  # a line past the stream limit echoes a long missing spec
+                return None
             if len(parts) != 3 or parts[1] != b"blob" or not parts[2].isdigit():
                 # a missing reply is the whole output; a directory's tree, however
                 # large, is left unread with the process killed

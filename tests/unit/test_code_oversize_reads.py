@@ -60,6 +60,8 @@ def test_a_capped_read_of_a_missing_path_or_a_directory_is_none(tmp_path: Path) 
     assert asyncio.run(show_file(git_dir, sha, "nope.py", max_bytes=10)) is None
     assert asyncio.run(show_file(git_dir, sha, "src", max_bytes=10)) is None
     assert asyncio.run(show_file(git_dir, "f" * 40, "src/f000.py", max_bytes=10)) is None
+    long = "a/" + "w" * 70_000 + ".py"  # git echoes it past the 64 KiB line limit
+    assert asyncio.run(show_file(git_dir, sha, long, max_bytes=10)) is None
 
 
 def _pipe_capacity() -> int:

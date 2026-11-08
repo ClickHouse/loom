@@ -41,12 +41,14 @@ def test_four_route_spellings_become_facets() -> None:
     ]
     express = parse_file(
         "lib/routes.js",
-        b"app.get('/health', h)\nrouter.post('/users/:id', h)\nfastify.route({ method: 'PUT', url: '/items', handler })\n",
+        b"app.get('/health', h)\nrouter.post('/users/:id', h)\nfastify.route({ method: 'PUT', url: '/items', handler })\n"
+        b"fastify.route({ method: 'GET', // the method v1 used\n url: '/a' })\n",
     )
     assert [f.name for f in route_facets(express)] == [
         "GET /health",
         "POST /users/:id",
         "PUT /items",
+        "GET /a",
     ]
     plain = parse_file("lib/util.ts", b"export function add(a: number) { return a }\n")
     assert route_facets(plain) == []
