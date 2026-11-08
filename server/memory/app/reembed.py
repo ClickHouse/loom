@@ -321,8 +321,9 @@ async def reembed_table(
     keys = _KEYS[table]
     order = ", ".join(keys)
     after = list(start_after) if start_after else None
+    written = held = 0
     # The rows the re-read skipped, in all pages and in this page.
-    written = held = changed = page_changed = 0
+    changed = page_changed = 0
 
     async def read_again(read: dict[int, dict[str, Any]]) -> dict[int, dict[str, Any]]:
         nonlocal page_changed
@@ -665,7 +666,7 @@ async def reembed_all(
     if delete_old and not dry_run:
         # Every org whose rows wait keeps its old vectors: off at the start, off
         # during the run or by now, or with a row the re-read found with other text.
-        keep = frozenset(off | left_orgs | await customer.switched_off_orgs())
+        keep = frozenset(left_orgs | await customer.switched_off_orgs())
         if keep:
             named = ", ".join(sorted(keep)[:20]) + (", ..." if len(keep) > 20 else "")
             log(f"old-model rows kept for a later run in {len(keep)} org(s): {named}")
