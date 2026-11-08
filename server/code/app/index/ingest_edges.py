@@ -605,7 +605,8 @@ async def _ts_callee_returns(
         return {}
     from server.code.domain.extract.edges_treesitter import callee_targets
 
-    targets = callee_targets(pf, name_table, lane_context)
+    # it may parse a module the file imports
+    targets = await asyncio.to_thread(callee_targets, pf, name_table, lane_context)
     if not targets:
         return {}
     types = await repo.return_types_for_qualified(org, ns, sorted(set(targets.values())))
@@ -614,11 +615,8 @@ async def _ts_callee_returns(
         # One more round for the callees a now-typed receiver resolves (`batch, _ :=
         # conn.PrepareBatch()` → `batch.Append`), one extra keyed read only when the
         # round finds new targets
-        more = {
-            c: qn
-            for c, qn in callee_targets(pf, name_table, lane_context, out).items()
-            if c not in out
-        }
+        found = await asyncio.to_thread(callee_targets, pf, name_table, lane_context, out)
+        more = {c: qn for c, qn in found.items() if c not in out}
         wanted = sorted({qn for qn in more.values() if qn not in types})
         if wanted:
             types.update(await repo.return_types_for_qualified(org, ns, wanted))

@@ -291,3 +291,26 @@ def test_the_round_does_not_parse_a_timed_out_host_shell_again(
     monkeypatch.setattr(ingest_chunks, "host_units_of", lambda path, source: again.append(path))
     asyncio.run(round_models._plans(reads, "o", "code-ns", sources, "m", 4000))
     assert again == []  # the chunk plans did not parse the shell again
+
+
+def test_callee_targets_run_off_the_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+
+    from server.code.app.index import ingest_edges
+    from server.code.domain.extract import edges_treesitter
+    from server.code.domain.extract.treesitter import ParsedFile
+
+    threads: list[bool] = []
+
+    def targets(*a: Any) -> dict[str, str]:
+        threads.append(threading.current_thread() is threading.main_thread())
+        return {"f": "m::f"}
+
+    class Repo:
+        async def return_types_for_qualified(self, org: str, ns: str, names: list[str]) -> dict:
+            return {"m::f": "m::T"}
+
+    monkeypatch.setattr(edges_treesitter, "callee_targets", targets)
+    pf = ParsedFile(path="a.py", lang="python", source=b"")
+    asyncio.run(ingest_edges._ts_callee_returns(Repo(), "o", "ns", pf, {}, None))
+    assert threads == [False, False]  # both rounds, and neither on the loop's thread
