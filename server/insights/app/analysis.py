@@ -151,11 +151,17 @@ async def load_secrets(*, may_draw: bool) -> None:
     secrets reseal`). `may_draw` draws them when there are none: `loom
     ch-setup`, or a boot whose server user can see that no analyst user exists
     yet. Run under the analysis lease, so one caller draws them."""
+    if refusal := await _secrets_refusal(may_draw=may_draw):
+        raise SetupRefused(refusal)
+
+
+async def _secrets_refusal(*, may_draw: bool) -> str:
+    """`load_secrets`, answering Loom's own refusal as text ('' once loaded)."""
     global _loaded
     sealed = await store.sealed_secrets()
     if sealed is None:
         if not may_draw:
-            raise SetupRefused(
+            return (
                 "loom.analysis_secrets has no row while the analyst user may exist; "
                 "`loom ch-setup` draws the secrets"
             )
@@ -164,12 +170,13 @@ async def load_secrets(*, may_draw: bool) -> None:
         sealed = await store.sealed_secrets()
     opened = _opened(sealed)
     if opened is None:
-        raise SetupRefused(
+        return (
             "loom.analysis_secrets does not open with LOOM_JWT_SECRET (set "
             "LOOM_JWT_SECRET_PREVIOUS to the secret it was sealed under and run "
             "`loom secrets reseal`)"
         )
     _loaded = opened
+    return ""
 
 
 def _opened(sealed: str | None) -> tuple[bytes, str] | None:
@@ -300,8 +307,10 @@ async def _write_under_lease() -> tuple[str, str]:
     draws them here. Returns why it wrote nothing, and the names behind it,
     when something stops a write."""
     async with lease():
-        if _loaded is None:
-            await load_secrets(may_draw=await store.analyst_user_absent())
+        if _loaded is None and (
+            refusal := await _secrets_refusal(may_draw=await store.analyst_user_absent())
+        ):
+            return refusal, ""  # Loom's own text, which names the fix
         foreign = await _foreign_problem()
         if foreign[0]:
             return foreign
@@ -420,16 +429,18 @@ async def reprobe() -> None:
         if not problem:
             _probe_failed(f"checking for row policies {_LOOM_DID_NOT_WRITE} failed", e)
             return
-        if isinstance(e, SetupRefused):
-            problem = f"{problem}: {e}"  # Loom's own text, which names the fix
-        else:
-            detail = f"{detail}; the repair or its re-check did not finish: {error_line(e)}"
+        detail = f"{detail}; the repair or its re-check did not finish: {error_line(e)}"
     _set_problem(problem, detail.lstrip("; "))
 
 
 _LOOM_DID_NOT_WRITE = "Loom did not write"
 # ClickHouse's own socket timeout and network error: no answer reached it.
 _NETWORK_CODES = frozenset({209, 210})
+
+
+def _probe_interval_s() -> float:
+    """The probe's pace, read on each use: the setting is live."""
+    return float(settings.ch_analysis_probe_interval_s)
 
 
 def _no_answer(e: BaseException) -> bool:
@@ -480,7 +491,7 @@ def _probe_failed(what: str, e: BaseException) -> None:
         _unreached_since = now
     # Still unknown, still refused with OVERLOADED; past three intervals the
     # problem is named, so health and `loom doctor` show it.
-    stale = now - _unreached_since >= 3 * float(settings.ch_analysis_probe_interval_s)
+    stale = now - _unreached_since >= 3 * _probe_interval_s()
     _ready = None
     _problem = f"the analysis probe has had no answer for three intervals: {kind}" if stale else ""
 
@@ -502,7 +513,7 @@ def start_probe_loop() -> asyncio.Task[None]:
                 await reprobe()
             else:
                 provisioned = await provision()
-            await asyncio.sleep(float(settings.ch_analysis_probe_interval_s))
+            await asyncio.sleep(_probe_interval_s())
 
     return asyncio.get_running_loop().create_task(_run(), name="loom-analysis-probe")
 

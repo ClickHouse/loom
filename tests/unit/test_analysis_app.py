@@ -805,16 +805,18 @@ def test_a_proxys_own_status_is_no_answer(monkeypatch: pytest.MonkeyPatch, ready
 def test_a_refusal_loom_wrote_during_a_repair_is_the_problem(
     monkeypatch: pytest.MonkeyPatch, ready: None
 ) -> None:
+    # A replica with no secrets loaded repairs by loading them; a row that does
+    # not open answers with Loom's own text, which names the fix.
     _clean_ran(monkeypatch)
+    monkeypatch.setattr(app, "_loaded", None)
+    monkeypatch.setattr(app, "lease", _NoLease)
     monkeypatch.setattr(
         app, "_probe", _returns(("this replica holds no analyst secrets", True, ""))
     )
     monkeypatch.setattr(app.store, "can_manage_access", _returns(True))
-
-    async def write() -> tuple[str, str]:
-        raise app.SetupRefused("loom.analysis_secrets does not open with LOOM_JWT_SECRET")
-
-    monkeypatch.setattr(app, "_write_under_lease", write)
+    monkeypatch.setattr(app.store, "analyst_user_absent", _returns(False))
+    monkeypatch.setattr(app.store, "sealed_secrets", _returns("not-a-sealed-value"))
+    monkeypatch.setattr(app, "_opened", lambda _: None)
     asyncio.run(app.reprobe())
     ready_now, problem = app.analysis_state()
     assert ready_now is False and "does not open with LOOM_JWT_SECRET" in problem
