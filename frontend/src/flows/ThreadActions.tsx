@@ -44,7 +44,8 @@ export function ThreadActions({
     const r = await deleteEveryAgent(identity, thread);
     if (r.error) {
       const why = humanizeError(r.error);
-      toast(r.parts ? `Deleted part of "${name}", then failed: ${why}` : `Delete failed: ${why}`, "error");
+      const rest = r.left ? `; ${r.left} messages are left` : "";
+      toast(r.parts ? `Deleted part of "${name}", then failed: ${why}${rest}` : `Delete failed: ${why}`, "error");
     } else if (r.left) toast(`Deleted part of "${name}"; ${r.left} messages are left`, "info");
     else toast(`Deleted "${name}"`, "ok");
     onChanged();
@@ -89,9 +90,11 @@ function RenameDialog({
     try {
       // The row belongs to the agent that opened the thread, not always the last writer;
       // a thread built by appends has none yet, so one is written with the title.
+      const t = title.trim();
       const head = await getConversationThread(identity, "*", thread.thread_id, { limit: 1 });
-      if (head.created_at) await renameThread(identity, head.agent, thread.thread_id, title.trim());
-      else await createThreadRow(identity, thread.agent, thread.thread_id, title.trim());
+      // A row deleted since the read answers `updated: false` too.
+      const r = head.created_at ? await renameThread(identity, head.agent, thread.thread_id, t) : { updated: false };
+      if (!r.updated) await createThreadRow(identity, thread.agent, thread.thread_id, t);
       toast("Renamed", "ok");
       onClose(true);
     } catch (e) {
@@ -136,14 +139,15 @@ async function deleteEveryAgent(
   let parts = 0;
   let left = 0;
   try {
-    for (; parts < MAX_AGENTS; parts++) {
+    while (parts < MAX_AGENTS) {
       await deleteThread(id, agent, thread.thread_id);
+      parts++;
       const rest = await getConversationThread(id, "*", thread.thread_id, { limit: 1 });
-      if (!rest.found) return { parts: parts + 1, left: 0 };
+      if (!rest.found) return { parts, left: 0 };
       left = rest.msg_count;
       // Next: the row's owner while a row is left, else the oldest remaining turn's writer.
       // The same agent again means its delete took nothing more.
-      if (!rest.agent || rest.agent === agent) return { parts: parts + 1, left };
+      if (!rest.agent || rest.agent === agent) break;
       agent = rest.agent;
     }
   } catch (error) {
