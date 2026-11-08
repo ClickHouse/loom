@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import { listBriefs, type BriefSummary } from "../api/briefs";
+import { deleteBrief, listBriefs, type BriefSummary } from "../api/briefs";
+import { canCall } from "../lib/canCall";
+import { humanizeError } from "../lib/format";
+import { useNamespaceRole } from "../lib/namespaceRole";
+import { useStore } from "../lib/state";
+import { confirmAction } from "./ConfirmDialog";
+import { IconButton } from "./IconButton";
+import { toast } from "./Toast";
 import { useFold } from "../lib/folds";
 import { Panel, SectionHeading } from "./ui";
 import { SessionBriefPanel } from "./SessionBriefPanel";
@@ -14,6 +21,24 @@ import { SessionBriefPanel } from "./SessionBriefPanel";
 export function SessionBriefsSection({ org, namespace }: { org: string; namespace: string }) {
   const [briefs, setBriefs] = useState<BriefSummary[]>([]);
   const [shown, toggleShown] = useFold("session-briefs");
+  const roleHere = useNamespaceRole(namespace);
+  const whoami = useStore((s) => s.whoami);
+  const canDelete = canCall("session.brief_delete", roleHere, whoami);
+  const remove = async (b: BriefSummary) => {
+    const ok = await confirmAction({
+      title: `Forget the brief "${b.goal || b.brief_key}"?`,
+      message: "A later session can no longer restore its work from it.",
+      confirmLabel: "Forget",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await deleteBrief({ org, namespace }, b.brief_key);
+      setBriefs((all) => all.filter((x) => x.brief_key !== b.brief_key));
+    } catch (e) {
+      toast(`Couldn't forget the brief: ${humanizeError(e)}`, "error");
+    }
+  };
   useEffect(() => {
     let live = true;
     setBriefs([]);
@@ -44,7 +69,21 @@ export function SessionBriefsSection({ org, namespace }: { org: string; namespac
       <div id="session-briefs-body" hidden={!shown}>
         {shown &&
           briefs.map((b) => (
-            <SessionBriefPanel key={b.brief_key} org={org} namespace={namespace} briefKey={b.brief_key} />
+            <div key={b.brief_key} className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <SessionBriefPanel org={org} namespace={namespace} briefKey={b.brief_key} />
+              </div>
+              {canDelete && (
+                <IconButton
+                  icon="trash"
+                  type="danger"
+                  size="sm"
+                  label={`Forget brief ${b.goal || b.brief_key}`}
+                  tooltip="Forget"
+                  onClick={() => void remove(b)}
+                />
+              )}
+            </div>
           ))}
       </div>
     </Panel>

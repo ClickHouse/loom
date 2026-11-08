@@ -18,7 +18,6 @@ from server.operations.base import Role
 from server.operations.dashboard import (
     AGENT_STEP,
     CODE_QUESTION,
-    DASHBOARD_PENDING,
     NOT_IN_DASHBOARD,
     TRACKER_QUESTION,
     _named_once,
@@ -29,25 +28,6 @@ from server.transport import mcp_op, mcp_tools
 
 # The reasons that say only an agent calls the op.
 AGENT_ONLY = {AGENT_STEP, CODE_QUESTION, TRACKER_QUESTION}
-
-# The most DASHBOARD_PENDING may hold: an op leaves it when its control lands,
-# and nothing joins it.
-PENDING_AT_MOST = frozenset(
-    {
-        "code.calibrate",
-        "code.reindex",
-        "conversation.delete",
-        "conversation.update",
-        "cost.agent_summary",
-        "grants.share_agent",
-        "grants.unshare_agent",
-        "namespace.guide_history",
-        "namespace.mark_seen",
-        "procedure.list",
-        "run.grade",
-        "session.brief_delete",
-    }
-)
 
 
 def _loom_op(name: str, toolset: str | None = None) -> tuple[dict, dict | None]:
@@ -82,10 +62,9 @@ def _op(name: str, *reach: str) -> SimpleNamespace:
 
 
 @pytest.mark.parametrize(
-    ("named", "pending", "op", "expected"),
+    ("named", "op", "expected"),
     [
         (
-            set(),
             set(),
             _op("code.ask"),
             "code.ask: no dashboard call site; add its control, or name it in "
@@ -93,35 +72,20 @@ def _op(name: str, *reach: str) -> SimpleNamespace:
         ),
         (
             {"code.ask"},
-            set(),
             _op("code.ask", "dashboard"),
             "code.ask: the dashboard calls it, so drop it from server/operations/dashboard.py",
-        ),
-        (
-            set(),
-            {"code.ask"},
-            _op("code.ask", "dashboard"),
-            "code.ask: the dashboard calls it, so drop it from server/operations/dashboard.py",
-        ),
-        (
-            {"code.ask"},
-            {"code.ask"},
-            _op("code.ask"),
-            "code.ask: in both NOT_IN_DASHBOARD and DASHBOARD_PENDING",
         ),
         (
             {"x.gone"},
-            set(),
             _op("code.ask", "dashboard"),
             "x.gone: in server/operations/dashboard.py but no such op",
         ),
     ],
 )
 def test_each_dashboard_violation_is_named(
-    monkeypatch: pytest.MonkeyPatch, named: set, pending: set, op: SimpleNamespace, expected: str
+    monkeypatch: pytest.MonkeyPatch, named: set, op: SimpleNamespace, expected: str
 ):
     monkeypatch.setattr(census, "NOT_IN_DASHBOARD", dict.fromkeys(named, "a reason"))
-    monkeypatch.setattr(census, "DASHBOARD_PENDING", frozenset(pending))
     assert census.dashboard_violations([op]) == [expected]
 
 
@@ -158,11 +122,6 @@ def test_an_op_a_reason_names_is_on_the_dashboard():
         for other in re.findall(r"[a-z_]+(?:\.[a-z_]+)+", reason):
             assert other in OPERATIONS_BY_NAME, (name, other)
             assert "dashboard" in OPERATIONS_BY_NAME[other].reach, (name, other)
-
-
-def test_the_pending_set_only_shrinks():
-    joined = sorted(DASHBOARD_PENDING - PENDING_AT_MOST)
-    assert not joined, f"{joined}: a new op a person needs ships with its dashboard control"
 
 
 def test_an_op_named_twice_is_refused():

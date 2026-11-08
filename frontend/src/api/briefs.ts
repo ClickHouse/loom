@@ -3,6 +3,7 @@
 // shows a conversation's brief next to the conversation it came from.
 // Wire shapes mirror server/memory/api/models_session_brief.py.
 import { post } from "../api";
+import type { Identity } from "../api";
 
 export interface BriefGetResponse {
   found: boolean;
@@ -68,4 +69,17 @@ export async function listBriefs(
     limit: opts.limit ?? 20,
   });
   return out.briefs || [];
+}
+
+/** POST /v1/session.brief_delete: the brief is forgotten (a tombstoned revision). */
+export async function deleteBrief(
+  id: Pick<Identity, "org" | "namespace">,
+  briefKey: string,
+): Promise<{ deleted: boolean }> {
+  return post("/v1/session.brief_delete", {
+    org: id.org,
+    namespace: id.namespace,
+    agent: "loom-ui",
+    brief_key: briefKey,
+  });
 }

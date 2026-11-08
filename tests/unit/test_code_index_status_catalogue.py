@@ -24,7 +24,7 @@ def test_catalogue_lists_every_served_code_op_with_its_request_fields() -> None:
     assert set(maturity) == registry and set(reach) == registry
     assert set(maturity.values()) <= {"stable", "experimental"}
     assert "mcp_core" in reach["code.search"] and maturity["code.search"] == "stable"
-    assert reach["code.reindex"] == ["http_only"] and maturity["code.reindex"] == "experimental"
+    assert reach["code.test_home"] == ["http_only"] and maturity["code.test_home"] == "experimental"
     # additive: the toolsets whose listing carries each op
     assert set(toolsets) == registry
     assert (

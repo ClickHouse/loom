@@ -8,7 +8,7 @@ import * as api from "../api";
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
-  return { ...actual, getNamespaceGuide: vi.fn(), saveNamespaceGuide: vi.fn() };
+  return { ...actual, getNamespaceGuide: vi.fn(), saveNamespaceGuide: vi.fn(), guideHistory: vi.fn() };
 });
 
 const GUIDE: api.NamespaceGuide = {
@@ -27,6 +27,7 @@ const open = (canEdit: boolean, onSaved = () => {}) =>
 beforeEach(() => {
   vi.mocked(api.getNamespaceGuide).mockReset().mockResolvedValue(GUIDE);
   vi.mocked(api.saveNamespaceGuide).mockReset();
+  vi.mocked(api.guideHistory).mockReset().mockResolvedValue([]);
 });
 
 describe("GuideDialog", () => {
@@ -110,5 +111,45 @@ describe("GuideDialog", () => {
       summary: "Mine",
       expected_revision: 4,
     });
+  });
+
+  it("lists the earlier revisions under History, without the one shown", async () => {
+    const revision = (n: number, note = "") => ({
+      revision: n,
+      summary: "Plans",
+      note,
+      updated_by: "a@x",
+      updated_at: "",
+    });
+    vi.mocked(api.guideHistory).mockResolvedValueOnce([revision(3), revision(2, "split the tiers"), revision(1)]);
+    open(false);
+    await userEvent.click(await screen.findByRole("button", { name: "History" }));
+    expect(await screen.findByText("Revision 2 by a@x")).toBeInTheDocument();
+    expect(screen.getByText("— split the tiers")).toBeInTheDocument();
+    expect(screen.getByText("Revision 1 by a@x")).toBeInTheDocument();
+    expect(screen.queryByText("Revision 3 by a@x")).toBeNull();
+    // The summary says what the namespace holds, not why a revision changed.
+    expect(screen.queryByText(/— Plans/)).toBeNull();
+  });
+
+  it("offers Retry when the history fails to read", async () => {
+    vi.mocked(api.guideHistory).mockRejectedValueOnce(new Error("down")).mockResolvedValueOnce([]);
+    open(false);
+    await userEvent.click(await screen.findByRole("button", { name: "History" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(api.guideHistory).toHaveBeenCalledTimes(2));
+  });
+
+  it("shows why the current revision changed beside its byline", async () => {
+    vi.mocked(api.getNamespaceGuide).mockResolvedValue({ ...GUIDE, note: "added the tier keys" });
+    open(false);
+    expect(await screen.findByText("— added the tier keys")).toBeInTheDocument();
+  });
+
+  it("offers no History on a guide's first revision", async () => {
+    vi.mocked(api.getNamespaceGuide).mockResolvedValue({ ...GUIDE, revision: 1 });
+    open(false);
+    expect(await screen.findByText(/Revision 1/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "History" })).toBeNull();
   });
 });

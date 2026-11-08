@@ -20,7 +20,7 @@ of reach kinds:
 ``dashboard``    the dashboard posts it: a quoted ``"/v1/<op>"`` call site in
                  ``frontend/src`` (tests and test helpers aside). An op without
                  it is in ``server.operations.dashboard``: ``NOT_IN_DASHBOARD``
-                 with the reason, or ``DASHBOARD_PENDING``.
+                 with the reason.
 ``http_only``    none of the above — a raw ``/v1/*`` POST is the only path.
 
 The MCP kinds derive live from ``server.operations.toolsets``. The file-scan

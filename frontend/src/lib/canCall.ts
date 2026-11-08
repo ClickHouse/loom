@@ -101,6 +101,9 @@ export const OP_MIN_ROLE = {
   "conversation.set_logging": ADMIN,
   // Settings → Memory's Webhooks section, ADMIN on the namespace.
   "webhook.list": ADMIN,
+  // A Conversations thread row's Rename and Delete.
+  "conversation.update": WRITER,
+  "conversation.delete": ADMIN,
   // A repository card's Docs and Sources facets (`canCallOn`): Add a document and Remove,
   // and every verb on a document source.
   "knowledge.add": WRITER,
@@ -132,6 +135,8 @@ export const OP_MIN_ROLE = {
   "facts.list": VIEWER,
   "run.list": VIEWER,
   "run.get": VIEWER,
+  "run.grade": WRITER,
+  "session.brief_delete": WRITER,
   "grants.list": VIEWER,
   "learnings.list": VIEWER,
   "policy.decisions": VIEWER,

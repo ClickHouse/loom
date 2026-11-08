@@ -9,13 +9,8 @@ inspect, configure, or to delete with a confirmation) has a control there; an op
 only an agent or a client program calls, or one the dashboard serves through
 another op, is named in `NOT_IN_DASHBOARD` with the reason. The census's
 `--check` (`tests/unit/test_op_reach_census.py`, through `dashboard_violations`)
-fails on an op with neither, on an op in both `NOT_IN_DASHBOARD` and
-`DASHBOARD_PENDING`, and on an entry for an op the dashboard calls or that no
-longer exists.
-
-`DASHBOARD_PENDING` holds the ops a person needs whose control is not built
-yet. It only shrinks (`tests/unit/test_op_surfaces.py` holds its ceiling): an op
-leaves it when its control lands, and a new op ships with its control instead.
+fails on an op with neither, and on an entry for an op the dashboard calls or
+that no longer exists.
 """
 
 from __future__ import annotations
@@ -104,7 +99,6 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
             "context.pack",
             "conversation.append",
             "conversation.compact",
-            "conversation.create",
             "decision.chain",
             "decision.outcome",
             "decision.precedents",
@@ -163,6 +157,7 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
     # ---- client programs
     dict.fromkeys(
         (
+            "code.calibrate",
             "code.coverage.unwatch",
             "code.coverage.watch",
             "code.outcome",
@@ -195,6 +190,14 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
     ),
     # ---- the dashboard does this through another op
     {
+        "grants.share_agent": (
+            "an agent shares its own namespace and the handler refuses any other caller; "
+            "a person shares a namespace from the Sharing page with grants.create"
+        ),
+        "grants.unshare_agent": (
+            "an agent withdraws its own share and the handler refuses any other caller; "
+            "a person revokes a grant from the Sharing page with grants.revoke"
+        ),
         "memory.import": (
             "run by the program that exports from another memory system; the dashboard imports "
             "files with memory.import_curated"
@@ -220,28 +223,12 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
             "an agent's one-call orientation on a namespace; the Assistant page's overview reads "
             "namespace.inventory"
         ),
+        "procedure.list": (
+            "memory.list under the procedure_ key prefix; the Memories page lists the same rows"
+        ),
         "search.query": (
             "each page searches its own plane: Memories memory.search, the Library "
             "knowledge.search, Conversations conversation.search"
         ),
     },
-)
-
-DASHBOARD_PENDING: frozenset[str] = frozenset(
-    {
-        # health and maintenance
-        "code.calibrate",
-        "code.reindex",
-        # pages of their own
-        "conversation.delete",
-        "conversation.update",
-        "cost.agent_summary",
-        "grants.share_agent",
-        "grants.unshare_agent",
-        "namespace.guide_history",
-        "namespace.mark_seen",
-        "procedure.list",
-        "run.grade",
-        "session.brief_delete",
-    }
 )

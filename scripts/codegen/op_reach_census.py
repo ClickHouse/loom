@@ -13,9 +13,9 @@ the server CLI uses (``LOOM_ENV_FILE=/path/.env`` to name another dotenv).
 
 The gate (also ``tests/unit/test_op_reach_census.py``): every op has a reach
 path other than a raw HTTP POST or is declared experimental; every op is on the
-dashboard or in ``server.operations.dashboard`` (with the reason it is not, or
-pending); the committed manifest is byte-identical to what ``--write-manifest``
-writes. ``--owners`` names, for every experimental op, the commit that added its
+dashboard or in ``server.operations.dashboard`` (with the reason it is not); the
+committed manifest is byte-identical to what ``--write-manifest`` writes.
+``--owners`` names, for every experimental op, the commit that added its
 declaration: the owner a deletion PR should cite.
 """
 
@@ -36,7 +36,7 @@ if str(ROOT) not in sys.path:  # run as a file
 
 from scripts.codegen.common import GeneratedFile, ruff_format  # noqa: E402
 from server.operations.base import MATURITIES, Operation  # noqa: E402
-from server.operations.dashboard import DASHBOARD_PENDING, NOT_IN_DASHBOARD  # noqa: E402
+from server.operations.dashboard import NOT_IN_DASHBOARD  # noqa: E402
 from server.operations.reach import STATIC_KINDS, has_reach  # noqa: E402
 from server.operations.registry import ALL_OPERATIONS  # noqa: E402
 
@@ -251,19 +251,16 @@ def dashboard_violations(ops: list[Operation]) -> list[str]:
     for op in ops:
         called = "dashboard" in op.reach
         named = op.name in NOT_IN_DASHBOARD
-        pending = op.name in DASHBOARD_PENDING
-        if not called and not named and not pending:
+        if not called and not named:
             out.append(
                 f"{op.name}: no dashboard call site; add its control, or name it in "
                 "NOT_IN_DASHBOARD with the reason"
             )
-        if called and (named or pending):
+        if called and named:
             out.append(
                 f"{op.name}: the dashboard calls it, so drop it from server/operations/dashboard.py"
             )
-        if named and pending:
-            out.append(f"{op.name}: in both NOT_IN_DASHBOARD and DASHBOARD_PENDING")
-    for name in sorted((set(NOT_IN_DASHBOARD) | DASHBOARD_PENDING) - names):
+    for name in sorted(set(NOT_IN_DASHBOARD) - names):
         out.append(f"{name}: in server/operations/dashboard.py but no such op")
     return out
 

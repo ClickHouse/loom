@@ -2,7 +2,7 @@ import { Suspense, forwardRef, lazy, useEffect, useRef, useState, type Component
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Popover } from "@clickhouse/click-ui/Popover";
-import { setSavedNamespace, isAuthDisabled } from "../api";
+import { markNamespaceSeen, setSavedNamespace, isAuthDisabled } from "../api";
 import { invalidateShared } from "../lib/sharedReads";
 import { useStore } from "../lib/state";
 import { WILDCARD_NAMESPACE } from "../lib/namespace";
@@ -91,6 +91,16 @@ function NamespacePickerMenu() {
 
   const onPick = (ns: string) => {
     if (!identity) return;
+    // A just-shared namespace is badged New until it is picked here once. Read the store
+    // now, not this render's copy, so a list read that landed since is kept.
+    const { myNamespaces, setMyNamespaces } = useStore.getState();
+    if (myNamespaces?.find((r) => r.namespace === ns)?.is_new) {
+      setMyNamespaces(myNamespaces.map((r) => (r.namespace === ns ? { ...r, is_new: false } : r)));
+      markNamespaceSeen(identity.org, ns)
+        .then(() => invalidateShared("mine:"))
+        // The badge is a convenience: after a failed mark it comes back on the next list read.
+        .catch(() => {});
+    }
     setIdentity({ ...identity, namespace: ns });
     setSavedNamespace(ns);
     setOpen(false);

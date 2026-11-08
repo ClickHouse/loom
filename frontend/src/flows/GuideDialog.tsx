@@ -2,7 +2,14 @@ import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
-import { getNamespaceGuide, saveNamespaceGuide, type NamespaceGuide } from "../api";
+import {
+  GUIDE_HISTORY_LIMIT,
+  getNamespaceGuide,
+  guideHistory,
+  saveNamespaceGuide,
+  type GuideRevision,
+  type NamespaceGuide,
+} from "../api";
 import { toast } from "../components/Toast";
 import { Alert, Loading, Unavailable } from "../components/ui";
 import { Modal, ModalFooter } from "../components/ui/Modal";
@@ -111,9 +118,6 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
   const close = (v: boolean) => {
     if (!busy) onOpenChange(v);
   };
-  const byline = (g: NamespaceGuide) =>
-    `Revision ${g.revision}${g.updated_by ? ` by ${g.updated_by}` : ""}${g.updated_at ? `, ${relativeTime(g.updated_at)}` : ""}`;
-
   return (
     <Modal
       open={open}
@@ -128,11 +132,15 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
         <div className="space-y-3">
           {guide.found ? (
             <>
-              <p className="text-xs text-text-muted">{byline(guide)}</p>
+              <p className="text-xs text-text-muted">
+                {byline(guide)}
+                {guide.note && <span className="text-text"> — {guide.note}</span>}
+              </p>
               {guide.summary && <p className="text-sm text-text">{guide.summary}</p>}
               <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap break-words rounded border border-border p-3 font-mono text-xs text-text">
                 {guide.content}
               </pre>
+              {guide.revision > 1 && <GuideHistory org={org} namespace={namespace} current={guide.revision} />}
             </>
           ) : (
             <p className="text-sm text-text-muted">
@@ -205,5 +213,71 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
         </form>
       )}
     </Modal>
+  );
+}
+
+/** "Revision 3 by …, 2 days ago": who wrote a revision and when, each part when known. */
+function byline(g: { revision: number; updated_by: string; updated_at: string | null }): string {
+  const by = g.updated_by ? ` by ${g.updated_by}` : "";
+  return `Revision ${g.revision}${by}${g.updated_at ? `, ${relativeTime(g.updated_at)}` : ""}`;
+}
+
+/** The guide's earlier revisions, read when opened: who changed it, when and why. The
+ *  newest one is the guide shown above, so the list starts below it. */
+function GuideHistory({ org, namespace, current }: { org: string; namespace: string; current: number }) {
+  const [open, setOpen] = useState(false);
+  const [revisions, setRevisions] = useState<GuideRevision[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [reads, setReads] = useState(0);
+  useAbortableEffect(
+    (signal, live) => {
+      if (!open) return;
+      setError(null);
+      guideHistory(org, namespace, GUIDE_HISTORY_LIMIT, { signal })
+        .then((r) => live() && setRevisions(r))
+        .catch((e) => live() && setError(humanizeError(e)));
+    },
+    [open, reads, org, namespace],
+  );
+  const earlier = revisions?.filter((r) => r.revision !== current) ?? null;
+  return (
+    <section>
+      <Button
+        type="empty"
+        htmlType="button"
+        iconLeft={open ? "chevron-down" : "chevron-right"}
+        aria-expanded={open}
+        aria-controls="guide-history"
+        onClick={() => setOpen((o) => !o)}
+      >
+        History
+      </Button>
+      {open && (
+        <div id="guide-history" className="mt-1">
+          {error && (
+            <div className="flex items-center gap-2">
+              <Alert role="alert" state="danger" text={error} />
+              <Button type="secondary" htmlType="button" onClick={() => setReads((n) => n + 1)}>
+                Retry
+              </Button>
+            </div>
+          )}
+          {!error && earlier === null && <Loading label="Loading the history" />}
+          {!error && earlier && (
+            <ul className="space-y-1 text-xs">
+              {earlier.map((r) => (
+                <li key={r.revision}>
+                  <span className="text-text-muted">{byline(r)}</span>
+                  {r.note && <span className="text-text"> — {r.note}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+          {!error && revisions?.length === GUIDE_HISTORY_LIMIT && (
+            <p className="mt-1 text-xs text-text-muted">Only the newest {GUIDE_HISTORY_LIMIT} revisions are read.</p>
+          )}
+        </div>
+      )}
+    </section>
   );
 }

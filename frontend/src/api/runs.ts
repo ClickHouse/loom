@@ -2,6 +2,7 @@
 // in that view's chunk and the shell evaluates only the functions it calls. Importers
 // still import from `api.ts`.
 import { post } from "../api";
+import type { Identity } from "../api";
 
 // ---------------------------------------------------------------------------
 // Run ledger: one row per agent execution — goal → recalled → used → written → cost → outcome. Wire shapes mirror server/tasks/api/models_run.py.
@@ -31,6 +32,11 @@ export interface RunRow {
   metadata: Record<string, unknown>;
   budget_usd: number; // 0 = none
   budget_seconds: number;
+  /** `pass`, `fail`, or "" when not graded; the source, reason and time come with it. */
+  grade: string;
+  grade_source: string;
+  grade_reason: string;
+  graded_at: string;
 }
 
 export interface RunGetResponse {
@@ -117,4 +123,23 @@ export async function listRuns(id: { org: string; namespace: string }, opts: Run
 
 export async function getRun(id: { org: string; namespace: string }, runId: string): Promise<RunGetResponse> {
   return post<RunGetResponse>("/v1/run.get", { org: id.org, namespace: id.namespace, run_id: runId });
+}
+
+/** A proposal an owner's auto policy accepted or rejected on a grade. */
+export interface RunGradeProposal {
+  memory_key: string;
+  decision: "accept" | "reject";
+  passes: number;
+  fails: number;
+}
+
+/** POST /v1/run.grade: whether a closed run's result held up, from the person who knows. */
+export async function gradeRun(
+  id: Pick<Identity, "org" | "namespace">,
+  runId: string,
+  grade: "pass" | "fail",
+  reason: string,
+  source: string,
+): Promise<{ graded: number; skipped_active: number; unchanged: number; proposals_decided: RunGradeProposal[] }> {
+  return post("/v1/run.grade", { org: id.org, namespace: id.namespace, run_id: runId, grade, reason, source });
 }

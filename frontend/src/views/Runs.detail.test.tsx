@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunGetResponse, RunRow } from "../api";
 import { useStore } from "../lib/state";
 import { must } from "../test/must";
-import { EMPTY_WHY, Runs, hasNoMemoryActivity } from "./Runs";
+import { EMPTY_WHY, RUNS_FIELDS, Runs, hasNoMemoryActivity } from "./Runs";
 
 // A run with no memory activity is folded whether loom inferred it or a program declared
 // it; every empty field on the replay says who fills it; the list filters by agent;
@@ -63,6 +63,10 @@ const row = (over: Partial<RunRow> = {}): RunRow => ({
   metadata: { work_type: "ISSUE_TRIAGE" },
   budget_usd: 0,
   budget_seconds: 0,
+  grade: "",
+  grade_source: "",
+  grade_reason: "",
+  graded_at: "",
   ...over,
 });
 const full = row({
@@ -112,7 +116,7 @@ describe("Runs page", () => {
   });
   afterEach(() => {
     cleanup();
-    useStore.setState({ identity: null, recallRunFilter: null });
+    useStore.setState({ identity: null, whoami: null, recallRunFilter: null });
   });
 
   it("asks run.list to fold runs with no memory activity, and refetches everything on the toggle", async () => {
@@ -208,6 +212,19 @@ describe("Runs page", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: /Recall history for this run/ }));
     expect(useStore.getState().view).toBe("recall");
     expect(useStore.getState().recallRunFilter).toBe("r-full");
+  });
+
+  it("shows the verdict run.get carries, which the list row does not", async () => {
+    useStore.setState({ whoami: { authenticated: true, subject: "alice", org: "dev", roles: ["admin"] } });
+    // run.list answers with RUNS_FIELDS alone, so the row has no grade fields.
+    const listed = Object.fromEntries(RUNS_FIELDS.map((f) => [f, full[f as keyof RunRow]])) as unknown as RunRow;
+    listRuns.mockResolvedValue([listed]);
+    getRun.mockResolvedValue(detail({ run: { ...full, grade: "fail", grade_source: "ci", grade_reason: "red" } }));
+    render(<Runs />);
+    fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("Graded as did not hold by ci: red")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Regrade: held up" })).toBeInTheDocument();
   });
 
   it("shows the run's budget and which part of it the run went past", async () => {

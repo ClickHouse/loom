@@ -45,6 +45,9 @@ import { ListState } from "../components/ui/ListState";
 import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { DraftSearch } from "../components/ui/DraftSearch";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
+import { RunGrade } from "../flows/RunGrade";
+import { canCall } from "../lib/canCall";
+import { useNamespaceRole } from "../lib/namespaceRole";
 
 // The ten fields a run row reads of the twenty a run carries; the replay reads the rest
 // (the request, the expected outcome, the response, the confidence) from run.get.
@@ -529,6 +532,9 @@ interface Shown {
 
 export function Runs() {
   const identity = useIdentity();
+  const roleHere = useNamespaceRole(identity.namespace);
+  const whoami = useStore((s) => s.whoami);
+  const canGrade = canCall("run.grade", roleHere, whoami);
   // Below Tailwind's sm breakpoint the toolbar holds the search alone; below Click UI's
   // table breakpoint the runs are list rows.
   const phone = useMedia(PHONE_QUERY);
@@ -693,7 +699,8 @@ export function Runs() {
   const busy = loading && shown !== null;
   // The opened run as run.get answers it: the list row carries only RUNS_FIELDS.
   // A run.get answer for the run opened before is not this one's.
-  const replayed = detail?.run && detail.run.run_id === open?.run_id ? detail.run : open;
+  const fetched = detail?.run && detail.run.run_id === open?.run_id ? detail.run : null;
+  const replayed = fetched ?? open;
   // The page the rows on screen are: the pager pages from it while they are what the list
   // shows, so a second Next during a read asks for the same page; for another filter or
   // page size it pages from the page asked for.
@@ -1133,6 +1140,11 @@ export function Runs() {
           {replayed?.final_response && (
             <Section title="Final response">
               <div className="text-sm whitespace-pre-wrap">{replayed.final_response}</div>
+            </Section>
+          )}
+          {fetched && fetched.status !== "active" && canGrade && (
+            <Section title="Did it hold up?">
+              <RunGrade key={fetched.run_id} identity={identity} run={fetched} />
             </Section>
           )}
           {open && Object.keys(open.metadata || {}).length > 0 && (

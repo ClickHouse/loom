@@ -51,6 +51,10 @@ const run = (i: number, over: Partial<RunRow> = {}): RunRow => ({
   metadata: {},
   budget_usd: 0,
   budget_seconds: 0,
+  grade: "",
+  grade_source: "",
+  grade_reason: "",
+  graded_at: "",
   ...over,
 });
 
