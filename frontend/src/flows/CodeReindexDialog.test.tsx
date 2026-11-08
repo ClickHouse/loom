@@ -12,8 +12,14 @@ vi.mock("../api", async (importOriginal) => {
   return { ...actual, codeRecentCommits: vi.fn(), codeReindex: vi.fn() };
 });
 
-const tip = "c".repeat(40);
-const branch = { org: "acme", namespace: "code-x", repo: "acme/x", branch: "main", git_head: tip } as CodeRepoSummary;
+const watermark = "c".repeat(40);
+const branch = {
+  org: "acme",
+  namespace: "code-x",
+  repo: "acme/x",
+  branch: "main",
+  git_head: watermark,
+} as CodeRepoSummary;
 const sha = "a".repeat(40);
 const row = (commit: string) => ({
   commit,
@@ -25,7 +31,7 @@ const row = (commit: string) => ({
 });
 
 beforeEach(() => {
-  vi.mocked(api.codeRecentCommits).mockResolvedValue({ rows: [row(tip), row(sha)] });
+  vi.mocked(api.codeRecentCommits).mockResolvedValue({ rows: [row(watermark), row(sha)] });
   vi.mocked(api.codeReindex).mockResolvedValue({ previous_head: "b".repeat(40), new_head: sha });
 });
 afterEach(() => {
@@ -52,11 +58,11 @@ describe("CodeReindexDialog", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("does not offer the tip, which has nothing after it", async () => {
+  it("does not offer the watermark, where a move changes nothing", async () => {
     render(<CodeReindexDialog branch={branch} onDone={vi.fn()} onClose={vi.fn()} />);
     await userEvent.click(await screen.findByRole("button", { name: /Commit/ }));
     expect(document.querySelector(`[cui-select-item][data-value="${sha}"]`)).not.toBeNull();
-    expect(document.querySelector(`[cui-select-item][data-value="${tip}"]`)).toBeNull();
+    expect(document.querySelector(`[cui-select-item][data-value="${watermark}"]`)).toBeNull();
   });
 
   it("keeps the dialog open with the reason when the server refuses", async () => {
@@ -69,10 +75,10 @@ describe("CodeReindexDialog", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("says so when the branch has indexed nothing before its tip", async () => {
-    vi.mocked(api.codeRecentCommits).mockResolvedValueOnce({ rows: [row(tip)] });
+  it("says so when the branch has indexed nothing before its last commit", async () => {
+    vi.mocked(api.codeRecentCommits).mockResolvedValueOnce({ rows: [row(watermark)] });
     render(<CodeReindexDialog branch={branch} onDone={vi.fn()} onClose={vi.fn()} />);
-    expect(await screen.findByText("The branch has no indexed commit before its tip.")).toBeInTheDocument();
+    expect(await screen.findByText("The branch has indexed no commit before its last one.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Re-index" })).toBeDisabled();
   });
 });

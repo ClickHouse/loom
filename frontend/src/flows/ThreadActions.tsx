@@ -161,9 +161,9 @@ async function deleteEveryAgent(
 }
 
 /** Title the thread: update its row as the agent that owns it (not always the last
- *  writer), or write one for a thread built by appends, which has none. A row that went
- *  between the read and the update is read once more. Answers false when the
- *  conversation is gone. */
+ *  writer), or write one for a thread built by appends, which has none. When the update
+ *  finds the row changed or gone, the head is read and the rename tried once more.
+ *  Answers false when the conversation is gone. */
 async function retitle(id: Pick<Identity, "org" | "namespace">, thread: Thread, title: string): Promise<boolean> {
   for (let tries = 0; tries < 2; tries++) {
     const head = await readHead(id, thread.thread_id);

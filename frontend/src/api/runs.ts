@@ -125,7 +125,6 @@ export async function getRun(id: { org: string; namespace: string }, runId: stri
   return post<RunGetResponse>("/v1/run.get", { org: id.org, namespace: id.namespace, run_id: runId });
 }
 
-/** POST /v1/run.grade: whether a closed run's result held up, from the person who knows. */
 /** A proposal an owner's auto policy accepted or rejected on a grade. */
 export interface RunGradeProposal {
   memory_key: string;
@@ -134,6 +133,7 @@ export interface RunGradeProposal {
   fails: number;
 }
 
+/** POST /v1/run.grade: whether a closed run's result held up, from the person who knows. */
 export async function gradeRun(
   id: Pick<Identity, "org" | "namespace">,
   runId: string,

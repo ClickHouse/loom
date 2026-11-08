@@ -91,8 +91,8 @@ function NamespacePickerMenu() {
 
   const onPick = (ns: string) => {
     if (!identity) return;
-    // A namespace someone just shared is badged New until it is opened once.
-    // The list as it is now: a read that landed since this render is not undone.
+    // A just-shared namespace is badged New until opened once. Read the store now, not this
+    // render's copy, so a list read that landed since is kept.
     const { myNamespaces, setMyNamespaces } = useStore.getState();
     if (myNamespaces?.find((r) => r.namespace === ns)?.is_new) {
       setMyNamespaces(myNamespaces.map((r) => (r.namespace === ns ? { ...r, is_new: false } : r)));

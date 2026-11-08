@@ -31,7 +31,7 @@ export function CodeReindexDialog({
     async (signal, live) => {
       try {
         const r = await codeRecentCommits(id, 100, { signal });
-        // The tip has nothing after it to index.
+        // The watermark itself: moving it there changes nothing.
         if (live()) setCommits(r.rows.filter((c) => c.commit !== branch.git_head));
       } catch (e) {
         if (live()) setError(humanizeError(e));
@@ -68,7 +68,7 @@ export function CodeReindexDialog({
           </p>
           {commits === null && !error && <Loading label="Loading the branch's commits" />}
           {commits?.length === 0 && (
-            <p className="text-sm text-text-muted">The branch has no indexed commit before its tip.</p>
+            <p className="text-sm text-text-muted">The branch has indexed no commit before its last one.</p>
           )}
           {commits && commits.length > 0 && (
             <Select
