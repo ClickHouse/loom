@@ -305,7 +305,8 @@ async def _copy_unchanged(
     client: Any, org: str, row: dict[str, Any], now: dict[str, Any] | None, seen: _Seen
 ) -> dict[str, Any] | None:
     """A planned row on a restricted branch added from the page is written while the
-    row the plan read is unchanged, with no last-admin guard: no copy keeps one."""
+    row the plan read is unchanged, with no last-admin guard: a copy never keeps the
+    branch's last admin."""
     read = seen.get((row["namespace"], row["subject"]))
     return row if read is not None and _live(now) and _version(now) == _version(read) else None
 
@@ -313,12 +314,19 @@ async def _copy_unchanged(
 async def _rewrite_wanted(
     client: Any, org: str, row: dict[str, Any], now: dict[str, Any] | None, seen: _Seen
 ) -> dict[str, Any] | None:
-    """A stray copy planned to become a copy of the operator grant. When that grant
-    changed since the plan, the stray's revoke is written instead: the restricted
-    branch must not keep it."""
+    """A stray copy planned to become a copy of the operator grant. When that grant is
+    no longer a live admin grant, the stray's revoke is written instead: the
+    restricted branch must not keep it. One that only changed since the plan (given
+    again, say) leaves the stray to the next sync."""
     if await _mirror_wanted(client, org, row, now, seen):
         return row
     if now is None or not await _copy_unchanged(client, org, row, now, seen):
+        return None
+    source_ns = row["granted_by"].removeprefix(GRANTED_BY_PREFIX)
+    source = await client.query_one(
+        _GRANT_ROW_SQL, params={"org": org, "ns": source_ns, "sub": row["subject"]}
+    )
+    if _live_admin(source):
         return None
     _log_stray(org, now)
     return _revoke_row(org, now)
@@ -515,13 +523,13 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
         read = [ns for ns in branches if _reaches(sources[ns], kind)]
         if targets:
             inserts += _plan_mirrors(org, rows, read, targets, branches)
-    held = {(str(r["namespace"]), str(r["subject"])): r for r in rows}
+    by_key = {(str(r["namespace"]), str(r["subject"])): r for r in rows}
     for ns in sorted(restricted):
         kept = [
             r
             for r in rows
             # A stray admin copy does not count, so an operator admin's is rewritten.
-            if not (r["namespace"] == ns and _live_admin(r) and _stray(r, config, held))
+            if not (r["namespace"] == ns and _live_admin(r) and _stray(r, config, by_key))
             # A page copy on an operator entry is no source for it.
             and not (r["namespace"] in config and _foreign(r, config))
         ]
@@ -530,7 +538,7 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
     revokes, strays = [], set()
     for r in rows:
         key = (r["namespace"], r["subject"])
-        if r["namespace"] in restricted and _stray(r, config, held):
+        if r["namespace"] in restricted and _stray(r, config, by_key):
             strays.add(key)
             if key not in planned:
                 _log_stray(org, r)
@@ -561,7 +569,7 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
     return written
 
 
-def _stray(row: dict[str, Any], config: list[str], held: _Seen) -> bool:
+def _stray(row: dict[str, Any], config: list[str], by_key: _Seen) -> bool:
     """On a restricted branch added from the page: a live copy that does not lead,
     copy by copy across the operator entries, to a grant given on one with at least
     its role. A mirror standing in for a gone source is written with its holder's
@@ -573,7 +581,7 @@ def _stray(row: dict[str, Any], config: list[str], held: _Seen) -> bool:
         if not _live(row) or _foreign(row, config):
             return True
         key = (str(row["granted_by"]).removeprefix(GRANTED_BY_PREFIX), str(row["subject"]))
-        source = held.get(key)
+        source = by_key.get(key)
         if key in visited or source is None or not _live(source):
             return True
         if grant_rank(str(row.get("role"))) > grant_rank(str(source.get("role"))):
@@ -692,9 +700,9 @@ async def revoke_repo_maintainer(
     strays: list[dict[str, Any]] = []
     # An admin grant given on a branch added from the page still reaches them all.
     keeps_added = own == "config" and _given_on_added(subject, admins, sources)
-    held = {(str(r["namespace"]), str(r["subject"])): r for r in rows}
+    by_key = {(str(r["namespace"]), str(r["subject"])): r for r in rows}
     for ns in branches:
-        theirs = held.get((ns, subject))
+        theirs = by_key.get((ns, subject))
         if ns in restricted and theirs is not None and _foreign(theirs, config):
             if not operator_admin:  # taken whatever the guard or the lowering
                 _log_stray(org, theirs)
@@ -757,6 +765,33 @@ async def _write_revokes(
     if out:
         written += await _write_under_claims(client, org, out, _still_admin, rows, hold_repo=None)
     return written
+
+
+async def sync_restricted_page_branches(
+    entries: list[Any], *, exhausted: Callable[[], bool] = lambda: False
+) -> None:
+    """Sync, once each, the repositories among `entries` with a branch added from the
+    page that is restricted, by this process's snapshot or by its directory row: the
+    copies it must not hold go on every pass, even when the sync after its
+    restriction failed. Stops once `exhausted` says the caller's budget is spent."""
+    page = [c for c in entries if c.source == "registry"]
+    done: set[tuple[str, str]] = set()
+    for org in sorted({c.org for c in page}):
+        mine = [c for c in page if c.org == org]
+        try:
+            from server.core.ch import get_client
+
+            restricted = await _restricted(get_client(), org, {c.namespace: c.source for c in mine})
+        except Exception as e:  # noqa: BLE001 — an unread directory waits for the next pass
+            log.warning("repo maintainers: %s classification unreadable: %s", org, e)
+            continue
+        for cfg in mine:
+            if exhausted():
+                return
+            hit = cfg.classification == "restricted" or cfg.namespace in restricted
+            if hit and (org, cfg.repo) not in done:
+                done.add((org, cfg.repo))
+                await sync_quietly(org, cfg.namespace)
 
 
 async def sync_quietly(org: str, namespace: str, *, ch: Any | None = None) -> None:

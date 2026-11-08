@@ -710,12 +710,6 @@ async def handle_code_repo_set_access(input: Any) -> Any:
     cfg: Any = repo_for_namespace(input.org, input.namespace)
     if cfg is None:
         raise ValidationError(f"{input.namespace} is not a repository index", code="NOT_A_REPO")
-    widening = str(cfg.classification) == "restricted" and cls == "standard"
-    if widening and input.confirm.strip() != input.namespace:
-        raise ValidationError(
-            f"opening a restricted repository: type the namespace ({input.namespace}) in `confirm`",
-            code="CONFIRM_REQUIRED",
-        )
     ch = get_client()
     subject, _org = current_caller()
     from server.auth.grant_claims import admins_change
@@ -728,9 +722,9 @@ async def handle_code_repo_set_access(input: Any) -> Any:
         admins_change(input.org, input.namespace),
     ):
         row = await _directory_row(ch, input.org, input.namespace)
-        # The row read here may be newer than the snapshot `widening` read.
-        restricted_now = row is not None and row.get("classification") == "restricted"
-        if restricted_now and cls == "standard" and input.confirm.strip() != input.namespace:
+        # Restricted by the snapshot or by the row read here, which may be newer.
+        was = "restricted" in (str(cfg.classification), (row or {}).get("classification"))
+        if was and cls == "standard" and input.confirm.strip() != input.namespace:
             raise ValidationError(
                 f"opening a restricted repository: type the namespace ({input.namespace}) "
                 "in `confirm`",
@@ -784,7 +778,7 @@ async def handle_code_repo_set_access(input: Any) -> Any:
         repo=str(cfg.repo),
         classification=cls,
         join_policy=pol,
-        previous_classification=str((row or {}).get("classification") or cfg.classification),
+        previous_classification="restricted" if was else "standard",
         previous_join_policy=previous_policy,
         directory_updated=directory_updated,
         effective_within_s=int(settings.code_repos_refresh_seconds),

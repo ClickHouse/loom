@@ -46,21 +46,6 @@ async def sync_maintainers(cfg: Any, client: Any) -> None:
         _SYNCED.add((cfg.org, cfg.namespace))
 
 
-async def sync_restricted_page_branches(entries: list[Any]) -> None:
-    """Sync, once each, the repositories among `entries` with a branch added from the
-    page that this process's snapshot restricts: the copies it must not hold go on every
-    pass, even when the sync after its restriction failed."""
-    from server.code.app.index import maintainers
-
-    done: set[tuple[str, str]] = set()
-    for cfg in entries:
-        if cfg.source != "registry" or cfg.classification != "restricted":
-            continue
-        if (cfg.org, cfg.repo) not in done:
-            done.add((cfg.org, cfg.repo))
-            await maintainers.sync_quietly(cfg.org, cfg.namespace)
-
-
 async def ensure_registered(cfg: Any, *, ch: Any | None = None, sync: bool = True) -> bool:
     """Idempotent. Returns True when a row was inserted this call. `sync=False` leaves the
     maintainers' fan-out, whose claims wait, to a caller that runs `sync_maintainers` once

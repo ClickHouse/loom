@@ -417,6 +417,26 @@ async def test_a_stray_whose_rewrite_is_refused_is_revoked(
     ]
 
 
+async def test_a_stray_whose_operator_grant_was_only_given_again_is_left_for_the_next_sync(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A revoke written now would be newer than ops's new grant, and keep them off for
+    good."""
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    again = _admin("code-z", "ops", at=T0 + timedelta(hours=1))
+
+    class _GivenAgain(_FakeCH):
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            planned = await super().query_all(sql, params)
+            if "loom.namespaces" not in sql:
+                self.rows = [again, *self.rows[1:]]
+            return planned
+
+    ch = _GivenAgain([_admin("code-z", "ops"), _copy("code-z-26-5", "ops", "code-z-dev")])
+    await maintainers.sync_repo_maintainers("clickhouse", "code-z", ch=ch)
+    assert [r for r in ch.inserted if r["namespace"] == "code-z-26-5"] == []
+
+
 async def test_a_page_copy_an_operator_entry_kept_never_reaches_a_restricted_page_branch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -904,22 +924,30 @@ async def test_the_registrar_syncs_a_branch_once_the_registry_is_read(
     await registry.ensure_registered(cfg, ch=object())
     await registry.ensure_registered(cfg, ch=object())
     assert synced == ["code-x", "code-x"]  # once while unread, once after, then done
+
     # The ingest pass syncs a repository with a restricted branch added from the page
     # on every pass, once: a restriction whose own sync failed still has its strays go.
-    entries = [
-        SimpleNamespace(
-            org="clickhouse", namespace=ns, repo="Org/z", source="registry", classification=c
+    # code-z-2 is restricted by its directory row alone, as a restriction cut short
+    # before its access row leaves it.
+    def entry(ns: str, classification: str) -> Any:
+        return SimpleNamespace(
+            org="clickhouse",
+            namespace=ns,
+            repo="Org/z",
+            source="registry",
+            classification=classification,
         )
-        for ns, c in (
-            ("code-z-1", "restricted"),
-            ("code-z-2", "restricted"),
-            ("code-z-3", "standard"),
-        )
-    ]
+
+    ch = _FakeCH([])
+    ch.restricted = {"code-z-2"}
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     synced.clear()
-    await registry.sync_restricted_page_branches(entries)
-    await registry.sync_restricted_page_branches(entries)
-    assert synced == ["code-z-1", "code-z-1"]
+    standard = [entry("code-z-3", "standard"), entry("code-z-2", "standard")]
+    await maintainers.sync_restricted_page_branches(standard)
+    await maintainers.sync_restricted_page_branches([entry("code-z-1", "restricted"), *standard])
+    assert synced == ["code-z-2", "code-z-1"]
+    await maintainers.sync_restricted_page_branches(standard, exhausted=lambda: True)
+    assert synced == ["code-z-2", "code-z-1"]  # past the pass budget
 
 
 async def test_code_init_reads_the_registry_before_it_registers(

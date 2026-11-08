@@ -723,6 +723,11 @@ def test_code_ingest_runs_no_repository_of_a_switched_off_org(monkeypatch) -> No
         ),
     ]
     monkeypatch.setattr("server.code.app.index.maintainers.sync_quietly", sync)
+
+    async def no_rows(org: str, namespaces: list[str], **_: Any) -> dict[str, str]:
+        return {}
+
+    monkeypatch.setattr("server.identity.app.registration.classifications", no_rows)
     monkeypatch.setattr("server.code.app.index.repo_registry.refresh_db_repos", nothing)
     monkeypatch.setattr(ip, "_inactive_namespaces", nothing)
     monkeypatch.setattr(ip, "selected_repos", lambda org, ns: repos)
