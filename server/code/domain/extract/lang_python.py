@@ -28,6 +28,7 @@ import re
 from functools import lru_cache
 from typing import Any
 
+from server.code.domain.extract import bounded_parse
 from server.code.domain.extract.py_members import (
     class_members,
     fold_declarations,
@@ -110,7 +111,7 @@ def _comment_above(node: Any, source: bytes) -> str:
 def parse_python(path: str, source: bytes) -> ParsedFile:
     """Parse one Python file: module-scoped symbols, imports, inherits."""
     parser = _py_parser()
-    tree = parser.parse(source)
+    tree = bounded_parse.parse(parser, source)
     pf = ParsedFile(path=path, lang="python", tree=tree, source=source)
     mod = module_scope(path)
 

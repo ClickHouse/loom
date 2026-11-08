@@ -19,6 +19,7 @@ import re
 from functools import lru_cache
 from typing import Any
 
+from server.code.domain.extract import bounded_parse
 from server.code.domain.extract.lang_code_islands import CodeSqlUnits, IslandGrammar, code_sql_units
 from server.code.domain.extract.lang_python import module_scope
 from server.code.domain.extract.treesitter import ParsedFile, Symbol, node_text
@@ -140,7 +141,7 @@ def _params(node: Any, source: bytes) -> str:
 
 def parse_java(path: str, source: bytes) -> ParsedFile:
     """Type declarations, methods, constructors and imports of one Java file."""
-    tree = _parser().parse(source)
+    tree = bounded_parse.parse(_parser(), source)
     pf = ParsedFile(path=path, lang=LANG_JAVA, tree=tree, source=source)
     mod = module_scope(path)
     imports: list[str] = []

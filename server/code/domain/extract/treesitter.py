@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any
 
+from server.code.domain.extract import bounded_parse
+
 _CPP_EXTS = {".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx", ".ipp", ".inl"}
 
 _WS_RE = re.compile(r"\s+")
@@ -291,7 +293,7 @@ _INCLUDE_RE = re.compile(r'#\s*include\s*[<"]([^>"]+)[>"]')
 def parse_cpp(path: str, source: bytes) -> ParsedFile:
     """Parse one C++ file: symbols with qualified names, includes, inherits."""
     parser = _cpp_parser()
-    tree = parser.parse(source)
+    tree = bounded_parse.parse(parser, source)
     pf = ParsedFile(path=path, lang="cpp", tree=tree, source=source)
 
     pf.includes = _INCLUDE_RE.findall(source.decode("utf-8", "replace"))

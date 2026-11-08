@@ -22,6 +22,7 @@ import re
 from functools import lru_cache
 from typing import Any
 
+from server.code.domain.extract import bounded_parse
 from server.code.domain.extract.lang_code_islands import CodeSqlUnits, IslandGrammar, code_sql_units
 from server.code.domain.extract.treesitter import ParsedFile, Symbol, node_text
 
@@ -560,7 +561,7 @@ def parse_go(path: str, source: bytes) -> ParsedFile:
     types as `inherits`, two `init` per file kept apart by line, and a `//go:build`
     constraint joined to every signature. Import paths stay raw for the resolver; the
     SQL islands are read by `go_sql_units` from the same tree."""
-    tree = _parser().parse(source)
+    tree = bounded_parse.parse(_parser(), source)
     pf = ParsedFile(path=path, lang=LANG_GO, tree=tree, source=source)
     root = tree.root_node
     pkg_node = next((c for c in root.named_children if c.type == "package_clause"), None)

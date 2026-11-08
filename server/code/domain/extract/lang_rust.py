@@ -48,6 +48,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any
 
+from server.code.domain.extract import bounded_parse
 from server.code.domain.extract.treesitter import ParsedFile, Symbol, node_text
 
 LANG_RUST = "rust"
@@ -284,7 +285,7 @@ def _use_paths(arg: Any, source: bytes) -> list[str]:
 
 
 def parse_rust(path: str, source: bytes) -> ParsedFile:
-    tree = _parser().parse(source)
+    tree = bounded_parse.parse(_parser(), source)
     pf = ParsedFile(path=path, lang=LANG_RUST, tree=tree, source=source)
     w = _Walker(pf=pf, source=source, mod=module_scope_rust(path))
     w.walk(tree.root_node, ())

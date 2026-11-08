@@ -1348,6 +1348,12 @@
           "type": "boolean",
           "description": "True lets every authenticated principal of the org read every configured code namespace (right for public or org-internal repos); false leaves reads to the namespace's own visibility and grants. Writes stay grant-driven. Per-entry \"org_readable\" in LOOM_CODE_REPOS_JSON."
         },
+        "code_parse_timeout_seconds": {
+          "default": 3.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Longest one tree-sitter parse of a file may run (seconds); past it the file is indexed as chunks without symbols and its parse error is recorded."
+        },
         "code_path_prefixes": {
           "default": "",
           "type": "string",

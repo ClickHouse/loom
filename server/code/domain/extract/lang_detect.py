@@ -34,6 +34,8 @@ import re
 from functools import lru_cache
 from typing import Any
 
+from server.code.domain.extract import bounded_parse
+
 SHELL = "shell"
 
 # GitHub Linguist, `Shell` (languages.yml), minus `.cgi`/`.fcgi` (Perl or
@@ -178,7 +180,7 @@ def _parses_as_shell(source: bytes) -> bool:
     if not source.strip() or _BINARY_HEAD.search(source[:4096]):
         return False
     try:
-        tree = _bash_parser().parse(source)
+        tree = bounded_parse.parse(_bash_parser(), source)
     except Exception:  # noqa: BLE001 — grammar missing or a parser fault: not shell
         return False
     root = tree.root_node

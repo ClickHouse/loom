@@ -24,6 +24,7 @@ deletes is not removed from the index's rows (disclosed here, not hidden).
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import hashlib
 import logging
@@ -501,33 +502,43 @@ def _binding_digest(names: frozenset[str], table: dict[str, list[tuple[str, str,
     return h.hexdigest()
 
 
-def _file_facts(
+async def _file_facts(
     path: str, source: bytes, digest: str
 ) -> tuple[Any, tuple[Any, ...], frozenset[str]]:
     """(parsed file or None when cached, symbols, names) of one post-image file."""
-    from server.code.app.index.ingest_parse import parse_file
-    from server.code.domain.extract.edges_treesitter import collect_call_names
-
     hit = _FILE_FACTS.get((path, digest))
     if hit is not None:
         return None, hit[0], hit[1]
+    # parsing is CPU work: off the event loop
+    pf, facts = await asyncio.to_thread(_parsed_facts, path, source)
+    _FILE_FACTS.put((path, digest), facts)
+    return pf, facts[0], facts[1]
+
+
+def _parsed_facts(path: str, source: bytes) -> tuple[Any, tuple[tuple[Any, ...], frozenset[str]]]:
+    from server.code.app.index.ingest_parse import parse_file
+    from server.code.domain.extract.edges_treesitter import collect_call_names
+
     pf = parse_file(path, source)
     if pf is None or not pf.symbols:
-        _FILE_FACTS.put((path, digest), ((), frozenset()))
-        return None, (), frozenset()
+        return None, ((), frozenset())
     names = {s.name for s in pf.symbols if s.kind in ("function", "method")}
     try:
         names |= collect_call_names(pf)
     except Exception as e:  # noqa: BLE001 — a file whose calls cannot be listed binds nothing
         logger.debug("pr_overlay: call names of %s failed: %s", path, e)
-    facts = (tuple(pf.symbols), frozenset(names))
-    _FILE_FACTS.put((path, digest), facts)
-    return pf, facts[0], facts[1]
+    return pf, (tuple(pf.symbols), frozenset(names))
 
 
-def _file_edges(pf: Any, table: dict[str, list[tuple[str, str, str]]]) -> tuple[OverlayEdge, ...]:
+def _file_edges(
+    pf: Any, path: str, source: bytes, table: dict[str, list[tuple[str, str, str]]]
+) -> tuple[OverlayEdge, ...]:
+    """The calls and inherits edges of one post-image file; `pf` is its parse when this
+    request already holds it."""
+    from server.code.app.index.ingest_parse import parse_file
     from server.code.domain.extract.edges_treesitter import extract_edges_and_misses
 
+    pf = pf or parse_file(path, source)
     try:
         edges, _misses = extract_edges_and_misses(pf, table, None)
     except Exception as e:  # noqa: BLE001 — per file, never the overlay
@@ -558,8 +569,6 @@ async def _parse_post_image(
     read: Callable[[str], Awaitable[bytes | None]],
     path_prefixes: tuple[str, ...],
 ) -> None:
-    from server.code.app.index.ingest_parse import parse_file
-
     paths = parsable_paths(ov.changed_paths, path_prefixes, ov.hunks)
     if not paths:
         return
@@ -571,7 +580,7 @@ async def _parse_post_image(
         if source is None or len(source) > MAX_FILE_BYTES:
             continue
         digest = _digest(source)
-        pf, symbols, file_names = _file_facts(p, source, digest)
+        pf, symbols, file_names = await _file_facts(p, source, digest)
         if not symbols:
             continue
         files[p] = (source, digest, pf, symbols, file_names)
@@ -590,7 +599,8 @@ async def _parse_post_image(
         key = (p, digest, _binding_digest(file_names, table))
         edges = _FILE_EDGES.get(key)
         if edges is None:
-            edges = _file_edges(pf or parse_file(p, source), table)
+            # parsing and binding are CPU work: off the event loop
+            edges = await asyncio.to_thread(_file_edges, pf, p, source, table)
             _FILE_EDGES.put(key, edges)
         ov.edges.extend(edges)
 

@@ -1198,6 +1198,10 @@ settings:
   # heal on the next backfill. [restart]
   # code_ingest_max_files_per_commit: 500
 
+  # Longest one tree-sitter parse of a file may run (seconds); past it the file is
+  # indexed as chunks without symbols and its parse error is recorded. [restart]
+  # code_parse_timeout_seconds: 3.0
+
   # The ingest pass's own deadline (seconds), kept at the supervisor's cap;
   # `code_ingest_pass_budget_fraction` keeps a pass under it. [restart]
   # code_ingest_max_pass_seconds: 900

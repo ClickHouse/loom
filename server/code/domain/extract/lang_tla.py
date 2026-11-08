@@ -43,6 +43,7 @@ import posixpath
 import re
 from dataclasses import dataclass, field
 
+from server.code.domain.extract import bounded_parse
 from server.code.domain.extract.chunker import Chunk, _assign_ordinals
 from server.code.domain.extract.edges_treesitter import Edge
 from server.code.domain.extract.lang_sql_model import Facet
@@ -267,7 +268,7 @@ def _definitions_grammar(source: bytes) -> list[tuple[str, str, int, int, str]] 
         return None
     try:
         parser = Parser(Language(tl.language()))
-        tree = parser.parse(source)
+        tree = bounded_parse.parse(parser, source)
     except Exception:  # noqa: BLE001 — a grammar that cannot parse: the reader falls back
         return None
     root = tree.root_node
