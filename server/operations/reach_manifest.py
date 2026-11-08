@@ -26,6 +26,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
+    "blacklist.sweep": ("dashboard",),
     "calibration.get": (
         "sdk_method",
         "dashboard",
@@ -203,6 +204,9 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
+    "extraction_policy.clear": ("dashboard",),
+    "extraction_policy.get": ("dashboard",),
+    "extraction_policy.set": ("dashboard",),
     "facts.expire_by_adapter": ("dashboard",),
     "facts.list": (
         "sdk_method",
@@ -544,6 +548,8 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "ops.projection_failures.list": ("dashboard",),
     "ops.projection_failures.resolve": ("dashboard",),
     "ops.projection_failures.retry": ("dashboard",),
+    "org.model_calls": ("dashboard",),
+    "org.set_model_calls": ("dashboard",),
     "policy.check": (
         "sdk_method",
         "dashboard",
@@ -661,6 +667,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "tracker.source.set_mapping": ("dashboard",),
     "tracker.test_signal": ("sdk_method",),
     "ui.vitals": ("dashboard",),
+    "webhook.deliveries": ("dashboard",),
+    "webhook.list": ("dashboard",),
+    "webhook.register": ("dashboard",),
+    "webhook.remove": ("dashboard",),
     "working_memory.append": (
         "sdk_method",
         "plugin_hook",
