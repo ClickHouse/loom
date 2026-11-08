@@ -1324,8 +1324,9 @@ key, erasing one also takes a summary built from the other's row, with its histo
 chunks, entity vectors and graph links, the graph rows only those links held, and the
 org-wide copies promoted from it, which nothing promotes again. A copy of a summary
 rebuilt without the user goes too, as its history still names the user: a copy does not
-record which version it took. The erasure takes every summary that may quote the user; the summary's current row is only
-tombstoned outside a purge, and consolidation rebuilds it from the rows that remain.
+record which version it took. The erasure takes every summary that may quote the user;
+the summary's current row is only tombstoned outside a purge, and consolidation rebuilds
+it from the rows that remain.
 Outside a purge the user's tombstoned keys stay, so such a rebuild counts as the user's
 too, and so does a summary `memory.restore` revives: a saga still running retires it
 again, and a later census of the erasure reports it.

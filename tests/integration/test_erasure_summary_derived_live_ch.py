@@ -183,16 +183,19 @@ def _seed(ch_client: Any, org: str) -> None:
 
 
 def _seed_shared(
-    ch_client: Any, org: str, keys: tuple[str, ...] = ("topic-diets", "topic-bob")
+    ch_client: Any,
+    org: str,
+    keys: tuple[str, ...] = ("topic-diets", "topic-bob"),
+    user: str = "-",
 ) -> None:
-    """Org-wide copies promoted from summaries, with their search rows."""
+    """Org-wide copies promoted from summaries (or `user`'s rows), with their search rows."""
     _insert(
         ch_client,
         "loom.shared",
         ["org", "namespace", "memory_key", "value", "memory_type", "confidence"]
         + ["promoted_from", "promotion_event", "promoted_by", "reversible_until", "version"],
         [
-            [org, "ns", key, "text", "fact", 1.0, [f"{org}/ns/a/-/-/{key}"], uuid.uuid4()]
+            [org, "ns", key, "text", "fact", 1.0, [f"{org}/ns/a/{user}/-/{key}"], uuid.uuid4()]
             + ["explicit", datetime(2099, 1, 1), 1]
             for key in keys
         ],
@@ -233,6 +236,7 @@ async def test_what_a_summary_of_the_users_memories_fed_leaves_with_it(
     org = unique_org("ersumdv")
     _seed(ch_client, org)
     _seed_shared(ch_client, org)
+    _seed_shared(ch_client, org, ("user_diet",), user="alice")  # a copy of her own row
     with erasure_mutations.purge_scope(purge), erasure_mutations.saga_scope(f"erasure-{org}"):
         before = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
         assert {t: before[t] for t in _COUNTED} == _COUNTED
@@ -272,7 +276,7 @@ async def test_what_a_summary_of_the_users_memories_fed_leaves_with_it(
     shared = f"SELECT memory_key FROM loom.memory_embeddings FINAL{_WHERE} AND scope = 'shared'"
     assert _column(ch_client, org, f"{shared} AND tombstoned_at IS NULL") == ["topic-bob"]
     assert _column(ch_client, org, shared) == (
-        ["topic-bob"] if purge else ["topic-bob", "topic-diets"]
+        ["topic-bob"] if purge else ["topic-bob", "topic-diets", "user_diet"]
     )
 
 

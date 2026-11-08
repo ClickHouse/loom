@@ -433,8 +433,9 @@ schema. These rules keep that safe. The operator procedure is in
     N resumes fails N's census outside a purge when N-1 ran those rows' steps, and the
     recovery worker's next resume runs them again; in a purge N's `memory.retire` runs
     them again, except for the search rows of shared copies of the user's own memories
-    when N-1 ran its `shared.tombstone`, which deleted the rows they are found by. After a purge that passed `memory.retire`, including
-    one N-1 completed, the user's keys are gone and nothing finds the summaries' rows.
+    when N-1 ran its `shared.tombstone`, which deleted the rows they are found by.
+    After a purge that passed `memory.retire`, including one N-1 completed, the user's
+    keys are gone and nothing finds the summaries' rows.
     The ledger does not name the build that ran a saga: once N serves alone, request
     again each user erasure without `purge` that completed since the rollout began (the
     `user_id` rows of `loom.erasure_requests`), and after a rollback, those N-1 completed
