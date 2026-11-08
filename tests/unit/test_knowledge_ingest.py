@@ -897,8 +897,12 @@ def test_an_upload_stores_the_bytes_and_answers_a_scoped_id(client: Any, world: 
 def test_an_upload_registers_its_namespace_before_it_writes(
     client: Any, world: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from server.identity.app.namespace_autoregister import should_autoregister
+    from server.knowledge.api.ops_knowledge import knowledge_ingest
     from server.knowledge.app import upload_routes
     from server.knowledge.store import blobs
+
+    assert should_autoregister(knowledge_ingest, "o", "ns")
 
     order: list[str] = []
 

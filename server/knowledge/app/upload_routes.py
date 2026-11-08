@@ -12,7 +12,9 @@ the upload row holds it from the originals sweep until it expires.
 
 The route bounds its own body (the request-body cap passes it through) and is
 admitted as an op is: after authorization it draws `knowledge.add`'s rate-limit
-buckets and holds one of the org's in-flight slots while it reads and stores.
+buckets, registers the namespace as `knowledge.ingest`'s transport would
+(`maybe_autoregister`), and holds one of the org's in-flight slots while it reads and
+stores.
 """
 
 from __future__ import annotations

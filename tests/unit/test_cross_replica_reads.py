@@ -59,7 +59,7 @@ def test_an_explicit_row_written_on_another_replica_is_never_overridden() -> Non
     assert asyncio.run(run()) is False
 
 
-def test_an_auto_row_carries_the_lowest_version() -> None:
+def test_an_owned_auto_row_carries_the_auto_row_version() -> None:
     ch = _Recorder()
     autoreg.forget_all()
     assert asyncio.run(
