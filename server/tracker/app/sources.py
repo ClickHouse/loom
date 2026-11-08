@@ -281,9 +281,6 @@ def _namespace_view(
         classification = str(row.get("classification") or "standard")
         visibility = str(row.get("visibility") or "private")
         registered = bool(row.get("active", True))
-        if entry.restricted:  # restricted by the map before its row is narrowed
-            classification, visibility = "restricted", "private"
-            join_policy = "approval" if join_policy == "open" else join_policy
     else:
         # the row is written at the leader's next boot; until
         # then the map says what it will be
@@ -867,10 +864,9 @@ async def _authority(org: str, name: str, need: Need) -> Any:
 async def _admits(auth: AuthInfo, org: str, namespace: str, *, flagged: bool) -> bool:
     """Whether the caller administers one namespace of a source: a standard one
     by the gate at admin (a live grant, or a token whose admin role covers it),
-    a restricted one by `_administers_restricted`. Restricted when the gate says so,
-    as every read decides it (the directory row or the source's entry), or, while its
-    row is not written yet, when the source registered it so (`flagged`), so a missing
-    row does not open it.
+    a restricted one by `_administers_restricted`. Restricted when the directory
+    says so, as every read decides it, or, while its row is not written yet, when
+    the source registered it so (`flagged`), so a missing row does not open it.
     An unreadable classification refuses, noted as the server's."""
     from server.auth.directory import ClassificationUnavailable, directory
     from server.auth.fail_closed import note_unreadable

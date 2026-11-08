@@ -1,7 +1,6 @@
 """The identity domain's answers to the authorization gate's namespace
 questions (`server.auth.directory.NamespaceDirectory`): the classification
-cache, the code-plane repo config, the tracker sources and the kind directory, read at
-call time; and
+cache, the code-plane repo config and the kind directory, read at call time; and
 whether a name a path would register as new already holds data or grants."""
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ from server.core.repo_base import _CHClient
 from server.erasure.app import ledger_reads
 from server.identity.app import namespace_classification, namespace_kinds, namespace_visibility
 from server.identity.store import namespace_census
-from server.tracker.domain.namespaces import restricted_tracker_namespaces, tracker_namespace
+from server.tracker.domain.namespaces import tracker_namespace
 
 
 class IdentityDirectory:
@@ -32,12 +31,12 @@ class IdentityDirectory:
     def code_entry(self, org: str, namespace: str) -> RepoConfig | None:
         return repos.repo_for_namespace(org, namespace)
 
-    def restricted_config_namespaces(self, org: str) -> set[str]:
+    def restricted_code_namespaces(self, org: str) -> set[str]:
         return {
             cfg.namespace
             for cfg in repos.configured_repos()
             if cfg.org == org and cfg.classification == "restricted"
-        } | restricted_tracker_namespaces(org)
+        }
 
     async def fanout_namespaces(
         self, org: str, namespaces: list[str], kinds: str | None = None

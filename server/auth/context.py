@@ -243,7 +243,7 @@ async def restricted_namespaces_hidden_from(org: str) -> list[str]:
     if auth is None:
         return []
     try:
-        names = directory().restricted_config_namespaces(org)
+        names = directory().restricted_code_namespaces(org)
         names |= set(await directory().restricted_set(org))
     except ClassificationUnavailable:
         # Cannot tell which are restricted: the rollup gets no filter it can

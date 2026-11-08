@@ -70,11 +70,6 @@ def restricted_namespaces() -> frozenset[str]:
     return frozenset(ns for ns, e in _sources.namespace_entries().items() if e.restricted)
 
 
-def restricted_tracker_namespaces(org: str) -> set[str]:
-    """The tracker namespaces of `org` the source map flags `restricted`."""
-    return set(restricted_namespaces()) if org == settings.tracker_org else set()
-
-
 def configured_namespaces() -> dict[str, TrackerNamespace]:
     """Namespace → its source, repositories and classification, from the
     merged sources map (the self-service registry under the sources JSON)."""
@@ -130,6 +125,5 @@ __all__ = [
     "ref_of",
     "repo_namespaces",
     "restricted_namespaces",
-    "restricted_tracker_namespaces",
     "split_source_id",
 ]

@@ -79,17 +79,10 @@ async def _join(input: NamespaceJoinInput, caller: str) -> NamespaceJoinOutput:
     existing = await grants_repo.find_any_grant(input.org, input.namespace, caller)
     policy = _jp.effective_join_policy(row)
     decision = _jp.join_gate(policy=policy, role=input.role)
-    # A restricted namespace (by its row or its configuration: this op skips the gate) is
-    # kept out of the directory (its existence is part of what is kept), except a
-    # restricted repository whose rule is approval, which a person may find and ask for;
-    # to a caller holding no grant, any other one answers as an absent name does.
-    from server.identity.app.namespace_classification import RESTRICTED, config_classification
-
-    restricted = (
-        str(row.get("classification") or "") == RESTRICTED
-        or config_classification(input.org, input.namespace) == RESTRICTED
-    )
-    hidden = restricted and not (
+    # A restricted row is kept out of the directory (its existence is part of what is kept),
+    # except a restricted repository whose rule is approval, which a person may find and
+    # ask for; to a caller holding no grant, any other one answers as an absent name does.
+    hidden = str(row.get("classification") or "") == "restricted" and not (
         str(row.get("kind") or "memory") == "code" and policy == "approval"
     )
     if (decision == "closed" or hidden) and existing is None:
@@ -498,7 +491,7 @@ async def _inherited_rows(ch: Any, org: str, caller: str, skip: set[str]) -> lis
             ns = str(r.get("namespace") or "")
             if not ns or ns in skip or (r.get("status") or "active") != "active":
                 continue
-            # Restricted by the directory, or by its own entry in the configuration.
+            # Restricted by the directory, or by its own entry in the repository config.
             if ns in restricted or config_classification(org, ns) == RESTRICTED:
                 continue
             skip.add(ns)

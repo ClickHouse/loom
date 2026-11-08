@@ -235,8 +235,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # The tracker namespaces are directory rows served live; the
     # leader gives each configured one its row (restricted where listed) at
     # boot, BEFORE any read, so the gate never sees a restricted namespace as
-    # an unregistered standard one; the gate reads the tracker configuration too, so a
-    # claim busy past its wait delays only the row, which the background retry writes.
+    # an unregistered standard one (a claim busy past its wait: the background retry).
     if _leader.leads_deployment():
         await boot.register_tracker_namespaces(ch)
         boot.publish_deployment_config(ch)

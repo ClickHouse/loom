@@ -5,13 +5,11 @@ principal of the org). `classification = 'restricted'` says the opposite:
 no default applies, and a read needs BOTH a token that names the namespace
 explicitly AND a live direct grant (server/auth/authz.py, `_check_restricted`).
 
-Three inputs, restricted wins:
+Two inputs, restricted wins:
 
 * the code-plane repo config (`RepoConfig.classification`, no I/O) — so the
   private repository's index is restricted even if its directory row is lost
   or reset;
-* the tracker sources (a configured namespace's `restricted`, no I/O) — so a
-  tracker namespace is restricted before its directory row is narrowed;
 * the directory row (`loom.namespaces.classification`) — so any namespace of
   any kind (a tracker mirror, a memory namespace) can be
   restricted by the operator.
@@ -66,15 +64,10 @@ def note_restricted(org: str, namespace: str) -> None:
 
 
 def config_classification(org: str, namespace: str) -> str:
-    """Classification from the code-plane repo config or the tracker sources,
-    `standard` when the namespace is neither a configured code entry nor a restricted
-    tracker namespace. No I/O."""
+    """Classification from the code-plane repo config, `standard` when the
+    namespace is not a configured code entry. No I/O."""
     from server.code.domain.index.repos import repo_for_namespace
-    from server.tracker.domain.namespaces import tracker_namespace
 
-    tracker = tracker_namespace(org, namespace)
-    if tracker is not None and tracker.restricted:
-        return RESTRICTED
     cfg = repo_for_namespace(org, namespace)
     if cfg is None:
         return STANDARD

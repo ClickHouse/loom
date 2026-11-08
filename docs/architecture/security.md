@@ -286,9 +286,8 @@ foreign row and a missing row look the same.
 
 ### Restricted namespaces
 
-A namespace classified `restricted` (in `loom.namespaces`, its repository entry or its
-tracker source entry; any one restricts) turns off every widening rule
-(`_check_restricted` in `server/auth/authz.py`).
+A namespace classified `restricted` (in `loom.namespaces` or its repository entry; either
+restricts) turns off every widening rule (`_check_restricted` in `server/auth/authz.py`).
 A call passes only when all of these hold:
 
 - the token's org is the namespace's (`*` does not count);
@@ -320,11 +319,12 @@ namespace, since the registrant's token is minted before the namespace exists. A
 claim that leaves the namespace out therefore admits, while a write claim (`ns_write`)
 that leaves it out refuses, and a trusted caller acting for a person
 (`X-Loom-On-Behalf-Of`) keeps the naming rule, since it carries its own claims. A
-namespace the source lists as restricted counts as one whatever its directory row says,
-as it does for every read. The token's own role there still caps the grant, so a
-dashboard session of anyone but a platform admin (a `writer` token) cannot change or
-retire a private tracker even though its person holds the admin grant: that takes a
-token with the `admin` role, which an operator mints with `loom mint-token --roles admin`
+namespace the source registered as restricted counts as one until its directory row is
+written; the row then decides, as it does for every read. The token's own role there
+still caps the grant, so a dashboard session of anyone but a platform admin (a `writer`
+token) cannot change or retire a private tracker even though its person holds the admin
+grant: that takes a token with the `admin` role, which an operator mints with
+`loom mint-token --roles admin`
 ([tracker sources](../features/tracker/record-contract.md#adding-a-tracker-source)).
 
 Every request admitted to the restricted namespace it names, through an op or a raw route,

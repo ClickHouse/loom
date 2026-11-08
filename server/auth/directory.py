@@ -3,11 +3,11 @@ fan-out narrows by (kind, visibility), and whether a name a path would register
 as new is already in use.
 
 The gate is platform code; what it decides on belongs to the domains: which
-namespaces of an org are restricted (the directory rows, the code-plane repo
-config and the tracker sources), which are configured code-plane entries, and
-what kind each one is. The identity domain answers through a
-`NamespaceDirectory`; the composition root (`server/wiring.py`) hands it in
-with `use_directory` before the process serves.
+namespaces of an org are restricted (the directory rows and the code-plane
+repo config), which are configured code-plane entries, and what kind each
+one is. The identity domain answers through a `NamespaceDirectory`; the
+composition root (`server/wiring.py`) hands it in with `use_directory`
+before the process serves.
 
 A process nobody wired has no directory: every lookup raises
 `DirectoryNotWired`, a `ClassificationUnavailable`, so each gate that denies
@@ -51,22 +51,20 @@ class NamespaceDirectory(Protocol):
         ...
 
     def is_restricted_cached(self, org: str, namespace: str) -> bool:
-        """The configuration plus the org's cached snapshot, stale or not; no
+        """The repo config plus the org's cached snapshot, stale or not; no
         I/O, False with no snapshot. For writers that run after the gate."""
         ...
 
     def config_classification(self, org: str, namespace: str) -> str:
-        """The classification the repo config or the tracker sources give, `standard`
-        when neither restricts it. No I/O."""
+        """The repo config's classification, `standard` off the code plane. No I/O."""
         ...
 
     def code_entry(self, org: str, namespace: str) -> CodeEntry | None:
         """The configured code-plane entry for (org, namespace). No I/O."""
         ...
 
-    def restricted_config_namespaces(self, org: str) -> set[str]:
-        """The namespaces of `org` the configuration classifies restricted: code-plane
-        entries and tracker namespaces. No I/O."""
+    def restricted_code_namespaces(self, org: str) -> set[str]:
+        """The configured code-plane entries of `org` classified restricted. No I/O."""
         ...
 
     async def fanout_namespaces(
