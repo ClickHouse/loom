@@ -467,11 +467,22 @@ async def test_restricting_a_page_branch_revokes_the_copy_a_sibling_gave_it(monk
     assert refreshed and all(refreshed)
 
 
+@pytest.mark.parametrize(
+    ("source", "snapshot", "classification"),
+    [
+        ("registry", "standard", "restricted"),
+        ("registry", "restricted", "standard"),
+        ("config", "standard", "restricted"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_restricting_a_page_branch_with_no_directory_row_writes_one(monkeypatch) -> None:
+async def test_a_page_branch_with_no_directory_row_gets_its_first_one(
+    monkeypatch, source: str, snapshot: str, classification: str
+) -> None:
     """A copy onto it reads that row under the branch's admins claim, and the ingest pass
     may not reach the branch for a long time (a pending clone, an org with model calls
-    off): the restriction writes the row itself."""
+    off): the access change writes the row itself. An operator entry's row stays the
+    registrar's to write."""
     from server.code.app import repo_admin as h
     from server.code.app.index import maintainers
 
@@ -491,25 +502,31 @@ async def test_restricting_a_page_branch_with_no_directory_row_writes_one(monkey
     monkeypatch.setattr(h, "current_caller", lambda: ("alice", ORG))
     monkeypatch.setattr(
         "server.code.domain.index.repos.repo_for_namespace",
-        lambda org, ns: _cfg("code-weave-rc", classification="standard", source="registry"),
+        lambda org, ns: _cfg("code-weave-rc", classification=snapshot, source=source),
     )
     ch = _CH(None)
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
-    out = await h.handle_code_repo_set_access(
-        SimpleNamespace(
-            org=ORG,
-            namespace="code-weave-rc",
-            classification="restricted",
-            join_policy="approval",
-            confirm="",
-        )
+    inp = SimpleNamespace(
+        org=ORG,
+        namespace="code-weave-rc",
+        classification=classification,
+        join_policy="approval",
+        confirm="",
     )
+    if snapshot == "restricted":  # a widening still needs confirm
+        with pytest.raises(ValidationError):
+            await h.handle_code_repo_set_access(inp)
+        inp.confirm = "code-weave-rc"
+    out = await h.handle_code_repo_set_access(inp)
+    if source == "config":
+        assert ch.inserts == [] and not out.directory_updated
+        return
     ((table, (row,)),) = ch.inserts
     assert table == "loom.namespaces" and out.directory_updated
     assert (row["namespace"], row["kind"], row["classification"], row["join_policy"]) == (
         "code-weave-rc",
         "code",
-        "restricted",
+        classification,
         "approval",
     )
 

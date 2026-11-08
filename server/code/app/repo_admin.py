@@ -735,17 +735,18 @@ async def handle_code_repo_set_access(input: Any) -> Any:
         previous_policy = str(
             (row or {}).get("join_policy") or ("open" if cfg.public else "approval")
         )
-        if row is None and cfg.source == "registry":
-            # Not registered yet: a copy onto it reads the directory row, so the
-            # decision is written there now rather than waiting for the ingest pass.
-            from server.code.app.index.registry import new_row as first_row
-
-            row = first_row(cfg, restricted=cls == "restricted", join_policy=pol)
         # The directory row first, which every replica reads now: a restriction cut short
         # after it still stops copies, and the registrar widens no row newer than the
         # access row.
         directory_updated = False
-        if row is not None:
+        if row is None and cfg.source == "registry":
+            # Not registered yet: a copy onto it reads the directory row, so the
+            # decision is written there now rather than waiting for the ingest pass.
+            from server.code.app.index.registry import insert_first_row
+
+            await insert_first_row(cfg, ch, restricted=cls == "restricted", join_policy=pol)
+            directory_updated = True
+        elif row is not None:
             new_row = dict(row)
             new_row.update(
                 {

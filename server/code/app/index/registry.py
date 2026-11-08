@@ -75,10 +75,11 @@ async def ensure_registered(cfg: Any, *, ch: Any | None = None, sync: bool = Tru
         return False
 
 
-def new_row(cfg: Any, *, restricted: bool, join_policy: str) -> dict[str, Any]:
-    """A code namespace's first directory row."""
+async def insert_first_row(cfg: Any, client: Any, *, restricted: bool, join_policy: str) -> None:
+    """Write a code namespace's first directory row. The caller holds the namespace's
+    admins claim and has read no row under it."""
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
-    return {
+    row = {
         "org": cfg.org,
         "namespace": cfg.namespace,
         "owner_email": "",
@@ -96,6 +97,7 @@ def new_row(cfg: Any, *, restricted: bool, join_policy: str) -> dict[str, Any]:
         "created_at": now,
         "updated_at": now,
     }
+    await client.insert("loom.namespaces", [row])
 
 
 async def _write_row(cfg: Any, client: Any) -> bool:
@@ -111,8 +113,8 @@ async def _write_row(cfg: Any, client: Any) -> bool:
     row = await namespace_row(cfg.org, cfg.namespace, ch=client)
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
     if row is None:
-        new = new_row(cfg, restricted=restricted, join_policy="open" if public else "approval")
-        await client.insert("loom.namespaces", [new])
+        join_policy = "open" if public else "approval"
+        await insert_first_row(cfg, client, restricted=restricted, join_policy=join_policy)
         if restricted:
             note_restricted(cfg.org, cfg.namespace)
         logger.info(

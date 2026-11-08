@@ -280,8 +280,9 @@ class CodeRepoSetAccessOutput(BaseModel):
     # The directory row's join policy before this call (when it had none: `open` for a
     # public entry, else `approval`).
     previous_join_policy: str
-    # True when the namespace's directory row got the new access too; False when the
-    # namespace has no directory row (only the registry row was written).
+    # True when the namespace's directory row got the new access too (a branch added
+    # from the page with no row yet gets its first one); False for an operator entry
+    # with no directory row (only the registry row was written).
     directory_updated: bool
     # every process re-reads the access row within this many seconds
     effective_within_s: int
