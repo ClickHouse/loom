@@ -134,3 +134,17 @@ async def test_a_namespace_skipped_at_boot_is_registered_on_a_later_try(
     finished = boot._TRACKER_RETRY
     await boot.register_tracker_namespaces(client)  # not leading: no retry starts
     assert boot._TRACKER_RETRY is finished
+
+
+def test_the_gate_reads_a_restricted_tracker_namespace_from_its_config(monkeypatch) -> None:
+    """A narrowing still waiting for its claim leaves the row standard; the gate fails
+    closed from the configuration meanwhile."""
+    from server.identity.app import namespace_classification as nc
+
+    entry = SimpleNamespace(org=ORG, restricted=True)
+    monkeypatch.setattr(
+        "server.tracker.domain.namespaces.tracker_namespace",
+        lambda org, ns: entry if (org, ns) == (ORG, "qa-p") else None,
+    )
+    assert nc.is_restricted_cached(ORG, "qa-p")
+    assert not nc.is_restricted_cached(ORG, "qa-open")

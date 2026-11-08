@@ -64,10 +64,15 @@ def note_restricted(org: str, namespace: str) -> None:
 
 
 def config_classification(org: str, namespace: str) -> str:
-    """Classification from the code-plane repo config, `standard` when the
-    namespace is not a configured code entry. No I/O."""
+    """Classification from the code-plane repo config or the tracker sources,
+    `standard` when the namespace is neither a configured code entry nor a restricted
+    tracker namespace. No I/O."""
     from server.code.domain.index.repos import repo_for_namespace
+    from server.tracker.domain.namespaces import tracker_namespace
 
+    tracker = tracker_namespace(org, namespace)
+    if tracker is not None and tracker.restricted:
+        return RESTRICTED
     cfg = repo_for_namespace(org, namespace)
     if cfg is None:
         return STANDARD

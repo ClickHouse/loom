@@ -243,10 +243,8 @@ async def register_tracker_namespaces(ch: Any) -> None:
     global _TRACKER_RETRY
     from server.workers import leader
 
-    if _TRACKER_RETRY is not None and not _TRACKER_RETRY.done():
-        return  # the running retry makes this pass, under the same claims
     retry = await _register_tracker_namespaces_once(ch)
-    if retry and leader.leads_deployment():
+    if retry and leader.leads_deployment() and (_TRACKER_RETRY is None or _TRACKER_RETRY.done()):
         _TRACKER_RETRY = _spawn_boot_loop(
             _retry_tracker_namespaces(ch), name="loom-tracker-namespaces-retry"
         )
@@ -270,29 +268,30 @@ def _tracker_retry_s() -> float:
 
 
 async def _register_tracker_namespaces_once(ch: Any) -> bool:
-    """One pass; True when a namespace was skipped or the pass failed. Its queries
-    carry their own tag, reset on return: at boot it runs inside the lifespan, whose
-    later queries are not registration."""
+    """One pass at a time in this process, which would otherwise wait on its own
+    claims; True when a namespace was skipped or the pass failed. Its queries carry
+    their own tag, reset on return: at boot it runs inside the lifespan, whose later
+    queries are not registration."""
     from server.core.ch import query_tag_var
+    from server.tracker.app import registry_sources
+    from server.tracker.app.registry import (
+        configured_pending,
+        ensure_configured_tracker_namespaces,
+    )
 
-    tag = query_tag_var.set("boot.tracker_namespaces")
-    try:
-        from server.tracker.app import registry_sources
-        from server.tracker.app.registry import (
-            configured_pending,
-            ensure_configured_tracker_namespaces,
-        )
-
-        await registry_sources.refresh_db_sources(force=True, ch=ch)
-        done = await ensure_configured_tracker_namespaces(ch=ch)
-        if done:
-            logging.getLogger(__name__).info("qa namespaces registered: %s", done)
-        return configured_pending()
-    except Exception as e:  # noqa: BLE001 — registration never fails boot; the gate keeps refusing
-        logging.getLogger(__name__).warning("qa namespace registration failed: %s", e)
-        return True
-    finally:
-        query_tag_var.reset(tag)
+    async with _TRACKER_PASS:
+        tag = query_tag_var.set("boot.tracker_namespaces")
+        try:
+            await registry_sources.refresh_db_sources(force=True, ch=ch)
+            done = await ensure_configured_tracker_namespaces(ch=ch)
+            if done:
+                logging.getLogger(__name__).info("qa namespaces registered: %s", done)
+            return configured_pending()
+        except Exception as e:  # noqa: BLE001 — registration never fails boot; the gate keeps refusing
+            logging.getLogger(__name__).warning("qa namespace registration failed: %s", e)
+            return True
+        finally:
+            query_tag_var.reset(tag)
 
 
 async def require_clickhouse_ready() -> None:
@@ -423,6 +422,7 @@ async def _fenced_boot_migrations(
 _BOOT_TASKS: set[asyncio.Task[Any]] = set()
 # The background retry of the tracker namespaces a boot pass skipped.
 _TRACKER_RETRY: asyncio.Task[Any] | None = None
+_TRACKER_PASS = asyncio.Lock()
 
 
 def _spawn_boot_task(coro: Coroutine[Any, Any, Any], *, name: str) -> None:
