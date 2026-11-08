@@ -1,9 +1,10 @@
 """The registry statements on ClickHouse: the snapshot read keeps a removed branch a
 member added from the page, so an operator entry is never listed for its namespace,
-and an operator entry's access row is no repository against the org's quota."""
+and an operator entry's access row is not counted against the org's quota."""
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -97,7 +98,7 @@ async def test_a_removed_page_branch_keeps_its_namespace_from_the_operator(org: 
 async def test_an_access_change_on_a_page_branch_keeps_every_column(org: str) -> None:
     await _add(org, "code-page")
     before = await CodeRepo().code_repo_row(org, "code-page")
-    page = repos.RepoConfig(**{**vars(_entry(org, "code-page")), "source": "registry"})
+    page = dataclasses.replace(_entry(org, "code-page"), source="registry")
     await reg.upsert_access(
         page,
         classification="restricted",

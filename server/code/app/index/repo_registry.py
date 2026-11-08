@@ -22,11 +22,12 @@ import re
 import time
 from typing import Any
 
+from server.code.domain.index import repos as repos_domain
 from server.code.domain.index.remote import parse_remote
 from server.code.domain.index.repos import (
     RepoConfig,
+    registry_loaded,
     registry_repos,
-    reset_skipped_for_tests,
     set_registry_repos,
 )
 from server.core.secrets_at_rest import seal, unseal
@@ -35,8 +36,6 @@ from server.settings import settings
 logger = logging.getLogger("loom.code_index.repo_registry")
 
 _LOADED_AT: float = -1e12
-# A read of loom.code_repos has succeeded since the process started (or the last reset).
-_EVER_LOADED = False
 _BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./-]{0,120}$")
 _NS_MAX = 63
 
@@ -149,7 +148,7 @@ async def refresh_db_repos(*, force: bool = False, ch: Any | None = None) -> lis
 async def read_registry(ch: Any | None = None) -> bool:
     """Read loom.code_repos into the snapshot now. False when that read failed
     and the last snapshot was kept; True with self-service off."""
-    global _LOADED_AT, _EVER_LOADED
+    global _LOADED_AT
     if not settings.code_self_service_enabled:
         return True
     try:
@@ -162,7 +161,6 @@ async def read_registry(ch: Any | None = None) -> bool:
         active = [r for r in rows if r.get("active") and r.get("namespace") and r.get("repo")]
         set_registry_repos([row_to_config(r) for r in active], page)
         _LOADED_AT = time.monotonic()
-        _EVER_LOADED = True
         return True
     except Exception as e:  # noqa: BLE001 — keep the last snapshot
         logger.warning(
@@ -174,7 +172,7 @@ async def read_registry(ch: Any | None = None) -> bool:
 def registry_read() -> bool:
     """The snapshot holds what loom.code_repos held at some read, or there is no registry
     (self-service off): False while every read since the process started failed."""
-    return not settings.code_self_service_enabled or _EVER_LOADED
+    return not settings.code_self_service_enabled or registry_loaded()
 
 
 async def start_refresher(ch: Any | None = None) -> asyncio.Task[None]:
@@ -200,11 +198,10 @@ async def start_refresher(ch: Any | None = None) -> asyncio.Task[None]:
 
 
 def reset_for_tests() -> None:
-    global _LOADED_AT, _EVER_LOADED
+    global _LOADED_AT
     set_registry_repos([], frozenset())
-    reset_skipped_for_tests()
+    repos_domain.reset_for_tests()
     _LOADED_AT = -1e12
-    _EVER_LOADED = False
 
 
 async def row_active(org: str, namespace: str, ch: Any | None = None) -> bool:

@@ -44,6 +44,7 @@ def _repo_cfg(args: argparse.Namespace) -> Any:
     from server.code.domain.index.repos import (
         config_errors_for,
         configured_repos,
+        page_namespaces,
         repo_for_namespace,
     )
 
@@ -51,6 +52,11 @@ def _repo_cfg(args: argparse.Namespace) -> Any:
     cfg = repo_for_namespace(org, ns)
     if cfg is not None:
         return cfg
+    if (org, ns) in page_namespaces():
+        raise SystemExit(
+            f"code repo {org}/{ns} is skipped: a member added that namespace from the "
+            "Repositories page; list the entry under another namespace"
+        )
     repos = configured_repos()
     if not repos:
         raise SystemExit(

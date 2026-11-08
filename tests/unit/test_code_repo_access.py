@@ -107,6 +107,18 @@ def test_an_entry_whose_namespace_a_member_added_is_skipped(monkeypatch, caplog)
     assert len([r for r in caplog.records if "code-weave" in r.getMessage()]) == 2
 
 
+def test_no_operator_entry_is_org_readable_before_the_registry_is_read(monkeypatch) -> None:
+    # Unread, a namespace a member added is not known yet: the whole org must not read it.
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repos, "registry_repos", lambda: [])
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    (entry,) = repos._with_registry([_cfg("code-weave", classification="standard")])
+    assert entry.org_readable is False
+    monkeypatch.setattr(repos, "_registry_loaded", True)
+    (entry,) = repos._with_registry([_cfg("code-weave", classification="standard")])
+    assert entry.org_readable is True
+
+
 def test_an_access_row_whose_entry_is_gone_is_not_a_branch(monkeypatch) -> None:
     access = dataclasses.replace(_cfg("code-weave", source="registry"), row_kind="access")
     added = dataclasses.replace(_cfg("code-added", source="registry"), row_kind="page")

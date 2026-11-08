@@ -359,12 +359,12 @@ def _code_registry_read() -> Iterator[None]:
     """The code ingest pass, the compiler tiers, the PR history and the code CLI run
     only once the self-service registry has been read; unit tests fake that read. A
     test of an unread registry resets it (`repo_registry.reset_for_tests`)."""
-    from server.code.app.index import repo_registry
+    from server.code.domain.index import repos
 
-    before = repo_registry._EVER_LOADED
-    repo_registry._EVER_LOADED = True
+    before = repos._registry_loaded
+    repos._registry_loaded = True
     yield
-    repo_registry._EVER_LOADED = before
+    repos._registry_loaded = before
 
 
 @pytest.fixture(autouse=True)

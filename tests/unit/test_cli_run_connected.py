@@ -205,3 +205,15 @@ def test_a_command_leaves_no_deployment_check_armed(
     monkeypatch.setattr(pg_profile, "check_configured", _arm)
     _ch.run_connected(_run)
     asyncio.run(pg._check_deployment(_Conn()))
+
+
+def test_a_skipped_namespace_names_why_the_entry_is_not_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.cli import code_run
+    from server.code.domain.index import repos
+
+    monkeypatch.setattr(repos, "configured_repos", lambda: [])
+    monkeypatch.setattr(repos, "_page_namespaces", frozenset({("acme", "code-x")}))
+    with pytest.raises(SystemExit, match="added that namespace from the"):
+        code_run._repo_cfg(argparse.Namespace(org="acme", namespace="code-x"))

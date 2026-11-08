@@ -290,6 +290,13 @@ def registry_repos() -> list[RepoConfig]:
 _registry_namespaces: frozenset[tuple[str, str]] = frozenset()
 # Namespaces a member added from the page, active or removed (`set_registry_repos`).
 _page_namespaces: frozenset[tuple[str, str]] = frozenset()
+# A read of loom.code_repos has reached the snapshot since the process started.
+_registry_loaded = False
+
+
+def registry_loaded() -> bool:
+    """The snapshot holds what loom.code_repos held at some read (no I/O)."""
+    return _registry_loaded
 
 
 def registry_namespaces() -> frozenset[tuple[str, str]]:
@@ -300,9 +307,10 @@ def registry_namespaces() -> frozenset[tuple[str, str]]:
 def set_registry_repos(entries: list[RepoConfig], page: frozenset[tuple[str, str]]) -> None:
     """Replace the registry snapshot with a fresh read: the active entries, and the
     (org, namespace) of every branch a member added from the page, removed ones too."""
-    global _registry_repos, _registry_namespaces, _page_namespaces
+    global _registry_repos, _registry_namespaces, _page_namespaces, _registry_loaded
+    _registry_loaded = True
     _registry_repos = list(entries)
-    # An access row is no branch of its own (`_with_registry`).
+    # An access row is not a branch (`_with_registry`).
     _registry_namespaces = frozenset(
         (c.org, c.namespace) for c in _registry_repos if c.row_kind != "access"
     )
@@ -319,8 +327,10 @@ def page_namespaces() -> frozenset[tuple[str, str]]:
 _skipped_logged: set[str] = set()
 
 
-def reset_skipped_for_tests() -> None:
-    """Log each skipped entry again."""
+def reset_for_tests() -> None:
+    """No registry read yet, and each skipped entry logged again."""
+    global _registry_loaded
+    _registry_loaded = False
     _skipped_logged.clear()
 
 
@@ -343,6 +353,8 @@ def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:
 
     rows = {(c.org, c.namespace): c for c in registry_repos()}
     taken = page_namespaces()
+    # Unread, a member's namespace is not known yet: no operator entry is org-readable.
+    unread = settings.code_self_service_enabled and not _registry_loaded
     out: list[RepoConfig] = []
     for c in env_repos:
         if (c.org, c.namespace) in taken:
@@ -355,6 +367,8 @@ def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:
                 )
             continue
         _skipped_logged.discard(c.label)  # listed: a later skip is logged again
+        if unread:
+            c = dataclasses.replace(c, org_readable=False)
         access = rows.get((c.org, c.namespace))
         if access is None:
             out.append(c)
