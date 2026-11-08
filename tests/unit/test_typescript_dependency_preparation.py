@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -177,6 +178,16 @@ async def test_a_redacted_tail_still_fits_the_record_whole(checkout: Path, tmp_p
     record = tier_health.failed(None, "typescript", recorder.error_text(failed.value), NOW)
     assert record.error.startswith("ToolOutputError: TypeScript dependency installation failed")
     assert "token=1 " not in record.error
+
+
+@pytest.mark.asyncio
+async def test_a_long_unbroken_output_is_redacted_promptly(checkout: Path, tmp_path: Path) -> None:
+    env = _installer(tmp_path)
+    (tmp_path / "npm").write_text("#!/bin/sh\nprintf 'a.%.0s' $(seq 100000)\nexit 1\n")
+    started = time.monotonic()
+    with pytest.raises(RuntimeError):
+        await deps.prepare_dependencies(checkout, (), env)
+    assert time.monotonic() - started < 5, "redacting the whole output is quadratic"
 
 
 @pytest.mark.asyncio
