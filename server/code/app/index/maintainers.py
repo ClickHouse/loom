@@ -19,10 +19,10 @@ gives no grant on the operator's namespaces.
   the subject's newest such grant is respected, and so is a request made there
   since: admin is not re-added. An older row of any kind is replaced. Called
   after an admin grant is created or approved on a code namespace, when a branch
-  is added, restricted or widened, and by the registrar on each pass until the self-service
-  registry is read, then once per process per namespace (so environment-registered
-  branches inherit), and by the ingest pass on every pass for a repository with
-  a restricted branch added from the page. Each pass also revokes, on a
+  is added, restricted or widened, and by the registrar on each pass until the
+  self-service registry is read, then once per process per namespace (so
+  environment-registered branches inherit), and by the ingest pass on every pass
+  for a repository with a restricted branch added from the page. Each pass also revokes, on a
   restricted branch added from the page, every copy that does not trace to an
   operator grant (``_stray``), or rewrites it as a copy of the subject's one.
 * ``revoke_repo_maintainer`` — a revoked admin leaves the branches the revoke
@@ -240,7 +240,6 @@ async def _read_grants(
     """When the read began, and `_grant_rows` read with sequential consistency: a
     lagging replica could miss a grant just made, and a stray's revoke planned from
     the rows is versioned at the read, or just above the stray (`_revoke_row`)."""
-
     read_at = time.time_ns()
     with sequential_reads():
         rows = await _grant_rows(client, org, branches)
@@ -319,16 +318,16 @@ async def _copy_wanted(
         return None
     if _version(source) != _version(seen.get((source_ns, subject))):
         return None
-    if await _restricted_since(client, org, row["namespace"], source_ns, source):
+    if await _target_restricted_now(client, org, row["namespace"], source_ns, source):
         return None
     return row
 
 
-async def _restricted_since(
+async def _target_restricted_now(
     client: Any, org: str, target: str, source: str, source_row: dict[str, Any]
 ) -> bool:
-    """Re-reads the target's classification under the claims, unless the copy is of
-    an admin grant given on an operator entry."""
+    """True when the target is restricted now, read under the claims; False without
+    a read for a copy of an admin grant given on an operator entry."""
     sources = _branches(org, repo_of(org, target) or "")
     if sources.get(source) == "config" and not _is_copy(source_row):
         return False
