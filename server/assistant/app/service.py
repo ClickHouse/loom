@@ -99,7 +99,8 @@ def _sealed(password: str, api_key: str) -> str:
 
 
 class _LibreChat:
-    """LibreChat's REST API, signed in once, at the first step that needs it."""
+    """LibreChat's REST API, signed in at the first step that needs it (twice when it
+    registers the service user)."""
 
     def __init__(self, client: httpx.AsyncClient, email: str, password: str) -> None:
         self._client = client
