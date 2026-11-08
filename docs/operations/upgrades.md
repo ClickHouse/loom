@@ -116,7 +116,9 @@ checkout.
     user's memories fed, a roll forward after a rollback included: once the newer build
     serves alone, request again each user erasure without `purge` that an older build
     completed, now or at any time before (the completed `user_id` rows of
-    `loom.erasure_requests`). An older build's saga left the summary's history, chunks,
+    `loom.erasure_requests`, which keeps 90 days; an older one has no ledger row left).
+    The new saga also erases what the user wrote since: request it for a user with no
+    live memory row, or only where that is wanted. An older build's saga left the summary's history, chunks,
     vectors, graph rows and shared copies
     ([rolling upgrades](../architecture/rolling-upgrades.md), rule 37). A user purge an
     older build completed left them too, and no later user erasure finds them: the
@@ -145,8 +147,8 @@ and a bot that build saves keeps 3600 as its maximum; reapply a shorter or longe
 once the newer build serves
 ([rolling upgrades](../architecture/rolling-upgrades.md), rule 26).
 A user erasure the previous build runs leaves what a summary of the user's memories
-fed; request again each one run without `purge` once the newer build serves; a purge it
-completed is not found again (rule 37).
+fed; request again each one run without `purge` once the newer build serves, as in step
+10; a purge it completed is not found again (rule 37).
 Do not roll back past the build that adds the document bucket while any catalog row
 names an object in it: an older build answers those downloads `410 BLOB_GONE`, its
 erasure deletes the rows and cannot reach their objects, and its sweep never walks the

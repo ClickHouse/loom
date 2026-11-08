@@ -358,8 +358,8 @@ async def delete_graph_links_by_user(org: str, user_id: str, *, ch: _CHClient | 
     """The user's links, and those of the summaries of the user's memories: by key, and
     by the summary's id for a row link, which carries the summary writer's user. First
     the graph rows and communities those links alone hold, read from the links, so a
-    run the census reopens leaves none of them with no link that names it; those count
-    under their own steps, not this one."""
+    run the census reopens leaves none of them with no link that names it; this step's
+    total counts the links only."""
     ch = ch or _default_client()
     await delete_entity_graph_by_user(org, user_id, ch=ch)
     await delete_entity_communities_by_user(org, user_id, ch=ch)
