@@ -18,6 +18,7 @@ it on a laptop.
 | Optional `<release>-analytics-export` | A daily CronJob and its own ServiceAccount (`analyticsExport.enabled`, [below](#analytics-export)).                                                           |
 | Optional `<release>-extractor`        | The document extractor's Deployment, Service and NetworkPolicy (`extractor.enabled`, [below](#document-extractor)).                                           |
 | NetworkPolicy `<release>`             | Full policy with `networkPolicy.enabled`; else all egress but [`egressExcept`](#instance-metadata-service), unless it is `[]` or `guardMetadata: false`.      |
+| Optional `<release>-code-tiers`       | A PrometheusRule on the failing code-index tiers (`alerts.prometheusRule.enabled`, [below](#alert-rules)).                                                    |
 | Optional dev ClickHouse               | `devClickhouse.enabled`: one ClickHouse pod with embedded Keeper. For test clusters only.                                                                     |
 
 ## Before you install
@@ -425,6 +426,16 @@ until every roll finishes.
 `analyticsExport.enabled: true` adds a daily CronJob that writes the previous UTC day's
 usage and a namespace snapshot to an S3 bucket as Parquet, under a ServiceAccount of its
 own ([exporting usage to a data warehouse](./analytics-export.md)).
+
+## Alert rules
+
+`alerts.prometheusRule.enabled: true` adds a PrometheusRule (the Prometheus Operator's
+CRD, which the chart does not install) for a deployment that exports Loom's metrics over
+OTLP into Prometheus: `LoomCodeTierFailing` for a code-index tier the `code_tier_failing`
+health problem reports, and `LoomCodeTierFailingFarBehind` for a tier the problem
+grades `error`. Their thresholds are the `LOOM_CODE_TIER_FAILING_*` settings
+([when a tier fails](./code-index-operations.md#when-a-tier-fails)).
+`alerts.prometheusRule.labels` adds the labels your Prometheus selects rules by.
 
 ## Checks
 

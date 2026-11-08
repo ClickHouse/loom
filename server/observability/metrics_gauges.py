@@ -13,7 +13,7 @@ import logging
 import os
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from functools import partial
 from typing import Any
 
@@ -786,6 +786,68 @@ def health_problem_series(problems: list[dict[str, Any]]) -> list[tuple[int, dic
     return out
 
 
+def code_tier_series(
+    rows: Sequence[Mapping[str, Any]],
+) -> tuple[list[tuple[int, dict[str, str]]], list[tuple[int, dict[str, str]]]]:
+    """(failing, lag) points, one per entry and tier the `code_tier_failing` problem
+    reports: its failed passes in a row, labelled with the error kind and the tier's
+    severity as the problem grades it, and the commits it trails the fetched tip by
+    (no point when unknown). Labelled raw, as the other code-plane gauges are: one
+    series per configured or registered entry and tier."""
+    failing: list[tuple[int, dict[str, str]]] = []
+    lag: list[tuple[int, dict[str, str]]] = []
+    for r in rows:
+        attrs = {"loom.org": r["org"], "loom.namespace": r["namespace"], "tier": r["tier"]}
+        failing.append(
+            (r["failed_passes"], {**attrs, "kind": r["kind"], "severity": r["severity"]})
+        )
+        if (behind := r["lag_commits"]) >= 0:
+            lag.append((behind, attrs))
+    return failing, lag
+
+
+def _register_code_tier_gauges(meter: Any) -> None:
+    """The failing code-index tiers this process last read; in-process, no store read."""
+
+    def _points(series: str) -> Callable[[Any], Any]:
+        def _cb(_options: Any) -> Any:
+            from opentelemetry.metrics import Observation
+
+            try:
+                from server.observability.state_inputs import state_inputs
+
+                failing, lag = code_tier_series(state_inputs().failing_code_tiers())
+                points = {"failing": failing, "lag": lag}[series]
+            except Exception:  # noqa: BLE001 — a gauge reading must not fail export
+                return []
+            return [Observation(v, attributes=a) for v, a in points]
+
+        return _cb
+
+    meter.create_observable_gauge(
+        name="loom.code.tier_failing",
+        callbacks=[_points("failing")],
+        description=(
+            "Failed passes in a row of a code-index tier the `code_tier_failing` health "
+            "problem reports, per namespace, `tier`, error `kind` and the tier's "
+            "`severity` as the problem grades it (warn, error); a tier reports from the "
+            "problem's warn threshold until its next successful pass"
+        ),
+        # an annotation unit: an OTLP-to-Prometheus export names it loom_code_tier_failing
+        unit="{pass}",
+    )
+    meter.create_observable_gauge(
+        name="loom.code.tier_lag_commits",
+        callbacks=[_points("lag")],
+        description=(
+            "Commits a code-index tier the `code_tier_failing` problem reports trails the "
+            "fetched branch tip by, as the entry's last published status counted it (a lower "
+            "bound), per namespace and `tier`; reported while its lag is known"
+        ),
+        unit="{commit}",
+    )
+
+
 def _register_health_gauges(meter: Any) -> None:
     """This process's health problems and its lost ledger rows; in-process only."""
 
@@ -900,6 +962,7 @@ def register_state_gauges(
         _register_code_plane_gauges(meter, _series)
         _register_worker_gauges(meter)
         _register_health_gauges(meter)
+        _register_code_tier_gauges(meter)
         log.info("loom state gauges registered")
     except Exception as e:  # noqa: BLE001 — gauge wiring must not stop startup
         log.warning("state gauge registration failed: %s", e)

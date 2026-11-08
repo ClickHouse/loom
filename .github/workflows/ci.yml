@@ -386,13 +386,16 @@ jobs:
           # Every optional object on, so each template renders at least once.
           on=(--set analyticsExport.enabled=true --set analyticsExport.bucket=ci --set analyticsExport.nameKeySecret.name=ci)
           extractor=(--set extractor.enabled=true --set secrets.extractorToken="$(openssl rand -hex 24)")
-          all=(--set workers.enabled=true --set workers.replicaCount=2 --set autoscaling.enabled=true --set networkPolicy.enabled=true --set mustMatchChange.publish=ci --set settingsFile.memory_ask_recency_weight=0.3 "${on[@]}" "${extractor[@]}")
+          all=(--set workers.enabled=true --set workers.replicaCount=2 --set autoscaling.enabled=true --set networkPolicy.enabled=true --set alerts.prometheusRule.enabled=true --set mustMatchChange.publish=ci --set settingsFile.memory_ask_recency_weight=0.3 "${on[@]}" "${extractor[@]}")
+          # The PrometheusRule's schema: the CRD catalog at a pinned commit.
+          crd='https://raw.githubusercontent.com/datreeio/CRDs-catalog/c86448cbf1a840ca62d119259864863897c8748a/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+
           for overlay in values-eks.yaml values-kind.yaml; do
             args=(-f "$chart/$overlay" --set secrets.jwtSecret="$secret")
             helm lint --strict "$chart" "${args[@]}"
             helm lint --strict "$chart" "${args[@]}" "${all[@]}"
             helm template loom "$chart" "${args[@]}" | kubeconform -strict -summary -kubernetes-version 1.30.0
-            helm template loom "$chart" "${args[@]}" "${all[@]}" | kubeconform -strict -summary -kubernetes-version 1.30.0
+            helm template loom "$chart" "${args[@]}" "${all[@]}" | kubeconform -strict -summary -kubernetes-version 1.30.0 -schema-location default -schema-location "$crd"
           done
           kubeconform -strict -summary -kubernetes-version 1.30.0 deploy/okf-sync/cronjob.yaml
           # Values the chart must refuse, each with its own message. A refused render

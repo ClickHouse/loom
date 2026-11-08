@@ -3,16 +3,17 @@
 The census statement, the agent-label gauge and the code-plane lag and
 config gauges need a few facts only a domain holds: the knowledge plane's
 chunk-liveness predicate, the usage kinds an agent writes, the configured
-repositories and the compiler tiers. The composition root
-(`server/wiring.py`) hands them in with `use_state_inputs`; the repository
-list and the config-error count are callables, read at every probe.
+repositories, the compiler tiers and the code-index tiers the `code_tier_failing`
+problem reports. The composition root (`server/wiring.py`) hands them in with
+`use_state_inputs`; the repository list, the config-error count and the failing
+code-index tiers are callables, read at every probe.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class CodeRepo(Protocol):
@@ -49,6 +50,9 @@ class StateInputs:
     # the config was first read
     repos_config_errors: Callable[[], int | None]
     compiler_tiers: tuple[CompilerTier, ...]
+    # the code-index tiers the `code_tier_failing` health problem reports: one mapping
+    # per entry and tier (org, namespace, tier, kind, failed_passes, lag_commits, severity)
+    failing_code_tiers: Callable[[], Sequence[Mapping[str, Any]]]
 
 
 _inputs: StateInputs | None = None

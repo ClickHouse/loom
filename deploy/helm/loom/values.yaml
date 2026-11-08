@@ -136,6 +136,15 @@ podDisruptionBudget:
   enabled: true
   maxUnavailable: 1
 
+# Alert rules for the Prometheus Operator (a PrometheusRule), for a deployment that
+# exports Loom's metrics over OTLP into Prometheus. Off by default: the chart
+# installs no CRD. The thresholds are the LOOM_CODE_TIER_FAILING_* settings.
+alerts:
+  prometheusRule:
+    enabled: false
+    # Extra labels the Prometheus instance selects rules by (e.g. release: prometheus).
+    labels: {}
+
 autoscaling:
   # Rate-limit shares resize by themselves as pods come and go.
   enabled: false

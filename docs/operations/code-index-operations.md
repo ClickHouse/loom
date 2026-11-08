@@ -728,7 +728,12 @@ The record is read where each reader already looks:
 - once a tier has failed `LOOM_CODE_TIER_FAILING_WARN_PASSES` passes in a row or for
   `LOOM_CODE_TIER_FAILING_WARN_HOURS`, it is the `code_tier_failing` problem in
   `/v1/health`, the dashboard banner and `loom doctor`
-  ([monitoring](./monitoring.md#v1health)).
+  ([monitoring](./monitoring.md#v1health));
+- for push alerting, the `loom.code.tier_failing` and `loom.code.tier_lag_commits`
+  gauges carry each tier the `code_tier_failing` problem reports
+  ([telemetry](../features/observability/telemetry.md)), with an alert in
+  `deploy/dashboards/code_plane.json` and, for Prometheus, the chart's rule
+  ([alert rules](./kubernetes.md#alert-rules)).
 
 The kinds (`_KINDS`) and their fixes (`fix_for`) are in
 [`server/code/domain/index/tier_health.py`](../../server/code/domain/index/tier_health.py).
