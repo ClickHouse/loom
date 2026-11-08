@@ -91,8 +91,8 @@ Rules:
   an admin grant given on a branch added here. A copy that is a branch's only admin
   stays, except on a restricted branch added here, where a revoke takes a copy whose
   source is not an operator entry (one whose holder keeps an admin grant given on an
-  operator entry other than the revoked one is rewritten by the next sync instead); an operator copy kept there goes at the next sync once its
-  operator grant is gone.
+  operator entry other than the revoked one is rewritten by the next sync instead); an
+  operator copy kept there goes at the next sync once its operator grant is gone.
 - An operator entry that names a namespace already added here keeps that namespace's
   admins, who then reach the repository's other operator entries, and its access row,
   whose classification and join policy win over the entry's: review both before
