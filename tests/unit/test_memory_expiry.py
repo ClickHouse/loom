@@ -114,7 +114,7 @@ def _stub(monkeypatch: pytest.MonkeyPatch, rows: list[MemoryRow]) -> tuple[_CH, 
     monkeypatch.setattr("server.memory.store.reemit_embedding_rows_for_key", _reemit)
     reemit_calls.clear()
 
-    async def _reemit_many(items, *, ch=None, batch=500, of_content=None) -> int:
+    async def _reemit_many(items, *, ch=None, batch=500) -> int:
         # The pass's mirrors arrive as ONE call; each key keeps
         # its own overrides (tombstone/anonymize vs demote).
         reemit_calls.append(len(items))
@@ -565,6 +565,7 @@ async def test_a_failed_scan_records_the_error_class_for_the_registry(
     assert got["last_error_kind"] == "NotFoundError"
 
 
+@pytest.mark.asyncio
 async def test_a_failed_mirror_is_recorded_per_writer_and_the_repair_applies_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -611,8 +612,16 @@ async def test_a_failed_mirror_is_recorded_per_writer_and_the_repair_applies_it(
     # demoted key's head.
     retired.clear()
     _DEMOTE_REEMITS.clear()
-    _retire_clients.clear()
-    monkeypatch.setattr("server.memory.store.retire_vectors_for_keys", _retire_many_ok)
+    clients: list[Any] = []
+
+    async def _retire_ok(items, *, ch=None, bare=False) -> int:
+        assert not bare  # a tombstone keeps its vector for memory.restore
+        clients.append(ch)
+        for (_o, _n, _a, _u, _s, key), version in items:
+            retired.append((key, version))
+        return len(items)
+
+    monkeypatch.setattr("server.memory.store.retire_vectors_for_keys", _retire_ok)
     heads = {r["memory_key"]: r for r in ch.inserts[0][1]}
 
     async def _heads(keys, *, ch=None, sequential=False) -> dict[Any, Any]:
@@ -624,22 +633,12 @@ async def test_a_failed_mirror_is_recorded_per_writer_and_the_repair_applies_it(
 
     assert [r.resolved for r in results] == [True, True]
     assert retired == [("a", written["a"]), ("d", written["d"])]
-    assert _retire_clients == [ch, ch]  # the repair's client, not the default
+    assert clients == [ch, ch]  # the repair's client, not the default
     # The replayed demote is a metadata copy of the head (read + 1), never pinned.
     assert _DEMOTE_REEMITS == [("b", {"expires_at": None, "confidence": 0.45})]
 
 
-_retire_clients: list[Any] = []
-
-
-async def _retire_many_ok(items, *, ch=None, bare=False) -> int:
-    assert not bare  # a tombstone keeps its vector for memory.restore
-    _retire_clients.append(ch)
-    for (_o, _n, _a, _u, _s, key), version in items:
-        retired.append((key, version))
-    return len(items)
-
-
+@pytest.mark.asyncio
 async def test_a_late_mirror_leaves_a_later_writes_vectors_alone(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -725,6 +724,7 @@ async def test_a_late_mirror_leaves_a_later_writes_vectors_alone(
     assert cutoffs == [{key("deleted"): second}, {key("gone"): second, key("kept"): second}]
 
 
+@pytest.mark.asyncio
 async def test_a_malformed_expiry_mirror_failure_is_abandoned(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -758,14 +758,14 @@ async def test_a_malformed_expiry_mirror_failure_is_abandoned(
         assert (result.abandoned, result.reason) == (True, "malformed_payload")
 
 
+@pytest.mark.asyncio
 async def test_a_replayed_demote_copies_the_head_as_it_is_now(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Writes since the sweep moved the heads: a touch set a new expiry, a lock changed
     # neither expiry nor confidence, and one key was deleted. Each demote copies its
     # head's expiry and confidence as a metadata copy (read + 1, no pinned version, so a
-    # row the head's writer lands later is newer), from rows of the head's text; the
-    # deleted key has nothing to copy. The anonymize runs as recorded.
+    # row the head's writer lands later is newer); the deleted key has nothing to copy. The anonymize runs as recorded.
     applied: list[Any] = []
     copied: list[Any] = []
 
@@ -773,8 +773,8 @@ async def test_a_replayed_demote_copies_the_head_as_it_is_now(
         applied.append(items)
         return 0
 
-    async def _reemit(items, *, ch=None, of_content=None) -> int:
-        copied.append((items, of_content))
+    async def _reemit(items, *, ch=None) -> int:
+        copied.append(items)
         return 0
 
     later = _REAL_NOW + timedelta(hours=1)
@@ -785,8 +785,8 @@ async def test_a_replayed_demote_copies_the_head_as_it_is_now(
     async def _heads(keys, *, ch=None, sequential=False) -> dict[Any, Any]:
         assert sequential
         live = {
-            touched: SimpleNamespace(expires_at=later, confidence=0.4, content_sha256="a" * 64),
-            locked: SimpleNamespace(expires_at=None, confidence=0.4, content_sha256="b" * 64),
+            touched: SimpleNamespace(expires_at=later, confidence=0.4),
+            locked: SimpleNamespace(expires_at=None, confidence=0.4),
         }
         return {k: SimpleNamespace(**vars(live[k]), sensitivity="") for k in keys if k in live}
 
@@ -798,11 +798,25 @@ async def test_a_replayed_demote_copies_the_head_as_it_is_now(
     )
     assert applied == [[(anonymized, 200, "anonymize", None)]]
     assert copied == [
-        (
-            [
-                (touched, {"expires_at": later, "confidence": 0.4}),
-                (locked, {"expires_at": None, "confidence": 0.4}),
-            ],
-            {touched: "a" * 64, locked: "b" * 64},
-        )
+        [
+            (touched, {"expires_at": later, "confidence": 0.4}),
+            (locked, {"expires_at": None, "confidence": 0.4}),
+        ]
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_mirror_failure_that_cannot_be_recorded_still_reports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app import projection_failures as pf
+
+    _stub(monkeypatch, [_row(memory_key="a")])
+
+    async def _down(*_a: Any, **_k: Any) -> int:
+        raise ConnectionError("insert refused")
+
+    monkeypatch.setattr("server.memory.store.retire_vectors_for_keys", _down)
+    monkeypatch.setattr(pf, "insert_projection_failures", _down)
+    res = await X.run_pass(X.ExpiryConfig())
+    assert (res.tombstoned, res.failures) == (1, ["mirror:1 keys: ConnectionError"])

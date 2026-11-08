@@ -41,7 +41,6 @@ from server.core.errors import caller_text
 from server.core.hashing import sha256_value as _sha
 from server.memory.app import webhooks
 from server.memory.domain import lock as _lock
-from server.memory.domain.redaction_lineage import is_content_hash
 from server.memory.store.rows import IdentityKey, MemoryRow, identity_key
 
 log = logging.getLogger(__name__)
@@ -412,10 +411,10 @@ async def replay_mirror(recorded: list[RecordedMirror], *, ch: Any | None = None
     """The mirror of a recorded failure, run after later writes may have landed. A
     tombstone or anonymize runs as recorded (`apply_mirror`): the key's vectors below
     the version hold the text it took out. A demote copies the key's live head as it is
-    now, its expiry and confidence, as a metadata copy at read + 1 of rows of the head's
-    text: a write since the sweep (a touch, a verify, a tag edit) keeps what it set, and
-    a row its writer lands after the read is newer than the copy. A key with no live
-    head, or a 'high' one, has nothing to copy."""
+    now, its expiry and confidence, onto the key's live vectors as a metadata copy at
+    read + 1: a write since the sweep (a touch, a verify, a tag edit) keeps what it
+    set, and a row its writer lands after the read is newer than the copy. A key with
+    no live head, or a 'high' one, has nothing to copy."""
     import server.memory.store as memory_repo
 
     n = await apply_mirror(
@@ -426,16 +425,13 @@ async def replay_mirror(recorded: list[RecordedMirror], *, ch: Any | None = None
     if not demoted:
         return n
     heads = await memory_repo.memory_rows_by_identity_keys(demoted, ch=ch, sequential=True)
-    copies = []
-    of_content: dict[IdentityKey, str] = {}
-    for key, head in heads.items():
-        if head.sensitivity == "high":
-            continue
-        copies.append((key, {"expires_at": head.expires_at, "confidence": head.confidence}))
-        if is_content_hash(head.content_sha256):
-            of_content[key] = head.content_sha256
+    copies = [
+        (key, {"expires_at": head.expires_at, "confidence": head.confidence})
+        for key, head in heads.items()
+        if head.sensitivity != "high"
+    ]
     if copies:
-        n += await memory_repo.reemit_embedding_rows_for_keys(copies, ch=ch, of_content=of_content)
+        n += await memory_repo.reemit_embedding_rows_for_keys(copies, ch=ch)
     return n
 
 
