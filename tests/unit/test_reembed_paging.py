@@ -387,8 +387,7 @@ async def test_a_resume_token_carries_the_orgs_delete_old_keeps(monkeypatch) -> 
     await rb.reembed_all(ch, _Emb(), resume=token, delete_old=True, log=lambda *_: None)
     assert ch.inserted == ["002"] and deletes and all(p.get("off") == ["o"] for p in deletes)
 
-    # An org switched off when a run starts is carried too, so a resume after it is
-    # switched back on still keeps its rows the run never rebuilt.
+    # An org switched off when a run starts is carried in every printed token too.
     async def off_now() -> set[str]:
         return {"o"}
 

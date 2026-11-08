@@ -322,7 +322,7 @@ def _add_reembed_parser(sub: Any) -> None:
     p_reembed.add_argument(
         "--delete-old",
         action="store_true",
-        help="Delete off-model rows after re-embedding, except an org's the run left",
+        help="Delete off-model rows after re-embedding, except in the orgs the run left for later",
     )
     p_reembed.add_argument(
         "--key-only",
