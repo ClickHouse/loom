@@ -94,7 +94,7 @@ class _Row:
             code = error.code
         elif isinstance(error, HTTPException):
             code = f"HTTP_{error.status_code}"
-        elif isinstance(error, asyncio.CancelledError | GeneratorExit | ClientDisconnect):
+        elif isinstance(error, asyncio.CancelledError | ClientDisconnect):
             code = _CLIENT_CLOSED
         else:
             code = "INTERNAL_ERROR"
@@ -253,7 +253,6 @@ async def _streamed(chunks: AsyncIterator[bytes], held: _Held) -> AsyncIterator[
             yield chunk
     except LoomServerError as e:
         # The status is sent: the refusal goes out as an error event, and on the row.
-        set_ledger_run(held.answer.run_id)
         held.row.write(e)
         held.finished = True
         yield bridge.error_event(e)

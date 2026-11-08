@@ -101,10 +101,15 @@ def _emit_token_refusal(
 ) -> None:
     from server.observability.consumer import bind_current_consumer
     from server.observability.ledger import emit_agent_event
+    from server.observability.run_context import set_ledger_run
     from server.observability.traffic_class import bind_claimed_class
     from server.transport._common import begin_call, sli_columns
+    from server.transport.assistant_call import answer_run
 
     begin_call()
+    # An answer's refused tool call is ledgered under the answer, as its admitted ones are
+    # ('' on any other connection).
+    set_ledger_run(answer_run())
     bind_current_consumer({"consumer": consumer} if consumer else None, auth)
     bind_claimed_class(auth)
     emit_agent_event(

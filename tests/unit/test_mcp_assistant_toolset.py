@@ -737,3 +737,30 @@ def test_only_an_answer_token_on_an_assistant_connection_reads_the_answer_header
         consumer=consumer,
     )
     assert mcp_module.answer_run_of(_Request(), toolset, auth) == run
+
+
+@pytest.mark.parametrize(("answer", "run"), [("chatcmpl-9", "chatcmpl-9"), ("", "")])
+def test_a_refused_assistant_tool_call_is_ledgered_under_its_answer(
+    answer: str, run: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A call the screen refuses (another tenant's namespace) is the row an audit of the
+    # answer most needs: it keeps the answer's id, as an admitted call does.
+    from server.auth.jwt import AuthInfo
+    from server.observability import ledger
+    from server.observability.run_context import current_ledger_run
+    from server.transport import mcp_ledger
+    from server.transport.assistant_call import set_answer_run
+
+    seen: list[str] = []
+    monkeypatch.setattr(ledger, "emit_agent_event", lambda **_kw: seen.append(current_ledger_run()))
+    auth = AuthInfo(
+        subject="alice",
+        org="acme",
+        namespaces=("acme-handbook",),
+        roles=(),
+        is_service_account=False,
+        consumer="loom-assistant",
+    )
+    set_answer_run(answer)
+    mcp_ledger.emit_token_refusal("memory.search", auth, error_code="NAMESPACE_NOT_ACCESSIBLE")
+    assert seen == [run]
