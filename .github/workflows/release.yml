@@ -19,11 +19,11 @@ name: release
 # docker-tag made; every run verifies both images' X.Y.Z tag) and
 # docker-smoke (the quickstart and the installer rehearsal) -> github-release
 # -> release-check (tag push only), and pypi, npm, mcp-registry (dispatch
-# only). A re-run after a partial publish is safe: the bundle keeps the ClickHouse release it was first
-# published with, the release is updated in place, PyPI skips files it already
-# has, npm and the MCP Registry skip a version they already have, a re-run of
-# failed jobs tags the same build again, and a run on a tag whose images are
-# published builds and tags none.
+# only). A re-run after a partial publish is safe: the bundle keeps the
+# ClickHouse release it was first published with, the release is updated in
+# place, PyPI skips files it already has, npm and the MCP Registry skip a
+# version they already have, a re-run of failed jobs tags the same build again,
+# and a run on a tag whose images are published builds and tags none.
 #
 # The PyPI, npm and MCP Registry jobs are dispatch-only, so a tag's GitHub
 # Release can be checked before the SDKs and the server listing reach the

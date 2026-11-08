@@ -299,12 +299,13 @@ A failed `docker-tag` (one image tagged, not the other) or a failed `sign` (Sigs
   run can tag or sign that build: a run on a half-tagged version fails its `preflight`, and a run
   on a published tag verifies signatures but cannot make them. Release a new version, and if
   `:latest` moved, point it back at the previous release's index for both images, by digest, and
-  check that `:latest` names that digest and carries its signature:
+  check that `:latest` names that digest and carries its signature (a previous release published
+  before the workflow signed has none: check the digest only):
 
   ```bash
   digest=$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:<previous X.Y.Z> --format '{{json .Manifest}}' | jq -re .digest)
   docker buildx imagetools create -t ghcr.io/clickhouse/<image>:latest "ghcr.io/clickhouse/<image>@$digest"
-  docker buildx imagetools inspect ghcr.io/clickhouse/<image>:latest --format '{{json .Manifest}}' | jq -re .digest
+  [ "$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:latest --format '{{json .Manifest}}' | jq -re .digest)" = "$digest" ]
   cosign verify ghcr.io/clickhouse/<image>:latest \
     --certificate-identity https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v<previous X.Y.Z> \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com
