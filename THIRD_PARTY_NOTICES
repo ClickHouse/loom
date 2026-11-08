@@ -24,6 +24,40 @@ identification of the license, and an indication of modifications when the
 material is shared. See deploy/lemmagen3/README.md for its checksum and full
 provenance.
 
+BGE small English v1.5 embedding model
+--------------------------------------
+
+Files: /app/models/bge-small/<revision>/ in the server image
+Project: BAAI bge-small-en-v1.5, https://huggingface.co/BAAI/bge-small-en-v1.5
+License: MIT (the model card); the text below is the LICENSE of its source
+project, https://github.com/FlagOpen/FlagEmbedding
+Changes: the files are a third party's quantized ONNX conversion of the model,
+the one the fastembed package downloads for it, whose model card also declares
+MIT; each is byte-identical to the revision and sha256 pinned in
+server/embedding/local_models.py.
+
+MIT License
+
+Copyright (c) 2022 staoxiao
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 SCIP schema
 -----------
 

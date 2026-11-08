@@ -228,6 +228,11 @@ settings:
   # `embedding_dim`; a new embedding space needs a full re-embed. [restart]
   # embedding_model: "fake-ngram-3072"
 
+  # Where `local` models live (relative: under the working directory), one directory per
+  # alias and revision; a missing file is fetched there. The image sets it by env.
+  # [restart]
+  # local_embedding_model_dir: "var/models"
+
   # --- memory ---
 
   # memory.ask synthesis (the strong tier when the cascade is on). [restart]

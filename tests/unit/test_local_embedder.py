@@ -34,17 +34,15 @@ from server.settings import settings
 
 @pytest.fixture(autouse=True)
 def _isolate_embedder(monkeypatch: pytest.MonkeyPatch):
-    """Reset the cached embedder + the local model-resolution cache and
-    pin a deterministic embedding config for each test, then restore."""
+    """Reset the cached embedder and pin a deterministic embedding config for each
+    test, then restore."""
     emb.reset()
-    local_mod._resolve_model.cache_clear()
     # Default-ish baseline; individual tests override as needed.
     monkeypatch.setattr(settings, "embedding_provider", "")
     monkeypatch.setattr(settings, "embedding_model", "fake-ngram-1024")
     monkeypatch.setattr(settings, "embedding_dim", 1024)
     yield
     emb.reset()
-    local_mod._resolve_model.cache_clear()
 
 
 # ---- provider resolution (no instantiation) -----------------------------
@@ -170,37 +168,18 @@ def test_a_label_over_the_served_model_cannot_be_the_served_model(
 # ---- local model-alias resolution ---------------------------------------
 
 
-def test_resolve_model_default_and_aliases() -> None:
-    assert local_mod._resolve_model("local") == ("BAAI/bge-small-en-v1.5", 384)
-    assert local_mod._resolve_model("local:bge-small") == (
-        "BAAI/bge-small-en-v1.5",
-        384,
-    )
-    assert local_mod._resolve_model("local:bge-base") == (
-        "BAAI/bge-base-en-v1.5",
-        768,
-    )
-    assert local_mod._resolve_model("local:minilm") == (
-        "sentence-transformers/all-MiniLM-L6-v2",
-        384,
-    )
+def test_local_specs_name_an_alias() -> None:
+    assert local_mod._alias("local") == "bge-small"
+    assert local_mod._alias("local:") == "bge-small"
+    for alias in ("bge-small", "bge-base", "minilm"):
+        assert local_mod._alias(f"local:{alias}") == alias
 
 
-def test_resolve_model_empty_alias_uses_default() -> None:
-    local_mod._resolve_model.cache_clear()
-    assert local_mod._resolve_model("local:") == ("BAAI/bge-small-en-v1.5", 384)
-
-
-def test_resolve_model_unknown_alias_raises() -> None:
-    local_mod._resolve_model.cache_clear()
+def test_an_unknown_alias_or_a_non_local_spec_raises() -> None:
     with pytest.raises(ValueError, match="unknown local embedding model alias"):
-        local_mod._resolve_model("local:gigantic-model")
-
-
-def test_resolve_model_rejects_non_local_spec() -> None:
-    local_mod._resolve_model.cache_clear()
+        local_mod._alias("local:gigantic-model")
     with pytest.raises(ValueError, match="not a local model spec"):
-        local_mod._resolve_model("text-embedding-3-small")
+        local_mod._alias("text-embedding-3-small")
 
 
 # ---- offline embed via a stub fastembed ----------------------------------
@@ -212,10 +191,14 @@ class _StubTextEmbedding:
     the embedder's defensive L2-normalize is exercised. No network."""
 
     instantiated_with: list[str] = []
+    loaded_from: list[str] = []
     calls: list[list[str]] = []
 
-    def __init__(self, model_name: str, threads: int | None = None) -> None:
+    def __init__(
+        self, model_name: str, specific_model_path: str, threads: int | None = None
+    ) -> None:
         type(self).instantiated_with.append(model_name)
+        type(self).loaded_from.append(specific_model_path)
         self.model_name, self.threads = model_name, threads
 
     def embed(self, texts):
@@ -228,10 +211,15 @@ class _StubTextEmbedding:
 
 
 @pytest.fixture
-def _stub_fastembed(monkeypatch: pytest.MonkeyPatch):
-    """Inject a stub `fastembed` module so LocalEmbedder loads offline."""
+def _stub_fastembed(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    """Inject a stub `fastembed` module, and pinned files that need no fetch, so
+    LocalEmbedder loads offline."""
+    from server.embedding import local_models
+
     _StubTextEmbedding.instantiated_with = []
+    _StubTextEmbedding.loaded_from = []
     _StubTextEmbedding.calls = []
+    monkeypatch.setattr(local_models, "model_dir", lambda alias: tmp_path / alias)
     import types
 
     stub = types.ModuleType("fastembed")
@@ -261,6 +249,7 @@ async def test_local_embed_returns_unit_norm_vector_offline(
     assert vec[1] == pytest.approx(0.8, abs=1e-6)
     # The stub loaded the right HF model id, and exactly once (lazy load).
     assert _StubTextEmbedding.instantiated_with == ["BAAI/bge-small-en-v1.5"]
+    assert _StubTextEmbedding.loaded_from[0].endswith("bge-small")
 
 
 @pytest.mark.asyncio

@@ -232,8 +232,9 @@ read per-category results and the stable-only pair.
 
 ## Fake providers make scores meaningless
 
-The stock stack runs `LOOM_EMBEDDING_MODEL=fake-ngram-3072`, CI runs `fake-ngram-1024`,
-and both run `LOOM_LLM_PROVIDER=fake`. The fake embedder (`server/embedding/fake.py`) hashes character
+A checkout's `.env` runs `LOOM_EMBEDDING_MODEL=fake-ngram-3072`, CI runs `fake-ngram-1024`,
+and both run `LOOM_LLM_PROVIDER=fake` (the released stack embeds with `local` and keeps the
+fake LLM). The fake embedder (`server/embedding/fake.py`) hashes character
 trigrams into buckets, so similarity tracks spelling, not meaning. The fake LLM
 (`server/llm/fake.py`) returns shaped JSON keyed off an anchor phrase, so pipelines run
 without extracting anything real. Under them:

@@ -19,7 +19,6 @@ x-loom-replica: &loom-replica
     context: ..
     dockerfile: Dockerfile
     args:
-      LOOM_EMBEDDING_MODEL: "${LOOM_EMBEDDING_MODEL:-text-embedding-3-small}"
       LOOM_BUILD_COMMIT: "${LOOM_BUILD_COMMIT:-unknown}"
   image: loom:replicas
   restart: unless-stopped

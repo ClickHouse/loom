@@ -14,8 +14,10 @@ published claim.
 | Is code intelligence useful for our repository? | Representative symbols, caller sets and issue-shaped questions | Real embedder; indexed repository                      | exact definitions, caller F1, file recall, abstention, tokens and latency             |
 | Can we reproduce a published result?            | The named public dataset and committed result artifact         | The pinned models or documented substitutes            | A comparable run with the same slice, reader, judge and search mode                   |
 
-Do not use the stock fake embedder or fake LLM to judge quality. They exist so the local
-stack can boot without credentials and integration tests can be deterministic.
+Do not use the fake embedder (a checkout's `.env`) or the fake LLM to judge quality: they
+exist so the stack can boot without credentials and integration tests can be
+deterministic. The released stack's local embedder retrieves for real, so a first look at
+search is meaningful on it; judge answers and extraction with a real LLM.
 
 ## Before you run
 

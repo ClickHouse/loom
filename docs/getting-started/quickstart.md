@@ -1,8 +1,10 @@
 # Quickstart
 
 This page boots Loom on a laptop and saves a first memory over HTTP, Python and MCP. It
-needs no API key and no account. The stock stack uses fake providers, so it shows the
-wiring, not recall quality.
+needs no API key and no account. A fresh install of the released stack embeds with a small
+local model the image carries, so search returns meaningful hits with no network (an
+upgraded one keeps the embedder its `.env` names); its LLM is fake, so extraction and
+`memory.ask` answers produce nothing. A checkout's `.env` uses fake providers for both.
 
 **The stock Docker installation is single-user:** no login, localhost-only access and
 a default `dev/local` namespace. One person can connect multiple agents without enabling
@@ -128,7 +130,7 @@ account, not the single-user `dev/local` defaults in the examples below.
 This enables multi-user authentication, not public networking: the stack still binds
 to localhost. Before sharing it with a team, configure [operator access](../operations/deployment.md#identity-modes)
 and [TLS](../operations/deployment.md#proxy-and-tls). Configure [real models and API keys](./models-and-keys.md)
-as well; selecting multi-user mode does not replace the fake providers.
+as well; selecting multi-user mode does not replace the fake LLM.
 
 For an already running single-user stack, follow the [switching instructions](#2-open-the-dashboard)
 instead; container recreation preserves the existing data volumes.
@@ -188,11 +190,12 @@ The checkout and release-bundle `.env` templates both select single-user mode.
 The release bundle sets `LOOM_IDENTITY_PROVIDER=single-user` explicitly; the checkout
 leaves it empty and infers the same mode from `LOOM_AUTH_REQUIRED=false`.
 
-| Setting                                                                     | Value         | Effect                                                                    |
-| --------------------------------------------------------------------------- | ------------- | ------------------------------------------------------------------------- |
-| `LOOM_AUTH_REQUIRED=false`, `LOOM_IDENTITY_PROVIDER=single-user` (or empty) | `single-user` | No login. Default namespace `dev/local`. SDK and MCP calls need no token. |
-| `LOOM_LLM_PROVIDER=fake`, `LOOM_LLM_MODEL=fake-echo-1`                      | fake LLM      | Extraction, entity tagging and `memory.ask` synthesis produce nothing.    |
-| `LOOM_EMBEDDING_MODEL=fake-ngram-3072`, `LOOM_EMBEDDING_DIM=3072`           | fake embedder | Search ranks by character n-grams. Enough to check wiring, not recall.    |
+| Setting                                                                      | Value         | Effect                                                                    |
+| ---------------------------------------------------------------------------- | ------------- | ------------------------------------------------------------------------- |
+| `LOOM_AUTH_REQUIRED=false`, `LOOM_IDENTITY_PROVIDER=single-user` (or empty)  | `single-user` | No login. Default namespace `dev/local`. SDK and MCP calls need no token. |
+| `LOOM_LLM_PROVIDER=fake`, `LOOM_LLM_MODEL=fake-echo-1`                       | fake LLM      | Extraction, entity tagging and `memory.ask` synthesis produce nothing.    |
+| `LOOM_EMBEDDING_MODEL=local`, `LOOM_EMBEDDING_DIM=384` (release bundle)      | bge-small     | Semantic search on CPU, from the model files the image carries.           |
+| `LOOM_EMBEDDING_MODEL=fake-ngram-3072`, `LOOM_EMBEDDING_DIM=3072` (checkout) | fake embedder | Search ranks by character n-grams. Enough to check wiring, not recall.    |
 
 Both installers generate a unique `COMPOSE_PROJECT_NAME`, a random JWT signing secret, a
 random extractor token, and `LOOM_BIND_HOST=127.0.0.1`. Separate clones therefore do not
@@ -206,7 +209,8 @@ rebuild, with progress and retry shown in the dashboard.
 
 For environment-based deployment instead, replace the provider lines in `~/.loom/.env`
 (released stack) or `.env` (checkout). Setting `OPENAI_API_KEY` alone changes nothing:
-the stock provider lines explicitly select fakes.
+the stock provider lines name their providers explicitly. Moving off the local or fake
+embedder re-embeds what is stored.
 
 ```bash
 LOOM_EMBEDDING_MODEL=text-embedding-3-large
@@ -451,11 +455,11 @@ docker compose --project-directory "$HOME/.loom" exec loom loom code init --name
 docker compose --project-directory "$HOME/.loom" exec loom loom code backfill --namespace code-myrepo --org dev --embed
 ```
 
-`backfill --embed` needs an embedding provider ([Models and keys](./models-and-keys.md)).
-On the stock keyless stack it refuses the fallback embedder and exits. To try the wiring
-anyway, add `--allow-fake-embedder`. Choosing a model later in **Settings → Models &
-keys** re-embeds the code index; after an `.env` change it needs its own re-embedding, as
-[Models and keys](./models-and-keys.md) describes.
+`backfill --embed` runs on the released stack's local embedder. Under a fake embedder (a
+checkout's `.env`, or an upgraded install that still names `fake-ngram-*`) it refuses and
+exits; to try the wiring anyway, add `--allow-fake-embedder`. Choosing a model later in
+**Settings → Models & keys** re-embeds the code index; after an `.env` change it needs its
+own re-embedding, as [Models and keys](./models-and-keys.md) describes.
 
 In multi-user mode a listed repository has no maintainer, so without `"public":true` a
 reader's join request waits with nobody to approve it. After `loom code init`, give
@@ -485,14 +489,15 @@ the answer and the chunks it cited. With the fake LLM it prints the top
 
 ## Common problems
 
-| Symptom                                                | Cause and fix                                                                                                                                                                      |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `set_from_messages` writes no facts; results arbitrary | Fake providers are active. Follow [Models and keys](./models-and-keys.md) to configure providers and rebuild existing embeddings. Do not delete your volumes to change models.     |
-| 401 `AUTH_INVALID` after turning auth on               | No token, or one signed with another `LOOM_JWT_SECRET`. Re-mint with the Compose command in [Get a token](#3-get-a-token).                                                         |
-| The dashboard returns 503                              | The server runs from source (`make server`) without a built frontend. Run `make frontend-build`.                                                                                   |
-| Released stack does not become healthy                 | Run `docker compose --project-directory "$HOME/.loom" logs --tail 100 loom clickhouse`. See [Troubleshooting](../operations/troubleshooting.md).                                   |
-| Adding a repository answers `SANDBOX_UNAVAILABLE`      | The stack runs without the repository-job sandbox. Index the repository through `LOOM_CODE_REPOS_JSON` ([Index a repository](#optional-index-a-repository-on-the-released-stack)). |
-| Port `8123`, `9000` or `7777` is taken                 | Remap the ClickHouse host ports ([local stack](../operations/deployment.md#local-stack-from-a-clone)).                                                                             |
+| Symptom                                           | Cause and fix                                                                                                                                                                                  |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `set_from_messages` writes no facts               | The LLM is the fake one. Follow [Models and keys](./models-and-keys.md) to configure one.                                                                                                      |
+| Search results look arbitrary                     | The embedder is a fake one (`fake-ngram-*` in `.env`). Switch it as [Models and keys](./models-and-keys.md) says, which re-embeds what is stored. Do not delete your volumes to change models. |
+| 401 `AUTH_INVALID` after turning auth on          | No token, or one signed with another `LOOM_JWT_SECRET`. Re-mint with the Compose command in [Get a token](#3-get-a-token).                                                                     |
+| The dashboard returns 503                         | The server runs from source (`make server`) without a built frontend. Run `make frontend-build`.                                                                                               |
+| Released stack does not become healthy            | Run `docker compose --project-directory "$HOME/.loom" logs --tail 100 loom clickhouse`. See [Troubleshooting](../operations/troubleshooting.md).                                               |
+| Adding a repository answers `SANDBOX_UNAVAILABLE` | The stack runs without the repository-job sandbox. Index the repository through `LOOM_CODE_REPOS_JSON` ([Index a repository](#optional-index-a-repository-on-the-released-stack)).             |
+| Port `8123`, `9000` or `7777` is taken            | Remap the ClickHouse host ports ([local stack](../operations/deployment.md#local-stack-from-a-clone)).                                                                                         |
 
 ## Next
 

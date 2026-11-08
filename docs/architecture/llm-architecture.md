@@ -43,8 +43,9 @@ asked for that width; choose a model that supports it. Local models emit their n
 width (`probe_embedding_dim`); a mismatch shows as `embedding_dim_mismatch` on
 `/v1/health`.
 
-**Image build.** The Docker image installs the local embedder only when built with a
-`local*` `LOOM_EMBEDDING_MODEL` build argument.
+**Image build.** The Docker image installs the local embedder and carries `bge-small`'s
+files, pinned to a revision and sha256 (`server/embedding/local_models.py`); the stack's
+`env.example` embeds with it.
 
 ### Protocol and paths
 

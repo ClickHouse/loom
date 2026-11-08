@@ -3081,6 +3081,11 @@
           "type": "number",
           "description": "Longest backoff, in seconds, between two attempts of an LLM call."
         },
+        "local_embedding_model_dir": {
+          "default": "var/models",
+          "type": "string",
+          "description": "Where `local` models live (relative: under the working directory), one directory per alias and revision; a missing file is fetched there. The image sets it by env."
+        },
         "log_format": {
           "default": "text",
           "enum": [

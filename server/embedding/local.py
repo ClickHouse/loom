@@ -1,11 +1,12 @@
 """Local CPU embedder via `fastembed` (ONNX), no API key: `local` or
 `local:<alias>`.
 
-Opt-in. The models are lower-dim and weaker on paraphrase-heavy retrieval
-than the hosted ones; the trade is no vendor and no network after the
-first download. Each emits its own dim and cosine distribution, which
-`LOOM_ADAPTIVE_THRESHOLDS` calibrates the search gates to, and switching to
-or from one needs a full re-embed.
+The released stack's embedder. The models are lower-dim and weaker on
+paraphrase-heavy retrieval than the hosted ones; the trade is no vendor and no
+network: their files are pinned and checked (`local_models`), and the image carries
+the default one. Each emits its own dim and cosine distribution, which
+`LOOM_ADAPTIVE_THRESHOLDS` calibrates the search gates to, and switching to or from
+one needs a full re-embed.
 
 `fastembed` is the optional `local-embedder` extra, imported lazily.
 """
@@ -16,9 +17,9 @@ import asyncio
 import logging
 import math
 from collections.abc import Iterable
-from functools import lru_cache
 from typing import Protocol
 
+from server.embedding import local_models
 from server.settings.catalog import DEFAULT_LOCAL_EMBEDDING_MODEL, LOCAL_EMBEDDING_MODELS
 
 log = logging.getLogger(__name__)
@@ -36,16 +37,12 @@ class _TextEmbedding(Protocol):
     def embed(self, documents: list[str]) -> Iterable[_Vector]: ...
 
 
-@lru_cache(maxsize=1)
-def _resolve_model(spec: str) -> tuple[str, int]:
-    """`local` or `local:<alias>` -> (Hugging Face id, dim); ValueError on
-    an unknown alias."""
+def _alias(spec: str) -> str:
+    """`local` or `local:<alias>` -> the alias; ValueError on an unknown one."""
     if spec == "local":
         alias = DEFAULT_LOCAL_EMBEDDING_MODEL
     elif spec.startswith("local:"):
-        alias = spec.split(":", 1)[1].strip()
-        if not alias:
-            alias = DEFAULT_LOCAL_EMBEDDING_MODEL
+        alias = spec.split(":", 1)[1].strip() or DEFAULT_LOCAL_EMBEDDING_MODEL
     else:
         raise ValueError(f"not a local model spec: {spec!r}")
     if alias not in LOCAL_EMBEDDING_MODELS:
@@ -53,7 +50,7 @@ def _resolve_model(spec: str) -> tuple[str, int]:
             f"unknown local embedding model alias {alias!r}; supported: "
             f"{sorted(LOCAL_EMBEDDING_MODELS)}"
         )
-    return LOCAL_EMBEDDING_MODELS[alias]
+    return alias
 
 
 def onnx_threads() -> int:
@@ -77,10 +74,9 @@ class LocalEmbedder:
                 "package. Install with: pip install fastembed"
             ) from e
 
-        hf_id, dim = _resolve_model(spec)
+        self.alias = _alias(spec)
         self.model_name = spec
-        self.hf_model_id = hf_id
-        self.dim = dim
+        self.hf_model_id, self.dim = LOCAL_EMBEDDING_MODELS[self.alias]
         self._embedder: _TextEmbedding | None = None  # lazy; loaded on first embed
         self._lock = asyncio.Lock()
 
@@ -93,15 +89,14 @@ class LocalEmbedder:
             from fastembed import TextEmbedding
 
             def _load() -> _TextEmbedding:
+                path = local_models.model_dir(self.alias)
                 log.info(
-                    "loading local embedder %s (HF: %s, dim=%d) — first call "
-                    "downloads from HuggingFace",
-                    self.model_name,
-                    self.hf_model_id,
-                    self.dim,
+                    "loading local embedder %s from %s (dim=%d)", self.model_name, path, self.dim
                 )
                 embedder: _TextEmbedding = TextEmbedding(
-                    model_name=self.hf_model_id, threads=onnx_threads()
+                    model_name=self.hf_model_id,
+                    specific_model_path=str(path),
+                    threads=onnx_threads(),
                 )
                 return embedder
 

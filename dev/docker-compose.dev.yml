@@ -29,9 +29,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      # fastembed is installed only when LOOM_EMBEDDING_MODEL is local (see Dockerfile).
       args:
-        LOOM_EMBEDDING_MODEL: "${LOOM_EMBEDDING_MODEL:-}"
         LOOM_BUILD_COMMIT: "${LOOM_BUILD_COMMIT:-unknown}"
     container_name: loom-server
     environment:
