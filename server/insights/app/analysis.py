@@ -27,10 +27,12 @@ from uuid import UUID
 
 from server.core import leases
 from server.core.ch import query_tag_var, statement_timeout
-from server.core.ch_errors import error_code, error_line
+from server.core.ch_errors import error_code, error_line, is_transient_network_error
 from server.core.ch_request_cost import request_query_id
 from server.core.errors import (
     AnalysisUnavailableError,
+    BackendTimeoutError,
+    BackendUnavailableError,
     OverloadedError,
     RateLimitedError,
     ValidationError,
@@ -252,10 +254,8 @@ async def provision() -> None:
             _set_problem(*foreign)
             return
         await reprobe()
-    except SetupRefused as e:
-        _set_problem(f"writing or probing {boundary.ANALYST_USER} failed: {e}")
-    except Exception as e:  # noqa: BLE001 — an unreached setup is retried by the next probe, never fatal to boot
-        _probe_unreached(e)
+    except Exception as e:  # noqa: BLE001 — a failed setup is a reported problem, never fatal to boot
+        _probe_failed(f"writing or probing {boundary.ANALYST_USER} failed", e)
 
 
 async def _current_statements() -> list[str]:
@@ -374,10 +374,10 @@ async def reprobe() -> None:
     """Probe the analyst user again. It also re-reads the secrets row: a
     replica moves to a new key only once the canary reads under it. A failure
     a write repairs is written again under the lease, by a replica that
-    writes the entities itself. Until the probe has an answer, an error means
-    it did not run and the last answer stands; once it has found a problem, a
-    repair that fails keeps the finding, so a security check never passes for
-    want of a write."""
+    writes the entities itself. Every ClickHouse answer that is not a clean
+    probe is a finding, a repair that fails keeps the finding it was for, and
+    a probe that got no answer at all leaves the replica answering OVERLOADED:
+    no path serves on a check that did not pass."""
     global _loaded
     try:
         stored = _opened(await store.sealed_secrets())
@@ -385,11 +385,8 @@ async def reprobe() -> None:
             _loaded = stored
         problem, repairable, detail = await _probe()
         manages = await store.can_manage_access()
-    except SetupRefused as e:
-        _set_problem(f"probing {boundary.ANALYST_USER} failed: {e}")
-        return
-    except Exception as e:  # noqa: BLE001 — an unreached probe keeps the last answer
-        _probe_unreached(e)
+    except Exception as e:  # noqa: BLE001 — a failed probe is a reported problem
+        _probe_failed(f"probing {boundary.ANALYST_USER} failed", e)
         return
     try:
         if problem and repairable and manages:
@@ -402,43 +399,72 @@ async def reprobe() -> None:
             # A policy added since the last write widens other users, not the
             # analyst, so only this check sees it.
             problem, detail = await _foreign_problem()
-    except Exception as e:  # noqa: BLE001 — a failed repair keeps the finding it was for
+    except Exception as e:  # noqa: BLE001 — a failed repair or check keeps the finding it was for
         if not problem:
-            _probe_unreached(e)
+            _probe_failed(f"checking for row policies {_LOOM_DID_NOT_WRITE} failed", e)
             return
-        detail = f"{detail}; the repair failed: {_scrubbed(error_line(e))}".lstrip("; ")
-    _set_problem(problem, detail)
+        detail = f"{detail}; the repair or its re-check did not finish: {error_line(e)}"
+    _set_problem(problem, detail.lstrip("; "))
 
 
-def _transient(e: BaseException) -> bool:
-    """An error that says nothing about the analyst user: no ClickHouse answer
-    at all (a dropped or refused connection), or one about the server's load
-    or reach rather than the statement."""
-    return error_code(e) in _TRANSIENT_CODES
+_LOOM_DID_NOT_WRITE = "Loom did not write"
+# ClickHouse's own socket timeout and network error: no answer reached it.
+_NETWORK_CODES = frozenset({209, 210})
 
 
-# No code (no ClickHouse answer), a timeout, too many queries, a network
-# error, a server short of memory.
-_TRANSIENT_CODES = frozenset({None, 159, 160, 202, 209, 210, 241, 1000})
+def _no_answer(e: BaseException) -> bool:
+    """An error that carries no answer about the analyst user: no connection,
+    a client-side wait that ran out, the pool or a lease held elsewhere, the
+    analyst user's own concurrency cap, or a server short of memory. Every
+    other ClickHouse answer, a statement's own cap included, is a finding."""
+    if isinstance(
+        e,
+        TimeoutError
+        | leases.LeaseBusy
+        | leases.LeaseUnavailable
+        | BackendUnavailableError
+        | BackendTimeoutError
+        | OverloadedError,
+    ):
+        return True
+    if is_transient_network_error(e):
+        return True
+    code = error_code(e)
+    if code in _NETWORK_CODES or code == _TOO_MANY_SIMULTANEOUS_QUERIES:
+        return True
+    return code == _MEMORY_LIMIT_EXCEEDED and ("(total)" in str(e) or "(for user)" in str(e))
 
 
 _unreached_kind = ""
+_unreached_since = 0.0
 
 
-def _probe_unreached(e: BaseException) -> None:
-    """A probe that could not run (a lease another replica held, a dropped
-    connection, a timeout) is not a finding: it keeps the last answer, so a
-    replica still starting answers OVERLOADED, which a client resends, and one
-    whose probe passed keeps answering. The error is logged once per kind."""
-    global _unreached_kind
+def _probe_failed(what: str, e: BaseException) -> None:
+    """Record a probe or setup that raised. A ClickHouse answer, or a refusal
+    Loom wrote, is a finding. No answer at all keeps a finding, and leaves a
+    replica that was serving or starting unknown, so it answers OVERLOADED,
+    which a client resends, until a probe runs; no answer for three probe
+    intervals becomes a finding of its own."""
+    global _ready, _problem, _unreached_kind, _unreached_since
+    if isinstance(e, SetupRefused):
+        _set_problem(f"{what}: {e}")
+        return
+    if not _no_answer(e):
+        _set_problem(f"{what}: {error_kind(e)}", error_line(e))
+        return
     kind = error_kind(e)
     if kind != _unreached_kind:
         _unreached_kind = kind
-        log.warning(
-            "the analysis probe could not run (%s); the last answer stands: %s",
-            kind,
-            _scrubbed(error_line(e)),
-        )
+        log.warning("the analysis probe got no answer (%s): %s", kind, _scrubbed(error_line(e)))
+    if _ready is False:
+        return  # a finding stands until a probe that runs clears it
+    now = time.monotonic()
+    if _ready is True or not _unreached_since:
+        _unreached_since = now
+    if now - _unreached_since > 3 * float(settings.ch_analysis_probe_interval_s):
+        _set_problem(f"the analysis probe has had no answer for three probes: {kind}")
+        return
+    _ready, _problem = None, ""
 
 
 def start_probe_loop() -> asyncio.Task[None]:
@@ -464,17 +490,17 @@ async def _canary_reads(secrets_: tuple[bytes, str]) -> bool:
     try:
         return await store.count_rows(boundary.CANARY_TABLE, password=password, extra=extra) == 1
     except Exception as e:
-        if _transient(e):
-            raise  # no answer about the key: the probe did not run
-        return False  # a refused login or read: the key is not in force
+        if _no_answer(e):
+            raise  # no answer about the key
+        return False  # a refused login, a refused or capped read: the key is not in force
 
 
 def _set_problem(problem: str, detail: str = "") -> None:
     """Record the probe's answer. `problem` is Loom's own text, which
     `/v1/health` shows without a token; `detail` (a driver's text, the names
     of policies or databases) goes only to the log."""
-    global _ready, _problem, _unreached_kind
-    _unreached_kind = ""  # the probe ran: an unreached one logs again
+    global _ready, _problem, _unreached_kind, _unreached_since
+    _unreached_kind, _unreached_since = "", 0.0  # the probe ran: no answer logs again
     scrubbed = _scrubbed(problem)
     changed = scrubbed != _problem
     _problem = scrubbed
@@ -525,7 +551,15 @@ async def _probe() -> tuple[str, bool, str]:
         except Exception as e:
             if error_code(e) == _ACCESS_DENIED:
                 return f"{boundary.ANALYST_USER} lacks its grants on {t.name}", True, ""
-            raise
+            if _no_answer(e):
+                raise
+            # A cap the count hit: no policy narrows the reserved scope to nothing.
+            return (
+                f"{t.name}'s count in the reserved scope failed ({error_kind(e)}): "
+                f"{boundary.ANALYST_USER} may have no scope policy on it",
+                True,
+                error_line(e),
+            )
         if admitted:
             # Seen as the analyst, a missing policy (under the server default a
             # user with none reads every row) and a widening one look alike, so
@@ -542,8 +576,8 @@ async def _probe() -> tuple[str, bool, str]:
         except Exception as e:  # a refusal (497) is the expected answer
             if error_code(e) == _ACCESS_DENIED:
                 continue
-            if _transient(e):
-                raise  # no answer about the grant: the probe did not run
+            if _no_answer(e):
+                raise  # no answer about the grant
             return f"{boundary.ANALYST_USER} was not refused {shown} ({error_kind(e)})", False, ""
         return f"{boundary.ANALYST_USER} may read {shown}: its grants are too wide", True, ""
     if await store.own_version(password=_password(), extra={}) > boundary.ENTITY_VERSION:
@@ -572,7 +606,9 @@ async def _signed_only(table: str) -> bool:
     except Exception as e:
         if error_code(e) == store.UNKNOWN_SETTING:
             return True
-        raise
+        if _no_answer(e):
+            raise
+        return False  # read, or refused another way: not under the scope policy
     return False
 
 

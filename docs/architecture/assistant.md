@@ -496,18 +496,22 @@ access management:
   check.
 
 A failed check answers `ANALYSIS_UNAVAILABLE`, which no client resends, and is a
-`loom doctor` problem. A probe that could not run (a lease another replica holds, a
-dropped connection, a timeout) is no finding and keeps the last answer, so a replica
-whose first probe has not run answers `OVERLOADED`, as does a statement that finds
-ClickHouse short of memory; both are resent after 5 s. Once the probe has found a
-problem, a repair that fails keeps the finding: a replica whose problem no write could
-fix answers `ANALYSIS_UNAVAILABLE` with the problem in `loom doctor`, and never passes
-for want of a write. `/v1/health` answers without a token, so the problem it shows is
-Loom's own text; the driver's text and the names of policies and databases go to the
-server log, and the 503 a caller gets names no cause. Unless the stored version is newer
-than its own, a replica that writes the entities itself writes them again under the
-lease after a check failed with a definite answer that a write repairs: a table without
-its policy, a canary under another key (with [part 2](#build-order), checked again once
+`loom doctor` problem. Every ClickHouse answer that is not a clean probe is a finding, a
+statement's own cap included (a count in the reserved scope that hits one was not
+narrowed to nothing by a policy), and a repair that fails keeps the finding it was for:
+a replica whose problem no write could fix answers `ANALYSIS_UNAVAILABLE` with the
+problem in `loom doctor`. A probe that got no answer at all (a dropped connection, a
+client-side wait that ran out, the pool or the lease held elsewhere, the analyst's
+concurrency cap, a server short of memory) is no pass either: it keeps a finding, and
+leaves a replica that was serving or starting answering `OVERLOADED`, which a client
+resends after 5 s, as does a statement that finds ClickHouse short of memory. No answer
+for three probe intervals is a finding of its own, so no replica serves on a check that
+has not passed. `/v1/health` answers without a token, so the problem it shows is Loom's
+own text; the driver's text and the names of policies and databases go to the server
+log, and the 503 a caller gets names no cause. Unless the stored version is newer than
+its own, a replica that writes the entities itself writes them again under the lease
+after a check failed with a definite answer that a write repairs: a table without its
+policy, a canary under another key (with [part 2](#build-order), checked again once
 three settle times have passed since the row's stored time, as `loom doctor` does, since
 a server still applying a rotation looks the same), a grant outside the allowlist.
 Elsewhere `loom doctor` names `loom ch-setup` as the fix. A policy Loom did not write,

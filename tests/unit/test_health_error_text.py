@@ -137,7 +137,8 @@ def test_a_polled_failure_is_logged_once_a_minute(caplog: pytest.LogCaptureFixtu
 
 def test_an_unreached_analysis_probe_shows_no_driver_text(monkeypatch: pytest.MonkeyPatch) -> None:
     # A probe that could not reach ClickHouse is no finding: health shows no
-    # analysis problem, and the driver's text goes to the log only.
+    # analysis problem (the replica answers OVERLOADED), and the driver's text
+    # goes to the log only.
     from server.insights.app import analysis
     from server.observability import problems
 
@@ -147,6 +148,7 @@ def test_an_unreached_analysis_probe_shows_no_driver_text(monkeypatch: pytest.Mo
     monkeypatch.setattr(analysis, "_ready", None)
     monkeypatch.setattr(analysis, "_problem", "")
     monkeypatch.setattr(analysis, "_unreached_kind", "")
+    monkeypatch.setattr(analysis, "_unreached_since", 0.0)
     monkeypatch.setattr(analysis.store, "sealed_secrets", down)
     asyncio.run(analysis.reprobe())
     ok, error = analysis.analysis_state()

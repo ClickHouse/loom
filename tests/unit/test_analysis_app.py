@@ -492,20 +492,6 @@ def test_ch_setups_analyst_line_advises_the_printed_sql_only_after_a_migration(
     assert ("--print-analyst-sql" in line) is advised
 
 
-def test_an_unreached_probe_keeps_the_last_answer_and_logs_the_text(
-    monkeypatch: pytest.MonkeyPatch, ready: None, caplog: pytest.LogCaptureFixture
-) -> None:
-    # A dropped connection is no finding: a replica whose probe passed keeps answering.
-    driver = "Code: 210. Connection refused (ch-internal-7:9440) SELECT 1 AS one"
-    monkeypatch.setattr(app.store, "sealed_secrets", _failing(driver))
-    monkeypatch.setattr(app, "_unreached_kind", "")
-    asyncio.run(app.reprobe())
-    asyncio.run(app.reprobe())
-    assert app.analysis_state() == (True, "")
-    logged = [r.message for r in caplog.records if "ch-internal-7" in r.message]
-    assert len(logged) == 1  # once per kind
-
-
 def test_a_replica_whose_first_setup_could_not_run_answers_overloaded(
     monkeypatch: pytest.MonkeyPatch, ready: None
 ) -> None:
@@ -747,22 +733,137 @@ def test_a_finding_whose_repair_fails_is_kept(monkeypatch: pytest.MonkeyPatch, r
     assert ready_now is False and problem == "loom_analyst holds grants outside the allowlist"
 
 
-def test_a_canary_read_that_times_out_is_no_finding(
-    monkeypatch: pytest.MonkeyPatch, ready: None
-) -> None:
-    # No answer about the key: the last answer stands.
+def _clean_ran(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app.store, "sealed_secrets", _returns(None))
-    monkeypatch.setattr(app.store, "run_statement", _failing("timed out reading from ClickHouse"))
+    monkeypatch.setattr(app.store, "can_manage_access", _returns(False))
     monkeypatch.setattr(app, "_unreached_kind", "")
-    asyncio.run(app.reprobe())
-    assert app.analysis_state() == (True, "")
+    monkeypatch.setattr(app, "_unreached_since", 0.0)
 
 
-def test_an_unreached_probe_after_one_that_ran_logs_again(
+def test_a_probe_with_no_answer_stops_serving_but_is_resent(
     monkeypatch: pytest.MonkeyPatch, ready: None, caplog: pytest.LogCaptureFixture
 ) -> None:
-    monkeypatch.setattr(app, "_unreached_kind", "")
-    app._probe_unreached(RuntimeError("Code: 210. Connection refused"))
-    app._set_problem("")  # a probe that ran
-    app._probe_unreached(RuntimeError("Code: 210. Connection refused"))
-    assert sum("could not run" in r.message for r in caplog.records) == 2
+    # No answer is no pass: the replica answers OVERLOADED, which a client resends.
+    _clean_ran(monkeypatch)
+    monkeypatch.setattr(app, "_probe", _failing_probe(TimeoutError("read timed out")))
+    asyncio.run(app.reprobe())
+    asyncio.run(app.reprobe())
+    assert app.analysis_state() == (None, "")
+    assert sum("got no answer" in r.message for r in caplog.records) == 1  # once per kind
+    with pytest.raises(OverloadedError):
+        asyncio.run(app.handle_insights_query(_query()))
+
+
+def test_no_answer_for_three_probes_is_a_finding(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    from server.settings import settings
+
+    _clean_ran(monkeypatch)
+    monkeypatch.setattr(settings, "ch_analysis_probe_interval_s", 5.0)
+    monkeypatch.setattr(app, "_probe", _failing_probe(TimeoutError("read timed out")))
+    now = [100.0]
+
+    def monotonic() -> float:
+        now[0] += 10.0  # each reading a probe interval and more later
+        return now[0]
+
+    monkeypatch.setattr(app.time, "monotonic", monotonic)
+    for _ in range(3):
+        asyncio.run(app.reprobe())
+    ready_now, problem = app.analysis_state()
+    assert ready_now is False and "no answer for three probes" in problem
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        "Code: 159. DB::Exception: Timeout exceeded",
+        "Code: 158. DB::Exception: Limit for rows to read exceeded",
+        "Code: 241. DB::Exception: Memory limit (for query) exceeded",
+    ],
+)
+def test_a_capped_reserved_scope_count_is_a_finding(
+    monkeypatch: pytest.MonkeyPatch, ready: None, error: str
+) -> None:
+    # A count that hits a cap was not narrowed to nothing by a scope policy.
+    async def run(sql: str, **_: Any) -> Any:
+        if boundary.CANARY_TABLE in sql:
+            return [], [], [(1,)]
+        raise RuntimeError(error)
+
+    monkeypatch.setattr(app.store, "run_statement", run)
+    problem, repairable, _ = asyncio.run(app._probe())
+    assert "count in the reserved scope failed" in problem and repairable
+
+
+def test_a_canary_read_with_no_answer_raises(monkeypatch: pytest.MonkeyPatch, ready: None) -> None:
+    monkeypatch.setattr(app.store, "run_statement", _failing("Code: 210. Connection refused"))
+    with pytest.raises(RuntimeError):
+        asyncio.run(app._probe())
+
+
+def test_a_manage_check_with_no_answer_does_not_pass_a_replica(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    # A foreign-policy finding must not clear because the access check timed out.
+    monkeypatch.setattr(app, "_ready", False)
+    monkeypatch.setattr(app, "_problem", "row policies Loom did not write are on the tables")
+    _clean_ran(monkeypatch)
+    monkeypatch.setattr(app, "_probe", _returns(("", False, "")))
+
+    async def manage() -> bool:
+        raise TimeoutError("read timed out")
+
+    monkeypatch.setattr(app.store, "can_manage_access", manage)
+    asyncio.run(app.reprobe())
+    assert app.analysis_state()[0] is not True
+
+
+@pytest.mark.parametrize(
+    ("error", "ready_after"),
+    [(TimeoutError("read timed out"), None), (RuntimeError("Code: 47. Unknown identifier"), False)],
+)
+def test_a_failed_foreign_policy_check_after_a_clean_probe(
+    monkeypatch: pytest.MonkeyPatch, ready: None, error: Exception, ready_after: bool | None
+) -> None:
+    _clean_ran(monkeypatch)
+    monkeypatch.setattr(app, "_probe", _returns(("", False, "")))
+    monkeypatch.setattr(app.store, "can_manage_access", _returns(True))
+
+    async def foreign() -> tuple[str, str]:
+        raise error
+
+    monkeypatch.setattr(app, "_foreign_problem", foreign)
+    asyncio.run(app.reprobe())
+    assert app.analysis_state()[0] is ready_after
+
+
+def test_a_recheck_that_does_not_finish_after_a_repair_keeps_the_finding(
+    monkeypatch: pytest.MonkeyPatch, ready: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    _clean_ran(monkeypatch)
+    calls = iter(
+        [("memory admits rows in the reserved scope", True, ""), TimeoutError("timed out")]
+    )
+
+    async def probe() -> Any:
+        answer = next(calls)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(app, "_probe", probe)
+    monkeypatch.setattr(app.store, "can_manage_access", _returns(True))
+    monkeypatch.setattr(app, "_write_under_lease", _returns(("", "")))
+    asyncio.run(app.reprobe())
+    ready_now, problem = app.analysis_state()
+    assert ready_now is False and problem == "memory admits rows in the reserved scope"
+    assert any("re-check did not finish" in r.message for r in caplog.records)
+
+
+def _failing_probe(error: Exception):
+    async def probe() -> Any:
+        raise error
+
+    return probe
