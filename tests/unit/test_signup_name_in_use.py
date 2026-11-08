@@ -299,6 +299,7 @@ def test_every_table_the_lookup_reads_is_ordered_by_org_and_namespace() -> None:
         "loom.task_events": "org, inbox",
         "loom.task_inboxes": "org, inbox",
         "loom.qa_sources": "org, name",
+        "loom.erasure_requests": "id",
         "loom.sso_links": "email, org, namespace",
     }
     for table in [*namespace_tables(), *namespace_census.STATE_TABLES]:
@@ -417,3 +418,50 @@ def test_another_subjects_live_grant_holds_back_the_owners_completion() -> None:
     assert not _held(_grant("Kim@Corp.test", 1))
     assert not _held(_grant("lee", 1), _grant("lee", 2, revoked=True))
     assert _held(_grant("lee", 1))
+
+
+@needs_clickhouse
+@pytest.mark.parametrize(
+    ("row", "live"),
+    [
+        (
+            "INSERT INTO loom.knowledge_sources (org, namespace, name, active, version)"
+            " VALUES ('dev', 'team', 's', {flag}, 1)",
+            ("true", "false"),
+        ),
+        (
+            "INSERT INTO loom.code_repos (org, namespace, repo, active, version)"
+            " VALUES ('dev', 'team', 'o/x', {flag}, 1)",
+            ("true", "false"),
+        ),
+        (
+            "INSERT INTO loom.collections (org, namespace, owner, deleted, version)"
+            " VALUES ('dev', 'team', 'kim', {flag}, 1)",
+            ("false", "true"),
+        ),
+        (
+            "INSERT INTO loom.sso_links (email, org, namespace, linked, version)"
+            " VALUES ('kim@x.test', 'dev', 'team', {flag}, 1)",
+            ("1", "0"),
+        ),
+        (
+            "INSERT INTO loom.erasure_requests (id, org, scope_type, scope_value, requester,"
+            " status, version) VALUES (generateUUIDv4(), 'dev', 'namespace', 'team', 'op',"
+            " {flag}, 1)",
+            ("'in_progress'", "'completed'"),
+        ),
+    ],
+)
+def test_a_state_row_counts_only_while_live(row: str, live: tuple[str, str]) -> None:
+    on, off = live
+    assert _in_use(_local_ch(row.format(flag=on)))
+    assert not _in_use(_local_ch(row.format(flag=off)))
+
+
+@needs_clickhouse
+def test_a_promoted_shared_row_marks_the_name_in_use() -> None:
+    shared = (
+        "INSERT INTO loom.shared (org, namespace, memory_key, value, reversible_until, version)"
+        " VALUES ('dev', 'team', 'k', 'v', now(), 1)"
+    )
+    assert _in_use(_local_ch(shared))

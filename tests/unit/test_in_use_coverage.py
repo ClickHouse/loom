@@ -47,7 +47,6 @@ EXEMPT: dict[str, str] = {
     "loom.qa_rollup_days": _TRACKER,
     "loom.qa_test_daily": _TRACKER,
     "loom.code_backport_gaps": _CODE,
-    "loom.erasure_requests": "records an erasure; holds no content",
     "loom.erasure_reversals": "records an erasure; holds no content",
     "loom.machine_identities": "a bot's roles, written only for a registered name, whose row stays",
     "loom.service_accounts": "its authority on a name is its creator's or its own live grant",

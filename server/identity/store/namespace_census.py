@@ -74,7 +74,8 @@ async def unregistered_live(
 
 _AT = "org = {org:String} AND namespace = {ns:String}"
 # Tables outside the erasure census whose live rows a later owner of the name would
-# inherit (a grant, an outside target, a source, a tree node, an identity link), each
+# inherit (a grant, an outside target, a source, a tree node, an identity link, an open
+# erasure), each
 # with the condition that makes its row live. Every other table keyed by namespace is
 # counted by the census or exempt with a reason (tests/unit/test_in_use_coverage.py).
 STATE_TABLES: dict[str, str] = {
@@ -89,6 +90,9 @@ STATE_TABLES: dict[str, str] = {
     "loom.collections": f"FINAL WHERE {_AT} AND NOT deleted",
     "loom.shared": f"WHERE {_AT}",
     "loom.sso_links": f"FINAL WHERE {_AT} AND linked = 1",
+    # An open erasure of the name would sweep a new owner's rows as its own.
+    "loom.erasure_requests": "FINAL WHERE org = {org:String} AND scope_type = 'namespace'"
+    " AND scope_value = {ns:String} AND status != 'completed'",
 }
 
 

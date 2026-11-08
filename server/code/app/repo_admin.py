@@ -352,6 +352,7 @@ async def _add_extra_branches(
             skipped.append({"branch": branch, "reason": caller_text(e)})
             continue
         except LoomServerError as e:  # failed or cut short under its claim
+            logger.warning("extra branch %s of %s not registered: %s", branch, repo, e)
             why = caller_text(e)
             reason = f"{namespace}: {why}; it may be partly set up, check it before adding again"
             skipped.append({"branch": branch, "reason": reason})

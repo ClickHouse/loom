@@ -93,6 +93,8 @@ def test_a_subject_granted_elsewhere_in_the_org_cannot_be_claimed(
         grants = (("dev", "Bob"), ("other-org", "carol"))
 
         async def query_one(self, sql: str, params: Any = None) -> Any:
+            if "AS in_use" in sql:  # the in-use read: the name itself holds nothing
+                return None
             if "namespace_grants" in sql:
                 held = {(o, s.lower()) for o, s in self.grants}
                 return {"held": 1} if (params["org"], params["name"]) in held else None
@@ -192,6 +194,8 @@ def test_agent_signup_cannot_claim_an_empowered_name(
 def test_agent_signup_cannot_claim_a_granted_name(monkeypatch: pytest.MonkeyPatch, ch: _CH) -> None:
     class _Granted(_CH):
         async def query_one(self, sql: str, params: Any = None) -> Any:
+            if "AS in_use" in sql:  # the in-use read: the name itself holds nothing
+                return None
             if "namespace_grants" in sql:
                 return {"held": 1} if params["name"] == "agent-bot" else None
             return await super().query_one(sql, params)
