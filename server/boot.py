@@ -234,12 +234,11 @@ def mark_process_start(ch: Any) -> None:
 
 async def register_tracker_namespaces(ch: Any) -> None:
     """The leader gives every configured tracker namespace its directory row
-    (restricted where listed) — at boot when the lease is held, or when the
-    lease is acquired on retry. Never
-    fatal: a failed registration logs and the gate keeps refusing. A pass that
-    skipped a namespace (its account claim busy past its wait) or failed is tried again
-    in the background while this process leads, so a narrowing does not wait for the
-    next boot."""
+    (restricted where listed) — at boot when the lease is held, or when this
+    process later acquires the lease. Never fatal: a failed registration logs
+    and the gate keeps refusing. A pass that skipped a namespace (its account
+    claim busy past its wait) or failed is tried again in the background while
+    this process leads, so a narrowing does not wait for the next boot."""
     global _TRACKER_RETRY
     from server.workers import leader
 

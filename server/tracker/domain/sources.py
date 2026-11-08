@@ -358,7 +358,9 @@ def _entry_from_json(ns: str, raw: Any, known_sources: set[str]) -> NamespaceEnt
     repos_raw = raw.get("repos") or []
     if not isinstance(repos_raw, list):  # kept with no repositories: it stays restricted and in use
         _warn_once(
-            f"repos:{ns}", f"LOOM_TRACKER_SOURCES_JSON namespace {ns!r}: repos is not a list"
+            f"repos:{ns}",
+            f"LOOM_TRACKER_SOURCES_JSON namespace {ns!r}: repos is not a list; it reads no "
+            "repositories",
         )
         repos_raw = []
     repos = tuple(sorted({str(r).strip() for r in repos_raw if str(r).strip()}))

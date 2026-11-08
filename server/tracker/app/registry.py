@@ -8,7 +8,7 @@ configured (a restricted tracker namespace carries private-repository issues and
 PRs; the restricted-namespace gate covers it). An existing row is narrowed to restricted
 when the config says so and never widened. The leader runs
 `ensure_configured_tracker_namespaces` at boot so the row exists before the
-first read (a claim busy past its wait: by the boot retry).
+first read (or, when its claim stays busy past the wait, by the background retry).
 """
 
 from __future__ import annotations

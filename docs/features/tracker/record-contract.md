@@ -160,7 +160,8 @@ A source entry may also carry:
 Rules:
 
 - A namespace naming an unknown source does not serve (one error line at boot, never a
-  guess).
+  guess). One whose `repos` is not a list reads no repositories and keeps its `restricted`
+  flag.
 - Each source has its own connection, circuit breaker and time budget, so one team's slow
   service never trips another's breaker.
 - Registered sources (`loom.qa_sources`) are re-read every
