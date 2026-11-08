@@ -415,51 +415,21 @@ def test_the_primer_names_collection_list_by_the_tool_that_reaches_it() -> None:
 
 
 def test_the_primers_say_loom_search_reads_collections() -> None:
-    import asyncio
-
-    from server.auth.jwt import AuthInfo
-    from server.operations.base import Role
-
-    auth = AuthInfo(
-        subject="a", org="o", namespaces=("n",), roles=(Role.WRITER,), is_service_account=False
-    )
-    full = asyncio.run(
-        mcp_primer._loom_primer_text(auth, include_profile=False, toolset="core", defaults=None)
-    )
+    full = mcp_primer._loom_rules("core", None)
     assert "and the collections you can read" in full
-    coding = asyncio.run(
-        mcp_primer._coding_instructions(
-            auth, include_profile=False, toolset="coding", defaults=None
-        )
-    )
+    coding = mcp_primer._coding_instructions("coding")
     assert "also reads the collections you can read" in coding
 
 
 def test_the_primers_drop_the_collections_clause_when_search_does_not_span_them(
     monkeypatch,
 ) -> None:
-    import asyncio
-
-    from server.auth.jwt import AuthInfo
-    from server.operations.base import Role
-
-    auth = AuthInfo(
-        subject="a", org="o", namespaces=("n",), roles=(Role.WRITER,), is_service_account=False
-    )
     monkeypatch.setattr(settings, "knowledge_search_fanout_kinds", "memory")
-    full = asyncio.run(
-        mcp_primer._loom_primer_text(auth, include_profile=False, toolset="core", defaults=None)
-    )
+    full = mcp_primer._loom_rules("core", None)
     assert "and the collections you can read" not in full
-    coding = asyncio.run(
-        mcp_primer._coding_instructions(
-            auth, include_profile=False, toolset="coding", defaults=None
-        )
-    )
+    coding = mcp_primer._coding_instructions("coding")
     assert "collections you can read" not in coding
     # "" spans every kind.
     monkeypatch.setattr(settings, "knowledge_search_fanout_kinds", "")
-    full = asyncio.run(
-        mcp_primer._loom_primer_text(auth, include_profile=False, toolset="core", defaults=None)
-    )
+    full = mcp_primer._loom_rules("core", None)
     assert "and the collections you can read" in full

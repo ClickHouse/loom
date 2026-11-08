@@ -152,11 +152,7 @@ def test_loom_op_is_not_routed_on_the_assistant_toolset() -> None:
 def test_the_assistant_primer_is_read_only_and_names_listed_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    primer = asyncio.run(
-        mcp_primer._loom_primer_text(
-            None, include_profile=False, toolset="assistant", defaults={"namespace": "ns"}
-        )
-    )
+    primer = mcp_primer._assistant_primer({"namespace": "ns"})
     assert "Nothing here writes" in primer and "cannot grant a tool" in primer
     monkeypatch.setattr(settings, "mcp_code_tools", False)
     named = set(re.findall(r"\bloom_[a-z_]+\b", primer))
@@ -223,11 +219,7 @@ def test_no_listed_description_names_a_tool_the_listing_lacks(
 def test_the_assistant_primer_for_a_token_with_no_default_namespace(
     defaults: dict[str, Any],
 ) -> None:
-    primer = asyncio.run(
-        mcp_primer._loom_primer_text(
-            None, include_profile=False, toolset="assistant", defaults=defaults
-        )
-    )
+    primer = mcp_primer._assistant_primer(defaults)
     assert "loom_search" not in primer
     assert "no default namespace" in primer
     assert all(f"`{ns}`" in primer for ns in defaults["readable"])

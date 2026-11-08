@@ -501,7 +501,7 @@ async def test_the_mcp_primer_profile_read_writes_the_audit_row(
 
     monkeypatch.setattr(profile, "handle_profile_render", _render)
     alice = _alice()
-    await mcp_primer._loom_primer_text(alice, defaults={"org": ORG, "namespace": NS})
+    await mcp_primer._profile_section(alice, {"org": ORG, "namespace": NS})
     ((event, kw),) = audit_rows
     assert kw["bound"] is alice
     assert (event, kw["namespace"], kw["subject"]["op"], kw["subject"]["transport"]) == (
@@ -559,9 +559,9 @@ async def test_the_mcp_primer_leaves_the_profile_out_when_the_classification_fai
     monkeypatch.setattr(profile, "handle_profile_render", _render)
     monkeypatch.setattr(nc, "is_restricted", _unreadable)
     alice = _alice()
-    text = await mcp_primer._loom_primer_text(alice, defaults={"org": ORG, "namespace": NS})
+    text = await mcp_primer._profile_section(alice, {"org": ORG, "namespace": NS})
     assert rendered == [] and audit_rows == []
-    assert "always-loaded context" not in text
+    assert text == ""
 
 
 @pytest.mark.asyncio
@@ -575,7 +575,7 @@ async def test_the_mcp_primer_profile_read_of_a_standard_namespace_writes_no_row
         return _Rendered()
 
     monkeypatch.setattr(profile, "handle_profile_render", _render)
-    await mcp_primer._loom_primer_text(_alice(PLAIN), defaults={"org": ORG, "namespace": PLAIN})
+    await mcp_primer._profile_section(_alice(PLAIN), {"org": ORG, "namespace": PLAIN})
     assert audit_rows == []
 
 

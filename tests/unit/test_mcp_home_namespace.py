@@ -342,7 +342,7 @@ def test_an_unaddressed_write_from_a_qa_only_token_asks_for_a_namespace(
 def _primer_text(token: Any) -> str:
     from server.transport import mcp_primer
 
-    return asyncio.run(mcp_primer._loom_primer_text(token, include_profile=False))
+    return mcp_primer._loom_rules(None, asyncio.run(mcp_primer._caller_defaults(token)))
 
 
 def _coding_line(token: Any) -> str:

@@ -227,9 +227,7 @@ def test_list_results_carry_cache_hints_and_the_primer_is_private(
     for r in (tools, prompts, resources):
         assert r["cacheScope"] == "public" and r["ttlMs"] == 300_000
 
-    async def _primer(
-        auth: Any, *, include_profile: bool = True, toolset: str | None = None
-    ) -> str:
+    async def _primer(auth: Any, *, toolset: str | None = None) -> str:
         return "PRIMER"
 
     monkeypatch.setattr(mcp_primer, "_loom_primer_text", _primer)
