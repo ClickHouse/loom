@@ -761,17 +761,17 @@ too) with sequential consistency; when it cannot be read the sign-up fails and n
 provisioned. The personal-namespace auto-claim passes over a name in use to its fallback
 name, a workload trust's exchange refuses an agent name in use, and a first write's
 auto-registration names no owner on a name in use (rows a read leaves aside,
-`namespace_autoregister.READ_TRACES`), so its writer cannot complete the registration. Every other path that
-registers a name as new and makes its caller admin (`namespace.register`,
-`namespace.restore` into a fresh target, `collection.create`, a self-service code
-repository or tracker source, which checks again under the account's claim after its
-remote probe) refuses a name in use unless the caller passes the gate's ADMIN check on it,
-within its token's limit on the name (`registration.refused_as_in_use`; for a collection
-name outside the tree, a platform admin). The refusal is the one a registered name's
-non-admin gets; the time it takes may still differ, as a registered name is answered
-before the in-use read. With auth off nobody is refused. An operator gives such a
-namespace an owner: `loom namespaces-adopt` registers the ones holding live memory, and an
-admin grant covers the rest, an ownerless auto-registered row included.
+`namespace_autoregister.READ_TRACES`), so its writer cannot complete the registration.
+Every other path that registers a name as new and makes its caller admin
+(`namespace.register`, `namespace.restore` into a fresh target, `collection.create`, a
+self-service code repository or tracker source, which checks again under the account's
+claim after its remote probe) refuses a name in use unless the caller passes the gate's
+ADMIN check on it, within its token's limit on the name (`registration.refused_as_in_use`;
+for a collection name outside the tree, a platform admin). The refusal is the one a
+registered name's non-admin gets; the time it takes may still differ, as a registered name
+is answered before the in-use read. With auth off nobody is refused. An operator gives
+such a namespace an owner: `loom namespaces-adopt` registers the ones holding live memory,
+and an admin grant covers the rest, an ownerless auto-registered row included.
 
 Two kinds of use leave nothing to find. A flat token minted for a name
 (`loom mint-token --namespaces <name>`) authorizes it without a row until its first
