@@ -826,6 +826,8 @@ async def sync_restricted_page_branches(
     random.shuffle(page)
     done: set[tuple[str, str]] = set()
     for org in dict.fromkeys(c.org for c in page):
+        if exhausted():
+            return
         mine = [c for c in page if c.org == org]
         try:
             restricted = await _restricted(get_client(), org, {c.namespace: c.source for c in mine})

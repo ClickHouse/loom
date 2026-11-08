@@ -6,13 +6,15 @@ indistinguishable from memory namespaces. Each ingest pass calls
 ensure_registered() once per process per repo entry: if no directory row exists, insert
 one with kind='code' and visibility='private' (read access stays grant-driven — see
 docs), restricted when either the registry row read then or the snapshot says so. An
-existing row is re-inserted in full in three cases only: the config says the
-repository is public and the row is a standard one not yet open (join_policy=open); the
-config classifies the entry `restricted` and the row does not (narrowed); a maintainer's
-access row says `standard` and the row says restricted (widened, the maintainer's own
-decision). Each case reads the registry row again under the namespace's admins claim,
-since this process's snapshot of it may predate a maintainer's change. The entry's
-mirror and checkouts are tightened by the ingest pass, not here.
+existing row is re-inserted in full in three cases only, each deciding from the registry
+row read again under the namespace's admins claim, as this process's snapshot of it may
+predate a maintainer's change: a standard row not yet open is opened when an access row
+newer than it says open, or with no access row when the operator's entry says public; a
+row not restricted is narrowed when the entry is restricted and no access row says
+otherwise; a restricted row is widened when a standard access row is newer than it (the
+maintainer's own decision). A newer access row is required because
+`code.repo.set_access` writes the directory row first. The entry's mirror and checkouts
+are tightened by the ingest pass, not here.
 """
 
 from __future__ import annotations
@@ -156,9 +158,10 @@ async def _write_row(cfg: Any, client: Any) -> bool:
         opened.update(join_policy="open", visibility="private", updated_at=now)
         await client.insert("loom.namespaces", [opened])
         logger.info(
-            "code namespace %s/%s directory row set open (config says public)",
+            "code namespace %s/%s directory row set open (%s says public)",
             cfg.org,
             cfg.namespace,
+            "the operator's entry" if access is None else "the access row",
         )
     if narrowing and (access is None or access_restricted):
         narrowed = dict(row)
@@ -175,8 +178,8 @@ async def _write_row(cfg: Any, client: Any) -> bool:
             row.get("classification"),
         )
     if widening and follows_access:
-        # A maintainer opened the repository; the directory follows the access
-        # row, not the entry's default
+        # A maintainer opened the repository; the directory follows the access row,
+        # written after it, not the entry's default
         widened = dict(row)
         widened["classification"] = "standard"
         widened["join_policy"] = str((access or {}).get("join_policy") or "approval")
