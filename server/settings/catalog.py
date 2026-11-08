@@ -2040,8 +2040,9 @@ class KnowledgeSettings(BaseModel):
     knowledge_upload_ttl_seconds: int = Field(default=86_400, ge=60)
     # The worker that runs ingestion jobs: extract, chunk, embed, publish.
     knowledge_ingest_enabled: bool = True
-    # Seconds between ingestion passes while jobs wait.
-    knowledge_ingest_interval_seconds: int = 2
+    # Seconds between ingestion passes while jobs wait; 0 takes the next job as soon
+    # as one ends, so the queue drains at the speed of its jobs.
+    knowledge_ingest_interval_seconds: int = 0
     # Seconds between passes when the last one found nothing to do.
     knowledge_ingest_idle_interval_seconds: int = 15
     # Seconds one pass, which runs one job, may take before it is cancelled:

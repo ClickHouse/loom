@@ -69,6 +69,8 @@ interface WorkerRow {
   effective: boolean;
   disabled_reason?: string;
   interval_seconds?: number;
+  // The wait after a pass that found no work, when the worker has one.
+  idle_interval_seconds?: number;
   // last_run_at: latest tick regardless of outcome (success iff
   // consecutive_failures==0); last_error: set only on a failed tick.
   last_run_at?: string;
@@ -109,6 +111,7 @@ function parseWorkerRow(name: string | undefined, b: unknown): WorkerRow | null 
     effective: b.effective === true,
     disabled_reason: str(b.disabled_reason),
     interval_seconds: num(b.interval_seconds),
+    idle_interval_seconds: num(b.idle_interval_seconds),
     last_run_at: str(b.last_run_at),
     last_duration_ms: num(b.last_duration_ms),
     consecutive_failures: num(b.consecutive_failures),
@@ -298,10 +301,13 @@ function statusOf(w: WorkerRow): WorkerStatus {
   }
   const lastRun = parseChTime(w.last_run_at);
   if (!lastRun) return "waiting";
-  // Stalled = last tick older than 3× the interval. Unknown interval → healthy.
-  if (w.interval_seconds && w.interval_seconds > 0) {
+  // Stalled = last tick older than 3× the longer of its waits: the interval, or the idle
+  // interval a worker that runs back to back (interval 0) keeps when it finds no work.
+  // Neither known → healthy.
+  const cadence = Math.max(w.interval_seconds ?? 0, w.idle_interval_seconds ?? 0);
+  if (cadence > 0) {
     const ageMs = Date.now() - lastRun.getTime();
-    if (ageMs > w.interval_seconds * 1000 * 3) return "stalled";
+    if (ageMs > cadence * 1000 * 3) return "stalled";
   }
   return "healthy";
 }
@@ -585,7 +591,11 @@ export function WorkersPanel() {
                   {
                     label: (
                       <span className="text-xs text-text-muted tabular">
-                        {w.interval_seconds ? fmtInterval(w.interval_seconds) : "—"}
+                        {w.interval_seconds === 0
+                          ? "back to back"
+                          : w.interval_seconds
+                            ? fmtInterval(w.interval_seconds)
+                            : "—"}
                       </span>
                     ),
                   },

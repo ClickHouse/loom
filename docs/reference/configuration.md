@@ -44,6 +44,7 @@ Every change to a setting's default, from `server/settings/_history.py`. A deplo
 
 | Release | Variable | Was | Is | Why |
 | --- | --- | --- | --- | --- |
+| 1.2.0 | `LOOM_KNOWLEDGE_INGEST_INTERVAL_SECONDS` | `2` | `0` | The ingest worker takes the next job as soon as one ends instead of waiting 2 s after every job, so a queue of small documents drains at the speed of its jobs; a pass that finds no job still waits `LOOM_KNOWLEDGE_INGEST_IDLE_INTERVAL_SECONDS`. |
 | 1.2.0 | `LOOM_CLICKSTACK_USER_ID_KEYS` | `'user_id,user.id,enduser.id'` | `'user_id,user.id,enduser.id,loom.user_id,langfuse.user.id'` | A user-scoped ClickStack erasure also matches the user-id keys Loom's own child spans carry, so they are erased with the request span. A deployment that sets the variable keeps its own list and should add both keys. |
 | 1.0.0 | `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` | `3` | `8` | A failed replay now waits 15 s, 1, 5, then 30 minutes before the next attempt, and an unreachable provider spends none: eight attempts span about two hours instead of three back to back. |
 
@@ -844,7 +845,7 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | `LOOM_KNOWLEDGE_UPLOAD_MAX_BYTES` | `int` | `67108864` | live | Largest file POST /v1/knowledge.upload accepts, in bytes; a larger body is refused with 413 before any of it is stored. |
 | `LOOM_KNOWLEDGE_UPLOAD_TTL_SECONDS` | `int` | `86400` |  | Seconds an upload stays ingestible; the originals sweep keeps its bytes until then, and knowledge.ingest refuses it after. |
 | `LOOM_KNOWLEDGE_INGEST_ENABLED` | `bool` | `True` |  | The worker that runs ingestion jobs: extract, chunk, embed, publish. |
-| `LOOM_KNOWLEDGE_INGEST_INTERVAL_SECONDS` | `int` | `2` |  | Seconds between ingestion passes while jobs wait. |
+| `LOOM_KNOWLEDGE_INGEST_INTERVAL_SECONDS` | `int` | `0` |  | Seconds between ingestion passes while jobs wait; 0 takes the next job as soon as one ends, so the queue drains at the speed of its jobs. |
 | `LOOM_KNOWLEDGE_INGEST_IDLE_INTERVAL_SECONDS` | `int` | `15` |  | Seconds between passes when the last one found nothing to do. |
 | `LOOM_KNOWLEDGE_INGEST_MAX_PASS_SECONDS` | `int` | `900` |  | Seconds one pass, which runs one job, may take before it is cancelled: the extractor's timeout plus embedding the largest source. A job cut off runs again from its start and counts toward its attempts. |
 | `LOOM_KNOWLEDGE_INGEST_MAX_ATTEMPTS` | `int` | `5` |  | Attempts a job gets after a transient failure (a provider or store outage) before it fails for good. |

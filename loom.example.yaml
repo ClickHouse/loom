@@ -2482,8 +2482,9 @@ settings:
   # The worker that runs ingestion jobs: extract, chunk, embed, publish. [restart]
   # knowledge_ingest_enabled: true
 
-  # Seconds between ingestion passes while jobs wait. [restart]
-  # knowledge_ingest_interval_seconds: 2
+  # Seconds between ingestion passes while jobs wait; 0 takes the next job as soon as
+  # one ends, so the queue drains at the speed of its jobs. [restart]
+  # knowledge_ingest_interval_seconds: 0
 
   # Seconds between passes when the last one found nothing to do. [restart]
   # knowledge_ingest_idle_interval_seconds: 15

@@ -176,6 +176,7 @@ async def admin_workers_status() -> WorkersStatusOutput:
             "enabled": enabled,
             "effective": enabled,
             "interval_seconds": m["interval_seconds"],
+            "idle_interval_seconds": m["idle_interval_seconds"],
             "disabled_reason": reason,
             "disabled_detail": detail,
         }

@@ -47,4 +47,16 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
             "that sets the variable keeps its own list and should add both keys."
         ),
     ),
+    DefaultChange(
+        version="1.2.0",
+        name="knowledge_ingest_interval_seconds",
+        old=2,
+        new=0,
+        why=(
+            "The ingest worker takes the next job as soon as one ends instead of waiting "
+            "2 s after every job, so a queue of small documents drains at the speed of its "
+            "jobs; a pass that finds no job still waits "
+            "`LOOM_KNOWLEDGE_INGEST_IDLE_INTERVAL_SECONDS`."
+        ),
+    ),
 )

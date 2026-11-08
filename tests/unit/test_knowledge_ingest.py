@@ -389,6 +389,10 @@ def _ingest(w: World, upload_id: str, **over: Any) -> str:
 
 
 def _run(w: World, ingestion_id: str) -> str | None:
+    """A worker pass running the job once it is due: a retry delay is taken as passed."""
+    job = w.job(ingestion_id)
+    if job is not None and job["state"] == "pending" and job["next_attempt_at"] > _now():
+        job["next_attempt_at"] = _now() - timedelta(seconds=1)
     return asyncio.run(ingest_run.take_and_run(w.job(ingestion_id)))  # type: ignore[arg-type]
 
 
@@ -712,6 +716,67 @@ def test_the_ingest_worker_runs_on_its_settings(settings_override: Any) -> None:
     assert registry.pass_deadline_seconds("knowledge_ingest") == 1200
     settings_override(knowledge_ingest_enabled=False)
     assert "knowledge_ingest" not in {w.name for w in registry.enabled_workers()}
+
+
+def test_the_job_is_read_again_under_its_lease_with_sequential_consistency(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The worker takes the next job at once, so the run that ended a job may have
+    written on another replica a moment ago: the re-read under the lease must see it,
+    or a job already ended reads as pending and runs again."""
+    from server.core.ch import sequential_reads_active
+
+    read = ingestions.get_ingestion
+    consistent: list[bool] = []
+
+    async def recording(*a: Any, **k: Any) -> Any:
+        consistent.append(sequential_reads_active())
+        return await read(*a, **k)
+
+    job_id = _ingest(world, _upload(world))
+    monkeypatch.setattr(ingestions, "get_ingestion", recording)
+    assert _run(world, job_id) == "ready"
+    assert consistent and consistent[0] is True  # the re-read under the lease
+
+
+def test_a_job_put_back_to_wait_is_not_run_from_a_due_row_read_before_it(
+    world: World, settings_override: Any
+) -> None:
+    """A due row a lagging replica served names the job as it was; under its lease
+    the job reads as waiting out a retry delay, so it is left for its time."""
+    settings_override(knowledge_ingest_max_attempts=3)
+    world.fail_embed = BackendUnavailableError("provider down")
+    job_id = _ingest(world, _upload(world))
+    stale = dict(world.job(job_id))  # type: ignore[arg-type]  # as due() read it, due now
+    assert _run(world, job_id) == "pending"
+    waiting = world.job(job_id)
+    assert waiting is not None and waiting["next_attempt_at"] > _now()
+    world.fail_embed = None
+    assert asyncio.run(ingest_run.take_and_run(stale)) is None
+    assert world.job(job_id) == waiting  # untouched: no attempt spent, no run
+
+
+def test_a_fresh_job_written_by_a_clock_ahead_of_the_workers_still_runs(world: World) -> None:
+    """Its due time is the writer's clock and has not moved since the due row was
+    read: the worker runs it, whatever its own clock says."""
+    job_id = _ingest(world, _upload(world))
+    job = world.job(job_id)
+    assert job is not None
+    job["next_attempt_at"] = _now() + timedelta(seconds=3)  # the writer's clock runs ahead
+    assert asyncio.run(ingest_run.take_and_run(dict(job))) == "ready"
+
+
+def test_by_default_the_worker_takes_the_next_job_at_once_and_waits_only_when_idle() -> None:
+    """A pass that ran a job is followed at once, so a queue drains at the speed of
+    its jobs; one that found none waits the idle interval."""
+    from server.workers import pass_context, registry
+    from server.workers.supervisor import next_interval_seconds
+
+    spec = next(w for w in registry.enabled_workers() if w.name == "knowledge_ingest")
+    busy = pass_context.PassContext("knowledge_ingest")
+    idle = pass_context.PassContext("knowledge_ingest", idle=True)
+    assert next_interval_seconds(spec, busy) == 0
+    assert next_interval_seconds(spec, idle) == 15
 
 
 def test_a_pass_runs_one_job_passing_over_one_another_process_holds(
