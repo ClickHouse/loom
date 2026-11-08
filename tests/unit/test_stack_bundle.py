@@ -391,10 +391,15 @@ def test_a_bundle_takes_the_versions_the_release_takes(tmp_path: Path, version: 
         s for s in _release_workflow()["jobs"]["version"]["steps"] if s.get("id") == "parse"
     ]
     output = tmp_path / "output"
-    env = {"PATH": "/usr/bin:/bin", "REF": f"refs/tags/v{version}", "DRY_RUN": "false"}
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "REF": f"refs/tags/v{version}",
+        "DRY_RUN": "false",
+        "GITHUB_OUTPUT": str(output),
+    }
     run = subprocess.run(
         ["bash", "-e", "-c", parse["run"]],
-        env={**env, "GITHUB_OUTPUT": str(output)},
+        env=env,
         capture_output=True,
         text=True,
     )
