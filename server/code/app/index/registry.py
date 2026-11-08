@@ -9,7 +9,9 @@ docs). An existing row is re-inserted in full in three cases only: the config sa
 repository is public and the row is a standard one not yet open (join_policy=open); the
 config classifies the entry `restricted` and the row does not (narrowed); a maintainer's
 access row says `standard` and the row says restricted (widened, the maintainer's own
-decision). The entry's mirror and checkouts are tightened by the ingest pass, not here.
+decision). Each case reads the registry row again under the namespace's admins claim,
+since this process's snapshot of it may predate a maintainer's change. The entry's
+mirror and checkouts are tightened by the ingest pass, not here.
 """
 
 from __future__ import annotations
@@ -45,9 +47,9 @@ async def sync_maintainers(cfg: Any, client: Any) -> None:
 
 
 async def sync_restricted_page_branches(entries: list[Any]) -> None:
-    """Sync, once each, the repositories among `entries` with a restricted branch added
-    from the page: the copies it must not hold go on every pass, even when the sync
-    after its restriction failed."""
+    """Sync, once each, the repositories among `entries` with a branch added from the
+    page that this process's snapshot restricts: the copies it must not hold go on every
+    pass, even when the sync after its restriction failed."""
     from server.code.app.index import maintainers
 
     done: set[tuple[str, str]] = set()
@@ -146,7 +148,11 @@ async def _write_row(cfg: Any, client: Any) -> bool:
             cfg.org,
             cfg.namespace,
         )
-    if restricted and classification != "restricted":
+    if (
+        restricted
+        and classification != "restricted"
+        and await _access_still_restricted(cfg, client)
+    ):
         narrowed = dict(row)
         narrowed["classification"] = "restricted"
         narrowed["visibility"] = "private"
@@ -190,6 +196,15 @@ async def _access_still_open(cfg: Any, client: Any) -> bool:
         str(access.get("classification")) != "restricted"
         and str(access.get("join_policy")) == "open"
     )
+
+
+async def _access_still_restricted(cfg: Any, client: Any) -> bool:
+    """The registry row read now still restricts the repository; with none, the
+    operator's entry decides."""
+    from server.code.store.index import CodeRepo
+
+    access = await CodeRepo(client).code_repo_row(cfg.org, cfg.namespace)
+    return access is None or str(access.get("classification")) == "restricted"
 
 
 async def _access_still_standard(cfg: Any, client: Any) -> bool:

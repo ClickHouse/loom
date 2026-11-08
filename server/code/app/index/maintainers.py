@@ -21,14 +21,15 @@ gives no grant on the operator's namespaces.
   after an admin grant is created or approved on a code namespace, when a branch
   is added or restricted, and by the registrar on each pass until the self-service
   registry is read, then once per process per namespace (so environment-registered
-  branches inherit), and by the ingest pass on every pass for a repository with a
-  restricted branch added from the page. Each pass also revokes, on a restricted branch added from
-  the page, every copy whose source is not an operator entry, or rewrites it as a
-  copy of the subject's operator grant.
+  branches inherit), and by the ingest pass on every pass for a repository with
+  a restricted branch added from the page. Each pass also revokes, on a
+  restricted branch added from the page, every copy that does not trace to an
+  operator grant (`_stray`), or rewrites it as a copy of the subject's one.
 * ``revoke_repo_maintainer`` — a revoked admin leaves the branches the revoke
   reaches, except a branch where they are the only active admin (the handler's
-  own guard). From an operator entry it takes off a branch added from the page
-  only a mirror, and none from a standard one while the subject holds an admin
+  own guard) other than a restricted branch added from the page. From an
+  operator entry it takes off a branch added from the page only a mirror, and
+  none from a standard one while the subject holds an admin
   grant given on one. On a restricted branch added from the page it takes only
   copies, and a page branch's revoke only those whose source is not an operator
   entry.
@@ -643,7 +644,8 @@ async def revoke_repo_maintainer(
     """Revoke `subject`'s active admin grant on the other branches of the
     repository the revoke reaches, or lower it to `lowered_to`; a branch where
     they are the only active admin keeps them (the same guard `grants.revoke`
-    applies). `repo` is what `read_repo` answered, and the caller holds
+    applies), but not a restricted branch added from the page, which no copy keeps.
+    `repo` is what `read_repo` answered, and the caller holds
     `repo_admin_claims` on it.
 
     A revoke on a branch added from the page leaves the operator entries alone
@@ -709,25 +711,23 @@ async def revoke_repo_maintainer(
                 continue  # an operator copy, which a page revoke never reaches
         elif keeps_added and sources[ns] == "registry":
             continue
-        if len(admins[ns]) <= 1:
-            log.warning(
-                "repo maintainers: %s/%s keeps %r — only admin of that branch",
-                org,
-                ns,
-                subject,
-            )
-            continue
-        out.append(
-            _row(
-                org,
-                ns,
-                subject,
-                granted_by=str(mine.get("granted_by") or ""),
-                now=now,
-                revoked=lowered_to is None,
-                role=lowered_to or "admin",
-            )
+        planned = _row(
+            org,
+            ns,
+            subject,
+            granted_by=str(mine.get("granted_by") or ""),
+            now=now,
+            revoked=lowered_to is None,
+            role=lowered_to or "admin",
         )
+        if ns in restricted:  # a copy keeps no restricted branch, its last admin or not
+            strays.append(planned)
+        elif len(admins[ns]) <= 1:
+            log.warning(
+                "repo maintainers: %s/%s keeps %r — only admin of that branch", org, ns, subject
+            )
+        else:
+            out.append(planned)
     written = await _write_revokes(client, org, strays, out, rows)
     if written:
         log.info(

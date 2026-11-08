@@ -781,7 +781,7 @@ async def handle_code_repo_set_access(input: Any) -> Any:
         repo=str(cfg.repo),
         classification=cls,
         join_policy=pol,
-        previous_classification=str(cfg.classification),
+        previous_classification=str((row or {}).get("classification") or cfg.classification),
         previous_join_policy=previous_policy,
         directory_updated=directory_updated,
         effective_within_s=int(settings.code_repos_refresh_seconds),

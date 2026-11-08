@@ -772,6 +772,19 @@ async def test_an_operator_revoke_keeps_a_mirror_that_is_a_page_branch_s_only_ad
     ]
 
 
+async def test_an_operator_revoke_takes_a_copy_that_is_a_restricted_branch_s_only_admin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No copy keeps a restricted branch: the next sync would take it anyway."""
+    monkeypatch.setattr(repos, "configured_repos", lambda: PRIVATE)
+    rows = [_admin("code-z", "ops"), _admin("code-z", "x"), _copy("code-z-26-5", "ops", "code-z")]
+    ch = _FakeCH(rows)
+    assert await _revoke("code-z", "ops", ch=ch) == 1
+    assert [(r["namespace"], r["revoked_at"] is not None) for r in ch.inserted] == [
+        ("code-z-26-5", True)
+    ]
+
+
 async def test_an_operator_revoke_takes_a_mirror_of_an_entry_no_longer_configured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -19,6 +19,8 @@ class _Client:
         self.inserted: list[tuple[str, list[dict]]] = []
 
     async def query_one(self, sql, params=None):
+        if "loom.code_repos" in sql:
+            return None  # an operator entry with no access row
         return self.existing
 
     async def insert(self, table, rows):
@@ -206,3 +208,23 @@ async def test_a_page_branch_opens_only_while_its_registry_row_says_open(join_po
     await registry.ensure_registered(cfg, ch=client)
     opened = [r["join_policy"] for _, rows in client.inserted for r in rows]
     assert opened == (["open"] if join_policy == "open" else [])
+
+
+@pytest.mark.parametrize("access", ["standard", "restricted"])
+@pytest.mark.asyncio
+async def test_a_narrowing_reaches_the_row_only_while_the_registry_row_says_restricted(
+    access: str,
+) -> None:
+    """The snapshot may predate a maintainer opening it: re-restricting would then
+    revoke the copies its siblings gave it."""
+
+    class _Access(_Client):
+        async def query_one(self, sql, params=None):
+            if "loom.code_repos" in sql:
+                return {"classification": access}
+            return {"classification": "standard", "join_policy": "approval"}
+
+    client = _Access()
+    await registry.ensure_registered(_cfg("restricted"), ch=client)
+    narrowed = [r["classification"] for _, rows in client.inserted for r in rows]
+    assert narrowed == (["restricted"] if access == "restricted" else [])
