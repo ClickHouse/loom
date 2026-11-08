@@ -153,7 +153,9 @@ def test_release_gate_installs_browser_dependencies_before_running_provider_flow
         "preflight",
         "docker",
     ]
-    assert "docker-tag" in workflow["jobs"]["github-release"]["needs"]
+    # The release waits for the signatures of what docker-tag tagged.
+    assert "docker-tag" in workflow["jobs"]["sign"]["needs"]
+    assert "sign" in workflow["jobs"]["github-release"]["needs"]
     assert steps[browser]["working-directory"] == "frontend"
     assert "npm ci" in steps[browser]["run"]
     assert job["timeout-minutes"] >= 30
@@ -219,11 +221,12 @@ def test_docker_tag_tags_both_scanned_images_and_refuses_one(tmp_path: Path) -> 
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "CALLS": str(tmp_path / "calls"),
         "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
+        "GITHUB_OUTPUT": str(tmp_path / "output"),
         "LATEST": "false",
     }
 
     def run() -> subprocess.CompletedProcess[str]:
-        for log in ("calls", "summary"):
+        for log in ("calls", "summary", "output"):
             (tmp_path / log).unlink(missing_ok=True)
         # The step's shell: `bash -e`, as GitHub runs a step with no `shell:`.
         return subprocess.run(
@@ -242,6 +245,11 @@ def test_docker_tag_tags_both_scanned_images_and_refuses_one(tmp_path: Path) -> 
     summary = (tmp_path / "summary").read_text()
     assert "`image.digest: sha256:index-loom`" in summary
     assert "`extractor.image.digest: sha256:index-x`" in summary
+    # What sign signs: each image's index, as image@digest.
+    assert (tmp_path / "output").read_text() == (
+        "digests=ghcr.io/clickhouse/loom@sha256:index-loom"
+        " ghcr.io/clickhouse/loom-extractor@sha256:index-x\n"
+    )
 
     # Only the highest final version takes `:latest`, on both images.
     env["LATEST"] = "true"

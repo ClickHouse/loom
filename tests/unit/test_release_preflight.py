@@ -445,10 +445,7 @@ def test_the_tag_run_signs_the_digests_it_made_and_every_run_verifies_them() -> 
     jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
     tag = jobs["docker-tag"]
     assert tag["outputs"]["digests"] == "${{ steps.tag.outputs.digests }}"
-    (tagging,) = [s for s in tag["steps"] if s.get("id") == "tag"]
-    # docker-tag needs a registry, so the line that builds its output is read, not run:
-    # each image as image@digest, the form cosign sign takes.
-    assert 'digests+=("$image@$digest")' in tagging["run"]
+    # What the step writes there: test_docker_quickstart_smoke.py runs it.
     steps = {s["id"]: s for s in jobs["sign"]["steps"] if "id" in s}
     assert steps["sign"]["if"] == "${{ needs.docker-tag.result == 'success' }}"
     assert steps["sign"]["env"]["DIGESTS"] == "${{ needs.docker-tag.outputs.digests }}"
