@@ -25,6 +25,36 @@ sys.path.insert(0, str(ROOT))
 from scripts.release.build_stack_bundle import build  # noqa: E402
 from server import __version__  # noqa: E402
 
+# Run in a container: connects to argv[2]:argv[3] and prints the errno name, `timeout`
+# or `connected`; `filtered` first applies the extractor child's socket filter.
+EGRESS_PROBE = (
+    "import errno, socket, sys\n"
+    "address = socket.gethostbyname(sys.argv[2])  # DNS needs a socket too\n"
+    "if sys.argv[1] == 'filtered':\n"
+    "    from loom_extractor.child import no_new_privileges, no_sockets\n"
+    "    no_new_privileges(); no_sockets()\n"
+    "try:\n"
+    "    socket.create_connection((address, int(sys.argv[3])), timeout=5)\n"
+    "except OSError as e:\n"
+    "    print(errno.errorcode.get(e.errno, 'timeout'))\n"
+    "else:\n"
+    "    print('connected')\n"
+)
+# What a connect attempt meets on a network with no route out; a refused or reset
+# connection means a packet left and something answered.
+NO_ROUTE = {"ENETUNREACH", "EHOSTUNREACH", "timeout"}
+
+
+def egress(compose: list[str], service: str, mode: str, host: str, port: str) -> str:
+    """What EGRESS_PROBE meets from inside `service`."""
+    reach = subprocess.run(
+        [*compose, "exec", "-T", service, "python", "-c", EGRESS_PROBE, mode, host, port],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return reach.stdout.strip()
+
 
 def request(base: str, path: str, body: dict | None = None) -> dict:
     data = json.dumps(body).encode() if body is not None else None
@@ -84,6 +114,26 @@ def provider_fixture(image: str, root: Path) -> Path:
         )
     )
     return override
+
+
+def offline_search(compose: list[str], root: Path) -> None:
+    """The stack again on a network with no route out (`internal`), its data kept: the
+    server boots and embeds with the model its image carries."""
+    override = root / "offline.json"
+    override.write_text(json.dumps({"networks": {"default": {"internal": True}}}))
+    offline = [*compose, "-f", str(override)]
+    run(*compose, "down", "--remove-orphans")
+    try:
+        run(*offline, "up", "-d", "--wait", "--wait-timeout", "240", "clickhouse", "loom")
+        got = egress(offline, "loom", "plain", "1.1.1.1", "443")
+        assert got in NO_ROUTE, f"the offline stack reached out: {got}"
+        check = (ROOT / "scripts/gates/docker_offline_search.py").read_text()
+        run(*offline, "exec", "-T", "loom", "python", "-", input=check, text=True)
+    except BaseException:
+        subprocess.run([*offline, "logs", "--tail", "100"], check=False)
+        raise
+    finally:
+        run(*offline, "down", "--remove-orphans")
 
 
 def latest_release() -> str:
@@ -159,30 +209,11 @@ def smoke(image: str, extractor_image: str, clickhouse_image: str) -> None:
             # The service's network is internal: no route out. Its network does hold
             # the server, so each extraction runs under a filter that makes no socket:
             # applied here as a child applies it, it refuses even loom:7777.
-            probe = (
-                "import errno, socket, sys\n"
-                "address = socket.gethostbyname(sys.argv[2])  # DNS needs a socket too\n"
-                "if sys.argv[1] == 'filtered':\n"
-                "    from loom_extractor.child import no_new_privileges, no_sockets\n"
-                "    no_new_privileges(); no_sockets()\n"
-                "try:\n"
-                "    socket.create_connection((address, int(sys.argv[3])), timeout=5)\n"
-                "except OSError as e:\n"
-                "    print(errno.errorcode.get(e.errno, 'timeout'))\n"
-                "else:\n"
-                "    print('connected')\n"
-            )
             for mode, host, port, want in (
-                ("plain", "1.1.1.1", "443", {"ENETUNREACH", "EHOSTUNREACH", "timeout"}),
+                ("plain", "1.1.1.1", "443", NO_ROUTE),
                 ("filtered", "loom", "7777", {"EPERM"}),
             ):
-                reach = subprocess.run(
-                    [*compose, "exec", "-T", "extractor", "python", "-c", probe, mode, host, port],
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                )
-                got = reach.stdout.strip()
+                got = egress(compose, "extractor", mode, host, port)
                 assert got in want, f"the extractor's {mode} connection to {host}:{port}: {got}"
             code = (ROOT / "scripts/gates/docker_code_smoke.py").read_text()
             run(*compose, "exec", "-T", "loom", "python", "-", input=code, text=True)
@@ -209,13 +240,14 @@ def smoke(image: str, extractor_image: str, clickhouse_image: str) -> None:
             assert models["llm_model"] == "fake-echo-docker-update", models
             saved = request(base, "/v1/memory.get", {**identity, "memory_key": "docker/smoke"})
             assert saved["found"] and saved["value"] == "Docker memory persists", saved
+            offline_search(compose, root)
             from scripts.gates.docker_provider_smoke import smoke_providers
 
             smoke_providers(base, compose)
             print(
                 "PASS Docker quickstart: healthy, dashboard, memory, extractor, "
                 "compiler indexing, provider rebuild/recovery, restart persistence, "
-                "environment update/recreation"
+                "environment update/recreation, offline search"
             )
         except BaseException:
             subprocess.run([*compose, "logs", "--tail", "100"], check=False)

@@ -17,17 +17,20 @@ subscription credentials or API keys to Loom.
 
 ## What works without provider keys?
 
-The stock Docker installation explicitly selects `fake-ngram-3072` embeddings and the
-`fake-echo-1` LLM. It boots without provider keys: storage, the dashboard and structural
-code indexing work, but search uses character overlap rather than semantic embeddings.
-The fake LLM does not produce meaningful extracted facts, summaries or generated answers.
-These defaults test installation and wiring, not the quality reported in the benchmarks.
+The released Docker installation embeds with `local` (bge-small, 384 dimensions, on CPU
+from files the image carries) and selects the `fake-echo-1` LLM. It boots without provider
+keys or network: storage, the dashboard, structural code indexing and semantic search
+work, though a hosted embedder retrieves better on paraphrase-heavy questions. The fake
+LLM does not produce meaningful extracted facts, summaries or generated answers. A
+checkout's `.env` selects `fake-ngram-3072` embeddings, which match on character overlap.
+An upgraded installation keeps the embedder its `~/.loom/.env` names; switching it to
+`local` is a model change like any other, and re-embeds what is stored.
 
-For semantic retrieval over saved content, configure a real embedding provider. For
-automatic fact extraction, summaries and generated answers, configure an LLM too.
-An LLM alone does not replace an embedding model; an embedding model alone does not
-generate answers. No hosted embedding configuration means the stock stack uses its
-fake embedder, not that it skips embedding entirely.
+For stronger retrieval over paraphrase-heavy content, configure a hosted embedding
+provider. For automatic fact extraction, summaries and generated answers, configure an
+LLM too. An LLM alone does not replace an embedding model; an embedding model alone does
+not generate answers. With no embedding configured, a checkout's server uses its fake
+embedder; it does not skip embedding.
 
 Some hosted providers also fall back to fakes when their key is missing. Check
 `fake_embedding`, `fake_llm`, `providers_degraded` and `problems` in `/v1/health`, then
@@ -71,6 +74,11 @@ embedding changes start the rebuild described below. **Use environment
 configuration** removes those overrides and restores this server's startup settings;
 it does not reload an edited `.env` file. Changing the embedding space requires a rebuild.
 
+The dashboard's embedding choices are hosted providers. To keep the released stack's
+`local` embedder and add a real LLM, set only the LLM lines in `~/.loom/.env`
+([Claude for the LLM](#claude-for-the-llm) shows them) and recreate the container: the
+embedding space is unchanged, so nothing is re-embedded.
+
 For dashboard embedding changes, Loom queues that rebuild automatically and keeps
 data-plane requests paused until verification, publication and cleanup finish.
 Models & keys shows the phase and progress; a failed job stays paused and offers
@@ -78,7 +86,7 @@ retry from its saved cursor. Keep the ClickHouse volume and the original
 `LOOM_JWT_SECRET`, which seals the stored provider keys, when recreating containers. Rebuilds make provider calls and may
 take time and incur fees proportional to the indexed content. The rebuild publishes
 to local MergeTree tables only. The first embedding choice on an install with no
-stored vectors, such as a fresh install leaving the placeholder models, switches
+stored vectors, such as a fresh install that has stored nothing yet, switches
 directly with no rebuild. Once vectors exist on replicated or shared storage, such
 as ClickHouse Cloud, Models & keys locks
 the embedding fields and the server refuses an embedding change before pausing
@@ -110,7 +118,7 @@ LOOM_REQUIRE_REAL_PROVIDERS=true
 
 The examples use Loom's shipped model defaults. Choose a model enabled for your API
 account. Setting a key alone does not change the stock installer configuration, which
-explicitly selects fake providers.
+names its providers explicitly (the local embedder and the fake LLM).
 
 ### Claude for the LLM
 

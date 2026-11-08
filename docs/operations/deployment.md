@@ -625,8 +625,21 @@ conflicts and writes `memory.ask` answers. Both default to fakes that need no ne
 - **Width.** `LOOM_EMBEDDING_DIM` must equal the model's width. It is fixed when the
   tables are created. The server probes the embedder at boot; a mismatch shows as the
   `embedding_dim_mismatch` problem.
-- **Local embedder.** The image includes it only when built with a `local*` value of
-  `LOOM_EMBEDDING_MODEL` (the compose files pass it as a build argument).
+- **Local embedder.** The image includes it and the default model's files (`bge-small`),
+  pinned to one revision and checked by sha256 at build and at load, so a server with no
+  network embeds. The image keeps them in `/app/models`, outside `/app/var`, which the
+  Helm chart mounts its cache volume over. The stack's `env.example` embeds with it. A
+  file that does not match its pin is refused.
+- **Another local alias.** `local:bge-base` and `local:minilm` are fetched at their pinned
+  revision into `LOOM_LOCAL_EMBEDDING_MODEL_DIR` on the first embed, which needs network.
+  In the image that directory is in the container's own layer, so a recreated container
+  fetches again. Under the chart, set `LOOM_LOCAL_EMBEDDING_MODEL_DIR: /app/var/models` in
+  `env`: the image sets the variable, so a `settingsFile` key does not apply. Each new pod
+  fills it again unless the cache volume starts from a snapshot
+  (`cache.ephemeral.dataSourceRef`). The variable moves every alias, `bge-small` too, so
+  a pod set this way fetches `bge-small` instead of using the copy the image carries;
+  leave it at `/app/models` to embed with `bge-small` and no network. The files come from
+  `huggingface.co` directly, with no mirror setting.
 - **Inference.** When `LOOM_LLM_PROVIDER` is empty it is inferred once at load: from the
   model name (`gpt*`, `o1*`, `o3*`, `o4*`, `chatgpt*` → openai, `claude*` → anthropic,
   `fake*` → fake), else from the key present (`OPENAI_API_KEY`, then
@@ -944,13 +957,14 @@ Carry the choices in `deploy/proxy/nginx.conf` over to your own front end:
 
 The repository [`Dockerfile`](../../Dockerfile) builds the server image every rung uses:
 
-| Stage              | Produces                                                                                                                                 |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `py-builder`       | the server with the `code` and `lemma` extras (plus `local-embedder` when `LOOM_EMBEDDING_MODEL=local*`)                                 |
-| `frontend-builder` | the dashboard bundle in `frontend/dist/` (without it its pages return 503; `/v1/admin/*` still answers)                                  |
-| `go-builder`       | a pinned, checksum-verified Go toolchain and scip-go for the Go compiler tier                                                            |
-| `node-builder`     | pinned Node, scip-typescript and pnpm for the TypeScript compiler tier; scip-python for the Python tier                                  |
-| runtime            | Python 3.12, non-root user `loom` (uid/gid 999), `git`, the `dev/` operator tools, the migrations, `bench/fixtures` for `code.calibrate` |
+| Stage              | Produces                                                                                                                                                                            |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `py-builder`       | the server with the `aws`, `code`, `lemma` and `local-embedder` extras                                                                                                              |
+| `local-models`     | `bge-small`'s pinned files, fetched and checked by sha256 (`python -m server.embedding.local_models fetch bge-small`)                                                               |
+| `frontend-builder` | the dashboard bundle in `frontend/dist/` (without it its pages return 503; `/v1/admin/*` still answers)                                                                             |
+| `go-builder`       | a pinned, checksum-verified Go toolchain and scip-go for the Go compiler tier                                                                                                       |
+| `node-builder`     | pinned Node, scip-typescript and pnpm for the TypeScript compiler tier; scip-python for the Python tier                                                                             |
+| runtime            | Python 3.12, non-root user `loom` (uid/gid 999), `git`, the `dev/` operator tools, the migrations, `bench/fixtures` for `code.calibrate`, the `local-models` files in `/app/models` |
 
 The runtime exposes 7777, has a built-in `/v1/health` healthcheck (30 s interval), and
 runs `scripts/serve.sh`, which starts `uvicorn server.main:app` with `LOOM_WEB_WORKERS`

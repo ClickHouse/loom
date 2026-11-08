@@ -86,18 +86,20 @@ Keep single-user mode localhost-only. For shared access, follow the
 
 ### 2. Configure models and API keys
 
-**The stock installation boots without keys using fake providers.** Storage, the
-dashboard and structural code indexing work, but these defaults do not provide useful
-semantic search or AI-generated answers.
+**The stock installation boots without keys or network.** Storage, the dashboard,
+structural code indexing and semantic search work, on a small local embedding model the
+image carries; the fake LLM gives no AI-generated answers.
 
-| Component  | Configure for real use                             | Without configuration                                                  |
-| ---------- | -------------------------------------------------- | ---------------------------------------------------------------------- |
-| Embeddings | Provider, embedding model, dimensions and API key. | `fake-ngram-3072`: character-overlap matching, not semantic retrieval. |
-| LLM        | Provider, model and API key.                       | `fake-echo-1`: no meaningful extraction, summaries or answers.         |
+| Component  | Configure for real use                             | Without configuration                                                       |
+| ---------- | -------------------------------------------------- | --------------------------------------------------------------------------- |
+| Embeddings | Provider, embedding model, dimensions and API key. | `local` (bge-small on CPU): semantic retrieval, weaker than a hosted model. |
+| LLM        | Provider, model and API key.                       | `fake-echo-1`: no meaningful extraction, summaries or answers.              |
 
 Open **Settings → Models & keys**, choose both providers and models, enter their
 keys, then click **Test & apply**. No Docker restart is needed; changing the embedding
-space rebuilds the existing index.
+space rebuilds the existing index. The dashboard's embedding choices are hosted
+providers: to keep `local` and add an LLM, set the LLM lines in `~/.loom/.env` instead
+([Models and keys](docs/getting-started/models-and-keys.md#claude-for-the-llm)).
 
 **One OpenAI API key can serve both roles.** Claude needs a separate embedding provider.
 OpenAI, Gemini and OpenAI-compatible embedding endpoints are supported. Your agent's
@@ -109,7 +111,8 @@ Prefer environment configuration? Edit `~/.loom/.env`, then recreate the server:
 docker compose --project-directory "$HOME/.loom" up -d --force-recreate loom
 ```
 
-A key alone does not replace the pinned fake models; set the provider and model too.
+A key alone does not change the pinned models (the local embedder and the fake LLM); set
+the provider and model too.
 Saved dashboard settings take precedence over `.env`. Follow
 [models and API keys](./docs/getting-started/models-and-keys.md) for provider recipes
 and health checks.

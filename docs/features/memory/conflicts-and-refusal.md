@@ -361,8 +361,8 @@ See the [configuration reference](../../reference/configuration.md#conflict-dete
 
 - **A conflict is a flag, not a refusal.** Both rows are served until resolved. A reader
   should prefer the later `valid_at`, or ask.
-- **Fake embedders give string-similarity verdicts.** The stock stack's fake embedder does
-  not model meaning. With adaptivity off, re-bench the fallback thresholds after changing
+- **Fake embedders give string-similarity verdicts.** A checkout's fake embedder does not
+  model meaning. With adaptivity off, re-bench the fallback thresholds after changing
   the embedder.
 - **`conflicts.resolve` is admin.** A writer settles its own contradiction with
   `memory.update` on the peer the `next` hint names.

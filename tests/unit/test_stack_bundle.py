@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from scripts.release import build_stack_bundle, prepare
+from server.settings.catalog import DEFAULT_LOCAL_EMBEDDING_MODEL, LOCAL_EMBEDDING_MODELS
 from tests.unit import git_repo
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -410,3 +411,15 @@ def test_a_bundle_takes_the_versions_the_release_takes(tmp_path: Path, version: 
         assert f"version={version}" in output.read_text().splitlines()
     else:
         assert run.returncode == 1 and "is not X.Y.Z or X.Y.Z-rc.N" in run.stdout, run.stdout
+
+
+def test_the_installer_env_names_the_default_local_model_at_its_width() -> None:
+    env = (ROOT / "deploy" / "standalone" / "env.example").read_text(encoding="utf-8")
+    values = dict(
+        line.split("=", 1) for line in env.splitlines() if line.startswith("LOOM_EMBEDDING_")
+    )
+    assert values["LOOM_EMBEDDING_MODEL"] == "local"
+    assert (
+        int(values["LOOM_EMBEDDING_DIM"])
+        == LOCAL_EMBEDDING_MODELS[DEFAULT_LOCAL_EMBEDDING_MODEL][1]
+    )

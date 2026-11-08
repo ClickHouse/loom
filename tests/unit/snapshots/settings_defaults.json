@@ -560,6 +560,7 @@
  "llm_response_cache_table": "loom.llm_response_cache",
  "llm_retry_attempts": 4,
  "llm_retry_max_wait_s": 20.0,
+ "local_embedding_model_dir": "var/models",
  "log_format": "text",
  "log_level": "info",
  "max_request_bytes": 33554432,

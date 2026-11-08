@@ -35,7 +35,6 @@ x-loom-common: &loom-common
     context: ..
     dockerfile: Dockerfile
     args:
-      LOOM_EMBEDDING_MODEL: "${LOOM_EMBEDDING_MODEL:-}"
       LOOM_BUILD_COMMIT: "${LOOM_BUILD_COMMIT:-unknown}"
   restart: unless-stopped
   # SIGTERM: 15 s not ready while serving (LOOM_SHUTDOWN_READY_DELAY_S), then

@@ -10,11 +10,14 @@ If a Loom server already exists, install the Claude Code or Codex plugin and poi
 server: [connect a coding agent](getting-started/connect-a-coding-agent.md). To run a server
 on a laptop, `loom up` boots one in a few minutes: [quickstart](getting-started/quickstart.md).
 
-### Why are my search results nonsense on a fresh stack?
+### Why are my search results nonsense?
 
-The stock `.env` runs fake embeddings and a fake LLM so the stack boots without credentials.
-Fake vectors make retrieval meaningless. Switch to a real provider
-([providers](operations/deployment.md#providers)) before judging quality.
+The install runs a fake embedder: its `.env` (a checkout's, or `~/.loom/.env`) names
+`fake-ngram-*`, whose vectors make retrieval meaningless. Switch its embedder, which
+re-embeds what is stored ([Models and keys](getting-started/models-and-keys.md)); a fresh
+install of the released stack embeds with a local model already. A hosted embedder
+retrieves better on paraphrase-heavy questions
+([providers](operations/deployment.md#providers)).
 
 ### Why does `memory.search` say `abstain` instead of returning something?
 

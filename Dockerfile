@@ -1,7 +1,7 @@
 # Loom Control Plane production image.
 #
-# Three stages: Python deps, frontend bundle, runtime. uvicorn binds via
-# the container's PORT env var.
+# Builder stages, then the runtime (docs/operations/deployment.md lists each). uvicorn
+# binds via the container's PORT env var.
 
 # Base images are pinned by digest; Renovate (renovate.json) keeps the pins current.
 FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS py-builder
@@ -22,22 +22,21 @@ COPY sdk ./sdk
 # [code] extras (tree-sitter, numpy) ship in the image: the code-plane
 # workers and the async code.refresh path lazy-import them at runtime,
 # so a plain "." install boots green and then crashes on first ingest.
-#
-# [local-embedder] (fastembed plus onnxruntime, about 80-100MB) ships only
-# when LOOM_EMBEDDING_MODEL is "local*" at build time. It arrives as a
-# build arg, so operators on a cloud embedder never pay for a dependency
-# they don't import. Flipping LOOM_EMBEDDING_MODEL between local and cloud
-# in .env re-triggers this layer on the next --build.
-ARG LOOM_EMBEDDING_MODEL=""
+# [local-embedder] (fastembed plus onnxruntime) ships in the image: the
+# released stack embeds with it, and the runtime stage carries its default
+# model's pinned files, so a stack started with no network still embeds.
 # Dependencies come from uv.lock exactly (--locked: the build fails when the
 # lock no longer matches pyproject.toml; hashes checked) into a venv the
 # runtime stage copies at the same path.
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv UV_PYTHON_DOWNLOADS=never UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
-RUN case "$LOOM_EMBEDDING_MODEL" in \
-         local*) EXTRAS="--extra aws --extra code --extra lemma --extra local-embedder" ;; \
-         *) EXTRAS="--extra aws --extra code --extra lemma" ;; \
-       esac \
-    && uv sync --locked --no-editable --no-cache $EXTRAS
+RUN uv sync --locked --no-editable --no-cache \
+    --extra aws --extra code --extra lemma --extra local-embedder
+
+# The default local embedding model, at its pinned revision and checked by sha256
+# (server/embedding/local_models.py), in a stage keyed on the venv and server/ alone,
+# so a frontend or docs change does not fetch it again.
+FROM py-builder AS local-models
+RUN LOOM_LOCAL_EMBEDDING_MODEL_DIR=/models /opt/venv/bin/python -m server.embedding.local_models fetch bge-small
 
 FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS frontend-builder
 WORKDIR /frontend
@@ -222,7 +221,11 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
     PORT=7777 \
     LOOM_BIND_HOST=0.0.0.0 \
-    LOOM_LISTEN_HOST=0.0.0.0
+    LOOM_LISTEN_HOST=0.0.0.0 \
+    LOOM_LOCAL_EMBEDDING_MODEL_DIR=/app/models
+
+# Outside /app/var, which a deployment may mount over (the Helm chart's cache volume).
+COPY --from=local-models --chown=loom:loom /models /app/models
 
 EXPOSE 7777
 # Readiness, not liveness: healthy once the replica can serve (migrations, keys

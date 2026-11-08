@@ -3648,6 +3648,9 @@ class ModelSettings(BaseModel):
     # network or key; production uses text-embedding-3-* (OPENAI_API_KEY). Change
     # it together with `embedding_dim`; a new embedding space needs a full re-embed.
     embedding_model: str = "fake-ngram-3072"
+    # Where `local` models live (relative: under the working directory), one directory per
+    # alias and revision; a missing file is fetched there. The image sets it by env.
+    local_embedding_model_dir: str = "var/models"
 
     # --- memory -----------------------------------------------------------------
     # memory.ask synthesis (the strong tier when the cascade is on).

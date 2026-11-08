@@ -142,8 +142,10 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 
 - **Symptom:** `set_from_messages` writes no facts, `memory.ask` returns empty answers,
   or search ranks by character overlap.
-- **Cause:** the process runs on a fake provider: configured as fake (the stock `.env`),
-  or configured as real without its key.
+- **Cause:** the process runs on a fake provider: configured as fake
+  (`LOOM_LLM_PROVIDER=fake`, which every stock `.env` sets, or `fake-ngram-*`
+  embeddings in a checkout's `.env` or an upgraded install), or configured as real
+  without its key.
 - **Check:** `curl -s localhost:7777/v1/health | jq '.problems[].code'` shows
   `llm_key_missing`, `embedder_key_missing`, `fake_llm` or `fake_embedder`
   (`fake_llm: true`, `fake_embedding: true` in the body).

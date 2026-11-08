@@ -142,14 +142,13 @@ code = [
 scip = [
   "protobuf>=7.35.1",
 ]
-# Local CPU embedder extras. Needed only when LOOM_EMBEDDING_MODEL=local*
-# is selected — the operator evaluates Loom without a hosted embedding
-# provider. fastembed pulls in onnxruntime (~80MB wheel)
-# and downloads the model itself on first call (~50MB for bge-small).
+# Local CPU embedder extras, for LOOM_EMBEDDING_MODEL=local*: the image installs
+# them and the released stack embeds with them. fastembed pulls in onnxruntime
+# (~80MB wheel); the model files are pinned in server/embedding/local_models.py.
 # Lazy-imported by server/embedding/local.py with an actionable error
 # message when missing.
 local-embedder = [
-  "fastembed>=0.4",
+  "fastembed>=0.9.1", # the first to allow pillow 13, which fixes critical CVEs in 12.x
 ]
 
 [project.scripts]

@@ -56,10 +56,9 @@ resolves as the server loads them: the environment, then the env file, then the
 | `LOOM_GRACEFUL_SHUTDOWN_S` | `10`                 | `uvicorn --timeout-graceful-shutdown`: how long a stopping process drains requests.                                                                                                                                                                                                                                                                    |
 | `LOOM_KEEP_ALIVE_S`        | `5`                  | `uvicorn --timeout-keep-alive`: how long an idle connection stays open. Behind a load balancer that reuses connections, longer than its idle timeout.                                                                                                                                                                                                  |
 
-Build arguments: `LOOM_EMBEDDING_MODEL` (a value starting with `local` adds the
-local CPU embedder's dependencies to the image; switching between a local and a
-cloud embedder rebuilds that layer) and `LOOM_BUILD_COMMIT` (baked into the
-image as `LOOM_BUILD_COMMIT`, reported as `build_commit`). The remaining
+Build argument: `LOOM_BUILD_COMMIT` (baked into the image as `LOOM_BUILD_COMMIT`,
+reported as `build_commit`). The image always carries the local CPU embedder and its
+default model, and sets `LOOM_LOCAL_EMBEDDING_MODEL_DIR=/app/models`. The remaining
 `ARG`s pin toolchain versions and checksums for the compiler-tier indexers
 (`GO_VERSION`, `NODE_VERSION`, `SCIP_GO_VERSION`, `SCIP_TYPESCRIPT_VERSION`,
 `SCIP_PYTHON_VERSION`, `PNPM_VERSION` and their `*_SHA256*` values).

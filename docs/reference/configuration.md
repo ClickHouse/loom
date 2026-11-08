@@ -1413,6 +1413,7 @@ Models: which model does each job.
 | `LOOM_LLM_MODEL` | `str` | `''` |  | The deployment's LLM: memory extraction, rerank and every job whose own model setting (the other *_model settings) is left "". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1). |
 | `LOOM_LLM_FALLBACK_MODEL` | `str` | `''` |  | Model to answer with when a client's provider is still unavailable after its retries (429 / 5xx / transport / timeout) or rejected the request (400 / 413 / 422). Counted in `loom.llm.fallback`. 401 / 403 / 404 are configuration and never fall back. "" = fail the op. |
 | `LOOM_EMBEDDING_MODEL` | `str` | `'fake-ngram-3072'` |  | Embeddings for memories, queries and code chunks. fake-ngram-3072 needs no network or key; production uses text-embedding-3-* (OPENAI_API_KEY). Change it together with `embedding_dim`; a new embedding space needs a full re-embed. |
+| `LOOM_LOCAL_EMBEDDING_MODEL_DIR` | `str` | `'var/models'` |  | Where `local` models live (relative: under the working directory), one directory per alias and revision; a missing file is fetched there. The image sets it by env. |
 
 ### Memory
 
