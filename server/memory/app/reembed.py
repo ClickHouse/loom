@@ -400,7 +400,8 @@ async def _read_again(
 ) -> tuple[dict[int, dict[str, Any]], list[int]]:
     """The rows of `read` as stored now (FINAL, by key, under the run's filter), each
     with the vectors being rebuilt as read, and the positions of those stored with other
-    text. A row deleted, tombstoned or given other text since its read is left out."""
+    text or identity. A row deleted, tombstoned, or given other text or another agent or
+    user since its read (its vector was made for that one) is left out."""
     cfg, keys = _TABLES[table], _KEY_COLUMNS[table]
     rebuilt = {cfg.get("key_vec")} if key_only else {cfg["vec"], cfg.get("key_vec")}
     vectors = rebuilt - {None}  # no key axis on two of the tables
@@ -422,7 +423,11 @@ async def _read_again(
     now = {key(r): r for r in stored}
     text = cfg["text"]
     present = {i: now[key(r)] for i, r in read.items() if key(r) in now}
-    kept = {i: read[i] | row for i, row in present.items() if row[text] == read[i][text]}
+    # The text the vector is made from, and the identity the model call was made for.
+    same = [c for c in (text, "agent", "user_id") if c in cols]
+    kept = {
+        i: read[i] | row for i, row in present.items() if all(row[c] == read[i][c] for c in same)
+    }
     rewritten = [i for i in present if i not in kept]
     return kept, rewritten
 
@@ -613,7 +618,9 @@ async def reembed_all(
         off = off & {org}
     waiting = 0
     resume_table, resume_key, kept_before = decode_resume(resume) if resume else ("", None, [])
-    left_orgs = set(kept_before)  # what the interrupted run found, so --delete-old keeps it
+    # What the interrupted run found, and the orgs off now, so --delete-old keeps them
+    # and a later resume carries them.
+    left_orgs = set(kept_before) | off
     tables = list(_TABLES)
     if resume_table:
         if in_database:

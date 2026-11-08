@@ -172,18 +172,19 @@ async def test_a_memory_row_is_re_embedded_whatever_its_text() -> None:
 @pytest.mark.asyncio
 async def test_a_row_removed_while_its_page_is_embedded_is_not_written_back() -> None:
     """A redaction deletes a key's rows, an erasure tombstones them and a write gives a
-    row other text: the page read before must not insert its old copy again. A row
-    changed otherwise (handed to another agent at the same stamp) is written with its
-    columns as stored now, so --delete-old leaves it a vector."""
-    ch, lines, written = _CH(5), [], []
+    row other text or hands it to another agent: the page read before must not insert its
+    old copy again. A row changed otherwise (saved) is written with its columns as stored
+    now, so --delete-old leaves it a vector."""
+    ch, lines, written = _CH(6), [], []
 
     class _Redacting(_Emb):
         async def embed_many(self, texts: list[str]) -> list[list[float]]:
-            deleted, rewritten, handed, tombstoned = ch.rows[1:]
+            deleted, rewritten, handed, tombstoned, saved = ch.rows[1:]
             ch.rows.remove(deleted)
             rewritten["content_excerpt"] = "other text"
             handed["agent"] = "peer"
             tombstoned["tombstoned_at"] = "now"
+            saved["is_saved"] = True
             return await super().embed_many(texts)
 
     insert = ch.insert
@@ -194,10 +195,10 @@ async def test_a_row_removed_while_its_page_is_embedded_is_not_written_back() ->
 
     ch.insert = _insert  # type: ignore[method-assign]
     n = await rb.reembed_table(ch, _Redacting(), "conversation_embeddings", log=lines.append)
-    assert n == 2 and ch.inserted == ["000", "003"]
-    assert [r["agent"] for r in written] == ["a", "peer"]
+    assert n == 2 and ch.inserted == ["000", "005"]
+    assert [r.get("is_saved") for r in written] == [None, True]  # as stored now
     assert all(r["embedding_model"] == "m2" and r["embedding"] == [0.1, 0.2] for r in written)
-    assert any("3 removed or rewritten since read, skipped" in line for line in lines)
+    assert any("4 removed or rewritten since read, skipped" in line for line in lines)
 
 
 @pytest.mark.asyncio
@@ -372,6 +373,19 @@ async def test_a_resume_token_carries_the_orgs_delete_old_keeps(monkeypatch) -> 
     monkeypatch.setattr("server.core.vectors.codes_state.refuse_width", width)
     await rb.reembed_all(ch, _Emb(), resume=token, delete_old=True, log=lambda *_: None)
     assert ch.inserted == ["002"] and deletes and all(p.get("off") == ["o"] for p in deletes)
+
+    # An org switched off when a run starts is carried too, so a resume after it is
+    # switched back on still keeps its rows the run never rebuilt.
+    async def off_now() -> set[str]:
+        return {"o"}
+
+    monkeypatch.setattr(rb.customer, "switched_off_orgs", off_now)
+    ch2, lines = _CH(3), []
+    ch2.execute = execute  # type: ignore[attr-defined]
+    start = rb.encode_resume("conversation_embeddings", [""] * 5)  # the turns table only
+    await rb.reembed_all(ch2, _Emb(), batch=1, resume=start, log=lines.append)
+    printed = [line.rsplit("resume: ", 1)[1] for line in lines if "resume: " in line]
+    assert printed and all(rb.decode_resume(t)[2] == ["o"] for t in printed)
 
 
 @pytest.mark.asyncio
