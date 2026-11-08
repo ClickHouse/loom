@@ -220,8 +220,8 @@ the package's visibility to public in its settings, then re-run the failed jobs.
    comes after `docker-tag` pushed the tag's image tags (and `:latest` when it is the highest
    final version). A re-run keeps the run's inputs and fails again, so dispatch the tag instead,
    which also publishes the SDKs and the MCP Registry listing:
-   `gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=<the newer release the error names>`
-   (if that release dumps the tag's `schemas/schema.sql`),
+   `gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=clickhouse/clickhouse-server:A.B.C.D`,
+   the newer release the error names (if it dumps the tag's `schemas/schema.sql`),
    or `gh workflow run release.yml --ref vX.Y.Z -f allow_clickhouse_downgrade=true`.
    Otherwise move `:latest` back to the previous release by hand, on both
    `ghcr.io/clickhouse/loom` and `ghcr.io/clickhouse/loom-extractor`.
@@ -293,8 +293,8 @@ A run that stopped in `clickhouse` published nothing.
   patch to an older line published during the soak with a newer release stops it. Two ways out:
   - delete the final's tag as above (it published nothing), tag a new candidate on that commit,
     soak it, and tag the final there again. The candidate's tag push resolves `latest`; when that
-    is older than the release the error names, dispatch the candidate with
-    `-f clickhouse_image=clickhouse/clickhouse-server:A.B.C.D` naming that release;
+    is older than the release the error names, dispatch the candidate with that release:
+    `gh workflow run release.yml --ref vX.Y.Z-rc.N -f clickhouse_image=clickhouse/clickhouse-server:A.B.C.D`;
   - or dispatch the final with `-f allow_clickhouse_downgrade=true` and accept the downgrade for
     that patch's installs.
 
