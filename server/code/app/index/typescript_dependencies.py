@@ -191,13 +191,9 @@ async def prepare_dependencies(
                 f"TypeScript dependency installation failed ({command[0]}, exit "
                 f"{done.returncode}) in {_project(checkout, root)}"
             )
-            # The installer first, for readers of the first line; then as much of the
-            # output's end as the tier-health record keeps beside it.
-            # Whole lines: a cut mid-line could split a URL credential from its scheme,
-            # which the record's redaction needs.
-            room = ERROR_CHARS - len(error_text(ToolOutputError(head))) - 1
-            # Redacted before the cut: the record redacts again (a no-op) and keeps it all.
-            shown = redact(output)
-            tail = shown[-room - 1 :].partition("\n")[2] if len(shown) > room else shown
+            # The installer first, for readers of the first line; then the end of the
+            # output, redacted before the cut so the budget is what the record keeps.
+            room = max(0, ERROR_CHARS - len(error_text(ToolOutputError(head))) - 1)
+            tail = redact(output)[-room:] if room else ""
             raise ToolOutputError(f"{head}\n{tail}")
     await asyncio.to_thread(marker.write_text, fingerprint)

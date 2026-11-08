@@ -144,22 +144,15 @@ async def test_a_failed_project_install_names_the_project_not_the_host_path(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("cut", ["boundary", "one_long_line"])
-async def test_a_failed_install_keeps_only_whole_output_lines(
-    checkout: Path, tmp_path: Path, cut: str
-) -> None:
-    head = deps.ToolOutputError(
-        "TypeScript dependency installation failed (npm, exit 1) in the checkout root"
-    )
-    room = tier_health.ERROR_CHARS - len(recorder.error_text(head)) - 1
-    # The last `room` characters start a line, or one line is longer than `room`.
-    last = "L" * (room - 1) if cut == "boundary" else "https://user:secret@h/" + "L" * room
+async def test_a_long_last_line_keeps_its_end(checkout: Path, tmp_path: Path) -> None:
     env = _installer(tmp_path)
-    (tmp_path / "npm").write_text(f"#!/bin/sh\necho first\necho {last}\nexit 1\n")
+    last = "ERR_PNPM_X " + "y" * 800 + " the cause"
+    (tmp_path / "npm").write_text(f"#!/bin/sh\necho first\necho '{last}'\nexit 1\n")
     with pytest.raises(RuntimeError) as failed:
         await deps.prepare_dependencies(checkout, (), env)
-    kept = str(failed.value).partition("\n")[2]
-    assert kept == (last if cut == "boundary" else "")
+    record = tier_health.failed(None, "typescript", recorder.error_text(failed.value), NOW)
+    assert record.error.startswith("ToolOutputError: TypeScript dependency installation failed")
+    assert record.error.endswith("y the cause")
 
 
 @pytest.mark.asyncio
