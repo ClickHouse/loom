@@ -132,7 +132,8 @@ def rewrite_row(
         # One above the row it was read from: a key-only rewrite, which shares its sort
         # key, replaces that row and loses to any version a live writer stamped since
         # (wall-clock ns). A new model's row has its own sort key; the re-read before
-        # the insert (`_still_stored`) keeps it from bringing removed content back.
+        # the insert (`_still_stored`) narrows the window in which it can bring removed
+        # content back to the time between that read and the insert.
         out["version"] = int(row.get("version") or 0) + 1
     elif cfg["version"] == "created_at":
         # newer created_at wins the ReplacingMergeTree(created_at) merge
@@ -287,8 +288,9 @@ async def reembed_table(
 ) -> int:
     """Re-embed one table's off-model rows to `embedder`. Returns rows written.
     Pages of `batch` rows in sort-key order; `start_after` (a resume token's
-    key) continues after that row. `left_orgs` collects the orgs switched off
-    during the run whose rows were left unwritten.
+    key) continues after that row. `left_orgs` collects the orgs whose rows were
+    left unwritten: switched off during the run, or a row removed or given other
+    text since its page was read (`--delete-old` keeps their old vectors).
     `key_only`: every live row of the scope but an import key with no key
     vector gets its key-axis vector rebuilt from `key_axis_text` (the value
     vector is kept); tables without a key axis are skipped."""
@@ -321,11 +323,14 @@ async def reembed_table(
     order = ", ".join(keys)
     after = list(start_after) if start_after else None
     written = held = changed = 0  # changed: rows removed or given other text since read
+    page_changed = 0
 
-    async def still_stored(read: dict[int, dict[str, Any]]) -> dict[int, dict[str, Any]]:
-        nonlocal changed
+    async def reread(read: dict[int, dict[str, Any]]) -> dict[int, dict[str, Any]]:
+        nonlocal page_changed
         kept = await _still_stored(ch, table, cols, read, where_clause, params)
-        changed += len(read) - len(kept)
+        page_changed = len(read) - len(kept)
+        if left_orgs is not None:
+            left_orgs.update(r["org"] for i, r in read.items() if i not in kept)
         return kept
 
     while True:
@@ -350,9 +355,10 @@ async def reembed_table(
             # memory row's vector follows its own sensitivity label instead.
             page = without_high(page, lambda r: str(r.get(cfg["text"]) or ""))
         held += len(rows) - len(page)
-        before = changed
-        left = await _rewrite_page(ch, embedder, table, page, key_only, still_stored)
-        written += len(page) - sum(left.values()) - (changed - before)
+        page_changed = 0
+        left = await _rewrite_page(ch, embedder, table, page, key_only, reread)
+        written += len(page) - sum(left.values()) - page_changed
+        changed += page_changed
         if left:
             if left_orgs is not None:
                 left_orgs.update(left)
@@ -398,12 +404,14 @@ async def _still_stored(
 
     # The bare key columns, so the primary key prunes to the page's rows.
     names, types = ", ".join(keys), ", ".join("String" for _ in keys)
+    wanted, stored = [key(r) for r in read.values()], []
     with sequential_reads():  # the redaction may have run on another replica
-        stored = await ch.query_all(
-            f"SELECT {', '.join(others)} FROM loom.{table} FINAL "
-            f"WHERE {where_clause} AND ({names}) IN {{keys:Array(Tuple({types}))}}",
-            params={**params, "keys": [key(r) for r in read.values()]},
-        )
+        for at in range(0, len(wanted), _REREAD_KEYS):
+            stored += await ch.query_all(
+                f"SELECT {', '.join(others)} FROM loom.{table} FINAL "
+                f"WHERE {where_clause} AND ({names}) IN {{keys:Array(Tuple({types}))}}",
+                params={**params, "keys": wanted[at : at + _REREAD_KEYS]},
+            )
     now = {key(r): r for r in stored}
     return {
         i: r | now[key(r)]
@@ -485,6 +493,9 @@ _KEY_COLUMNS: dict[str, tuple[str, ...]] = {
     "entity_vectors": ("org", "namespace", "agent", "user_id", "entity_text", "memory_key"),
     "conversation_embeddings": ("org", "namespace", "embedding_model", "thread_id", "msg_id"),
 }
+# Keys per re-read statement: they travel in the request's query string, which a
+# large --batch-size would push past the HTTP limit.
+_REREAD_KEYS = 500
 _KEYS: dict[str, tuple[str, ...]] = {
     table: tuple("toString(scope)" if c == "scope" else c for c in cols)
     for table, cols in _KEY_COLUMNS.items()
@@ -634,7 +645,7 @@ async def reembed_all(
         log(f"{waiting} rows of {len(off)} switched-off org(s) left for a later run")
     if delete_old and not dry_run:
         # Every org whose rows wait keeps its old vectors: off at the start, off
-        # during the run, or off by now.
+        # during the run or by now, or with a row the re-read before an insert skipped.
         keep = frozenset(off | left_orgs | await customer.switched_off_orgs())
         for table in _TABLES:
             await delete_off_model(

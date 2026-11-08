@@ -192,3 +192,38 @@ async def test_a_row_removed_while_its_page_is_embedded_is_not_written_back() ->
     assert [r["agent"] for r in written] == ["a", "peer"]
     assert all(r["embedding_model"] == "m2" and r["embedding"] == [0.1, 0.2] for r in written)
     assert any("3 removed or rewritten since read, skipped" in line for line in lines)
+
+
+@pytest.mark.asyncio
+async def test_delete_old_keeps_the_old_rows_of_an_org_with_a_skipped_row(monkeypatch) -> None:
+    """A row given other text while its page was embedded has no new-model copy yet: its
+    org's old-model rows stay for a later run."""
+    ch, deletes = _CH(2), []
+
+    class _Rewriting(_Emb):
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            ch.rows[1]["content_excerpt"] = "other text"
+            return await super().embed_many(texts)
+
+    async def execute(sql: str, params: Any = None, **_: Any) -> None:
+        deletes.append(params or {})
+
+    async def width(table: str, dim: int) -> None:
+        return None
+
+    async def not_reembedded(*a: Any, **k: Any) -> int:
+        return 0
+
+    ch.execute = execute  # type: ignore[attr-defined]
+    monkeypatch.setattr("server.core.vectors.codes_state.refuse_width", width)
+    real = rb.reembed_table
+
+    async def only_turns(ch: Any, embedder: Any, table: str, **kw: Any) -> int:
+        if table != "conversation_embeddings":
+            return await not_reembedded()
+        return await real(ch, embedder, table, **kw)
+
+    monkeypatch.setattr(rb, "reembed_table", only_turns)
+    await rb.reembed_all(ch, _Rewriting(), delete_old=True, log=lambda *_: None)
+    assert ch.inserted == ["000"]
+    assert deletes and all(p.get("off") == ["o"] for p in deletes)
