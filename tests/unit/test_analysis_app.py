@@ -448,6 +448,32 @@ def test_a_standing_problem_is_logged_once(
 ) -> None:
     monkeypatch.setattr(app, "_ready", None)
     monkeypatch.setattr(app, "_problem", "")
-    for _ in range(3):
-        app._set_problem("the analyst user is missing")
-    assert sum("is unavailable" in r.message for r in caplog.records) == 1
+    for problem in ["missing", "missing", "missing", "wider", "", "wider"]:
+        app._set_problem(problem)
+    logged = [r.message for r in caplog.records if "is unavailable" in r.message]
+    # Each change logs once: a new problem, and one that cleared and came back.
+    assert logged == [
+        "insights.query is unavailable: missing",
+        "insights.query is unavailable: wider",
+        "insights.query is unavailable: wider",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("error", "advised"),
+    [(app.NOT_MIGRATED, False), ("Code: 497. DB::Exception: Not enough privileges", True)],
+)
+def test_ch_setups_analyst_line_advises_the_printed_sql_only_after_a_migration(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], error: str, advised: bool
+) -> None:
+    from server.cli import _ch, ch_setup
+
+    async def fail() -> None:
+        raise RuntimeError(error)
+
+    monkeypatch.setattr(app, "rewrite", fail)
+    monkeypatch.setattr(_ch, "run_connected", lambda fn: asyncio.run(fn(None)))
+    ch_setup._write_analyst()
+    line = capsys.readouterr().out.strip()
+    assert line.startswith("· loom_analyst (insights.query): not written (")
+    assert ("--print-analyst-sql" in line) is advised

@@ -395,8 +395,9 @@ async def _canary_reads(secrets_: tuple[bytes, str]) -> bool:
 
 def _set_problem(problem: str) -> None:
     global _ready, _problem
-    changed = _scrubbed(problem) != _problem or _ready is None
-    _problem = _scrubbed(problem)
+    scrubbed = _scrubbed(problem)
+    changed = scrubbed != _problem
+    _problem = scrubbed
     _ready = not _problem
     if _problem and changed:
         # Once per change: health and `loom doctor` carry the standing state.
