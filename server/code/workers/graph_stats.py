@@ -233,6 +233,45 @@ def _stem(path: str) -> str:
     return PurePosixPath(path).stem.lower().replace("_", "")
 
 
+def _path_convention_rows(org: str, ns: str, known: set[str]) -> list[dict[str, Any]]:
+    """`code_test_map` rows pairing each test file with the source files whose
+    stem is a substring of its stem, for stems that name at most three files.
+    Looks up each substring of the test stem up to the longest source stem,
+    rather than scanning every stem for every test."""
+    from server.code.store.index import build_row
+
+    src_by_stem: dict[str, list[str]] = {}
+    for p in known:
+        if p.startswith("src/") and "/tests/" not in p:
+            src_by_stem.setdefault(_stem(p), []).append(p)
+    # A substring is never empty, so an empty stem never matches.
+    mappable = {s: paths for s, paths in src_by_stem.items() if len(paths) <= 3}
+    longest = max((len(s) for s in mappable), default=0)
+    rows = []
+    for t in known:
+        if not (t.startswith("tests/") or "/tests/" in t):
+            continue
+        t_stem = _stem(t)
+        n = len(t_stem)
+        subs = {t_stem[i:j] for i in range(n) for j in range(i + 1, min(n, i + longest) + 1)}
+        for s_stem in subs & mappable.keys():
+            paths = mappable[s_stem]
+            for src_path in paths:
+                rows.append(
+                    build_row(
+                        "code_test_map",
+                        org=org,
+                        namespace=ns,
+                        src_path=src_path,
+                        method="path_convention",
+                        test_path=t,
+                        confidence=0.7 if len(paths) == 1 else 0.4,
+                        evidence=f"stem '{s_stem}'",
+                    )
+                )
+    return rows
+
+
 def compute_symbol_stats(
     org: str,
     ns: str,
@@ -580,29 +619,10 @@ async def _run_repo(org: str, ns: str, result: CodeGraphStatsResult) -> None:
         result.files_ranked = len(rows)
 
     # ---- test map ----------------------------------------------------------
-    test_rows = []
-    test_files = [p for p in known if p.startswith("tests/") or "/tests/" in p]
-    src_files = [p for p in known if p.startswith("src/") and "/tests/" not in p]
-    src_by_stem: dict[str, list[str]] = {}
-    for p in src_files:
-        src_by_stem.setdefault(_stem(p), []).append(p)
-    for t in test_files:
-        t_stem = _stem(t)
-        for s_stem, paths in src_by_stem.items():
-            if s_stem and s_stem in t_stem and len(paths) <= 3:
-                for src_path in paths:
-                    test_rows.append(
-                        build_row(
-                            "code_test_map",
-                            org=org,
-                            namespace=ns,
-                            src_path=src_path,
-                            method="path_convention",
-                            test_path=t,
-                            confidence=0.7 if len(paths) == 1 else 0.4,
-                            evidence=f"stem '{s_stem}'",
-                        )
-                    )
+    # Seconds of pure Python on a large repository: in a thread, so the event
+    # loop (and the supervisor lease it renews) keeps running.
+    test_rows = await asyncio.to_thread(_path_convention_rows, org, ns, known)
+    pass_context.check_stop()  # the thread ran on past a lost lease
     pairs = await repo.pr_file_pairs(org, ns)
     for pr in pairs:
         test_rows.append(
