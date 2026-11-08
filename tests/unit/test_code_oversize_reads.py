@@ -285,7 +285,7 @@ def test_an_oversize_attributes_file_gives_no_patterns_and_is_logged(tmp_path, c
     with caplog.at_level("WARNING"):
         rules = asyncio.run(dl.load_denylist(cfg, sha, show_file))
     assert rules.patterns == ()
-    assert ".gitattributes not read" in caplog.text
+    assert f"{cfg.label}: .gitattributes not read" in caplog.text
 
 
 def test_the_repository_patterns_are_capped_and_the_cap_logged(caplog) -> None:

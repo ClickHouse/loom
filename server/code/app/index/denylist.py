@@ -284,7 +284,7 @@ async def _show_text(cfg: Any, sha: str, show_file: Any, name: str) -> str:
     try:
         raw = await show_file(cfg.git_dir, sha, name, max_bytes=PATTERN_FILE_MAX_BYTES)
     except BlobTooLarge as e:
-        logger.warning("code ingest: %s not read, no patterns from it: %s", name, e)
+        logger.warning("code ingest: %s: %s not read, no patterns from it: %s", cfg.label, name, e)
         raw = None
     except Exception:  # noqa: BLE001 — a repo-local file is best-effort
         raw = None
