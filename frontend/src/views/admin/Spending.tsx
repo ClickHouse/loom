@@ -448,6 +448,7 @@ export function Spending() {
           )}
         </>
       )}
+      {/* Keyed so one namespace's spend never paints under another's badge. */}
       <AgentSpend key={rowsKey} />
     </PageContainer>
   );

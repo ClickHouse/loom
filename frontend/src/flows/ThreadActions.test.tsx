@@ -194,6 +194,23 @@ describe("ThreadActions", () => {
     expect(api.createThreadRow).not.toHaveBeenCalled();
   });
 
+  it("asks to try again when the thread's row keeps changing under the rename", async () => {
+    const head = { found: true, msg_count: 1, agent: "codex", created_at: "2000-01-01 00:00:00" } as never;
+    vi.mocked(api.getConversationThread).mockResolvedValueOnce(head).mockResolvedValueOnce(head);
+    vi.mocked(api.renameThread).mockResolvedValueOnce({ updated: false }).mockResolvedValueOnce({ updated: false });
+    render(<ThreadActions identity={identity} thread={thread} canRename canDelete={false} onChanged={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename conversation" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "The conversation changed during the rename; try again",
+    );
+    expect(api.renameThread).toHaveBeenCalledTimes(2);
+    expect(api.createThreadRow).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Rename conversation" })).toBeInTheDocument();
+  });
+
   it("writes no row when the conversation went between the read and the update", async () => {
     vi.mocked(api.getConversationThread)
       .mockResolvedValueOnce({ found: true, msg_count: 1, agent: "codex", created_at: "2000-01-01 00:00:00" } as never)

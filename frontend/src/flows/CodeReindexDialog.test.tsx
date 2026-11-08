@@ -12,12 +12,20 @@ vi.mock("../api", async (importOriginal) => {
   return { ...actual, codeRecentCommits: vi.fn(), codeReindex: vi.fn() };
 });
 
-const branch = { org: "acme", namespace: "code-x", repo: "acme/x", branch: "main" } as CodeRepoSummary;
+const tip = "c".repeat(40);
+const branch = { org: "acme", namespace: "code-x", repo: "acme/x", branch: "main", git_head: tip } as CodeRepoSummary;
 const sha = "a".repeat(40);
-const commit = { commit: sha, subject: "fix the parser", committed_at: "", ingested_at: "", files: 3, pr_number: 0 };
+const row = (commit: string) => ({
+  commit,
+  subject: "fix the parser",
+  committed_at: "",
+  ingested_at: "",
+  files: 3,
+  pr_number: 0,
+});
 
 beforeEach(() => {
-  vi.mocked(api.codeRecentCommits).mockResolvedValue({ rows: [commit] });
+  vi.mocked(api.codeRecentCommits).mockResolvedValue({ rows: [row(tip), row(sha)] });
   vi.mocked(api.codeReindex).mockResolvedValue({ previous_head: "b".repeat(40), new_head: sha });
 });
 afterEach(() => {
@@ -31,17 +39,24 @@ async function pick() {
 }
 
 describe("CodeReindexDialog", () => {
-  it("re-walks from a commit the branch indexed, then re-reads the card", async () => {
+  it("re-indexes after a commit the branch indexed, then re-reads the card", async () => {
     const onClose = vi.fn();
     const onDone = vi.fn();
     render(<CodeReindexDialog branch={branch} onDone={onDone} onClose={onClose} />);
-    expect(screen.getByRole("button", { name: "Re-walk" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Re-index" })).toBeDisabled();
     await pick();
-    await userEvent.click(screen.getByRole("button", { name: "Re-walk" }));
+    await userEvent.click(screen.getByRole("button", { name: "Re-index" }));
     await waitFor(() => expect(api.codeReindex).toHaveBeenCalledWith({ org: "acme", namespace: "code-x" }, sha));
     expect(api.codeRecentCommits).toHaveBeenCalledWith({ org: "acme", namespace: "code-x" }, 100, expect.anything());
     expect(onDone).toHaveBeenCalled();
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("does not offer the tip, which has nothing after it", async () => {
+    render(<CodeReindexDialog branch={branch} onDone={vi.fn()} onClose={vi.fn()} />);
+    await userEvent.click(await screen.findByRole("button", { name: /Commit/ }));
+    expect(document.querySelector(`[cui-select-item][data-value="${sha}"]`)).not.toBeNull();
+    expect(document.querySelector(`[cui-select-item][data-value="${tip}"]`)).toBeNull();
   });
 
   it("keeps the dialog open with the reason when the server refuses", async () => {
@@ -49,15 +64,15 @@ describe("CodeReindexDialog", () => {
     const onClose = vi.fn();
     render(<CodeReindexDialog branch={branch} onDone={vi.fn()} onClose={onClose} />);
     await pick();
-    await userEvent.click(screen.getByRole("button", { name: "Re-walk" }));
+    await userEvent.click(screen.getByRole("button", { name: "Re-index" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("not an admin");
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("says so when the branch has indexed nothing to walk from", async () => {
-    vi.mocked(api.codeRecentCommits).mockResolvedValueOnce({ rows: [] });
+  it("says so when the branch has indexed nothing before its tip", async () => {
+    vi.mocked(api.codeRecentCommits).mockResolvedValueOnce({ rows: [row(tip)] });
     render(<CodeReindexDialog branch={branch} onDone={vi.fn()} onClose={vi.fn()} />);
-    expect(await screen.findByText("The branch has no indexed commits yet.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Re-walk" })).toBeDisabled();
+    expect(await screen.findByText("The branch has no indexed commit before its tip.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Re-index" })).toBeDisabled();
   });
 });

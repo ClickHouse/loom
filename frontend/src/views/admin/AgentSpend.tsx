@@ -20,8 +20,7 @@ function caption(data: AgentSpendSummary): string {
   return `$${data.total_cost_usd.toFixed(4)} over the last ${DAYS} days${unpriced}`;
 }
 
-/** The coding agents' own model spend in this namespace (cost.agent_summary), by model.
- *  Spending keys it by namespace, so one namespace's rows never paint under another's badge. */
+/** The coding agents' own model spend in this namespace (cost.agent_summary), by model. */
 export function AgentSpend() {
   const identity = useIdentity();
   const [data, setData] = useState<AgentSpendSummary | null>(null);

@@ -92,10 +92,10 @@ function NamespacePickerMenu() {
   const onPick = (ns: string) => {
     if (!identity) return;
     // A namespace someone just shared is badged New until it is opened once.
-    if (stored?.find((r) => r.namespace === ns)?.is_new) {
-      // The list as it is now: a read that landed since this render is not undone.
-      const { myNamespaces, setMyNamespaces } = useStore.getState();
-      setMyNamespaces((myNamespaces ?? []).map((r) => (r.namespace === ns ? { ...r, is_new: false } : r)));
+    // The list as it is now: a read that landed since this render is not undone.
+    const { myNamespaces, setMyNamespaces } = useStore.getState();
+    if (myNamespaces?.find((r) => r.namespace === ns)?.is_new) {
+      setMyNamespaces(myNamespaces.map((r) => (r.namespace === ns ? { ...r, is_new: false } : r)));
       markNamespaceSeen(identity.org, ns)
         .then(() => invalidateShared("mine:"))
         // The badge is a convenience: after a failed mark it comes back on the next list read.

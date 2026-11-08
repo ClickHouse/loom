@@ -9,9 +9,9 @@ import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, Loading } from "../components/ui";
 
 /** A maintainer's repair after a bad ingest pass: move the branch's watermark back to a
- *  commit it indexed (code.reindex), and the ingest worker walks again from there. The
- *  commit is picked from the branch's own, since the server moves the watermark to any id
- *  and one not on the branch stops its ingest. */
+ *  commit it indexed (code.reindex), and the ingest worker indexes the commits after it
+ *  again. The commit is picked from the branch's own: the server takes any id, and the
+ *  ingest skips ahead to the tip from one that is not on the branch. */
 export function CodeReindexDialog({
   branch,
   onDone,
@@ -31,7 +31,8 @@ export function CodeReindexDialog({
     async (signal, live) => {
       try {
         const r = await codeRecentCommits(id, 100, { signal });
-        if (live()) setCommits(r.rows);
+        // The tip has nothing after it to index.
+        if (live()) setCommits(r.rows.filter((c) => c.commit !== branch.git_head));
       } catch (e) {
         if (live()) setError(humanizeError(e));
       }
@@ -44,7 +45,7 @@ export function CodeReindexDialog({
     setError(null);
     try {
       const r = await codeReindex(id, sha);
-      toast(`${branch.repo} @ ${branch.branch} walks again from ${r.new_head.slice(0, 12)}`, "ok");
+      toast(`${branch.repo} @ ${branch.branch} indexes the commits after ${r.new_head.slice(0, 12)} again`, "ok");
       onDone();
       onClose();
     } catch (e) {
@@ -53,7 +54,7 @@ export function CodeReindexDialog({
     }
   };
   return (
-    <Modal open onOpenChange={(v) => !v && onClose()} title="Re-walk from a commit" className="w-full max-w-[480px]">
+    <Modal open onOpenChange={(v) => !v && onClose()} title="Re-index after a commit" className="w-full max-w-[480px]">
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -62,11 +63,13 @@ export function CodeReindexDialog({
       >
         <div className="space-y-4">
           <p className="text-sm text-text-muted">
-            The index of {branch.repo} @ {branch.branch} is walked again from this commit. Every write is an upsert, so
-            walking again is safe.
+            The commits of {branch.repo} @ {branch.branch} after this one are indexed again. Every write is an upsert,
+            so indexing again is safe.
           </p>
           {commits === null && !error && <Loading label="Loading the branch's commits" />}
-          {commits?.length === 0 && <p className="text-sm text-text-muted">The branch has no indexed commits yet.</p>}
+          {commits?.length === 0 && (
+            <p className="text-sm text-text-muted">The branch has no indexed commit before its tip.</p>
+          )}
           {commits && commits.length > 0 && (
             <Select
               label="Commit"
@@ -83,7 +86,7 @@ export function CodeReindexDialog({
             Cancel
           </Button>
           <Button type="primary" htmlType="submit" disabled={busy || !sha} loading={busy}>
-            Re-walk
+            Re-index
           </Button>
         </ModalFooter>
       </form>

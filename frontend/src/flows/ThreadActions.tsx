@@ -161,22 +161,20 @@ async function deleteEveryAgent(
 }
 
 /** Title the thread: update its row as the agent that owns it (not always the last
- *  writer), or write one for a thread built by appends, which has none. Answers false
- *  when the conversation is gone. */
+ *  writer), or write one for a thread built by appends, which has none. A row that went
+ *  between the read and the update is read once more. Answers false when the
+ *  conversation is gone. */
 async function retitle(id: Pick<Identity, "org" | "namespace">, thread: Thread, title: string): Promise<boolean> {
-  let head = await readHead(id, thread.thread_id);
-  if (!head.found) return false;
-  if (head.created_at) {
-    if ((await renameThread(id, head.agent, thread.thread_id, title)).updated) return true;
-    // The row changed since the read: title the one there now, or write one while the
-    // conversation still has turns. Writing over a row would replace its metadata.
-    head = await readHead(id, thread.thread_id);
+  for (let tries = 0; tries < 2; tries++) {
+    const head = await readHead(id, thread.thread_id);
     if (!head.found) return false;
-    if (head.created_at) {
-      if ((await renameThread(id, head.agent, thread.thread_id, title)).updated) return true;
-      throw new Error("The conversation changed during the rename; try again");
+    if (!head.created_at) {
+      // conversation.create replaces a row written since the read, metadata included;
+      // it has no create-if-absent, so that window stays open.
+      await createThreadRow(id, thread.agent, thread.thread_id, title);
+      return true;
     }
+    if ((await renameThread(id, head.agent, thread.thread_id, title)).updated) return true;
   }
-  await createThreadRow(id, thread.agent, thread.thread_id, title);
-  return true;
+  throw new Error("The conversation changed during the rename; try again");
 }

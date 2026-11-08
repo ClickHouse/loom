@@ -268,7 +268,7 @@ export async function codeRefresh(
 }
 
 /** POST /v1/code.reindex (ADMIN): move the index's git watermark to `gitHead`; the ingest
- *  worker walks again from there. */
+ *  worker indexes the commits after it again. */
 export async function codeReindex(id: CodeId, gitHead: string): Promise<{ previous_head: string; new_head: string }> {
   return post("/v1/code.reindex", { ...id, agent: "loom-ui", git_head: gitHead });
 }

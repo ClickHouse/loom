@@ -12,7 +12,7 @@ vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
     ...actual,
-    gradeRun: vi.fn(async () => ({ graded: 1, skipped_active: 0, unchanged: 0, proposals_decided: [] as unknown[] })),
+    gradeRun: vi.fn(async () => ({ graded: 1, skipped_active: 0, unchanged: 0, proposals_decided: [] })),
   };
 });
 
@@ -43,7 +43,10 @@ describe("RunGrade", () => {
       graded: 1,
       skipped_active: 0,
       unchanged: 0,
-      proposals_decided: [{}, {}],
+      proposals_decided: [
+        { memory_key: "fact_a", decision: "reject", passes: 0, fails: 3 },
+        { memory_key: "fact_b", decision: "accept", passes: 4, fails: 0 },
+      ],
     });
     render(<RunGrade identity={identity} run={run()} />);
     await userEvent.click(screen.getByRole("button", { name: "Did not hold" }));

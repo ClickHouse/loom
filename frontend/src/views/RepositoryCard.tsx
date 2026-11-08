@@ -409,7 +409,7 @@ function branchMenu(b: CodeRepoSummary, actions: CodeActions, busy: boolean): Ro
     items.push({ label: "Withdraw request", icon: "clock", onSelect: () => actions.onCancel(b) });
   const reindex = actions.onReindex;
   if (reindex && st === "member" && b.my_role === "admin")
-    items.push({ label: "Re-walk from a commit…", icon: "history", onSelect: () => reindex(b) });
+    items.push({ label: "Re-index after a commit…", icon: "history", onSelect: () => reindex(b) });
   const remove = actions.onRemove;
   if (remove && b.my_role === "admin" && b.source === "registry")
     items.push({ label: "Remove branch", icon: "trash", danger: true, onSelect: () => remove(b) });

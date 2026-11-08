@@ -126,12 +126,20 @@ export async function getRun(id: { org: string; namespace: string }, runId: stri
 }
 
 /** POST /v1/run.grade: whether a closed run's result held up, from the person who knows. */
+/** A proposal an owner's auto policy accepted or rejected on a grade. */
+export interface RunGradeProposal {
+  memory_key: string;
+  decision: "accept" | "reject";
+  passes: number;
+  fails: number;
+}
+
 export async function gradeRun(
   id: Pick<Identity, "org" | "namespace">,
   runId: string,
   grade: "pass" | "fail",
   reason: string,
   source: string,
-): Promise<{ graded: number; skipped_active: number; unchanged: number; proposals_decided: unknown[] }> {
+): Promise<{ graded: number; skipped_active: number; unchanged: number; proposals_decided: RunGradeProposal[] }> {
   return post("/v1/run.grade", { org: id.org, namespace: id.namespace, run_id: runId, grade, reason, source });
 }
