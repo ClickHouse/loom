@@ -17,7 +17,9 @@ gives it the COLUMN, where the text makes the binding unambiguous:
     column of it (`known`: the file's own definitions plus what the caller
     learned from the namespace). `INSERT INTO t (a, b)` writes `a`, `b`;
     `UPDATE t SET a = …` / `ALTER TABLE t UPDATE a = …` writes `a`; every
-    other reference is a read. `SELECT *` names no column.
+    other reference is a read. `SELECT *` over one table reads its known columns
+    (`CONF_STAR`), for a table of at most `STAR_COLUMNS_MAX` of them and up to
+    `STAR_READS_MAX` columns a file.
   * **Facets** — `column_read` / `column_write` rows named
     `<table>.<column>` on the statement (the facet table), so
     `code.tests_for({facets:[{kind:"column_write",name:"users.email"}]})`
@@ -27,9 +29,10 @@ gives it the COLUMN, where the text makes the binding unambiguous:
 
 What is deliberately NOT bound (schema-less column lineage cannot settle these; lineage
 conventions mark such edges as indirect): an unqualified column in a multi-table
-statement, a column through a subquery or CTE alias, `*`, a column of a table nobody in
-the tree defines. Precision over coverage — a wrong column edge misroutes an impact
-question, a missing one only widens it to the table edge already drawn.
+statement, a column through a subquery or CTE alias, a `*` over several tables, a column
+of a table nobody in the tree defines. Precision over coverage — a wrong column edge
+misroutes an impact question, a missing one only widens it to the table edge already
+drawn.
 """
 
 from __future__ import annotations
@@ -53,6 +56,11 @@ from server.code.domain.extract.lang_sql_objects import (
     references,
     split_schema,
 )
+from server.code.domain.extract.lang_sql_split import (
+    comment_spans,
+    split_statements,
+    without_spans,
+)
 from server.code.domain.extract.treesitter import Symbol
 
 KIND_COLUMN = "column"
@@ -62,7 +70,9 @@ CONF_QUALIFIED = 0.95  # `alias.col` → the alias's table
 CONF_SINGLE_TABLE = 0.9  # unqualified `col` in a one-table statement, column known
 CONF_EXPLICIT = 1.0  # `INSERT INTO t (a, b)`, `UPDATE t SET a`
 
-_IDENT = r"(?:`[^`]+`|\"[^\"]+\"|\[[^\]]+\]|[A-Za-z_][\w$]*)"
+# A bare name starts a word and a bracketed one holds no `[`: either is then searched
+# once, not again from every later character or `[`.
+_IDENT = r"(?:`[^`]+`|\"[^\"]+\"|\[[^\[\]]+\]|(?<![\w$])[A-Za-z_][\w$]*)"
 # a column definition item's head: the column name then its type word
 _COL_DEF_RE = re.compile(r"^\s*(" + _IDENT + r")\s+(?:(" + _IDENT + r")|\()")
 # items of a CREATE TABLE body that are not columns
@@ -113,29 +123,45 @@ _ALTER_TABLE_RE = re.compile(
     + _IDENT
     + r"){0,2})"
 )
-_ALTER_UPDATE_RE = re.compile(r"(?is)^\s*ALTER\s+TABLE\s+.*?\bUPDATE\s+(.*?)\s+WHERE\b")
+_ALTER_UPDATE_RE = re.compile(
+    r"(?is)^\s*+ALTER\s++TABLE\s++(?:(?!\bUPDATE\s).)*?\bUPDATE\s++(.*?)(?<=\S)\s+WHERE\b"
+)
 # unanchored: a `CREATE RULE … DO INSTEAD INSERT INTO t (…)` or a function body writes
 # its columns as explicitly as a top-level statement
 _UPDATE_SET_RE = re.compile(
     r"(?is)\bUPDATE\s+(?:ONLY\s+)?(" + _IDENT + r"(?:\." + _IDENT + r"){0,2})"
-    r"(?:\s+(?:AS\s+)?(" + _IDENT + r"))?\s+SET\s+(.*?)(?:\s+WHERE\b|\s+FROM\b|;|$)"
+    r"(?:\s+(?:AS\s+)?(" + _IDENT + r"))?\s+SET\s++(.*?)(?:(?<=\S)\s+WHERE\b|(?<=\S)\s+FROM\b|;|$)"
 )
 _INSERT_COLS_RE = re.compile(
     r"(?is)\b(?:INSERT|REPLACE)\s+INTO\s+(?:TABLE\s+)?("
     + _IDENT
     + r"(?:\."
     + _IDENT
-    + r"){0,2})\s*\(([^)]*)\)"
+    + r"){0,2})\s*\(([^()]*)\)"
 )
 CONF_STAR = 0.85  # `SELECT *` over a one-table statement whose columns are known
+# A `SELECT *` over a wider table reads nothing, and the stars of one file read at most
+# STAR_READS_MAX columns together, or a file of one wide table and many `SELECT *` would
+# read columns times statements.
+STAR_COLUMNS_MAX = 1000  # not a setting: bounds what one star reads
+STAR_READS_MAX = 100_000  # not a setting: bounds what one file's stars read
+
+
+@dataclass
+class StarBudget:
+    """The columns the `SELECT *` of one file may still read."""
+
+    left: int = STAR_READS_MAX
+
+
 _STAR_RE = re.compile(
     r"(?is)\bSELECT\s+(?:DISTINCT\s+)?(?:(" + _IDENT + r")\.)?\*(?=\s*(?:,|FROM\b))"
 )
 _WITH_RE = re.compile(
-    r"(?is)(?:\bWITH\s+(?:RECURSIVE\s+)?|,\s*)(" + _IDENT + r")\s*(?:\([^)]*\))?\s+AS\s*\("
+    r"(?is)(?:\bWITH\s+(?:RECURSIVE\s+)?|,\s*)(" + _IDENT + r")(?:\s*\([^()]*\))?\s+AS\s*\("
 )
 _DERIVED_RE = re.compile(r"(?is)\)\s*(?:AS\s+)?(" + _IDENT + r")\b")
-_SELECT_LIST_RE = re.compile(r"(?is)^\s*SELECT\s+(?:DISTINCT\s+)?(.*?)\s+FROM\b")
+_SELECT_LIST_RE = re.compile(r"(?is)^\s*+SELECT\s++(?:DISTINCT\s++)?(.*?)(?<=\S)\s+FROM\b")
 _ASSIGN_LHS_RE = re.compile(r"(" + _IDENT + r"(?:\." + _IDENT + r")?)\s*=")
 # `table [AS] alias` after FROM / JOIN / UPDATE / INTO
 _SOURCE_RE = re.compile(
@@ -156,11 +182,12 @@ _LIST_ALIAS_RE = re.compile(
     r"|USING|JOIN|LEFT|RIGHT|INNER|FULL|CROSS|GROUP|ORDER|LIMIT|HAVING|UNION|FINAL|SAMPLE|PREWHERE"
     r"|SETTINGS|FORMAT|VALUES|SELECT|WITH|WINDOW|QUALIFY)\b)(" + _IDENT + r"))?"
 )
-_ALTER_WHERE_RE = re.compile(r"(?is)^\s*ALTER\s+TABLE\s+.*?\b(?:UPDATE|DELETE)\b.*?\bWHERE\b(.*)$")
+_ALTER_WHERE_RE = re.compile(
+    r"(?is)^\s*+ALTER\s++TABLE\s++(?:(?!\b(?:UPDATE|DELETE)\b).)*?\b(?:UPDATE|DELETE)\b.*?\bWHERE\b(.*)$"
+)
 _QUALIFIED_RE = re.compile(r"(?<![\w$.\"`\]])(" + _IDENT + r")\.(" + _IDENT + r")(?![\w$.(])")
 _BARE_RE = re.compile(r"(?<![\w$.\"`\]@:{])(" + _IDENT + r")(?![\w$.(`\"])")
 _STRING_RE = re.compile(r"'(?:[^']|'')*'|\$\$.*?\$\$", re.S)
-_COMMENT_RE = re.compile(r"--[^\n]*|/\*.*?\*/", re.S)
 _KEYWORDS = frozenset(
     w.upper()
     for w in """
@@ -249,25 +276,23 @@ def _split_top_level(body: str) -> list[str]:
     return out
 
 
-def _body_between_parens(text: str, start: int) -> str | None:
-    """The text inside the paren opening at `start`, or None if unbalanced."""
-    depth = 0
+def _paren_closes(text: str) -> dict[int, int]:
+    """{index of a `(`: index of its `)`} for the balanced parens outside quotes, in one
+    pass."""
+    out: dict[int, int] = {}
+    opens: list[int] = []
     quote = ""
-    for i in range(start, len(text)):
-        ch = text[i]
+    for i, ch in enumerate(text):
         if quote:
             if ch == quote:
                 quote = ""
-            continue
-        if ch in "'\"`":
+        elif ch in "'\"`":
             quote = ch
         elif ch == "(":
-            depth += 1
-        elif ch == ")":
-            depth -= 1
-            if depth == 0:
-                return text[start + 1 : i]
-    return None
+            opens.append(i)
+        elif ch == ")" and opens:
+            out[opens.pop()] = i
+    return out
 
 
 def table_columns(stmt: Statement, obj: CreatedObject | None = None) -> list[ColumnDef]:
@@ -280,9 +305,10 @@ def table_columns(stmt: Statement, obj: CreatedObject | None = None) -> list[Col
     m = _CREATE_TABLE_RE.match(stmt.body)
     if not m:
         return []
-    inner = _body_between_parens(stmt.body, m.end() - 1)
-    if inner is None:
+    close = _paren_closes(stmt.body[m.end() - 1 :]).get(0)  # quotes read from the `(`
+    if close is None:
         return []
+    inner = stmt.body[m.end() : m.end() - 1 + close]
     out: list[ColumnDef] = []
     seen: set[str] = set()
     for item in _split_top_level(inner):
@@ -345,7 +371,7 @@ def file_columns(
 def _strip(body: str) -> str:
     """The statement body without string literals and comments (their text
     is not identifiers), same length not required."""
-    return _STRING_RE.sub("''", _COMMENT_RE.sub(" ", body))
+    return _STRING_RE.sub("''", without_spans(body, comment_spans(body, True), " "))
 
 
 def _alias_map(body: str, refs: References) -> dict[str, str]:
@@ -353,14 +379,17 @@ def _alias_map(body: str, refs: References) -> dict[str, str]:
     sources, CTE names excluded through `refs` (a CTE is not a table)."""
     tables = {bare_name(n).lower(): bare_name(n) for n in [*refs.reads, *refs.writes]}
     out: dict[str, str] = dict(tables)
+    list_end = 0
     for m in _SOURCE_RE.finditer(body):
         written, alias = m.group(1), m.group(2) or ""
         pairs: list[tuple[str, str]] = [(written, alias)]
-        # the comma-joined list that may follow: `FROM a x, b AS y, c`
+        # the comma-joined list that may follow: `FROM a x, b AS y, c`; a source inside
+        # a list already read adds only itself, or a long list is read once per item
         pos = m.end()
-        while True:
+        while m.start() >= list_end:
             lm = _LIST_ALIAS_RE.match(body, pos)
             if lm is None:
+                list_end = pos
                 break
             pairs.append((lm.group(1), lm.group(2) or ""))
             pos = lm.end()
@@ -455,7 +484,7 @@ def _select_items(select_body: str) -> list[tuple[str, str, str]]:
             out.append(("", "", ""))
             continue
         alias = ""
-        am = re.match(r"(?is)^(.*?)\s+(?:AS\s+)?(" + _IDENT + r")$", item)
+        am = re.match(r"(?is)^(.*?)(?<=\S)\s+(?:AS\s+)?(" + _IDENT + r")$", item)
         expr = item
         if am and am.group(2).upper() not in _KEYWORDS:
             expr, alias = am.group(1).strip(), _plain(am.group(2))
@@ -477,7 +506,6 @@ def _body_columns(
     where the source binds through the body's own aliases, its one known table, or an
     earlier CTE it selects from (the columns then carry that CTE's sources); everything
     else is unmapped."""
-    from server.code.domain.extract.lang_sql_split import split_statements
 
     sts = split_statements(select_body)
     if not sts:
@@ -533,19 +561,26 @@ def _scoped_columns(body: str, known: dict[str, set[str]]) -> dict[str, dict[str
     """{cte or derived-table alias (lower): its exposed columns} for the
     `WITH name AS (…)` and `(SELECT …) alias` scopes of a statement."""
     out: dict[str, dict[str, tuple[str, str]]] = {}
+    closes = _paren_closes(body)
+    # Each scope around a nested one reads its body again: the bodies read are capped at
+    # 4 times the statement, so a deep nest costs linear time.
+    budget = 4 * len(body)
     for m in _WITH_RE.finditer(body):
-        inner = _body_between_parens(body, m.end() - 1)
-        if inner is not None:
+        close = closes.get(m.end() - 1)
+        if close is not None and close - m.end() <= budget:
+            budget -= close - m.end()
+            inner = body[m.end() : close]
             out[_plain(m.group(1)).lower()] = _body_columns(inner, known, out)  # in order
     depth = 0
     for i, ch in enumerate(body):
         if ch == "(":
             if depth == 0 and re.match(r"(?is)\(\s*SELECT\b", body[i : i + 12]):
-                inner = _body_between_parens(body, i)
-                if inner is not None:
-                    dm = _DERIVED_RE.match(body, i + len(inner) + 1)
+                close = closes.get(i)
+                if close is not None:
+                    dm = _DERIVED_RE.match(body, close)
                     if dm and _plain(dm.group(1)).upper() not in _KEYWORDS:
-                        out[_plain(dm.group(1)).lower()] = _body_columns(inner, known, out)
+                        derived = body[i + 1 : close]
+                        out[_plain(dm.group(1)).lower()] = _body_columns(derived, known, out)
             depth += 1
         elif ch == ")":
             depth = max(0, depth - 1)
@@ -558,20 +593,29 @@ def _star_reads(
     aliases: dict[str, str],
     known: dict[str, set[str]],
     acc: _Collector,
+    budget: StarBudget,
 ) -> None:
-    """`SELECT *` / `SELECT t.*` over a table whose columns are known reads every known
-    column at CONF_STAR."""
+    """`SELECT *` / `SELECT t.*` over a table whose columns are known, at most
+    `STAR_COLUMNS_MAX` of them, reads every known column at CONF_STAR, while the
+    file's budget lasts."""
     for sm in _STAR_RE.finditer(body):
         qual = _plain(sm.group(1) or "").lower()
         table = aliases.get(qual) if qual else (next(iter(tables)) if len(tables) == 1 else None)
         if table is None:
             continue
-        for col in sorted(known.get(table) or ()):
+        cols = known.get(table) or ()
+        if len(cols) > min(STAR_COLUMNS_MAX, budget.left):
+            continue
+        budget.left -= len(cols)
+        for col in sorted(cols):
             acc.add("r", table, col, CONF_STAR)
 
 
 def column_refs(
-    stmt: Statement, known: dict[str, set[str]], refs: References | None = None
+    stmt: Statement,
+    known: dict[str, set[str]],
+    refs: References | None = None,
+    star: StarBudget | None = None,
 ) -> ColumnRefs:
     """The (table, column, confidence) a statement reads and writes, bound
     by the rules in the module docstring. `known` is {bare table: columns}."""
@@ -624,7 +668,7 @@ def column_refs(
             if plain.upper() not in _KEYWORDS and plain.lower() in cols:
                 t, src = cols[plain.lower()]
                 acc.add("r", t, src, CONF_SINGLE_TABLE)
-    _star_reads(read_body, tables, aliases, known, acc)
+    _star_reads(read_body, tables, aliases, known, acc, star or StarBudget())
     return _drop_written_reads(acc.out)
 
 
@@ -670,8 +714,9 @@ def column_facets(statements: list[Statement], known: dict[str, set[str]]) -> li
     """`column_read` / `column_write` facets named `<table>.<column>` on the
     statement that references the column."""
     out: list[Facet] = []
+    star = StarBudget()  # one per file
     for st in statements:
-        cr = column_refs(st, known)
+        cr = column_refs(st, known, star=star)
         for table, col, conf in cr.reads:
             line = line_of_name(st, col)
             out.append(Facet(FACET_COLUMN_READ, f"{table}.{col}", st.ordinal, line, conf))
@@ -696,8 +741,9 @@ def column_edges(
     repository named `<table>.<column>` (0.9 ×)."""
     own_by_key: dict[str, Symbol] = {s.name: s for s in own if s.kind == KIND_COLUMN}
     edges: list[Edge] = []
+    star = StarBudget()  # one per file
     for st in statements:
-        cr = column_refs(st, known)
+        cr = column_refs(st, known, star=star)
         if not cr.reads and not cr.writes:
             continue
         src = statement_symbol(path, mod, st)
@@ -788,8 +834,9 @@ def column_names(statements: list[Statement], known: dict[str, set[str]]) -> set
     """The `<table>.<column>` names the file references — what the ingest
     asks the name table for before `column_edges`."""
     out: set[str] = set()
+    star = StarBudget()  # one per file
     for st in statements:
-        cr = column_refs(st, known)
+        cr = column_refs(st, known, star=star)
         out.update(f"{t}.{c}" for t, c, _ in [*cr.reads, *cr.writes])
     return out
 

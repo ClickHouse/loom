@@ -330,6 +330,29 @@ memory the workers process has. The full index of such a tree takes about an hou
   configure inside the same `LOOM_CODE_SCIP_DELTA_TIMEOUT_SECONDS` (3600) as the index;
   a timed-out delta leaves `scip_commit` where it was, so the next pass retries a larger
   window.
+- **Delta caps.** The server reads a compiler tier's delta (every tier, delta or full
+  run) only when it is a regular file, not a link, within two caps, both checked before
+  it is parsed; a delta over either fails the entry's pass, and a raised value reaches
+  the next pass. `LOOM_CODE_SCIP_DELTA_FILE_MAX_MB` (180 MiB) bounds the bytes, and
+  `LOOM_CODE_SCIP_DELTA_MAX_NODES` (6,000,000) bounds the `{`, `[` and `,` bytes, which
+  bound the JSON values a parse builds. A parse holds up to about 600 B per counted byte
+  (minimal `{"path":""}` files or symbols, which repository code can write) plus about
+  6 times the delta's bytes (one long string holding a 4-byte character), on top of the
+  process's own 52 MiB. At the defaults that is 52 MiB + 600 B × 6,000,000 +
+  6 × 180 MiB, about 4.5 GiB for the worst delta. A synthetic C++-shaped delta has one
+  counted byte per about 32 bytes and parses at about 9 times its size, so it meets
+  both caps near 180 MiB, about 1.6 GiB parsed; a real delta with longer names meets
+  them later, one with shorter names sooner. Raise both together, to what the worker's
+  memory allows by that formula. To measure the per-value cost on a host (about 3.4 GiB
+  at the default count):
+
+  ```bash
+  .venv/bin/python -c "import resource; from server.code.app.index.scip_delta import ScipDelta; n = 2_999_999; raw = b'{\"commit\":\"c\",\"files\":[' + b','.join([b'{\"path\":\"\"}'] * n) + b']}'; ScipDelta.model_validate_json(raw); print(raw.count(b'{') + raw.count(b'[') + raw.count(b','), 'counted,', len(raw) >> 20, 'MiB delta,', resource.getrusage(resource.RUSAGE_SELF).ru_maxrss >> 10, 'MiB peak RSS')"
+  ```
+
+  An invalid delta fails the pass with `delta invalid: <n> errors`, not pydantic's list
+  of every bad item.
+
 - **C/C++ full index.** `code_scip_full` re-indexes one entry per pass: an entry whose
   `scip_commit` is not seeded yet (the delta skips it with "watermarks not seeded"), and
   every entry once its last applied full run is `LOOM_CODE_SCIP_FULL_EVERY_HOURS` (168)
@@ -392,6 +415,27 @@ memory the workers process has. The full index of such a tree takes about an hou
   registry, incompatible lockfile or generated types requiring a build can still need
   project-specific configuration; the worker reports the exact failure in
   `workers.status`. Server credentials are not passed into the installer environment.
+  The server reads the checkout's `package.json` (up to 1 MiB) and each install root's
+  `yarn.lock` (up to 64 MiB) only as regular files, never through a link; a symlinked one
+  fails the TypeScript pass even when the link points inside the repository.
+- **Repository files are size-checked before they are read.** The ingest asks the mirror
+  for a file's size first: a file over `LOOM_CODE_INGEST_MAX_FILE_BYTES` is not read, and
+  its `code_files` row records the reason (`code.index_errors`); 0 lifts the cap. Every
+  manifest the import resolver reads (the TypeScript, Python and Go project and workspace
+  files) is read from the mirror up to 1 MiB, a `go.mod` up to 64 KiB and at most 200 of
+  them; a larger one is skipped once per commit with a warning naming the org and
+  namespace, and the imports it would have resolved stay unresolved. Outside a worker
+  pass the resolver reads a file from its indexed chunks instead, which hold only files
+  within `LOOM_CODE_INGEST_MAX_FILE_BYTES` (any size at 0). A barrel's re-exports are read
+  under the same file cap. A binary or denylisted file over the cap is tombstoned as
+  one under it is, by its path and its first 8 KiB; a generated one gets the skipped
+  row, with no declarations.
+- **The repository's own exclusions are bounded and fail open.** `.loomignore` and
+  `.gitattributes` are read up to 1 MiB and give at most 1,000 patterns between them. A
+  larger file gives no patterns, and patterns past the 1,000th are dropped, so the paths
+  they would have excluded are indexed; the log names the file or the count. The
+  entry's own `exclude` globs are never cut, so a path that must stay out belongs
+  there.
 - **A failed apply** leaves its batch `failed` with the error;
   `loom code scip-retry <batch_id>` resets it to pending.
 - **Manual and CI producers** live in `scripts/scip_harness/` (`run_delta.sh`,
@@ -446,7 +490,11 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
   guarantees no process it started outlives it;
 - bounded output in the server: a job's stderr, and the stdout of a build, install or
   clone, keep only their last 1 MiB; a command whose stdout Loom parses (`ls-remote`,
-  fetch) may print up to 64 MiB, and past that the whole job is killed and fails;
+  fetch) may print up to 64 MiB, and past that the whole job is killed and fails. A file
+  the server reads back from a job or a checkout is a regular file, never a link: a
+  compiler tier's delta up to `LOOM_CODE_SCIP_DELTA_FILE_MAX_MB` and
+  `LOOM_CODE_SCIP_DELTA_MAX_NODES`, the checkout's `package.json` up to 1 MiB and each
+  install root's `yarn.lock` up to 64 MiB;
 - no network, except for clones, fetches, submodules and dependency downloads, and then
   only through an egress proxy outside the sandbox. It accepts `CONNECT` to ports 443,
   22 and the remote's own port, resolves the name (from `/etc/resolv.conf` alone: not
@@ -809,18 +857,19 @@ A failure with kind `unknown` carries the end of the output to read.
 
 ## Failure model
 
-| Failure                                                              | Behaviour                                                                                                                                                                                                                                                                                | Recovery                                                                |
-| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `git fetch` fails                                                    | watermark unmoved; the entry's `fetch` tier records the error, its kind and fix (`tier_health`)                                                                                                                                                                                          | the next pass (supervisor backoff)                                      |
-| crash mid-commit                                                     | the commit is re-run                                                                                                                                                                                                                                                                     | idempotent upserts                                                      |
-| a file fails to parse                                                | file skipped, `code_files.index_error` set                                                                                                                                                                                                                                               | `code.index_errors` lists them; fixed by the next change or a repair    |
-| embedding provider down                                              | chunks stored without vectors; lexical search still serves                                                                                                                                                                                                                               | `code_embed_recovery`                                                   |
-| compiler-tier apply fails                                            | batch `failed` with the error                                                                                                                                                                                                                                                            | `loom code scip-retry <batch_id>`                                       |
-| a compiler-tier pass fails or hangs                                  | the harness's timeout ends a hang, and the pass deadline (that timeout plus headroom for the git steps and the apply) cancels anything else; the entry lock is freed; a failure the pass reports (the harness's own timeout included) is recorded with its kind and fix in `tier_health` | the next pass; `workers.status` names the timeout                       |
-| compiler-tier window base unknown (history rewritten, pruned mirror) | every `scripts/scip_harness/` tier exits 3, never an empty delta; the Python, TypeScript and Go workers clear the tier's watermark                                                                                                                                                       | the next run is a full index for that tier (`code_scip_full` for C/C++) |
-| GitHub rate limit                                                    | the pass ends, cursor unmoved                                                                                                                                                                                                                                                            | the next pass                                                           |
-| branch force-pushed (watermark no longer an ancestor)                | watermark reset to the new head, logged                                                                                                                                                                                                                                                  | `loom code backfill` to re-derive                                       |
-| weekly graph stats fail                                              | last week's ranks keep serving                                                                                                                                                                                                                                                           | the next weekly pass                                                    |
+| Failure                                                                                                             | Behaviour                                                                                                                                                                                                                                                                                | Recovery                                                                                                                                                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `git fetch` fails                                                                                                   | watermark unmoved; the entry's `fetch` tier records the error, its kind and fix (`tier_health`)                                                                                                                                                                                          | the next pass (supervisor backoff)                                                                                                                                                                                                |
+| crash mid-commit                                                                                                    | the commit is re-run                                                                                                                                                                                                                                                                     | idempotent upserts                                                                                                                                                                                                                |
+| a file fails to parse                                                                                               | file skipped, `code_files.index_error` set                                                                                                                                                                                                                                               | `code.index_errors` lists them; fixed by the next change or a repair                                                                                                                                                              |
+| embedding provider down                                                                                             | chunks stored without vectors; lexical search still serves                                                                                                                                                                                                                               | `code_embed_recovery`                                                                                                                                                                                                             |
+| compiler-tier apply fails                                                                                           | batch `failed` with the error                                                                                                                                                                                                                                                            | `loom code scip-retry <batch_id>`                                                                                                                                                                                                 |
+| a compiler-tier pass fails or hangs                                                                                 | the harness's timeout ends a hang, and the pass deadline (that timeout plus headroom for the git steps and the apply) cancels anything else; the entry lock is freed; a failure the pass reports (the harness's own timeout included) is recorded with its kind and fix in `tier_health` | the next pass; `workers.status` names the timeout                                                                                                                                                                                 |
+| compiler-tier window base unknown (history rewritten, pruned mirror)                                                | every `scripts/scip_harness/` tier exits 3, never an empty delta; the Python, TypeScript and Go workers clear the tier's watermark                                                                                                                                                       | the next run is a full index for that tier (`code_scip_full` for C/C++)                                                                                                                                                           |
+| a compiler-tier delta is a link, not a regular file, or oversize, or the Go harness writes more deltas than modules | the delta is refused (`FileRefused`, or `Go harness wrote more deltas than its N module(s)`) and the entry's pass fails; the watermark stays                                                                                                                                             | oversize: raise `LOOM_CODE_SCIP_DELTA_FILE_MAX_MB` and `LOOM_CODE_SCIP_DELTA_MAX_NODES` together (sizing above); a link, a non-regular file or extra deltas recur every pass until the repository changes or the entry is removed |
+| GitHub rate limit                                                                                                   | the pass ends, cursor unmoved                                                                                                                                                                                                                                                            | the next pass                                                                                                                                                                                                                     |
+| branch force-pushed (watermark no longer an ancestor)                                                               | watermark reset to the new head, logged                                                                                                                                                                                                                                                  | `loom code backfill` to re-derive                                                                                                                                                                                                 |
+| weekly graph stats fail                                                                                             | last week's ranks keep serving                                                                                                                                                                                                                                                           | the next weekly pass                                                                                                                                                                                                              |
 
 The code index's gauges (`loom.code.index_lag_commits`, `loom.code.stale_files`,
 `loom.code.tier_lag_seconds`, `loom.code.embed_backlog`, `loom.code.files_errored`) are

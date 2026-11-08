@@ -61,6 +61,12 @@ def test_an_external_template_is_its_modules_unit_and_binds_by_selector_and_meth
         and (3, "fmt", "handler") in sites
         and (4, "articles", "handler") in sites
     )
+    assert [n for _, n, _ in template_sites('{{ $any(x) }}<a *ngIf="a.$emit(x)">')] == [
+        "$any",
+        "$emit",
+    ]
+    assert [n for _, n, _ in template_sites('<a [width]="n*px(2)">')] == ["px"]
+    assert [n for _, n, _ in template_sites('<a *ngIf="i*2 === n && check(x)">')] == ["check"]
     selectors = {
         "app-layout-header": ("h1", "src.app.core.layout.header.component::HeaderComponent")
     }
@@ -101,7 +107,8 @@ def test_an_empty_manifest_read_is_not_cached() -> None:
             return self.texts.get(path, "")
 
     repo = _Repo()
-    ingest_resolve._PACKAGE_JSON_CACHE.pop(("o", "n", "src/app/app.component.ts"))
+    key = ("o", "n", "src/app/app.component.ts", ingest_resolve.PACKAGE_JSON_MAX_BYTES)
+    ingest_resolve._PACKAGE_JSON_CACHE.pop(key)
     assert (
         asyncio.run(ingest_resolve._package_json_text(repo, "o", "n", "src/app/app.component.ts"))
         == ""

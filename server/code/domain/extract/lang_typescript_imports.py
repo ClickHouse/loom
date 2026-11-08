@@ -61,7 +61,7 @@ def import_bindings(pf: ParsedFile) -> dict[str, str]:
     ):
         out[m.group(1)] = m.group(2)
     for m in re.finditer(
-        r"""(?:const|let|var)\s*\{([^}]*)\}\s*=\s*(?:await\s+)?import\(\s*["']([^"']+)["']""",
+        r"""(?:const|let|var)\s*\{([^{}]*)\}\s*=\s*(?:await\s+)?import\(\s*["']([^"']+)["']""",
         text,
     ):
         for part in m.group(1).split(","):
@@ -70,7 +70,7 @@ def import_bindings(pf: ParsedFile) -> dict[str, str]:
                 out[name] = m.group(2)
     # `const { a, b: c } = require("y")` binds a and c to y
     for m in re.finditer(
-        r"""(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\(\s*["']([^"']+)["']""",
+        r"""(?:const|let|var)\s*\{([^{}]*)\}\s*=\s*require\(\s*["']([^"']+)["']""",
         text,
     ):
         for part in m.group(1).split(","):
@@ -235,6 +235,10 @@ def package_subpath(spec: str) -> str:
     return "./" + "/".join(rest) if rest else "."
 
 
+# `exports` with each target's condition picked: one target string, or subpath -> target
+ExportsView = str | dict[str, str] | None
+
+
 def _pick_condition(target: Any) -> str:
     if isinstance(target, str):
         return target
@@ -244,7 +248,9 @@ def _pick_condition(target: Any) -> str:
                 picked = _pick_condition(target[cond])
                 if picked:
                     return picked
-        for value in target.values():  # a nested condition object without a known key
+        for key, value in target.items():  # a nested condition object without a known key
+            if key in _EXPORT_CONDITIONS:
+                continue  # read above: a second read per level is exponential in the depth
             picked = _pick_condition(value)
             if picked:
                 return picked
@@ -256,20 +262,16 @@ def _pick_condition(target: Any) -> str:
     return ""
 
 
-def _exports_target(exports: Any, subpath: str) -> str:
-    """The target string the `exports` field maps `subpath` to, '' when
-    the subpath is not exported. Exact keys first, then `*` patterns
-    (longest literal prefix wins, as Node ranks them)."""
-    if exports is None:
-        return ""
+def _exports_target(exports: ExportsView, subpath: str) -> str:
+    """The target string a manifest view's `exports` (`_view`: each target's condition
+    already picked) maps `subpath` to, '' when the subpath is not exported. Exact keys
+    first, then `*` patterns (longest literal prefix wins, as Node ranks them)."""
     if isinstance(exports, str):
         return exports if subpath == "." else ""
-    if isinstance(exports, dict) and not any(k.startswith(".") for k in exports):
-        return _pick_condition(exports) if subpath == "." else ""  # conditions at the top level
     if not isinstance(exports, dict):
         return ""
     if subpath in exports:
-        return _pick_condition(exports[subpath])
+        return exports[subpath]
     best_key, best = "", ""
     for key, target in exports.items():
         if "*" not in key:
@@ -279,26 +281,48 @@ def _exports_target(exports: Any, subpath: str) -> str:
         if fits and len(subpath) >= len(head) + len(tail):
             if len(head) > len(best_key):
                 star = subpath[len(head) : len(subpath) - len(tail)]
-                picked = _pick_condition(target)
-                best_key, best = head, picked.replace("*", star) if picked else ""
+                best_key, best = head, target.replace("*", star)
     return best
 
 
-def exports_candidates(spec: str, pkg_dir: str, package_json: str) -> list[str]:
-    """Repository paths the package's `exports` (or `main` / `types`) maps
-    the specifier to, most likely first; [] when the package.json does not
-    parse or the subpath is not exported."""
-    try:
-        data = json.loads(package_json)
-    except ValueError:
-        return []
+# (`exports` with each target's condition picked, the `types` / `module` / `main` fallback)
+Manifest = tuple[ExportsView, str]
+
+
+def _view(data: Any) -> Manifest | None:
+    """The `Manifest` of a parsed package.json; None when it is no object."""
     if not isinstance(data, dict):
+        return None
+    raw = data.get("exports")
+    exports: ExportsView = raw if isinstance(raw, str) else None
+    if isinstance(raw, dict):
+        if any(k.startswith(".") for k in raw):
+            exports = {k: _pick_condition(v) for k, v in raw.items()}
+        else:
+            exports = _pick_condition(raw)  # conditions at the top level: "." only
+    return exports, str(data.get("types") or data.get("module") or data.get("main") or "")
+
+
+def manifest_view(package_json: str) -> Manifest | None:
+    """The `Manifest` of a package.json text; None when it does not parse."""
+    try:
+        return _view(json.loads(package_json))
+    except (ValueError, RecursionError):  # nesting deeper than the parser's or our stack
+        return None
+
+
+def exports_candidates(spec: str, pkg_dir: str, view: Manifest | None) -> list[str]:
+    """Repository paths the package's `exports` (or `main` / `types`) maps
+    the specifier to, most likely first; [] when its package.json did not
+    parse (`view` None) or the subpath is not exported."""
+    if view is None:
         return []
+    exports, fallback = view
     subpath = package_subpath(spec)
-    target = _exports_target(data.get("exports"), subpath)
+    target = _exports_target(exports, subpath)
     if not target and subpath == ".":
-        target = str(data.get("types") or data.get("module") or data.get("main") or "")
-    if not target or not isinstance(target, str):
+        target = fallback
+    if not target:
         return []
     rel = target[2:] if target.startswith("./") else target.lstrip("/")
     forms = [rel]
@@ -334,7 +358,7 @@ def unresolved_package_specs(from_path: str, specs: list[str], present: set[str]
 # imports from `features/query` also depends on `features/query/dataModel` — an
 # `includes` edge at `BARREL_CONFIDENCE`, below the direct import's 1.0.
 _REEXPORT_RE = re.compile(
-    r"""^\s*export\s+(?:type\s+)?(?:\*(?:\s+as\s+\w+)?|\{[^}]*\})\s+from\s+["']([^"']+)["']""",
+    r"""^[^\S\n]*export\s+(?:type\s+)?(?:\*(?:\s+as\s+\w+)?|\{[^{}]*\})\s+from\s+["']([^"']+)["']""",
     re.M,
 )
 BARREL_CONFIDENCE = 0.9

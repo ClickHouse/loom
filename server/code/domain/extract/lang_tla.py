@@ -30,7 +30,7 @@ kind ``model`` named after the file, signature the checked names, plus a
 that checks it, and `calls` edges model → operator so `code.callers(TypeOK)`
 answers "checked by CommitProtocol.cfg".
 
-Parsing: `tree-sitter-tlaplus` when installed (the `[code]` extra), else a
+Parsing: `tree-sitter-tlaplus` when installed (no extra installs it), else a
 line-based reader that finds the same top-level definitions by the
 column-0 `Name(args) ==` shape. Outside the extractor stamp with the other
 lane modules.
@@ -38,6 +38,7 @@ lane modules.
 
 from __future__ import annotations
 
+import bisect
 import posixpath
 import re
 from dataclasses import dataclass, field
@@ -82,18 +83,18 @@ STANDARD_MODULES: frozenset[str] = frozenset(
 
 _MODULE_RE = re.compile(r"^-{4,}\s*MODULE\s+(\w+)\s*-{4,}\s*$")
 _END_RE = re.compile(r"^={4,}\s*$")
-_EXTENDS_RE = re.compile(r"^EXTENDS\s+(.+?)\s*$")
-_CONSTANTS_RE = re.compile(r"^CONSTANTS?\s+(.+?)\s*$")
-_VARIABLES_RE = re.compile(r"^VARIABLES?\s*(.*?)\s*$")
+_EXTENDS_RE = re.compile(r"^EXTENDS(?=\s.)\s*+((?:.*\S)?)\s*$")
+_CONSTANTS_RE = re.compile(r"^CONSTANTS?(?=\s.)\s*+((?:.*\S)?)\s*$")
+_VARIABLES_RE = re.compile(r"^VARIABLES?\s*+((?:.*\S)?)\s*$")
 _OPDEF_RE = re.compile(r"^([A-Za-z_]\w*)(\([^)]*\))?\s*==")
 _THEOREM_RE = re.compile(r"^(THEOREM|ASSUME|LEMMA)\b\s*(\w+)?")
 _IDENT_RE = re.compile(r"\b([A-Za-z_]\w*)\b")
 _CFG_LINE_RE = re.compile(
-    r"^\s*(SPECIFICATION|INVARIANTS?|PROPERTY|PROPERTIES|INIT|NEXT|CONSTRAINTS?|SYMMETRY)\s+(.*?)\s*$",
+    r"^\s*+(SPECIFICATION|INVARIANTS?|PROPERTY|PROPERTIES|INIT|NEXT|CONSTRAINTS?|SYMMETRY)\s++((?:.*\S)?)\s*$",
     re.I,
 )
 _CFG_HEAD_RE = re.compile(
-    r"^\s*(SPECIFICATION|INVARIANTS?|PROPERTY|PROPERTIES|CONSTANTS?|INIT|NEXT)\b", re.I | re.M
+    r"^[^\S\n]*(SPECIFICATION|INVARIANTS?|PROPERTY|PROPERTIES|CONSTANTS?|INIT|NEXT)\b", re.I | re.M
 )
 _TLA_KEYWORDS: frozenset[str] = frozenset(
     {
@@ -162,7 +163,40 @@ class TlaUnits:
     doc: str = ""
 
 
-def _comment_run_above(lines: list[str], start_idx: int) -> str:
+_ASSIGN_RE = re.compile(r"<-|=")  # each side is stripped: `\s*` around it is quadratic
+_DOC_MAX = 2000  # not a setting: the cut every doc_comment of this lane takes
+
+
+class _BlockDocs:
+    """The `(* … *)` doc of a definition under a block's `*)`: the lines from the nearest
+    `(*` above, cut to `_DOC_MAX`. Each opener's text is read forward once and shared by
+    the definitions below it, so a block over many definitions is not read again for
+    each; `upto` is asked in line order, as `tla_units` walks the definitions."""
+
+    def __init__(self, lines: list[str]) -> None:
+        self.lines = lines
+        self.openers: list[int] = []  # each line's nearest `(*` at or above it, else -1
+        last = -1
+        for i, ln in enumerate(lines):
+            if "(*" in ln:
+                last = i
+            self.openers.append(last)
+        self.read: dict[int, tuple[int, str]] = {}  # opener -> (next line, text so far)
+
+    def upto(self, i: int) -> str:
+        j = self.openers[i]
+        if j < 0:
+            return ""
+        k, text = self.read.get(j, (j, ""))
+        while k <= i and len(text) < _DOC_MAX:
+            piece = self.lines[k].strip()[:_DOC_MAX]
+            text = piece if k == j else f"{text}\n{piece}"[:_DOC_MAX]
+            k += 1
+        self.read[j] = (k, text)
+        return text
+
+
+def _comment_run_above(lines: list[str], start_idx: int, blocks: _BlockDocs) -> str:
     """The `\\*` comment lines (or one `(* … *)` block) directly above line
     index `start_idx`, blank lines allowed between the comment and the
     definition but not inside the run."""
@@ -171,16 +205,11 @@ def _comment_run_above(lines: list[str], start_idx: int) -> str:
     while i >= 0 and not lines[i].strip():
         i -= 1
     if i >= 0 and lines[i].rstrip().endswith("*)"):
-        j = i
-        while j >= 0 and "(*" not in lines[j]:
-            j -= 1
-        if j >= 0:
-            return "\n".join(x.strip() for x in lines[j : i + 1])[:2000]
-        return ""
+        return blocks.upto(i)
     while i >= 0 and lines[i].lstrip().startswith("\\*"):
         out.append(lines[i].strip())
         i -= 1
-    return "\n".join(reversed(out))[:2000]
+    return "\n".join(reversed(out))[:_DOC_MAX]
 
 
 def _definitions_regex(text: str) -> list[tuple[str, str, int, int, str]]:
@@ -218,10 +247,9 @@ def _definitions_regex(text: str) -> list[tuple[str, str, int, int, str]]:
     out: list[tuple[str, str, int, int, str]] = []
     for n, (i, name, sig, kind) in enumerate(starts):
         stop = starts[n + 1][0] if n + 1 < len(starts) else end_idx
-        for d in decl_idx:
-            if i < d < stop:
-                stop = d
-                break
+        k = bisect.bisect_right(decl_idx, i)  # the first declaration after it, found once
+        if k < len(decl_idx) and decl_idx[k] < stop:
+            stop = decl_idx[k]
         j = stop - 1
         while j > i and (not lines[j].strip() or lines[j].lstrip().startswith("\\*")):
             j -= 1
@@ -249,6 +277,10 @@ def _definitions_grammar(source: bytes) -> list[tuple[str, str, int, int, str]] 
     if mod is None:
         return None
     out: list[tuple[str, str, int, int, str]] = []
+    kinds = ("operator_definition", "theorem", "assumption", "assume_prove")
+    starts = [c.start_point[0] for c in mod.children if c.type in kinds]
+    if len(set(starts)) < len(starts):
+        return None  # two definitions on one line: each would read the whole line again
     for c in mod.children:
         if c.type == "operator_definition":
             name_node = next(
@@ -405,10 +437,11 @@ def tla_units(path: str, source: bytes) -> TlaUnits:
             path,
             1,
             len(lines),
-            doc_comment="\n".join(x for x in doc_lines if x)[:2000],
+            doc_comment="\n".join(x for x in doc_lines if x)[:_DOC_MAX],
         ),
         *decl_syms,
     ]
+    blocks = _BlockDocs(lines)
     for name, sig, start, end, kind in defs:
         syms.append(
             Symbol(
@@ -419,7 +452,7 @@ def tla_units(path: str, source: bytes) -> TlaUnits:
                 path,
                 start,
                 end,
-                doc_comment=_comment_run_above(lines, start - 1),
+                doc_comment=_comment_run_above(lines, start - 1, blocks),
             )
         )
     return TlaUnits(
@@ -468,6 +501,12 @@ def tla_chunks(pf: ParsedFile) -> list[Chunk]:
                 [module.id] if module else [],
             )
         )
+    # constants and variables by line, so each gap takes its own by bisection
+    decls = sorted(
+        (d for d in pf.symbols if d.kind in (KIND_CONSTANT, KIND_VARIABLE)),
+        key=lambda d: d.start_line,
+    )
+    decl_lines = [d.start_line for d in decls]
     cursor = head_end + 1
     for s in defs:
         if s.start_line > cursor:
@@ -481,12 +520,8 @@ def tla_chunks(pf: ParsedFile) -> list[Chunk]:
                     )
                     else "other"
                 )
-                inside = [
-                    d
-                    for d in pf.symbols
-                    if d.kind in (KIND_CONSTANT, KIND_VARIABLE)
-                    and cursor <= d.start_line <= s.start_line - 1
-                ]
+                lo = bisect.bisect_left(decl_lines, cursor)
+                inside = decls[lo : bisect.bisect_right(decl_lines, s.start_line - 1)]
                 out.append(
                     Chunk(
                         pf.path,
@@ -616,7 +651,7 @@ def tlc_units(path: str, source: bytes) -> TlcUnits:
         if mode == "CONSTANTS" or "=" in s or "<-" in s:
             for part in s.split(","):
                 if "=" in part or "<-" in part:
-                    k, v = re.split(r"\s*(?:<-|=)\s*", part.strip(), maxsplit=1)
+                    k, v = _ASSIGN_RE.split(part, maxsplit=1)
                     if _IDENT_RE.fullmatch(k.strip()):
                         constants.append((k.strip(), v.strip()))
     sig = ", ".join(f"{role} {name}" for role, name, _l in checked)[:300]

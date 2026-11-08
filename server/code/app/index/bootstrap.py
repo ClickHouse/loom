@@ -547,7 +547,7 @@ async def index_slice(
     rounds took on, so the next pass continues there (`partial` on the progress)."""
     from server.code.app.index import gitrepo
     from server.code.app.index.denylist import load_denylist
-    from server.code.app.index.ingest import ingest_file
+    from server.code.app.index.ingest import ingest_file, read_capped
     from server.code.app.index.ingest_headers import headers_first
     from server.embedding.embedder import get_embedder
 
@@ -570,7 +570,20 @@ async def index_slice(
 
     async def _source(path: str) -> tuple[str, bytes | None]:
         async with sem:
-            return path, await gitrepo.show_file(cfg.git_dir, head, path)
+            source, recorded = await read_capped(
+                gitrepo.show_file,
+                repo,
+                org,
+                ns,
+                git_dir=cfg.git_dir,
+                path=path,
+                commit_sha=head,
+                embedding_model=model_name,
+                denylist=denylist,
+            )
+        if recorded is not None:
+            counters["errors" if recorded is False else "files"] += 1
+        return path, source
 
     async def _one(reads: Any, path: str, source: bytes) -> None:
         async with sem:

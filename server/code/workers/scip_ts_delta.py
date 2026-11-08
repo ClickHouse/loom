@@ -27,7 +27,6 @@ scip-typescript binary are absent. Dependency failures leave the watermark intac
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import sys
@@ -53,6 +52,7 @@ from server.code.app.index.typescript_dependencies import (
     LOCKFILES,
     prepare_dependencies,
 )
+from server.code.app.index.untrusted_files import read_delta
 from server.core.paths import SCIP_HARNESS_DIR
 from server.settings import settings
 
@@ -138,15 +138,17 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipTsDeltaResu
             delta_path,
             cfg.scip_ts_projects,
         )
-        if not await asyncio.to_thread(delta_path.exists):
+        try:
+            raw = await asyncio.to_thread(read_delta, delta_path)
+        except FileNotFoundError:
             # the harness exits 0 with no delta when no TypeScript file changed
             logger.info("code_scip_ts_delta: %s no TypeScript changes in window", cfg.namespace)
             await repo.set_state(cfg.org, cfg.namespace, WATERMARK, target)
             return
-        from server.code.app.index.scip_delta import ScipDelta, apply_delta
+        from server.code.app.index.scip_delta import apply_delta, parse_delta
 
-        raw = await asyncio.to_thread(delta_path.read_text)
-        delta = ScipDelta.model_validate(json.loads(raw))
+        delta = parse_delta(raw)
+        del raw  # the bytes are not needed past the parse
 
     if not scip_commit:
         # A full run sees the whole tree, so a document with

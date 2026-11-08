@@ -91,9 +91,14 @@ MODULE_FILES: tuple[str, ...] = (
 TERRAGRUNT_FILES: tuple[str, ...] = ("terragrunt.hcl", "root.hcl")
 
 _TOKEN_RE = re.compile(
-    r"#[^\n]*|//[^\n]*|/\*.*?\*/"
-    r"|<<-?(?P<heredoc>[A-Z_][A-Z0-9_]*)\n.*?\n\s*(?P=heredoc)"
-    r"|\"(?:[^\"\\\n]|\\.|\$\{(?:[^{}]|\{[^{}]*\})*\})*\""
+    # An unclosed comment or heredoc runs to the end instead of being searched again from
+    # every later opener; a string's parts are matched possessively, the `$${` and `%%{`
+    # escapes and then an interpolation first, so a string that never closes is not
+    # retried every way it could split; an unclosed one is one token to the end of its
+    # line, or each `\"` in it would start another scan of the rest.
+    r"#[^\n]*|//[^\n]*|/\*.*?(?:\*/|\Z)"
+    r"|<<-?(?P<heredoc>[A-Z_][A-Z0-9_]*)\n.*?(?:\n[^\S\n]*(?P=heredoc)|\Z)"
+    r"|\"(?:\$\$\{|%%\{|(?>\$\{(?:[^{}]|\{[^{}]*\})*\})|[^\"\\\n]|\\.)*+\"?"
     r"|[A-Za-z_][\w-]*(?:\.[A-Za-z_][\w-]*)*|-?\d[\w.]*|[{}()\[\]=,:?]|\S",
     re.S,
 )
@@ -412,7 +417,8 @@ def hcl_units(path: str, text: str) -> HclUnits:
 
 
 _PROVIDER_ATTR_RE = re.compile(r"^\s*provider\s*=\s*([a-z][\w-]*)\.([A-Za-z_][\w-]*)\s*$")
-_PROVIDERS_MAP_RE = re.compile(r"\b[a-z][\w-]*\s*=\s*([a-z][\w-]*)\.([A-Za-z_][\w-]*)")
+# A key starts after no word or `-`: `\b` would start one at every letter of `a-a-a…`.
+_PROVIDERS_MAP_RE = re.compile(r"(?<![\w-])[a-z][\w-]*+\s*=\s*([a-z][\w-]*)\.([A-Za-z_][\w-]*)")
 
 
 def _provider_sites(

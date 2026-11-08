@@ -11,21 +11,23 @@ import signal
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.cli.code_backfill import _record_manual_pass
 from server.cli.code_run import _identity, _note, _repo_cfg
 
-
-async def _read_delta(path: str) -> Any:
-    """The kept delta `--apply-delta` names. A missing or unreadable file is the
-    caller's input, not a failure of the tier: it is read before anything is recorded."""
-    import json as _json
-
+if TYPE_CHECKING:
     from server.code.app.index.scip_delta import ScipDelta
 
-    raw = await asyncio.to_thread(Path(path).read_text)
-    return ScipDelta.model_validate(_json.loads(raw))
+
+async def _read_delta(path: str) -> ScipDelta:
+    """The kept delta `--apply-delta` names, read and parsed as a worker reads one, under
+    the same caps. A missing, refused or unreadable file is the caller's input, not a
+    failure of the tier: it is read before anything is recorded."""
+    from server.code.app.index.scip_delta import parse_delta
+    from server.code.app.index.untrusted_files import read_delta
+
+    return parse_delta(await asyncio.to_thread(read_delta, Path(path)))
 
 
 async def _scip_apply_only(
@@ -34,7 +36,7 @@ async def _scip_apply_only(
     org: str,
     ns: str,
     git_head: str,
-    delta: Any,
+    delta: ScipDelta,
 ) -> int:
     """`scip-full --apply-delta`: apply a delta the harness already produced
     (`--keep-delta`). The apply is idempotent — a re-run key-diffs against

@@ -6,7 +6,9 @@ burst of calls reads once. Each is a `TtlCache`: an entry lives `ttl_s` after it
 is stored (a `put` may name its own TTL, e.g. a shorter one for a failed read;
 a cache whose TTL is a setting takes a callable that reads it at each `put`),
 and past `maxsize` entries the least recently used one is dropped, so no cache
-grows without bound.
+grows without bound. A cache of values whose size a repository chooses (a file's text)
+also takes `weigh` and `maxweight`: past `maxweight` in total, the least recently used
+entries are dropped too.
 
 Every cache registers itself; `clear_all()` empties them all, which is how the
 unit suite starts each test from cold caches.
@@ -26,11 +28,26 @@ _MISS = object()
 class TtlCache[K, V]:
     """A bounded LRU map whose entries expire `ttl_s` seconds after their `put`."""
 
-    def __init__(self, ttl_s: float | Callable[[], float], *, maxsize: int = 1024) -> None:
+    def __init__(
+        self,
+        ttl_s: float | Callable[[], float],
+        *,
+        maxsize: int = 1024,
+        weigh: Callable[[V], int] | None = None,
+        maxweight: int = 0,
+    ) -> None:
         self._ttl = ttl_s
         self.maxsize = max(1, int(maxsize))
         self._items: OrderedDict[K, tuple[float, V]] = OrderedDict()
+        self._weigh = weigh
+        self.maxweight = int(maxweight)
+        self.weight = 0  # the sum of `weigh` over the entries held
         _CACHES.append(self)
+
+    def _drop(self, key: K) -> None:
+        _, value = self._items.pop(key)
+        if self._weigh is not None:
+            self.weight -= self._weigh(value)
 
     @property
     def ttl_s(self) -> float:
@@ -48,7 +65,7 @@ class TtlCache[K, V]:
         if hit is None:
             return default
         if hit[0] <= time.monotonic():
-            del self._items[key]
+            self._drop(key)
             return default
         self._items.move_to_end(key)
         return hit[1]
@@ -56,16 +73,23 @@ class TtlCache[K, V]:
     def put(self, key: K, value: V, *, ttl_s: float | None = None) -> None:
         """Store `value` for `ttl_s` seconds (the cache's TTL by default)."""
         life = self.ttl_s if ttl_s is None else float(ttl_s)
+        if key in self._items:
+            self._drop(key)
         self._items[key] = (time.monotonic() + life, value)
-        self._items.move_to_end(key)
-        while len(self._items) > self.maxsize:
-            self._items.popitem(last=False)
+        if self._weigh is not None:
+            self.weight += self._weigh(value)
+        while len(self._items) > self.maxsize or (
+            self.maxweight and self.weight > self.maxweight and len(self._items) > 1
+        ):
+            self._drop(next(iter(self._items)))
 
     def pop(self, key: K) -> None:
-        self._items.pop(key, None)
+        if key in self._items:
+            self._drop(key)
 
     def clear(self) -> None:
         self._items.clear()
+        self.weight = 0
 
     def __len__(self) -> int:
         return len(self._items)

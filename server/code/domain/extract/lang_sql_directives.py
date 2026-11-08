@@ -27,6 +27,7 @@ by a heal.
 
 from __future__ import annotations
 
+import bisect
 import posixpath
 import re
 from dataclasses import dataclass, field
@@ -62,9 +63,9 @@ _SQLC_NAME_RE = re.compile(r"^\s*--\s*name:\s*(?P<name>[A-Za-z_]\w*)\s+(?P<cmd>:
 # `-- Deploy flipr:users to pg` / `-- Revert flipr:users from pg` / `-- Verify flipr:users on pg`;
 # an older template writes `-- Deploy users` alone: accepted under a deploy/ revert/ verify/ dir
 _SQITCH_RE = re.compile(
-    r"^\s*--\s*(Deploy|Revert|Verify)\s+[\w.-]+:[\w./-]+\s+(?:to|from|on)\s+\w+", re.I | re.M
+    r"^[^\S\n]*--\s*(Deploy|Revert|Verify)\s+[\w.-]+:[\w./-]+\s+(?:to|from|on)\s+\w+", re.I | re.M
 )
-_SQITCH_BARE_RE = re.compile(r"^\s*--\s*(Deploy|Revert|Verify)\s+[\w.:/-]+\s*$", re.I | re.M)
+_SQITCH_BARE_RE = re.compile(r"^[^\S\n]*--\s*(Deploy|Revert|Verify)\s+[\w.:/-]+\s*$", re.I | re.M)
 _ATLAS_RE = re.compile(r"^\s*--\s*atlas:", re.I)
 _FLYWAY_NAME_RE = re.compile(
     r"(^|/)(?P<kind>[VUR])(?P<version>[0-9][0-9_.]*)?__(?P<desc>[^/]+)\.sql$", re.I
@@ -72,7 +73,7 @@ _FLYWAY_NAME_RE = re.compile(
 _TIMESTAMP_NAME_RE = re.compile(r"(^|/)(?P<version>\d{8,14})_[^/]+\.sql$")
 _NUMBER_NAME_RE = re.compile(r"(^|/)(?P<version>\d{1,8})_[^/]+\.sql$")
 _PRISMA_PATH_RE = re.compile(r"(^|/)migrations/(?P<version>\d{14})_[^/]+/migration\.sql$")
-_PSQL_INCLUDE_RE = re.compile(r"^\s*\\(?:i|ir|include|include_relative)\s+(?P<path>\S+)", re.M)
+_PSQL_INCLUDE_RE = re.compile(r"^[^\S\n]*\\(?:i|ir|include|include_relative)\s+(?P<path>\S+)", re.M)
 _SQITCH_DIRS = {"deploy": "deploy", "revert": "revert", "verify": "verify"}
 
 
@@ -101,11 +102,11 @@ def detect_tool(path: str, text: str) -> tuple[str, str]:
     head = text[:4000]
     if _LIQUIBASE_HEAD_RE.search(head) or _CHANGESET_RE.search(text):
         return TOOL_LIQUIBASE, _version_from_name(path)
-    if re.search(r"(?m)^\s*--\s*\+goose\b", text):
+    if re.search(r"(?m)^[^\S\n]*--\s*\+goose\b", text):
         return TOOL_GOOSE, _version_from_name(path)
-    if re.search(r"(?m)^\s*--\s*migrate:(up|down)\b", text):
+    if re.search(r"(?m)^[^\S\n]*--\s*migrate:(up|down)\b", text):
         return TOOL_DBMATE, _version_from_name(path)
-    if re.search(r"(?m)^\s*--\s*name:\s*[A-Za-z_]\w*\s+:\w+", text):
+    if re.search(r"(?m)^[^\S\n]*--\s*name:\s*[A-Za-z_]\w*\s+:\w+", text):
         return TOOL_SQLC, ""
     if _SQITCH_RE.search(text) or (_sqitch_direction(path) and _SQITCH_BARE_RE.search(text)):
         return TOOL_SQITCH, ""
@@ -200,14 +201,16 @@ def _named_query_symbols(
 ) -> list[Symbol]:
     """sqlc: `-- name: GetAuthor :one` names the statement that follows."""
     out: list[Symbol] = []
-    by_start = sorted(statements, key=lambda s: s.start_line)
+    with_body = sorted((s for s in statements if s.body), key=lambda s: s.start_line)
+    ends = [s.end_line for s in with_body]  # rising: statements do not overlap
     for ln_no, line in _lines_with_numbers(text):
         m = _SQLC_NAME_RE.match(line)
         if not m:
             continue
-        st = next((s for s in by_start if s.end_line >= ln_no and s.body), None)
-        if st is None:
+        k = bisect.bisect_left(ends, ln_no)
+        if k == len(with_body):
             continue
+        st = with_body[k]
         name = m.group("name")
         out.append(
             Symbol(
@@ -231,10 +234,14 @@ def _changeset_symbols(path: str, mod: str, text: str, statements: list[Statemen
     heads = [(ln_no, m) for ln_no, line in numbered if (m := _CHANGESET_RE.match(line))]
     out: list[Symbol] = []
     total_lines = len(numbered)
+    by_start = sorted(statements, key=lambda s: s.start_line)
+    starts = [s.start_line for s in by_start]
     for k, (ln_no, m) in enumerate(heads):
         end = heads[k + 1][0] - 1 if k + 1 < len(heads) else total_lines
-        inside = [s for s in statements if s.end_line >= ln_no and s.start_line <= end]
-        last = min(max((s.end_line for s in inside), default=ln_no), end)
+        # the last statement that starts by `end` ends last, as statements do not overlap
+        j = bisect.bisect_right(starts, end) - 1
+        reach = by_start[j].end_line if j >= 0 and by_start[j].end_line >= ln_no else ln_no
+        last = min(reach, end)
         while last > ln_no and not numbered[last - 1][1].strip():
             last -= 1  # the blank lines before the next changeset are nobody's
         name = f"{m.group('author')}:{m.group('id')}"
@@ -291,15 +298,15 @@ def directive_units(path: str, text: str, statements: list[Statement]) -> Direct
             units.facets.append(Facet(FACET_DIRECTION, d, st.ordinal, st.start_line, 1.0))
     if tool == TOOL_LIQUIBASE:
         units.symbols.extend(_changeset_symbols(path, mod, text, statements))
+        by_start = sorted(statements, key=lambda s: s.start_line)
+        ends = [s.end_line for s in by_start]
         for ln_no in _rollback_lines(text):
             # `--rollback` follows the statement it undoes; the splitter reads
             # it as the NEXT statement's leading comment, so look back first
-            before = [s for s in statements if s.end_line < ln_no]
-            owner: Statement | None = (
-                before[-1]
-                if before
-                else next((s for s in statements if s.start_line <= ln_no <= s.end_line), None)
-            )
+            k = bisect.bisect_left(ends, ln_no)
+            owner: Statement | None = by_start[k - 1] if k else None
+            if owner is None and by_start and by_start[0].start_line <= ln_no:
+                owner = by_start[0]
             if owner is not None:
                 units.facets.append(Facet(FACET_DIRECTION, "rollback", owner.ordinal, ln_no, 1.0))
     if tool == TOOL_SQLC:

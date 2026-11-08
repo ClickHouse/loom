@@ -26,7 +26,7 @@ def _bash_parser() -> Any:
     return tree_sitter.Parser(tree_sitter.Language(tree_sitter_bash.language()))
 
 
-_SOURCE_RE = re.compile(r"^\s*(?:source|\.)\s+([\w./$-]+)", re.MULTILINE)
+_SOURCE_RE = re.compile(r"^[^\S\n]*(?:source|\.)\s+([\w./$-]+)", re.MULTILINE)
 
 
 def parse_bash(path: str, source: bytes) -> ParsedFile:

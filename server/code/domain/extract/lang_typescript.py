@@ -723,8 +723,10 @@ def _iife_body(expr: Any) -> Any | None:
     return body if body is not None and body.type == "statement_block" else None
 
 
-_EXPORT_CLAUSE_RE = re.compile(r"\bexport\s*\{([^}]*)\}(?!\s*from\b)")
-_EXPORT_DEFAULT_NAME_RE = re.compile(r"\bexport\s+default\s+([A-Za-z_$][\w$]*)\s*;?\s*$", re.M)
+_EXPORT_CLAUSE_RE = re.compile(r"\bexport\s*\{([^{}]*)\}(?!\s*from\b)")
+_EXPORT_DEFAULT_NAME_RE = re.compile(
+    r"\bexport\s+default\s+([A-Za-z_$][\w$]*)[^\S\n]*+;?[^\S\n]*+$", re.M
+)
 
 
 def export_clause_names(text: str) -> set[str]:

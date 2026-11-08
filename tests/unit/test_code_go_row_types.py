@@ -195,7 +195,7 @@ async def test_an_empty_module_index_is_not_cached(monkeypatch) -> None:
         async def live_paths_named(self, org: str, ns: str, name: str) -> list[str]:
             return list(paths)
 
-    async def text(repo, org: str, ns: str, path: str) -> str:
+    async def text(repo, org: str, ns: str, path: str, max_bytes: int = 0) -> str:
         return "module example.com/m\n"
 
     monkeypatch.setattr(ingest_resolve, "_package_json_text", text)

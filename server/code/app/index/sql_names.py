@@ -171,7 +171,7 @@ def _shape_re(name: str) -> re.Pattern[str]:
     q = re.escape(name)
     return re.compile(
         r"(?:(?P<const>\bname\s*=\s*)|(?P<ret>\breturn\s+)|"
-        r'(?P<reg>register\w*\s*(?:<[^>()]{0,200}>)?\s*\(\s*))"' + q + r'"'
+        r'(?P<reg>(?<!\w)(?>\w*register)\w*+(?:\s*<[^>()]{0,200}>)?\s*\(\s*))"' + q + r'"'
     )
 
 
@@ -203,7 +203,7 @@ def names_match(sql_name: str, cls: str) -> bool:
 _ANY_CONST_RE = re.compile(r'\bname\s*=\s*"([A-Za-z_][A-Za-z0-9_]{2,60})"')
 _ANY_RETURN_RE = re.compile(r'\breturn\s+"([A-Za-z_][A-Za-z0-9_]{2,60})"\s*;')
 _ANY_REG_RE = re.compile(
-    r'register\w*\s*(?:<[^>()]{0,200}>)?\s*\(\s*"([A-Za-z_][A-Za-z0-9_]{2,60})"'
+    r'(?<!\w)(?>\w*register)\w*+(?:\s*<[^>()]{0,200}>)?\s*\(\s*"([A-Za-z_][A-Za-z0-9_]{2,60})"'
 )
 
 
@@ -237,9 +237,12 @@ class RegistrationHit:
     stated_class: str = ""
 
 
-# Read from each word's first letter and each blank run once; a line of many
-# `<` (closed or not) still rescans (code chunks are at most 6,000 characters).
-_STATED_CLASS_RE = re.compile(r"(?<!\w)[^\WA-Za-z_]*+([A-Za-z_]\w*+)\s*+(?:<[^;]*>)?\s*::\s*$")
+# Template arguments nest up to three deep (`F<A<B<int>>>::name`), matched level by level
+# so an unclosed `<` is not searched on from every identifier before it.
+_TARGS = r"<[^;<>]*>"
+for _ in range(2):
+    _TARGS = r"<[^;<>]*(?:" + _TARGS + r"[^;<>]*)*>"
+_STATED_CLASS_RE = re.compile(r"(?<!\w)([A-Za-z_]\w*)\s*+(?:" + _TARGS + r")?\s*+::\s*$")
 
 
 def _stated_class(content: str, m: re.Match[str]) -> str:

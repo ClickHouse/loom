@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import time
+
+import pytest
+
 from server.code.domain.extract.lang_tla import (
     is_tlc_config,
     parse_tla,
@@ -12,6 +16,7 @@ from server.code.domain.extract.lang_tla import (
     tlc_edges,
     tlc_units,
 )
+from tests.unit.code_fixtures import assert_linear
 
 SPEC = b"""---------------------------- MODULE Ledger ----------------------------
 (* toy ledger *)
@@ -128,3 +133,60 @@ def test_tlc_config_is_a_model_with_checks_facets_and_calls() -> None:
     assert {(e.to_qualified_name) for e in edges} == {"Ledger::TypeOK", "Ledger::Spec"}, (
         "the includer's module wins a tie"
     )
+
+
+@pytest.mark.parametrize("unit", ["a == 1\nTHEOREM a\n", "*)\na == 1\n", "a == 1\n\\* c\n"])
+def test_a_module_of_many_definitions_parses_and_chunks_in_linear_time(unit: str) -> None:
+    def cost(n: int) -> float:
+        opener = "(*\n" if unit.startswith("*)") else ""  # every `*)` below closes it
+        src = ("---- MODULE M ----\nVARIABLES v\n" + opener + unit * n).encode()
+        t0 = time.perf_counter()
+        tla_chunks(parse_tla("M.tla", src))
+        return time.perf_counter() - t0
+
+    assert_linear(cost, 4_000, 16_000)
+
+
+def test_a_model_line_of_a_long_space_run_parses_in_linear_time() -> None:
+    def cost(n: int) -> float:
+        src = ("INIT Init\nCONSTANTS\na" + " " * n + "b=1\n").encode()
+        t0 = time.perf_counter()
+        parse_tlc_config("MC.cfg", src)
+        return time.perf_counter() - t0
+
+    assert_linear(cost, 20_000, 80_000)
+
+
+def test_a_doc_block_over_two_hundred_lines_is_kept_to_its_cap() -> None:
+    body = "".join(f"  line {i}\n" for i in range(300))
+    src = f"---- MODULE M ----\n(*\n{body}*)\nOp == 1\n====\n".encode()
+    (op,) = [s for s in parse_tla("M.tla", src).symbols if s.name == "Op"]
+    assert op.doc_comment.startswith("(*\nline 0\nline 1") and len(op.doc_comment) == 2000
+
+
+def test_a_long_line_in_a_doc_block_over_many_definitions_is_read_once() -> None:
+    def cost(opener: str) -> float:
+        src = ("---- MODULE M ----\n" + opener + "\n" + "*)\na == 1\n" * 4_000).encode()
+        t0 = time.perf_counter()
+        parse_tla("M.tla", src)
+        return time.perf_counter() - t0
+
+    assert_linear(cost, "(*", "(*\n" + " " * 2_000_000)
+
+
+def test_many_definitions_under_one_long_doc_block_cost_what_a_short_one_does() -> None:
+    def cost(blank_lines: int) -> float:
+        src = ("---- MODULE M ----\n(*\n" + "\n" * blank_lines + "A==*)\n" * 8_000).encode()
+        t0 = time.perf_counter()
+        parse_tla("M.tla", src)
+        return time.perf_counter() - t0
+
+    # the block is read once, so its 2,000 lines add little; read per definition they
+    # cost about 4 times the rest of the parse
+    assert_linear(cost, 1, 1_999, ratio=2.5)
+
+
+def test_two_definitions_on_one_line_are_read_by_the_column_0_reader() -> None:
+    pytest.importorskip("tree_sitter_tlaplus")
+    src = b"---- MODULE M ----\nA == 1 B == 2\nC == 3\n====\n"
+    assert [s.name for s in parse_tla("M.tla", src).symbols] == ["M", "A", "C"]

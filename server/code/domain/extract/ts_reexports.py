@@ -21,25 +21,31 @@ import re
 from collections.abc import Awaitable, Callable
 
 from server.code.domain.extract.lang_typescript_imports import import_candidates
+from server.code.domain.extract.ts_config import strip_comments
 
 MAX_DEPTH = 8
 _DECL_RE = (
-    r"^\s*export\s+(?:default\s+)?(?:declare\s+)?(?:async\s+)?"
+    r"^[^\S\n]*export\s+(?:default\s+)?(?:declare\s+)?(?:async\s+)?"
     r"(?:abstract\s+class|class|function\*?|const|let|var|enum|interface|type|namespace)\s+{name}\b"
 )
 _DEFAULT_NAME_RE = re.compile(
-    r"^\s*export\s+default\s+(?:async\s+)?(?:function\*?|class)\s+([A-Za-z_$][\w$]*)", re.M
+    r"^[^\S\n]*export\s+default\s+(?:async\s+)?(?:function\*?|class)\s+([A-Za-z_$][\w$]*)", re.M
 )
-_DEFAULT_IDENT_RE = re.compile(r"^\s*export\s+default\s+([A-Za-z_$][\w$]*)\s*;?\s*$", re.M)
+_DEFAULT_IDENT_RE = re.compile(
+    r"^[^\S\n]*export\s+default\s+([A-Za-z_$][\w$]*)[^\S\n]*+;?[^\S\n]*+$", re.M
+)
 _DEFAULT_ANON_RE = re.compile(
-    r"^\s*export\s+default\s+(?:async\s+)?(?:function\*?|class)?\s*[({<]", re.M
+    r"^[^\S\n]*export\s+default\s++(?:async\s++)?(?:function\*?|class)?\s*+[({<]", re.M
 )
-_EXPORT_LIST_RE = re.compile(r"""\bexport\s*\{([^}]*)\}\s*(?:from\s*["']([^"']+)["'])?""")
+_EXPORT_LIST_RE = re.compile(r"""\bexport\s*\{([^{}]*)\}\s*(?:from\s*["']([^"']+)["'])?""")
 _EXPORT_STAR_RE = re.compile(
     r"""\bexport\s*\*\s*(?:as\s+([A-Za-z_$][\w$]*)\s+)?from\s*["']([^"']+)["']"""
 )
-_IMPORT_RE = re.compile(r"""\bimport\s+([^;'"]+?)\s+from\s*["']([^"']+)["']""")
-_COMMENT_RE = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
+# A clause stops at the next `import` keyword: an import with no `from` would otherwise
+# search on to the end of the file from each one, quadratic in a file of them.
+_IMPORT_RE = re.compile(
+    r"""(?<![\w$])import\s++((?:(?!(?<![\w$])import(?![\w$]))[^;'"])+?)(?<=\S)\s+from\s*["']([^"']+)["']"""
+)
 
 
 def _parts(spec_list: str) -> list[tuple[str, str]]:
@@ -65,7 +71,7 @@ def declared_name(text: str, name: str) -> str | None:
     declaration's own name (`export default function Foo` → Foo, `export
     default Bar` → Bar) or 'default' for an anonymous one. None when the
     module only re-exports or does not mention it."""
-    clean = _COMMENT_RE.sub("", text)
+    clean = strip_comments(text)
     if name == "default":
         m = _DEFAULT_NAME_RE.search(clean)
         if m:
@@ -77,26 +83,31 @@ def declared_name(text: str, name: str) -> str | None:
     if re.search(_DECL_RE.format(name=re.escape(name)), clean, re.M):
         return name
     # `export { X }` / `export { Y as X }` with no `from`: a local declaration exported by list
+    imported: set[str] | None = None  # read once: a scan per export list is quadratic
     for m in _EXPORT_LIST_RE.finditer(clean):
         if m.group(2):
             continue
         for local, alias in _parts(m.group(1)):
-            if alias == name and not _imported_local(clean, local):
-                return local
+            if alias == name:
+                imported = _imported_locals(clean) if imported is None else imported
+                if local not in imported:
+                    return local
     return None
 
 
-def _imported_local(clean: str, local: str) -> bool:
+def _imported_locals(clean: str) -> set[str]:
+    """Every local name an import binds: a namespace, a default or a named import."""
+    out: set[str] = set()
     for m in _IMPORT_RE.finditer(clean):
         clause = m.group(1)
-        if re.search(rf"(^|[\s,{{])\*\s+as\s+{re.escape(local)}\b", clause):
-            return True
-        if re.match(rf"^\s*{re.escape(local)}\s*(,|$)", clause):
-            return True
-        inner = re.search(r"\{([^}]*)\}", clause)
-        if inner and any(alias == local for _n, alias in _parts(inner.group(1))):
-            return True
-    return False
+        out.update(re.findall(r"(?:^|[\s,{])\*\s+as\s+([A-Za-z_$][\w$]*)", clause))
+        dflt = re.match(r"^\s*([A-Za-z_$][\w$]*)\s*(?:,|$)", clause)
+        if dflt:
+            out.add(dflt.group(1))
+        inner = re.search(r"\{([^{}]*)\}", clause)
+        if inner:
+            out.update(alias for _n, alias in _parts(inner.group(1)))
+    return out
 
 
 def reexport_steps(text: str, name: str) -> list[tuple[str, str]]:
@@ -105,7 +116,7 @@ def reexport_steps(text: str, name: str) -> list[tuple[str, str]]:
     name } from`), an imported-then-exported alias (`import A from "x";
     export { A as name }`, `import { A } from "x"; export { A as name }`),
     then every `export * from` in order (with `name` unchanged)."""
-    clean = _COMMENT_RE.sub("", text)
+    clean = strip_comments(text)
     out: list[tuple[str, str]] = []
     imports: dict[str, tuple[str, str]] = {}
     for m in _IMPORT_RE.finditer(clean):
@@ -113,7 +124,7 @@ def reexport_steps(text: str, name: str) -> list[tuple[str, str]]:
         dflt = re.match(r"^\s*([A-Za-z_$][\w$]*)\s*(?:,|$)", clause)
         if dflt:
             imports[dflt.group(1)] = (spec, "default")
-        inner = re.search(r"\{([^}]*)\}", clause)
+        inner = re.search(r"\{([^{}]*)\}", clause)
         if inner:
             for n, alias in _parts(inner.group(1)):
                 imports[alias] = (spec, n)

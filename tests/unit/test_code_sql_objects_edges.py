@@ -3,12 +3,17 @@ read and write, and the edges between them."""
 
 from __future__ import annotations
 
+import time
+
+import pytest
+
 from server.code.app.index.ingest_parse import parse_file
 from server.code.domain.extract import lang_sql as ls
 from server.code.domain.extract import lang_sql_objects as lo
 from server.code.domain.extract import lang_sql_split
 from server.code.domain.extract.lang_python import module_scope
 from server.code.domain.extract.name_scope import gate_name_table
+from tests.unit.code_fixtures import assert_linear
 
 _TEST = b"""\
 -- Tags: no-fasttest
@@ -301,3 +306,43 @@ def test_edges_sit_on_the_reference_line_inside_a_body() -> None:
     ]  # the UPDATE's line, not the CREATE's
     facets = {(f.kind, f.name, f.line) for f in lo.reference_facets(sts)}
     assert ("table_write", "authors", 4) in facets and ("table_write", "drafts", 5) in facets
+
+
+@pytest.mark.parametrize("name", ["a{}", "a${}", "`a {}`"])
+def test_reference_lines_of_a_statement_of_many_names_cost_linear_time(name: str) -> None:
+    def cost(n: int) -> float:
+        names = ",\n".join(name.format(i) for i in range(n))
+        sts = lang_sql_split.split_statements("SELECT 1 FROM " + names)
+        t0 = time.perf_counter()
+        facets = lo.reference_facets(sts)
+        took = time.perf_counter() - t0
+        assert {f.line for f in facets} == set(range(1, n + 1))
+        return took
+
+    assert_linear(cost, 2_000, 8_000, floor=0.05, bound=2.0)
+
+
+def test_a_quoted_name_after_an_escaped_quote_in_a_literal_is_found() -> None:
+    from server.code.domain.extract.lang_sql_facets import line_of_name
+
+    (st,) = lang_sql_split.split_statements("SELECT 1\nFROM 'a\\'b', \"my-col\", 'x'")
+    assert line_of_name(st, "my-col") == 2
+
+
+def test_edges_of_one_name_defined_in_many_schemas_cost_linear_time() -> None:
+    def cost(n: int) -> float:
+        text = "".join(f"CREATE TABLE s{i}.a (x Int);\nSELECT 1 FROM a;\n" for i in range(n))
+        sts = lang_sql_split.split_statements(text)
+        own = lo.object_symbols("m.sql", "m", sts)
+        t0 = time.perf_counter()
+        lo.sql_edges("m.sql", "m", sts, own, {})
+        return time.perf_counter() - t0
+
+    assert_linear(cost, 4_000, 16_000)
+
+
+def test_a_quoted_name_after_a_literal_over_two_lines_is_found() -> None:
+    from server.code.domain.extract.lang_sql_facets import line_of_name
+
+    (st,) = lang_sql_split.split_statements("SELECT 'line one\nline two' FROM \"my t\"")
+    assert line_of_name(st, "my t") == 2

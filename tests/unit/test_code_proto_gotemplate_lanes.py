@@ -3,6 +3,8 @@ tree-less lanes share (`lane_units`: span chunks, the site binder)."""
 
 from __future__ import annotations
 
+import time
+
 from server.code.domain.extract import lang_gotemplate as gt
 from server.code.domain.extract import lang_proto as pb
 from server.code.domain.extract.lane_units import (
@@ -14,6 +16,7 @@ from server.code.domain.extract.lane_units import (
 from server.code.domain.extract.lang_detect import detect_by_extension
 from server.code.domain.extract.name_scope import gate_name_table
 from server.code.domain.extract.treesitter import ParsedFile, Symbol
+from tests.unit.code_fixtures import assert_linear
 
 PROTO = b"""syntax = "proto3";
 
@@ -342,3 +345,24 @@ def test_bind_sites_ladder() -> None:
     # B: two same-file definitions → ambiguous; D: two repo-wide → ambiguous; E: wrong kind;
     # C under `local`: repo-wide not allowed; line 20: no enclosing symbol; A from A: self;
     # a repeated (edge, source, target, line) records once; an unknown site kind is skipped
+
+
+def _proto_cost(nest: int, n: int) -> float:
+    src = ('syntax = "proto3";\n' + "message A{" * nest + "message A{}\n" * n).encode()
+    t0 = time.perf_counter()
+    pb.parse_proto("a.proto", src)
+    return time.perf_counter() - t0
+
+
+def test_a_file_of_many_messages_parses_in_linear_time() -> None:
+    assert_linear(lambda n: _proto_cost(0, n), 4_000, 16_000)
+
+
+def test_a_deep_nest_of_messages_costs_no_more_than_a_flat_file() -> None:
+    assert_linear(lambda nest: _proto_cost(nest, 8_000), 0, 300)  # deep against flat
+
+
+def test_a_gotemplate_comment_holding_an_action_is_blanked_whole() -> None:
+    src = b'{{/* {{ include "a" . }} */}}\n{{- /* {{ define "b" }}{{ end }} */ -}}\nx: {{ include "c" . }}\n'
+    pf = gt.parse_gotemplate("charts/c/templates/cm.yaml", src)
+    assert gt.reference_sites(pf) == [(3, "c", "include")] and pf.symbols == []

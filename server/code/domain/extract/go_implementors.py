@@ -36,7 +36,7 @@ from server.code.domain.extract.treesitter import ParsedFile, Symbol
 
 IMPLEMENTS_CONFIDENCE = 0.8
 KIND_METHOD = "method"
-_METHOD_LIST_RE = re.compile(r"interface\{([^}]*)\}")
+_METHOD_LIST_RE = re.compile(r"interface\{([^{}]*)\}")
 
 
 def interface_method_names(signature: str) -> tuple[list[str], list[str]]:

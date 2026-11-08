@@ -31,11 +31,14 @@ import time
 from collections import defaultdict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from server.code.domain.extract.extractor_stamp import STAGES
 from server.core.background import gather_or_cancel
 from server.llm import customer
+
+if TYPE_CHECKING:
+    from server.code.app.index.ingest_stats import FileIngestStats
 
 logger = logging.getLogger("loom.code_index.reconcile")
 
@@ -243,6 +246,15 @@ class HealResult:
     # denylist or its content rules, or no parser claims them).
     skipped_paths: list[str] = field(default_factory=list)
 
+    def record(self, path: str, recorded: FileIngestStats | Literal[False]) -> None:
+        """An oversize file's record (`read_capped`): its stats count as an ingested
+        file's; a failed one is an error with no row, which the next reconcile asks for
+        again, so the heal does not name it a skipped path either."""
+        if recorded is False:
+            self.errors += 1
+        else:
+            self.count(path, recorded, scoped=False)
+
     def count(self, path: str, stats: Any, *, scoped: bool) -> None:
         """One ingested file's counts (`scoped`: the heal ran under a stage scope)."""
         self.files += 1
@@ -296,6 +308,7 @@ async def heal(
 
         show_file = _sf
     from server.code.app.index.denylist import load_denylist
+    from server.code.app.index.ingest import read_capped
     from server.code.app.index.round_reads import RoundReads, round_size, rounds
     from server.settings import settings
 
@@ -303,10 +316,25 @@ async def heal(
     denylist = await load_denylist(cfg, head, show_file)
     sem = asyncio.Semaphore(max(1, concurrency))
     size = round_size() if round_files is None else max(0, int(round_files))
+    oversize: set[str] = set()  # read by their size alone: counted or left for later
 
     async def _source(path: str) -> tuple[str, bytes | None]:
         async with sem:
-            return path, await show_file(cfg.git_dir, head, path)
+            source, recorded = await read_capped(
+                show_file,
+                repo,
+                cfg.org,
+                cfg.namespace,
+                git_dir=cfg.git_dir,
+                path=path,
+                commit_sha=head,
+                embedding_model=embedder.model_name,
+                denylist=denylist,
+            )
+        if recorded is not None:
+            oversize.add(path)
+            out.record(path, recorded)
+        return path, source
 
     async def _one(reads: Any, path: str, source: bytes) -> None:
         async with sem:
@@ -348,7 +376,7 @@ async def heal(
         out.attempted += len(batch)
         found = dict(await asyncio.gather(*(_source(p) for p in batch)))
         sources = {p: src for p, src in found.items() if src is not None}
-        out.skipped_paths.extend(p for p in batch if p not in sources)
+        out.skipped_paths.extend(p for p in batch if p not in sources and p not in oversize)
         async with RoundReads(repo, cfg.org, cfg.namespace) as reads:
             if size > 0:
                 await reads.prefetch(sources, denylist, embedding_model=embedder.model_name)

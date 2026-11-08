@@ -50,7 +50,7 @@ KIND_SECTION = "section"
 EDGE_READS = "reads"
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 _FENCE_RE = re.compile(r"^(```|~~~)")
-_LINK_RE = re.compile(r"\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+_LINK_RE = re.compile(r"\]\(((?:(?!\]\()[^)\s])++)(?:\s+\"[^\"]*\")?\)")
 _CODE_REF_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)(?:\(\))?`")
 _NOISE_REFS: frozenset[str] = frozenset(
     {

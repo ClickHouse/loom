@@ -10,14 +10,44 @@ import os
 import pathlib
 import sys
 import time
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Literal
 
 from server.cli.code_maintenance import _compact_after_bulk
 from server.cli.code_run import _identity, _note, _repo_cfg
 from server.core.background import gather_or_cancel
 from server.llm import customer
 
+if TYPE_CHECKING:
+    from server.code.app.index.ingest_stats import FileIngestStats
+
 log = logging.getLogger("loom.cli.code")
+
+
+def _count_record(counters: dict[str, int], recorded: FileIngestStats | Literal[False]) -> None:
+    """Count an oversize file's record as `_one` counts an ingested file."""
+    key = "errors" if recorded is False else "excluded" if recorded.excluded else "files"
+    counters[key] = counters.get(key, 0) + 1
+
+
+def _edge_source(
+    git_dir: str, head: str, sem: asyncio.Semaphore
+) -> Callable[[str], Awaitable[tuple[str, bytes | None]]]:
+    """The edges-only pass's reader: a file over `code_ingest_max_file_bytes` reads as
+    absent, its row left as the index phase (this run's or an earlier one's) wrote it."""
+    from server.code.app.index import gitrepo
+    from server.code.app.index.gitrepo import BlobTooLarge
+    from server.settings import settings
+
+    async def _source(path: str) -> tuple[str, bytes | None]:
+        cap = int(settings.code_ingest_max_file_bytes)
+        async with sem:
+            try:
+                return path, await gitrepo.show_file(git_dir, head, path, max_bytes=cap)
+            except BlobTooLarge:
+                return path, None
+
+    return _source
 
 
 async def _backfill(args: argparse.Namespace) -> int:
@@ -82,7 +112,7 @@ async def _backfill(args: argparse.Namespace) -> int:
         print(f"chunks stored as dim=0 stubs for model {model}; run --phase embed after")
 
     from server.code.app.index.denylist import load_denylist
-    from server.code.app.index.ingest import ingest_file
+    from server.code.app.index.ingest import ingest_file, read_capped
 
     suffix = str(getattr(args, "embedding_model_suffix", "") or "")
     model_name = get_embedder().model_name + suffix
@@ -99,7 +129,20 @@ async def _backfill(args: argparse.Namespace) -> int:
 
     async def _source(path: str) -> tuple[str, bytes | None]:
         async with sem:
-            return path, await gitrepo.show_file(cfg.git_dir, head, path)
+            source, recorded = await read_capped(
+                gitrepo.show_file,
+                repo,
+                org,
+                ns,
+                git_dir=cfg.git_dir,
+                path=path,
+                commit_sha=head,
+                embedding_model=model_name,
+                denylist=denylist,
+            )
+        if recorded is not None:
+            _count_record(counters, recorded)
+        return path, source
 
     async def _one(reads: Any, path: str, source: bytes) -> None:
         async with sem:
@@ -170,7 +213,7 @@ async def _backfill(args: argparse.Namespace) -> int:
             org,
             ns,
             paths,
-            source=_source,
+            source=_edge_source(cfg.git_dir, head, sem),
             denylist=denylist,
             head=head,
             model_name=model_name,

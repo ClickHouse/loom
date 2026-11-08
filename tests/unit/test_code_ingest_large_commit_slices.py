@@ -56,7 +56,7 @@ def _wire(
     async def meta(git_dir: str, shas: list[str]) -> dict[str, tuple[str, int]]:
         return {s: ("", int(clock.time()) - 3600 + i) for i, s in enumerate(shas)}
 
-    async def show(git_dir: str, sha: str, path: str) -> bytes:
+    async def show(git_dir: str, sha: str, path: str, max_bytes: int = 0) -> bytes:
         return b"x"
 
     async def subject(git_dir: str, sha: str) -> str:

@@ -45,7 +45,7 @@ _MAX_DOC = 2000
 # so the call-graph walk can never see it.
 _FIXTURE_DEC_RE = re.compile(r"@\s*(?:pytest\.)?fixture\b")
 _PARAMETRIZE_DEC_RE = re.compile(r"@\s*(?:pytest\.)?mark\.parametrize|@\s*parametrize\b")
-_USEFIXTURES_DEC_RE = re.compile(r"usefixtures\s*\(([^)]*)\)")
+_USEFIXTURES_DEC_RE = re.compile(r"usefixtures\s*\(([^()]*)\)")
 _STR_ARG_RE = re.compile(r"""["']([^"']+)["']""")
 _GETFIXTURE_RE = re.compile(r"""\.getfixturevalue\(\s*["'](\w+)["']""")
 # Parameters pytest never resolves as fixtures.

@@ -168,7 +168,7 @@ class _Repo:
 def _fakes(missing: set[str] | None = None):
     seen: list[tuple[str, dict[str, Any]]] = []
 
-    async def show_file(git_dir, sha, path):
+    async def show_file(git_dir, sha, path, max_bytes=0):
         return None if path in (missing or set()) else b"int x;"
 
     class _S:

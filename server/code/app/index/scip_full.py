@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 import shutil
 import sys
@@ -19,8 +18,9 @@ from server.code.app.index import compiler_tier
 from server.code.app.index.entry_lock import check_held
 from server.code.app.index.gitrepo import git_config_env
 from server.code.app.index.sandbox import tool_mounts
-from server.code.app.index.scip_delta import ScipApplyStats, ScipDelta, apply_delta
+from server.code.app.index.scip_delta import ScipApplyStats, apply_delta, parse_delta
 from server.code.app.index.tier_health import ToolOutputError
+from server.code.app.index.untrusted_files import read_delta
 from server.core.paths import SCIP_HARNESS_DIR
 from server.settings import settings
 
@@ -182,10 +182,11 @@ async def _index_and_apply(
         )
         if rc != 0:
             raise FullIndexFailed(rc, out)
+        raw = await asyncio.to_thread(read_delta, delta_path)
         if keep_delta:
-            await asyncio.to_thread(shutil.copyfile, delta_path, keep_delta)
-        raw = await asyncio.to_thread(delta_path.read_text)
-        delta = ScipDelta.model_validate(json.loads(raw))
+            await asyncio.to_thread(Path(keep_delta).write_bytes, raw)
+        delta = parse_delta(raw)
+        del raw  # the bytes are not needed past the parse
     stats = await apply_delta(repo, cfg.org, cfg.namespace, delta)
     check_held()
     await mark_done(repo, cfg.org, cfg.namespace, target)

@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator
 from server.code.app.index.repo_modes import lock_file_mode
 
 # A clone's temp tree beside its mirror: `<mirror>.partial-<pid>-<monotonic ns>`.
-_PARTIAL = re.compile(r"(.+)\.partial-\d+-\d+")
+_PARTIAL = re.compile(r"\A(.+)\.partial-\d+-\d+")  # fullmatch only
 
 
 def partial_temp_dir(git_dir: str) -> str:

@@ -8,7 +8,7 @@ from __future__ import annotations
 from server.code.domain.extract.edges_treesitter import extract_edges_and_misses
 from server.code.domain.extract.lang_python import parse_python, resolve_imports
 from server.code.domain.extract.name_scope import gate_name_table
-from server.code.domain.extract.py_routes import py_facets
+from server.code.domain.extract.py_routes import _PREFIX_DECL_RE, py_facets
 
 MODULE = b'''
 from dataclasses import dataclass
@@ -284,3 +284,11 @@ app.add_url_rule("/old", view_func=old)
 
 def test_a_file_without_decorators_or_routes_has_no_facets() -> None:
     assert py_facets(parse_python("m.py", b"def f():\n    return 1\nX = 2\n")) == []
+
+
+def test_a_router_naming_its_class_in_its_arguments_keeps_its_prefix() -> None:
+    src = (
+        'r = APIRouter(prefix="/v1", route_class=TimedAPIRouter)\n'
+        'bp = Blueprint("UserBlueprint", __name__, url_prefix="/u")\n'
+    )
+    assert [m.group(1) for m in _PREFIX_DECL_RE.finditer(src)] == ["r", "bp"]

@@ -610,7 +610,7 @@ def coalesce_leftovers(
     return out
 
 
-_SHELLCHECK_SOURCE_RE = re.compile(r"^\s*#\s*shellcheck\s+source=(\S+)", re.M)
+_SHELLCHECK_SOURCE_RE = re.compile(r"^[^\S\n]*#\s*shellcheck\s+source=(\S+)", re.M)
 _INTERPRETERS = frozenset(
     {
         "bash",

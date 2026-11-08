@@ -639,7 +639,7 @@ class _Git:
     async def head_sha(self, git_dir, branch):
         return "c" * 40
 
-    async def show_file(self, git_dir, sha, path):
+    async def show_file(self, git_dir, sha, path, max_bytes=0):
         if path == "src/Storages/Foo.cpp":
             return b"namespace ErrorCodes { extern const int BAD_ARGUMENTS; }\n"
         return b"namespace ErrorCodes { extern const int ADDED_HERE; }\n"
@@ -832,7 +832,7 @@ async def test_a_supplied_diff_checks_error_codes_at_the_namespaces_own_branch(
         seen.append(branch)
         return "d" * 40
 
-    async def show_file(git_dir, sha, path):
+    async def show_file(git_dir, sha, path, max_bytes=0):
         return b"namespace ErrorCodes { extern const int BAD_ARGUMENTS; }\n"
 
     monkeypatch.setattr(h.gitrepo, "head_sha", head_sha)
@@ -840,3 +840,20 @@ async def test_a_supplied_diff_checks_error_codes_at_the_namespaces_own_branch(
     uses = [cv.ErrorCodeUse(path="src/Foo.cpp", name="BAD_ARGUMENTS", line=1, text="")]
     declared, _exact = await h._externs(_Repo(), ORG, NS, "/mirror.git", "", uses, "26.8")
     assert seen == ["26.8"] and declared[("src/Foo.cpp", "BAD_ARGUMENTS")] is True
+
+
+@pytest.mark.asyncio
+async def test_an_extern_file_over_the_ingest_cap_is_unknown_not_undeclared(monkeypatch) -> None:
+    from server.code.app.index import gitrepo
+
+    async def too_large(git_dir: str, sha: str, path: str, max_bytes: int = 0) -> bytes:
+        raise gitrepo.BlobTooLarge(path, max_bytes + 1, "b" * 40, max_bytes, b"")
+
+    class Repo:
+        async def chunk_contains(self, *a: object, **k: object) -> list[object]:
+            return []  # an oversize file has no chunks
+
+    monkeypatch.setattr(gitrepo, "show_file", too_large)
+    use = cv.ErrorCodeUse(path="src/Common/ErrorCodes.cpp", name="NEW_CODE", line=1, text="")
+    got, exact = await h._externs(Repo(), "o", "ns", "/git", "a" * 40, [use], "main")
+    assert got == {("src/Common/ErrorCodes.cpp", "NEW_CODE"): None} and not exact

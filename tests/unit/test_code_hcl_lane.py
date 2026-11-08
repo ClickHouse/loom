@@ -248,3 +248,22 @@ def test_provider_aliases_repetition_and_depends_on() -> None:
         "aws_subnet.per_az",
         "module.kms",
     ) in got
+
+
+def test_an_escaped_interpolation_ends_its_string_at_its_quote() -> None:
+    for esc in ("$${", "%%{"):
+        src = f'locals {{\n  a = "{esc}"\n}}\nresource "aws_s3_bucket" "b" {{}}\n'.encode()
+        pf = parse_hcl("infra/main.tf", src)
+        assert [(s.name, s.start_line, s.end_line) for s in pf.symbols] == [
+            ("local.a", 2, 3),
+            ("aws_s3_bucket.b", 4, 4),
+        ], esc
+
+
+def test_a_quoted_argument_in_an_interpolation_stays_in_its_string() -> None:
+    src = b'resource "aws_x" "a" {\n  name = "${join("(", var.l)}"\n}\nresource "aws_x" "b" {}\n'
+    pf = parse_hcl("infra/main.tf", src)
+    assert [(s.name, s.start_line, s.end_line) for s in pf.symbols] == [
+        ("aws_x.a", 1, 3),
+        ("aws_x.b", 4, 4),
+    ]

@@ -3,6 +3,7 @@ types a statement names, with the line each first appears on."""
 
 from __future__ import annotations
 
+import functools
 import re
 
 from server.code.domain.extract.lang_sql_model import (
@@ -249,7 +250,7 @@ _ASSIGN_RE = re.compile(r"\b([A-Za-z_]\w*)\s*=")
 _ENGINE_RE = re.compile(r"(?i)\bENGINE\s*=\s*([A-Za-z_]\w*)")
 _SYSTEM_RE = re.compile(r"\bsystem\.([A-Za-z_]\w*)")
 _FORMAT_RE = re.compile(r"(?i)\bFORMAT\s+([A-Za-z_]\w*)")
-_LINE_OF_RE_CACHE: dict[str, re.Pattern[str]] = {}
+_WORD_RE = re.compile(r"\w+")
 
 
 def line_of_name(stmt: Statement, name: str) -> int:
@@ -261,14 +262,44 @@ def line_of_name(stmt: Statement, name: str) -> int:
 def _line_of(stmt: Statement, name: str) -> int:
     """The file line the first mention of `name` sits on, else the
     statement's first body line."""
-    rx = _LINE_OF_RE_CACHE.get(name)
-    if rx is None:
-        rx = _LINE_OF_RE_CACHE[name] = re.compile(r"\b" + re.escape(name) + r"\b")
-    head = _blank_head(stmt.text)
-    for k, ln in enumerate(stmt.text.split("\n")):
-        if k >= head and rx.search(ln):
-            return stmt.start_line + k - head
-    return stmt.start_line
+    head, lines = _first_name_lines(stmt.text)
+    k = lines.get(name, -1)
+    return stmt.start_line + k - head if k >= 0 else stmt.start_line
+
+
+# A comment or a string literal, which may span lines (so a quote inside either opens
+# no name; an unclosed literal runs to the end, or each of its quotes would scan the
+# rest), a word or `$` name, or a quoted name's body: every name `bare_name` gives. A
+# `#` comment is not known here: a quote in one can hide a quoted name's line, never a
+# word's.
+_NAME_TOKEN_RE = re.compile(
+    r"--[^\n]*|(?s:/\*.*?(?:\*/|\Z))|'(?:[^'\\]|''|\\.)*+'?"
+    r"|([\w$]+)|`([^`\n]*)`|\"([^\"\n]*)\"|\[([^\[\]\n]*)\]"
+)
+_BARE_TOKEN_RE = re.compile(r"[\w$]+")
+
+
+# The callers read one statement's names in a row: two statements' indexes are kept.
+@functools.lru_cache(maxsize=2)
+def _first_name_lines(text: str) -> tuple[int, dict[str, int]]:
+    """The leading comment lines and {name: the first line it is on past them}, read
+    once per statement: a scan per name costs quadratic time in a statement of many
+    names."""
+    head = _blank_head(text)
+    out: dict[str, int] = {}
+    pos = sum(len(ln) + 1 for ln in text.split("\n", head)[:head])
+    line = head
+    for m in _NAME_TOKEN_RE.finditer(text, pos):
+        line += text.count("\n", pos, m.start())
+        pos = m.start()
+        if m.lastindex:
+            out.setdefault(m.group(m.lastindex), line)
+        # `a` in `a$b` or in `"a b"`, and the names a comment or literal spells, each on
+        # its own line
+        for k, part in enumerate(m.group(0).split("\n")):
+            for w in [*_BARE_TOKEN_RE.findall(part), *_WORD_RE.findall(part)]:
+                out.setdefault(w, line + k)
+    return head, out
 
 
 def _setting_names(body: str) -> list[str]:

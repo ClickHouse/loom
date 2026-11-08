@@ -57,13 +57,15 @@ CHUNK_OPTIONS: dict[str, Any] = {
 }
 _MANIFEST_EXTENSIONS: frozenset[str] = frozenset({".yaml", ".yml", ".txt", ".json", ".html"})
 
-_ACTION_RE = re.compile(r"\{\{-?\s*(.*?)\s*-?\}\}", re.S)
-_COMMENT_RE = re.compile(r"\{\{-?\s*/\*.*?\*/\s*-?\}\}", re.S)
+# A body stops at the next `{{`, so an unclosed action is not searched on from each; the
+# trim markers and spaces are stripped in `_actions`, not by `\s*` around a lazy body.
+_ACTION_RE = re.compile(r"\{\{-?((?:(?!\{\{).)*?)\}\}", re.S)
+_COMMENT_RE = re.compile(r"\{\{-?\s*/\*.*?(?:\*/\s*-?\}\}|\Z)", re.S)  # unclosed: to the end
 _NAMED_RE = re.compile(r'^(define|block)\s+"([^"]+)"')
 _INCLUDE_RE = re.compile(r'(?<![\w.$])(?:include|template)\s+"([^"]+)"')
 _OPENERS: frozenset[str] = frozenset({"if", "range", "with", "define", "block"})
 _KIND_RE = re.compile(r"^kind:\s*([A-Za-z][\w.-]*)\s*$", re.M)
-_NAME_RE = re.compile(r"^  name:\s*(.+?)\s*$")
+_NAME_RE = re.compile(r"^  name:\s*+(.*\S)\s*$")
 
 
 @dataclass
@@ -94,10 +96,14 @@ def _actions(text: str) -> list[tuple[int, int, str]]:
     out: list[tuple[int, int, str]] = []
     # blank the comments but keep their newlines so line numbers hold
     cleaned = _COMMENT_RE.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
+    line, at = 1, 0
     for m in _ACTION_RE.finditer(cleaned):
-        start = cleaned.count("\n", 0, m.start()) + 1
-        end = start + m.group(0).count("\n")
-        out.append((start, end, m.group(1).strip()))
+        line += cleaned.count("\n", at, m.start())  # from the last action, not the top
+        at = m.start()
+        end = line + m.group(0).count("\n")
+        inner = m.group(1)
+        inner = inner[:-1] if inner.endswith("-") else inner  # the `-}}` trim marker
+        out.append((line, end, inner.strip()))
     return out
 
 

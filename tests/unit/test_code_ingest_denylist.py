@@ -74,7 +74,7 @@ async def test_load_denylist_reads_repo_local_ignore_file(monkeypatch: pytest.Mo
             ignore_file=".loomignore",
         )
 
-    async def show_file(git_dir: str, sha: str, path: str) -> bytes | None:
+    async def show_file(git_dir: str, sha: str, path: str, max_bytes: int = 0) -> bytes | None:
         assert (git_dir, sha, path) == ("var/x.git", "deadbeef", ".loomignore")
         return b"# repo says\nprograms/bash-completion/\n"
 

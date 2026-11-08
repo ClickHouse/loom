@@ -595,7 +595,7 @@ def test_the_code_backfill_index_run_sends_nothing_for_a_switched_off_org(monkey
     async def tree(*a: Any) -> list[str]:
         return ["a.py"]
 
-    async def show(*a: Any) -> bytes:
+    async def show(*a: Any, **k: Any) -> bytes:
         return b"def f():\n    return 1\n"
 
     async def no_denylist(*a: Any) -> None:

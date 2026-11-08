@@ -394,7 +394,7 @@ def _run_git(repo: _Repo, text: str, *, resolve: Any, show: Any, diff: str = "",
         calls.append(("run", *args[:3]))
         return diff
 
-    async def fake_show(git_dir: str, sha: str, path: str) -> bytes | None:
+    async def fake_show(git_dir: str, sha: str, path: str, max_bytes: int = 0) -> bytes | None:
         calls.append(("show", path))
         return show(path)
 

@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Literal
 
 from server.code.app.index.denylist import Denylist, default_denylist
 from server.code.app.index.describe import _describe_new_chunks
@@ -57,6 +58,9 @@ from server.code.domain.extract.lang_sql_model import SQL_LANG
 from server.code.domain.extract.treesitter import ParsedFile, lang_for_path
 from server.code.store.index import CodeRepo, build_row
 from server.llm import customer
+
+if TYPE_CHECKING:
+    from server.code.app.index.gitrepo import BlobTooLarge
 
 logger = logging.getLogger("loom.code_index.ingest")
 
@@ -358,6 +362,90 @@ async def _refused(
         )
         return True, declared_only
     return False, declared_only
+
+
+async def record_oversize(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    *,
+    path: str,
+    too_large: BlobTooLarge,
+    commit_sha: str,
+    embedding_model: str,
+    denylist: Denylist | None = None,
+) -> FileIngestStats:
+    """`ingest_file`'s verdict on a file the mirror holds above
+    `code_ingest_max_file_bytes`, from its size and its first bytes: the repository
+    chose the size, so the rest is not read. A file the denylist refuses, by its path
+    or by those bytes (binary, generated), is tombstoned as `ingest_file` does; any
+    other file row records the reason and its blob id, so the reconcile does not ask
+    again until the bytes change."""
+    from server.settings import settings as _settings
+
+    stats = FileIngestStats(path=path)
+    rules = denylist if denylist is not None else default_denylist()
+    reason = rules.refusal(path, too_large.head)  # its content rules probe the head only
+    if reason and not _declared_not_searched(reason, stats):
+        stats.skipped = True
+        stats.excluded = reason
+        await tombstone_file(repo, org, ns, path=path, embedding_model=embedding_model)
+        return stats
+    cap = int(_settings.code_ingest_max_file_bytes)
+    stats.error = f"{SKIPPED}: {too_large.size} bytes > code_ingest_max_file_bytes ({cap})"
+    row = _file_row(
+        org,
+        ns,
+        path=path,
+        pf=None,
+        source=b"",
+        commit_sha=commit_sha,
+        chunk_count=0,
+        error=stats.error,
+    )
+    # The file row of the unread bytes: no content hash, the blob id git reported.
+    row.update(content_hash="", blob_sha=too_large.blob, size_bytes=too_large.size, loc=0)
+    await repo.insert_rows("code_files", [row])
+    return stats
+
+
+async def read_capped(
+    show_file: Callable[..., Awaitable[bytes | None]],
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    *,
+    git_dir: str,
+    path: str,
+    commit_sha: str,
+    embedding_model: str,
+    denylist: Denylist | None,
+) -> tuple[bytes | None, FileIngestStats | Literal[False] | None]:
+    """`path`'s bytes at `commit_sha`, read under `code_ingest_max_file_bytes`, None
+    when the commit holds no file there. A larger file is not read: `record_oversize`
+    records its verdict and the bytes come back None. The second item is that record's
+    stats, False when it failed (logged), None for a file within the cap."""
+    from server.code.app.index.gitrepo import BlobTooLarge
+    from server.settings import settings as _settings
+
+    cap = int(_settings.code_ingest_max_file_bytes)
+    try:
+        return await show_file(git_dir, commit_sha, path, max_bytes=cap), None
+    except BlobTooLarge as e:
+        try:
+            return None, await record_oversize(
+                repo,
+                org,
+                ns,
+                path=path,
+                too_large=e,
+                commit_sha=commit_sha,
+                embedding_model=embedding_model,
+                denylist=denylist,
+            )
+        except Exception as err:  # noqa: BLE001 — per-file, keep going
+            logger.warning("%s: recording oversize %s failed: %s", git_dir, path, err)
+            return None, False
 
 
 async def _write_error_row(

@@ -30,7 +30,6 @@ or scip-go skip cleanly.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import posixpath
@@ -59,6 +58,7 @@ from server.code.app.index.gitrepo import (
     nul_fields,
 )
 from server.code.app.index.sandbox import tool_mounts
+from server.code.app.index.untrusted_files import read_delta
 from server.code.domain.index.tier_health import module_failures, without_module_failures
 from server.core.paths import SCIP_HARNESS_DIR
 from server.settings import settings
@@ -244,13 +244,17 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResu
         log = await _run_harness(checkout, scip_commit or "--full", target, out_dir, modules, cfg)
         failed = module_failures(log)
         result.modules_skipped.extend(f"{cfg.namespace}: {line}" for line in failed)
-        from server.code.app.index.scip_delta import ScipDelta, apply_delta
+        from server.code.app.index.scip_delta import apply_delta, parse_delta
 
-        paths = sorted(await asyncio.to_thread(lambda: list(out_dir.glob("*.json"))))
+        # One delta per module the harness ran over (a full run: every go.mod it lists)
+        expected = modules or await _module_dirs(checkout)
+        paths = await asyncio.to_thread(_deltas, out_dir, len(expected))
         for path in paths:
-            raw = await asyncio.to_thread(path.read_text)
-            delta = ScipDelta.model_validate(json.loads(raw))
+            raw = await asyncio.to_thread(read_delta, path)
+            delta = parse_delta(raw)
+            del raw  # the bytes are not needed past the parse
             stats = await apply_delta(repo, cfg.org, cfg.namespace, delta)
+            del delta  # free this module's model before the next one is read
             result.modules_indexed += 1
             logger.info(
                 "code_scip_go_delta: %s module %s applied %s",
@@ -325,6 +329,19 @@ def _harness_env(out_dir: Path, modules: list[str], cfg: RepoConfig) -> dict[str
     if modules:
         env["MODULES"] = "\n".join(modules)
     return env
+
+
+def _deltas(out_dir: Path, most: int) -> list[Path]:
+    """The `*.json` deltas the harness wrote, refused past `most`: the listing stops at
+    the first delta too many."""
+    found: list[Path] = []
+    with os.scandir(out_dir) as entries:
+        for entry in entries:
+            if entry.name.endswith(".json"):  # the root module's is `.json`
+                found.append(Path(entry.path))
+                if len(found) > most:
+                    raise RuntimeError(f"Go harness wrote more deltas than its {most} module(s)")
+    return sorted(found)
 
 
 async def _run_harness(

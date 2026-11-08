@@ -146,6 +146,8 @@ async def test_first_run_is_full_over_every_module_and_applies_each_delta(monkey
 
     monkeypatch.setattr(w, "git", fake_git)
     monkeypatch.setattr(w, "_run_harness", fake_harness)
+    # a full run expects one delta per go.mod the checkout lists
+    monkeypatch.setattr(w, "_module_dirs", AsyncMock(return_value=["lib", "svc"]))
     applied: list[str] = []
 
     async def fake_apply(repo, org, ns, delta):

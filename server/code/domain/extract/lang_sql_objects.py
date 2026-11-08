@@ -75,7 +75,7 @@ OBJECT_KIND_BY_WORD: dict[str, str] = {
 CALLABLE_KINDS: frozenset[str] = frozenset({"function", "procedure", "aggregate"})
 
 # `name`, `"quoted name"`, `` `name` ``, `db.name`, `{CLICKHOUSE_DATABASE:Identifier}.t`
-_SEG = r'(?:"[^"\n]+"|`[^`\n]+`|\[[^\]\n]+\]|\{[^}\n]*\}|[A-Za-z_][\w$]*)'
+_SEG = r'(?:"[^"\n]+"|`[^`\n]+`|\[[^\[\]\n]+\]|\{[^{}\n]*\}|[A-Za-z_][\w$]*)'
 _NAME = rf"({_SEG}(?:\.{_SEG}){{0,2}})"
 _CREATE_RE = re.compile(
     r"(?is)^\s*CREATE\s+(?:OR\s+REPLACE\s+)?"
@@ -96,7 +96,7 @@ _READ_RE = re.compile(
     + _NAME
     + r"(?![\w$])(?!\s*\()"
 )
-_COPY_TO_RE = re.compile(r"(?i)\bCOPY\s+" + _NAME + r"\s*(?:\([^)]*\))?\s+TO\b")
+_COPY_TO_RE = re.compile(r"(?i)\bCOPY\s+" + _NAME + r"(?:\s*\([^()]*\))?\s+TO\b")
 _WRITE_RE = re.compile(
     r"(?i)\b(?:INSERT\s+INTO(?:\s+TABLE)?|REPLACE\s+INTO|UPDATE|DELETE\s+FROM|MERGE\s+INTO"
     r"|TRUNCATE(?:\s+TABLE)?(?:\s+IF\s+EXISTS)?|ALTER\s+(?:TABLE|VIEW)(?:\s+IF\s+EXISTS)?"
@@ -109,7 +109,7 @@ _WRITE_RE = re.compile(
     # f(...)`, excluded by name below
 )
 _WRITE_NOT_A_TABLE = frozenset({"function", "table"})
-_COPY_FROM_RE = re.compile(r"(?i)\bCOPY\s+" + _NAME + r"\s*(?:\([^)]*\))?\s+FROM\b")
+_COPY_FROM_RE = re.compile(r"(?i)\bCOPY\s+" + _NAME + r"(?:\s*\([^()]*\))?\s+FROM\b")
 # ClickHouse's `ALTER TABLE t UPDATE col = …` — the bare `UPDATE <name>` alternative
 # above would read `col` as a written table
 _ALTER_UPDATE_NAME_RE = re.compile(r"(?i)\bUPDATE\s+" + _NAME)
@@ -132,7 +132,7 @@ _MV_TO_RE = re.compile(
     + _NAME
 )
 _CTE_RE = re.compile(
-    r"(?i)(?:\bWITH\s+(?:RECURSIVE\s+)?|,\s*)(" + _SEG + r")\s*(?:\([^)]*\))?\s+AS\s*\("
+    r"(?i)(?:\bWITH\s+(?:RECURSIVE\s+)?|,\s*)(" + _SEG + r")(?:\s*\([^()]*\))?\s+AS\s*\("
 )
 # Function names every dialect ships: a call to one never binds to a same-
 # named definition elsewhere in the tree (a Python `count`, a C++ `now`).
@@ -676,6 +676,14 @@ def sql_edges(
     without it every edge is `calls`. Each edge sits on the line the reference is
     written on (a body's inner statement, not the CREATE)."""
     edges: list[Edge] = []
+    # `resolve_object`'s first own definition per name, and per name in a schema, found
+    # once: a scan of `own` per reference costs quadratic time
+    first: dict[tuple[frozenset[str], str, str], Symbol] = {}
+    for family in (SQL_OBJECT_KINDS, CALLABLE_KINDS):
+        for sym in own:
+            if sym.kind in family:
+                first.setdefault((family, sym.name, ""), sym)
+                first.setdefault((family, sym.name, _candidate_scope(sym.qualified_name)[1]), sym)
     for st in statements:
         src = statement_symbol(path, mod, st)
         refs = references(st)
@@ -702,10 +710,11 @@ def sql_edges(
             if (
                 kinds is CALLABLE_KINDS
                 and bare in _BUILTIN_FUNCTIONS
-                and not any(s.name == bare and s.kind in kinds for s in own)
+                and (kinds, bare, "") not in first
             ):
                 continue  # `count()` binds to nobody's definition
-            hit = resolve_object(bare, schema, kinds, own, name_table, path)
+            mine = first.get((kinds, bare, schema)) or first.get((kinds, bare, ""))
+            hit = resolve_object(bare, schema, kinds, [mine] if mine else [], name_table, path)
             if hit is None:
                 continue
             to_id, to_qn, conf = hit

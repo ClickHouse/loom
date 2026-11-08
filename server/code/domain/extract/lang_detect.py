@@ -110,7 +110,7 @@ SHELL_INTERPRETERS: frozenset[str] = frozenset(
 BATS_FILENAMES: frozenset[str] = frozenset({"setup_suite.bash", "test_helper.bash"})
 
 _SHEBANG_RE = re.compile(rb"^#!\s*(\S+)(?:\s+(\S+))?")
-_DIRECTIVE_RE = re.compile(rb"^\s*#\s*shellcheck\s+shell=([a-z]+)", re.M)
+_DIRECTIVE_RE = re.compile(rb"^[^\S\n]*#\s*shellcheck\s+shell=([a-z]+)", re.M)
 _TEST_DIR_RE = re.compile(r"(^|/)(tests?|spec|specs|t|scripts?|bin|hooks|ci|\.github|tools)(/|$)")
 _BINARY_HEAD = re.compile(rb"[\x00-\x08\x0e-\x1f]")
 

@@ -19,6 +19,7 @@ from server.code.domain.extract.treesitter import ParsedFile
 from server.code.domain.index.remote import repo_tag
 from server.code.domain.index.repos import configured_repos, docs_namespaces, repo_for_namespace
 from server.code.store.index import CodeRepo
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
@@ -233,13 +234,18 @@ async def parsed(
 
 async def _file_at(org: str, namespace: str, commit: str, path: str) -> bytes | None:
     """`path` at `commit` from the bare mirror; None when the commit has no such file. A
-    mirror that cannot be read raises."""
+    mirror that cannot be read raises; a file over `code_ingest_max_file_bytes` raises
+    `ParseFailed`, unread."""
     if not commit or not path:
         return None
     cfg = repo_for_namespace(org, namespace)
     if cfg is None:
         raise gitrepo.GitError(f"no repository indexes {namespace}")
-    return await gitrepo.file_at(cfg.git_dir, commit, path)
+    try:
+        cap = settings.code_ingest_max_file_bytes
+        return await gitrepo.file_at(cfg.git_dir, commit, path, max_bytes=cap)
+    except gitrepo.BlobTooLarge:
+        raise ParseFailed(path, "over code_ingest_max_file_bytes") from None
 
 
 async def names_at(org: str, namespace: str, commit: str, path: str) -> set[str] | None:

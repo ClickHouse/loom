@@ -4,6 +4,10 @@ library is a call site."""
 
 from __future__ import annotations
 
+import time
+
+import pytest
+
 from server.code.domain.extract.lane_units import bind_sites, span_chunks
 from server.code.domain.extract.lang_detect import detect_by_extension
 from server.code.domain.extract.lang_jsonnet import (
@@ -14,6 +18,7 @@ from server.code.domain.extract.lang_jsonnet import (
     resolve_imports,
     wanted_paths,
 )
+from tests.unit.code_fixtures import assert_linear
 
 SHARED = b"""// helpers for the migration jobs
 {
@@ -163,3 +168,34 @@ def test_nested_object_members_are_dotted_symbols() -> None:
         "computed keys, comprehension clauses and object locals are not members"
     )
     assert pf.symbols[1].qualified_name == "helm-charts.grafana.lib::dashboards.api"
+
+
+def test_a_member_after_a_string_holding_a_newline_is_read() -> None:
+    pf = parse_jsonnet("a.jsonnet", b'{\n  a: "foo\nbar",\n  b: 1,\n}\n')
+    assert {s.name for s in pf.symbols} >= {"a", "b"}
+
+
+def test_members_after_strings_holding_a_url_or_a_colour_are_read() -> None:
+    src = b"{\n  a: 'https://x',\n  b: 1,\n  c: '#73BF69',\n  d: 2,\n}\n"
+    assert {s.name for s in parse_jsonnet("a.jsonnet", src).symbols} >= {"a", "b", "c", "d"}
+
+
+def test_members_after_a_verbatim_string_ending_in_a_backslash_are_read() -> None:
+    src = b"{\n  a: @'C:\\',\n  b: 1,\n  c: 'x',\n}\n"
+    assert {s.name for s in parse_jsonnet("a.jsonnet", src).symbols} >= {"a", "b", "c"}
+
+
+@pytest.mark.parametrize(
+    "head,unit,tail",
+    [("", "local a = 1\n", ""), ("{", "a:1,", "}"), ("{", "a:{},", "}")],
+)
+def test_a_file_of_many_locals_or_members_parses_in_linear_time(
+    head: str, unit: str, tail: str
+) -> None:
+    def cost(n: int) -> float:
+        src = (head + unit * n + tail).encode()
+        t0 = time.perf_counter()
+        parse_jsonnet("a.jsonnet", src)
+        return time.perf_counter() - t0
+
+    assert_linear(cost, 4_000, 16_000)

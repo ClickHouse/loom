@@ -658,20 +658,62 @@ async def _reexport_chains(
     return out
 
 
-_IMPORT_CLAUSE_RE = re.compile(r"""\bimport\s+([^;'"]+?)\s+from\s*["']([^"']+)["']""")
+# A clause stops at the next `import` keyword: an import with no `from` would otherwise
+# search on to the end of the file from each one, quadratic in a file of them. It runs on
+# the text without comments, whose `import` would end a clause early; strings are kept
+# (a `//` in one is no comment), an unclosed quote to the end of its line.
+_STRING_RE = re.compile(
+    r"""\"(?:[^"\\\n]|\\.)*+"?|'(?:[^'\\\n]|\\.)*+'?|`(?:[^`\\]|\\.)*+`?""", re.S
+)
+_OPENER_RE = re.compile(r"""["'`]|//|/\*""")
+
+
+def _without_comments(text: str) -> str:
+    """`text` with its comments blanked and its strings kept, in one pass. A `/*` or `//`
+    after a backslash is a regex's (`/^\\/*/`), and a `/*` with no `*/` after it is text,
+    as `ts_config.strip_comments` reads it, with no later one closing either."""
+    out: list[str] = []
+    i = 0
+    closed = True
+    while m := _OPENER_RE.search(text, i):
+        j, tok = m.start(), m.group()
+        if tok[0] == "/" and text[j - 1 : j] == "\\":
+            out.append(text[i : j + 1])
+            i = j + 1
+        elif tok == "//":
+            end = text.find("\n", j)
+            out.append(text[i:j] + " ")
+            i = len(text) if end < 0 else end
+        elif tok == "/*":
+            end = text.find("*/", j + 2) if closed else -1
+            closed = end >= 0
+            out.append(text[i:j] + " " if closed else text[i : j + 1])
+            i = end + 2 if closed else j + 1
+        else:
+            string = _STRING_RE.match(text, j)
+            end = string.end() if string else j + 1
+            out.append(text[i:end])
+            i = end
+    out.append(text[i:])
+    return "".join(out)
+
+
+_IMPORT_CLAUSE_RE = re.compile(
+    r"""(?<![\w$])import\s++((?:(?!(?<![\w$])import(?![\w$]))[^;'"])+?)(?<=\S)\s+from\s*["']([^"']+)["']"""
+)
 
 
 def _import_names(pf: ParsedFile, bindings: dict[str, str]) -> list[tuple[str, str, str]]:
     """(local name, imported name | 'default', specifier) per import binding;
     namespace imports are skipped (their members bind through the root)."""
-    text = pf.source.decode("utf-8", "replace")
+    text = _without_comments(pf.source.decode("utf-8", "replace"))
     out: list[tuple[str, str, str]] = []
     for m in _IMPORT_CLAUSE_RE.finditer(text):
         clause, spec = m.group(1), m.group(2)
         dflt = re.match(r"^\s*([A-Za-z_$][\w$]*)\s*(?:,|$)", clause)
         if dflt and bindings.get(dflt.group(1)) == spec:
             out.append((dflt.group(1), "default", spec))
-        inner = re.search(r"\{([^}]*)\}", clause)
+        inner = re.search(r"\{([^{}]*)\}", clause)  # `[^}]` would rescan from every `{`
         if inner:
             for part in inner.group(1).split(","):
                 part = part.strip()

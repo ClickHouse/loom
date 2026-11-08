@@ -76,14 +76,16 @@ _FIELD_LABELS: frozenset[str] = frozenset({"repeated", "optional", "required"})
 _WELL_KNOWN_PREFIX = "google.protobuf."
 _EXTERNAL_IMPORT_PREFIXES: tuple[str, ...] = ("google/",)
 
+# An unclosed string is one token to the end of its line, or each quote it holds would
+# scan the rest of the line again.
 _TOKEN_RE = re.compile(
-    r"//[^\n]*|/\*.*?\*/|\"(?:[^\"\\\n]|\\.)*\"|'(?:[^'\\\n]|\\.)*'"
+    r"//[^\n]*|/\*.*?(?:\*/|\Z)|\"(?:[^\"\\\n]|\\.)*+\"?|'(?:[^'\\\n]|\\.)*+'?"
     r"|[A-Za-z_][A-Za-z0-9_.]*|\.[A-Za-z_][A-Za-z0-9_.]*|-?\d[\w.+-]*|[{}();=<>,\[\]:]|\S",
     re.S,
 )
-_PACKAGE_RE = re.compile(r"(?m)^\s*package\s+([A-Za-z_][\w.]*)\s*;")
-_GO_PACKAGE_RE = re.compile(r"(?m)^\s*option\s+go_package\s*=\s*\"([^\"]+)\"")
-_IMPORT_RE = re.compile(r"(?m)^\s*import\s+(?:public\s+|weak\s+)?\"([^\"]+)\"\s*;")
+_PACKAGE_RE = re.compile(r"(?m)^[^\S\n]*package\s+([A-Za-z_][\w.]*)\s*;")
+_GO_PACKAGE_RE = re.compile(r"(?m)^[^\S\n]*option\s+go_package\s*=\s*\"([^\"]+)\"")
+_IMPORT_RE = re.compile(r"(?m)^[^\S\n]*import\s+(?:public\s+|weak\s+)?\"([^\"]+)\"\s*;")
 
 
 @dataclass
@@ -130,6 +132,15 @@ class _Parser:
         self.toks = toks
         self.i = 0
         self.units = ProtoUnits()
+        # each `{` token's matching `}`, found in one pass: a scan per block from its
+        # `{` costs depth times tokens in a deep nest
+        self._closes: dict[int, int] = {}
+        opens: list[int] = []
+        for j, t in enumerate(toks):
+            if t.text == "{":
+                opens.append(j)
+            elif t.text == "}" and opens:
+                self._closes[opens.pop()] = j
 
     # ---------------------------------------------------------------- tokens
     def _peek(self, k: int = 0) -> _Tok | None:
@@ -161,15 +172,11 @@ class _Parser:
         return last
 
     def _block_end(self) -> int:
-        """At `{`: the line of the matching `}` (consumes nothing)."""
-        depth = 0
-        for t in self.toks[self.i :]:
-            if t.text == "{":
-                depth += 1
-            elif t.text == "}":
-                depth -= 1
-                if depth == 0:
-                    return t.line
+        """At `{`: the line of the matching `}`, else the last token's (consumes
+        nothing)."""
+        j = self._closes.get(self.i)
+        if j is not None:
+            return self.toks[j].line
         return self.toks[-1].line if self.toks else 0
 
     # --------------------------------------------------------------- symbols

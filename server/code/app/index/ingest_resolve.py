@@ -5,12 +5,14 @@ roots), each cached and read once per path while in flight."""
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import posixpath
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from server.code.app.index.ingest_headers import include_candidates
 from server.code.app.index.ingest_parse import (
@@ -20,10 +22,14 @@ from server.code.app.index.ingest_parse import (
     TS_LANGS,
     _lane_module,
 )
+from server.code.app.index.untrusted_files import PACKAGE_JSON_MAX_BYTES
 from server.code.app.ttl_cache import TtlCache
 from server.code.domain.extract.treesitter import ParsedFile
 from server.code.store.index import CodeRepo
 from server.settings import settings
+
+if TYPE_CHECKING:
+    from server.code.domain.extract.lang_typescript_imports import Manifest
 
 logger = logging.getLogger("loom.code_index.ingest")
 
@@ -32,10 +38,10 @@ _PY_LAYOUT_CACHE: dict[tuple[str, str], tuple[float, Any]] = {}
 
 async def _py_layout(repo: CodeRepo, org: str, ns: str, present: set[str]) -> Any:
     """The namespace's Python layout — the roots its manifests declare (`pyproject.toml`
-    / `setup.py` / `setup.cfg` / `pytest.ini` / `tox.ini`, texts from the live chunks
-    the way package.json is read) and its entry points — cached ten minutes; None when
-    the set is not live. A manifest read before it is indexed (a first backfill) is not
-    cached."""
+    / `setup.py` / `setup.cfg` / `pytest.ini` / `tox.ini`, read the way package.json is:
+    from the mirror in a pass, up to `PACKAGE_JSON_MAX_BYTES`) and its entry points —
+    cached ten minutes; None when the set is not live. A manifest read before it is
+    indexed (a first backfill) is not cached, unless every one is known over its cap."""
     import time
 
     from server.code.domain.extract import py_layouts as pl
@@ -51,7 +57,7 @@ async def _py_layout(repo: CodeRepo, org: str, ns: str, present: set[str]) -> An
     )[: pl.MAX_MANIFESTS]
     texts = {p: await _package_json_text(repo, org, ns, p) for p in manifests}
     layout = pl.layout_from_texts({p: t for p, t in texts.items() if t}, present)
-    if all(texts.values()):
+    if all(t or _oversize(org, ns, p, PACKAGE_JSON_MAX_BYTES) for p, t in texts.items()):
         _PY_LAYOUT_CACHE[(org, ns)] = (now, layout)
     return layout
 
@@ -216,8 +222,8 @@ async def _resolve_py_includes(repo: CodeRepo, org: str, ns: str, pf: ParsedFile
 async def _resolve_code_lane_imports(repo: CodeRepo, org: str, ns: str, pf: ParsedFile) -> None:
     """Go import paths inside the repository's modules and Java imports under the file's own source
     root resolve to indexed files through one membership read; everything else names no edge. The Go
-    side reads every `go.mod` the namespace holds once (the module index) so a multi-module
-    repository's cross-module imports resolve like `go build` resolves them."""
+    side reads the namespace's shallowest `GO_MODS_MAX` `go.mod` files once (the module index) so
+    a multi-module repository's cross-module imports resolve like `go build` resolves them."""
     if pf.lang == "go":
         await _resolve_go_imports(repo, org, ns, pf)
         return
@@ -291,35 +297,77 @@ async def _go_package_listing(repo: CodeRepo, org: str, ns: str, pkg_dir: str) -
     return listing
 
 
+# A go.mod names a module, its Go version and its requirements: a few KiB.
+# not a setting: what the resolver reads of a go.mod, parsed per namespace
+GO_MOD_MAX_BYTES = 64 * 1024
+# not a setting: like the 200 TypeScript workspace members, the go.mod files read
+GO_MODS_MAX = 200
 _GO_MODULE_INDEX_CACHE: TtlCache[tuple[str, str], list[tuple[str, str]]] = TtlCache(
     lambda: settings.code_ingest_sibling_text_ttl_s
 )
 
 
 async def _go_module_index(repo: CodeRepo, org: str, ns: str) -> list[tuple[str, str]]:
-    """The namespace's Go module index — every live `go.mod` read once (the same cached live-text
-    read used for package.json), cached ten minutes like it. A repository with one `go.mod` at the
-    root is the index's one-entry case."""
+    """The namespace's Go module index — its shallowest `GO_MODS_MAX` live `go.mod` files, each
+    read once up to `GO_MOD_MAX_BYTES` (the same cached live-text read used for package.json),
+    cached ten minutes like it. A repository with one `go.mod` at the root is the index's
+    one-entry case."""
     from server.code.domain.extract.lang_go import go_module_index
 
     key = (org, ns)
     hit = _GO_MODULE_INDEX_CACHE.get(key)
     if hit is not None:
         return hit
-    paths = await repo.live_paths_named(org, ns, "go.mod")
-    texts = {p: await _package_json_text(repo, org, ns, p) for p in paths}
+    paths = sorted(await repo.live_paths_named(org, ns, "go.mod"), key=lambda p: (p.count("/"), p))[
+        :GO_MODS_MAX
+    ]
+    texts = {p: await _package_json_text(repo, org, ns, p, GO_MOD_MAX_BYTES) for p in paths}
     index = go_module_index(texts)
-    if index:
+    if index or _read_or_oversize(org, ns, texts, GO_MOD_MAX_BYTES):
         # An EMPTY index is not cached — a first backfill reaching .go files before any
         # go.mod is indexed would otherwise treat every cross-package import as a
-        # library for ten minutes
+        # library for ten minutes — unless every go.mod was read or is known over its
+        # cap, which the next file would find again
         _GO_MODULE_INDEX_CACHE.put(key, index)
     return index
 
 
-_PACKAGE_JSON_CACHE: TtlCache[tuple[str, str, str], str] = TtlCache(
-    lambda: settings.code_ingest_sibling_text_ttl_s, maxsize=50_000
+# The manifest texts a pass reads, by path; a repository chooses their sizes, so the
+# cache is bounded by the bytes each str holds (its widest character sets every one's
+# width) and by count.
+# not a setting: a memory bound on texts the TTL keeps; a miss only re-reads the mirror
+PACKAGE_JSON_CACHE_BYTES = 64 * 1024 * 1024
+_PACKAGE_JSON_CACHE: TtlCache[tuple[str, str, str, int], str] = TtlCache(
+    lambda: settings.code_ingest_sibling_text_ttl_s,
+    maxsize=50_000,
+    weigh=sys.getsizeof,
+    maxweight=PACKAGE_JSON_CACHE_BYTES,
 )
+
+# Parsed package.json views, by text: every importer of a package asks again. A view
+# holds up to about 7 times its text's size, so the cache is bounded by the bytes its
+# texts held as well as by count.
+# not a setting: a memory bound on a parse cache; a miss only parses again
+MANIFEST_VIEWS_BYTES = 4 * 1024 * 1024
+_MANIFEST_VIEWS: TtlCache[bytes, tuple[Manifest | None, int]] = TtlCache(
+    lambda: settings.code_ingest_sibling_text_ttl_s,
+    maxsize=256,
+    weigh=lambda hit: hit[1],
+    maxweight=MANIFEST_VIEWS_BYTES,
+)
+
+
+def _manifest_view(text: str) -> Manifest | None:
+    """`manifest_view(text)`, parsed once per text."""
+    from server.code.domain.extract.lang_typescript_imports import manifest_view
+
+    key = hashlib.blake2b(text.encode(), digest_size=16).digest()
+    hit = _MANIFEST_VIEWS.get(key)
+    if hit is None:
+        hit = (manifest_view(text), sys.getsizeof(text))
+        _MANIFEST_VIEWS.put(key, hit)
+    return hit[0]
+
 
 # The (git_dir, sha) a worker pass is ingesting at. Set, a sibling file's text (a
 # package.json, a barrel's re-exports) comes from the mirror at that commit, a few
@@ -339,20 +387,62 @@ def git_text_source(git_dir: str, sha: str) -> Iterator[None]:
         _GIT_TEXT_SOURCE.reset(token)
 
 
-async def _live_text(repo: CodeRepo, org: str, ns: str, path: str) -> str:
+# The sibling files found over a cap, by path and cap and by where the verdict came from:
+# (git_dir, sha) for the mirror's at a pass's commit, (org, namespace) for the indexed
+# chunks', which a pass also reaches when the mirror fails. An empty read is not cached,
+# so without this every import that needs the file would read it again; a file over one
+# cap may be within a larger one.
+_OVERSIZE: TtlCache[tuple[str, str, str, int], bool] = TtlCache(
+    lambda: settings.code_ingest_sibling_text_ttl_s,
+    maxsize=65_536,  # a verdict is a few bytes; the barrels of one pass do not evict a manifest's
+)
+
+
+def _oversize(org: str, ns: str, path: str, max_bytes: int) -> bool:
+    """Whether `path` is known over `max_bytes`, at the pass's commit or in the indexed
+    chunks: its "" is a verdict."""
+    src = _GIT_TEXT_SOURCE.get()
+    keys = [(*src, path, max_bytes)] if src else []
+    keys.append((org, ns, path, max_bytes))
+    return any(_OVERSIZE.get(k) is not None for k in keys)
+
+
+def _over_cap(key: tuple[str, str, str, int], org: str, ns: str, why: object) -> str:
+    """ "" for a file over its cap, recorded under `key` and logged once."""
+    _OVERSIZE.put(key, True)
+    logger.warning("code ingest: %s/%s: sibling file skipped: %s", org, ns, why)
+    return ""
+
+
+async def _live_text(repo: CodeRepo, org: str, ns: str, path: str, max_bytes: int) -> str:
     """One file's text: the mirror's blob at the pass's commit when a
-    `git_text_source` is set and holds the path, else the indexed chunks."""
+    `git_text_source` is set and holds the path, else the indexed chunks. A file over
+    `max_bytes` reads as "": the repository chose its size, and the caller parses it.
+    The mirror's verdict is kept for its commit; the chunks', which may hold an older
+    version, for the namespace, so a mirror that recovers is asked again."""
     src = _GIT_TEXT_SOURCE.get()
     if src is not None:
         from server.code.app.index import gitrepo
 
+        at_commit = (*src, path, max_bytes)
+        if _OVERSIZE.get(at_commit) is not None:
+            return ""
         try:
-            blob = await gitrepo.show_file(src[0], src[1], path)
+            blob = await gitrepo.show_file(src[0], src[1], path, max_bytes=max_bytes)
+        except gitrepo.BlobTooLarge as e:
+            return _over_cap(at_commit, org, ns, e)
         except Exception:  # noqa: BLE001 — a slow or broken mirror falls back
             blob = None
         if blob is not None:
             return blob.decode("utf-8", "replace")
-    return await repo.live_text_for_path(org, ns, path)
+    in_chunks = (org, ns, path, max_bytes)
+    if _OVERSIZE.get(in_chunks) is not None:
+        return ""
+    text = await repo.live_text_for_path(org, ns, path)
+    # the chunks hold files up to the ingest cap: the caller's cap holds on this path too
+    if max_bytes and (size := len(text.encode())) > max_bytes:
+        return _over_cap(in_chunks, org, ns, f"{path} is {size} bytes; max {max_bytes}")
+    return text
 
 
 _TSCONFIG_CACHE: TtlCache[tuple[str, str, str], Any] = TtlCache(
@@ -380,29 +470,37 @@ async def _workspace_registry(
     hit = _WORKSPACE_CACHE.get((org, ns))
     if hit is not None:
         return hit
-    yaml_text = (
-        await _package_json_text(repo, org, ns, "pnpm-workspace.yaml")
-        if "pnpm-workspace.yaml" in present
-        else ""
-    )
-    root_text = (
-        await _package_json_text(repo, org, ns, "package.json") if "package.json" in present else ""
-    )
+    read: dict[str, str] = {}
 
     async def _opt(path: str) -> str:
-        return await _package_json_text(repo, org, ns, path) if path in present else ""
+        if path in present:
+            read[path] = await _package_json_text(repo, org, ns, path)
+        return read.get(path, "")
 
-    globs = tw.workspace_globs(yaml_text, root_text) + tw.extra_manifest_globs(
+    globs = tw.workspace_globs(
+        await _opt("pnpm-workspace.yaml"), await _opt("package.json")
+    ) + tw.extra_manifest_globs(
         await _opt("lerna.json"),
         await _opt("rush.json"),
         await _opt("nx.json"),
     )
     dirs = tw.member_dirs(globs, present)
     texts = {d: await _package_json_text(repo, org, ns, f"{d}/package.json") for d in dirs[:200]}
+    read.update((f"{d}/package.json", t) for d, t in texts.items())
     reg = tw.registry(texts)
-    if reg:  # an empty registry in a first backfill is the manifests not yet indexed, not a fact
+    # An empty registry in a first backfill is the manifests not yet indexed, not a fact;
+    # one empty because a manifest is over its cap is.
+    if reg or (
+        any(_oversize(org, ns, p, PACKAGE_JSON_MAX_BYTES) for p in read)
+        and _read_or_oversize(org, ns, read, PACKAGE_JSON_MAX_BYTES)
+    ):
         _WORKSPACE_CACHE.put((org, ns), reg)
     return reg
+
+
+def _read_or_oversize(org: str, ns: str, texts: dict[str, str], max_bytes: int) -> bool:
+    """Every manifest read gave its text or is known over `max_bytes`, and one was read."""
+    return bool(texts) and all(t or _oversize(org, ns, p, max_bytes) for p, t in texts.items())
 
 
 def _registry_dirs(registry: dict[str, str], spec: str) -> list[str]:
@@ -454,7 +552,8 @@ async def _tsconfig_candidates(
             texts[cur] = await _package_json_text(repo, org, ns, cur)
             cur = tc.next_extends(cur, texts[cur], dirs_for, present)
         cfg = tc.resolve_config(cp, texts, dirs_for, present)
-        if texts.get(cp):  # a config read before it is indexed is not cached
+        # one read before it is indexed is not cached
+        if texts.get(cp) or _oversize(org, ns, cp, PACKAGE_JSON_MAX_BYTES):
             _TSCONFIG_CACHE.put(key, cfg)
     out: dict[str, list[str]] = {}
     for spec in pf.includes:
@@ -498,7 +597,8 @@ async def _workspace_candidates(
         )
         cands = [f for stem in stems for f in stem_forms(stem)]
         text = await _package_json_text(repo, org, ns, f"{d}/package.json")
-        cands.extend(c for c in exports_candidates(spec, d, text) if c not in cands)
+        view = _manifest_view(text)
+        cands.extend(c for c in exports_candidates(spec, d, view) if c not in cands)
         out[spec] = cands
     return out
 
@@ -530,16 +630,22 @@ def _read_finished(key: tuple[str, ...], task: asyncio.Future[Any]) -> None:
         task.exception()  # retrieved: a read every caller left must not log "never retrieved"
 
 
-async def _package_json_text(repo: CodeRepo, org: str, ns: str, path: str) -> str:
-    """The live text of one package.json, cached ten minutes per namespace:
-    a backfill reads it once per package, a worker pass a few times."""
-    key = (org, ns, path)
+async def _package_json_text(
+    repo: CodeRepo, org: str, ns: str, path: str, max_bytes: int = PACKAGE_JSON_MAX_BYTES
+) -> str:
+    """The live text of one manifest (a package.json, a go.mod), at most `max_bytes`
+    from the mirror, cached ten minutes per namespace: a backfill reads it once per
+    package, a worker pass a few times."""
+    key = (org, ns, path, max_bytes)
     hit = _PACKAGE_JSON_CACHE.get(key)
     if hit is not None:
         return hit
     text = cast(
         str,
-        await single_flight(("package", *key), lambda: _live_text(repo, org, ns, path)),
+        await single_flight(
+            ("package", org, ns, path, str(max_bytes)),
+            lambda: _live_text(repo, org, ns, path, max_bytes),
+        ),
     )
     if text:
         # An empty read (the file not yet indexed in a first backfill) is not a fact to
@@ -586,7 +692,7 @@ async def _resolve_package_exports(
         if pkg_dir is None:
             continue
         text = await _package_json_text(repo, org, ns, f"{pkg_dir}/package.json")
-        cands = exports_candidates(spec, pkg_dir, text)
+        cands = exports_candidates(spec, pkg_dir, _manifest_view(text))
         if not cands:
             continue
         found = (
@@ -620,7 +726,10 @@ async def _barrel_targets_of(repo: CodeRepo, org: str, ns: str, path: str) -> tu
         return hit
     text = cast(
         str,
-        await single_flight(("barrel", *key), lambda: _live_text(repo, org, ns, path)),
+        await single_flight(
+            ("barrel", *key),
+            lambda: _live_text(repo, org, ns, path, settings.code_ingest_max_file_bytes),
+        ),
     )
     specs = [s for s in reexport_specs(text) if s.startswith(".")]
     targets: tuple[str, ...] = ()

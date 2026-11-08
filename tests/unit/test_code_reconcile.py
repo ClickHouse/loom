@@ -83,7 +83,7 @@ def test_heal_reingests_only_listed_paths_and_counts_moves():
 
     seen: list[str] = []
 
-    async def show_file(git_dir, sha, path):
+    async def show_file(git_dir, sha, path, max_bytes=0):
         return None if path == "src/deleted.cpp" else b"int x;"
 
     class _Stats:
@@ -196,7 +196,7 @@ def test_heal_passes_the_scope_and_the_live_hash_through_and_counts_identical_fi
 
     calls: list[dict[str, Any]] = []
 
-    async def show_file(git_dir, sha, path):
+    async def show_file(git_dir, sha, path, max_bytes=0):
         return b"int x;"
 
     class _Stats:
@@ -437,7 +437,7 @@ def test_heal_names_the_paths_it_indexed_nothing_for():
             org="o", namespace="n", git_dir="/git", embed_reuse_from="", ignore_file=""
         )
 
-    async def show_file(git_dir, sha, path):
+    async def show_file(git_dir, sha, path, max_bytes=0):
         return None if path == "gone.py" else b"x = 1\n"
 
     async def ingest_file(reads, org, ns, *, path, **kw):

@@ -138,8 +138,12 @@ _SETTINGS_FILES = (
 )
 _HISTORY_FILE = "src/Core/SettingsChangesHistory.cpp"
 _STATELESS = "tests/queries/0_stateless/"
-_DECL_RE = re.compile(r"DECLARE\w*\(\s*\w+\s*,\s*([a-z][a-z0-9_]{2,80})\s*,")
-_OBSOLETE_RE = re.compile(r"MAKE_OBSOLETE\w*\(\s*\w+\s*,\s*\w+\s*,\s*([a-z][a-z0-9_]{2,80})\s*,")
+# Each starts a word and reads it once (a prefixed `M_DECLARE` included), so a run of
+# macro names is searched once, not from each.
+_DECL_RE = re.compile(r"(?<!\w)(?>\w*DECLARE)\w*+\(\s*\w+\s*,\s*([a-z][a-z0-9_]{2,80})\s*,")
+_OBSOLETE_RE = re.compile(
+    r"(?<!\w)(?>\w*MAKE_OBSOLETE)\w*+\(\s*\w+\s*,\s*\w+\s*,\s*([a-z][a-z0-9_]{2,80})\s*,"
+)
 _HISTORY_RE = re.compile(r'\{\s*"([a-z][a-z0-9_]{2,80})"\s*,')
 _TEST_SET_RE = re.compile(r"(?i)\b(?:SET|SETTINGS)\s+([a-z][a-z0-9_]{2,80})\s*=")
 _TEST_SET_MORE_RE = re.compile(r",\s*([a-z][a-z0-9_]{2,80})\s*=")
@@ -558,7 +562,7 @@ def blame_verdict(rows: list[dict[str, Any]], *, ranges: int) -> str:
 _REJECTED = re.compile(r"\bRejected:(.*)", re.S)
 # decision.record's value closes its rejected options with the realized outcome
 _REALIZED = "Realized:"
-_SETTING_NAME = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+")
+_SETTING_NAME = re.compile(r"\A[a-z][a-z0-9]*(?:_[a-z0-9]+)+")  # fullmatch only
 
 
 def checked_names(text: str, *, constraint: bool) -> list[str]:

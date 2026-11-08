@@ -63,7 +63,9 @@ _KEBAB_TAG_RE = re.compile(r"<([a-z][a-z0-9]*(?:-[a-z0-9]+)+)(?=[\s/>])")
 # `@click="reload"`, `@click="reload(x)"`, `v-on:input="onInput"`; the value's
 # first token must be the whole expression or a call of it — `router.push(…)`,
 # `() => f()` and `emit('x')` are not a same-file function by name
-_HANDLER_RE = re.compile(r"""(?:@|v-on:)[\w.:-]+\s*=\s*["']\s*([A-Za-z_$][\w$]*)\s*(?:\(|["'])""")
+_HANDLER_RE = re.compile(
+    r"""(?<![\w.:-])(?:@|v-on:)[\w.:-]++\s*=\s*["']\s*([A-Za-z_$][\w$]*)\s*(?:\(|["'])"""
+)
 _INTERP_RE = re.compile(r"\{\{\s*([A-Za-z_$][\w$]*)\s*\(")
 # A bound prop whose value is a bare identifier (`:formatter="fmtRow"`,
 # `v-bind:on-save="save"`) passes a function down; the binder keeps it only when a
@@ -72,7 +74,7 @@ _BOUND_PROP_RE = re.compile(
     r"""(?<![\w@])(?::|v-bind:)[\w.-]+\s*=\s*["']\s*([A-Za-z_$][\w$]*)\s*["']"""
 )
 _MACROS = ("defineProps", "defineEmits", "defineModel", "defineExpose")
-_TEMPLATE_COMMENT_RE = re.compile(r"^\s*<!--\s*(.*?)\s*-->", re.S)
+_TEMPLATE_COMMENT_RE = re.compile(r"^\s*+<!--(.*?)-->", re.S)  # its text is stripped after
 _MAX_DOC = 400
 
 
