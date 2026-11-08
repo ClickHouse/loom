@@ -5,6 +5,7 @@ LibreChat answers through httpx.MockTransport as v0.8.8's agents API streams."""
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import time
 from typing import Any
@@ -68,6 +69,8 @@ class _World:
         self.status = 200
         self.delegated: dict[str, Any] = {}
         self.cap_asked: dict[str, Any] = {}
+        # The class the namespace registry gives an answer on the route.
+        self.traffic_class = "interactive"
         # True: the share is spent; None: the spend cannot be read.
         self.over_cap: bool | None = False
         self.switched_off = False
@@ -350,9 +353,22 @@ def client(world: _World, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, list[di
         return None
 
     def emit(**kw: Any) -> None:
-        acc = cost_accumulator.current()
-        rows.append({**kw, "cost": acc.cost_usd if acc else 0.0, "run": current_ledger_run()})
+        from server.observability.traffic_class import current_traffic_class
 
+        acc = cost_accumulator.current()
+        rows.append(
+            {
+                **kw,
+                "cost": acc.cost_usd if acc else 0.0,
+                "run": current_ledger_run(),
+                "traffic_class": current_traffic_class(),
+            }
+        )
+
+    async def classified(*_: Any) -> tuple[str, str]:
+        return world.traffic_class, "namespace"
+
+    monkeypatch.setattr(routes, "classify", classified)
     monkeypatch.setattr(routes, "verify_bearer_header", lambda *_a, **_k: _caller())
     monkeypatch.setattr(routes, "check_acted_for", nothing)
     monkeypatch.setattr(routes, "note_restricted_access", nothing)
@@ -567,7 +583,10 @@ def test_a_client_that_went_away_is_its_own_failure(monkeypatch: pytest.MonkeyPa
 
     rows: list[dict[str, Any]] = []
     monkeypatch.setattr(routes, "emit_agent_event", lambda **kw: rows.append(kw))
-    routes._Row(_caller(), ORG, NS).write(asyncio.CancelledError())
+    # In a copy of the context: the row binds a cost accumulator for this test alone.
+    contextvars.copy_context().run(
+        lambda: routes._Row(_caller(), ORG, NS).write(asyncio.CancelledError())
+    )
     (row,) = rows
     assert row["error_code"] == "HTTP_499"
     assert status_class(False, row["error_code"], row["error"]) == "client"
@@ -608,6 +627,9 @@ def test_a_forgotten_service_is_set_up_again(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(service, "_answering", ("agent_1", "sk-old"))
     monkeypatch.setattr(service, "_loop", None)
     monkeypatch.setattr(service, "start_setup_loop", lambda: started.append(True))
+    # Restored after the test: forgetting marks the service as setting up again.
+    monkeypatch.setattr(service, "_ready", None)
+    monkeypatch.setattr(service, "_problem", "")
     service.forget_answering("LibreChat refused the stored key or agent (401)")
     assert service.answering() is None and started == [True]
     ready, problem = service.assistant_state()
@@ -764,6 +786,22 @@ def test_a_client_leaving_mid_stream_is_its_own_failure_and_releases_all(
     assert row["error_code"] == "HTTP_499" and row["run"] == "chatcmpl-7"
     assert row["cost"] == pytest.approx(settings.assistant_answer_ceiling_usd)
     assert bridge._running == {} and tenant_slots._IN_FLIGHT.get(ORG, 0) == 0
+
+
+def test_the_routes_answer_is_classified_as_an_op_call_is(
+    world: _World, client: tuple[Any, list[dict[str, Any]]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.assistant.app import routes
+
+    http, rows = client
+    drawn: list[str] = []
+    monkeypatch.setattr(routes, "admit_route", lambda *_a, **kw: drawn.append(kw["traffic_class"]))
+    world.traffic_class = "bench"
+    r = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
+    assert r.status_code == 200
+    # Its buckets are drawn in its class, and its row carries it.
+    (row,) = rows
+    assert drawn == ["bench"] and row["traffic_class"] == "bench"
 
 
 def test_an_admission_cancelled_after_the_org_slot_frees_it_and_writes_its_row(

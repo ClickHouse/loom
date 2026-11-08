@@ -40,10 +40,16 @@ from server.core.errors import (
 from server.core.ratelimit import admit_route
 from server.identity.app.caller_home import default_namespace
 from server.identity.app.restricted_access import note_restricted_access
+from server.identity.app.traffic_class_registry import classify
 from server.observability import cost_accumulator, sli
 from server.observability.budgets import effective_budget_ms
 from server.observability.ledger import emit_agent_event
 from server.observability.run_context import set_ledger_run
+from server.observability.traffic_class import (
+    bind_claimed_class,
+    current_traffic_class,
+    set_current_traffic_class,
+)
 from server.operations.base import Role
 from server.settings import settings
 
@@ -125,6 +131,18 @@ class _Row:
             log.debug("assistant answer: ledger row not written: %s", e)
 
 
+async def _classify(auth: AuthInfo, org: str, namespace: str, payload: Any) -> None:
+    """The answer's traffic class, resolved as the op transport resolves it (the token's
+    claim, the namespace's registry class, the request's hint), before its buckets are
+    drawn and its row written."""
+    try:
+        cls, source = await classify(auth, org, namespace, payload)
+    except Exception as e:  # noqa: BLE001 — FAILS OPEN: classification never refuses a call
+        log.debug("assistant answer: traffic class not resolved: %s", e)
+        cls, source = "interactive", "default"
+    set_current_traffic_class(cls, source)
+
+
 def _sli() -> tuple[str, int]:
     """(SLO class, budget) as the op transport records them for `assistant.ask`
     (`transport._common.sli_columns`), so the route's rows and the op's fall in one."""
@@ -202,6 +220,7 @@ async def chat_completions(request: Request) -> Any:
         except PermissionError as e:
             raise _refusal(e) from e
         set_current_auth(auth)
+        bind_claimed_class(auth)  # a refusal's row carries the token's class claim
         row.auth = auth
         bridge.refuse_org_wide(auth)  # before anything reads under the org
         try:
@@ -218,9 +237,16 @@ async def chat_completions(request: Request) -> Any:
         messages = bridge.admitted_messages(payload.get("messages"))
         await check_acted_for(auth, org)
         await bridge.authorize(auth, org, namespace)
+        await _classify(auth, org, namespace, payload)
         # Drawn once the caller is authorized and before any cost check, as the op
         # transport draws them; the org's in-flight slot too, before a token is minted.
-        admit_route(bridge.ASSISTANT_OP, namespace, org=org, actor=auth.subject)
+        admit_route(
+            bridge.ASSISTANT_OP,
+            namespace,
+            org=org,
+            actor=auth.subject,
+            traffic_class=current_traffic_class(),
+        )
         slots.enter_context(tenant_slots.hold(org))
         ticket = await bridge.open_answer(auth, org, namespace)
     except (LoomServerError, HTTPException, PermissionError) as e:
