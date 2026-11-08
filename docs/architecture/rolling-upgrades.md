@@ -430,8 +430,9 @@ schema. These rules keep that safe. The operator procedure is in
     graph rows and shared copies; [erasure saga](memory-architecture.md#erasure-saga)):
     N-1's user saga and census reach only the user's own, so a user erasure N-1 runs
     leaves the summary's rows and records `completed`. A saga N-1 left in progress that
-    N resumes fails N's census when N-1 ran those rows' steps, and the recovery worker's
-    next resume runs them again. After a purge that passed `memory.retire`, including
+    N resumes fails N's census outside a purge when N-1 ran those rows' steps, and the
+    recovery worker's next resume runs them again; in a purge N's `memory.retire` runs
+    them again. After a purge that passed `memory.retire`, including
     one N-1 completed, the user's keys are gone and nothing finds the summaries' rows.
     The ledger does not name the build that ran a saga: once N serves alone, request
     again each user erasure without `purge` that completed since the rollout began (the

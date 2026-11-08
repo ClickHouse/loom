@@ -1326,8 +1326,8 @@ org-wide copies promoted from it, which nothing promotes again. The erasure take
 summary that may quote the user; the summary's current row is only
 tombstoned outside a purge, and consolidation rebuilds it from the rows that remain.
 Outside a purge the user's tombstoned keys stay, so such a rebuild counts as the user's
-too: a saga still running retires it again, and a later census of the erasure reports
-it.
+too, and so does a summary `memory.restore` revives: a saga still running retires it
+again, and a later census of the erasure reports it.
 
 Under the Postgres authority the journal's revisions of a summary go with it when its
 current head names the user; a summary rebuilt without the user keeps its older
