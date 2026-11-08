@@ -89,8 +89,8 @@ async def test_the_user_saga_deletes_the_graph_before_it_deletes_the_links(monke
 
     monkeypatch.setattr(h, "_do_step", fake_do_step)
     await h._saga_user_id("o", "alice", completed=set(), row={})
-    assert "entity_graph.delete" in calls
-    assert calls.index("entity_graph.delete") < calls.index("graph_links.delete")
+    # graph_links.delete deletes the graph rows its links alone hold, then the links
+    assert "entity_graph.delete" not in calls
     assert calls.index("memory.tombstone") < calls.index(
-        "entity_graph.delete"
+        "graph_links.delete"
     )  # keys still resolve: tombstone, not delete

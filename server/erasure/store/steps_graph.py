@@ -335,8 +335,8 @@ async def delete_entity_graph_by_user(
     org: str, user_id: str, *, ch: _CHClient | None = None
 ) -> int:
     """Delete the triples and edges only this user's memories (or summaries of them)
-    carried. Must run BEFORE `graph_links.delete` (which runs it again first):
-    ownership is read from the link tables.
+    carried, before their links go: `graph_links.delete` runs it first, as ownership is
+    read from the link tables.
 
     The mutation names each key by its hash, computed by ClickHouse on both sides:
     nothing bounds a stored entity name, and one name can outgrow a form field."""

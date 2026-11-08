@@ -114,12 +114,11 @@ checkout.
    the grant. Each cleared question costs one synthesis on its next ask.
 10. Moving to a build whose user erasure reaches what a consolidated summary of the
     user's memories fed, a roll forward after a rollback included: once the newer build
-    serves alone, request again each user erasure without `purge` requested before then,
-    now or at any time before (the `user_id` rows of `loom.erasure_requests`, which keeps
-    90 days; an older one has no ledger row left): one an older build started and the
-    newer one finished can still have left shared copies.
-    An older build's saga left the summary's history, chunks, vectors, graph rows and
-    shared copies ([rolling upgrades](../architecture/rolling-upgrades.md), rule 37).
+    serves alone, request again each user erasure without `purge` requested before then
+    (the `user_id` rows of `loom.erasure_requests`, kept 90 days), including one the newer
+    build finished: an older build's saga left the summary's history, chunks, vectors,
+    graph rows and shared copies ([rolling upgrades](../architecture/rolling-upgrades.md),
+    rule 37).
     The new saga also erases what the user wrote since: request it for a user with no
     live memory row, or only where that is wanted. A user purge an older build completed
     left the same rows, and no later user erasure finds them: the user's keys are gone.

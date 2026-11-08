@@ -50,7 +50,6 @@ _STEPS = (
     ("shared_embeddings.tombstone", memory_steps.tombstone_shared_embeddings_by_user),
     ("shared.tombstone", memory_steps.tombstone_shared_by_user),
     ("memory_chunks.tombstone", memory_steps.tombstone_memory_chunks_by_user),
-    ("entity_graph.delete", graph_steps.delete_entity_graph_by_user),
     ("entity_communities.delete", graph_steps.delete_entity_communities_by_user),
     ("entity_vectors.delete", graph_steps.delete_entity_vectors_by_user),
     ("graph_links.delete", graph_steps.delete_graph_links_by_user),

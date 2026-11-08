@@ -687,10 +687,10 @@ async def test_both_sagas_run_entity_vectors_delete_after_the_graph_step(monkeyp
     monkeypatch.setattr("server.core.namespace_write_marks.bump", _async_noop)
     calls = _record_steps(monkeypatch)
     await h._saga_user_id("o", "alice", completed=set(), row={})
-    # Entity_communities.delete sits between them in the user saga
-    # (it reads ownership from the edge links, so before graph_links.delete too)
-    assert calls.index("entity_vectors.delete") == calls.index("entity_graph.delete") + 2, calls
-    assert calls.index("entity_communities.delete") == calls.index("entity_graph.delete") + 1, calls
+    # the user saga's graph rows go in graph_links.delete, which reads ownership first;
+    # entity_communities.delete reads it from the edge links, before they go
+    assert "entity_graph.delete" not in calls
+    assert calls.index("entity_vectors.delete") == calls.index("entity_communities.delete") + 1
     assert calls.index("entity_vectors.delete") < calls.index("graph_links.delete")
     assert calls[-1] == "verify.residue"
 

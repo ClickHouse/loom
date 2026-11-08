@@ -169,8 +169,7 @@ async def test_user_saga_orders_the_new_steps_around_the_link_tables(monkeypatch
     await h._saga_user_id("o", "alice", completed=set(), row={})
     for step in ("entity_communities.delete", "llm_response_cache.delete", "ask_precedents.delete"):
         assert step in calls, step
-    # communities read ownership from the edge links: after the graph, before the links go
-    assert calls.index("entity_graph.delete") < calls.index("entity_communities.delete")
+    # communities read ownership from the edge links: before the links go
     assert calls.index("entity_communities.delete") < calls.index("graph_links.delete")
     # the text stores follow the memory tombstone (their predicate reads the user's keys)
     assert calls.index("memory.tombstone") < calls.index("llm_response_cache.delete")
