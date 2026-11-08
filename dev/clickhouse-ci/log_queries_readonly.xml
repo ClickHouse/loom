@@ -1,7 +1,7 @@
 <!--
-  CI only: Loom's user, on the default profile, may not change how its queries
-  are logged, as on ClickHouse Cloud, so a statement or settings profile that
-  turns query logging off fails here as it does there.
+  CI only: every user on the default profile, Loom's among them, may not change
+  how its queries are logged, as on ClickHouse Cloud, so a statement or settings
+  profile that turns query logging off fails here as it does there.
 -->
 <clickhouse>
     <profiles>

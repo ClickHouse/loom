@@ -341,7 +341,7 @@ or on `loom.analysis_secrets`, and it cannot run `EXPLAIN`.
 changes it. It keeps the secrets out of what is logged instead:
 
 - Every statement that carries the key or the password runs with
-  `log_queries_cut_to_length = 1` (`TEXT_CUT_FROM_LOG` in
+  `log_queries_cut_to_length = 1` (`LOG_TEXT_CUT` in
   `server/insights/domain/analysis.py`), which ClickHouse Cloud leaves unconstrained.
   ClickHouse then logs the statement, in `system.query_log` and in its server log, as
   only the number of characters it removed. The printed SQL sets it first, for the
@@ -626,11 +626,12 @@ analyst's password, for its own query id, until its expiry. A statement ClickHou
 refuses is logged with its error message, which can quote the whole statement (an
 unknown column's error quotes the query it was looked up in, the caller's statement
 inside the wrapper), also for a restricted namespace whose ledger drops the text;
-ClickHouse Cloud pins `log_queries_min_type`, so the error rows cannot be left out. The probe's own
-refused reads add a few error rows from the analyst at every probe. The deploy delta
-leaves the analyst's statements out of its shapes. The rows a statement returns are
-stored nowhere; an error can quote a value it failed on, which ClickHouse's logs keep
-([stored data](#stored-data-and-erasure)).
+ClickHouse Cloud pins `log_queries_min_type`, so the error rows cannot be left out. The
+probe's refused reads add about one error row per allowlisted table and refused read at
+every probe. The
+deploy delta leaves the analyst's statements out of its shapes. The rows a statement
+returns are stored nowhere; an error can quote a value it failed on, which ClickHouse's
+logs keep ([stored data](#stored-data-and-erasure)).
 
 ## Isolation proof
 
@@ -651,8 +652,11 @@ viewer token. Each case must be refused or return no canary:
 - on `loom.memory` itself: a deleted memory, a memory tombstoned by an erasure, and a
   version a later one replaced, with `SETTINGS final = 0` and
   `apply_row_policy_after_final = 0`;
-- `SETTINGS send_logs_level`, `use_query_condition_cache` or `max_threads` past the
-  profile;
+- `SETTINGS send_logs_level`, `use_query_condition_cache`, `log_queries_cut_to_length`
+  or `max_threads` past the profile;
+- `toUInt64(memory_key)` in the select list, `WHERE` and `PREWHERE`, also with
+  short-circuit evaluation off and filters moved or merged: each is refused, and its
+  error, in the answer and in `system.query_log`, quotes only the caller's own row;
 - `SETTINGS` that change the scope, the caps, `readonly` or `use_query_cache`, the same
   statement text run first by one org with the query cache and then by the other, a
   scope sent with an expired or forged signature, and a scope one statement read with
@@ -686,8 +690,8 @@ viewer token. Each case must be refused or return no canary:
   the row to writing the version, each of which leaves `ANALYSIS_UNAVAILABLE` or a state
   the next run finishes with the stored key;
 - `loom.analysis_secrets` and `loom.analysis_canary` read directly, and neither the
-  statement's text nor the key in `system.query_log`, the printed SQL run as printed
-  included;
+  statement's text nor the key or its pads in `system.query_log`, the printed SQL run
+  as printed included;
 - reseal races:
   - a reseal whose read comes before a printed rotation and whose insert after it, which
     leaves the new key;

@@ -64,9 +64,8 @@ CAPS_DIGEST_SETTING = "SQL_loom_analyst_caps_digest"
 # byte, which ClickHouse logs as only the number of characters it removed.
 # Loom cannot turn query logging off everywhere (ClickHouse Cloud pins
 # `log_queries` for its users), but Cloud leaves this setting unconstrained.
-_CUT_SETTING, _CUT_BYTES = "log_queries_cut_to_length", 1
-TEXT_CUT_FROM_LOG = {_CUT_SETTING: _CUT_BYTES}
-TEXT_CUT_SQL = f"{_CUT_SETTING} = {_CUT_BYTES}"
+LOG_TEXT_CUT = {"log_queries_cut_to_length": 1}
+LOG_TEXT_CUT_SQL = "log_queries_cut_to_length = 1"
 
 _BLOCK = 64  # SHA-256 block size, for HMAC's inner and outer pads
 
@@ -281,11 +280,13 @@ def _setting(name: str) -> str:
 
 def _masked_bytes(key: bytes, data: bytes) -> str:
     """`data` as a `decrypt` expression, whose arguments ClickHouse prints as [HIDDEN]."""
+    if len(key) != 32:
+        raise ValueError("the scope key must be 32 bytes, as aes-256-ecb takes")
     padder = padding.PKCS7(128).padder()
     # The key sits beside the ciphertext: this masks the pads in ClickHouse's
     # printing, it does not keep them secret. ECB is deterministic, so every
     # write spells the same policy.
-    encryptor = Cipher(algorithms.AES256(key), modes.ECB()).encryptor()
+    encryptor = Cipher(algorithms.AES(key), modes.ECB()).encryptor()
     sealed = encryptor.update(padder.update(data) + padder.finalize()) + encryptor.finalize()
     return f"decrypt('aes-256-ecb', unhex('{sealed.hex()}'), unhex('{key.hex()}'))"
 
@@ -340,7 +341,7 @@ def profile_settings() -> list[str]:
         "final = 1 CONST",
         "apply_row_policy_after_final = 1 CONST",
         # A statement that runs is logged without its text; the ledger keeps its digest.
-        f"{TEXT_CUT_SQL} CONST",
+        f"{LOG_TEXT_CUT_SQL} CONST",
         "read_overflow_mode = 'throw' CONST",
         "result_overflow_mode = 'throw' CONST",
         "timeout_overflow_mode = 'throw' CONST",

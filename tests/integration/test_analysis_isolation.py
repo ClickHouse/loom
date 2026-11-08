@@ -194,6 +194,7 @@ _ESCAPES = [
     "SELECT memory_key FROM loom.memory SETTINGS use_query_cache = 1",
     "SELECT memory_key FROM loom.memory SETTINGS send_logs_level = 'trace'",
     "SELECT memory_key FROM loom.memory SETTINGS use_query_condition_cache = 1",
+    "SELECT memory_key FROM loom.memory SETTINGS log_queries_cut_to_length = 100000",
     "SELECT memory_key FROM loom.memory SETTINGS max_threads = 1000",
     # A scope signed with another key, and one past its expiry.
     "SELECT memory_key FROM loom.memory SETTINGS SQL_loom_sig = '" + "AB" * 32 + "'",
@@ -241,7 +242,7 @@ def test_an_error_quotes_no_value_from_another_scope(
         "SELECT groupArray(exception) FROM system.query_log "
         "WHERE startsWith(query_id, {rid:String}) AND exception != ''",
         parameters={"rid": f"{request_id}:"},
-        settings=boundary.TEXT_CUT_FROM_LOG,
+        settings=boundary.LOG_TEXT_CUT,
     ).result_rows[0][0]
     # The caller's own row is the one that threw.
     assert any(f"own/{seed.nonce}" in e for e in logged), logged
@@ -427,7 +428,7 @@ def test_a_statement_during_a_policy_rewrite_reads_the_right_rows(
         try:
             while not done.is_set():
                 for stmt in policies:
-                    ch_client.command(stmt, settings=boundary.TEXT_CUT_FROM_LOG)
+                    ch_client.command(stmt, settings=boundary.LOG_TEXT_CUT)
                 rewrites.append(1)
         except BaseException as e:  # noqa: BLE001 — reported to the test below
             failures.append(e)
@@ -474,19 +475,29 @@ def test_the_statement_text_stays_out_of_the_query_log(
     control_plane_url: str, seed: _Seed, ch_client
 ) -> None:
     marker = f"probe_{seed.nonce}"
-    request_id = f"text-{seed.nonce}"
-    r = _query(control_plane_url, seed, f"SELECT '{marker}' AS m", request_id=request_id)
+    sql = f"SELECT '{marker}' AS m"
+    r = _query(control_plane_url, seed, sql, request_id=f"text-{seed.nonce}")
     assert r.status_code == 200, r.text
+    # A statement cannot lift the profile's cut: refused or run, its text is cut.
+    lifted = f"{sql} SETTINGS log_queries_cut_to_length = 100000"
+    r = _query(control_plane_url, seed, lifted, request_id=f"lift-{seed.nonce}")
+    assert r.status_code in {200, *_REFUSED}, r.text
     ch_client.command("SYSTEM FLUSH LOGS")
-    # The statement is logged, as on a server that pins log_queries, but not its
-    # text; this read cuts its own, which holds the marker.
-    own, quoted = ch_client.query(
-        "SELECT countIf(user = 'loom_analyst' AND startsWith(query_id, {rid:String})), "
+    # Both are logged, as on a server that pins log_queries, but not their text;
+    # this read cuts its own, which holds the marker.
+    ran, lifted_rows, quoted = ch_client.query(
+        "SELECT countIf(user = 'loom_analyst' AND startsWith(query_id, {ran:String})), "
+        "countIf(user = 'loom_analyst' AND startsWith(query_id, {lift:String})), "
         "countIf(query LIKE {m:String}) FROM system.query_log",
-        parameters={"rid": f"{request_id}:", "m": f"%{marker}%"},
-        settings=boundary.TEXT_CUT_FROM_LOG,
+        parameters={
+            "ran": f"text-{seed.nonce}:",
+            "lift": f"lift-{seed.nonce}:",
+            "m": f"%{marker}%",
+        },
+        settings=boundary.LOG_TEXT_CUT,
     ).result_rows[0]
-    assert own > 0
+    assert ran > 0
+    assert lifted_rows > 0
     assert quoted == 0
 
 
@@ -510,7 +521,7 @@ def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client) -> Non
                 "SELECT count() FROM system.query_log WHERE event_time >= {start:DateTime} "
                 "AND user = 'loom_analyst' AND exception LIKE '%UNKNOWN_SETTING%'",
                 parameters={"start": start},
-                settings=boundary.TEXT_CUT_FROM_LOG,
+                settings=boundary.LOG_TEXT_CUT,
             ).result_rows[0][0]
             > 0
         )
@@ -522,7 +533,7 @@ def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client) -> Non
         "OR multiSearchAny(formatted_query, {k:Array(String)}) "
         "OR multiSearchAny(exception, {k:Array(String)})",
         parameters={"k": secrets},
-        settings=boundary.TEXT_CUT_FROM_LOG,
+        settings=boundary.LOG_TEXT_CUT,
     ).result_rows[0][0]
     assert logged == 0
 
@@ -637,7 +648,7 @@ def test_a_dropped_policy_reads_nothing_and_is_written_again(
             "the probe to write the policy again",
         )
     except BaseException:
-        ch_client.command(statement, settings=boundary.TEXT_CUT_FROM_LOG)
+        ch_client.command(statement, settings=boundary.LOG_TEXT_CUT)
         raise
     _answers_again(control_plane_url, seed)
 
@@ -653,7 +664,7 @@ def test_a_canary_under_another_key_is_written_again(
         boundary.policy_filter(os.urandom(32)),
         f"`{boundary.ANALYST_USER}`",
     )
-    ch_client.command(other_key, settings=boundary.TEXT_CUT_FROM_LOG)
+    ch_client.command(other_key, settings=boundary.LOG_TEXT_CUT)
     try:
         _probed_until(
             control_plane_url,
@@ -662,7 +673,7 @@ def test_a_canary_under_another_key_is_written_again(
             "the probe to write the canary's policy again",
         )
     except BaseException:
-        ch_client.command(statement, settings=boundary.TEXT_CUT_FROM_LOG)
+        ch_client.command(statement, settings=boundary.LOG_TEXT_CUT)
         raise
     _answers_again(control_plane_url, seed)
 

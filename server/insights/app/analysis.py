@@ -227,7 +227,7 @@ def printed_statements(revokes: list[str]) -> list[str]:
     `SET` that cuts the text of the rest from the log."""
     statements = entity_statements()
     first = next(i for i, s in enumerate(statements) if s.startswith("GRANT "))
-    return [f"SET {boundary.TEXT_CUT_SQL}", *statements[:first], *revokes, *statements[first:]]
+    return [f"SET {boundary.LOG_TEXT_CUT_SQL}", *statements[:first], *revokes, *statements[first:]]
 
 
 def _scope_extra(org: str, namespaces: list[str], key: bytes | None = None) -> dict[str, Any]:

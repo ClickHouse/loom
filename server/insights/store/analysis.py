@@ -271,7 +271,7 @@ async def write_entities(statements: list[str], *, ch: _CHClient | None = None) 
     ch = ch or _default_client()
     with uncaptured():
         for sql in statements:
-            await ch.execute(sql, settings=boundary.TEXT_CUT_FROM_LOG)
+            await ch.execute(sql, settings=boundary.LOG_TEXT_CUT)
 
 
 def target_database() -> str:
