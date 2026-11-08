@@ -25,7 +25,7 @@ describe("AgentSpend", () => {
     });
     render(<AgentSpend />);
     expect(await screen.findByText("claude-x")).toBeInTheDocument();
-    expect(screen.getByText("$1.50 over the last 7 days, 2 turns unpriced")).toBeInTheDocument();
+    expect(screen.getByText("$1.5000 over the last 7 days, 2 turns unpriced")).toBeInTheDocument();
     expect(api.getAgentSpend).toHaveBeenCalledWith(
       expect.objectContaining({ namespace: "team" }),
       7,

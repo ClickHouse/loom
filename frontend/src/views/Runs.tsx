@@ -1141,9 +1141,10 @@ export function Runs() {
               <div className="text-sm whitespace-pre-wrap">{replayed.final_response}</div>
             </Section>
           )}
-          {open && open.status !== "active" && canGrade && (
+          {/* The list row carries only RUNS_FIELDS; the verdict comes with run.get. */}
+          {detail?.run && detail.run.run_id === open?.run_id && detail.run.status !== "active" && canGrade && (
             <Section title="Did it hold up?">
-              <RunGrade key={open.run_id} identity={identity} run={open} />
+              <RunGrade key={detail.run.run_id} identity={identity} run={detail.run} />
             </Section>
           )}
           {open && Object.keys(open.metadata || {}).length > 0 && (

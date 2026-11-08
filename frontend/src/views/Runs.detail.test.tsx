@@ -116,7 +116,7 @@ describe("Runs page", () => {
   });
   afterEach(() => {
     cleanup();
-    useStore.setState({ identity: null, recallRunFilter: null });
+    useStore.setState({ identity: null, whoami: null, recallRunFilter: null });
   });
 
   it("asks run.list to fold runs with no memory activity, and refetches everything on the toggle", async () => {
@@ -212,6 +212,17 @@ describe("Runs page", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: /Recall history for this run/ }));
     expect(useStore.getState().view).toBe("recall");
     expect(useStore.getState().recallRunFilter).toBe("r-full");
+  });
+
+  it("shows the verdict run.get carries, which the list row does not", async () => {
+    useStore.setState({ whoami: { authenticated: true, subject: "alice", org: "dev", roles: ["admin"] } });
+    listRuns.mockResolvedValue([full]);
+    getRun.mockResolvedValue(detail({ run: { ...full, grade: "fail", grade_source: "ci", grade_reason: "red" } }));
+    render(<Runs />);
+    fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("Graded as did not hold by ci: red")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Regrade: held up" })).toBeInTheDocument();
   });
 
   it("shows the run's budget and which part of it the run went past", async () => {

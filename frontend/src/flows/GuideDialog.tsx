@@ -265,7 +265,7 @@ function GuideHistory({ org, namespace, current }: { org: string; namespace: str
               {earlier.map((r) => (
                 <li key={r.revision}>
                   <span className="text-text-muted">{byline(r)}</span>
-                  {(r.note || r.summary) && <span className="text-text"> — {r.note || r.summary}</span>}
+                  {r.note && <span className="text-text"> — {r.note}</span>}
                 </li>
               ))}
             </ul>

@@ -114,14 +114,22 @@ describe("GuideDialog", () => {
   });
 
   it("lists the earlier revisions under History, without the one shown", async () => {
-    const revision = (n: number) => ({ revision: n, summary: `r${n}`, note: "", updated_by: "a@x", updated_at: "" });
-    vi.mocked(api.guideHistory).mockResolvedValueOnce([revision(3), revision(2), revision(1)]);
+    const revision = (n: number, note = "") => ({
+      revision: n,
+      summary: "Plans",
+      note,
+      updated_by: "a@x",
+      updated_at: "",
+    });
+    vi.mocked(api.guideHistory).mockResolvedValueOnce([revision(3), revision(2, "split the tiers"), revision(1)]);
     open(false);
     await userEvent.click(await screen.findByRole("button", { name: "History" }));
-    expect(await screen.findByText(/r2/)).toBeInTheDocument();
-    expect(screen.getByText(/r1/)).toBeInTheDocument();
-    expect(screen.queryByText(/r3/)).toBeNull();
-    expect(screen.getByText("Revision 2 by a@x")).toBeInTheDocument();
+    expect(await screen.findByText("Revision 2 by a@x")).toBeInTheDocument();
+    expect(screen.getByText("— split the tiers")).toBeInTheDocument();
+    expect(screen.getByText("Revision 1 by a@x")).toBeInTheDocument();
+    expect(screen.queryByText("Revision 3 by a@x")).toBeNull();
+    // The summary says what the namespace holds, not why a revision changed.
+    expect(screen.queryByText(/— Plans/)).toBeNull();
   });
 
   it("offers Retry when the history fails to read", async () => {

@@ -96,7 +96,7 @@ function NamespacePickerMenu() {
       useStore.getState().setMyNamespaces(stored.map((r) => (r.namespace === ns ? { ...r, is_new: false } : r)));
       markNamespaceSeen(identity.org, ns)
         .then(() => invalidateShared("mine:"))
-        // The badge is a convenience: a failed mark leaves it for the next pick.
+        // The badge is a convenience: after a failed mark it comes back on the next list read.
         .catch(() => {});
     }
     setIdentity({ ...identity, namespace: ns });

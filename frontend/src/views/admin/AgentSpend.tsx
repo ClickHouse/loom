@@ -33,7 +33,7 @@ export function AgentSpend() {
         level={2}
         caption={
           data
-            ? `$${data.total_cost_usd.toFixed(2)} over the last ${DAYS} days${unpriced}`
+            ? `$${data.total_cost_usd.toFixed(4)} over the last ${DAYS} days${unpriced}`
             : `What the coding agents spent on their own model calls, the last ${DAYS} days.`
         }
       />
@@ -56,7 +56,7 @@ export function AgentSpend() {
                 { label: <span className="font-mono text-xs">{model}</span> },
                 { label: <span className="tabular">{r.turns.toLocaleString()}</span> },
                 { label: <span className="tabular">{r.sessions.toLocaleString()}</span> },
-                { label: <span className="tabular">${r.cost_usd.toFixed(2)}</span> },
+                { label: <span className="tabular">${r.cost_usd.toFixed(4)}</span> },
               ],
             };
           })}
