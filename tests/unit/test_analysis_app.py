@@ -652,9 +652,25 @@ def test_statements_under_the_analysis_lease_are_bounded_inside_it(
     assert asyncio.run(run()) == leases.statement_bound(60)
 
 
-def test_a_retry_replaces_its_own_running_attempt(ready: None) -> None:
-    # The retry ladder resends a statement's settings, query id included; a
-    # first attempt still running would otherwise refuse it (code 216).
-    extra = app._scope_extra("acme", ["ns"])
-    assert extra["replace_running_query"] == 1
-    assert extra["query_id"] and extra["query_id"] != app._scope_extra("acme", ["ns"])["query_id"]
+def test_a_statement_and_its_retries_carry_the_requests_query_id(ready: None) -> None:
+    # The retry ladder rebuilds the settings for each attempt from the same
+    # extra: every attempt sends the request's id and replaces a first attempt
+    # ClickHouse still runs (code 216 otherwise).
+    import contextvars
+
+    from server.core import ch, request_work
+
+    def in_a_request() -> tuple[list[dict[str, Any]], str]:
+        request_work.begin()
+        ch.query_tag_var.set("insights.query rid-1")
+        extra = app._scope_extra("acme", ["ns"])
+        with ch.as_analyst(boundary.ANALYST_USER, "pw", extra):
+            attempts = [ch.statement_settings("SELECT 1") for _ in range(2)]
+        return attempts, app._scope_extra("acme", ["ns"])["query_id"]
+
+    # A copied context: the request and its tag end with the call.
+    attempts, next_id = contextvars.copy_context().run(in_a_request)
+    ids = {a["query_id"] for a in attempts}
+    assert len(ids) == 1 and next(iter(ids)).startswith("rid-1:")
+    assert all(a["replace_running_query"] == 1 for a in attempts)
+    assert next_id not in ids  # the next statement gets its own

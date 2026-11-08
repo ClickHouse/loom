@@ -259,21 +259,24 @@ grants, settings profile and row policies are:
 **Signed row policies.** Loom sends four custom settings with each statement: the org
 (`SQL_loom_org`), the namespaces (`SQL_loom_ns`), an expiry (`SQL_loom_exp`) and
 `SQL_loom_sig`, the HMAC-SHA256 under a 256-bit key of one length-prefixed string of the
-other three and the statement's query id, which Loom picks fresh for each statement. The
-expiry covers every attempt the client's retry ladder can make at the time cap
-(`scope_ttl_s` in `server/insights/app/analysis.py`). Each allowlisted table's policy,
-`TO loom_analyst`, admits a row only when its `org` and `namespace` match the settings,
-the expiry is in the future, and the signature matches the hash ClickHouse computes with
-the key written into the policy. A statement may set custom settings itself
-(`readonly = 2` allows it), but without the key it cannot sign another scope, so a
-changed scope reads nothing. A statement can read its own scope with `getSetting`, but
-the policy signs the query id Loom sends with the statement (`initialQueryID()`, the
-same on every server the statement fans out to), so a signature lifted from one
-statement reads nothing when sent with another, by the same caller or any other. The
-policy reads every setting through `toString`, so a statement that sets one to a number
-or an array cannot make the policy raise an error, whose message would quote the policy
-and its key; and Loom never passes on a ClickHouse message that names the scope
-settings.
+other three and the statement's query id: the request's `<request_id>:<n>:<nonce>`, new
+for each statement, whose per-request random nonce keeps two requests, of one tenant or
+two, from sharing an id (a probe outside a request takes a random UUID). The client's
+retry of a statement resends the same id with `replace_running_query = 1`, so it
+replaces its own attempt ClickHouse still runs. The expiry covers every attempt the
+client's retry ladder can make at the time cap (`scope_ttl_s` in
+`server/insights/app/analysis.py`). Each allowlisted table's policy, `TO loom_analyst`,
+admits a row only when its `org` and `namespace` match the settings, the expiry is in
+the future, and the signature matches the hash ClickHouse computes with the key written
+into the policy. A statement may set custom settings itself (`readonly = 2` allows it),
+but without the key it cannot sign another scope, so a changed scope reads nothing. A
+statement can read its own scope with `getSetting`, but the policy signs the query id
+Loom sends with the statement (`initialQueryID()`, the same on every server the
+statement fans out to), so a signature lifted from one statement reads nothing when sent
+with another, by the same caller or any other. The policy reads every setting through
+`toString`, so a statement that sets one to a number or an array cannot make the policy
+raise an error, whose message would quote the policy and its key; and Loom never passes
+on a ClickHouse message that names the scope settings.
 
 Each policy also carries its table's live predicate, the one the erasure census counts
 (`tombstoned_at IS NULL` on `loom.memory`), and the profile holds `final = 1` and
