@@ -341,7 +341,8 @@ def _note(answer: Answer, data: str) -> None:
         answer.run_id = clean_run_id(chunk["id"])
         set_ledger_run(answer.run_id)
     if chunk.get("error"):
-        answer.error = json.dumps(chunk["error"])[:300]
+        # Whole: `_redacted` takes out any secret it echoes before it cuts the text.
+        answer.error = json.dumps(chunk["error"])
     usage = chunk.get("usage")
     if isinstance(usage, dict):
         try:

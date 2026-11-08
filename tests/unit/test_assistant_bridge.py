@@ -661,6 +661,32 @@ def test_an_error_after_the_stream_began_is_charged_its_ceiling(world: _World) -
     assert acc.cost_usd == pytest.approx(settings.assistant_answer_ceiling_usd)
 
 
+def test_an_error_chunk_echoing_the_token_logs_no_part_of_it(
+    world: _World, caplog: pytest.LogCaptureFixture
+) -> None:
+    opened = asyncio.run(bridge.open_answer(_caller(), ORG, NS))
+    token = "Zq9T" + "k" * 60
+    ticket = bridge.Ticket(ORG, NS, opened.agent_id, opened.api_key, token, opened.slot)
+    # `{"message": "` is 13 characters: the token starts at 295, across the 300-character
+    # cut, where a cut before the redaction would leave its first five in the log.
+    message = "x" * 263 + f" parent_message_id={token}"
+    assert json.dumps({"message": message}).index(token) == 295
+    world.stream_body = _sse(
+        {"id": "chatcmpl-7", "choices": [{"delta": {"content": "Sev"}}]},
+        {"error": {"message": message}},
+    )
+
+    async def run() -> None:
+        with pytest.raises(AssistantUpstreamError):
+            async for _ in bridge.stream(ticket, QUESTION, bridge.Answer()):
+                pass
+
+    with caplog.at_level("WARNING", logger=bridge.log.name):
+        asyncio.run(run())
+    assert "ended an answer with an error" in caplog.text
+    assert "Zq9T" not in caplog.text
+
+
 def test_a_client_leaving_mid_stream_is_its_own_failure_and_releases_all(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
