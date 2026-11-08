@@ -103,6 +103,30 @@ async def insert_first_row(cfg: Any, client: Any, *, restricted: bool, join_poli
     await client.insert("loom.namespaces", [row])
 
 
+async def _register_first_row(cfg: Any, client: Any, *, restricted: bool, public: bool) -> None:
+    """The first directory row: the registry row read now decides over this process's
+    snapshot of it (`restricted`, `public`), which decides only when there is none."""
+    from server.code.store.index import CodeRepo
+    from server.identity.app.namespace_classification import note_restricted
+
+    access = await CodeRepo(client).code_repo_row(cfg.org, cfg.namespace)
+    join_policy = "open" if public else "approval"
+    if access is not None:
+        restricted = str(access.get("classification")) == "restricted"
+        join_policy = str(access.get("join_policy") or "approval")
+        if restricted and join_policy == "open":
+            join_policy = "approval"  # a restricted index is never open
+    await insert_first_row(cfg, client, restricted=restricted, join_policy=join_policy)
+    if restricted:
+        note_restricted(cfg.org, cfg.namespace)
+    logger.info(
+        "registered code namespace %s/%s (kind=code, classification=%s)",
+        cfg.org,
+        cfg.namespace,
+        "restricted" if restricted else "standard",
+    )
+
+
 async def _write_row(cfg: Any, client: Any) -> bool:
     """`ensure_registered`'s directory write; True when a row was inserted."""
     from server.code.store.index import CodeRepo
@@ -116,21 +140,7 @@ async def _write_row(cfg: Any, client: Any) -> bool:
     row = await namespace_row(cfg.org, cfg.namespace, ch=client)
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
     if row is None:
-        # The registry row read now decides over this process's snapshot of it.
-        access = await CodeRepo(client).code_repo_row(cfg.org, cfg.namespace)
-        if access is not None:
-            restricted = str(access.get("classification")) == "restricted"
-            public = not restricted and str(access.get("join_policy")) == "open"
-        join_policy = "open" if public else "approval"
-        await insert_first_row(cfg, client, restricted=restricted, join_policy=join_policy)
-        if restricted:
-            note_restricted(cfg.org, cfg.namespace)
-        logger.info(
-            "registered code namespace %s/%s (kind=code, classification=%s)",
-            cfg.org,
-            cfg.namespace,
-            "restricted" if restricted else "standard",
-        )
+        await _register_first_row(cfg, client, restricted=restricted, public=public)
         return True
     classification = str(row.get("classification") or "standard")
     opening = public and classification == "standard" and str(row.get("join_policy")) != "open"
