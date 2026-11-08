@@ -40,9 +40,10 @@ before ClickHouse applies it; watch `system.mutations`.
     deletes. Every other row is written with its other columns as that second read found
     them. A deletion, redaction or erasure that lands between that read and the insert, or
     whose mutation has not reached the row yet, can leave the row live with its new
-    vector: run such a redaction or deletion again after the run (an erasure's verify step
-    finds the row and retries). `--in-database` reads each table once, as its statement
-    starts, so run it while nothing redacts or erases.
+    vector: run such a redaction again after the run; the orphan-vector sweep tombstones a
+    deleted memory's leftover vector, and an erasure's verify step finds the row and
+    retries. `--in-database` reads each table once, as its statement starts, so run it
+    while nothing redacts or erases.
 - **A model of another width.** On ClickHouse 26.8 or later a fresh install codes its
   vector columns (`Quantized`) where `enable_quantized_codec` can be on
   ([ClickHouse](../architecture/clickhouse.md#gated-clickhouse-settings)), and a coded

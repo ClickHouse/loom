@@ -382,7 +382,6 @@ async def test_a_resume_token_carries_the_orgs_delete_old_keeps(monkeypatch) -> 
 
     monkeypatch.setattr(rb.customer, "switched_off_orgs", off_now)
     ch2, lines = _CH(3), []
-    ch2.execute = execute  # type: ignore[attr-defined]
     start = rb.encode_resume("conversation_embeddings", [""] * 5)  # the turns table only
     await rb.reembed_all(ch2, _Emb(), batch=1, resume=start, log=lines.append)
     printed = [line.rsplit("resume: ", 1)[1] for line in lines if "resume: " in line]
