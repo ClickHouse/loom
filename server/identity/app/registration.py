@@ -26,6 +26,13 @@ async def namespace_row(
     return await namespaces_repo.fetch_row(org, namespace, ch=ch)
 
 
+async def classifications(
+    org: str, namespaces: list[str], *, ch: _CHClient | None = None
+) -> dict[str, str]:
+    """The classification of each of `namespaces` that has a directory row, in one read."""
+    return await namespaces_repo.classifications(org, namespaces, ch=ch)
+
+
 async def namespace_retention_days(org: str, namespace: str, *, ch: _CHClient | None = None) -> int:
     """The namespace's own `retention_days`, which sets its ledger's TTL over the table's
     global one (0 when it sets none or is not registered)."""

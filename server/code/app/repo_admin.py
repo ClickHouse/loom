@@ -682,7 +682,9 @@ async def handle_code_repo_set_access(input: Any) -> Any:
     joins the classification snapshot, a widening drops it), and every other
     process re-reads the row
     within `code_repos_refresh_seconds`. Widening restricted → standard
-    needs `confirm` = namespace; a restricted index is never `open`."""
+    needs `confirm` = namespace; a restricted index is never `open`. A restriction
+    then syncs the repository's maintainers; when that fails the call fails after
+    the restriction is written, and a retry or any later sync finishes it."""
     require_code_intel()
     from server.code.domain.index.repos import repo_for_namespace
     from server.core.ch import get_client
@@ -715,32 +717,52 @@ async def handle_code_repo_set_access(input: Any) -> Any:
             code="CONFIRM_REQUIRED",
         )
     ch = get_client()
-    row = await _directory_row(ch, input.org, input.namespace)
-    previous_policy = str((row or {}).get("join_policy") or ("open" if cfg.public else "approval"))
     subject, _org = current_caller()
-    await reg.upsert_access(
-        cfg, classification=cls, join_policy=pol, created_by=subject or "maintainer", ch=ch
-    )
-    await reg.refresh_db_repos(force=True, ch=ch)
-    directory_updated = False
-    if row is not None:
-        new_row = dict(row)
-        new_row.update(
-            {
-                "classification": cls,
-                "join_policy": pol,
-                "visibility": "private",
-                "updated_at": datetime.now(UTC).replace(microsecond=0, tzinfo=None),
-            }
+    from server.auth.grant_claims import admins_change
+
+    # A maintainer sync copies onto this branch under the same claim, whose reads are
+    # sequential: it reads the classification after both rows, or the sync below
+    # reads its copy.
+    async with admins_change(input.org, input.namespace):
+        row = await _directory_row(ch, input.org, input.namespace)
+        if row is None and cls == "restricted" and cfg.source == "registry":
+            # Without one, the restriction reaches other replicas only through their
+            # snapshots.
+            raise BackendUnavailableError(
+                f"{input.namespace} has no directory row yet; retry once it is registered"
+            )
+        previous_policy = str(
+            (row or {}).get("join_policy") or ("open" if cfg.public else "approval")
         )
-        await ch.insert("loom.namespaces", [new_row])
-        directory_updated = True
+        await reg.upsert_access(
+            cfg, classification=cls, join_policy=pol, created_by=subject or "maintainer", ch=ch
+        )
+        directory_updated = False
+        if row is not None:
+            new_row = dict(row)
+            new_row.update(
+                {
+                    "classification": cls,
+                    "join_policy": pol,
+                    "visibility": "private",
+                    "updated_at": datetime.now(UTC).replace(microsecond=0, tzinfo=None),
+                }
+            )
+            await ch.insert("loom.namespaces", [new_row])
+            directory_updated = True
+        await reg.refresh_db_repos(force=True, ch=ch)
     if cls == "restricted":
         # Joins this process's snapshot at once; a reset first would leave it nothing
         # to join, and the next request would wait on a directory read instead.
         nc.note_restricted(input.org, input.namespace)
         # This host's mirror at once; every other host's at its next mirror round.
         await asyncio.to_thread(restrict_entry, cfg)
+        from server.code.app.index import maintainers
+        from server.core.ch import sequential_reads
+
+        # Revokes the admins its siblings added from the page copied onto it.
+        with sequential_reads():
+            await maintainers.sync_repo_maintainers(input.org, input.namespace, ch=ch)
     else:
         nc.reset()  # a widening drops the stale restricted entry
     return CodeRepoSetAccessOutput(

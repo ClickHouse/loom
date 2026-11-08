@@ -6,8 +6,9 @@ to ask branch by branch. This module copies *active admin* grants between the
 configured branch namespaces of one repository, in one direction (``_reaches``): the
 operator's entries pass their admins to every branch, and a branch added from the
 page (``code.repo.add``, open to any org member) passes its admins only to other
-branches added from the page. Registering a branch of a repository the operator
-configures gives no grant on the operator's namespaces.
+standard branches added from the page: a restricted one (``_restricted``) takes the
+operator's admins only. Registering a branch of a repository the operator configures
+gives no grant on the operator's namespaces.
 
 * ``sync_repo_maintainers`` — every branch gets the union of the active admins
   of the branches that reach it, written where it lacks one (``granted_by =
@@ -20,11 +21,16 @@ configures gives no grant on the operator's namespaces.
   after an admin grant is created or approved on a code namespace, when a branch
   is added, and by the registrar on each pass until the self-service registry
   is read, then once per process per namespace (so environment-registered
-  branches inherit).
+  branches inherit). Each pass also revokes, on a restricted branch added from
+  the page, every copy whose source is not an operator entry, or rewrites it as a
+  copy of the subject's operator grant.
 * ``revoke_repo_maintainer`` — a revoked admin leaves the branches the revoke
   reaches, except a branch where they are the only active admin (the handler's
   own guard). From an operator entry it takes off a branch added from the page
-  only a mirror, and none while the subject holds an admin grant given on one.
+  only a mirror, and none from a standard one while the subject holds an admin
+  grant given on one. On a restricted branch added from the page it takes only
+  copies, and a page branch's revoke only those whose source is not an operator
+  entry.
 
 Readers stay per branch: the approval fan-out already turns a person's branch requests
 into one decision. Restricted branches also need the token to name them — a person's
@@ -80,6 +86,38 @@ def _reaches(source: str, target: str) -> bool:
     return source == "config" or target != "config"
 
 
+async def _restricted(client: Any, org: str, sources: dict[str, str]) -> set[str]:
+    """The restricted branches among the ones in `sources` added from the page, by
+    this process's snapshot or by their directory rows read now, as
+    `namespace_classification.is_restricted` reads it: a restriction made on another
+    replica may be newer than the snapshot. A failed read raises, so no branch is
+    given a copy or skipped by a revoke on a guess."""
+    from server.code.domain.index.repos import configured_repos
+    from server.core.ch import sequential_reads
+    from server.identity.app.registration import classifications
+
+    added = [ns for ns, source in sources.items() if source == "registry"]
+    if not added:
+        return set()
+    with sequential_reads():
+        rows = await classifications(org, added, ch=client)
+    snapshot = {c.namespace: c.classification for c in configured_repos() if c.org == org}
+    return {ns for ns in added if "restricted" in (rows.get(ns), snapshot.get(ns))}
+
+
+def _is_copy(row: dict[str, Any]) -> bool:
+    """The row was written by this fan-out, not given on its branch."""
+    return str(row.get("granted_by") or "").startswith(GRANTED_BY_PREFIX)
+
+
+def _foreign(row: dict[str, Any], config: list[str]) -> bool:
+    """A live copy, of any role (a lowering keeps the copy's source), whose source is
+    none of the operator entries in `config`: one a restricted branch added from the
+    page must not hold."""
+    source = str(row.get("granted_by") or "").removeprefix(GRANTED_BY_PREFIX)
+    return _live(row) and _is_copy(row) and source not in config
+
+
 def repo_of(org: str, namespace: str) -> str | None:
     """The repository `namespace` is a configured branch of, in this process's
     snapshot; None off a configured repository."""
@@ -105,11 +143,12 @@ def _repo_key(repo: str) -> str:
 
 @asynccontextmanager
 async def repo_admin_claims(org: str, repo: str | None, subject: str) -> AsyncIterator[None]:
-    """Hold what a change that takes a maintainer off the repository's other branches
-    needs: `subject`'s maintainer grants there, then the repository's admins,
-    from its own last-admin count to its last write, so two such changes in
-    one repository run one after the other. Taken before any namespace's
-    admins claim. A no-op when `repo` is None."""
+    """Hold what a change to a maintainer's copies on the repository's other
+    branches (a sync, or a revoke that takes them off) needs: `subject`'s
+    maintainer grants there, then the repository's admins, from its own
+    last-admin count to its last write, so two such changes in one repository
+    run one after the other. Taken before any namespace's admins claim. A no-op
+    when `repo` is None."""
     from server.auth.grant_claims import admins_change
 
     if repo is None:
@@ -210,13 +249,16 @@ def _version(row: dict[str, Any] | None) -> int | None:
     return None if row is None else int(row["version"])
 
 
-def _live_admin(row: dict[str, Any] | None) -> bool:
+def _live(row: dict[str, Any] | None) -> bool:
     return (
         row is not None
-        and row.get("role") == "admin"
         and row.get("revoked_at") is None
         and str(row.get("status") or "active") in _ACTIVE
     )
+
+
+def _live_admin(row: dict[str, Any] | None) -> bool:
+    return _live(row) and (row or {}).get("role") == "admin"
 
 
 # The grant rows a plan was made from, by (namespace, subject).
@@ -233,10 +275,31 @@ async def _mirror_wanted(
     subject, source_ns = row["subject"], row["granted_by"].removeprefix(GRANTED_BY_PREFIX)
     if _version(now) != _version(seen.get((row["namespace"], subject))):
         return False
+    if await _restricted_since(client, org, row["namespace"], source_ns):
+        return False
     source = await client.query_one(
         _GRANT_ROW_SQL, params={"org": org, "ns": source_ns, "sub": subject}
     )
     return _live_admin(source) and _version(source) == _version(seen.get((source_ns, subject)))
+
+
+async def _restricted_since(client: Any, org: str, target: str, source: str) -> bool:
+    """Re-reads the target's classification under the claims for a copy whose source
+    is not an operator entry."""
+    sources = _branches(org, repo_of(org, target) or "")
+    if sources.get(source) == "config":
+        return False
+    # A target the snapshot no longer places is read as one added from the page.
+    return target in await _restricted(client, org, {target: sources.get(target, "registry")})
+
+
+async def _copy_unchanged(
+    client: Any, org: str, row: dict[str, Any], now: dict[str, Any] | None, seen: _Seen
+) -> bool:
+    """A copy a restricted branch must not hold is revoked while it is still the
+    row the plan read, even as the branch's only admin: it never was one."""
+    read = seen.get((row["namespace"], row["subject"]))
+    return read is not None and _live(now) and _version(now) == _version(read)
 
 
 async def _still_admin(
@@ -298,19 +361,22 @@ async def _write_subject(
     seen: _Seen,
     hold_repo: str | None,
 ) -> int:
-    """`_write_under_claims` for one subject's rows. A row that takes admin (a
-    revoke or a lowering) also holds its branch's admins claim, so the branch's
-    last admin is never taken."""
+    """`_write_under_claims` for one subject's rows. With `hold_repo` the rows hold
+    `repo_admin_claims`, so a sync and a revoke in one repository run one after the
+    other. Each row also holds its branch's admins claim, all taken before any grant
+    claim: one that takes admin (a revoke or a lowering) so the branch's last admin
+    is never taken, and a copy so that a restriction, written under that claim,
+    lands before its classification is read or after its write."""
     from server.auth.grant_claims import admins_change, grant_change
     from server.core import grant_cache
 
     rows.sort(key=lambda r: r["namespace"])
     async with AsyncExitStack() as held:
         if hold_repo is not None:
-            await held.enter_async_context(repo_change(org, hold_repo, subject))
+            await held.enter_async_context(repo_admin_claims(org, hold_repo, subject))
         for row in rows:
-            if row["role"] != "admin" or row.get("revoked_at") is not None:  # takes admin
-                await held.enter_async_context(admins_change(org, row["namespace"]))
+            await held.enter_async_context(admins_change(org, row["namespace"]))
+        for row in rows:
             await held.enter_async_context(grant_change(org, row["namespace"], subject))
         wanted = []
         for row in rows:
@@ -358,11 +424,10 @@ def _plan_mirrors(
         ns, subject, version = str(r["namespace"]), str(r["subject"]), int(r["version"])
         if ns not in active:
             continue
-        live = r.get("revoked_at") is None and str(r.get("status") or "active") in _ACTIVE
-        if live and r.get("role") == "admin":
+        if _live_admin(r):
             active[ns].add(subject)
             granted_by = str(r.get("granted_by") or "")
-            if not granted_by.startswith(GRANTED_BY_PREFIX):
+            if not _is_copy(r):
                 if subject not in union or version > union[subject][0]:
                     union[subject] = (version, r["granted_at"], ns)
             elif granted_by.removeprefix(GRANTED_BY_PREFIX) not in all_branches:
@@ -411,32 +476,82 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
                 namespace,
             )
         return 0
-    if len(branches) < 2:
+    if not branches:
         return 0
     from server.core.ch import get_client
 
     client = ch or get_client()
     rows = await _grant_rows(client, org, branches)
+    restricted = await _restricted(client, org, sources)
+    config = [ns for ns in branches if sources[ns] == "config"]
     inserts: list[dict[str, Any]] = []
     for kind in ("config", "registry"):
-        targets = [ns for ns in branches if sources[ns] == kind]
+        targets = [ns for ns in branches if sources[ns] == kind and ns not in restricted]
         read = [ns for ns in branches if _reaches(sources[ns], kind)]
         if targets:
             inserts += _plan_mirrors(org, rows, read, targets, branches)
-    written = (
-        await _write_under_claims(client, org, inserts, _mirror_wanted, rows, hold_repo=repo)
-        if inserts
-        else 0
-    )
+    for ns in sorted(restricted):
+        # A copy it must not hold does not count, so an operator admin's is rewritten;
+        # a lowered one still does, so the lowering stands. A foreign copy on an
+        # operator entry is no source for it either, its page source gone or not.
+        kept = [
+            r
+            for r in rows
+            if not _foreign(r, config) or (r["namespace"] == ns and not _live_admin(r))
+        ]
+        inserts += _plan_mirrors(org, kept, [*config, ns], [ns], branches)
+    planned = {(r["namespace"], r["subject"]) for r in inserts}
+    revokes = []
+    for r in rows:
+        key = (r["namespace"], r["subject"])
+        if r["namespace"] in restricted and _foreign(r, config) and key not in planned:
+            _log_stray(org, r)
+            revokes.append(_revoke_row(org, r))
+    written, busy = 0, None
+    if revokes:
+        try:
+            written += await _write_under_claims(
+                client, org, revokes, _copy_unchanged, rows, hold_repo=repo
+            )
+        except GrantBusyError as e:  # the copies below are still written; a later sync retries
+            busy = e
+    if inserts:
+        written += await _write_under_claims(
+            client, org, inserts, _mirror_wanted, rows, hold_repo=repo
+        )
+    if busy is not None:
+        raise busy
     if written:
         log.info(
-            "repo maintainers: %s/%s — %d admin grant(s) mirrored across %d branches",
+            "repo maintainers: %s/%s — %d admin grant(s) mirrored or revoked across %d branches",
             org,
             namespace,
             written,
             len(branches),
         )
     return written
+
+
+def _log_stray(org: str, row: dict[str, Any]) -> None:
+    log.warning(
+        "repo maintainers: %s/%s plans to revoke %r — copied from %s, not an operator entry here",
+        org,
+        row["namespace"],
+        row["subject"],
+        row["granted_by"],
+    )
+
+
+def _revoke_row(org: str, row: dict[str, Any]) -> dict[str, Any]:
+    return _row(
+        org,
+        str(row["namespace"]),
+        str(row["subject"]),
+        granted_by=str(row.get("granted_by") or ""),
+        now=naive_utc_now(),
+        revoked=True,
+        role=str(row.get("role") or "admin"),
+    )
 
 
 def _given_on_added(
@@ -448,8 +563,7 @@ def _given_on_added(
     removed holds no such grant and is taken, like a mirror of an operator
     entry."""
     return any(
-        sources.get(ns) == "registry"
-        and not str(by_subject[subject].get("granted_by") or "").startswith(GRANTED_BY_PREFIX)
+        sources.get(ns) == "registry" and not _is_copy(by_subject[subject])
         for ns, by_subject in admins.items()
         if subject in by_subject
     )
@@ -482,9 +596,12 @@ async def revoke_repo_maintainer(
     `repo_admin_claims` on it.
 
     A revoke on a branch added from the page leaves the operator entries alone
-    (`_reaches`); one on an operator entry takes off a branch added from the
-    page only a mirror, and none while the subject holds an admin grant given
-    on a branch added from the page.
+    (`_reaches`); one on an operator entry takes off a branch added from the page
+    only a mirror, and none from a standard one while the subject holds an admin
+    grant given on a branch added from the page. On a restricted branch added from
+    the page, a revoke from an operator entry takes only a copy, one from a page
+    branch only a copy whose source is not an operator entry (`_foreign`), which
+    goes even as that branch's last admin.
 
     The registry is read again under the claims: a branch added after
     `read_repo` read it, and given a copy by a sync that held the claims
@@ -505,19 +622,41 @@ async def revoke_repo_maintainer(
     branches = [b for b, source in sources.items() if b != namespace and _reaches(own, source)]
     if not branches:
         return 0
-    rows = await _grant_rows(client, org, branches)
+    restricted = await _restricted(client, org, {b: sources[b] for b in branches})
+    config = [b for b, source in sources.items() if source == "config"]
+    # The operator entries a page revoke does not reach are read too, for the line below.
+    rows = await _grant_rows(client, org, list(dict.fromkeys([*branches, *config])))
     admins: dict[str, dict[str, dict[str, Any]]] = {ns: {} for ns in branches}
     for r in rows:
-        live = r.get("revoked_at") is None and str(r.get("status") or "active") in _ACTIVE
-        if live and r.get("role") == "admin":
+        if _live_admin(r) and r["namespace"] in admins:
             admins[str(r["namespace"])][str(r["subject"])] = r
+    # An operator admin's stray copy is the sync's to rewrite as a copy of that grant.
+    operator_admin = own == "registry" and any(
+        r["subject"] == subject and r["namespace"] in config and _live_admin(r) and not _is_copy(r)
+        for r in rows
+    )
     now = naive_utc_now()
     out: list[dict[str, Any]] = []
+    strays: list[dict[str, Any]] = []
     # An admin grant given on a branch added from the page still reaches them all.
     keeps_added = own == "config" and _given_on_added(subject, admins, sources)
+    held = {(str(r["namespace"]), str(r["subject"])): r for r in rows}
     for ns in branches:
+        stray = held.get((ns, subject))
+        if ns in restricted and stray is not None and _foreign(stray, config):
+            if not operator_admin:  # taken whatever the guard or the lowering
+                _log_stray(org, stray)
+                strays.append(_revoke_row(org, stray))
+            continue
         mine = admins[ns].get(subject)
-        if mine is None or (keeps_added and sources[ns] == "registry"):
+        if mine is None:
+            continue
+        if ns in restricted:
+            if not _is_copy(mine):
+                continue  # a grant given there stays
+            if own == "registry":
+                continue  # an operator copy, which a page revoke never reaches
+        elif keeps_added and sources[ns] == "registry":
             continue
         if len(admins[ns]) <= 1:
             log.warning(
@@ -538,11 +677,7 @@ async def revoke_repo_maintainer(
                 role=lowered_to or "admin",
             )
         )
-    written = (
-        await _write_under_claims(client, org, out, _still_admin, rows, hold_repo=None)
-        if out
-        else 0
-    )
+    written = await _write_revokes(client, org, strays, out, rows)
     if written:
         log.info(
             "repo maintainers: %s/%s — %r %s on %d sibling branch(es)",
@@ -552,6 +687,25 @@ async def revoke_repo_maintainer(
             f"lowered to {lowered_to}" if lowered_to else "revoked",
             written,
         )
+    return written
+
+
+async def _write_revokes(
+    client: Any,
+    org: str,
+    strays: list[dict[str, Any]],
+    out: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+) -> int:
+    """A revoke's rows: the stray copies with no last-admin guard, then the rest with
+    it. The caller holds `repo_admin_claims`."""
+    written = 0
+    if strays:
+        written += await _write_under_claims(
+            client, org, strays, _copy_unchanged, rows, hold_repo=None
+        )
+    if out:
+        written += await _write_under_claims(client, org, out, _still_admin, rows, hold_repo=None)
     return written
 
 

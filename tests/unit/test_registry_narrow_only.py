@@ -4,6 +4,8 @@ restricted — mirroring every column — and never widens one."""
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 import server.code.app.index.registry as registry
@@ -110,3 +112,77 @@ async def test_existing_row_already_restricted_is_left_alone() -> None:
     client = _Client(existing=existing)
     await registry.ensure_registered(_cfg("restricted"), ch=client)
     assert client.inserted == []
+
+
+@pytest.mark.parametrize("access", ["standard", "restricted"])
+@pytest.mark.asyncio
+async def test_a_maintainer_s_widening_reaches_the_row_only_while_its_access_row_says_so(
+    monkeypatch: pytest.MonkeyPatch, access: str
+) -> None:
+    """The snapshot says a maintainer opened it; the access row read now decides, since a
+    restriction may have landed after the snapshot was read."""
+    existing = {"org": "clickhouse", "namespace": "code-p", "classification": "restricted"}
+
+    class _Access(_Client):
+        async def query_one(self, sql, params=None):
+            if "loom.code_repos" in sql:
+                return {"classification": access}
+            return self.existing
+
+    client = _Access(existing=existing)
+    cfg = dataclasses.replace(_cfg("standard"), access_source="registry")
+    held = _hold_admins(monkeypatch, client)
+    await registry.ensure_registered(cfg, ch=client)
+    widened = [r["classification"] for _, rows in client.inserted for r in rows]
+    assert widened == (["standard"] if access == "standard" else [])
+    assert held == (["code-p"] if access == "standard" else [])
+
+
+def _hold_admins(monkeypatch: pytest.MonkeyPatch, client: _Client) -> list[str]:
+    """The namespaces whose admins claim was held at each directory write."""
+    from contextlib import asynccontextmanager
+
+    from server.auth import grant_claims
+
+    real, holding, held = grant_claims.admins_change, [], []
+
+    @asynccontextmanager
+    async def _admins(org: str, ns: str):
+        async with real(org, ns):
+            holding.append(ns)
+            yield
+            holding.remove(ns)
+
+    write = client.insert
+
+    async def _insert(table, rows):
+        held.extend(holding)
+        await write(table, rows)
+
+    monkeypatch.setattr(grant_claims, "admins_change", _admins)
+    monkeypatch.setattr(client, "insert", _insert)
+    return held
+
+
+@pytest.mark.parametrize("existing", [None, {"classification": "standard"}])
+@pytest.mark.asyncio
+async def test_the_registrar_reads_and_writes_the_row_under_the_admins_claim(
+    monkeypatch: pytest.MonkeyPatch, existing: dict | None
+) -> None:
+    """`code.repo.set_access` restricts under the same claim: a read made before it, or
+    on a lagging replica, must not open, widen or recreate a restricted row."""
+    from server.core.ch import sequential_reads_active
+
+    reads: list[bool] = []
+
+    class _Fresh(_Client):
+        async def query_one(self, sql, params=None):
+            reads.append(sequential_reads_active())
+            return dict(self.existing) if self.existing else None
+
+    client = _Fresh(existing=existing)
+    held = _hold_admins(monkeypatch, client)
+    await registry.ensure_registered(dataclasses.replace(_cfg("standard"), public=True), ch=client)
+    assert reads == [True]
+    assert [r["join_policy"] for _, rows in client.inserted for r in rows] == ["open"]
+    assert held == ["code-p"]
