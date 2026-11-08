@@ -490,17 +490,13 @@ def test_the_statement_text_stays_out_of_the_query_log(
     assert quoted == 0
 
 
-def test_the_scope_key_stays_out_of_the_query_log(ch_client) -> None:
+def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client) -> None:
     """Every policy holds the key as hex literals, which the server's boot
     wrote and the probe's refused reads quote: no logged statement text or
-    error carries one."""
+    error carries one. The whole log is read, the boot's writes included, so
+    it needs a ClickHouse that no older build served under the same key."""
     start = ch_client.query("SELECT now()").result_rows[0][0]
-    policy = ch_client.query(
-        "SELECT select_filter FROM system.row_policies "
-        "WHERE short_name = {p:String} AND database = 'loom' AND table = 'memory'",
-        parameters={"p": boundary.POLICY_NAME},
-    ).result_rows[0][0]
-    secrets = re.findall(r"unhex\('([0-9a-f]+)'\)", policy)
+    secrets = re.findall(r"unhex\('([0-9a-f]+)'\)", _scope_filter(ch_client, "memory"))
     # The decrypt arguments, and the pads they evaluate to, which must never be printed.
     padded = bytes.fromhex(next(h for h in secrets if len(h) == 64)).ljust(64, b"\0")
     pads = [bytes(b ^ pad for b in padded) for pad in (0x36, 0x5C)]
@@ -580,16 +576,22 @@ def _rows_hidden_without_a_policy(ch_client, nonce: str) -> bool:
         ch_client.command(f"DROP TABLE IF EXISTS {table}")
 
 
-def _policy(ch_client, table: str) -> str:
-    """The analyst's scope policy on `table` as a CREATE statement. Built from
+def _scope_filter(ch_client, table: str) -> str:
+    """The analyst's scope policy condition on `table`, read from
     system.row_policies: SHOW CREATE prints the key's literals as [HIDDEN]."""
-    using = ch_client.query(
+    return ch_client.query(
         "SELECT select_filter FROM system.row_policies WHERE short_name = {p:String} "
         "AND database = 'loom' AND table = {t:String}",
         parameters={"p": boundary.POLICY_NAME, "t": table},
     ).result_rows[0][0]
+
+
+def _policy(ch_client, table: str) -> str:
+    """The analyst's scope policy on `table` as a CREATE statement."""
     analyst = f"`{boundary.ANALYST_USER}`"
-    return boundary.policy_sql("loom", boundary.POLICY_NAME, table, using, analyst)
+    return boundary.policy_sql(
+        "loom", boundary.POLICY_NAME, table, _scope_filter(ch_client, table), analyst
+    )
 
 
 def test_an_extra_grant_is_revoked_by_the_probe(
