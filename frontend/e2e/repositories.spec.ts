@@ -299,7 +299,7 @@ test.describe("document sources", () => {
     await expect(sources).toContainText("design-docs");
     await expect(sources).toContainText("Synced");
     await expect(sources).toContainText("12 documents listed · 3 written · 1 not converted");
-    // The source's name is a read, not a verb.
+    // The only button is the source's name, which opens its details.
     await expect(sources.getByRole("button")).toHaveText(["design-docs"]);
     await page.waitForTimeout(300);
     expect(requested).toEqual(["/v1/knowledge.source.list"]);
