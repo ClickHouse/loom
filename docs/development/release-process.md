@@ -304,22 +304,24 @@ A failed `docker-tag` (one image tagged, not the other) or a failed `sign` (Sigs
   no images, so it rebuilds and would move the published tags.
 - Once "Re-run all jobs" has replaced the tagging run's attempt, or the 30 days have passed, no
   run can tag or sign that build: a run on a half-tagged version fails its `preflight`, and a run
-  on a published tag verifies signatures but cannot make them. Release a new version, and if
-  `:latest` moved, point it back at the previous release's index for both images, by digest, and
-  check that `:latest` names that digest and carries its signature (a previous release published
-  before the workflow signed has none: drop the `else` branch):
+  on a published tag verifies signatures but cannot make them. Release a new version. Until it is
+  out, the unsigned build's moving tags still name it: point `:latest` (if it moved) and, for a
+  final, `:X.Y` back at the previous release that carried them, for both images, by digest:
 
   ```bash
   digest=$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:<previous X.Y.Z> --format '{{json .Manifest}}' | jq -re .digest)
-  docker buildx imagetools create -t ghcr.io/clickhouse/<image>:latest "ghcr.io/clickhouse/<image>@$digest"
-  if [ "$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:latest --format '{{json .Manifest}}' | jq -re .digest)" != "$digest" ]; then
-    echo "latest does not name $digest" >&2
-    false
-  else
-    cosign verify "ghcr.io/clickhouse/<image>@$digest" \
-      --certificate-identity https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v<previous X.Y.Z> \
-      --certificate-oidc-issuer https://token.actions.githubusercontent.com
-  fi
+  docker buildx imagetools create -t ghcr.io/clickhouse/<image>:<tag> "ghcr.io/clickhouse/<image>@$digest"
+  [ "$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:<tag> --format '{{json .Manifest}}' | jq -re .digest)" = "$digest" ] \
+    || { echo "<tag> does not name $digest" >&2; false; }
+  ```
+
+  Then check the previous release's signature (one published before the workflow signed has none
+  to check):
+
+  ```bash
+  cosign verify "ghcr.io/clickhouse/<image>@$digest" \
+    --certificate-identity https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v<previous X.Y.Z> \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com
   ```
 
 ### When the clickhouse job stops

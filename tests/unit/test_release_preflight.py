@@ -448,6 +448,8 @@ def test_the_tag_run_signs_the_digests_it_made_and_every_run_verifies_them() -> 
     # What the step writes there: test_docker_quickstart_smoke.py runs it.
     steps = {s["id"]: s for s in jobs["sign"]["steps"] if "id" in s}
     assert steps["sign"]["if"] == "${{ needs.docker-tag.result == 'success' }}"
+    (login,) = [s for s in jobs["sign"]["steps"] if s.get("name") == "Log in to ghcr.io"]
+    assert login["if"] == steps["sign"]["if"]  # the push of a signature needs it
     assert steps["sign"]["env"]["DIGESTS"] == "${{ needs.docker-tag.outputs.digests }}"
     assert "if" not in steps["verify"]  # runs whether or not this run signed
     assert VERIFY in steps["verify"]["run"]
