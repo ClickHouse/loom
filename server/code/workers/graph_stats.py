@@ -254,7 +254,7 @@ def _path_convention_rows(org: str, ns: str, known: set[str]) -> list[dict[str, 
         t_stem = _stem(t)
         n = len(t_stem)
         subs = {t_stem[i:j] for i in range(n) for j in range(i + 1, min(n, i + longest) + 1)}
-        for s_stem in sorted(subs & mappable.keys()):
+        for s_stem in subs & mappable.keys():
             paths = mappable[s_stem]
             for src_path in paths:
                 rows.append(
