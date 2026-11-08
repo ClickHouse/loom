@@ -19,8 +19,9 @@ from pathlib import Path
 
 from server.code.app.index.gitrepo import auth_env
 from server.code.app.index.sandbox import run_job
-from server.code.app.index.tier_health import ToolOutputError
+from server.code.app.index.tier_health import ToolOutputError, error_text
 from server.code.app.index.untrusted_files import read_checkout_file, read_package_json
+from server.code.domain.index.tier_health import ERROR_CHARS
 from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.typescript_dependencies")
@@ -127,14 +128,9 @@ def _install_command(checkout: Path, root: Path) -> tuple[list[str], dict[str, s
     ], {}
 
 
-# The end of a failed install's output its error keeps: with the first line it fits the
-# tier-health record (600 characters).
-_OUTPUT_CHARS = 400
-
-
-def _where(checkout: Path, root: Path) -> str:
-    """The install root as the record shows it: relative to the checkout, no host path."""
-    return str(root.relative_to(checkout)) if root != checkout else "the checkout root"
+def _project(checkout: Path, root: Path) -> str:
+    """The install root as an error names it: no host path."""
+    return "the checkout root" if root == checkout else f"project {root.name}"
 
 
 async def prepare_dependencies(
@@ -184,17 +180,19 @@ async def prepare_dependencies(
         except TimeoutError:
             raise ToolOutputError(
                 f"TypeScript dependency installation ({command[0]}) timed out after "
-                f"{timeout_s}s in {_where(checkout, root)}"
+                f"{timeout_s}s in {_project(checkout, root)}"
             ) from None
         if done.returncode != 0:
             output = done.stdout.decode("utf-8", "replace")
             logger.warning(
                 "TypeScript dependency installation in %s failed: %s", root, output[-2000:]
             )
-            # The installer first, for readers of the first line; the output's end fits
-            # beside it in the tier-health record.
-            raise ToolOutputError(
+            head = (
                 f"TypeScript dependency installation failed ({command[0]}, exit "
-                f"{done.returncode}) in {_where(checkout, root)}\n{output[-_OUTPUT_CHARS:]}"
+                f"{done.returncode}) in {_project(checkout, root)}"
             )
+            # The installer first, for readers of the first line; then as much of the
+            # output's end as the tier-health record keeps beside it.
+            room = max(0, ERROR_CHARS - len(error_text(ToolOutputError(head))) - 1)
+            raise ToolOutputError(f"{head}\n{output[-room:] if room else ''}")
     await asyncio.to_thread(marker.write_text, fingerprint)

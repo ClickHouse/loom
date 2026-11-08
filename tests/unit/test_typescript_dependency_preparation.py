@@ -129,6 +129,20 @@ async def test_a_failed_install_is_recorded_with_the_installer_and_its_last_outp
 
 
 @pytest.mark.asyncio
+async def test_a_failed_project_install_names_the_project_not_the_host_path(
+    checkout: Path, tmp_path: Path
+) -> None:
+    env = _installer(tmp_path, fail=True)
+    (checkout / "web").mkdir()
+    (checkout / "web" / "package.json").write_text('{"name":"web","version":"1.0.0"}')
+    (checkout / "web" / "package-lock.json").write_text("{}")
+    with pytest.raises(RuntimeError) as failed:
+        await deps.prepare_dependencies(checkout, ("web",), env)
+    assert "(npm, exit 1) in project web" in str(failed.value)
+    assert str(tmp_path) not in str(failed.value)
+
+
+@pytest.mark.asyncio
 async def test_an_install_timeout_is_recorded_as_a_timeout(
     checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
