@@ -136,11 +136,16 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
     # A repository a person added since the last pass is
     # picked up here — the registry snapshot is what configured_repos() reads.
     from server.code.app.index.maintainers import sync_restricted_page_branches
-    from server.code.app.index.repo_registry import refresh_db_repos
+    from server.code.app.index.repo_registry import refresh_db_repos, registry_read
 
     budget = pass_budget()
     result.budget_s = round(budget.seconds, 1)
     await refresh_db_repos()
+    if not registry_read():
+        # Unread, an operator entry for a namespace a member added is not skipped yet,
+        # and would be indexed into that member's namespace.
+        logger.warning("code_ingest: the self-service registry is unread; nothing indexed")
+        return
     inactive = await _inactive_namespaces()
     # A deleted directory row means retired — the worker must
     # not keep fetching and indexing it.

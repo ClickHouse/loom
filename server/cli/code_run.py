@@ -85,14 +85,14 @@ async def _then_disconnect(coro: asyncio.Future[int] | Coroutine[Any, Any, int])
     try:
         # A repository added from the Repositories page lives in the registry, not in
         # LOOM_CODE_REPOS_JSON: read it before the subcommand resolves its namespace.
-        from server.code.app.index.repo_registry import refresh_db_repos
+        from server.code.app.index.repo_registry import refresh_db_repos, registry_read
 
         await get_client().connect()
         async with model_command():
-            try:
-                await refresh_db_repos(force=True)
-            except Exception as e:  # noqa: BLE001 — configured repositories remain usable
-                log.info("code cli: repository registry not read: %s", e)
+            await refresh_db_repos(force=True)  # never raises
+            if not registry_read():
+                # Unread, an operator entry for a namespace a member added is not skipped.
+                raise SystemExit("the self-service repository registry cannot be read; retry")
             started = True
             try:
                 return int(await coro)

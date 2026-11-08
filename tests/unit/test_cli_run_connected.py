@@ -9,6 +9,13 @@ import pytest
 
 from server.cli import _ch, maintenance, reports
 
+
+@pytest.fixture(autouse=True)
+def _registry_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The ingest pass and the code CLI run only once the registry has been read."""
+    monkeypatch.setattr("server.code.app.index.repo_registry.registry_read", lambda: True)
+
+
 pytestmark = pytest.mark.usefixtures("stub_model_command")
 
 
@@ -176,6 +183,11 @@ def test_a_code_subcommand_sees_the_repositories_added_from_the_repositories_pag
 
     assert asyncio.run(code_run._then_disconnect(_sub())) == 0
     assert ch.events == ["connect", "disconnect"]
+    # A registry never read: an operator entry for a member's namespace is not skipped
+    # yet, so the subcommand does not run.
+    monkeypatch.setattr(repo_registry, "registry_read", lambda: False)
+    with pytest.raises(SystemExit):
+        asyncio.run(code_run._then_disconnect(_sub()))
 
 
 def test_a_command_leaves_no_deployment_check_armed(

@@ -16,6 +16,13 @@ from server.code.app.index import coverage_import as ci
 from server.code.domain.index import coverage_claim as cc
 from server.code.domain.index import coverage_runs as cr
 
+
+@pytest.fixture(autouse=True)
+def _registry_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The code CLI runs only once the registry has been read."""
+    monkeypatch.setattr("server.code.app.index.repo_registry.registry_read", lambda: True)
+
+
 pytestmark = pytest.mark.usefixtures("stub_model_command")
 
 # ---------------------------------------------------------------- pure logic

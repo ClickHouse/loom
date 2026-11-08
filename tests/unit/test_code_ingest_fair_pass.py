@@ -24,6 +24,12 @@ from tests.unit.test_code_ingest_pass_budget import _cfg, _Clock, _wire_run
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _registry_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The ingest pass and the code CLI run only once the registry has been read."""
+    monkeypatch.setattr("server.code.app.index.repo_registry.registry_read", lambda: True)
+
+
 def test_a_cut_per_phase_is_kept_and_the_cursor_lists_them_first_cut_first() -> None:
     r = ingest_budget.CodeIngestResult()
     r.cut("code-p:commits@abcdef123456+3", cfg=_cfg("code-p"))
