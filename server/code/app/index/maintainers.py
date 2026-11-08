@@ -53,6 +53,7 @@ from contextlib import (
 from datetime import datetime
 from typing import Any
 
+from server.core.ch import sequential_reads
 from server.core.datetimes import naive_utc_now
 from server.core.errors import GrantBusyError
 from server.core.grant_sql import LIVE_GRANT
@@ -96,7 +97,6 @@ async def _restricted(client: Any, org: str, sources: dict[str, str]) -> set[str
     replica may be newer than the snapshot. A failed read raises, so no branch is
     given a copy or skipped by a revoke on a guess."""
     from server.code.domain.index.repos import configured_repos
-    from server.core.ch import sequential_reads
     from server.identity.app.registration import classifications
 
     added = [ns for ns, source in sources.items() if source == "registry"]
@@ -168,7 +168,6 @@ async def _read_registry_now(client: Any) -> None:
     page would leave its copies live, and no later sync removes them, so a
     failed read raises `GrantBusyError`."""
     from server.code.app.index.repo_registry import read_registry
-    from server.core.ch import sequential_reads
 
     with sequential_reads():
         read = await read_registry(client)
@@ -239,7 +238,6 @@ async def _read_grants(
     """When the read began, and `_grant_rows` read with sequential consistency: a
     lagging replica could miss a grant just made, and a stray's revoke planned from
     the rows is versioned at the read, or just above the stray (`_revoke_row`)."""
-    from server.core.ch import sequential_reads
 
     read_at = time.time_ns()
     with sequential_reads():
@@ -668,7 +666,6 @@ def _given_on_added(
 async def _is_code_namespace(client: Any, org: str, namespace: str) -> bool:
     """The directory row says `namespace` is a code index: a branch added from
     the page is one before the registry snapshot lists it."""
-    from server.core.ch import sequential_reads
     from server.identity.app.registration import namespace_row
 
     with sequential_reads():  # a lagging replica would skip the fan-out

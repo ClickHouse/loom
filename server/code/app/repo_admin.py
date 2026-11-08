@@ -36,7 +36,7 @@ from server.code.app.index.bootstrap import awaits_first_index, restrict_entry
 from server.code.domain.index import repos as code_repos
 from server.code.domain.index.remote import repo_key
 from server.code.domain.index.repos import registry_repos
-from server.core.ch import own_write_reads
+from server.core.ch import own_write_reads, sequential_reads
 from server.core.errors import (
     AuthInsufficientError,
     BackendUnavailableError,
@@ -732,15 +732,15 @@ async def handle_code_repo_set_access(input: Any) -> Any:
                 "in `confirm`",
                 code="CONFIRM_REQUIRED",
             )
-        if row is None and cls == "restricted" and cfg.source == "registry":
-            # Without one, the restriction reaches other replicas only through their
-            # snapshots.
-            raise BackendUnavailableError(
-                f"{input.namespace} has no directory row yet; retry once it is registered"
-            )
         previous_policy = str(
             (row or {}).get("join_policy") or ("open" if cfg.public else "approval")
         )
+        if row is None and cfg.source == "registry":
+            # Not registered yet: a copy onto it reads the directory row, so the
+            # decision is written there now rather than waiting for the ingest pass.
+            from server.code.app.index.registry import new_row as first_row
+
+            row = first_row(cfg, restricted=cls == "restricted", join_policy=pol)
         # The directory row first, which every replica reads now: a restriction cut short
         # after it still stops copies, and the registrar widens no row newer than the
         # access row.
@@ -760,8 +760,6 @@ async def handle_code_repo_set_access(input: Any) -> Any:
         await reg.upsert_access(
             cfg, classification=cls, join_policy=pol, created_by=subject or "maintainer", ch=ch
         )
-    from server.core.ch import sequential_reads
-
     with sequential_reads():  # the sync below reads this snapshot
         await reg.refresh_db_repos(force=True, ch=ch)
     if cls == "restricted":

@@ -467,38 +467,51 @@ async def test_restricting_a_page_branch_revokes_the_copy_a_sibling_gave_it(monk
     assert refreshed and all(refreshed)
 
 
-@pytest.mark.parametrize("snapshot", ["standard", "restricted"])
 @pytest.mark.asyncio
-async def test_a_page_branch_with_no_directory_row_is_not_restricted_yet(
-    monkeypatch, snapshot: str
-) -> None:
-    """A copy onto it reads that row under the branch's admins claim: without one the
-    restriction would reach other replicas only with their snapshots, whatever this
-    replica's says."""
+async def test_restricting_a_page_branch_with_no_directory_row_writes_one(monkeypatch) -> None:
+    """A copy onto it reads that row under the branch's admins claim, and the ingest pass
+    may not reach the branch for a long time (a pending clone, an org with model calls
+    off): the restriction writes the row itself."""
     from server.code.app import repo_admin as h
-    from server.core.errors import BackendUnavailableError
+    from server.code.app.index import maintainers
 
     async def refresh(*a, **k):
         return []
 
+    async def upsert(*a, **k):
+        return None
+
+    async def sync(*a, **k):
+        return None
+
     monkeypatch.setattr(reg, "refresh_db_repos", refresh)
+    monkeypatch.setattr(reg, "upsert_access", upsert)
+    monkeypatch.setattr(maintainers, "sync_quietly", sync)
+    monkeypatch.setattr(h, "restrict_entry", lambda cfg: None)
+    monkeypatch.setattr(h, "current_caller", lambda: ("alice", ORG))
     monkeypatch.setattr(
         "server.code.domain.index.repos.repo_for_namespace",
-        lambda org, ns: _cfg("code-weave-rc", classification=snapshot, source="registry"),
+        lambda org, ns: _cfg("code-weave-rc", classification="standard", source="registry"),
     )
     ch = _CH(None)
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
-    with pytest.raises(BackendUnavailableError):
-        await h.handle_code_repo_set_access(
-            SimpleNamespace(
-                org=ORG,
-                namespace="code-weave-rc",
-                classification="restricted",
-                join_policy="approval",
-                confirm="",
-            )
+    out = await h.handle_code_repo_set_access(
+        SimpleNamespace(
+            org=ORG,
+            namespace="code-weave-rc",
+            classification="restricted",
+            join_policy="approval",
+            confirm="",
         )
-    assert ch.inserts == []
+    )
+    ((table, (row,)),) = ch.inserts
+    assert table == "loom.namespaces" and out.directory_updated
+    assert (row["namespace"], row["kind"], row["classification"], row["join_policy"]) == (
+        "code-weave-rc",
+        "code",
+        "restricted",
+        "approval",
+    )
 
 
 @pytest.mark.asyncio

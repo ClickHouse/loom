@@ -75,6 +75,29 @@ async def ensure_registered(cfg: Any, *, ch: Any | None = None, sync: bool = Tru
         return False
 
 
+def new_row(cfg: Any, *, restricted: bool, join_policy: str) -> dict[str, Any]:
+    """A code namespace's first directory row."""
+    now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
+    return {
+        "org": cfg.org,
+        "namespace": cfg.namespace,
+        "owner_email": "",
+        "description": describe(cfg),
+        "tags": ["code"],
+        "active": True,
+        "kind": "code",
+        # Every code row is visibility=private. Discovery does not depend on it (the
+        # Repositories page and namespace.browse list code rows by kind), and `public`
+        # would let authz read the index without a join. join_policy alone says how a
+        # person gets in.
+        "visibility": "private",
+        "classification": "restricted" if restricted else "standard",
+        "join_policy": join_policy,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
 async def _write_row(cfg: Any, client: Any) -> bool:
     """`ensure_registered`'s directory write; True when a row was inserted."""
     from server.code.store.index import CodeRepo
@@ -88,29 +111,8 @@ async def _write_row(cfg: Any, client: Any) -> bool:
     row = await namespace_row(cfg.org, cfg.namespace, ch=client)
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
     if row is None:
-        await client.insert(
-            "loom.namespaces",
-            [
-                {
-                    "org": cfg.org,
-                    "namespace": cfg.namespace,
-                    "owner_email": "",
-                    "description": describe(cfg),
-                    "tags": ["code"],
-                    "active": True,
-                    "kind": "code",
-                    # Every code row is visibility=private. Discovery does not depend on
-                    # it (the Repositories page and namespace.browse list code rows by
-                    # kind), and `public` would let authz read the index without a join.
-                    # join_policy alone says how a person gets in.
-                    "visibility": "private",
-                    "classification": "restricted" if restricted else "standard",
-                    "join_policy": "open" if public and not restricted else "approval",
-                    "created_at": now,
-                    "updated_at": now,
-                }
-            ],
-        )
+        new = new_row(cfg, restricted=restricted, join_policy="open" if public else "approval")
+        await client.insert("loom.namespaces", [new])
         if restricted:
             note_restricted(cfg.org, cfg.namespace)
         logger.info(
