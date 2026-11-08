@@ -249,7 +249,7 @@ def denylist_for(cfg: Any, ignore_text: str = "", attributes_text: str = "") -> 
     if len(from_repo) > REPO_PATTERNS_MAX:
         logger.warning(
             "code ingest: %s: %d ignore and attribute patterns, the first %d kept",
-            getattr(cfg, "label", "repository"),
+            cfg.label,
             len(from_repo),
             REPO_PATTERNS_MAX,
         )

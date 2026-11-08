@@ -11,19 +11,10 @@ import re
 import time
 from typing import Any
 
-import pytest
-
+from server.code.app.index import ingest_resolve
 from server.code.domain.extract import lang_typescript_imports as lti
 from server.code.domain.extract import py_layouts, ts_config, ts_reexports, ts_workspace
 from tests.unit.code_fixtures import grows_linearly
-
-
-@pytest.fixture(autouse=True)
-def _no_parsed_manifests() -> Any:
-    lti.clear_manifests()
-    yield
-    lti.clear_manifests()
-
 
 # The patterns the linear forms replace, kept here to prove the output is unchanged.
 _OLD_COMMENT_RE = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
@@ -125,23 +116,25 @@ def test_a_package_json_is_parsed_once_per_text(monkeypatch) -> None:
             }
         }
     )
-    first = lti.exports_candidates("@x/pkg", "packages/pkg", manifest)
-    assert lti.exports_candidates("@x/pkg/utils/a", "packages/pkg", manifest)
-    assert lti.exports_candidates("@x/pkg", "packages/pkg", manifest) == first
+    view = ingest_resolve._manifest_view
+    first = lti.exports_candidates("@x/pkg", "packages/pkg", view(manifest))
+    assert lti.exports_candidates("@x/pkg/utils/a", "packages/pkg", view(manifest))
+    assert lti.exports_candidates("@x/pkg", "packages/pkg", view(manifest)) == first
     assert first and first[0].startswith("packages/pkg/")
     assert len(loads) == 1
-    for i in range(lti._MANIFESTS_KEPT + 1):
-        lti.exports_candidates("@x/pkg", "p", json.dumps({"main": f"m{i}.js"}))
-    assert len(lti._MANIFESTS) == lti._MANIFESTS_KEPT
+    views = ingest_resolve._MANIFEST_VIEWS
+    for i in range(views.maxsize + 1):
+        view(json.dumps({"main": f"m{i}.js"}))
+    assert len(views) == views.maxsize
 
 
 def test_the_parsed_manifests_are_bounded_by_their_texts_length() -> None:
-    pad = "x" * (lti._MANIFESTS_CHARS // 4)
+    views = ingest_resolve._MANIFEST_VIEWS
+    pad = "x" * (ingest_resolve.MANIFEST_VIEWS_CHARS // 4)
     for i in range(10):
-        lti.exports_candidates("@x/p", "p", json.dumps({"main": f"m{i}.js", "pad": pad}))
-    assert lti._manifest_chars <= lti._MANIFESTS_CHARS
-    assert sum(n for _, n in lti._MANIFESTS.values()) == lti._manifest_chars
-    assert 1 <= len(lti._MANIFESTS) <= 4
+        ingest_resolve._manifest_view(json.dumps({"main": f"m{i}.js", "pad": pad}))
+    assert views.weight <= ingest_resolve.MANIFEST_VIEWS_CHARS
+    assert 1 <= len(views) <= 4
 
 
 _DEEP = "[" * 200_000  # past the parser's recursion limit
@@ -151,14 +144,14 @@ def test_a_manifest_nested_past_the_stack_is_no_manifest() -> None:
     assert ts_config.parse_jsonc(_DEEP) == {}
     assert ts_workspace.workspace_globs("", _DEEP) == []
     assert ts_workspace.extra_manifest_globs(_DEEP, _DEEP, _DEEP) == []
-    assert lti.exports_candidates("@x/p", "p", _DEEP) == []
+    assert lti.manifest_view(_DEEP) is None
     # nested deeper than the interpreter's own recursion limit, which the parser still reads
     for deep in (
         '{"exports":{".":' + '{"types":' * 1_200 + '"x"' + "}" * 1_202,
         '{"exports":{".":' + "[" * 1_200 + '"x"' + "]" * 1_200 + "}}",
     ):
         json.loads(deep)
-        assert lti.exports_candidates("@x/p", "p", deep) == []
+        assert lti.manifest_view(deep) is None
     assert py_layouts._toml("a = " + "[" * 200_000) is None
 
 
@@ -212,5 +205,5 @@ def test_a_chain_of_conditions_that_picks_nothing_is_read_once_per_level(monkeyp
 
     monkeypatch.setattr(lti, "_pick_condition", counted)
     text = '{"name":"@x/p","exports":{".":' + '{"types":' * 30 + "null" + "}" * 32
-    assert lti.exports_candidates("@x/p", "p", text) == []
+    assert lti.exports_candidates("@x/p", "p", lti.manifest_view(text)) == []
     assert calls == 31  # each object once and the leaf; read twice per level it was 2**30

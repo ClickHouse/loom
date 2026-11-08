@@ -102,7 +102,7 @@ async def _backfill(args: argparse.Namespace) -> int:
         if path in oversize:
             return path, None
         async with sem:
-            source, counter = await read_capped(
+            source, recorded = await read_capped(
                 gitrepo.show_file,
                 repo,
                 org,
@@ -113,9 +113,9 @@ async def _backfill(args: argparse.Namespace) -> int:
                 embedding_model=model_name,
                 denylist=denylist,
             )
-        if counter:
+        if recorded is not None:
             oversize.add(path)
-            counters[counter] += 1
+            counters["files" if recorded else "errors"] += 1
         return path, source
 
     async def _one(reads: Any, path: str, source: bytes) -> None:

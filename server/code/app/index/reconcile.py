@@ -307,7 +307,7 @@ async def heal(
 
     async def _source(path: str) -> tuple[str, bytes | None]:
         async with sem:
-            source, counter = await read_capped(
+            source, recorded = await read_capped(
                 show_file,
                 repo,
                 cfg.org,
@@ -318,7 +318,7 @@ async def heal(
                 embedding_model=embedder.model_name,
                 denylist=denylist,
             )
-        if counter == "errors":
+        if recorded is False:
             out.errors += 1
         return path, source
 

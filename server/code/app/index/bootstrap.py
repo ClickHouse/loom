@@ -570,7 +570,7 @@ async def index_slice(
 
     async def _source(path: str) -> tuple[str, bytes | None]:
         async with sem:
-            source, counter = await read_capped(
+            source, recorded = await read_capped(
                 gitrepo.show_file,
                 repo,
                 org,
@@ -581,8 +581,8 @@ async def index_slice(
                 embedding_model=model_name,
                 denylist=denylist,
             )
-        if counter:
-            counters[counter] += 1
+        if recorded is not None:
+            counters["files" if recorded else "errors"] += 1
         return path, source
 
     async def _one(reads: Any, path: str, source: bytes) -> None:

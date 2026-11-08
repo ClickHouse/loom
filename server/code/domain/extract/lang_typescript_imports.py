@@ -4,11 +4,9 @@ exports), barrels and their re-exports."""
 
 from __future__ import annotations
 
-import hashlib
 import json
 import posixpath
 import re
-from collections import OrderedDict
 from typing import Any
 
 from server.code.domain.extract.lang_typescript import (
@@ -287,19 +285,12 @@ def _exports_target(exports: ExportsView, subpath: str) -> str:
     return best
 
 
-# Parsed manifests kept, by count and by the characters of their texts: a view holds up
-# to about 7 times its text's size, and a miss only parses again.
-# not a setting: a memory bound on a parse cache
-_MANIFESTS_KEPT = 256
-# not a setting: a memory bound on a parse cache
-_MANIFESTS_CHARS = 4 * 1024 * 1024
-# digest -> (view, its text's length)
-_MANIFESTS: OrderedDict[bytes, tuple[tuple[ExportsView, str] | None, int]] = OrderedDict()
-_manifest_chars = 0
+# (`exports` with each target's condition picked, the `types` / `module` / `main` fallback)
+Manifest = tuple[ExportsView, str]
 
 
-def _view(data: Any) -> tuple[ExportsView, str] | None:
-    """`_manifest`'s view of a parsed package.json; None when it is no object."""
+def _view(data: Any) -> Manifest | None:
+    """The `Manifest` of a parsed package.json; None when it is no object."""
     if not isinstance(data, dict):
         return None
     raw = data.get("exports")
@@ -312,40 +303,18 @@ def _view(data: Any) -> tuple[ExportsView, str] | None:
     return exports, str(data.get("types") or data.get("module") or data.get("main") or "")
 
 
-def _manifest(package_json: str) -> tuple[ExportsView, str] | None:
-    """(`exports` with each target's condition picked, the `types` / `module` / `main`
-    fallback) of a package.json, parsed once per text: every importer of the package
-    asks again. None when it does not parse."""
-    global _manifest_chars
-    key = hashlib.blake2b(package_json.encode(), digest_size=16).digest()
-    if key in _MANIFESTS:
-        _MANIFESTS.move_to_end(key)
-        return _MANIFESTS[key][0]
+def manifest_view(package_json: str) -> Manifest | None:
+    """The `Manifest` of a package.json text; None when it does not parse."""
     try:
-        view = _view(json.loads(package_json))
+        return _view(json.loads(package_json))
     except (ValueError, RecursionError):  # nesting deeper than the parser's or our stack
-        view = None
-    _MANIFESTS[key] = (view, len(package_json))
-    _manifest_chars += len(package_json)
-    while len(_MANIFESTS) > 1 and (
-        len(_MANIFESTS) > _MANIFESTS_KEPT or _manifest_chars > _MANIFESTS_CHARS
-    ):
-        _manifest_chars -= _MANIFESTS.popitem(last=False)[1][1]
-    return view
+        return None
 
 
-def clear_manifests() -> None:
-    """Drop every parsed manifest (tests start from an empty cache)."""
-    global _manifest_chars
-    _MANIFESTS.clear()
-    _manifest_chars = 0
-
-
-def exports_candidates(spec: str, pkg_dir: str, package_json: str) -> list[str]:
+def exports_candidates(spec: str, pkg_dir: str, view: Manifest | None) -> list[str]:
     """Repository paths the package's `exports` (or `main` / `types`) maps
-    the specifier to, most likely first; [] when the package.json does not
-    parse or the subpath is not exported."""
-    view = _manifest(package_json)
+    the specifier to, most likely first; [] when its package.json did not
+    parse (`view` None) or the subpath is not exported."""
     if view is None:
         return []
     exports, fallback = view

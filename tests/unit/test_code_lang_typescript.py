@@ -334,6 +334,7 @@ _PKG_JSON = """{
 def test_exports_table_resolves_subpaths_the_probing_ladder_cannot() -> None:
     from server.code.domain.extract.lang_typescript_imports import (
         exports_candidates,
+        manifest_view,
         package_dirs_for,
         package_subpath,
         unresolved_package_specs,
@@ -346,17 +347,18 @@ def test_exports_table_resolves_subpaths_the_probing_ladder_cannot() -> None:
         "libs/shared",
     ]
     assert package_subpath("@langfuse/shared/query") == "./query" and package_subpath("zod") == "."
-    cands = exports_candidates("@langfuse/shared/query", "packages/shared", _PKG_JSON)
+    pkg = manifest_view(_PKG_JSON)
+    cands = exports_candidates("@langfuse/shared/query", "packages/shared", pkg)
     assert cands[0] == "packages/shared/dist/src/features/query/index.ts"
     assert "packages/shared/src/features/query/index.ts" in cands  # `dist/` → `src/`
-    assert exports_candidates("@langfuse/shared", "packages/shared", _PKG_JSON)[0] == (
+    assert exports_candidates("@langfuse/shared", "packages/shared", pkg)[0] == (
         "packages/shared/dist/src/index.ts"
     )
-    star = exports_candidates("@langfuse/shared/features/monitors", "packages/shared", _PKG_JSON)
+    star = exports_candidates("@langfuse/shared/features/monitors", "packages/shared", pkg)
     assert "packages/shared/src/features/monitors/index.ts" in star  # a `*` pattern, `types` first
-    assert exports_candidates("@langfuse/shared/private/x", "packages/shared", _PKG_JSON) == []
-    assert exports_candidates("@langfuse/shared/nope", "packages/shared", _PKG_JSON) == []
-    assert exports_candidates("@langfuse/shared", "packages/shared", "not json") == []
+    assert exports_candidates("@langfuse/shared/private/x", "packages/shared", pkg) == []
+    assert exports_candidates("@langfuse/shared/nope", "packages/shared", pkg) == []
+    assert manifest_view("not json") is None
     present = {"packages/shared/src/index.ts"}
     specs = ["@langfuse/shared", "@langfuse/shared/query", "./x", "zod", "@/src/a"]
     assert unresolved_package_specs("web/src/a.ts", specs, present) == [

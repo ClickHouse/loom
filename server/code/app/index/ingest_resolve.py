@@ -5,12 +5,13 @@ roots), each cached and read once per path while in flight."""
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import posixpath
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from server.code.app.index.ingest_headers import include_candidates
 from server.code.app.index.ingest_parse import (
@@ -25,6 +26,9 @@ from server.code.app.ttl_cache import TtlCache
 from server.code.domain.extract.treesitter import ParsedFile
 from server.code.store.index import CodeRepo
 from server.settings import settings
+
+if TYPE_CHECKING:
+    from server.code.domain.extract.lang_typescript_imports import Manifest
 
 logger = logging.getLogger("loom.code_index.ingest")
 
@@ -338,6 +342,31 @@ _PACKAGE_JSON_CACHE: TtlCache[tuple[str, str, str, int], str] = TtlCache(
     maxweight=PACKAGE_JSON_CACHE_CHARS,
 )
 
+# Parsed package.json views, by text: every importer of a package asks again. A view
+# holds up to about 7 times its text's size, so the cache is bounded by the texts'
+# characters as well as by count.
+# not a setting: a memory bound on a parse cache; a miss only parses again
+MANIFEST_VIEWS_CHARS = 4 * 1024 * 1024
+_MANIFEST_VIEWS: TtlCache[bytes, tuple[Manifest | None, int]] = TtlCache(
+    lambda: settings.code_ingest_sibling_text_ttl_s,
+    maxsize=256,
+    weigh=lambda hit: hit[1],
+    maxweight=MANIFEST_VIEWS_CHARS,
+)
+
+
+def _manifest_view(text: str) -> Manifest | None:
+    """`manifest_view(text)`, parsed once per text."""
+    from server.code.domain.extract.lang_typescript_imports import manifest_view
+
+    key = hashlib.blake2b(text.encode(), digest_size=16).digest()
+    hit = _MANIFEST_VIEWS.get(key)
+    if hit is None:
+        hit = (manifest_view(text), len(text))
+        _MANIFEST_VIEWS.put(key, hit)
+    return hit[0]
+
+
 # The (git_dir, sha) a worker pass is ingesting at. Set, a sibling file's text (a
 # package.json, a barrel's re-exports) comes from the mirror at that commit, a few
 # milliseconds each, instead of reassembling the file from code_chunks FINAL (~0.33 s
@@ -566,7 +595,8 @@ async def _workspace_candidates(
         )
         cands = [f for stem in stems for f in stem_forms(stem)]
         text = await _package_json_text(repo, org, ns, f"{d}/package.json")
-        cands.extend(c for c in exports_candidates(spec, d, text) if c not in cands)
+        view = _manifest_view(text)
+        cands.extend(c for c in exports_candidates(spec, d, view) if c not in cands)
         out[spec] = cands
     return out
 
@@ -660,7 +690,7 @@ async def _resolve_package_exports(
         if pkg_dir is None:
             continue
         text = await _package_json_text(repo, org, ns, f"{pkg_dir}/package.json")
-        cands = exports_candidates(spec, pkg_dir, text)
+        cands = exports_candidates(spec, pkg_dir, _manifest_view(text))
         if not cands:
             continue
         found = (
