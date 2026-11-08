@@ -5,6 +5,7 @@ another's change."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from types import SimpleNamespace
 
 import pytest
@@ -31,12 +32,14 @@ class _Client:
 
 
 @pytest.fixture
-def claims(monkeypatch: pytest.MonkeyPatch) -> MemoryClaims:
+def claims(monkeypatch: pytest.MonkeyPatch) -> Iterator[MemoryClaims]:
     claims = MemoryClaims()
     monkeypatch.setattr(grant_claims, "take", claims.take)
     code_registry.reset_for_tests()
     tracker_registry.reset_for_tests()
-    return claims
+    yield claims
+    code_registry.reset_for_tests()
+    tracker_registry.reset_for_tests()
 
 
 def _account(ns: str) -> str:
@@ -109,7 +112,7 @@ async def test_a_namespace_skipped_at_boot_is_registered_on_a_later_try(
     )
     monkeypatch.setattr(sources, "refresh_db_sources", _refresh)
     monkeypatch.setattr(leader, "leads_deployment", lambda: leads[0])
-    monkeypatch.setattr(grant_claims, "TTL_S", 0.01)
+    monkeypatch.setattr(boot, "_tracker_retry_s", lambda: 0.01)
     monkeypatch.setattr(grant_claims, "WAIT_S", 0.01)
     monkeypatch.setattr(boot, "_TRACKER_RETRY", None)
     claims.held.add(_account("qa-p"))  # another change holds it

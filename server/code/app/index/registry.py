@@ -21,7 +21,7 @@ mirror and checkouts to `repo_dir_mode`, not here.
 from __future__ import annotations
 
 import logging
-from contextlib import AsyncExitStack
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import Any
 
@@ -72,10 +72,8 @@ async def ensure_registered(
         # Account claim: every writer of the directory row holds it.
         # Admins claim: a maintainer copy onto this branch holds it, so it lands before a
         # narrowing or sees it.
-        async with AsyncExitStack() as held:
-            if not account_held:
-                await held.enter_async_context(account_change(cfg.org, cfg.namespace))
-            await held.enter_async_context(admins_change(cfg.org, cfg.namespace))
+        account = nullcontext() if account_held else account_change(cfg.org, cfg.namespace)
+        async with account, admins_change(cfg.org, cfg.namespace):
             inserted = await _write_row(cfg, client)
         _DONE.add(key)
         if sync:

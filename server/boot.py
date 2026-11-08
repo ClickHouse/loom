@@ -243,8 +243,10 @@ async def register_tracker_namespaces(ch: Any) -> None:
     global _TRACKER_RETRY
     from server.workers import leader
 
+    if _TRACKER_RETRY is not None and not _TRACKER_RETRY.done():
+        return  # the running retry makes this pass, under the same claims
     retry = await _register_tracker_namespaces_once(ch)
-    if retry and leader.leads_deployment() and (_TRACKER_RETRY is None or _TRACKER_RETRY.done()):
+    if retry and leader.leads_deployment():
         _TRACKER_RETRY = _spawn_boot_loop(
             _retry_tracker_namespaces(ch), name="loom-tracker-namespaces-retry"
         )
@@ -253,13 +255,18 @@ async def register_tracker_namespaces(ch: Any) -> None:
 async def _retry_tracker_namespaces(ch: Any) -> None:
     """Retry every claim TTL: by then a busy holder has finished or its claim can be
     taken over."""
-    from server.auth.grant_claims import TTL_S
     from server.workers import leader
 
     while True:
-        await asyncio.sleep(TTL_S)
+        await asyncio.sleep(_tracker_retry_s())
         if not leader.leads_deployment() or not await _register_tracker_namespaces_once(ch):
             return
+
+
+def _tracker_retry_s() -> float:
+    from server.auth.grant_claims import TTL_S
+
+    return float(TTL_S)
 
 
 async def _register_tracker_namespaces_once(ch: Any) -> bool:
