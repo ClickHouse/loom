@@ -59,7 +59,7 @@
         "assistant_service_email": {
           "default": "loom-assistant@loom.invalid",
           "type": "string",
-          "description": "Email of the LibreChat service user that owns the agent; LibreChat sends it no mail."
+          "description": "Email of the LibreChat service user that owns the agent; LibreChat sends it no mail. Read once, when the first boot writes loom.assistant_service: changing it later changes nothing."
         },
         "assistant_setup_retry_s": {
           "default": 60.0,

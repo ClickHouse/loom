@@ -1,8 +1,9 @@
 # The Loom assistant's agent definition. Loom seeds it into the LibreChat that runs
 # beside it, under the service user it registers there, at boot: it writes the
 # definition when `version` is newer than the one stored, or the same with another
-# model. Bump `version` with any change below. The tools are the assistant toolset
-# (`server/operations/toolsets.py`, MCP_ASSISTANT_OPS), listed by Loom, not here.
+# model. Its tools are the assistant toolset (`server/operations/toolsets.py`,
+# MCP_ASSISTANT_OPS), listed by Loom, not here. Bump `version` with any change below or
+# to that toolset: a boot writes nothing new at the same version.
 name: Loom assistant
 version: 1
 provider: anthropic

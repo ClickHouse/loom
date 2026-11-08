@@ -55,7 +55,7 @@ The assistant: LibreChat run headless beside Loom, and the agent Loom seeds in i
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_ASSISTANT_LIBRECHAT_URL` | `str` | `''` |  | LibreChat's internal address (http://librechat:3080), reachable only from Loom. "" = no assistant: no service setup at boot. |
-| `LOOM_ASSISTANT_SERVICE_EMAIL` | `str` | `'loom-assistant@loom.invalid'` |  | Email of the LibreChat service user that owns the agent; LibreChat sends it no mail. |
+| `LOOM_ASSISTANT_SERVICE_EMAIL` | `str` | `'loom-assistant@loom.invalid'` |  | Email of the LibreChat service user that owns the agent; LibreChat sends it no mail. Read once, when the first boot writes loom.assistant_service: changing it later changes nothing. |
 | `LOOM_ASSISTANT_SETUP_RETRY_S` | `float` | `60.0` |  | Seconds before the service setup is tried again after its first failure (LibreChat still starting, its database restored from elsewhere); each next failure doubles the wait, up to 16 times this. A try signs in at most once, and LibreChat allows 7 sign-ins per address in 5 minutes, hence the floor of 60. |
 
 ## Auth

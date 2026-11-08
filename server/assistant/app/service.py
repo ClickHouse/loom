@@ -205,14 +205,15 @@ async def ensure_service() -> None:
                 sealed=_sealed(secrets.token_urlsafe(24), ""),
             ).advanced()
             await store.write(row)
-        secrets_ = opened(row.sealed)
-        if secrets_ is None:
+        credentials = opened(row.sealed)
+        if credentials is None:
             raise ServiceRefused(
                 "loom.assistant_service does not open with LOOM_JWT_SECRET (set "
                 "LOOM_JWT_SECRET_PREVIOUS to the secret it was sealed under and run "
                 "`loom secrets reseal`)"
             )
-        password, key, agent_id = secrets_["password"], secrets_.get("api_key", ""), row.agent_id
+        password, key = credentials["password"], credentials.get("api_key", "")
+        agent_id = row.agent_id
         async with httpx.AsyncClient(
             base_url=str(settings.assistant_librechat_url),
             headers={"User-Agent": _BROWSER_UA},

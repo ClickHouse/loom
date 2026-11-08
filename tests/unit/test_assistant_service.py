@@ -65,16 +65,15 @@ def test_when_a_boot_writes_the_definition(
 
 
 def test_a_version_names_one_definition() -> None:
-    # The instructions and the tools (the assistant toolset) are the definition: a
-    # change to either needs a new version in agent.yaml, and its digest here.
+    # The name, provider, instructions and tools (the assistant toolset) are the
+    # definition: a change to any needs a new version in agent.yaml, and its digest here.
     defn = service.current_definition()
-    digest = hashlib.sha256(json.dumps([defn.instructions, list(defn.tools)]).encode()).hexdigest()[
-        :16
-    ]
+    named = [defn.name, defn.provider, defn.instructions, list(defn.tools)]
+    digest = hashlib.sha256(json.dumps(named).encode()).hexdigest()[:16]
     assert {defn.version: digest} == {1: DEFINITION_DIGEST}
 
 
-DEFINITION_DIGEST = "7facd469a60a403e"
+DEFINITION_DIGEST = "3f5e0e4efdb7e2dd"
 
 
 class _Row:
@@ -282,6 +281,18 @@ def test_a_boot_cut_short_is_finished_by_the_next(setup: tuple[_Row, _LibreChat]
     # The key it stored stands: no second key, one agent.
     assert len(lc.keys) == 1 and len(lc.agents) == 1
     assert "POST /api/api-keys" not in lc.calls
+
+
+def test_a_librechat_that_cannot_answer_the_check_is_a_problem(
+    setup: tuple[_Row, _LibreChat],
+) -> None:
+    row, lc = setup
+    asyncio.run(service.ensure_service())
+    assert row.row is not None
+    lc.fail_on, lc.fail_status = f"GET /api/agents/v1/models/{row.row.agent_id}", 503
+    assert asyncio.run(service._setup_once()) is False
+    _, problem = service.assistant_state()
+    assert "LibreChat answered 503 for the assistant's agent" in problem
 
 
 def test_the_oldest_agent_of_the_name_is_kept_and_the_rest_deleted(

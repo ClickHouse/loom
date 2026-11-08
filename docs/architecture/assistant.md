@@ -777,11 +777,14 @@ rules. Its log level stays at `info`, which writes no message text. The deployme
 violation bans off (`BAN_VIOLATIONS=false`) and the unverified-user expiry off
 (`ALLOW_UNVERIFIED_EMAIL_LOGIN=true`, so LibreChat never deletes the service user it
 registered without a mail server), so a burst of replica restarts cannot lock Loom out;
-nothing but Loom reaches LibreChat, so the bans protect nothing there. Registration
-stays on (`ALLOW_REGISTRATION=true`) for the same reason, and the service user, the
-first LibreChat registers, takes LibreChat's `ADMIN` role, whose remote-agent permission
-the agents API key needs; it is an administrator of a LibreChat that holds nothing of
-Loom's. LibreChat runs without Redis, so one replica runs, and its run bookkeeping (each
+only Loom reaches LibreChat, so the bans protect nothing there. Within Loom,
+repository code runs sandboxed with no route to LibreChat (`--unshare-net`; a job's
+egress proxy reaches public hosts on ports 443 and 22 alone), except an operator
+repository's build on a host without the sandbox, which already runs with Loom's own
+environment ([the repository-job sandbox](../operations/code-index-operations.md#repository-job-sandbox)).
+Registration stays on (`ALLOW_REGISTRATION=true`) for the same reason. The
+configuration's agent and remote-agent permissions apply to every LibreChat role, so
+the service user needs no particular one. LibreChat runs without Redis, so one replica runs, and its run bookkeeping (each
 run's agent, model and ids, never the request) stays in its own memory. LibreChat's
 registration logs its request, password included, when the email is already in use or
 the request is malformed; Loom registers only under the lease and only after LibreChat

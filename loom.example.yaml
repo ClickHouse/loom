@@ -845,7 +845,8 @@ settings:
   # assistant_librechat_url: ""
 
   # Email of the LibreChat service user that owns the agent; LibreChat sends it no mail.
-  # [restart]
+  # Read once, when the first boot writes loom.assistant_service: changing it later
+  # changes nothing. [restart]
   # assistant_service_email: "loom-assistant@loom.invalid"
 
   # Seconds before the service setup is tried again after its first failure (LibreChat

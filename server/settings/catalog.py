@@ -52,6 +52,8 @@ class AssistantSettings(BaseModel):
     # = no assistant: no service setup at boot.
     assistant_librechat_url: str = ""
     # Email of the LibreChat service user that owns the agent; LibreChat sends it no mail.
+    # Read once, when the first boot writes loom.assistant_service: changing it later
+    # changes nothing.
     assistant_service_email: str = "loom-assistant@loom.invalid"
     # Seconds before the service setup is tried again after its first failure
     # (LibreChat still starting, its database restored from elsewhere); each next
