@@ -416,7 +416,7 @@ jobs:
                       errors.append(f"stack bundle names {pinned}, not the checked release")
                   if release_version != version:
                       errors.append(f"stack bundle version {release_version}, expected {version}")
-              if "\n" + stamped(version) not in pathlib.Path("release/stack/install.sh").read_text():
+              if stamped(version) not in pathlib.Path("release/stack/install.sh").read_text():
                   errors.append(f"install.sh does not install {version}")
 
           for e in errors:

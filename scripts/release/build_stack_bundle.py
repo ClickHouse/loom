@@ -55,12 +55,13 @@ def read_member(archive: Path, name: str) -> str:
     """One file of a bundle as text; a ValueError when it cannot be read."""
     try:
         with tarfile.open(archive) as bundle:
-            member = bundle.extractfile(name)
-            if member is None:  # a directory or another entry that is not a file
+            try:
+                member = bundle.extractfile(name)
+            except KeyError:
+                member = None
+            if member is None:  # missing, or a directory or another entry that is not a file
                 raise ValueError(f"{archive} has no {name}")
             return member.read().decode()
-    except KeyError:
-        raise ValueError(f"{archive} has no {name}") from None
     # Missing, cut short, corrupted (tarfile reports a zlib error as ReadError), or not text.
     except (OSError, EOFError, tarfile.TarError, UnicodeDecodeError) as e:
         reason = getattr(e, "strerror", None) or e
@@ -93,8 +94,9 @@ def refuse_older(image: str, published: list[Path]) -> None:
 
 
 def stamped(version: str) -> str:
-    """install.sh's line naming the release it installs by default."""
-    return f"  RELEASE_VERSION={version}\n"
+    """install.sh's line naming the release it installs by default, with the
+    newline before it, so a line indented otherwise never matches."""
+    return f"\n  RELEASE_VERSION={version}\n"
 
 
 # install.sh's default, which a release's copy replaces with its own version.
