@@ -85,10 +85,12 @@ async def run_tier[R: TierResult](
     entry with a network remote gets no tier at all (`unsandboxed_skip`). With
     `gc_checkout` each entry's checkout is repacked when due (`gc_if_due`) after its
     work, under the entry lock where the tier takes it; only this tier's worker moves
-    that tree. Each entry's outcome is its `health_tier` record (default: `producer`;
-    `tier_health.record`): a failure, or a success unless `run_repo` returned False (it
-    attempted nothing: the entry was not due) or added a skip. An entry the tier does
-    not own drops its record (`tier_health.forget`)."""
+    that tree. A failed gc (a checkout this user cannot search) is logged, not recorded:
+    a later pass with nothing due could not clear it. Each entry's outcome is its
+    `health_tier` record (default: `producer`; `tier_health.record`): a failure, or a
+    success unless `run_repo` returned False (it attempted nothing: the entry was not
+    due) or added a skip. An entry the tier does not own drops its record
+    (`tier_health.forget`)."""
     from server.code.domain.index.repos import configured_repos
     from server.code.store.index import CodeRepo
 
@@ -153,8 +155,13 @@ async def _gc_checkout(cfg: RepoConfig, producer: str) -> None:
     from server.code.app.index.mirrors import gc_if_due
 
     git_dir = Path(checkout_for(cfg, producer)) / ".git"
-    if await asyncio.to_thread(git_dir.is_dir):
-        await gc_if_due(str(git_dir))
+    try:
+        if await asyncio.to_thread(git_dir.is_dir):
+            await gc_if_due(str(git_dir))
+    except Exception as e:  # noqa: BLE001 — housekeeping never fails the tier: a pass not due records nothing to clear it
+        logger.warning(
+            "%s: checkout gc of %s failed: %s: %s", producer, git_dir, type(e).__name__, e
+        )
 
 
 UNSANDBOXED_SKIP = "self-registered repository, no build tier without the sandbox"
