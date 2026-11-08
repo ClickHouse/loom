@@ -98,6 +98,8 @@ async def ensure_configured_tracker_namespaces(*, ch: Any | None = None) -> list
         return []
     done: list[str] = []
     for ns, cfg in sorted(configured_namespaces().items()):
+        if (cfg.org, ns) in _DONE:
+            continue
         classification = "restricted" if cfg.restricted else "standard"
         try:
             # The claim every writer of the directory row holds, as `tracker.source.add` does.
@@ -109,6 +111,16 @@ async def ensure_configured_tracker_namespaces(*, ch: Any | None = None) -> list
         except Exception as e:  # noqa: BLE001 — the directory is a convenience at boot
             logger.warning("qa namespace registration skipped for %s: %s", ns, e)
     return done
+
+
+def configured_pending() -> bool:
+    """Whether a configured namespace was skipped by every pass so far."""
+    from server.tracker.domain.namespaces import configured_namespaces
+    from server.tracker.store.source import qa_intel
+
+    return qa_intel.configured() and any(
+        (cfg.org, ns) not in _DONE for ns, cfg in configured_namespaces().items()
+    )
 
 
 def reset_for_tests() -> None:

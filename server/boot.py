@@ -236,22 +236,53 @@ async def register_tracker_namespaces(ch: Any) -> None:
     """The leader gives every configured tracker namespace its directory row
     (restricted where listed) — at boot when the lease is held, or when the
     lease is acquired on retry. Never
-    fatal: a failed registration logs and the gate keeps refusing. Its
-    queries carry their own tag, reset on return: at boot it runs inside the
-    lifespan, whose later queries are not registration."""
+    fatal: a failed registration logs and the gate keeps refusing. A namespace
+    skipped (its account claim busy or unreachable) is tried again in the
+    background, so a narrowing does not wait for the next boot."""
+    global _TRACKER_RETRY
+    if await _register_tracker_namespaces_once(ch) and (
+        _TRACKER_RETRY is None or _TRACKER_RETRY.done()
+    ):
+        _TRACKER_RETRY = _spawn_boot_loop(
+            _retry_tracker_namespaces(ch), name="loom-tracker-namespaces-retry"
+        )
+
+
+_TRACKER_RETRY: asyncio.Task[Any] | None = None
+
+
+async def _retry_tracker_namespaces(ch: Any) -> None:
+    """Every claim TTL, by when a busy holder has finished or been taken over."""
+    from server.auth.grant_claims import TTL_S
+
+    while True:
+        await asyncio.sleep(TTL_S)
+        if not await _register_tracker_namespaces_once(ch):
+            return
+
+
+async def _register_tracker_namespaces_once(ch: Any) -> bool:
+    """One pass; True when a namespace was skipped. Its queries carry their own tag,
+    reset on return: at boot it runs inside the lifespan, whose later queries are not
+    registration."""
     from server.core.ch import query_tag_var
 
     tag = query_tag_var.set("boot.tracker_namespaces")
     try:
         from server.tracker.app import registry_sources
-        from server.tracker.app.registry import ensure_configured_tracker_namespaces
+        from server.tracker.app.registry import (
+            configured_pending,
+            ensure_configured_tracker_namespaces,
+        )
 
         await registry_sources.refresh_db_sources(force=True, ch=ch)
         done = await ensure_configured_tracker_namespaces(ch=ch)
         if done:
             logging.getLogger(__name__).info("qa namespaces registered: %s", done)
+        return configured_pending()
     except Exception as e:  # noqa: BLE001 — registration never fails boot; the gate keeps refusing
         logging.getLogger(__name__).warning("qa namespace registration failed: %s", e)
+        return False
     finally:
         query_tag_var.reset(tag)
 
