@@ -25,7 +25,7 @@ async def test_a_users_row_links_are_deleted_by_the_user_they_carry(
         return [("ns", "k")]
 
     async def user_summary_rows(org: str, user_id: str, *, ch: Any) -> SummaryRows:
-        return SummaryRows(keys=[("ns", "topic")], identities=[], ids=[("ns", "s1")])
+        return SummaryRows(keys=[("ns", "topic")], identities=[], ids=[("ns", "s1")], sources=[])
 
     async def no_graph_rows(org: str, user_id: str, *, ch: Any) -> int:
         return 0

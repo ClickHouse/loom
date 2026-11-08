@@ -207,20 +207,16 @@ async def delete_last_seen_by_user(
 # `promoted_from` (`org/namespace/agent/user_id/session_id/memory_key`) whose
 # fourth segment is the user.
 _PROMOTED_FROM_USER = "arrayExists(x -> splitByChar('/', x)[4] = {uid:String}, promoted_from)"
-# Or from a summary of the user's memories, by its (namespace, agent, user_id, key); a
-# key may hold slashes, so it is the rest of the entry.
-_PROMOTED_FROM_SUMMARY = (
-    "arrayExists(x -> has({rows:Array(Tuple(String, String, String, String))}, "
-    "(splitByChar('/', x)[2], splitByChar('/', x)[3], splitByChar('/', x)[4], "
-    "arrayStringConcat(arraySlice(splitByChar('/', x), 6), '/'))), promoted_from)"
-)
+# Or from a summary of the user's memories, by the whole entry: a key or a session may
+# hold slashes.
+_PROMOTED_FROM_SUMMARY = "hasAny(promoted_from, {sources:Array(String)})"
 _PROMOTED_FROM = f"({_PROMOTED_FROM_USER} OR {_PROMOTED_FROM_SUMMARY})"
 
 
 async def _promoted_slices(org: str, user_id: str, *, ch: _CHClient) -> list[dict[str, Any]]:
     """The bound values of `_PROMOTED_FROM`, a slice of the summaries at a time."""
-    summaries = (await user_summary_rows(org, user_id, ch=ch)).identities
-    return [{"uid": user_id, "rows": part} for part in slices_or_one_empty(summaries)]
+    summaries = (await user_summary_rows(org, user_id, ch=ch)).sources
+    return [{"uid": user_id, "sources": part} for part in slices_or_one_empty(summaries)]
 
 
 async def tombstone_shared_by_user(

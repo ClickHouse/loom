@@ -50,22 +50,25 @@ class SummaryRows(NamedTuple):
     keys: list[tuple[str, str]]  # (namespace, memory_key)
     identities: list[tuple[str, str, str, str]]  # (namespace, agent, user_id, memory_key)
     ids: list[tuple[str, str]]  # (namespace, memory_id)
+    # as `memory.promote` names a source: org/namespace/agent/user_id/session_id/key
+    sources: list[str]
 
 
 async def user_summary_rows(org: str, user_id: str, *, ch: _CHClient) -> SummaryRows:
     rows = await ch.query_all(
-        "SELECT DISTINCT toString(namespace) AS ns, agent, user_id, memory_key, "
+        "SELECT DISTINCT toString(namespace) AS ns, agent, user_id, session_id, memory_key, "
         f"toString(memory_id) AS id {SUMMARY_ROWS_FROM}",
         params={"org": org, "uid": user_id},
     )
     found = [
-        (str(r["ns"]), str(r["agent"]), str(r["user_id"]), str(r["memory_key"]), str(r["id"]))
+        tuple(str(r[c]) for c in ("ns", "agent", "user_id", "session_id", "memory_key", "id"))
         for r in rows
     ]
     return SummaryRows(
-        keys=sorted({(ns, key) for ns, _, _, key, _ in found}),
-        identities=sorted({(ns, a, u, key) for ns, a, u, key, _ in found}),
+        keys=sorted({(ns, key) for ns, _, _, _, key, _ in found}),
+        identities=sorted({(ns, a, u, key) for ns, a, u, _, key, _ in found}),
         ids=sorted({(ns, i) for ns, *_, i in found}),
+        sources=sorted({f"{org}/{ns}/{a}/{u}/{s}/{key}" for ns, a, u, s, key, _ in found}),
     )
 
 
