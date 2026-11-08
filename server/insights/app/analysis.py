@@ -554,7 +554,8 @@ _KEY_LITERAL = re.compile(r"unhex\('[0-9A-Fa-f]+'\)")
 
 
 def _scrubbed(text: str) -> str:
-    """The text with any key pad a ClickHouse message quoted cut out."""
+    """The text with the key's literals cut out, for a policy ClickHouse
+    printed unmasked."""
     return _KEY_LITERAL.sub("unhex(…)", text)
 
 

@@ -64,8 +64,9 @@ CAPS_DIGEST_SETTING = "SQL_loom_analyst_caps_digest"
 # byte, which ClickHouse logs as only the number of characters it removed.
 # Loom cannot turn query logging off everywhere (ClickHouse Cloud pins
 # `log_queries` for its users), but Cloud leaves this setting unconstrained.
-LOG_TEXT_CUT = {"log_queries_cut_to_length": 1}
-LOG_TEXT_CUT_SQL = "log_queries_cut_to_length = 1"
+_LOG_CUT_SETTING, _LOG_CUT_BYTES = "log_queries_cut_to_length", 1
+LOG_TEXT_CUT = {_LOG_CUT_SETTING: _LOG_CUT_BYTES}
+LOG_TEXT_CUT_SQL = f"{_LOG_CUT_SETTING} = {_LOG_CUT_BYTES}"
 
 _BLOCK = 64  # SHA-256 block size, for HMAC's inner and outer pads
 

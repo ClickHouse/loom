@@ -512,7 +512,8 @@ def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client) -> Non
     padded = bytes.fromhex(next(h for h in secrets if len(h) == 64)).ljust(64, b"\0")
     pads = [bytes(b ^ pad for b in padded) for pad in (0x36, 0x5C)]
     secrets += [p.hex() for p in pads] + [p.hex().upper() for p in pads]
-    secrets += ["".join(f"\\x{b:02X}" for b in p[:8]) for p in pads]
+    # The pads end in the zero-padded key's 0x36 and 0x5C bytes, printable as they are.
+    secrets += ["6" * 32, "\\" * 32]
 
     def refused_since_start() -> bool:
         ch_client.command("SYSTEM FLUSH LOGS")
