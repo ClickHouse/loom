@@ -335,14 +335,14 @@ trial when it names the key in `run.complete(memories_used=…)` and is graded w
 `run.grade`. Loom decides only when the owner set `proposal_policy.mode` to `auto`
 (`min_passes`, `max_fails`, `reject_after_fails`). See [runs](../runs.md).
 
-With the policy left `manual` (the default), a writer accepts or rejects a proposal on the
-**Proposals** tab of the **Review queue** at `/admin/review_queue`. Only an admin has the
-drawer that links that page, and it does not always list it
-([dashboard](../dashboard.md#the-admin-drawer)). A decision names a key and decides its
-newest row, so the tab offers no decision for a key that more than one listed proposal
-holds. Accepting a proposal that recorded a contradiction while on trial stores it
-`conflicted`, and it waits on the **Conflicts** tab. Learnings have a review of their own:
-[learnings review queue](./procedures-and-learnings.md#learnings-review-queue).
+A writer accepts or rejects a proposal on the **Proposals** tab of the **Review queue** at
+`/admin/review_queue`; with the policy left `manual` (the default), nothing else decides it.
+Only an admin has the admin drawer, and it lists the page only at times
+([dashboard](../dashboard.md#the-admin-drawer)); anyone else opens the URL. A decision names
+a key and decides its newest row, so the tab offers no decision for a key that more than one
+listed proposal holds. Accepting a proposal that recorded a contradiction while on trial
+stores it `conflicted`, and it waits on the **Conflicts** tab. Learnings have a review of
+their own: [learnings review queue](./procedures-and-learnings.md#learnings-review-queue).
 
 ## Typed records
 
