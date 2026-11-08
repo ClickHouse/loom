@@ -784,7 +784,7 @@ async def _forget_plan(
     resolved = forget_requests[-MAX_FORGET_REQUESTS:]
     state.forget_requests = len(resolved)
     if len(forget_requests) > MAX_FORGET_REQUESTS:
-        log.info(
+        log.warning(
             "forget requests: %d in one window, the latest %d resolved by content",
             len(forget_requests),
             MAX_FORGET_REQUESTS,
