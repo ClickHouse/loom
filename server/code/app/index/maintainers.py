@@ -31,10 +31,10 @@ gives no grant on the operator's namespaces.
   only a mirror, and none from a standard one while the subject holds an admin
   grant given on one. On a restricted branch added from the page it takes only
   copies: one whose source is not an operator entry (``_foreign``) without the
-  guard, unless the subject keeps an operator admin grant, which the next sync
-  copies over it; an operator copy only on an operator revoke, under the guard.
-  The next sync takes a copy the guard keeps once it no longer traces to an
-  operator grant.
+  guard, unless the subject keeps an admin grant given on an operator entry other
+  than the revoked one, which the next sync copies over it; an operator copy
+  only on an operator revoke, under the guard. The next sync takes a copy the
+  guard keeps once it no longer traces to an operator grant.
 
 Readers stay per branch: the approval fan-out already turns a person's branch requests
 into one decision. Restricted branches also need the token to name them — a person's
@@ -840,5 +840,5 @@ async def sync_quietly(org: str, namespace: str, *, ch: Any | None = None) -> No
     """The fan-out never fails the op or pass that runs it."""
     try:
         await sync_repo_maintainers(org, namespace, ch=ch)
-    except Exception:  # a sync never fails the op or pass that runs it
+    except Exception:  # logged with its traceback, never raised
         log.warning("repo maintainers: sync failed for %s/%s", org, namespace, exc_info=True)
