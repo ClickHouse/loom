@@ -35,6 +35,7 @@ from server.core.errors import (
     OverloadedError,
     RateLimitedError,
     ValidationError,
+    classified,
     error_kind,
 )
 from server.identity.domain.read_scope import request_read_narrowed
@@ -382,8 +383,9 @@ def _charge(answer: Answer) -> None:
 
 
 def error_event(e: LoomServerError) -> bytes:
-    """A refusal once the stream has begun, as the error event OpenAI's streams send."""
-    return f"data: {json.dumps({'error': e.to_detail()})}\n\n".encode()
+    """A refusal once the stream has begun, as the error event OpenAI's streams send,
+    with the `category` and `retryable` every coded error body carries."""
+    return f"data: {json.dumps({'error': classified(e.to_detail(), e.status_code)})}\n\n".encode()
 
 
 async def ask(auth: AuthInfo, org: str, namespace: str, messages: Any) -> Answer:

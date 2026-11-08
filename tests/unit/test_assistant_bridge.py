@@ -337,6 +337,9 @@ def test_a_refusal_mid_stream_is_an_error_event() -> None:
     event = bridge.error_event(RateLimitedError("spent", retry_after_s=60))
     assert event.startswith(b"data: ") and event.endswith(b"\n\n")
     assert json.loads(event[6:])["error"]["code"] == "RATE_LIMITED"
+    # Classed as the HTTP refusal of it is: whose move it is, and whether asking again helps.
+    upstream = json.loads(bridge.error_event(AssistantUpstreamError("LibreChat failed"))[6:])
+    assert upstream["error"]["category"] == "dependency" and upstream["error"]["retryable"] is True
 
 
 @pytest.fixture
