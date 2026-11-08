@@ -105,13 +105,6 @@ def _indexed(org: str, repo: str, git_remote: str, branch: str) -> bool:
     )
 
 
-def _in_use_error(repo: str, branch: str, namespace: str) -> ValidationError:
-    return ValidationError(
-        f"{repo} @ {branch} is {namespace}, already in use here (join it if it is indexed)",
-        code="REPO_EXISTS",
-    )
-
-
 async def _register(
     *,
     org: str,
@@ -139,7 +132,10 @@ async def _register(
     # Checked again under the account claim sign-up and register hold: the probe took time.
     async with account_change(org, namespace):
         if await _namespace_taken(org, namespace):
-            raise _in_use_error(repo, branch, namespace)
+            raise ValidationError(
+                f"{repo} @ {branch} is {namespace}, already in use here (join it if it is indexed)",
+                code="REPO_EXISTS",
+            )
         # Rows a removed namespace of this name left (N-1 clears none; the purge is
         # detached), emptied only once the name is this caller's.
         await _empty_tracker_links(org, namespace, detail="stale row of a removed namespace")
@@ -341,7 +337,10 @@ async def _add_extra_branches(
                 exclude_generated=bool(input.exclude_generated),
                 scip_producer=str(input.scip_producer or ""),
             )
-        except (ValidationError, GrantBusyError, NotClaimed) as e:  # before any write
+        except ValidationError as e:  # taken meanwhile, before any write: its own sentence
+            skipped.append({"branch": branch, "reason": e.message})
+            continue
+        except (GrantBusyError, NotClaimed) as e:  # busy or unreadable, before any write
             skipped.append({"branch": branch, "reason": caller_text(e)})
             continue
         except LoomServerError as e:  # failed or cut short under its claim

@@ -354,7 +354,7 @@ async def test_add_registers_every_chosen_branch_and_skips_per_branch(monkeypatc
         == {
             "26.6": "the namespace code-clickhouse-26-6 is taken",
             "26.5": "GRANT_BUSY: another change to the account is running; retry shortly",  # busy: a skip
-            "26.4": "VALIDATION_FAILED: code-clickhouse-26-4 is already in use",  # taken during the probe
+            "26.4": "code-clickhouse-26-4 is already in use",  # taken during the probe
             # its claim's bound: it may be written, so it is not called a clean skip
             "26.3": (
                 "code-clickhouse-26-3: BACKEND_TIMEOUT: a statement ran past its bound; it may be "
