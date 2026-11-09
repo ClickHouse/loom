@@ -200,7 +200,6 @@ export function Assistant() {
           against this namespace's model budget. The conversation stays in this tab until it reloads: Loom stores none
           of it.
         </p>
-        {/* A new namespace or token scope starts a new conversation. */}
         <AssistantChat key={chatKey} conversationKey={chatKey} namespace={namespace} blocked={chatGate} />
       </Panel>
 

@@ -3,6 +3,7 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { type ChatMessage, type Citation, streamAssistantChat } from "../../api/assistantChat";
 import { Alert, Unavailable } from "../../components/ui";
+import { fieldError } from "../../components/ui/fieldError";
 import { ApiError } from "../../lib/errors";
 import { humanizeError } from "../../lib/format";
 import { AnswerText } from "./AnswerText";
@@ -196,15 +197,14 @@ export function AssistantChat({
       </div>
     );
 
+  // The same trimmed question `ask` sends; past the route's length it says so on the field.
+  const tooLong =
+    draft.trim().length > MAX_MESSAGE_CHARS
+      ? `A question is at most ${MAX_MESSAGE_CHARS.toLocaleString("en-US")} characters.`
+      : null;
   const sendBlocked =
-    blocked ??
-    (answering
-      ? "An answer is still coming in."
-      : !draft.trim()
-        ? "Type a question."
-        : draft.length > MAX_MESSAGE_CHARS
-          ? `A question is at most ${MAX_MESSAGE_CHARS.toLocaleString("en-US")} characters.`
-          : null);
+    blocked ?? (answering ? "An answer is still coming in." : !draft.trim() ? "Type a question." : tooLong);
+  const error = fieldError("assistant-question-error", tooLong);
   return (
     <div className="space-y-4">
       {turns.length > 0 && (
@@ -248,7 +248,8 @@ export function AssistantChat({
           value={draft}
           onChange={(v) => setDraft(v)}
           onKeyDown={onKeyDown}
-          aria-describedby="assistant-question-hint"
+          {...error}
+          aria-describedby={["assistant-question-hint", error["aria-describedby"]].filter(Boolean).join(" ")}
         />
         <p id="assistant-question-hint" className="text-xs text-text-muted">
           Enter asks, Shift+Enter adds a line. Each answer's citations are checked against Loom as you when it ends.

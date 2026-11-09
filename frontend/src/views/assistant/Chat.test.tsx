@@ -272,7 +272,26 @@ describe("AssistantChat", () => {
     await user.paste("x".repeat(MAX_MESSAGE_CHARS + 1));
     await user.keyboard("{Enter}");
     expect(calls).toHaveLength(0);
-    expect(screen.getByText(/A question is at most 20,000 characters/)).toBeInTheDocument();
+    // Said on the field itself, not only in the Ask button's tooltip.
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(field).toHaveAccessibleDescription(expect.stringContaining("A question is at most 20,000 characters."));
+  });
+
+  it("counts a question's length as it is sent, trimmed", async () => {
+    answers.push(() => {
+      const s = sse();
+      queueMicrotask(() => s.done());
+      return s;
+    });
+    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    const user = userEvent.setup();
+    const field = screen.getByLabelText("Question");
+    await user.click(field);
+    await user.paste(`${"x".repeat(MAX_MESSAGE_CHARS)}   `);
+    expect(field).not.toHaveAttribute("aria-invalid");
+    await user.click(screen.getByRole("button", { name: "Ask" }));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].body.messages.at(-1)?.content).toHaveLength(MAX_MESSAGE_CHARS);
   });
 
   it("sends the newest messages the route accepts, each cut to its length", () => {
