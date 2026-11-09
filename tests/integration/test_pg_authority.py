@@ -168,7 +168,7 @@ async def test_a_revisions_metadata_is_kept_from_its_row_and_outlives_it(
     assert (await call("memory.set", _set(ns, "k", "a fact", user_id="u"))).status_code == 200
     await _published(pg_conn, org)
     meta = (
-        "SELECT agent, session_id, memory_key, memory_type, status, source_trace, tombstoned, "
+        "SELECT agent, session_id, memory_key, memory_type, status, source_trace, "
         "redacted_at, redaction_reason FROM loom.memory_revisions "
         "WHERE org = $1 AND namespace = $2 AND seq = $3"
     )
@@ -180,7 +180,6 @@ async def test_a_revisions_metadata_is_kept_from_its_row_and_outlives_it(
         "memory_type": "semantic",
         "status": "active",
         "source_trace": written["source_trace"],
-        "tombstoned": False,
         "redacted_at": None,
         "redaction_reason": "",
     }
@@ -197,14 +196,14 @@ async def test_a_revisions_metadata_is_kept_from_its_row_and_outlives_it(
             "version, content_sha256, actor, source_class, row, audit) "
             "SELECT org, namespace, $3, user_id, memory_id, version + 1, content_sha256, actor, "
             "source_class, row || jsonb_build_object('version', version + 1, 'memory_key', "
-            "'k2', 'tombstoned_at', '2026-01-01T00:00:00') - 'status', audit "
+            "'k2') - 'status', audit "
             "FROM loom.memory_revisions WHERE org = $1 AND namespace = $2 AND seq = 1",
             org,
             ns,
             seq,
         )
     older = dict(await pg_conn.fetchrow(meta, org, ns, seq))
-    assert (older["memory_key"], older["status"], older["tombstoned"]) == ("k2", "active", True)
+    assert (older["memory_key"], older["status"]) == ("k2", "active")
     await pg_conn.execute(
         "UPDATE loom.memory_revisions SET row = row || jsonb_build_object('redacted_at', "
         "'2026-02-01T00:00:00', 'redaction_reason', 'a secret') "
@@ -638,7 +637,7 @@ async def test_a_redact_reaches_a_revision_by_its_metadata(
         await pg_conn.execute(
             "UPDATE loom.memory_revisions SET agent = NULL, session_id = NULL, "
             "memory_key = NULL, memory_type = NULL, status = NULL, source_trace = NULL, "
-            f"tombstoned = NULL, redacted_at = NULL, redaction_reason = NULL {at}",
+            f"redacted_at = NULL, redaction_reason = NULL {at}",
             org,
             ns,
             first["version"],
