@@ -100,7 +100,6 @@ _TARGET_KW: dict[str, Any] = {
     "session_id": "-",
     "memory_key": "user_timezone",
     "version": 1,
-    "tombstoned_at": None,
     "content_sha256": "b" * 64,
 }
 

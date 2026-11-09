@@ -28,9 +28,10 @@ from server.core.pg_profile import durability_verdict
 from server.core.schema import pg_migrate
 from server.erasure.store.steps_pg import PG_CENSUS, PG_NO_MEMORY_CONTENT
 from server.memory.app import pg_admission
+from server.memory.domain.redaction_lineage import REDACTED_VALUE
 from server.memory.store import pg_memory
 from server.memory.store.pg_publish import ClaimExpired
-from server.memory.store.rows import MemoryRow, identity_key
+from server.memory.store.rows import MemoryRow, _hydrate, identity_key
 
 
 @pytest.mark.parametrize(
@@ -853,6 +854,89 @@ async def test_a_gap_with_erased_seqs_is_read_without_them(monkeypatch: pytest.M
     monkeypatch.setattr(pg_memory, "revisions_since", _since)
     captured = {("o", "*"): 0, ("o", "n"): 10}
     assert await pg_admission._gap(captured, {("o", "n"): 14}, "o", "n") == (14, [{"seq": 12}])
+
+
+@pytest.mark.asyncio
+async def test_a_gap_with_a_cleared_payload_is_not_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A revision whose payload was cleared after its delivery cannot be judged from the
+    journal: the gap is not read, and the write reaches its verdict on peers read anew."""
+
+    async def _fetch(sql: str, *args: Any) -> list[dict[str, Any]]:
+        return [{"seq": 11, "row": {"memory_key": "k"}}, {"seq": 12, "row": None}]
+
+    monkeypatch.setattr(pg, "fetch", _fetch)
+    assert await pg_memory.revisions_since("o", "n", 10, 12) is None
+    captured = {("o", "*"): 0, ("o", "n"): 10}
+    assert await pg_admission._gap(captured, {("o", "n"): 12}, "o", "n") is None
+
+
+@pytest.mark.asyncio
+async def test_a_version_whose_payload_was_cleared_serves_clickhouses_row_as_redacted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once a revision's payload is cleared, its old version is ClickHouse's row checked
+    against the journal's columns: served scrubbed when the journal says it is redacted
+    (ClickHouse's scrub may not have run), not served under another key, and not served
+    when the journal holds no such revision (erased)."""
+    ident = {"org": "o", "namespace": "n", "user_id": "u", "session_id": "-"}
+    row = {
+        **ident,
+        "agent": "a",
+        "memory_key": "k",
+        "memory_type": "semantic",
+        "value": '"the vault code is 1234"',
+        "confidence": 1.0,
+        "pinned": False,
+        "created_at": datetime(2026, 1, 1),
+    }
+    mid_a, mid_b, mid_c = (str(uuid.uuid4()) for _ in range(3))
+    read = [
+        _hydrate({**row, "memory_id": mid_a, "version": 1}),
+        _hydrate({**row, "memory_id": mid_b, "version": 2}),
+        _hydrate({**row, "memory_id": mid_c, "version": 3}),
+    ]
+    journal = {"agent": "a", "user_id": "u", "session_id": "-", "memory_key": "k", "row": None}
+
+    async def _fetch(sql: str, *args: Any) -> list[dict[str, Any]]:
+        return [
+            {
+                **journal,
+                "memory_id": mid_a,
+                "version": 1,
+                "redacted_at": None,
+                "redaction_reason": "",
+            },
+            {
+                **journal,
+                "memory_id": mid_b,
+                "version": 2,
+                "redacted_at": "2026-02-01T00:00:00",
+                "redaction_reason": "a secret",
+            },
+        ]
+
+    monkeypatch.setattr(pg, "fetch", _fetch)
+    held = await pg_memory.revisions_at("o", "n", read)
+    assert set(held) == {(mid_a, 1), (mid_b, 2)}
+    assert held[(mid_a, 1)].value == "the vault code is 1234"
+    redacted = held[(mid_b, 2)]
+    assert redacted.value_text == REDACTED_VALUE and redacted.entities == []
+    assert (redacted.redacted_at, redacted.redaction_reason) == (datetime(2026, 2, 1), "a secret")
+
+    async def _other_key(sql: str, *args: Any) -> list[dict[str, Any]]:
+        return [
+            {
+                **journal,
+                "memory_id": mid_a,
+                "version": 1,
+                "memory_key": "other",
+                "redacted_at": None,
+                "redaction_reason": "",
+            }
+        ]
+
+    monkeypatch.setattr(pg, "fetch", _other_key)
+    assert await pg_memory.revisions_at("o", "n", read) == {}
 
 
 @pytest.mark.asyncio
@@ -2832,6 +2916,26 @@ async def test_a_commits_gap_with_erased_seqs_is_checked_on_the_rows_left() -> N
 
 
 @pytest.mark.asyncio
+async def test_a_commits_gap_with_a_cleared_payload_is_not_cleared_from_the_journal() -> None:
+    """A revision of the gap whose payload was cleared after its delivery cannot be judged
+    from the journal: the commit does not clear the gap, and the write reaches its
+    verdict again on peers read anew, rather than decoding a missing row."""
+    seen: list[list[dict[str, Any]]] = []
+
+    class _Conn:
+        async def fetch(self, sql: str, *args: Any) -> list[dict[str, Any]]:
+            return [{"row": {"memory_id": "m12"}}, {"row": None}]
+
+    def _check(rows: list[dict[str, Any]]) -> bool:
+        seen.append(rows)
+        return True
+
+    admission = pg_memory.Admission(generations={("o", "n"): 10}, gap_check=_check)
+    assert await pg_memory._gap_cleared(_Conn(), admission, {("o", "n"): 13}) is False
+    assert seen == []
+
+
+@pytest.mark.asyncio
 async def test_a_redaction_finds_a_version_clickhouse_does_not_hold_yet(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2858,7 +2962,7 @@ async def test_a_redaction_finds_a_version_clickhouse_does_not_hold_yet(
 
     async def _fetchrow(sql: str, *args: Any) -> dict[str, Any]:
         asked.append(args)
-        return {"row": pg_memory.encode_row(head)}
+        return {**head, "content_sha256": ""}
 
     monkeypatch.setattr(pg, "fetchrow", _fetchrow)
     target = await history.find_history_target("o", mid, 7, ch=object())

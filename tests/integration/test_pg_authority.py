@@ -217,6 +217,84 @@ async def test_a_bulk_write_of_bytes_another_key_holds_is_judged_on_the_authorit
 
 
 @pytest.mark.usefixtures("pg_authority")
+async def test_a_revisions_metadata_is_kept_from_its_row_and_outlives_it(
+    call: Any, pg_conn: Any, org: str
+) -> None:
+    """The journal's typed columns follow `row` whoever writes it: a commit, a revision
+    inserted without them (as an older build writes one), a scrub; a cleared `row`
+    leaves them as they were, and a revision without them (written before the columns)
+    takes them from the payload it loses."""
+    ns = f"pg-{uuid.uuid4().hex[:8]}"
+    assert (await call("memory.set", _set(ns, "k", "a fact", user_id="u"))).status_code == 200
+    await _published(pg_conn, org)
+    meta = (
+        "SELECT agent, session_id, memory_key, status, redacted_at, redaction_reason "
+        "FROM loom.memory_revisions "
+        "WHERE org = $1 AND namespace = $2 AND seq = $3"
+    )
+    written = dict(await pg_conn.fetchrow(meta, org, ns, 1))
+    assert written == {
+        "agent": "a",
+        "session_id": "-",
+        "memory_key": "k",
+        "status": "active",
+        "redacted_at": None,
+        "redaction_reason": "",
+    }
+    async with pg_conn.transaction():
+        seq = await pg_conn.fetchval(
+            "UPDATE loom.scope_generations SET generation = generation + 1 "
+            "WHERE org = $1 AND scope = $2 RETURNING generation",
+            org,
+            ns,
+        )
+        # The columns an older build's commit names.
+        await pg_conn.execute(
+            "INSERT INTO loom.memory_revisions (org, namespace, seq, user_id, memory_id, "
+            "version, content_sha256, actor, source_class, row, audit) "
+            "SELECT org, namespace, $3, user_id, memory_id, version + 1, content_sha256, actor, "
+            "source_class, row || jsonb_build_object('version', version + 1, 'memory_key', "
+            "'k2') - 'status', audit "
+            "FROM loom.memory_revisions WHERE org = $1 AND namespace = $2 AND seq = 1",
+            org,
+            ns,
+            seq,
+        )
+    older = dict(await pg_conn.fetchrow(meta, org, ns, seq))
+    assert (older["memory_key"], older["status"]) == ("k2", "active")
+    await pg_conn.execute(
+        "UPDATE loom.memory_revisions SET row = row || jsonb_build_object('redacted_at', "
+        "'2026-02-01T00:00:00', 'redaction_reason', 'a secret') "
+        "WHERE org = $1 AND namespace = $2 AND seq = 1",
+        org,
+        ns,
+    )
+    await pg_conn.execute(
+        "UPDATE loom.memory_revisions SET row = NULL WHERE org = $1 AND namespace = $2 AND seq = 1",
+        org,
+        ns,
+    )
+    cleared = dict(await pg_conn.fetchrow(meta, org, ns, 1))
+    assert cleared == {
+        **written,
+        "redacted_at": "2026-02-01T00:00:00",
+        "redaction_reason": "a secret",
+    }
+    # A revision written before the columns existed (NULL there; an UPDATE that sets no
+    # `row` leaves the trigger out) takes them from the payload it loses.
+    at = "WHERE org = $1 AND namespace = $2 AND seq = $3"
+    await pg_conn.execute(
+        "UPDATE loom.memory_revisions SET agent = NULL, session_id = NULL, memory_key = NULL, "
+        f"status = NULL, redacted_at = NULL, redaction_reason = NULL {at}",
+        org,
+        ns,
+        seq,
+    )
+    await pg_conn.execute(f"UPDATE loom.memory_revisions SET row = NULL {at}", org, ns, seq)
+    assert dict(await pg_conn.fetchrow(meta, org, ns, seq)) == older
+
+
+@pytest.mark.usefixtures("pg_authority")
 async def test_writes_made_together_share_their_clickhouse_inserts(
     call: Any, pg_conn: Any, org: str, ch_client: Any
 ) -> None:
@@ -609,6 +687,49 @@ async def test_a_nul_character_is_refused_before_anything_commits(
         )
         == 0
     )
+
+
+@pytest.mark.usefixtures("pg_authority")
+@pytest.mark.parametrize("journal", ["written_before_the_columns", "payload_cleared"])
+async def test_a_redact_reaches_a_revision_by_its_metadata(
+    call: Any, pg_conn: Any, org: str, journal: str
+) -> None:
+    """A redaction finds its version in the journal whatever the revision holds: one
+    written before the typed columns existed (NULL there) through its payload, and one
+    whose payload is cleared through its columns, which it then marks."""
+    ns = f"pg-{uuid.uuid4().hex[:8]}"
+    first = (await call("memory.set", _set(ns, "k", "the token is hunter2"))).json()
+    assert (await call("memory.set", _set(ns, "k", "the token was rotated"))).status_code == 200
+    await _published(pg_conn, org)
+    at = "WHERE org = $1 AND namespace = $2 AND version = $3"
+    if journal == "written_before_the_columns":
+        # An UPDATE that does not set `row` leaves the trigger out, as before the file.
+        await pg_conn.execute(
+            "UPDATE loom.memory_revisions SET agent = NULL, session_id = NULL, "
+            "memory_key = NULL, status = NULL, "
+            f"redacted_at = NULL, redaction_reason = NULL {at}",
+            org,
+            ns,
+            first["version"],
+        )
+    else:
+        await pg_conn.execute(
+            f"UPDATE loom.memory_revisions SET row = NULL {at}", org, ns, first["version"]
+        )
+    r = await call(
+        "memory.redact",
+        {"memory_id": first["memory_id"], "version": first["version"], "reason": "leak"},
+    )
+    assert r.status_code == 200 and r.json()["redacted"] is True, r.text
+    marked = await pg_conn.fetchrow(
+        "SELECT redacted_at IS NOT NULL AS redacted, redaction_reason, "
+        f"coalesce(row->>'value', '') AS value FROM loom.memory_revisions {at}",
+        org,
+        ns,
+        first["version"],
+    )
+    assert marked["redacted"] and marked["redaction_reason"].startswith("leak")
+    assert "hunter2" not in marked["value"]
 
 
 async def test_a_redact_scrubs_the_postgres_journal_and_the_clickhouse_history(

@@ -146,14 +146,16 @@ async def _gap(
     captured: dict[tuple[str, str], int], moved: dict[tuple[str, str], int], org: str, ns: str
 ) -> tuple[int, list[dict[str, Any]]] | None:
     """(the generation the gap ends at, every row it committed), or None when a
-    policy scope moved or the gap is too long to read. A seq missing from it was
-    erased, or was an erasure's own advance: nothing of it is left to be a peer."""
+    policy scope moved, the gap is too long to read or a payload of it was cleared. A
+    seq missing from it was erased, or was an erasure's own advance: nothing of it is
+    left to be a peer."""
     if set(moved) - {(org, ns)}:
         return None
     through, after = moved[(org, ns)], captured[(org, ns)]
     if through - after > settings.pg_admission_gap_rows:
         return None
-    return through, await pg_memory.revisions_since(org, ns, after, through)
+    rows = await pg_memory.revisions_since(org, ns, after, through)
+    return None if rows is None else (through, rows)
 
 
 async def _measure(

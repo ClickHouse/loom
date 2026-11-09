@@ -409,7 +409,7 @@ async def _committed_hit(conn: Any, row: Any) -> CacheHit:
     refs = list(row["revisions"] or [])
     revs = await conn.fetch(
         "SELECT r.namespace, r.seq, r.memory_id::text AS memory_id, r.version, "
-        "r.content_sha256, r.row->>'memory_key' AS memory_key "
+        "r.content_sha256, coalesce(r.memory_key, r.row->>'memory_key') AS memory_key "
         "FROM loom.memory_revisions r "
         "JOIN unnest($1::text[], $2::text[], $3::bigint[]) AS k(org, namespace, seq) "
         "USING (org, namespace, seq) ORDER BY r.seq",

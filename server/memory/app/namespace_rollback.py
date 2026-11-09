@@ -278,9 +278,7 @@ async def _reinstated(
     if pg.enabled():
         # As the authority holds them: a redaction scrubs Postgres before ClickHouse's
         # copies, and an erasure removes them.
-        held = await pg_memory.revisions_at(
-            org, namespace, [(str(h.memory_id), h.version) for h in historical]
-        )
+        held = await pg_memory.revisions_at(org, namespace, historical)
         historical = [
             held[k]
             for h in historical
