@@ -2087,8 +2087,8 @@
            "choices": null,
            "nargs": null,
            "type": null,
-           "required": false,
-           "help": "default: LOOM_CODE_NAMESPACE",
+           "required": true,
+           "help": "the entry's code namespace",
            "metavar": null
           }
          ]

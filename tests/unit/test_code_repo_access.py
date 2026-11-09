@@ -857,10 +857,8 @@ def test_the_default_code_namespace_never_lands_on_a_member_branch(monkeypatch) 
 
 
 def test_a_handler_never_defaults_to_a_namespace_the_gate_did_not_check(monkeypatch) -> None:
-    import argparse
     import contextvars
 
-    from server.cli import code
     from server.code.app.common import resolve_code_identity
     from server.operations.registry import OPERATIONS_BY_NAME
     from server.transport import gates
@@ -883,8 +881,6 @@ def test_a_handler_never_defaults_to_a_namespace_the_gate_did_not_check(monkeypa
         assert resolve_code_identity("", "") == (ORG, "code-weave")
 
     contextvars.copy_context().run(request)
-    with pytest.raises(SystemExit, match="needs --namespace"):
-        code._print_scip_lock_path(argparse.Namespace(org="", namespace=""))
     monkeypatch.setattr(repos, "_page_namespaces", frozenset({(ORG, "code-weave")}))
     with pytest.raises(ValidationError) as e:
         repos.default_code_namespace(ORG)

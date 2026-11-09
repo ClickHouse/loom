@@ -31,8 +31,11 @@ def _identity(args: argparse.Namespace) -> tuple[str, str]:
         ns = args.namespace or default_code_namespace(org)
     except RegistryUnread:
         raise SystemExit("the self-service repository registry could not be read; retry") from None
-    except ValidationError as e:
-        raise SystemExit(f"{e.message}; or pass --namespace") from None
+    except ValidationError:
+        raise SystemExit(
+            f"the default code namespace {org}/{settings.code_namespace} was added from the "
+            "Repositories page: pass --namespace"
+        ) from None
     if not org or not ns:
         missing = " and ".join(
             f

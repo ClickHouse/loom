@@ -67,8 +67,8 @@
   "options: -h, --help show this help message and exit --checkout CHECKOUT default: LOOM_CODE_SCIP_CHECKOUT_DIR --jobs JOBS scip-clang -j (0 = nproc/2) --keep-delta KEEP_DELTA copy the harness's delta.json here after indexing (so an interrupted apply can be re-run with --apply-delta instead of paying the ~50 min index again) --apply-delta APPLY_DELTA skip checkout + scip-clang and apply this delta.json (from --keep-delta); scip_commit is set to the delta's commit --org ORG default: LOOM_CODE_ORG --namespace NAMESPACE default: LOOM_CODE_NAMESPACE"
  ],
  "loom code scip-lock-path": [
-  "usage: loom code scip-lock-path [-h] [--org ORG] [--namespace NAMESPACE]",
-  "options: -h, --help show this help message and exit --org ORG default: LOOM_CODE_ORG --namespace NAMESPACE default: LOOM_CODE_NAMESPACE"
+  "usage: loom code scip-lock-path [-h] [--org ORG] --namespace NAMESPACE",
+  "options: -h, --help show this help message and exit --org ORG default: LOOM_CODE_ORG --namespace NAMESPACE the entry's code namespace"
  ],
  "loom code entry-lock": [
   "usage: loom code entry-lock [-h] [--org ORG] [--namespace NAMESPACE] [--tier {clang,typescript,go,python}] ...",

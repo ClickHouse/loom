@@ -114,9 +114,11 @@ def test_a_registry_read_between_gate_and_handler_never_defaults_the_namespace(
     from server.code.app.common import resolve_code_identity
     from server.code.domain.index import repos
 
+    reached: list[str] = []
     defaulted: list[tuple[str, str]] = []
 
     async def _defaults(inp: Any) -> Any:
+        reached.append("handler")
         monkeypatch.setattr(repos, "_registry_loaded", True)  # the read lands meanwhile
         defaulted.append(resolve_code_identity(inp.org, inp.namespace))
         return None
@@ -133,4 +135,4 @@ def test_a_registry_read_between_gate_and_handler_never_defaults_the_namespace(
     # A JSON-RPC error, as for any unavailable backend.
     assert "the self-service repository registry is not read yet" in out["error"]["message"]
     assert r.json()["detail"]["code"] == "BACKEND_UNAVAILABLE"
-    assert defaulted == []
+    assert reached == ["handler", "handler"] and defaulted == []
