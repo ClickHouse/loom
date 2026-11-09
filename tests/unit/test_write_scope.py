@@ -273,15 +273,9 @@ def test_same_key_supersession_reads_only_the_writers_rows() -> None:
 
 
 def test_value_update_peers_are_the_writers_rows() -> None:
-    from server.memory.app.value_updates import _peers, _peers_many
+    from server.memory.app.value_updates import _peers
 
     ch = _SqlCH()
-    _run_as(
-        _pinned("U"),
-        lambda: _peers_many(
-            ch, org="o", namespace="n", items=[("semantic", "k", [0.1])], min_cosine=0.5
-        ),
-    )
     _run_as(
         _pinned("U"),
         lambda: _peers(
@@ -294,8 +288,9 @@ def test_value_update_peers_are_the_writers_rows() -> None:
             min_cosine=0.5,
         ),
     )
-    assert len(ch.sql) == 2
-    assert all("m.user_id = {scope_uid:String}" in s for s, _ in ch.sql)
+    # Stage A, codes-first and scoped: no candidate, so no stage B.
+    assert len(ch.sql) == 1 and "JOIN" not in ch.sql[0][0]
+    assert _scoped_to_u(ch)
 
 
 def test_recall_echo_keys_are_the_callers_keys(monkeypatch) -> None:
@@ -670,38 +665,6 @@ def test_a_namespace_wide_writer_runs_no_separate_pinned_statement(monkeypatch) 
     assert out.verdict == "rejected" and out.pinned_blocker_id == "v1"
 
 
-def test_batched_conflict_candidates_are_the_writers_rows() -> None:
-    from server.memory.app.conflicts import candidate_rows_many
-
-    ch = _SqlCH()
-    _run_as(
-        _pinned("U"),
-        lambda: candidate_rows_many(
-            org="o", namespace="n", items=[("semantic", "k", [0.1], 0.3)], ch=ch
-        ),
-    )
-    candidates, pinned = ch.sql
-    assert (
-        "m.user_id = {scope_uid:String}" in candidates[0] and "m.pinned = 1 OR" not in candidates[0]
-    )
-    # Other users' pinned rows come from their own unscoped statement.
-    assert "scope_uid" not in pinned[0] and "m.pinned = 1" in pinned[0]
-    assert "LIMIT 10 BY qidx" in pinned[0]
-
-
-def test_a_namespace_wide_bulk_writer_runs_no_pinned_statement() -> None:
-    from server.memory.app.conflicts import candidate_rows_many
-
-    ch = _SqlCH()
-    _run_as(
-        None,
-        lambda: candidate_rows_many(
-            org="o", namespace="n", items=[("semantic", "k", [0.1], 0.3)], ch=ch
-        ),
-    )
-    assert len(ch.sql) == 1 and "LIMIT 10 BY qidx" in ch.sql[0][0]
-
-
 def _own_row(i: int) -> dict[str, Any]:
     return {
         **_V_PINNED_ROW,
@@ -754,7 +717,7 @@ class _CloserOwnRowsOfBothTypes(_NamespaceCH):
         _PinnedRowWithAnotherTypesVector,
     ],
 )
-def test_bulk_and_single_both_reject_a_write_close_to_a_foreign_pinned_row(
+def test_a_write_close_to_a_foreign_pinned_row_is_rejected(
     monkeypatch, namespace_rows: type[_NamespaceCH]
 ) -> None:
     from server.memory.app import conflicts
@@ -762,7 +725,7 @@ def test_bulk_and_single_both_reject_a_write_close_to_a_foreign_pinned_row(
     ch = namespace_rows()
     monkeypatch.setattr(conflicts, "get_client", lambda: ch)
 
-    def check(candidate_rows: Any) -> Any:
+    def check() -> Any:
         return conflicts.check_on_commit(
             org="o",
             namespace="n",
@@ -771,23 +734,15 @@ def test_bulk_and_single_both_reject_a_write_close_to_a_foreign_pinned_row(
             memory_key="k",
             new_value="U lives in Lisbon",
             new_embedding=[0.1, 0.2],
-            candidate_rows=candidate_rows,
             resolved_threshold=0.85,
             resolved_duplicate_threshold=0.9,
             resolved_policy="auto_reinforce",
             allowlisted_keys=set(),
         )
 
-    async def bulk() -> Any:
-        rows = await conflicts.candidate_rows_many(
-            org="o", namespace="n", items=[("semantic", "k", [0.1, 0.2], 0.3)], ch=ch
-        )
-        return await check(rows[0])
-
-    single = _run_as(_pinned("U"), lambda: check(None))
-    batched = _run_as(_pinned("U"), bulk)
-    assert single.verdict == batched.verdict == "rejected"
-    assert single.pinned_blocker_id == batched.pinned_blocker_id == "v1"
+    single = _run_as(_pinned("U"), check)
+    assert single.verdict == "rejected"
+    assert single.pinned_blocker_id == "v1"
 
 
 class _OwnPinnedRowBeyondTen(_NamespaceCH):
@@ -815,21 +770,8 @@ def test_a_narrowed_writers_own_rows_get_the_namespace_wide_verdict(monkeypatch)
     )
     assert out.verdict == "rejected" and out.pinned_blocker_id == "v1"
 
-    async def bulk() -> Any:
-        from server.memory.app import conflicts
 
-        rows = await conflicts.candidate_rows_many(
-            org="o",
-            namespace="n",
-            items=[("semantic", "k", [0.1, 0.2], 0.3)],
-            ch=_OwnPinnedRowBeyondTen(),
-        )
-        return rows[0]
-
-    assert all(r["memory_id"] != "u-pinned" for r in _run_as(_pinned("U"), bulk))
-
-
-def test_a_bulk_fact_with_prefetched_rows_runs_no_pinned_statement(monkeypatch) -> None:
+def test_a_check_given_its_peer_rows_runs_no_pinned_statement(monkeypatch) -> None:
     from server.memory.app import conflicts
 
     ch = _PinnedV()
@@ -851,7 +793,7 @@ def test_a_bulk_fact_with_prefetched_rows_runs_no_pinned_statement(monkeypatch) 
         )
 
     out = _run_as(_pinned("U"), check)
-    assert ch.sql == [], "one pinned read per batch, never one per fact"
+    assert ch.sql == [], "the rows passed in carry their pinned arm"
     assert out.verdict == "rejected" and out.pinned_blocker_id == "v1"
     assert all(p.memory_id != "v1" for p in out.peers)
 

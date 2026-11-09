@@ -53,9 +53,6 @@ from server.memory.store.conflict_candidates import (
     PEER_LIMIT,
     PINNED_PEERS_SQL,
     _peer_candidates_sql,
-    candidate_sql_many,
-    pinned_sql_many,
-    vector_params,
 )
 from server.settings import settings
 
@@ -183,74 +180,6 @@ async def resolve_conflict_floor(org: str, namespace: str, memory_type: str) -> 
     return threshold, _peer_query_distance(threshold)
 
 
-async def candidate_rows_many(
-    *,
-    org: str,
-    namespace: str,
-    items: list[tuple[str, str, list[float], float]],
-    batch: int | None = None,
-    ch: Any = None,
-) -> dict[int, list[dict[str, Any]]]:
-    """Peer rows for many facts at once, keyed by the fact's index in `items`
-    (each `(memory_type, memory_key, embedding, max_distance)`). Facts are
-    grouped by embedding dimension, cut into chunks of `batch`
-    (`memory_write_candidate_batch`), and the chunks run concurrently — the
-    same concurrency as the per-fact path, at one namespace read per chunk
-    instead of per fact. A fact with no embedding gets no entry. Fail-open per
-    chunk: a failed chunk's facts fall back to the per-fact statement in the
-    caller by getting no entry here — callers treat a missing key as "fetch
-    yourself", not as "no peers"."""
-    import asyncio
-
-    ch = ch or get_client()
-    scope = _scope_or_none()
-    if scope is None:
-        return {}  # every fact falls back to the per-fact path, which fails closed
-    size = int(batch if batch is not None else settings.memory_write_candidate_batch)
-    size = max(size, 1)
-    by_dim: dict[int, list[int]] = {}
-    for i, (_mt, _k, emb, _md) in enumerate(items):
-        if emb:
-            by_dim.setdefault(len(emb), []).append(i)
-    out: dict[int, list[dict[str, Any]]] = {}
-
-    async def _chunk(dim: int, idxs: list[int]) -> None:
-        params: dict[str, Any] = {
-            "org": org,
-            "ns": namespace,
-            "dim": dim,
-            **vector_params([items[i][2] for i in idxs]),
-            "types": [items[i][0] for i in idxs],
-            "keys": [items[i][1] for i in idxs],
-            "max_dists": [float(items[i][3]) for i in idxs],
-        }
-        rows = await ch.query_all(
-            candidate_sql_many(len(idxs), scope_and(scope, params, "m")), params=params
-        )
-        if scope.narrowed:  # other users' pinned rows still block; the scope hides them
-            pinned = await ch.query_all(pinned_sql_many(len(idxs)), params=params)
-            rows += [r for r in pinned if _foreign_pinned(r, scope)]
-        for i in idxs:
-            out[i] = []
-        seen: set[tuple[int, str]] = set()
-        for r in rows:
-            q = int(r.get("qidx") or 0)
-            if 0 <= q < len(idxs) and (q, str(r.get("memory_id"))) not in seen:
-                seen.add((q, str(r.get("memory_id"))))
-                out[idxs[q]].append(dict(r))
-
-    jobs = [
-        _chunk(dim, idxs[k : k + size])
-        for dim, idxs in by_dim.items()
-        for k in range(0, len(idxs), size)
-    ]
-    results = await asyncio.gather(*jobs, return_exceptions=True)
-    for res in results:
-        if isinstance(res, Exception):
-            log.warning("batched conflict candidates failed (per-fact fallback): %s", res)
-    return out
-
-
 async def _policy_before_gate(
     resolved_policy: str | None, candidate_rows: Any, org: str, namespace: str
 ) -> str | None:
@@ -280,7 +209,11 @@ _PEER_MAX_K = 2048
 
 
 async def _peer_rows(
-    ch: Any, params: dict[str, Any], scope: ReadFilters = WHOLE_NAMESPACE
+    ch: Any,
+    params: dict[str, Any],
+    scope: ReadFilters = WHOLE_NAMESPACE,
+    *,
+    limit: int = PEER_LIMIT,
 ) -> list[dict[str, Any]]:
     """The gate's peers: this fact's cosine neighbours under the same type,
     excluding its own key (a re-write is LWW by version, not a conflict), at
@@ -314,13 +247,13 @@ async def _peer_rows(
             live = {_ident(r): r for r in rows}
         out = [{**live[_ident(c)], "dist": float(c["dist"])} for c in inside if _ident(c) in live]
         exhausted = len(cand) < k or len(inside) < len(cand)
-        if len(out) >= PEER_LIMIT or exhausted:
+        if len(out) >= limit or exhausted:
             break
         if k >= _PEER_MAX_K:
-            return await _peer_rows_joined(ch, params, scope_and(scope, params, "m"))
+            return await _peer_rows_joined(ch, params, scope_and(scope, params, "m"), limit)
         k *= 4
     out.sort(key=lambda r: (r["dist"], str(r.get("memory_key") or "")))
-    return out[:PEER_LIMIT]
+    return out[:limit]
 
 
 def _ident(r: dict[str, Any]) -> tuple[str, str, str, str]:
@@ -333,7 +266,7 @@ def _ident(r: dict[str, Any]) -> tuple[str, str, str, str]:
 
 
 async def _peer_rows_joined(
-    ch: Any, params: dict[str, Any], in_scope: str = ""
+    ch: Any, params: dict[str, Any], in_scope: str = "", limit: int = PEER_LIMIT
 ) -> list[dict[str, Any]]:
     """The single-statement join: the widening's last resort, once stage A
     has read `_PEER_MAX_K` candidates without enough live peers. Filtered to
@@ -343,7 +276,7 @@ async def _peer_rows_joined(
         """
         SELECT
             m.memory_id, m.memory_key, m.value, m.pinned,
-            m.agent, m.user_id, m.session_id, m.run_id, m.valid_at,
+            m.agent, m.user_id, m.session_id, m.run_id, m.valid_at, m.created_at,
             """
         + "cosineDistance(e.embedding, {emb:Array(Float32)})"
         + """ AS dist
@@ -366,7 +299,7 @@ async def _peer_rows_joined(
         + f"""
         HAVING dist <= {{max_dist:Float32}}
         ORDER BY dist ASC
-        LIMIT {PEER_LIMIT}
+        LIMIT {int(limit)}
         """,
         params=params,
     )
@@ -508,10 +441,10 @@ async def check_on_commit(
         `new_valid_at`: the new row's validity date when the writer supplied one; it decides
         which side of a templated substitution `newest_wins` retires.
 
-        `candidate_rows` / `resolved_threshold`: a bulk writer that already fetched this
-        fact's peers with `candidate_rows_many` and resolved the namespace threshold passes
-        them in; the statement and the two threshold lookups are then skipped and every step
-        below runs on the same rows the per-fact statement would have returned."""
+        `candidate_rows` / `resolved_threshold`: a writer that already fetched this fact's
+        peers (`peer_rows`) or resolved the namespace threshold passes them in; that
+        statement or those lookups are then skipped and every step below runs on the rows
+        the peer statement returns."""
     # Non-searchable types (episodic) carry no embedding → skip cleanly.
     if not new_embedding:
         return ConflictResult(verdict="clear", peers=[])

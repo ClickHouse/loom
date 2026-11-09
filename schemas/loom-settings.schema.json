@@ -5008,11 +5008,6 @@
           "type": "integer",
           "description": "Leases (max pass plus lease margin each) after a webhook.remove in which delivery passes still mark the removed memory webhook's events dead."
         },
-        "memory_write_candidate_batch": {
-          "default": 6,
-          "type": "integer",
-          "description": "Facts per batched candidate lookup (conflict and value-update peers) on the write path; matches the per-fact concurrency so wall time stays flat. 0 = one statement per fact."
-        },
         "mentor_max_hints_per_session": {
           "default": 6,
           "type": "integer",

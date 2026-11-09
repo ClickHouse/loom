@@ -36,7 +36,6 @@ from datetime import datetime
 from typing import Any
 
 from server.identity.app.request_scope import request_scope
-from server.identity.domain.read_scope import scope_and
 from server.memory.app.auto_resolution import (
     VALUE_UPDATE,
     RetirementTracker,
@@ -44,7 +43,6 @@ from server.memory.app.auto_resolution import (
     retired_entry,
 )
 from server.memory.domain.conflicts import values_differ
-from server.memory.store.conflict_candidates import vector_param, vector_params
 
 log = logging.getLogger(__name__)
 
@@ -169,73 +167,8 @@ def _supersession_update(
     return _update
 
 
-def _peers_sql_many(n: int, in_scope: str = "") -> str:
-    """Batched form of `_peers`: one namespace read for `n`
-    freshly written rows, one `cosineDistance` term per row (an `arrayMap`
-    over the vector column replicates it per row per fact), `LIMIT 8 BY qidx`
-    for the per-row `LIMIT 8`."""
-    terms = ", ".join(
-        f"({i}, 1 - cosineDistance(e.embedding, {vector_param(i)}))" for i in range(1, n + 1)
-    )
-    return f"""
-        SELECT hit.1 - 1 AS qidx,
-               toString(m.memory_id) AS memory_id, m.memory_key AS memory_key,
-               m.value AS value, m.valid_at AS valid_at, m.created_at AS created_at,
-               hit.2 AS cos
-        FROM loom.memory m FINAL
-        JOIN loom.memory_embeddings e FINAL
-          ON  e.org = m.org AND e.namespace = m.namespace
-          AND e.memory_key = m.memory_key
-          AND e.user_id = m.user_id AND e.session_id = m.session_id
-          AND e.agent = m.agent
-        ARRAY JOIN arrayFilter(
-            x -> x.2 >= {{min_cos:Float32}}
-                 AND {{types:Array(String)}}[x.1] = m.memory_type
-                 AND {{keys:Array(String)}}[x.1] != m.memory_key,
-            [{terms}]) AS hit
-        WHERE m.org = {{org:String}}
-          AND m.namespace = {{ns:String}}
-          AND m.tombstoned_at IS NULL
-          AND m.status IN ('active', 'conflicted')
-          AND e.tombstoned_at IS NULL
-          AND e.embedding_dim = {{dim:UInt16}}
-          AND length(e.embedding) = {{dim:UInt16}}{in_scope}
-        ORDER BY qidx ASC, cos DESC
-        LIMIT 8 BY qidx
-        """
-
-
-async def _peers_many(
-    ch: Any,
-    *,
-    org: str,
-    namespace: str,
-    items: list[tuple[str, str, list[float]]],
-    min_cosine: float,
-) -> dict[int, list[dict[str, Any]]]:
-    """Peers for many rows in one statement; keyed by index into `items`
-    (`(memory_type, memory_key, embedding)`); every item gets a key."""
-    if not items:
-        return {}
-    dim = len(items[0][2])
-    params: dict[str, Any] = {
-        "org": org,
-        "ns": namespace,
-        **vector_params([it[2] for it in items]),
-        "types": [it[0] for it in items],
-        "keys": [it[1] for it in items],
-        "dim": dim,
-        "min_cos": float(min_cosine),
-    }
-    # A write retires only rows inside the writer's read scope.
-    in_scope = scope_and(request_scope(), params, "m")
-    rows = await ch.query_all(_peers_sql_many(len(items), in_scope), params=params)
-    out: dict[int, list[dict[str, Any]]] = {i: [] for i in range(len(items))}
-    for r in rows:
-        q = int(r.get("qidx") or 0)
-        if 0 <= q < len(items):
-            out[q].append(dict(r))
-    return out
+# The most value-update peers weighed per row.
+_PEERS_PER_ROW = 8
 
 
 async def _peers(
@@ -248,6 +181,12 @@ async def _peers(
     embedding: list[float],
     min_cosine: float,
 ) -> list[dict[str, Any]]:
+    """The row's nearest live peers of its type at cosine `min_cosine` or more, inside
+    the writer's read scope, nearest first: the conflict check's two-stage read
+    (`conflicts._peer_rows`, codes-first), so a write never reads the namespace's
+    vectors at full width."""
+    from server.memory.app.conflicts import _peer_rows
+
     params: dict[str, Any] = {
         "org": org,
         "ns": namespace,
@@ -255,36 +194,20 @@ async def _peers(
         "self_key": memory_key,
         "emb": embedding,
         "dim": len(embedding),
-        "min_cos": float(min_cosine),
+        "max_dist": 1.0 - float(min_cosine),
     }
-    in_scope = scope_and(request_scope(), params, "m")
-    rows = await ch.query_all(
-        f"""
-        SELECT toString(m.memory_id) AS memory_id, m.memory_key AS memory_key,
-               m.value AS value, m.valid_at AS valid_at, m.created_at AS created_at,
-               1 - cosineDistance(e.embedding, {{emb:Array(Float32)}}) AS cos
-        FROM loom.memory m FINAL
-        JOIN loom.memory_embeddings e FINAL
-          ON  e.org = m.org AND e.namespace = m.namespace
-          AND e.memory_key = m.memory_key
-          AND e.user_id = m.user_id AND e.session_id = m.session_id
-          AND e.agent = m.agent
-        WHERE m.org = {{org:String}}
-          AND m.namespace = {{ns:String}}
-          AND m.memory_type = {{mt:String}}
-          AND m.memory_key != {{self_key:String}}
-          AND m.tombstoned_at IS NULL
-          AND m.status IN ('active', 'conflicted')
-          AND e.tombstoned_at IS NULL
-          AND e.embedding_dim = {{dim:UInt16}}
-          AND length(e.embedding) = {{dim:UInt16}}{in_scope}
-        HAVING cos >= {{min_cos:Float32}}
-        ORDER BY cos DESC
-        LIMIT 8
-        """,
-        params=params,
-    )
-    return [dict(r) for r in rows]
+    rows = await _peer_rows(ch, params, request_scope(), limit=_PEERS_PER_ROW)
+    return [
+        {
+            "memory_id": str(r["memory_id"]),
+            "memory_key": r["memory_key"],
+            "value": r["value"],
+            "valid_at": r["valid_at"],
+            "created_at": r["created_at"],
+            "cos": 1.0 - float(r["dist"]),
+        }
+        for r in rows
+    ]
 
 
 async def link_value_updates(
@@ -321,68 +244,26 @@ async def link_value_updates(
             return None
         return emb
 
-    # Peers for a batch of rows come from one statement
-    # (`_peers_many`); the per-row statement remains for batch = 0 and for a
-    # batch that failed. Rows are grouped by embedding dimension so one
-    # statement's `dim` holds for all of them.
-    from server.settings import settings as _s
-
-    batch = int(_s.memory_write_candidate_batch)
-    prefetched: dict[int, list[dict[str, Any]]] = {}
-    if batch > 0:
-        by_dim: dict[int, list[int]] = {}
-        for i, row in enumerate(rows):
-            emb = _eligible(row)
-            if emb:
-                by_dim.setdefault(len(emb), []).append(i)
-
-        async def _batch(idxs: list[int]) -> None:
-            items = [
-                (
-                    str(rows[i].get("memory_type") or "semantic"),
-                    str(rows[i].get("memory_key") or ""),
-                    _eligible(rows[i]) or [],
-                )
-                for i in idxs
-            ]
-            async with sem:
-                got = await _peers_many(
-                    ch, org=org, namespace=namespace, items=items, min_cosine=min_cosine
-                )
-            for j, i in enumerate(idxs):
-                prefetched[i] = got.get(j, [])
-
-        jobs = [
-            _batch(idxs[k : k + batch])
-            for idxs in by_dim.values()
-            for k in range(0, len(idxs), batch)
-        ]
-        for res in await asyncio.gather(*jobs, return_exceptions=True):
-            if isinstance(res, Exception):
-                log.warning("value_updates: batched peer lookup failed (per-row): %s", res)
-
-    async def _one(i: int, row: dict[str, Any]) -> list[UpdateLink]:
+    async def _one(row: dict[str, Any]) -> list[UpdateLink]:
         key = str(row.get("memory_key") or "")
         emb = _eligible(row)
         if not emb:
             return []
-        peers = prefetched.get(i)
-        if peers is None:
-            async with sem:
-                try:
-                    peers = await _peers(
-                        ch,
-                        org=org,
-                        namespace=namespace,
-                        memory_type=str(row.get("memory_type") or "semantic"),
-                        memory_key=key,
-                        embedding=emb,
-                        min_cosine=min_cosine,
-                    )
-                except Exception as e:  # noqa: BLE001 — never block an ingest
-                    log.warning("value_updates: peer lookup failed (open): %s", e)
-                    report.errors += 1
-                    return []
+        async with sem:
+            try:
+                peers = await _peers(
+                    ch,
+                    org=org,
+                    namespace=namespace,
+                    memory_type=str(row.get("memory_type") or "semantic"),
+                    memory_key=key,
+                    embedding=emb,
+                    min_cosine=min_cosine,
+                )
+            except Exception as e:  # noqa: BLE001 — never block an ingest
+                log.warning("value_updates: peer lookup failed (open): %s", e)
+                report.errors += 1
+                return []
         return decide_links(
             str(row.get("memory_id") or ""),
             key,
@@ -392,7 +273,7 @@ async def link_value_updates(
             peers,
         )
 
-    results = await asyncio.gather(*(_one(i, r) for i, r in enumerate(rows)))
+    results = await asyncio.gather(*(_one(r) for r in rows))
     report.checked = len(rows)
     links = [ln for sub in results for ln in sub]
     # One write per older row; if several newer rows supersede it, the latest

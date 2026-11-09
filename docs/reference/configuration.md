@@ -1015,7 +1015,6 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES` | `int` | `200` |  | Entries per bulk call that get the conflict check; later entries are written unchecked and counted. 0 = none are checked. memory.import checks every entry whatever this says. |
 | `LOOM_MEMORY_BULK_FOLLOW_MAX_PAIRS` | `int` | `1024` | live | Supersession pairs one bulk write follows on the triple plane in the request; the rest are recorded for the projection repair to follow. 0 = the repair follows all. |
 | `LOOM_BULK_CONFLICT_CHECK_CONCURRENCY` | `int` | `8` |  | Bulk-path conflict checks run at once (at least 1). |
-| `LOOM_MEMORY_WRITE_CANDIDATE_BATCH` | `int` | `6` |  | Facts per batched candidate lookup (conflict and value-update peers) on the write path; matches the per-fact concurrency so wall time stays flat. 0 = one statement per fact. |
 | `LOOM_DUPLICATE_THRESHOLD` | `float` | `0.97` |  | Cosine ≥ this with a canonical-form mismatch marks a write 'duplicate' with a duplicate_of pointer instead of 'conflicted'. Per-namespace override: loom.namespaces.duplicate_threshold. |
 
 ### Blacklist cache

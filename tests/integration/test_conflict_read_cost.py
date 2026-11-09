@@ -115,7 +115,6 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
         "max_dist": 2.0,
         "dim": _DIM,
     }
-    items = [("semantic", f"new{i}", emb, 2.0) for i in range(4)]
     run = secrets.token_hex(4)
 
     async def measured(phase: str, call: Any) -> Any:
@@ -126,10 +125,6 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
             set_query_tag("")
 
     wide = await measured("wide", lambda: conflicts._peer_rows(ch, params))
-    wide_bulk = await measured(
-        "wide_bulk",
-        lambda: conflicts.candidate_rows_many(org=org, namespace=_NS, items=items, batch=4, ch=ch),
-    )
     set_current_auth(
         AuthInfo(
             subject="sa:bot",
@@ -146,12 +141,6 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
         pinned = await measured(
             "pinned", lambda: conflicts._foreign_pinned_rows(ch, params, scope, own)
         )
-        bulk = await measured(
-            "bulk",
-            lambda: conflicts.candidate_rows_many(
-                org=org, namespace=_NS, items=items, batch=4, ch=ch
-            ),
-        )
     finally:
         set_current_auth(None)
 
@@ -159,14 +148,10 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
     assert len(own) == 10 and all(r["user_id"] == "u3" for r in own)
     assert [r["memory_key"] for r in pinned][:1] == ["k47"]
     assert all(r["pinned"] and r["user_id"] != "u3" for r in pinned)
-    assert len(wide_bulk) == len(bulk) == 4
-    for rows in bulk.values():
-        assert sum(1 for r in rows if r["user_id"] == "u3" and not r["pinned"]) == 10
-        assert any(r["memory_key"] == "k47" for r in rows)
 
     cost = {
         phase: _cost(await _logged(ch, f"it.conflict_cost.{run}.{phase}"))
-        for phase in ("wide", "wide_bulk", "scoped", "pinned", "bulk")
+        for phase in ("wide", "scoped", "pinned")
     }
     for phase, c in cost.items():
         print(f"{phase}: {c['read_rows']} rows, {c['read_bytes']} B, {c['memory_usage']} B mem")
@@ -176,7 +161,6 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
     single = cost["scoped"]["read_bytes"] + cost["pinned"]["read_bytes"]
     assert single <= 2 * cost["wide"]["read_bytes"]
     assert cost["scoped"]["read_bytes"] < cost["wide"]["read_bytes"] / 5
-    assert cost["bulk"]["read_bytes"] <= 2 * cost["wide_bulk"]["read_bytes"]
 
 
 def _small(i: int) -> str:
@@ -225,7 +209,7 @@ async def test_a_foreign_pinned_row_blocks_a_narrowed_write_single_and_bulk(
     monkeypatch.setattr(conflicts, "get_client", lambda: ch)
     emb = [1.0] + [0.0] * (_DIM - 1)
 
-    def check(candidate_rows: Any) -> Any:
+    def check() -> Any:
         return conflicts.check_on_commit(
             org=org,
             namespace=_NS,
@@ -234,7 +218,6 @@ async def test_a_foreign_pinned_row_blocks_a_narrowed_write_single_and_bulk(
             memory_key="new",
             new_value="U lives in Lisbon",
             new_embedding=emb,
-            candidate_rows=candidate_rows,
             resolved_threshold=0.85,
             resolved_duplicate_threshold=0.9,
             resolved_policy="auto_reinforce",
@@ -252,12 +235,8 @@ async def test_a_foreign_pinned_row_blocks_a_narrowed_write_single_and_bulk(
         )
     )
     try:
-        single = await check(None)
-        rows = await conflicts.candidate_rows_many(
-            org=org, namespace=_NS, items=[("semantic", "new", emb, 0.3)], ch=ch
-        )
-        batched = await check(rows[0])
+        single = await check()
     finally:
         set_current_auth(None)
-    assert single.verdict == batched.verdict == "rejected"
-    assert all(p.user_id == "U" for p in single.peers + batched.peers), "V's row is never named"
+    assert single.verdict == "rejected"
+    assert all(p.user_id == "U" for p in single.peers), "V's row is never named"

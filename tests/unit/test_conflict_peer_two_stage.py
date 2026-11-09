@@ -96,7 +96,9 @@ def test_the_widening_cap_falls_back_to_the_join(monkeypatch: pytest.MonkeyPatch
     ch = _TwoStageCH([(f"d{i:04d}", 0.01) for i in range(3000)], set())
     joined: list[dict[str, Any]] = []
 
-    async def _joined(ch_: Any, params: dict[str, Any], in_scope: str = "") -> list[dict[str, Any]]:
+    async def _joined(
+        ch_: Any, params: dict[str, Any], in_scope: str = "", limit: int = 10
+    ) -> list[dict[str, Any]]:
         joined.append(params)
         return [{"memory_key": "from-join", "dist": 0.02}]
 
@@ -108,10 +110,8 @@ def test_the_gates_own_stage_a_reads_every_type() -> None:
     assert "memory_type" not in conflict_candidates._peer_candidates_sql()
 
 
-@pytest.mark.parametrize(
-    "sql", [conflict_candidates.PINNED_PEERS_SQL, conflict_candidates.pinned_sql_many(3)]
-)
-def test_the_pinned_arm_takes_type_from_the_memory_row_never_the_vector(sql: str) -> None:
+def test_the_pinned_arm_takes_type_from_the_memory_row_never_the_vector() -> None:
+    sql = conflict_candidates.PINNED_PEERS_SQL
     assert "m.pinned = 1" in sql and "m.memory_type" in sql
     # Every type read is the memory row's (`m.`); a bare one would be the vector row's.
     assert not re.search(r"(?<![.\w])memory_type", sql)
@@ -131,9 +131,7 @@ def test_stage_a_keeps_the_codes_first_shape_and_never_decodes_the_column() -> N
     assert "status IN ('active', 'conflicted')" in rows and "tombstoned_at IS NULL" in rows
 
 
-def test_the_joined_fallback_takes_its_limit_from_the_peer_limit(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_the_joined_fallback_takes_the_callers_limit() -> None:
     seen: list[str] = []
 
     class _CH:
@@ -141,15 +139,6 @@ def test_the_joined_fallback_takes_its_limit_from_the_peer_limit(
             seen.append(sql)
             return []
 
-    monkeypatch.setattr(cf, "PEER_LIMIT", 7)
+    asyncio.run(cf._peer_rows_joined(_CH(), dict(_BASE), limit=7))
     asyncio.run(cf._peer_rows_joined(_CH(), dict(_BASE)))
-    assert "LIMIT 7" in seen[0]
-
-
-def test_both_pinned_statements_share_one_pinned_row_filter() -> None:
-    shared = conflict_candidates._pinned_row_filter("{t}").split("{t}")
-    for sql in (conflict_candidates.PINNED_PEERS_SQL, conflict_candidates.pinned_sql_many(2)):
-        assert all(part.strip() in sql for part in shared)
-    limit = f"LIMIT {conflict_candidates.PEER_LIMIT}"
-    assert limit in conflict_candidates.PINNED_PEERS_SQL
-    assert f"{limit} BY qidx" in conflict_candidates.pinned_sql_many(2)
+    assert "LIMIT 7" in seen[0] and f"LIMIT {cf.PEER_LIMIT}" in seen[1]

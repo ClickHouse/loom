@@ -2952,11 +2952,6 @@ settings:
   # Bulk-path conflict checks run at once (at least 1). [restart]
   # bulk_conflict_check_concurrency: 8
 
-  # Facts per batched candidate lookup (conflict and value-update peers) on the write
-  # path; matches the per-fact concurrency so wall time stays flat. 0 = one statement
-  # per fact. [restart]
-  # memory_write_candidate_batch: 6
-
   # Cosine ≥ this with a canonical-form mismatch marks a write 'duplicate' with a
   # duplicate_of pointer instead of 'conflicted'. Per-namespace override:
   # loom.namespaces.duplicate_threshold. [restart]

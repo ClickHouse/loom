@@ -509,7 +509,7 @@ def test_a_bulk_write_answers_a_held_conflict_check(monkeypatch, error) -> None:
     with pytest.raises(type(error)):  # not "unchecked": the org's write is held
         asyncio.run(
             bulk_set._bulk_conflict_verdicts(
-                put, [{}], [(entry, "v", None, None, None)], [(0, None, None, None)], [[0.1]], {}
+                put, [{}], [(entry, "v", None, None, None)], [(0, None, None, None)], [[0.1]]
             )
         )
 

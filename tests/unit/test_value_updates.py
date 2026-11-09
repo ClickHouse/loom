@@ -64,6 +64,13 @@ def _peer(
         "valid_at": datetime.fromisoformat(valid_at) if valid_at else None,
         "created_at": datetime.fromisoformat(created),
         "cos": 0.82,
+        # what the two-stage peer read returns for it (stage A's identity and distance)
+        "agent": "a",
+        "user_id": "u",
+        "session_id": "-",
+        "pinned": 0,
+        "run_id": "-",
+        "dist": 0.18,
     }
 
 
@@ -164,7 +171,7 @@ async def test_link_value_updates_writes_supersession_on_the_older_row(
         ch=ch,
     )
     assert rep.checked == 1 and len(rep.links) == 1 and rep.errors == 0
-    assert ch.calls[0]["min_cos"] == pytest.approx(0.75) and ch.calls[0]["dim"] == 2
+    assert ch.calls[0]["max_dist"] == pytest.approx(0.25) and ch.calls[0]["dim"] == 2
     ids, overrides = writes[0]
     assert ids == ["p1"]
     assert overrides["status"] == "superseded" and overrides["superseded_by"] == "n1"

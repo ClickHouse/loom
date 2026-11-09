@@ -2505,10 +2505,6 @@ class MemorySettings(BaseModel):
     memory_bulk_follow_max_pairs: Annotated[int, LIVE] = Field(default=1024, ge=0)
     # Bulk-path conflict checks run at once (at least 1).
     bulk_conflict_check_concurrency: int = Field(default=8, ge=1)
-    # Facts per batched candidate lookup (conflict and value-update peers) on
-    # the write path; matches the per-fact concurrency so wall time stays flat.
-    # 0 = one statement per fact.
-    memory_write_candidate_batch: int = 6
 
     # Cosine ≥ this with a canonical-form mismatch marks a write 'duplicate'
     # with a duplicate_of pointer instead of 'conflicted'. Per-namespace

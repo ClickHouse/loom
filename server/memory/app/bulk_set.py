@@ -344,7 +344,6 @@ async def _bulk_verdicts(
         state.entry_metas,
         state.pending,
         value_vectors,
-        state.floors,
         cap=state.conflict_check_cap,
     )
     clock.mark("verdicts")
@@ -1418,7 +1417,6 @@ async def _bulk_conflict_verdicts(
     entry_metas: list[tuple[Any, ...]],
     pending: list[tuple[Any, ...]],
     value_vectors: list[list[float]],
-    floors: dict[str, tuple[float, float]],
     *,
     cap: int | None = None,
 ) -> dict[int, Any]:
@@ -1441,12 +1439,7 @@ async def _bulk_conflict_verdicts(
     sem = asyncio.Semaphore(int(_settings.bulk_conflict_check_concurrency))
     out: dict[int, Any] = {}
 
-    async def _one(
-        idx: int,
-        vec: list[float],
-        candidate_rows: list[dict[str, Any]] | None = None,
-        resolved_threshold: float | None = None,
-    ) -> None:
+    async def _one(idx: int, vec: list[float]) -> None:
         entry, serialized, _t, _e, _x = entry_metas[idx]
         async with sem:
             try:
@@ -1462,49 +1455,16 @@ async def _bulk_conflict_verdicts(
                     new_valid_at=(
                         getattr(entry, "valid_at", None) or getattr(input, "valid_at", None)
                     ),
-                    candidate_rows=candidate_rows,
-                    resolved_threshold=resolved_threshold,
                 )
             except customer.HOLDS:
                 raise  # held, as the batch's own embeds would be: the write answers it
             except Exception as e:  # noqa: BLE001 — the fact writes unchecked
                 log.warning("bulk_set: conflict check failed for %r: %s", entry.memory_key, e)
 
+    # Each fact reads its own peers (`conflicts._peer_rows`, codes-first): one statement
+    # over the namespace's full vectors for many facts reads every vector at full width.
     pairs = list(zip(pending, value_vectors, strict=False))[:cap]
-    # The peer statement runs once per batch of facts, not once per fact: the namespace's
-    # vectors are read once per batch. Thresholds resolve once per memory_type. A batch that
-    # failed leaves its facts without an entry and they fall back to the per-fact statement.
-    batch = int(_settings.memory_write_candidate_batch)
-    prefetched: dict[int, list[dict[str, Any]]] = {}
-    if batch > 0 and len(pairs) > 1:
-        from server.memory.app import conflicts as _conflicts
-
-        items: list[tuple[str, str, list[float], float]] = []
-        for (idx, _t, _x, _k), vec in pairs:
-            mt = str(entry_metas[idx][0].memory_type)
-            if vec and mt not in floors:
-                try:
-                    floors[mt] = await _conflicts.resolve_conflict_floor(
-                        input.org, input.namespace, mt
-                    )
-                except Exception as e:  # noqa: BLE001 — per-fact path resolves it
-                    log.warning("bulk_set: threshold lookup failed for %r: %s", mt, e)
-            md = floors.get(mt, (0.0, 0.0))[1]
-            items.append((mt, str(entry_metas[idx][0].memory_key), vec if mt in floors else [], md))
-        try:
-            prefetched = await _conflicts.candidate_rows_many(
-                org=input.org, namespace=input.namespace, items=items, batch=batch
-            )
-        except Exception as e:  # noqa: BLE001 — fall back to per-fact statements
-            log.warning("bulk_set: batched candidate lookup failed: %s", e)
-            prefetched = {}
-
-    jobs = []
-    for j, ((idx, _t, _x, _k), vec) in enumerate(pairs):
-        mt = str(entry_metas[idx][0].memory_type)
-        rows = prefetched.get(j)
-        thr = floors.get(mt, (None, None))[0] if rows is not None else None
-        jobs.append(_one(idx, vec, candidate_rows=rows, resolved_threshold=thr))
+    jobs = [_one(idx, vec) for (idx, _t, _x, _k), vec in pairs]
     if jobs:
         await asyncio.gather(*jobs)
     return out
