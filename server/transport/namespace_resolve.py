@@ -98,10 +98,14 @@ def suggestable(org: str, can_access: Any) -> list[str]:
     scope = current_code_scope()
     if scope and (not org or scope[0] == org):
         out.append(scope[1])
+    from server.identity.app.namespace_classification import is_restricted_cached
+
     for r in config_entries():
         if org and r.org != org:
             continue
-        if can_access(org, r.namespace) or str(r.classification or "standard") != "restricted":
+        # The directory row may say restricted where the configuration does not yet.
+        restricted = r.classification == "restricted" or is_restricted_cached(r.org, r.namespace)
+        if can_access(org, r.namespace) or not restricted:
             out.append(r.namespace)
     for ns, t in configured_namespaces().items():
         if org and t.org != org:

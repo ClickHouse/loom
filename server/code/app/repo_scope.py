@@ -12,7 +12,12 @@ from __future__ import annotations
 import logging
 
 from server.auth.authz import row_in_scope
-from server.code.domain.index.repos import configured_repos, docs_namespaces, repo_for_namespace
+from server.code.domain.index.repos import (
+    RegistryUnread,
+    configured_repos,
+    docs_namespaces,
+    repo_for_namespace,
+)
 from server.code.domain.scope import current_code_scope
 from server.operations.base import Role
 
@@ -36,6 +41,8 @@ async def readable_repo_namespace(org: str, code_namespace: str) -> str:
         if not ns:
             return ""
         return ns if await row_in_scope(org, ns, Role.VIEWER, hides_answer=False) else ""
+    except RegistryUnread:
+        return ""  # which entries are configured is not known yet: closed
     except Exception as e:  # noqa: BLE001 — a gate that cannot check refuses
         # One line per scoped request while the grants read is down.
         log.warning("repository namespace gate failed (closed): %s", e)

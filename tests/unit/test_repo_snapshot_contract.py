@@ -21,6 +21,7 @@ CONFIG_ENTRY_READERS = {
     "identity/app/namespace_classification.py",
     "identity/app/namespace_kinds.py",
     "identity/app/token_grants.py",
+    "identity/app/me_service_accounts.py",
     # Whether a revoke on a never-read process must read the registry and fan out.
     "code/app/index/maintainers.py",
     "transport/namespace_resolve.py",
@@ -174,6 +175,20 @@ async def test_a_service_account_bound_to_repositories_is_not_minted_while_unrea
 
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
     monkeypatch.setattr(repos, "_registry_loaded", False)
+    monkeypatch.setattr(repos, "config_entry", lambda org, ns: object() if ns == "code-x" else None)
     with pytest.raises(repos.RegistryUnread):
         await me_service_accounts._bound_trackers("o", "s", object(), ["code-x"])  # type: ignore[arg-type]
     assert await me_service_accounts._bound_trackers("o", "s", object(), []) == []  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_the_link_recheck_reads_nothing_while_the_registry_is_unread(monkeypatch) -> None:
+    from server.memory.app import code_link_pass, code_link_recheck
+
+    async def no_read() -> list[tuple[str, str]]:
+        raise AssertionError("no repository is read")
+
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    monkeypatch.setattr(code_link_recheck.store, "code_namespaces", no_read)
+    await code_link_recheck.recheck_all(code_link_pass.PassResult())
