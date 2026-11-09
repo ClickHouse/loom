@@ -170,7 +170,7 @@ def _supersession_update(
 
 
 def _peers_sql_many(n: int, in_scope: str = "") -> str:
-    """Batched form of `_peers`: one namespace read for `n`
+    """Batched form of `_peers_joined`: one namespace read for `n`
     freshly written rows, one `cosineDistance` term per row (an `arrayMap`
     over the vector column replicates it per row per fact), `LIMIT 8 BY qidx`
     for the per-row `LIMIT 8`."""
@@ -238,7 +238,7 @@ async def _peers_many(
     return out
 
 
-async def _peers(
+async def _peers_joined(
     ch: Any,
     *,
     org: str,
@@ -287,6 +287,44 @@ async def _peers(
     return [dict(r) for r in rows]
 
 
+async def _peers_codes_first(
+    ch: Any,
+    *,
+    org: str,
+    namespace: str,
+    memory_type: str,
+    memory_key: str,
+    embedding: list[float],
+    min_cosine: float,
+) -> list[dict[str, Any]]:
+    """The row's nearest live peers of its type at cosine `min_cosine` or more, inside
+    the writer's read scope, nearest first, by the conflict check's two-stage read
+    (`conflicts.nearest_peer_rows`): codes-first, falling back to the full-width join
+    only past `_PEER_MAX_K` candidates."""
+    from server.memory.app.conflicts import nearest_peer_rows
+
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "mt": memory_type,
+        "self_key": memory_key,
+        "emb": embedding,
+        "dim": len(embedding),
+        "max_dist": 1.0 - float(min_cosine),
+    }
+    rows = await nearest_peer_rows(ch, params, request_scope(), limit=8)  # as the join's LIMIT 8
+    return [
+        {
+            "memory_id": str(r["memory_id"]),
+            "memory_key": r["memory_key"],
+            "value": r["value"],
+            "valid_at": r["valid_at"],
+            "cos": 1.0 - float(r["dist"]),
+        }
+        for r in rows
+    ]
+
+
 async def link_value_updates(
     *,
     org: str,
@@ -321,15 +359,18 @@ async def link_value_updates(
             return None
         return emb
 
-    # Peers for a batch of rows come from one statement
-    # (`_peers_many`); the per-row statement remains for batch = 0 and for a
-    # batch that failed. Rows are grouped by embedding dimension so one
-    # statement's `dim` holds for all of them.
+    # Under LOOM_MEMORY_BULK_PEER_READ=batched, peers for a batch of rows come from one
+    # statement (`_peers_many`), rows grouped by embedding dimension so one statement's
+    # `dim` holds for all of them. A row the batch did not cover (batch = 0, a failed
+    # batch) reads its own peers: the joined statement under `batched`, codes-first under
+    # `per_fact`.
     from server.settings import settings as _s
 
     batch = int(_s.memory_write_candidate_batch)
+    per_fact = _s.memory_bulk_peer_read == "per_fact"
+    read_one = _peers_codes_first if per_fact else _peers_joined
     prefetched: dict[int, list[dict[str, Any]]] = {}
-    if batch > 0:
+    if batch > 0 and not per_fact:
         by_dim: dict[int, list[int]] = {}
         for i, row in enumerate(rows):
             emb = _eligible(row)
@@ -370,7 +411,7 @@ async def link_value_updates(
         if peers is None:
             async with sem:
                 try:
-                    peers = await _peers(
+                    peers = await read_one(
                         ch,
                         org=org,
                         namespace=namespace,

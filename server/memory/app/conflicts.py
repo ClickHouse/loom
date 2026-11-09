@@ -176,9 +176,9 @@ async def same_key_mark(
 
 
 async def resolve_conflict_floor(org: str, namespace: str, memory_type: str) -> tuple[float, float]:
-    """(threshold, max_distance) for one namespace + memory_type — the two
-    numbers `check_on_commit` resolves before its statement, exposed so a bulk
-    writer resolves them once per type instead of once per fact."""
+    """(threshold, max_distance) for one namespace and memory_type, as `check_on_commit`
+    resolves them: for a caller that reads them once for many checks, or needs them
+    without one."""
     threshold = await _resolve_threshold(org, namespace, memory_type=memory_type)
     return threshold, _peer_query_distance(threshold)
 
@@ -251,20 +251,16 @@ async def candidate_rows_many(
     return out
 
 
-async def _policy_before_gate(
-    resolved_policy: str | None, candidate_rows: Any, org: str, namespace: str
-) -> str | None:
+async def _policy_before_gate(resolved_policy: str | None, org: str, namespace: str) -> str | None:
     """The namespace policy the gate consults before its peer
     statement. Under `append_only` the namespace's writes are events, not
     claims — a run's report is not a restatement of last run's because it
     shares the template — so every write is its own row: no merge, duplicate
     or conflict verdict against a peer (a same-key rewrite stays
     last-writer-wins by version) and the peer statement is never issued.
-    The prefetched policy when the caller had it; else one point read on the
-    per-fact path (a bulk caller that prefetched its candidate rows passes
-    the policy with them and pays no read here); an unreadable policy keeps
-    the cosine path (None)."""
-    if resolved_policy is not None or candidate_rows is not None:
+    The prefetched policy when the caller had it, else one point read; an
+    unreadable policy keeps the cosine path (None)."""
+    if resolved_policy is not None:
         return resolved_policy
     try:
         return await namespace_conflict_policy(org, namespace, ch=get_client())
@@ -279,12 +275,16 @@ _PEER_FIRST_K = 32
 _PEER_MAX_K = 2048
 
 
-async def _peer_rows(
-    ch: Any, params: dict[str, Any], scope: ReadFilters = WHOLE_NAMESPACE
+async def nearest_peer_rows(
+    ch: Any,
+    params: dict[str, Any],
+    scope: ReadFilters = WHOLE_NAMESPACE,
+    *,
+    limit: int = PEER_LIMIT,
 ) -> list[dict[str, Any]]:
-    """The gate's peers: this fact's cosine neighbours under the same type,
-    excluding its own key (a re-write is LWW by version, not a conflict), at
-    most `PEER_LIMIT`, nearest first.
+    """A fact's nearest live peers of its type, excluding its own key (a re-write is LWW
+    by version, not a conflict), at most `limit` (default `PEER_LIMIT`), nearest first:
+    the conflict gate's peers, and under `per_fact` the value-update links'.
 
     Two statements instead of the `memory FINAL JOIN memory_embeddings FINAL` scan.
     Stage A ranks the namespace's vectors alone, in the shape the `Quantized` codec
@@ -295,8 +295,9 @@ async def _peer_rows(
     the row-side filters (type, status, tombstone), which is where the two tables can
     disagree (vectors of non-live rows, live rows whose vector says otherwise). Stage A
     filters nothing the join did not filter on the vector side. When fewer than
-    `PEER_LIMIT` survive while stage A's last candidate is still inside `max_dist`,
-    stage A widens (x4) — the answer is the join's, not an approximation of it. Ties
+    `limit` survive while stage A's last candidate is still inside `max_dist`,
+    stage A widens (x4). Stage A ranks by the quantized codes, so where two candidates'
+    distances tie within the codes' error the last peer can differ from the join's. Ties
     sort by memory_key (the join's order among equal distances is arbitrary).
     Both stages stay inside `scope`, so other users' rows never take the places."""
     params = dict(params)
@@ -314,13 +315,13 @@ async def _peer_rows(
             live = {_ident(r): r for r in rows}
         out = [{**live[_ident(c)], "dist": float(c["dist"])} for c in inside if _ident(c) in live]
         exhausted = len(cand) < k or len(inside) < len(cand)
-        if len(out) >= PEER_LIMIT or exhausted:
+        if len(out) >= limit or exhausted:
             break
         if k >= _PEER_MAX_K:
-            return await _peer_rows_joined(ch, params, scope_and(scope, params, "m"))
+            return await _peer_rows_joined(ch, params, scope_and(scope, params, "m"), limit)
         k *= 4
     out.sort(key=lambda r: (r["dist"], str(r.get("memory_key") or "")))
-    return out[:PEER_LIMIT]
+    return out[:limit]
 
 
 def _ident(r: dict[str, Any]) -> tuple[str, str, str, str]:
@@ -333,7 +334,7 @@ def _ident(r: dict[str, Any]) -> tuple[str, str, str, str]:
 
 
 async def _peer_rows_joined(
-    ch: Any, params: dict[str, Any], in_scope: str = ""
+    ch: Any, params: dict[str, Any], in_scope: str = "", limit: int = PEER_LIMIT
 ) -> list[dict[str, Any]]:
     """The single-statement join: the widening's last resort, once stage A
     has read `_PEER_MAX_K` candidates without enough live peers. Filtered to
@@ -366,7 +367,7 @@ async def _peer_rows_joined(
         + f"""
         HAVING dist <= {{max_dist:Float32}}
         ORDER BY dist ASC
-        LIMIT {PEER_LIMIT}
+        LIMIT {int(limit)}
         """,
         params=params,
     )
@@ -493,30 +494,30 @@ async def check_on_commit(
     allowlisted_keys: set[str] | None = None,
 ) -> ConflictResult:
     """Run the 4-step algorithm. Caller raises 409 on verdict=='rejected'
-        and applies merge/conflict flags on insert.
+    and applies merge/conflict flags on insert.
 
-        `resolved_duplicate_threshold` / `resolved_policy` / `allowlisted_keys`
-    : the namespace reads a point write prefetched in one round
-        trip (`prefetch_write_config`); None reads them here.
+    `resolved_duplicate_threshold` / `resolved_policy` / `allowlisted_keys`: the
+    namespace reads a caller already made (a point write's `prefetch_write_config`, a
+    bulk call's one policy read); None reads them here.
 
-        `new_run_id`: a write made under a run keeps its own row.
-        A canonical-form match with a peer from another run, or from no run,
-        is returned as `duplicate` (insert, status='duplicate', `duplicate_of`
-        the peer) rather than `merge` (no insert), so the run's `run_id`-scoped
-        reads find what the run wrote. Same-run restatements still merge.
+    `new_run_id`: a write made under a run keeps its own row.
+    A canonical-form match with a peer from another run, or from no run,
+    is returned as `duplicate` (insert, status='duplicate', `duplicate_of`
+    the peer) rather than `merge` (no insert), so the run's `run_id`-scoped
+    reads find what the run wrote. Same-run restatements still merge.
 
-        `new_valid_at`: the new row's validity date when the writer supplied one; it decides
-        which side of a templated substitution `newest_wins` retires.
+    `new_valid_at`: the new row's validity date when the writer supplied one; it decides
+    which side of a templated substitution `newest_wins` retires.
 
-        `candidate_rows` / `resolved_threshold`: a bulk writer that already fetched this
-        fact's peers with `candidate_rows_many` and resolved the namespace threshold passes
-        them in; the statement and the two threshold lookups are then skipped and every step
-        below runs on the same rows the per-fact statement would have returned."""
+    `candidate_rows`: the peers a caller already read (a bulk call's
+    `candidate_rows_many`, or `peer_rows` under the Postgres authority), pinned arm
+    included; the peer and pinned statements are skipped. `resolved_threshold`: the
+    type's conflict threshold, when the caller read it; the lookups are skipped."""
     # Non-searchable types (episodic) carry no embedding → skip cleanly.
     if not new_embedding:
         return ConflictResult(verdict="clear", peers=[])
 
-    resolved_policy = await _policy_before_gate(resolved_policy, candidate_rows, org, namespace)
+    resolved_policy = await _policy_before_gate(resolved_policy, org, namespace)
     if resolved_policy == APPEND_ONLY_POLICY:  # no verdict against a peer
         return ConflictResult(verdict="clear", peers=[])
 
@@ -547,9 +548,10 @@ async def check_on_commit(
     elif scope is None:
         rows = []
     else:
-        rows = await _peer_rows(ch, params, scope)
+        rows = await nearest_peer_rows(ch, params, scope)
     keyed = memory_type in KEY_IDENTIFIED_TYPES
-    # A bulk caller's rows carry its pinned arm already; a decision needs none.
+    # Rows passed in (`candidate_rows_many`, `peer_rows`) carry their pinned arm already;
+    # a decision needs none.
     if candidate_rows is None and not keyed:
         rows += await _foreign_pinned_rows(ch, params, scope, rows)
     rows = await _without_erased(org, namespace, rows)
@@ -1082,7 +1084,7 @@ async def peer_rows(
         "dim": len(embedding),
     }
     scope = _scope_or_none()
-    rows = [] if scope is None else await _peer_rows(ch, params, scope)
+    rows = [] if scope is None else await nearest_peer_rows(ch, params, scope)
     return rows + await _foreign_pinned_rows(ch, params, scope, rows)
 
 

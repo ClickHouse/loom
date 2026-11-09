@@ -3852,6 +3852,15 @@
           "type": "integer",
           "description": "Supersession pairs one bulk write follows on the triple plane in the request; the rest are recorded for the projection repair to follow. 0 = the repair follows all."
         },
+        "memory_bulk_peer_read": {
+          "default": "batched",
+          "enum": [
+            "batched",
+            "per_fact"
+          ],
+          "type": "string",
+          "description": "How a bulk write reads each fact's conflict and value-update peers: batched = one join per memory_write_candidate_batch facts; per_fact = memory.set's codes-first read per fact, for large namespaces (it may pick another last peer where distances tie)."
+        },
         "memory_calibration_namespace_miss_ttl_s": {
           "default": 60.0,
           "exclusiveMinimum": 0,

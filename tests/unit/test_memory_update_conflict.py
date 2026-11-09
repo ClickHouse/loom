@@ -287,11 +287,11 @@ def test_own_key_is_excluded_by_the_check_itself() -> None:
     query excludes the caller's own key, so an update is never its own peer."""
     import inspect
 
-    # The peer statement lives in `_peer_rows`.
+    # The peer statement lives in `nearest_peer_rows`.
     # Stage A (`_peer_candidates_sql`) carries the exclusion.
     src = (
         inspect.getsource(cf.check_on_commit)
-        + inspect.getsource(cf._peer_rows)
+        + inspect.getsource(cf.nearest_peer_rows)
         + inspect.getsource(conflict_candidates._peer_candidates_sql)
     )
     assert "memory_key != {self_key:String}" in src

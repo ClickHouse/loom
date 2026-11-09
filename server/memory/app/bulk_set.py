@@ -67,7 +67,7 @@ from server.memory.app.set_commit import set_next
 from server.memory.app.set_entities import declared_entities
 from server.memory.app.triple_projections import reconcile_row_facts, write_derived_facts
 from server.memory.app.write_fence import lift_above_deletes, lift_after_insert
-from server.memory.domain.conflicts import kept_versions
+from server.memory.domain.conflicts import APPEND_ONLY_POLICY, kept_versions
 from server.memory.domain.memory_types import is_embedded
 from server.memory.domain.temporal_sql import LIVE_STATUSES
 from server.memory.domain.webhook_events import EventType
@@ -344,8 +344,8 @@ async def _bulk_verdicts(
         state.entry_metas,
         state.pending,
         value_vectors,
-        state.floors,
         cap=state.conflict_check_cap,
+        floors=state.floors,
     )
     clock.mark("verdicts")
     plan = _apply_verdicts(state, emb_idx_of, verdicts)
@@ -684,7 +684,7 @@ async def _commit_batch(
 
 async def _reach_of(state: _BulkWriteState) -> list[tuple[str, str, list[float], float]]:
     """Each embedded entry's (type, key, vector, how far its conflict check reaches),
-    the reach the verdict phase resolved for its type when it did."""
+    the reach the verdict phase read for its type, else read here."""
     from server.memory.app.conflicts import resolve_conflict_floor
 
     out = []
@@ -1412,14 +1412,67 @@ def _supersede_pairs(plan: BulkVerdictPlan) -> list[tuple[str, str]]:
     ]
 
 
+async def _namespace_policy(org: str, namespace: str) -> str | None:
+    """The namespace's conflict policy, or None when it cannot be read."""
+    from server.memory.app.conflicts import namespace_conflict_policy
+
+    try:
+        return await namespace_conflict_policy(org, namespace, ch=get_client())
+    except Exception as e:  # noqa: BLE001 — each fact's check reads it again
+        log.warning("bulk_set: conflict policy read failed: %s", e)
+        return None
+
+
+async def _type_floor(org: str, namespace: str, memory_type: str) -> tuple[float, float] | None:
+    """The type's (conflict threshold, reach), or None when it cannot be read."""
+    from server.memory.app.conflicts import resolve_conflict_floor
+
+    try:
+        return await resolve_conflict_floor(org, namespace, memory_type)
+    except Exception as e:  # noqa: BLE001 — each fact's check resolves it again
+        log.warning("bulk_set: threshold lookup failed for %r: %s", memory_type, e)
+        return None
+
+
+async def _batched_peers(
+    input: Any,
+    entry_metas: list[tuple[Any, ...]],
+    pairs: list[tuple[tuple[Any, ...], list[float]]],
+    floors: dict[str, tuple[float, float]],
+) -> dict[int, list[dict[str, Any]]]:
+    """Under `LOOM_MEMORY_BULK_PEER_READ=batched`, the facts' peers read a batch at a time
+    (`conflicts.candidate_rows_many`), keyed by the fact's place in `pairs`; a fact with no
+    entry reads its own. Under `per_fact`, nothing: each fact reads its peers codes-first
+    (`conflicts.nearest_peer_rows`), as memory.set does."""
+    from server.memory.app import conflicts
+    from server.settings import settings
+
+    batch = int(settings.memory_write_candidate_batch)
+    if settings.memory_bulk_peer_read == "per_fact" or batch <= 0 or len(pairs) < 2:
+        return {}
+    items: list[tuple[str, str, list[float], float]] = []
+    for (idx, _t, _x, _k), vec in pairs:
+        entry = entry_metas[idx][0]
+        mt = str(entry.memory_type)
+        reach = floors[mt][1] if mt in floors else 0.0
+        items.append((mt, str(entry.memory_key), vec if mt in floors else [], reach))
+    try:
+        return await conflicts.candidate_rows_many(
+            org=input.org, namespace=input.namespace, items=items, batch=batch
+        )
+    except Exception as e:  # noqa: BLE001 — each fact reads its own peers
+        log.warning("bulk_set: batched candidate lookup failed: %s", e)
+        return {}
+
+
 async def _bulk_conflict_verdicts(
     input: Any,
     memory_rows: list[dict[str, Any]],
     entry_metas: list[tuple[Any, ...]],
     pending: list[tuple[Any, ...]],
     value_vectors: list[list[float]],
-    floors: dict[str, tuple[float, float]],
     *,
+    floors: dict[str, tuple[float, float]],
     cap: int | None = None,
 ) -> dict[int, Any]:
     """check_on_commit for every searchable entry, concurrency-bounded. Keys are
@@ -1440,17 +1493,32 @@ async def _bulk_conflict_verdicts(
     cap = max(cap, 0)
     sem = asyncio.Semaphore(int(_settings.bulk_conflict_check_concurrency))
     out: dict[int, Any] = {}
+    if not pending[:cap]:
+        return out
+    # The namespace's policy and each type's (threshold, reach), read once for the batch
+    # (`floors` stays on the call's state for the Postgres gap check); one that cannot be
+    # read is left to each fact's check, which reads it again.
+    policy = await _namespace_policy(input.org, input.namespace)
+    pairs = list(zip(pending, value_vectors, strict=False))[:cap]
+    prefetched: dict[int, list[dict[str, Any]]] = {}
+    # Under append_only no fact reads peers (`check_on_commit` answers clear first), and
+    # the Postgres gap check reads its own reach.
+    if policy != APPEND_ONLY_POLICY:
+        types = dict.fromkeys(str(entry_metas[idx][0].memory_type) for idx, *_ in pending[:cap])
+        for mt in types:
+            if mt not in floors and (floor := await _type_floor(input.org, input.namespace, mt)):
+                floors[mt] = floor
+        prefetched = await _batched_peers(input, entry_metas, pairs, floors)
 
-    async def _one(
-        idx: int,
-        vec: list[float],
-        candidate_rows: list[dict[str, Any]] | None = None,
-        resolved_threshold: float | None = None,
-    ) -> None:
+    async def _one(idx: int, vec: list[float], candidate_rows: list[dict[str, Any]] | None) -> None:
         entry, serialized, _t, _e, _x = entry_metas[idx]
+        floor = floors.get(str(entry.memory_type))
         async with sem:
             try:
                 out[idx] = await check_on_commit(
+                    candidate_rows=candidate_rows,
+                    resolved_policy=policy,
+                    resolved_threshold=floor[0] if floor else None,
                     org=input.org,
                     namespace=input.namespace,
                     agent=input.agent,
@@ -1462,51 +1530,14 @@ async def _bulk_conflict_verdicts(
                     new_valid_at=(
                         getattr(entry, "valid_at", None) or getattr(input, "valid_at", None)
                     ),
-                    candidate_rows=candidate_rows,
-                    resolved_threshold=resolved_threshold,
                 )
             except customer.HOLDS:
                 raise  # held, as the batch's own embeds would be: the write answers it
             except Exception as e:  # noqa: BLE001 — the fact writes unchecked
                 log.warning("bulk_set: conflict check failed for %r: %s", entry.memory_key, e)
 
-    pairs = list(zip(pending, value_vectors, strict=False))[:cap]
-    # The peer statement runs once per batch of facts, not once per fact: the namespace's
-    # vectors are read once per batch. Thresholds resolve once per memory_type. A batch that
-    # failed leaves its facts without an entry and they fall back to the per-fact statement.
-    batch = int(_settings.memory_write_candidate_batch)
-    prefetched: dict[int, list[dict[str, Any]]] = {}
-    if batch > 0 and len(pairs) > 1:
-        from server.memory.app import conflicts as _conflicts
-
-        items: list[tuple[str, str, list[float], float]] = []
-        for (idx, _t, _x, _k), vec in pairs:
-            mt = str(entry_metas[idx][0].memory_type)
-            if vec and mt not in floors:
-                try:
-                    floors[mt] = await _conflicts.resolve_conflict_floor(
-                        input.org, input.namespace, mt
-                    )
-                except Exception as e:  # noqa: BLE001 — per-fact path resolves it
-                    log.warning("bulk_set: threshold lookup failed for %r: %s", mt, e)
-            md = floors.get(mt, (0.0, 0.0))[1]
-            items.append((mt, str(entry_metas[idx][0].memory_key), vec if mt in floors else [], md))
-        try:
-            prefetched = await _conflicts.candidate_rows_many(
-                org=input.org, namespace=input.namespace, items=items, batch=batch
-            )
-        except Exception as e:  # noqa: BLE001 — fall back to per-fact statements
-            log.warning("bulk_set: batched candidate lookup failed: %s", e)
-            prefetched = {}
-
-    jobs = []
-    for j, ((idx, _t, _x, _k), vec) in enumerate(pairs):
-        mt = str(entry_metas[idx][0].memory_type)
-        rows = prefetched.get(j)
-        thr = floors.get(mt, (None, None))[0] if rows is not None else None
-        jobs.append(_one(idx, vec, candidate_rows=rows, resolved_threshold=thr))
-    if jobs:
-        await asyncio.gather(*jobs)
+    jobs = [_one(idx, vec, prefetched.get(j)) for j, ((idx, _t, _x, _k), vec) in enumerate(pairs)]
+    await asyncio.gather(*jobs)
     return out
 
 

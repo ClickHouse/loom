@@ -64,7 +64,7 @@ class _TwoStageCH:
 
 
 def _run(ch: _TwoStageCH) -> list[dict[str, Any]]:
-    return asyncio.run(cf._peer_rows(ch, dict(_BASE)))
+    return asyncio.run(cf.nearest_peer_rows(ch, dict(_BASE)))
 
 
 def test_the_nearest_live_rows_come_back_nearest_first_ties_by_key() -> None:
@@ -96,7 +96,9 @@ def test_the_widening_cap_falls_back_to_the_join(monkeypatch: pytest.MonkeyPatch
     ch = _TwoStageCH([(f"d{i:04d}", 0.01) for i in range(3000)], set())
     joined: list[dict[str, Any]] = []
 
-    async def _joined(ch_: Any, params: dict[str, Any], in_scope: str = "") -> list[dict[str, Any]]:
+    async def _joined(
+        ch_: Any, params: dict[str, Any], in_scope: str = "", limit: int = 10
+    ) -> list[dict[str, Any]]:
         joined.append(params)
         return [{"memory_key": "from-join", "dist": 0.02}]
 
@@ -131,9 +133,7 @@ def test_stage_a_keeps_the_codes_first_shape_and_never_decodes_the_column() -> N
     assert "status IN ('active', 'conflicted')" in rows and "tombstoned_at IS NULL" in rows
 
 
-def test_the_joined_fallback_takes_its_limit_from_the_peer_limit(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_the_joined_fallback_takes_the_callers_limit() -> None:
     seen: list[str] = []
 
     class _CH:
@@ -141,9 +141,9 @@ def test_the_joined_fallback_takes_its_limit_from_the_peer_limit(
             seen.append(sql)
             return []
 
-    monkeypatch.setattr(cf, "PEER_LIMIT", 7)
+    asyncio.run(cf._peer_rows_joined(_CH(), dict(_BASE), limit=7))
     asyncio.run(cf._peer_rows_joined(_CH(), dict(_BASE)))
-    assert "LIMIT 7" in seen[0]
+    assert "LIMIT 7" in seen[0] and f"LIMIT {cf.PEER_LIMIT}" in seen[1]
 
 
 def test_both_pinned_statements_share_one_pinned_row_filter() -> None:

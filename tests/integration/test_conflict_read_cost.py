@@ -125,7 +125,7 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
         finally:
             set_query_tag("")
 
-    wide = await measured("wide", lambda: conflicts._peer_rows(ch, params))
+    wide = await measured("wide", lambda: conflicts.nearest_peer_rows(ch, params))
     wide_bulk = await measured(
         "wide_bulk",
         lambda: conflicts.candidate_rows_many(org=org, namespace=_NS, items=items, batch=4, ch=ch),
@@ -142,7 +142,7 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
     )
     try:
         scope = conflicts._scope_or_none()
-        own = await measured("scoped", lambda: conflicts._peer_rows(ch, params, scope))
+        own = await measured("scoped", lambda: conflicts.nearest_peer_rows(ch, params, scope))
         pinned = await measured(
             "pinned", lambda: conflicts._foreign_pinned_rows(ch, params, scope, own)
         )

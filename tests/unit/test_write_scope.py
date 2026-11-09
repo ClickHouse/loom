@@ -273,7 +273,7 @@ def test_same_key_supersession_reads_only_the_writers_rows() -> None:
 
 
 def test_value_update_peers_are_the_writers_rows() -> None:
-    from server.memory.app.value_updates import _peers, _peers_many
+    from server.memory.app.value_updates import _peers_joined, _peers_many
 
     ch = _SqlCH()
     _run_as(
@@ -284,7 +284,7 @@ def test_value_update_peers_are_the_writers_rows() -> None:
     )
     _run_as(
         _pinned("U"),
-        lambda: _peers(
+        lambda: _peers_joined(
             ch,
             org="o",
             namespace="n",
@@ -296,6 +296,26 @@ def test_value_update_peers_are_the_writers_rows() -> None:
     )
     assert len(ch.sql) == 2
     assert all("m.user_id = {scope_uid:String}" in s for s, _ in ch.sql)
+
+
+def test_the_per_fact_value_update_read_stays_in_the_writers_scope() -> None:
+    from server.memory.app.value_updates import _peers_codes_first
+
+    ch = _SqlCH()
+    _run_as(
+        _pinned("U"),
+        lambda: _peers_codes_first(
+            ch,
+            org="o",
+            namespace="n",
+            memory_type="semantic",
+            memory_key="k",
+            embedding=[0.1],
+            min_cosine=0.5,
+        ),
+    )
+    assert len(ch.sql) == 1 and "JOIN" not in ch.sql[0][0]  # stage A, no candidate
+    assert _scoped_to_u(ch)
 
 
 def test_recall_echo_keys_are_the_callers_keys(monkeypatch) -> None:
@@ -605,7 +625,9 @@ class _NamespaceCH(_SqlCH):
         if "m.pinned = 1" in sql:  # every pinned memory row of the type, by distance
             pinned = [r for r in rows if r["pinned"] and _type(r) == "semantic"]
             pinned = [r for r in pinned if r["dist"] <= 0.3][:10]
-            return [{**r, "qidx": 0} for r in pinned] if "BY qidx" in sql else pinned
+            if "BY qidx" in sql:  # every fact of the batch, as its own `qidx`
+                return [{**r, "qidx": q} for q in range(len(p["keys"])) for r in pinned]
+            return pinned
         if "IN {ids:" in sql:  # stage B filters the type
             ids = {tuple(i) for i in p["ids"]}
             return [

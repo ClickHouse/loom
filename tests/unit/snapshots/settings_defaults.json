@@ -690,6 +690,7 @@
  "memory_bulk_contextualize_max_entries": 200,
  "memory_bulk_dedup_scope": "identity",
  "memory_bulk_follow_max_pairs": 1024,
+ "memory_bulk_peer_read": "batched",
  "memory_calibration_namespace_miss_ttl_s": 60.0,
  "memory_calibration_namespace_ttl_s": 60.0,
  "memory_capture_structured_answers": true,

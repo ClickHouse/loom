@@ -173,9 +173,9 @@ class _BulkWriteState:
     # trusted. MUST be initialised here, before the lookup: initialising it after the lookup
     # would clobber the success assignment and classify every batch as `unknown`.
     existing_lookup_ok: bool = False
-    # Under the Postgres authority: the scope generations the verdicts are reached at,
-    # and each memory type's (threshold, reach) the verdicts resolved.
+    # Under the Postgres authority: the scope generations the verdicts are reached at.
     generations: dict[tuple[str, str], int] = field(default_factory=dict)
+    # Each memory type's (conflict threshold, reach), read once per call.
     floors: dict[str, tuple[float, float]] = field(default_factory=dict)
     # A commit whose publication is left to the delivery worker: raised once the batch's
     # follow-ups ran.

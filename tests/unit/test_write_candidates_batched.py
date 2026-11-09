@@ -108,6 +108,7 @@ async def test_check_on_commit_with_prefetched_rows_issues_no_peer_statement(mon
         new_embedding=[0.1, 0.2],
         candidate_rows=rows,
         resolved_threshold=0.85,
+        resolved_policy="auto_reinforce",
     )
     # Only the allowlist read hit ClickHouse; no threshold lookups, no peer statement.
     assert len(ch.query_one_calls) == 0

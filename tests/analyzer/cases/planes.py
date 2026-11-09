@@ -783,7 +783,7 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     await CF._peer_rows_joined(ch, dict(_peer))
     # A writer bounded to one user: its peers in its scope, others' pinned rows.
     one_user = ReadFilters(scope="own_user", user_id="u1", session_id=None)
-    await CF._peer_rows(ch, dict(_peer), one_user)
+    await CF.nearest_peer_rows(ch, dict(_peer), one_user)
     scoped = dict(_peer)
     await CF._peer_rows_joined(ch, scoped, scope_and(one_user, scoped, "m"))
     await CF._foreign_pinned_rows(ch, dict(_peer), one_user, [])
