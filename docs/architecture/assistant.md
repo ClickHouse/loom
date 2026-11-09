@@ -1,19 +1,18 @@
 # Assistant design
 
-This page is the design of Loom's assistant, which will answer questions about what a
+This page is the design of Loom's assistant, which answers questions about what a
 namespace holds and how it is used, with a citation for every claim. It names the
-surfaces, how each caller's identity will reach the agent's tools, the analysis op and
-its isolation, the deployment, what will be stored and erased, and the cost. The
-analysis op and its analyst user, LibreChat deployed headless with the agent Loom seeds,
-and the bridge's chat route and `assistant.ask` are built; the rest is design, and
-[the build order](#build-order) lists the parts.
+surfaces, how each caller's identity reaches the agent's tools, the analysis op and its
+isolation, the deployment, what is stored and erased, and the cost. Every part is built
+but the analysis key's rotation, which is design; [the build order](#build-order) lists
+the parts.
 
-LibreChat will be the assistant: it will host the agent (its model, instructions and
-tools) and run it headless beside Loom, reachable only from Loom. Loom will supply the
-agent's tools, which read under a token of the asker's own subject, and a read-only SQL
-op that ClickHouse itself holds to that token's org and namespaces. People will chat on
-the dashboard's Assistant page; agents and scripts will reach the same agent over HTTP,
-MCP and both SDKs, through Loom's origin and as themselves.
+LibreChat is the assistant: it hosts the agent (its model, instructions and tools) and
+runs it headless beside Loom, reachable only from Loom. Loom supplies the agent's tools,
+which read under a token of the asker's own subject, and a read-only SQL op that
+ClickHouse itself holds to that token's org and namespaces. People chat on the
+dashboard's Assistant page; agents and scripts reach the same agent over HTTP, MCP and
+both SDKs, through Loom's origin and as themselves.
 
 ## Surfaces
 
