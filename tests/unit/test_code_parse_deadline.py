@@ -57,7 +57,8 @@ def test_a_node_reads_its_text_after_the_deadline_has_passed(
     reader = threading.Thread(
         target=lambda: texts.append(tree.root_node.children[0].text), daemon=True
     )
-    # The spinning read holds the GIL, so only faulthandler's C watchdog can end it.
+    # The join bounds a read that spins; faulthandler's C watchdog bounds one that never
+    # lets the join wake.
     faulthandler.dump_traceback_later(20, exit=True)
     try:
         reader.start()
