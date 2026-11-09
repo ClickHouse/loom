@@ -78,8 +78,10 @@ def test_only_the_request_gate_records_its_refusal_of_the_default_namespace() ->
 
 
 def _reads_code_namespace_setting(tree: ast.Module) -> bool:
-    """`settings.code_namespace`, under any name the settings object is imported as,
-    read as an attribute or through getattr."""
+    """`settings.code_namespace` read as an attribute or through getattr, on the
+    settings object as `from server.settings import settings` binds it (aliased
+    too). Not a rebinding, a module-qualified `x.settings`, or a dump of the model:
+    no module reads it so, and a review catches a new one."""
     names = {"settings"} | {
         a.asname
         for n in ast.walk(tree)
