@@ -19,12 +19,11 @@ down, writes and authoritative reads fail closed, never fall back to ClickHouse.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 import weakref
 from collections.abc import AsyncIterator, Mapping
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Any
 
 from server.core.error_summary import error_summary
@@ -318,7 +317,7 @@ def _terminate(conn: Any) -> None:
     from the pool, and a call on it would replace the block's error."""
     import asyncpg
 
-    with contextlib.suppress(asyncpg.InterfaceError):
+    with suppress(asyncpg.InterfaceError):
         conn.terminate()
 
 

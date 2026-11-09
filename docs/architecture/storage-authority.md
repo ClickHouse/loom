@@ -548,9 +548,10 @@ its own wait covers every row its transaction read.
   erasure settles the claimed document unsent.
   The read is made durable on its own connection because the settling commit, on
   another, could not cover it: after a failover it would mark the document done on a
-  primary where the claimed revision is the head again. `decision.record` checks its writers this way after its record lands,
-  and a delete of a decision retires its record this way in its flush, so each waits
-  for one more standby round trip.
+  primary where the claimed revision is the head again.
+- `decision.record` checks its writers this way after its record lands, and a delete of a
+  decision retires its record this way in its flush, so each waits for one more standby
+  round trip.
 
 The rule for any path: a ClickHouse send fed by a Postgres read sends only what the
 caller committed or claimed, or reads durably first. A decision that only changes

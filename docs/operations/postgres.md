@@ -13,6 +13,8 @@ ClickHouse.
 
 - Postgres 16 or newer. No extension is needed.
 - A database and a role that owns it (Loom creates the `loom` schema in it).
+- The role may run `pg_logical_emit_message` (the public may by default; the boot refuses
+  otherwise and names the `GRANT`).
 - For `LOOM_PG_DURABILITY=synchronous` (the default): at least one synchronous standby
   in another failure domain, so an acknowledged write survives the loss of the primary.
 - `wal_level = logical` if the database will also feed a replication tool; Loom itself
