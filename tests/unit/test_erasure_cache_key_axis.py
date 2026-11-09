@@ -14,6 +14,7 @@ import pytest
 import server.erasure.app.saga as h
 import server.memory.store as memory_repo
 from server.erasure.store import census as erasure_census
+from server.erasure.store import predicates as erasure_predicates
 from server.erasure.store import steps_graph as graph_steps
 from server.erasure.store import steps_memory as memory_steps
 from server.llm import cache as lc
@@ -55,21 +56,20 @@ class _RecCH:
         return [{"mutation_id": "m", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}]
 
 
-# The statement the census and the steps share, as ClickHouse gets it: the user's keys
-# and those of the summaries built from them (`USER_SUMMARIES`).
+# The user's keys and those of the summaries built from them, from the current rows and
+# the history, paired with the user's (namespace, src:key); its shape is pinned below.
 # What it matches: tests/integration/test_erasure_consolidated_quotes_live_ch.py.
-_SUMMARY_KEYS = (
-    "WHERE org = {org:String} AND has(tags, 'consolidated') AND "
-    "hasAny(arrayMap(t -> (toString(namespace), t), tags), "
-    "(SELECT groupUniqArray((toString(namespace), concat('src:', memory_key))) "
-    "FROM loom.memory WHERE org = {org:String} AND user_id = {uid:String})))"
-)
-_QUOTED_KEYS = (
-    "arrayConcat((SELECT groupUniqArray(memory_key) FROM loom.memory "
-    "WHERE org = {org:String} AND user_id = {uid:String}), "
-    f"arrayConcat((SELECT groupUniqArray(memory_key) FROM loom.memory {_SUMMARY_KEYS}, "
-    f"(SELECT groupUniqArray(memory_key) FROM loom.memory_versions {_SUMMARY_KEYS}))"
-)
+_QUOTED_KEYS = erasure_predicates.USER_QUOTED_KEY_LIST
+
+
+def test_the_quoted_keys_read_the_summaries_rows_and_history_by_the_users_pairs() -> None:
+    assert "FROM loom.memory FINAL" in _QUOTED_KEYS
+    assert "UNION ALL SELECT" in _QUOTED_KEYS and "FROM loom.memory_versions" in _QUOTED_KEYS
+    # a summary is the user's by its (namespace, src:key) pair, not by key alone
+    assert "has(tags, 'consolidated')" in _QUOTED_KEYS
+    assert "arrayMap(t -> (toString(namespace), t), tags)" in _QUOTED_KEYS
+    assert "groupUniqArray((toString(namespace), concat('src:', memory_key)))" in _QUOTED_KEYS
+    assert "user_id = {uid:String}" in _QUOTED_KEYS
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +149,9 @@ def test_the_cache_table_insert_is_projected_onto_the_live_columns() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_user_saga_orders_the_new_steps_around_the_link_tables(monkeypatch) -> None:
+async def test_user_saga_runs_the_cache_steps_after_the_tombstone_with_no_communities_step(
+    monkeypatch,
+) -> None:
     import server.erasure.app.backends as eb
 
     calls: list[str] = []
@@ -165,11 +167,11 @@ async def test_user_saga_orders_the_new_steps_around_the_link_tables(monkeypatch
     monkeypatch.setattr(eb, "all_backends", list)
     monkeypatch.setattr("server.core.namespace_write_marks.bump", _noop)
     await h._saga_user_id("o", "alice", completed=set(), row={})
-    for step in ("entity_communities.delete", "llm_response_cache.delete", "ask_precedents.delete"):
+    for step in ("graph_links.delete", "llm_response_cache.delete", "ask_precedents.delete"):
         assert step in calls, step
-    # communities read ownership from the edge links: after the graph, before the links go
-    assert calls.index("entity_graph.delete") < calls.index("entity_communities.delete")
-    assert calls.index("entity_communities.delete") < calls.index("graph_links.delete")
+    # the communities go inside graph_links.delete, which reads ownership from the edge
+    # links before they go
+    assert "entity_communities.delete" not in calls
     # the text stores follow the memory tombstone (their predicate reads the user's keys)
     assert calls.index("memory.tombstone") < calls.index("llm_response_cache.delete")
     assert calls.index("memory.tombstone") < calls.index("ask_precedents.delete")
@@ -180,7 +182,7 @@ def test_registry_gives_the_three_tables_a_user_predicate_and_an_owner() -> None
     owners = erasure_census.step_owners("user_id")
     assert owners["llm_response_cache.delete"] == ("loom.llm_response_cache",)
     assert owners["ask_precedents.delete"] == ("loom.memory_ask_precedents",)
-    assert owners["entity_communities.delete"] == ("loom.entity_communities",)
+    assert "loom.entity_communities" in owners["graph_links.delete"]
     assert erasure_census.steps_to_reopen({"loom.llm_response_cache": 3}, "user_id") == {
         "llm_response_cache.delete"
     }
@@ -188,7 +190,7 @@ def test_registry_gives_the_three_tables_a_user_predicate_and_an_owner() -> None
         {"memory_ask_precedents": 1, "entity_communities": 2}, "user_id"
     ) == {
         "ask_precedents.delete",
-        "entity_communities.delete",
+        "graph_links.delete",
     }
     by_table = {s.table: s for s in erasure_census._CENSUS}
     assert by_table["loom.llm_response_cache"].user_pred == f"hasAny(window_keys, {_QUOTED_KEYS})"
@@ -247,10 +249,12 @@ def test_communities_leave_when_only_the_users_memories_linked_the_entity() -> N
         "SELECT namespace, entity_a AS entity, memory_key FROM loom.entity_edge_memories FINAL WHERE org = {org:String} UNION ALL SELECT namespace, entity_b AS entity, memory_key FROM loom.entity_edge_memories FINAL"
         in read_sql
     )
+    having = read_sql.split("HAVING", 1)[1]
     assert (
-        "HAVING countIf((namespace, memory_key) IN (SELECT namespace, memory_key FROM loom.memory WHERE org = {org:String} AND user_id = {uid:String})) > 0 AND countIf((namespace, memory_key) NOT IN (SELECT namespace, memory_key FROM loom.memory WHERE org = {org:String} AND user_id = {uid:String})) = 0"
-        in read_sql
+        "(SELECT namespace, memory_key FROM loom.memory WHERE org = {org:String} AND user_id = {uid:String})"
+        in having
     )
+    assert "has(tags, 'consolidated')" in having and "FROM loom.memory_versions" in having
     assert read_params == {"org": "o", "uid": "alice"}
     sql, params = ch.commands[0]
     # a row LABELLED by such an entity goes too: the label text is the residue

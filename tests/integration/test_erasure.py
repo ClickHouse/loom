@@ -253,8 +253,8 @@ async def test_user_id_erasure_deletes_a_graph_with_an_entity_name_past_a_form_f
     result = await admin_agent.erasure.request_user_id(target, requester="ops@example.com")
     assert result["status"] == "completed", result
     steps = {s["step"]: s for s in result["steps"]}
-    assert steps["entity_graph.delete"]["rows_affected"] >= 2
-    assert steps["entity_communities.delete"]["rows_affected"] >= 2
+    # the triple, the edge and the two communities go with the links that alone held them
+    assert steps["graph_links.delete"]["rows_affected"] >= 4
     for table, names_it in _NAMES_IT.items():
         left = ch_client.query(
             f"SELECT count() FROM {table} "

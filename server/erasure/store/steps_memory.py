@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable, Sequence
+from typing import Any
 
 from server.core import object_store
 from server.core.background import gather_or_cancel
@@ -24,14 +25,22 @@ from server.erasure.store.mutations import (
 )
 from server.erasure.store.predicates import (
     CHUNK_KEYS_IN,
+    CONSOLIDATED_IN,
     NS_EQ,
     NS_IN,
     ORG_NS,
     ORG_UID,
     PARENT_KEYS_IN,
+    SUMMARY_CHUNKS_IN,
     UID,
 )
-from server.erasure.store.scope_reads import hashes, slices_or_one_empty, user_key_pairs
+from server.erasure.store.scope_reads import (
+    consolidated_slices,
+    hashes,
+    slices_or_one_empty,
+    user_key_pairs,
+    user_summary_rows,
+)
 from server.knowledge.domain.ingest_states import OPEN_STATES
 from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY
 from server.settings import settings
@@ -198,6 +207,16 @@ async def delete_last_seen_by_user(
 # `promoted_from` (`org/namespace/agent/user_id/session_id/memory_key`) whose
 # fourth segment is the user.
 _PROMOTED_FROM_USER = "arrayExists(x -> splitByChar('/', x)[4] = {uid:String}, promoted_from)"
+# Or from a summary of the user's memories, by the whole entry: a key or a session may
+# hold slashes.
+_PROMOTED_FROM_SUMMARY = "hasAny(promoted_from, {sources:Array(String)})"
+_PROMOTED_FROM = f"({_PROMOTED_FROM_USER} OR {_PROMOTED_FROM_SUMMARY})"
+
+
+async def _promoted_slices(org: str, user_id: str, *, ch: _CHClient) -> list[dict[str, Any]]:
+    """The bound values of `_PROMOTED_FROM`, a slice of the summaries at a time."""
+    summaries = (await user_summary_rows(org, user_id, ch=ch)).sources
+    return [{"uid": user_id, "sources": part} for part in slices_or_one_empty(summaries)]
 
 
 async def tombstone_shared_by_user(
@@ -212,11 +231,16 @@ async def tombstone_shared_by_user(
     The repr format is `org/namespace/agent/user_id/session_id/memory_key`,
     so position 4 of the slash-split is the user_id. If ANY entry names the
     erased user, the shared row is tombstoned — partial-source erasure still
-    requires full removal because the value may carry that user's contribution.
+    requires full removal because the value may carry that user's contribution. So is
+    one promoted from a summary of the user's memories.
     """
-    return await tombstone_scoped(
-        "loom.shared", org=org, scope_where=_PROMOTED_FROM_USER, params={"uid": user_id}, ch=ch
-    )
+    ch = ch or _default_client()
+    total = 0
+    for params in await _promoted_slices(org, user_id, ch=ch):
+        total += await tombstone_scoped(
+            "loom.shared", org=org, scope_where=_PROMOTED_FROM, params=params, ch=ch
+        )
+    return total
 
 
 async def tombstone_shared_embeddings_by_user(
@@ -226,7 +250,7 @@ async def tombstone_shared_embeddings_by_user(
     ch: _CHClient | None = None,
 ) -> int:
     """Tombstone the scope='shared' embedding rows that back any shared
-    memory whose source includes this user_id.
+    memory whose source includes this user_id, or a summary of the user's memories.
 
     Shared embeddings don't directly carry user_id (sentinel
     agent='_shared'), so the (namespace, key) pairs of the loom.shared rows
@@ -234,12 +258,15 @@ async def tombstone_shared_embeddings_by_user(
     key alone would reach another namespace's shared row of the same spelling.
     """
     ch = ch or _default_client()
-    rows = await ch.query_all(
-        "SELECT DISTINCT namespace, memory_key FROM loom.shared FINAL "
-        f"WHERE org = {{org:String}} AND {_PROMOTED_FROM_USER}",
-        params={"org": org, "uid": user_id},
-    )
-    pairs = sorted((str(r["namespace"]), str(r["memory_key"])) for r in rows)
+    found: set[tuple[str, str]] = set()
+    for params in await _promoted_slices(org, user_id, ch=ch):
+        rows = await ch.query_all(
+            "SELECT DISTINCT namespace, memory_key FROM loom.shared FINAL "
+            f"WHERE org = {{org:String}} AND {_PROMOTED_FROM}",
+            params={"org": org, **params},
+        )
+        found.update((str(r["namespace"]), str(r["memory_key"])) for r in rows)
+    pairs = sorted(found)
     total = 0
     for part in chunks(pairs):
         total += await tombstone_scoped(
@@ -568,7 +595,8 @@ async def tombstone_memory_chunks_by_user(
     user, and the no-user ('-') chunks whose parent (namespace, key) pairs are
     the user's, read from loom.memory (tombstoned rows included — the memory
     step runs first and the chunks must follow it, not escape it). Another
-    user's chunks of a shared key stay (`CHUNK_KEYS_IN`)."""
+    user's chunks of a shared key stay (`CHUNK_KEYS_IN`). The chunks of a summary of
+    the user's memories go too, by the summary's agent, user and key."""
     ch = ch or _default_client()
     total = 0
     for part in slices_or_one_empty(await user_key_pairs(org, user_id, ch=ch)):
@@ -577,6 +605,17 @@ async def tombstone_memory_chunks_by_user(
             org=org,
             scope_where=CHUNK_KEYS_IN,
             params={"uid": user_id, "keys": part},
+            ch=ch,
+        )
+    identities = (await user_summary_rows(org, user_id, ch=ch)).identities
+    # a legacy '-' chunk of the summary too, as the write path retires it as its own
+    legacy = {(ns, agent, "-", key) for ns, agent, _, key in identities}
+    for rows in chunks(sorted(set(identities) | legacy)):
+        total += await tombstone_scoped(
+            "loom.memory_chunks",
+            org=org,
+            scope_where=SUMMARY_CHUNKS_IN,
+            params={"rows": rows},
             ch=ch,
         )
     return total
@@ -604,14 +643,8 @@ async def delete_memory_versions_by_namespace(
     The history exists so a rollback can re-insert an old
     head; after erasure that would resurrect erased content, so the rows go,
     not a tombstone."""
-    return await count_then_mutate(
-        "loom.memory_versions",
-        count_where="org = {org:String} AND namespace = {ns:String}",
-        mutation="DELETE",
-        mutation_where="org = {org:String} AND namespace = {ns:String}",
-        params={"org": org, "ns": namespace},
-        final=False,
-        ch=ch,
+    return await delete_scoped(
+        "loom.memory_versions", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
     )
 
 
@@ -622,16 +655,18 @@ async def delete_memory_versions_by_user(
     ch: _CHClient | None = None,
 ) -> int:
     """Hard-delete a user's version history across namespaces (see the
-    namespace variant)."""
-    return await count_then_mutate(
-        "loom.memory_versions",
-        count_where="org = {org:String} AND user_id = {uid:String}",
-        mutation="DELETE",
-        mutation_where="org = {org:String} AND user_id = {uid:String}",
-        params={"org": org, "uid": user_id},
-        final=False,
-        ch=ch,
+    namespace variant), and the versions of a summary that name one of the user's keys,
+    which `memory.history` reads and a rollback re-inserts. After the cache steps:
+    they find an answer that quoted a summary by its history."""
+    ch = ch or _default_client()
+    total = await delete_scoped(
+        "loom.memory_versions", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
     )
+    for params in await consolidated_slices(org, user_id, ch=ch):
+        total += await delete_scoped(
+            "loom.memory_versions", org=org, scope_where=CONSOLIDATED_IN, params=params, ch=ch
+        )
+    return total
 
 
 # A memory's links to code, and the queue of memory writes the link worker reads.

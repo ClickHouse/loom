@@ -1286,22 +1286,59 @@ none of the three lists.
 
 A user-scope step reaches a table with no `user_id` column through a predicate that holds
 a subquery: the user's memory keys, record ids or shared keys, or the graph keys and
-entities only the user's memories link (`server/erasure/store/predicates.py`). The census
-counts with that predicate as written. A replicated table refuses a mutation with a
-subquery or with `now()`, so the step reads the subquery first and mutates by what it
-returned, bound as an array a slice at a time (`server/erasure/store/scope_reads.py`), and
-binds the time it stamps. A key that holds stored free text (a triple, an edge, a
-community's entity or label, a document's `source_uri`) is bound as its `cityHash64`,
-computed by ClickHouse on both sides: nothing bounds a stored name, and one name can be
-longer than the form field a bound value travels in. A slice's mutation tag hashes the
-step that submits it and its bound values but not the stamp, so each slice waits for its
-own mutation, two steps that submit one statement wait for their own, and a step re-run
-after a crash re-reads its slices and waits for any of its own still pending.
+entities only the user's memories link, and the same of the summaries built from them
+(`server/erasure/store/predicates.py`). The census counts with that predicate as written.
+A replicated table refuses a mutation with a subquery or with `now()`, so the step reads
+the subquery first and mutates by what it returned, bound as an array a slice at a time
+(`server/erasure/store/scope_reads.py`), and binds the time it stamps. A key that holds
+stored free text (a triple, an edge, a community's entity or label, a document's
+`source_uri`) is bound as its `cityHash64`, computed by ClickHouse on both sides: nothing
+bounds a stored name, and one name can be longer than the form field a bound value travels
+in. A slice's mutation tag hashes the step that submits it and its bound values but not
+the stamp, so each slice waits for its own mutation, two steps that submit one statement
+wait for their own, and a step re-run after a crash re-reads its slices and waits for any
+of its own still pending.
 
 The user-scope steps read the user's memory keys from `loom.memory`, so a user purge
 tombstones those rows in `memory.tombstone` and deletes them in `memory.retire`, after the
 last step that reads them; the consolidated summaries built from them are deleted there
 too, after their vectors and code links.
+
+The steps that reach the user's chunks, entity vectors, graph rows and version history
+treat those summaries as the user's rows, and the census counts them the same way:
+
+- `consolidated.tombstone` runs right after the user's rows are tombstoned.
+- `graph_links.delete` deletes the triples, edges and communities that only the user's
+  and the summaries' links hold before it deletes those links, so a run the census
+  reopens leaves none unlinked.
+- `memory_versions.delete` runs after the cache steps, which find an answer that quoted a
+  summary by its history.
+- `shared_embeddings.tombstone` runs before `shared.tombstone`: it finds the search rows
+  through the shared rows, which a purge deletes.
+- `memory.retire` retires a summary written since, its shared copies and the answers that
+  quoted it; in a purge it also runs the chunk, vector, graph-link and history steps again
+  before it deletes the rows that name the summary.
+
+A `src:` tag names a key, not its writer: where two users of a namespace hold the same
+key, erasing one also takes a summary built from the other's row, with its history,
+chunks, entity vectors and graph links, the graph rows only those links held, and the
+org-wide copies promoted from it, which nothing promotes again. A copy of a summary
+rebuilt without the user goes too, as its history still names the user: a copy does not
+record which version it took. The erasure takes every summary that may quote the user;
+the summary's current row is only tombstoned outside a purge, and consolidation rebuilds
+it from the rows that remain.
+Outside a purge the user's tombstoned keys stay, so such a rebuild counts as the user's
+too, and so does a summary `memory.restore` revives: a saga still running retires it
+again, and a later census of the erasure reports it.
+
+Under the Postgres authority the journal's revisions of a summary go with it when its
+current head names the user; a summary rebuilt without the user keeps its older
+revisions there. The user-scope census counts a summary's row, not its
+`loom.memory_embeddings` or `loom.memory_code_links` rows or its `loom.shared` copies,
+which `consolidated.tombstone`, `shared_embeddings.tombstone`, `shared.tombstone` and
+`memory.retire` retire with it. A copy an older build promoted with `agent="*"` names
+`*` for its source agent and the request's user: no erasure finds one of a summary,
+and one of a user's own row is found only by the user the request named.
 
 An erasure in an org, at any scope, deletes the whole org's cached query vectors in
 `loom.embedding_cache`, not only the erased scope's: the rows carry the org but no

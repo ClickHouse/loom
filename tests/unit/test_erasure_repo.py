@@ -297,7 +297,9 @@ async def test_tombstone_shared_embeddings_by_user_names_each_namespace_with_its
         "alice",
         ch=ch,
     )
-    ((read_sql, read_params),) = ch.read_calls[:1]
+    # the summaries of the user's memories first, then the shared rows promoted from either
+    assert "has(tags, 'consolidated')" in ch.read_calls[0][0]
+    ((read_sql, read_params),) = [c for c in ch.read_calls if "FROM loom.shared FINAL" in c[0]]
     assert "SELECT DISTINCT namespace, memory_key FROM loom.shared FINAL" in read_sql
     assert "splitByChar('/', x)[4]" in read_sql and read_params["uid"] == "alice"
     sel_sql, _ = ch.query_one_calls[0]
@@ -308,6 +310,18 @@ async def test_tombstone_shared_embeddings_by_user_names_each_namespace_with_its
     )
     ((mut_sql, mut_params),) = ch.execute_calls
     assert "SELECT" not in mut_sql and mut_params["keys"] == [("team-a", "k1")]
+
+
+def _summary_row(memory_id: str) -> dict[str, str]:
+    """A summary as `scope_reads.user_summary_rows` reads it."""
+    return {
+        "ns": "ns",
+        "agent": "a",
+        "user_id": "-",
+        "session_id": "-",
+        "memory_key": "t",
+        "id": memory_id,
+    }
 
 
 @pytest.mark.asyncio
@@ -321,9 +335,7 @@ async def test_consolidated_dependents_of_an_erased_user_are_tombstoned_in_both_
     topic = "00000000-0000-0000-0000-0000000000c1"
     ch = StubCH()
     ch.reads.append(("namespace, memory_key FROM", [{"namespace": "ns", "memory_key": "k1"}]))
-    ch.reads.append(
-        ("toString(memory_id) AS id FROM loom.memory", [{"namespace": "ns", "id": topic}])
-    )
+    ch.reads.append(("toString(memory_id) AS id FROM (SELECT", [_summary_row(topic)]))
     ch.query_one_returns.extend([{"n": 2}, {"n": 2}, {"n": 1}])
     n = await graph_steps.tombstone_consolidated_dependents_by_user("o", "alice", ch=ch)
     assert n == 5
@@ -339,21 +351,27 @@ async def test_consolidated_dependents_of_an_erased_user_are_tombstoned_in_both_
         assert "{pairs:Array(Tuple(String, String))}" in sql
         assert params["src"] == ["src:k1"] and params["pairs"] == [("ns", "src:k1")]
         assert "UPDATE tombstoned_at = {now:DateTime}" in sql
-    # the topic rows are read after the tombstones, then bound with their namespace
+    # the topic rows (and their history) are read after the tombstones, then bound with
+    # their namespace
     ids_sql, ids_params = ch.read_calls[1]
-    assert "has(tags, 'consolidated')" in ids_sql and ids_params["pairs"] == [("ns", "src:k1")]
+    assert "has(tags, 'consolidated')" in ids_sql and "FROM loom.memory_versions" in ids_sql
+    assert ids_params == {"org": "o", "uid": "alice"}
     assert (
-        "DELETE" in links and "(namespace, memory_id) IN {rows:Array(Tuple(String, UUID))}" in links
+        "DELETE" in links and "(namespace, memory_id) IN {ids:Array(Tuple(String, UUID))}" in links
     )
-    assert link_params["rows"] == [("ns", topic)]
+    assert link_params["ids"] == [("ns", topic)]
     assert not [sql for sql, _ in ch.execute_calls if "SELECT" in sql]
 
 
 @pytest.mark.asyncio
-async def test_a_user_purge_deletes_the_memory_rows_after_the_steps_that_read_their_keys() -> None:
+async def test_a_user_purge_deletes_the_memory_rows_after_the_steps_that_read_their_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """In a purge, `memory.tombstone` and the summaries' tombstone still stamp
     loom.memory, so the cache steps between can read the keys; `memory.retire`
     deletes the summaries and then the user's rows."""
+    # and what a summary written since fed (test_erasure_step_order pins them)
+    monkeypatch.setattr(graph_steps, "_SUMMARY_DERIVED_STEPS", ())
     pairs = ("namespace, memory_key FROM", [{"namespace": "ns", "memory_key": "k1"}])
     with erasure_mutations.purge_scope(True):
         ch = StubCH()
@@ -370,15 +388,14 @@ async def test_a_user_purge_deletes_the_memory_rows_after_the_steps_that_read_th
         assert embeddings.startswith("DELETE FROM loom.memory_embeddings")
         assert memory.startswith("ALTER TABLE loom.memory UPDATE tombstoned_at")
 
-        # the summaries' rows are tombstoned and their links go; the answers quoting them
+        # the user's late rows are stamped; the summaries' rows are tombstoned and their
+        # links go; the answers quoting them
         # go again, while their keys still find them; the rows are deleted last, so a
         # step stopped part way still finds the summaries through them
         topic = "00000000-0000-0000-0000-0000000000c1"
         ch = StubCH()
         ch.reads.append(pairs)
-        ch.reads.append(
-            ("toString(memory_id) AS id FROM loom.memory", [{"namespace": "ns", "id": topic}])
-        )
+        ch.reads.append(("toString(memory_id) AS id FROM (SELECT", [_summary_row(topic)]))
         keys, one = {"keys": ["t"]}, {"n": 1}
         ch.query_one_returns.extend(
             [one, one, one, one, keys, one, keys, one, keys, one, one, {"n": 2}]
@@ -387,12 +404,12 @@ async def test_a_user_purge_deletes_the_memory_rows_after_the_steps_that_read_th
         # delete here (memory.tombstone counts none in a purge, the late stamp neither)
         assert await graph_steps.retire_memory_by_user("o", "alice", ch=ch) == 8
         calls = [(" ".join(sql.split()), params) for sql, params in ch.execute_calls]
-        embeddings, summaries, (links, link_params), stamp, cache, precedents, code, *rest = calls
+        stamp, embeddings, summaries, (links, link_params), cache, precedents, code, *rest = calls
         assert stamp[0].startswith("ALTER TABLE loom.memory UPDATE tombstoned_at")
         (memory, memory_params), (own, own_params) = rest
         assert embeddings[0].startswith("DELETE FROM loom.memory_embeddings")
         assert summaries[0].startswith("ALTER TABLE loom.memory UPDATE tombstoned_at")
-        assert "loom.memory_code_links" in links and link_params["rows"] == [("ns", topic)]
+        assert "loom.memory_code_links" in links and link_params["ids"] == [("ns", topic)]
         assert "loom.llm_response_cache" in cache[0] and cache[1]["keys"] == ["t"]
         assert "loom.memory_ask_precedents" in precedents[0]
         assert "DELETE FROM loom.code_answers" in code[0] and code[1]["keys"] == ["t"]

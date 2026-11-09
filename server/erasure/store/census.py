@@ -29,10 +29,15 @@ from server.erasure.store.predicates import (
     USER_CHUNKS,
     USER_COMMUNITY_ROWS,
     USER_CONFLICT_RECORD_IDS,
+    USER_GRAPH_KEYS,
     USER_MEMORY_KEYS,
     USER_PARENT_KEYS,
     USER_PRECEDENT_KEYS,
     USER_RECORD_IDS,
+    USER_SUMMARIES,
+    USER_SUMMARY_CHUNKS,
+    USER_SUMMARY_IDS,
+    USER_SUMMARY_VECTORS,
     USER_WINDOW_KEYS,
 )
 from server.erasure.store.provider_copies import copy_residue
@@ -79,7 +84,11 @@ _HOLDS_TEXT = "(answer != '' OR citations != '')"
 _CENSUS: tuple[Substrate, ...] = (
     # In the user scope `memory.tombstone` only stamps these rows, which the later steps
     # read the user's keys from; `memory.retire` owns them and, in a purge, deletes them.
-    Substrate("loom.memory", LIVE, UID, "memory.tombstone", "memory.retire"),
+    # A live summary built from the user's memories counts too: `memory.retire` retires
+    # one written since `consolidated.tombstone`.
+    Substrate(
+        "loom.memory", LIVE, f"({UID} OR {USER_SUMMARIES})", "memory.tombstone", "memory.retire"
+    ),
     Substrate(
         "loom.memory_embeddings",
         LIVE,
@@ -87,10 +96,11 @@ _CENSUS: tuple[Substrate, ...] = (
         "memory_embeddings.tombstone",
         "memory_embeddings.tombstone",
     ),
+    # The user's history and that of the summaries built from the user's memories.
     Substrate(
         "loom.memory_versions",
         "1",
-        UID,
+        f"({UID} OR {USER_SUMMARIES})",
         "memory_versions.delete",
         "memory_versions.delete",
     ),
@@ -120,7 +130,7 @@ _CENSUS: tuple[Substrate, ...] = (
     Substrate(
         "loom.memory_chunks",
         LIVE,
-        USER_CHUNKS,
+        f"({USER_CHUNKS} OR {USER_SUMMARY_CHUNKS})",
         "memory_chunks.tombstone",
         "memory_chunks.tombstone",
     ),
@@ -141,28 +151,28 @@ _CENSUS: tuple[Substrate, ...] = (
     Substrate(
         "loom.entity_triple_memories",
         "1",
-        USER_PARENT_KEYS,
+        USER_GRAPH_KEYS,
         "graph_links.delete",
         "graph_links.delete",
     ),
     Substrate(
         "loom.entity_triple_rows",
         "1",
-        UID,
+        f"({UID} OR {USER_SUMMARY_IDS})",
         "graph_links.delete",
         "graph_links.delete",
     ),
     Substrate(
         "loom.entity_edge_memories",
         "1",
-        USER_PARENT_KEYS,
+        USER_GRAPH_KEYS,
         "graph_links.delete",
         "graph_links.delete",
     ),
     Substrate(
         "loom.entity_edge_rows",
         "1",
-        UID,
+        f"({UID} OR {USER_SUMMARY_IDS})",
         "graph_links.delete",
         "graph_links.delete",
     ),
@@ -193,18 +203,17 @@ _CENSUS: tuple[Substrate, ...] = (
         "memory_reinforcement.delete",
         "memory_reinforcement.delete",
     ),
-    # The three derived tables reach the user scope through the keys of the
-    # window they quote (cache, precedents) or the entities only the user's
-    # memories linked (communities) — parent-key predicates, as for the graph
-    # links. Read at census time from loom.memory's tombstoned rows and the
-    # edge links; under a purge the memory rows are gone and the predicates
-    # read 0, as `USER_CHUNKS` does.
+    # The three derived tables reach the user scope through the keys of the window they
+    # quote (cache, precedents) or the entities only the user's memories or summaries of
+    # them linked (communities) — parent-key predicates, as for the graph links. Read at
+    # census time from loom.memory's tombstoned rows and the edge links; under a purge
+    # the memory rows are gone and the predicates read 0, as `USER_CHUNKS` does.
     Substrate(
         "loom.entity_communities",
         "1",
         USER_COMMUNITY_ROWS,
         "entity_communities.delete",
-        "entity_communities.delete",
+        "graph_links.delete",
     ),
     Substrate(
         "loom.memory_ask_precedents",
@@ -231,8 +240,8 @@ _CENSUS: tuple[Substrate, ...] = (
         "code_answers.delete",
         ns_pred=f"{MEMORY_NS_EQ} AND {_HOLDS_TEXT}",
     ),
-    # User scope deletes the triples/edges only the user's
-    # memories carried, through the link tables — but the census cannot count
+    # User scope deletes the triples/edges only the user's memories (or summaries of
+    # them) carried, through the link tables — but the census cannot count
     # them by user (no user axis), so they are namespace-only rows here.
     Substrate("loom.entity_edges", "1", None, "entity_graph.delete", None),
     Substrate("loom.entity_triples", "1", None, "entity_graph.delete", None),
@@ -240,7 +249,7 @@ _CENSUS: tuple[Substrate, ...] = (
     Substrate(
         "loom.entity_vectors",
         LIVE,
-        f"(user_id = {{uid:String}} OR {USER_PARENT_KEYS})",
+        f"(user_id = {{uid:String}} OR {USER_PARENT_KEYS} OR {USER_SUMMARY_VECTORS})",
         "entity_vectors.delete",
         "entity_vectors.delete",
     ),
@@ -443,10 +452,13 @@ _CENSUS: tuple[Substrate, ...] = (
 #   shared*.tombstone                — org-wide promoted rows, matched by
 #                                       provenance not by scope.
 #   consolidated.tombstone           — loom.memory rows under another identity,
-#                                       and their code links; counted by the
-#                                       memory row for the namespace scope only.
-#                                       `memory.retire` (the user-scope owner of
-#                                       loom.memory) runs the same pass again.
+#                                       their search rows and code links. The
+#                                       memory row counts the summaries in both
+#                                       scopes; their loom.memory_embeddings and
+#                                       loom.memory_code_links rows only in the
+#                                       namespace scope. `memory.retire` (the
+#                                       user-scope owner of loom.memory) runs the
+#                                       same pass again.
 #   procedure_runs / query_nodes / session_outcomes / term_aggregates .delete
 #                                    — derived ledgers without a read path
 #                                       into memory content; not censused.

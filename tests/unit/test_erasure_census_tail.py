@@ -35,7 +35,7 @@ class _CH:
         return {"n": self.count}
 
     async def query_all(self, sql, params=None):
-        if "startsWith(t.name, '_provider_rebuild_')" in sql:
+        if "startsWith(t.name, '_provider_rebuild_')" in sql or "'consolidated'" in sql:
             return []
         if "system.mutations" not in sql:
             return self.rows
@@ -675,7 +675,7 @@ async def _async_noop(*a, **kw):
     return None
 
 
-async def test_both_sagas_run_entity_vectors_delete_after_the_graph_step(monkeypatch) -> None:
+async def test_entity_vectors_delete_sits_beside_the_graph_steps(monkeypatch) -> None:
     calls = _record_steps(monkeypatch)
     await h._saga_namespace("o", ["lme-1"], completed=set(), row={}, external=False)
     assert calls.index("entity_vectors.delete") == calls.index("entity_graph.delete") + 1, calls
@@ -687,11 +687,10 @@ async def test_both_sagas_run_entity_vectors_delete_after_the_graph_step(monkeyp
     monkeypatch.setattr("server.core.namespace_write_marks.bump", _async_noop)
     calls = _record_steps(monkeypatch)
     await h._saga_user_id("o", "alice", completed=set(), row={})
-    # Entity_communities.delete sits between them in the user saga
-    # (it reads ownership from the edge links, so before graph_links.delete too)
-    assert calls.index("entity_vectors.delete") == calls.index("entity_graph.delete") + 2, calls
-    assert calls.index("entity_communities.delete") == calls.index("entity_graph.delete") + 1, calls
-    assert calls.index("entity_vectors.delete") < calls.index("graph_links.delete")
+    # the user saga's graph rows and communities go in graph_links.delete, which reads
+    # ownership from the links first
+    assert "entity_graph.delete" not in calls and "entity_communities.delete" not in calls
+    assert calls.index("entity_vectors.delete") == calls.index("graph_links.delete") - 1
     assert calls[-1] == "verify.residue"
 
 

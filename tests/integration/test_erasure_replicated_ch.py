@@ -15,7 +15,8 @@ from tests.integration._resources import ch_client_from_env, unique_org
 
 NS = "repl"
 USER = "u1"
-# The tables the steps below read and mutate.
+# The tables the steps below read and mutate: a step that reads one outside this list
+# fails here with an unknown table.
 _TABLES = (
     "memory",
     "memory_embeddings",
@@ -31,8 +32,13 @@ _TABLES = (
     "entity_communities",
     "documents",
     "memory_code_links",
+    "memory_versions",
+    "shared",
 )
+# loom.entity_vectors is left out: this fixture's copy of its quantized codec column is
+# refused (code 36). Its summary statement binds a tuple array and holds no subquery.
 _VECTOR = "arrayWithConstant(3072, 0.)"
+_SUMMARY_ID = "00000000-0000-4000-8000-0000000000c1"
 
 
 @pytest.fixture
@@ -84,8 +90,9 @@ async def ch(db: str) -> AsyncIterator[Any]:
 
 
 def _seed(raw: Any, db: str, org: str) -> None:
-    """One user's memory under every table, a locked row the clear keeps, and another
-    writer's version of the user's document."""
+    """One user's memory under every table, a locked row the clear keeps, another
+    writer's version of the user's document, and a summary of the user's memory with its
+    history, chunk, row link and a shared copy with its search row."""
     ident = "'a', 'u1', 's1'"
     for key, lock in (("k1", ""), ("k2", "read_only")):
         raw.command(
@@ -127,6 +134,44 @@ def _seed(raw: Any, db: str, org: str) -> None:
         f"INSERT INTO {db}.entity_communities (org, namespace, entity, community_id, label)"
         f" VALUES ('{org}', '{NS}', 'oslo', 1, 'oslo')"
     )
+    # the user's own history of k1 and a row link of the user's
+    raw.command(
+        f"INSERT INTO {db}.memory_versions (org, namespace, agent, user_id, session_id,"
+        f" memory_key, version) VALUES ('{org}', '{NS}', {ident}, 'k1', 1)"
+    )
+    raw.command(
+        f"INSERT INTO {db}.entity_triple_rows (org, namespace, memory_id, user_id, subject,"
+        f" relation, object) VALUES ('{org}', '{NS}', generateUUIDv4(), 'u1', 'u', 'r', 'o')"
+    )
+    # a summary of the user's k1 under '-', its history, a chunk and a row link
+    tags = "['consolidated', 'src:k1']"
+    for table in ("memory", "memory_versions"):
+        raw.command(
+            f"INSERT INTO {db}.{table} (org, namespace, agent, user_id, session_id, memory_key,"
+            f" version, memory_id, tags) VALUES ('{org}', '{NS}', 'a', '-', '-', 'topic', 1,"
+            f" '{_SUMMARY_ID}', {tags})"
+        )
+    raw.command(
+        f"INSERT INTO {db}.memory_chunks (org, namespace, agent, user_id, session_id,"
+        " parent_memory_key, chunk_index, content, embedding)"
+        f" SELECT '{org}', '{NS}', 'a', '-', '-', 'topic', 0, 'summary chunk', {_VECTOR}"
+    )
+    raw.command(
+        f"INSERT INTO {db}.entity_triple_rows (org, namespace, memory_id, user_id, subject,"
+        f" relation, object) VALUES ('{org}', '{NS}', '{_SUMMARY_ID}', '-', 's', 'r', 'o')"
+    )
+    raw.command(
+        f"INSERT INTO {db}.shared (org, namespace, memory_key, value, memory_type, confidence,"
+        " promoted_from, promotion_event, promoted_by, reversible_until, version)"
+        f" VALUES ('{org}', '{NS}', 'team-topic', 'v', 'fact', 1, ['{org}/{NS}/a/-/-/topic'],"
+        " generateUUIDv4(), 'explicit', now(), 1)"
+    )
+    raw.command(
+        f"INSERT INTO {db}.memory_embeddings (org, namespace, agent, user_id, session_id,"
+        " memory_key, scope, version, embedding, memory_key_embedding)"
+        f" SELECT '{org}', '{NS}', '_shared', '-', '-', 'team-topic', 'shared', 1, {_VECTOR},"
+        f" {_VECTOR}"
+    )
     for who, version in (("u2", 1), (USER, 2)):
         raw.command(
             f"INSERT INTO {db}.documents (org, namespace, source_uri, content, version, user_id)"
@@ -144,11 +189,17 @@ async def test_the_user_steps_and_a_clear_mutate_replicated_tables(
     org = unique_org("erasure-repl")
     _seed(raw, db, org)
 
-    assert await steps_memory.tombstone_memory_chunks_by_user(org, USER, ch=ch) == 1
+    # the user's chunk and the summary's
+    assert await steps_memory.tombstone_memory_chunks_by_user(org, USER, ch=ch) == 2
     assert await steps_graph.tombstone_source_links_by_user(org, USER, ch=ch) == 2
-    assert await steps_graph.delete_entity_graph_by_user(org, USER, ch=ch) == 2
-    assert await steps_graph.delete_entity_communities_by_user(org, USER, ch=ch) == 1
-    assert await steps_graph.delete_graph_links_by_user(org, USER, ch=ch) == 2
+    # the triple, the edge and the community, then the user's and the summary's row links
+    # and two key links
+    assert await steps_graph.delete_graph_links_by_user(org, USER, ch=ch) == 7
+    # the summary's shared copy and its search row, then the user's and the summary's
+    # history
+    assert await steps_memory.tombstone_shared_embeddings_by_user(org, USER, ch=ch) == 1
+    assert await steps_memory.tombstone_shared_by_user(org, USER, ch=ch) == 1
+    assert await steps_memory.delete_memory_versions_by_user(org, USER, ch=ch) == 2
     with purge_scope(True):
         assert await steps_memory.tombstone_documents_by_user(org, USER, ch=ch) == 1
     counts = await bulk_tombstone_scope(org=org, namespace=NS, user_id=USER, ch=ch)
@@ -158,9 +209,17 @@ async def test_the_user_steps_and_a_clear_mutate_replicated_tables(
         table: raw.query(
             f"SELECT count() FROM {db}.{table} WHERE org = %(o)s", {"o": org}
         ).result_rows[0][0]
-        for table in ("entity_triples", "entity_edges", "entity_communities")
+        for table in ("entity_triples", "entity_edges", "entity_communities", "memory_versions")
     }
-    assert left == {"entity_triples": 0, "entity_edges": 0, "entity_communities": 0}
+    assert left == dict.fromkeys(
+        ("entity_triples", "entity_edges", "entity_communities", "memory_versions"), 0
+    )
+    for table in ("memory_chunks", "shared"):
+        kept = raw.query(
+            f"SELECT count() FROM {db}.{table} FINAL WHERE org = %(o)s AND tombstoned_at IS NULL",
+            {"o": org},
+        ).result_rows[0][0]
+        assert kept == 0, table
     live = raw.query(
         f"SELECT memory_key FROM {db}.memory_embeddings FINAL"
         " WHERE org = %(o)s AND tombstoned_at IS NULL",

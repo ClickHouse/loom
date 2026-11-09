@@ -90,9 +90,10 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
     promotion_event = str(uuid.uuid4())
     now_naive = naive_utc_now()
     reversible_until = now_naive + timedelta(days=input.reversible_for_days)
+    # The row read, not the request: an `agent="*"` lookup names no identity, and erasure
+    # finds a copy by its source's.
     promoted_from_repr = (
-        f"{input.org}/{input.namespace}/{input.agent}/"
-        f"{input.user_id}/{input.session_id}/{input.memory_key}"
+        f"{src.org}/{src.namespace}/{src.agent}/{src.user_id}/{src.session_id}/{src.memory_key}"
     )
     promoted_by = input.approver or "explicit"
     src_value_json = json.dumps(src.value, default=str)

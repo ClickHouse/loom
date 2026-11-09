@@ -9,11 +9,15 @@ as the driver renders it).
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, NamedTuple
 
-from server.core.ch_params import chunks
+from server.core.ch_params import FIELD_BYTES, chunks
 from server.core.repo_base import _CHClient
-from server.erasure.store.predicates import USER_KEYS_SUBQ, USER_QUOTED_KEY_LIST
+from server.erasure.store.predicates import (
+    SUMMARY_ROWS_FROM,
+    USER_KEYS_SUBQ,
+    USER_QUOTED_KEY_LIST,
+)
 
 
 async def user_key_pairs(org: str, user_id: str, *, ch: _CHClient) -> list[tuple[str, str]]:
@@ -23,6 +27,49 @@ async def user_key_pairs(org: str, user_id: str, *, ch: _CHClient) -> list[tuple
         params={"org": org, "uid": user_id},
     )
     return sorted((str(r["namespace"]), str(r["memory_key"])) for r in rows)
+
+
+async def consolidated_slices(org: str, user_id: str, *, ch: _CHClient) -> list[dict[str, Any]]:
+    """The bound values of `CONSOLIDATED_IN`, a slice of the user's (namespace, key) at a
+    time. Pairs are measured without the `src:` prefix they are bound with: half a field
+    leaves room for it."""
+    pairs = await user_key_pairs(org, user_id, ch=ch)
+    return [consolidated_params(part) for part in chunks(pairs, limit=FIELD_BYTES // 2)]
+
+
+def consolidated_params(pairs: list[tuple[str, str]]) -> dict[str, Any]:
+    """The bound values of `CONSOLIDATED_IN` for a slice of the user's (namespace, key)."""
+    tagged = [(ns, "src:" + key) for ns, key in pairs]
+    return {"src": sorted({tag for _, tag in tagged}), "pairs": tagged}
+
+
+class SummaryRows(NamedTuple):
+    """The summaries built from the user's memories, tombstoned rows included, as the
+    columns their derived rows name them by."""
+
+    keys: list[tuple[str, str]]  # (namespace, memory_key)
+    identities: list[tuple[str, str, str, str]]  # (namespace, agent, user_id, memory_key)
+    ids: list[tuple[str, str]]  # (namespace, memory_id)
+    # as `memory.promote` names a source: org/namespace/agent/user_id/session_id/key
+    sources: list[str]
+
+
+async def user_summary_rows(org: str, user_id: str, *, ch: _CHClient) -> SummaryRows:
+    rows = await ch.query_all(
+        "SELECT DISTINCT toString(namespace) AS ns, agent, user_id, session_id, memory_key, "
+        f"toString(memory_id) AS id {SUMMARY_ROWS_FROM}",
+        params={"org": org, "uid": user_id},
+    )
+    found = [
+        tuple(str(r[c]) for c in ("ns", "agent", "user_id", "session_id", "memory_key", "id"))
+        for r in rows
+    ]
+    return SummaryRows(
+        keys=sorted({(ns, key) for ns, _, _, _, key, _ in found}),
+        identities=sorted({(ns, a, u, key) for ns, a, u, _, key, _ in found}),
+        ids=sorted({(ns, i) for ns, *_, i in found}),
+        sources=sorted({f"{org}/{ns}/{a}/{u}/{s}/{key}" for ns, a, u, s, key, _ in found}),
+    )
 
 
 async def user_quoted_keys(org: str, user_id: str, *, ch: _CHClient) -> list[str]:

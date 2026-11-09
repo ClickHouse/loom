@@ -47,39 +47,44 @@ _CODE_LINKS = (
 USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("memory.tombstone", ((U, "loom.memory"),)),
     ("memory_embeddings.tombstone", ((U, "loom.memory_embeddings"),)),
-    ("memory_versions.delete", ((D, "loom.memory_versions"),)),
+    (
+        "consolidated.tombstone",
+        ((U, "loom.memory_embeddings"), (U, "loom.memory"), (D, "loom.memory_code_links")),
+    ),
     ("code_links.delete", _CODE_LINKS),
     ("working_memory.tombstone", ((U, "loom.working_memory"),)),
-    ("shared.tombstone", ((U, "loom.shared"),)),
     ("shared_embeddings.tombstone", ((U, "loom.memory_embeddings"),)),
+    ("shared.tombstone", ((U, "loom.shared"),)),
     ("agent_events.scrub", ((U, "loom.agent_events"),)),
     ("derived_facts.delete", ((D, "loom.derived_facts"),)),
     ("memory_reinforcement.delete", ((D, "loom.memory_reinforcement"),)),
     ("raw_evidence.delete", ((D, "loom.memory_evidence"), (D, "loom.memory_extraction_queue"))),
-    ("memory_chunks.tombstone", ((U, "loom.memory_chunks"),)),
+    ("memory_chunks.tombstone", ((U, "loom.memory_chunks"), (U, "loom.memory_chunks"))),
     (
         "source_links.tombstone",
         ((U, "loom.memory_belief_sources"), (U, "loom.memory_chunk_sources")),
     ),
-    ("entity_graph.delete", ((D, "loom.entity_triples"), (D, "loom.entity_edges"))),
-    ("entity_communities.delete", ((D, "loom.entity_communities"),)),
-    ("entity_vectors.delete", ((L, "loom.entity_vectors"),)),
+    ("entity_vectors.delete", ((L, "loom.entity_vectors"), (L, "loom.entity_vectors"))),
     (
         "graph_links.delete",
         (
+            # first the graph rows and communities its links alone hold
+            (D, "loom.entity_triples"),
+            (D, "loom.entity_edges"),
+            (D, "loom.entity_communities"),
+            # the user's row links, then the summaries'
             (D, "loom.entity_triple_rows"),
+            (D, "loom.entity_triple_rows"),
+            (D, "loom.entity_edge_rows"),
             (D, "loom.entity_edge_rows"),
             (D, "loom.entity_triple_memories"),
             (D, "loom.entity_edge_memories"),
         ),
     ),
-    (
-        "consolidated.tombstone",
-        ((U, "loom.memory_embeddings"), (U, "loom.memory"), (D, "loom.memory_code_links")),
-    ),
     ("llm_response_cache.delete", ((D, "loom.llm_response_cache"),)),
     ("ask_precedents.delete", ((D, "loom.memory_ask_precedents"),)),
     ("code_answers.delete", ((L, "loom.code_answers"),)),
+    ("memory_versions.delete", ((D, "loom.memory_versions"), (D, "loom.memory_versions"))),
     ("summaries.tombstone", ((U, "loom.session_summaries"), (U, "loom.entity_summaries"))),
     (
         "records.tombstone",
@@ -97,6 +102,9 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
             (U, "loom.memory_embeddings"),
             (U, "loom.memory"),
             (D, "loom.memory_code_links"),
+            # a shared copy promoted since
+            (U, "loom.memory_embeddings"),
+            (U, "loom.shared"),
             (U, "loom.memory"),
             (D, "loom.llm_response_cache"),
             (D, "loom.memory_ask_precedents"),
@@ -359,11 +367,18 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
 USER_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("memory.tombstone", ((U, "loom.memory"),)),
     ("memory_embeddings.tombstone", ((L, "loom.memory_embeddings"),)),
-    ("memory_versions.delete", ((D, "loom.memory_versions"),)),
+    (
+        "consolidated.tombstone",
+        (
+            (L, "loom.memory_embeddings"),
+            (U, "loom.memory"),
+            (D, "loom.memory_code_links"),
+        ),
+    ),
     ("code_links.delete", _CODE_LINKS),
     ("working_memory.tombstone", ((D, "loom.working_memory"),)),
-    ("shared.tombstone", ((D, "loom.shared"),)),
     ("shared_embeddings.tombstone", ((L, "loom.memory_embeddings"),)),
+    ("shared.tombstone", ((D, "loom.shared"),)),
     ("agent_events.scrub", ((U, "loom.agent_events"),)),
     ("derived_facts.delete", ((D, "loom.derived_facts"),)),
     ("memory_reinforcement.delete", ((D, "loom.memory_reinforcement"),)),
@@ -374,7 +389,7 @@ USER_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
             (D, "loom.memory_extraction_queue"),
         ),
     ),
-    ("memory_chunks.tombstone", ((L, "loom.memory_chunks"),)),
+    ("memory_chunks.tombstone", ((L, "loom.memory_chunks"), (L, "loom.memory_chunks"))),
     (
         "source_links.tombstone",
         (
@@ -382,35 +397,27 @@ USER_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
             (D, "loom.memory_chunk_sources"),
         ),
     ),
-    (
-        "entity_graph.delete",
-        (
-            (D, "loom.entity_triples"),
-            (D, "loom.entity_edges"),
-        ),
-    ),
-    ("entity_communities.delete", ((D, "loom.entity_communities"),)),
-    ("entity_vectors.delete", ((L, "loom.entity_vectors"),)),
+    ("entity_vectors.delete", ((L, "loom.entity_vectors"), (L, "loom.entity_vectors"))),
     (
         "graph_links.delete",
         (
+            # first the graph rows and communities its links alone hold
+            (D, "loom.entity_triples"),
+            (D, "loom.entity_edges"),
+            (D, "loom.entity_communities"),
+            # the user's row links, then the summaries'
             (D, "loom.entity_triple_rows"),
+            (D, "loom.entity_triple_rows"),
+            (D, "loom.entity_edge_rows"),
             (D, "loom.entity_edge_rows"),
             (D, "loom.entity_triple_memories"),
             (D, "loom.entity_edge_memories"),
         ),
     ),
-    (
-        "consolidated.tombstone",
-        (
-            (L, "loom.memory_embeddings"),
-            (U, "loom.memory"),
-            (D, "loom.memory_code_links"),
-        ),
-    ),
     ("llm_response_cache.delete", ((D, "loom.llm_response_cache"),)),
     ("ask_precedents.delete", ((D, "loom.memory_ask_precedents"),)),
     ("code_answers.delete", ((L, "loom.code_answers"),)),
+    ("memory_versions.delete", ((D, "loom.memory_versions"), (D, "loom.memory_versions"))),
     (
         "summaries.tombstone",
         (
@@ -431,13 +438,32 @@ USER_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     (
         "memory.retire",
         (
+            # the user's late rows stamped, the summaries retired, the answers that quoted
+            # either, what a summary written since fed, then the rows
+            (U, "loom.memory"),
             (L, "loom.memory_embeddings"),
             (U, "loom.memory"),
             (D, "loom.memory_code_links"),
-            (U, "loom.memory"),
             (D, "loom.llm_response_cache"),
             (D, "loom.memory_ask_precedents"),
             (L, "loom.code_answers"),
+            (L, "loom.memory_embeddings"),
+            (D, "loom.shared"),
+            (L, "loom.memory_chunks"),
+            (L, "loom.memory_chunks"),
+            (L, "loom.entity_vectors"),
+            (L, "loom.entity_vectors"),
+            (D, "loom.entity_triples"),
+            (D, "loom.entity_edges"),
+            (D, "loom.entity_communities"),
+            (D, "loom.entity_triple_rows"),
+            (D, "loom.entity_triple_rows"),
+            (D, "loom.entity_edge_rows"),
+            (D, "loom.entity_edge_rows"),
+            (D, "loom.entity_triple_memories"),
+            (D, "loom.entity_edge_memories"),
+            (D, "loom.memory_versions"),
+            (D, "loom.memory_versions"),
             (D, "loom.memory"),
             (D, "loom.memory"),
         ),

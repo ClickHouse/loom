@@ -59,14 +59,10 @@ async def test_only_triples_and_edges_owned_by_the_user_alone_are_deleted() -> N
         "SELECT cityHash64(namespace, subject, relation, object) AS h "
         "FROM loom.entity_triple_memories FINAL"
     )
-    assert (
-        "HAVING countIf((namespace, memory_key) IN (SELECT namespace, memory_key FROM loom.memory WHERE org = {org:String} AND user_id = {uid:String})) > 0"
-        in tread
-    )
-    assert (
-        "AND countIf((namespace, memory_key) NOT IN (SELECT namespace, memory_key FROM loom.memory WHERE org = {org:String} AND user_id = {uid:String})) = 0"
-        in tread
-    )
+    # the user's keys and those of the summaries built from them, history included
+    having = tread.split("HAVING", 1)[1]
+    assert erasure_predicates.USER_KEYS_SUBQ in having
+    assert "has(tags, 'consolidated')" in having and "FROM loom.memory_versions" in having
     assert tread_params == {"org": "o", "uid": "alice"}
     assert eread.startswith(
         "SELECT cityHash64(namespace, entity_a, entity_b) AS h FROM loom.entity_edge_memories"
@@ -82,7 +78,7 @@ async def test_only_triples_and_edges_owned_by_the_user_alone_are_deleted() -> N
     assert ch.queries[0][0].split("WHERE", 1)[1].strip() in tsql
 
 
-async def test_the_user_saga_deletes_the_graph_before_it_deletes_the_links(monkeypatch) -> None:
+async def test_the_user_saga_has_no_graph_step_and_tombstones_first(monkeypatch) -> None:
     import server.erasure.app.saga as h
 
     calls: list[str] = []
@@ -93,8 +89,8 @@ async def test_the_user_saga_deletes_the_graph_before_it_deletes_the_links(monke
 
     monkeypatch.setattr(h, "_do_step", fake_do_step)
     await h._saga_user_id("o", "alice", completed=set(), row={})
-    assert "entity_graph.delete" in calls
-    assert calls.index("entity_graph.delete") < calls.index("graph_links.delete")
+    # graph_links.delete deletes the graph rows its links alone hold, then the links
+    assert "entity_graph.delete" not in calls
     assert calls.index("memory.tombstone") < calls.index(
-        "entity_graph.delete"
+        "graph_links.delete"
     )  # keys still resolve: tombstone, not delete

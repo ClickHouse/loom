@@ -81,9 +81,14 @@ USER_KEY_LIST = (
     "(SELECT groupUniqArray(memory_key) FROM loom.memory "
     "WHERE org = {org:String} AND user_id = {uid:String})"
 )
-# The summaries built from the user's memories: rows tagged `consolidated` and a
-# `src:<key>` of one of the user's keys in the row's own namespace, under any identity.
-# The read form of `steps_graph._CONSOLIDATED`, which binds the user's pairs.
+# A summary built from the user's rows, under any identity: tagged `src:<key>` with a key
+# the user wrote in the summary's own namespace (a copy into another namespace keeps the
+# tags and is not the user's there), on each version. `hasAny(tags, src)` is there for
+# the skip index; the pairs decide. `USER_SUMMARIES` is the read form.
+CONSOLIDATED_IN = (
+    "has(tags, 'consolidated') AND hasAny(tags, {src:Array(String)}) "
+    "AND hasAny(arrayMap(t -> (namespace, t), tags), {pairs:Array(Tuple(String, String))})"
+)
 _USER_SRC_PAIRS = (
     "(SELECT groupUniqArray((toString(namespace), concat('src:', memory_key))) "
     "FROM loom.memory WHERE org = {org:String} AND user_id = {uid:String})"
@@ -92,16 +97,44 @@ USER_SUMMARIES = (
     "has(tags, 'consolidated') AND "
     f"hasAny(arrayMap(t -> (toString(namespace), t), tags), {_USER_SRC_PAIRS})"
 )
-# A cached answer or a precedent that quoted such a summary quoted the user. The
-# version history too: a summary rebuilt without the user can merge its older row away,
-# so an answer quoting its new version goes too, and one cached mid-saga fails the census.
-USER_SUMMARY_KEY_LIST = (
-    "arrayConcat((SELECT groupUniqArray(memory_key) FROM loom.memory "
-    f"WHERE org = {{org:String}} AND {USER_SUMMARIES}), "
-    "(SELECT groupUniqArray(memory_key) FROM loom.memory_versions "
-    f"WHERE org = {{org:String}} AND {USER_SUMMARIES}))"
+# The summaries built from the user's memories, from the current rows and the history: a
+# summary rebuilt without the user keeps under its key what its old text gave it, and
+# only the history names it, whether or not `loom.memory` has merged its old version away.
+_SUMMARY_COLUMNS = "namespace, agent, user_id, session_id, memory_key, memory_id, tags"
+SUMMARY_ROWS_FROM = (
+    f"FROM (SELECT {_SUMMARY_COLUMNS} FROM loom.memory FINAL WHERE org = {{org:String}} "
+    f"UNION ALL SELECT {_SUMMARY_COLUMNS} FROM loom.memory_versions "
+    f"WHERE org = {{org:String}}) WHERE {USER_SUMMARIES}"
 )
+# A cached answer or a precedent that quoted such a summary quoted the user; the cache
+# steps run while the history still names a rebuilt one.
+USER_SUMMARY_KEY_LIST = f"(SELECT groupUniqArray(memory_key) {SUMMARY_ROWS_FROM})"
 USER_QUOTED_KEY_LIST = f"arrayConcat({USER_KEY_LIST}, {USER_SUMMARY_KEY_LIST})"
+# What was derived from a summary is the user's too: chunks and entity vectors by its
+# agent, user and key (neither carries the memory's session), row links by (namespace,
+# id), key links by (namespace, key) through `PARENT_KEYS_IN`.
+_USER_SUMMARY_KEYS_SUBQ = f"(SELECT toString(namespace), memory_key {SUMMARY_ROWS_FROM})"
+_USER_SUMMARY_IDENTITIES = (
+    f"(SELECT toString(namespace), agent, user_id, memory_key {SUMMARY_ROWS_FROM})"
+)
+_IDENTITIES = "{rows:Array(Tuple(String, String, String, String))}"
+# a legacy '-' chunk at a summary's key is the summary's too, as for the user's own keys
+USER_SUMMARY_CHUNKS = (
+    "(namespace, agent, user_id, parent_memory_key) IN "
+    f"(SELECT toString(namespace), agent, arrayJoin([user_id, '-']), memory_key "
+    f"{SUMMARY_ROWS_FROM})"
+)
+SUMMARY_CHUNKS_IN = f"(namespace, agent, user_id, parent_memory_key) IN {_IDENTITIES}"
+USER_SUMMARY_VECTORS = f"(namespace, agent, user_id, memory_key) IN {_USER_SUMMARY_IDENTITIES}"
+SUMMARY_VECTORS_IN = f"(namespace, agent, user_id, memory_key) IN {_IDENTITIES}"
+USER_SUMMARY_IDS = (
+    f"(namespace, memory_id) IN (SELECT toString(namespace), memory_id {SUMMARY_ROWS_FROM})"
+)
+SUMMARY_IDS_IN = "(namespace, memory_id) IN {ids:Array(Tuple(String, UUID))}"
+USER_GRAPH_KEYS = (
+    f"((namespace, memory_key) IN {USER_KEYS_SUBQ} "
+    f"OR (namespace, memory_key) IN {_USER_SUMMARY_KEYS_SUBQ})"
+)
 USER_WINDOW_KEYS = f"hasAny(window_keys, {USER_QUOTED_KEY_LIST})"
 USER_PRECEDENT_KEYS = f"hasAny(arrayConcat(window_keys, cited_keys), {USER_QUOTED_KEY_LIST})"
 WINDOW_KEYS_IN = "hasAny(window_keys, {keys:Array(String)})"
@@ -113,11 +146,11 @@ USER_MEMORY_KEYS = f"hasAny(memory_keys, {USER_QUOTED_KEY_LIST})"
 MEMORY_KEYS_IN = "hasAny(memory_keys, {keys:Array(String)})"
 # A community row names an entity (and a label — the highest-degree member of
 # its community, another entity name). The entity belongs to the user when
-# every memory linking it in the co-occurrence graph is the user's and at
-# least one is — the exclusive-ownership rule, read from the edge link
-# table, so this runs before graph_links.delete removes those rows. A row
-# whose LABEL is such an entity goes too: the label text is the residue, and
-# the communities worker relabels on its next pass from the edges that remain.
+# every memory linking it in the co-occurrence graph is the user's (or a summary of
+# theirs) and at least one is — the exclusive-ownership rule, read from the edge link
+# table before the links go. A row whose LABEL is such an entity goes too: the label
+# text is the residue, and the communities worker relabels on its next pass from the
+# edges that remain.
 USER_COMMUNITY_ENTITIES = (
     "(SELECT namespace, entity FROM ("
     "SELECT namespace, entity_a AS entity, memory_key FROM loom.entity_edge_memories FINAL "
@@ -126,8 +159,7 @@ USER_COMMUNITY_ENTITIES = (
     "SELECT namespace, entity_b AS entity, memory_key FROM loom.entity_edge_memories FINAL "
     "WHERE org = {org:String}) "
     "GROUP BY namespace, entity "
-    f"HAVING countIf((namespace, memory_key) IN {USER_KEYS_SUBQ}) > 0 "
-    f"AND countIf((namespace, memory_key) NOT IN {USER_KEYS_SUBQ}) = 0)"
+    f"HAVING countIf({USER_GRAPH_KEYS}) > 0 AND countIf(NOT {USER_GRAPH_KEYS}) = 0)"
 )
 USER_COMMUNITY_ROWS = (
     f"((namespace, entity) IN {USER_COMMUNITY_ENTITIES} "

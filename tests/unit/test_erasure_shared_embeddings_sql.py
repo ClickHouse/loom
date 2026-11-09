@@ -39,6 +39,8 @@ async def test_a_shared_row_of_the_same_key_in_another_namespace_keeps_its_embed
     ch = KeptCH(
         tmp_path,
         ddl("shared"),
+        ddl("memory"),
+        ddl("memory_versions"),
         *EMBEDDINGS,
         _shared("team-a", "alice"),
         _shared("team-b", "bob"),
@@ -52,3 +54,47 @@ async def test_a_shared_row_of_the_same_key_in_another_namespace_keeps_its_embed
     )
     assert n == 1
     assert [(r["namespace"], r["gone"]) for r in rows] == [("team-a", 1), ("team-b", 0)]
+
+
+def _promoted(namespace: str, key: str, source: str) -> str:
+    return (
+        "INSERT INTO loom.shared (org, namespace, memory_key, value, memory_type, confidence,"
+        " promoted_from, promotion_event, promoted_by, reversible_until, version) VALUES"
+        f" ('acme', '{namespace}', '{key}', 'v', 'fact', 1, ['acme/{source}'],"
+        " generateUUIDv4(), 'sa:p', now(), 1)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_copy_promoted_from_a_summary_of_the_users_memory_goes(tmp_path: Path) -> None:
+    """A key or a session may hold a slash: the whole entry is matched. A copy of the
+    same key under another agent is another memory's, and stays."""
+    summary = (
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key,"
+        " memory_type, value, version, tags) VALUES"
+        " ('acme', 'ns', 'a', 'alice', '-', 'user_diet', 'fact', 'v', 1, []),"
+        " ('acme', 'ns', 'a', '-', '-', 'topic/diets', 'fact', 'v', 1,"
+        " ['consolidated', 'src:user_diet']),"
+        " ('acme', 'ns', 'a', '-', 'run/7', 'topic', 'fact', 'v', 1,"
+        " ['consolidated', 'src:user_diet'])"
+    )
+    ch = KeptCH(
+        tmp_path,
+        ddl("shared"),
+        ddl("memory"),
+        ddl("memory_versions"),
+        summary,
+        _promoted("ns", "copy-mine", "ns/a/-/-/topic/diets"),
+        _promoted("ns", "copy-other", "ns/b/-/-/topic/diets"),
+        _promoted("ns", "copy-session", "ns/a/-/run/7/topic"),
+    )
+    assert await memory_steps.tombstone_shared_by_user("acme", "alice", ch=ch) == 2
+    rows = await ch.query_all(
+        "SELECT memory_key, tombstoned_at IS NOT NULL AS gone FROM loom.shared FINAL"
+        " ORDER BY memory_key"
+    )
+    assert [(r["memory_key"], r["gone"]) for r in rows] == [
+        ("copy-mine", 1),
+        ("copy-other", 0),
+        ("copy-session", 1),
+    ]

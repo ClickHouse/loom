@@ -42,6 +42,7 @@ async def test_another_users_chunks_of_the_same_key_stay_live(tmp_path: Path) ->
         "SET enable_quantized_codec = 1",
         ddl("memory"),
         ddl("memory_chunks"),
+        ddl("memory_versions"),
         _memory("u1"),
         _memory("u2"),
         _chunk("u1", 0),

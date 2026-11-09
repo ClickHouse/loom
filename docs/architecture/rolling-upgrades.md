@@ -426,6 +426,24 @@ schema. These rules keep that safe. The operator procedure is in
     ([upgrade procedure](../operations/upgrades.md#upgrade-procedure), step 9); after a
     rollback, clear it once N-1 serves alone and again once N serves again. No gate holds
     the rollout.
+37. **What a summary of the user's memories fed** (its history, chunks, entity vectors,
+    graph rows and shared copies; [erasure saga](memory-architecture.md#erasure-saga)):
+    N-1's user saga and census reach only the user's own, so a user erasure N-1 runs
+    leaves the summary's rows and records `completed`. Outside a purge, a saga N-1 left
+    in progress that N resumes fails N's census when N-1 ran those rows' steps, and the
+    recovery worker's next resume runs them again; the shared copies, which the census
+    does not count, stay when N-1 passed `memory.retire`. In a purge, N's
+    `memory.retire` runs them again, except for the search rows of shared copies of the
+    user's own memories when N-1 ran its `shared.tombstone`, which deleted the rows they
+    are found by.
+    After a purge that passed `memory.retire`, including one N-1 completed, the user's
+    keys are gone and nothing finds the summaries' rows.
+    Every build before N leaves them, and the ledger does not name the build that ran a
+    saga: once N serves alone, request again each user erasure without `purge` that was
+    requested before then (the `user_id` rows of `loom.erasure_requests`), and after a
+    rollback, those requested since the rollback once N serves again
+    ([upgrade procedure](../operations/upgrades.md#upgrade-procedure), step 10, which
+    names what the new saga also erases); no gate holds the rollout.
 
 ## What checks them
 
