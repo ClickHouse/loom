@@ -1789,6 +1789,19 @@ describe("Assistant: documents", () => {
     expect(within(result).queryByText(/Some documents may be missing/)).toBeNull();
   });
 
+  it("says a listing whose check failed was not checked, not that it was cut", async () => {
+    // The server lists every ClickHouse row when its check against Postgres fails.
+    inspectKnowledge.mockResolvedValueOnce({
+      ...KNOWLEDGE,
+      listed_complete: false,
+      skipped: ["listed.heads: ValueError"],
+    });
+    render(<Assistant />);
+    const result = await pickDocuments();
+    expect(within(result).getByText("The listing could not be checked against the latest writes.")).toBeInTheDocument();
+    expect(within(result).queryByText(/^Newest \d+ of \d+ listed\.$/)).toBeNull();
+  });
+
   it("does not call a namespace empty when its job count could not be read", async () => {
     inspectKnowledge.mockResolvedValueOnce(jobsUnread(emptyNamespace()));
     render(<Assistant />);

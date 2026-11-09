@@ -882,9 +882,10 @@ the listed documents) read ClickHouse, so they can miss a commit it does not hav
 The report reads the namespace's unsettled deliveries once (a delivery whose row landed
 but whose older chunk versions are not retired yet counts). Any owed or parked delivery
 is counted in `skipped` (`projection: …`); a Postgres that does not answer is named
-there instead, and not asked again in the call. Either makes `listed_complete` false. A listed row is kept only while `get_many_by_uris` serves it at
-the version ClickHouse listed, live; a document rewritten or deleted in Postgres since
-leaves the listing, counted in `skipped` (`listed.heads: …`).
+there instead, and not asked again in the call. Either makes `listed_complete` false. A
+listed row is kept only while `get_many_by_uris` serves it at the version ClickHouse
+listed, live; a document rewritten or deleted in Postgres since leaves the listing,
+counted in `skipped` (`listed.heads: …`).
 
 An erasure's `pg_knowledge.delete` step, after `pg_memory.delete`, runs on a connection
 of its own in one transaction:
