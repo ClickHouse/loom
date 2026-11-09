@@ -457,3 +457,38 @@ def test_a_lease_clickhouse_spent_before_the_durable_read_counts(
     with pytest.raises(pg_lease.PublicationPending):
         asyncio.run(pg_delivery._still_heads([claim], deadline=0.0))
     assert reads == [False]  # no durable read was made
+
+
+@pytest.mark.parametrize(
+    "head",
+    [
+        pytest.param({"redacted_at": "2026-01-01 00:00:00"}, id="a redacted copy"),
+        pytest.param({"tombstoned_at": "2026-01-01 00:00:00"}, id="a deleted copy"),
+    ],
+)
+def test_the_flush_builds_no_document_onto_a_redacted_or_deleted_head(
+    monkeypatch: pytest.MonkeyPatch, head: dict[str, str]
+) -> None:
+    """A redaction keeps the content hash: a redacted head is not a copy to build the
+    writer's document onto, or the redacted text would be searchable again."""
+    doc = {**_claim(5, "a" * 64).row}
+
+    async def heads_owing(keys, *, durable=False):  # type: ignore[no-untyped-def]
+        return {pg_memory.identity_key(doc): ({**_head(9), **head}, 0)}
+
+    class _Committed:
+        seqs = [("o", "n", 1)]
+        rows = [doc]
+
+    class _Entry:
+        documents_sent = False
+        documents = [doc]
+        committed = _Committed()
+        stale: list[Any] = []
+
+    entry = _Entry()
+    monkeypatch.setattr(pg_memory, "heads_owing", heads_owing)
+    monkeypatch.setattr(pg_memory, "embedded", lambda row: True)
+    sent = asyncio.run(pg_batch._served_documents([entry]))  # type: ignore[list-item]
+    assert sent[id(entry)] == {}
+    assert entry.stale == [("o", "n", 1)]
