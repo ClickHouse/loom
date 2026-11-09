@@ -7,8 +7,9 @@
 # container as a post-checkout step via this script. The same image as
 # compose.yaml, the latest release, so CI validates what a default install runs.
 # One mount is CI's own: dev/clickhouse-ci/log_queries_readonly.xml pins
-# query logging (log_queries, log_query_settings, log_queries_min_type) for
-# every user on the default profile, Loom's included, as ClickHouse Cloud does.
+# query logging (log_queries, log_queries_probability, log_query_settings,
+# log_queries_min_type) for every user on the default profile, Loom's
+# included, as ClickHouse Cloud does.
 #
 # A second ClickHouse beside a running one (one per worktree) takes its own
 # name and host ports: LOOM_CH_CONTAINER, LOOM_CH_HOST_PORT, LOOM_CH_NATIVE_HOST_PORT.

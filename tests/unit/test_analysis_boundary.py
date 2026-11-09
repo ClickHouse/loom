@@ -187,7 +187,7 @@ def test_every_allowlisted_table_is_reached_by_erasure() -> None:
 def test_no_entity_statement_changes_what_cloud_pins() -> None:
     # ClickHouse Cloud pins how its users' queries are logged and refuses a
     # profile or a statement that changes it; the text is cut from the log instead.
-    pinned = re.compile(r"\blog_(queries|query_settings|queries_min_type)\s*=")
+    pinned = re.compile(r"\blog_(queries|queries_probability|query_settings|queries_min_type)\s*=")
     assert not any(pinned.search(stmt) for stmt in SQL)
 
 

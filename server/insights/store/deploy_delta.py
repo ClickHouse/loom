@@ -166,7 +166,7 @@ _QL_WINDOW = (
     " AND event_time >= {swap:DateTime} - INTERVAL {window:UInt32} MINUTE"
     " AND event_time < {swap:DateTime} + INTERVAL {window:UInt32} MINUTE"
     " AND http_user_agent LIKE {ua:String}"
-    # insights.query runs callers' SQL, not the deployment's own workload.
+    # The analyst user's statements are callers' SQL and the probe, not shapes.
     " AND user != {analyst:String}"
 )
 

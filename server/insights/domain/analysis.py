@@ -23,6 +23,7 @@ import hmac
 from dataclasses import dataclass
 from typing import NamedTuple
 
+# pyjwt[crypto] guarantees it
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 

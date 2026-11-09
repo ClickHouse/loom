@@ -407,9 +407,9 @@ stored key. Elsewhere an admin uses one of two commands:
 
 A printed rotation run only in part leaves analysis unavailable, by the order of a write
 below. Its statements must run in that one session, after its first statement,
-`SET log_queries_cut_to_length = 1, log_formatted_queries = 0`: ClickHouse takes no per-statement settings on an
-access statement, and a console that sends them one by one would log the key in
-`system.query_log`.
+`SET log_queries_cut_to_length = 1, log_formatted_queries = 0`: ClickHouse takes no
+per-statement settings on an access statement, and a console that sends them one by one
+would log the key in `system.query_log`.
 
 The allowlist lives in code with the column comments that become the agent's catalog, so
 the grants, the policies and the catalog come from one definition. The rules a write
@@ -619,9 +619,10 @@ Each call writes one `agent_events` row with its row count and latency (identifi
 in `server/observability/event_args.py`) and the statement's digest and length. The
 `sql` argument joins the ledger's text keys, which record a digest, never the text; a
 restricted namespace drops text keys from the ledger, so the op also records the digest
-as `sql_digest`, an identifier key, which the citation check reads. The profile holds
-both `CONST`, so `system.query_log`, the span log and the server log record
-each statement the analyst runs without its text: its user, timing, rows read and
+as `sql_digest`, an identifier key, which the citation check reads. The analyst profile
+holds `log_queries_cut_to_length = 1` and `log_formatted_queries = 0` as `CONST`, so
+`system.query_log`, the span log and the server log record each statement the analyst
+runs without its text: its user, timing, rows read and
 settings, the scope and its signature among them. A signature reads rows only with the
 analyst's password, for its own query id, until its expiry. A statement ClickHouse
 refuses is logged with its error message, which can quote the whole statement (an
