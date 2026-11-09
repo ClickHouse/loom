@@ -1,0 +1,25 @@
+<!--
+  CI only: every user on the default profile, Loom's among them, may not change
+  how its queries are logged, as on ClickHouse Cloud, so a statement or settings
+  profile that turns query logging off fails here as it does there.
+-->
+<clickhouse>
+    <profiles>
+        <default>
+            <constraints>
+                <log_queries>
+                    <readonly/>
+                </log_queries>
+                <log_queries_probability>
+                    <readonly/>
+                </log_queries_probability>
+                <log_query_settings>
+                    <readonly/>
+                </log_query_settings>
+                <log_queries_min_type>
+                    <readonly/>
+                </log_queries_min_type>
+            </constraints>
+        </default>
+    </profiles>
+</clickhouse>

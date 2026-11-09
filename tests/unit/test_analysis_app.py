@@ -4,6 +4,7 @@ answered, what the probe calls repairable, and when nothing is written."""
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 
 import pytest
@@ -320,6 +321,8 @@ def test_the_printed_sql_revokes_what_show_grants_lists_before_granting(
     printed = app.printed_statements(revokes)
     first_grant = next(i for i, s in enumerate(printed) if s.startswith("GRANT "))
     assert printed[first_grant - len(revokes) : first_grant] == revokes
+    # The file is run in one session, whose first statement cuts the rest from the log.
+    assert printed[0] == "SET log_queries_cut_to_length = 1, log_formatted_queries = 0"
 
 
 def test_a_column_grant_in_another_database_is_outside_the_allowlist(
@@ -1027,3 +1030,10 @@ def test_a_write_clickhouse_refuses_is_a_kept_finding_and_not_done(
         assert asyncio.run(app.provision()) is False
         ready_now, problem = app.analysis_state()
         assert ready_now is False and problem.startswith("writing or probing loom_analyst failed")
+
+
+def test_a_drawn_password_has_every_character_class() -> None:
+    # ClickHouse Cloud refuses a user whose password lacks one.
+    password = app._drawn_password()
+    for character_class in ("[a-z]", "[A-Z]", "[0-9]", "[^A-Za-z0-9]"):
+        assert re.search(character_class, password), character_class

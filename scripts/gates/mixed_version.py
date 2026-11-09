@@ -16,6 +16,9 @@ Then it writes from each build and reads from the other, and checks:
 - every asset a build's dashboard page names loads from a replica of the other
   build (needs npm);
 - after the cross-boot each build answers ready;
+- each build answers `insights.query` on the analyst entities at N's version,
+  and no logged statement text or error holds the scope key or its pads
+  (both skipped where N-1 has no analysis plane);
 - with every process on `LOOM_BACKGROUND_WORKERS=auto`, exactly one process
   runs the workers, and it is N+1: its tree carries one no-op migration more,
   so N hands the lease over to it.
@@ -50,6 +53,12 @@ from typing import Any
 import httpx
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:  # run as a file: this checkout's server, not an installed one
+    sys.path.insert(0, str(ROOT))
+
+from server.core.sql_literal import sql_string  # noqa: E402
+from server.insights.domain import analysis as boundary  # noqa: E402
+
 CH_IMAGE = "clickhouse/clickhouse-server:26.5.1.882"
 CH_PASSWORD = "loomdev"
 JWT_SECRET = "mixed-version-gate-secret-" + "0" * 32
@@ -119,10 +128,19 @@ def clickhouse(keep: bool) -> Iterator[int]:
             subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
 
-def sql(port: int, query: str) -> str:
+def sql(
+    port: int,
+    query: str,
+    params: dict[str, str] | None = None,
+    settings: dict[str, Any] | None = None,
+) -> str:
+    """`query`'s answer; `params` bind its `{name:Type}` placeholders. A
+    setting that changes how the statement is logged goes with the request,
+    since in a SETTINGS clause it does not cut the statement's own text."""
+    bound = {f"param_{k}": v for k, v in (params or {}).items()}
     r = httpx.post(
         f"http://127.0.0.1:{port}/",
-        params={"user": "loom", "password": CH_PASSWORD},
+        params={"user": "loom", "password": CH_PASSWORD, **bound, **(settings or {})},
         content=query.encode(),
         timeout=60,
     )
@@ -210,6 +228,8 @@ class Server:
             LOOM_EMBEDDING_MODEL="fake-ngram-1024",
             LOOM_LLM_PROVIDER="fake",
             LOOM_BACKGROUND_WORKERS=self.workers,
+            # The analysis probe's refused reads, which the gate searches the logs for.
+            LOOM_CH_ANALYSIS_PROBE_INTERVAL_S="5",
             LOOM_LATENCY_BUDGET_MULTIPLIER="10",
             # Low enough that the fake embedder judges the two region facts close.
             LOOM_CONFLICT_THRESHOLD="0.5",
@@ -299,7 +319,6 @@ class Server:
 
 def mint(org: str, ns: str) -> str:
     os.environ.setdefault("LOOM_JWT_SECRET", JWT_SECRET)
-    sys.path.insert(0, str(ROOT))
     import jwt
 
     from server.auth.jwt import mint_token
@@ -350,6 +369,7 @@ class Scenario:
             self.verdict_survives(a, b)
         self.unknown_column_survives(ids)
         self.newer_ledger_warns()
+        self.analysis_across()
         self.sign_in_across()
         self.dashboard_loads_across()
         self.one_leader()
@@ -373,6 +393,102 @@ class Scenario:
             got = self.get(label, f"facts/{other}")
             self.check(got.get("value") == f"by {other}", f"{label} reads what {other} wrote")
         return ids
+
+    def analysis_across(self) -> None:
+        if not (self.builds["N-1"].tree / "server/insights/domain/analysis.py").exists():
+            print("  skip  insights.query: N-1 has no analysis plane")
+            return
+        # N first: it answers only once its own entities are written and probed.
+        for label in ("N", "N-1"):
+            self.check(self.answers_insights(label), f"{label} answers insights.query")
+        version = sql(
+            self.ch_port,
+            "SELECT trim(BOTH '\\'' FROM value) FROM system.settings_profile_elements "
+            "WHERE profile_name = {user:String} AND setting_name = {name:String}",
+            {"user": boundary.ANALYST_USER, "name": boundary.VERSION_SETTING},
+        )
+        self.check(
+            version == str(boundary.ENTITY_VERSION),
+            f"the analyst entities are at N's version ({version})",
+        )
+        policy = sql(
+            self.ch_port,
+            "SELECT select_filter FROM system.row_policies WHERE short_name = {name:String} "
+            "AND database = 'loom' AND table = 'memory'",
+            {"name": boundary.POLICY_NAME},
+        )
+        try:
+            secrets = boundary.policy_spellings(policy)
+        except ValueError as e:
+            self.check(False, f"the memory policy names the scope key ({e})")
+            return
+        # An older build's probe errors can hold the pads in clear in the
+        # server log: its search starts now.
+        since = sql(self.ch_port, "SELECT now()")
+        self.logs_hold_no_key(since, {"k": "[" + ", ".join(map(sql_string, secrets)) + "]"})
+
+    def answers_insights(self, label: str) -> bool:
+        """Whether `label` answers insights.query within SETTLE_S: a process
+        answers once its own probe has passed."""
+        body = {"org": self.org, "namespace": "mixed", "sql": "SELECT count() FROM loom.memory"}
+        deadline = time.monotonic() + SETTLE_S
+        while True:
+            r = httpx.post(
+                f"{self.builds[label].url}/v1/insights.query",
+                json=body,
+                headers={"Authorization": f"Bearer {self.token}"},
+                timeout=60,
+            )
+            if r.status_code == 200 or time.monotonic() > deadline:
+                return r.status_code == 200
+            time.sleep(2)
+
+    def logs_hold_no_key(self, since: str, needles: dict[str, str]) -> None:
+        """No statement text or error in query_log, and no server log error
+        since `since`, holds a spelling of the key; each search first shows a
+        refused read of the probe reached that log."""
+        sql(self.ch_port, "SYSTEM FLUSH LOGS")
+        refused = sql(
+            self.ch_port,
+            "SELECT count() FROM system.query_log WHERE user = {user:String} "
+            "AND exception LIKE '%UNKNOWN_SETTING%'",
+            {"user": boundary.ANALYST_USER},
+        )
+        self.check(refused != "0", f"the probe's refused reads are logged ({refused})")
+        logged = sql(
+            self.ch_port,
+            "SELECT count() FROM system.query_log WHERE "
+            "multiSearchAnyCaseInsensitive(query, {k:Array(String)}) "
+            "OR multiSearchAnyCaseInsensitive(formatted_query, {k:Array(String)}) "
+            "OR multiSearchAnyCaseInsensitive(log_comment, {k:Array(String)}) "
+            "OR multiSearchAnyCaseInsensitive(exception, {k:Array(String)})",
+            needles,
+            boundary.LOG_TEXT_CUT,
+        )
+        self.check(logged == "0", "no logged statement or error holds the scope key")
+        # The server log records each refused read's error, whatever log_queries says.
+        deadline = time.monotonic() + SETTLE_S
+        while True:
+            sql(self.ch_port, "SYSTEM FLUSH LOGS")
+            quoted = sql(
+                self.ch_port,
+                "SELECT count() FROM system.text_log WHERE event_time >= {since:DateTime} "
+                "AND level = 'Error' AND position(message, 'SQL_loom_') > 0 "
+                "AND message LIKE '%UNKNOWN_SETTING%'",
+                {"since": since},
+            )
+            if quoted != "0" or time.monotonic() > deadline:
+                break
+            time.sleep(2)
+        self.check(quoted != "0", f"a probe's refused read reached the server log ({quoted})")
+        errors = sql(
+            self.ch_port,
+            "SELECT count() FROM system.text_log WHERE event_time >= {since:DateTime} "
+            "AND level = 'Error' AND multiSearchAnyCaseInsensitive(message, {k:Array(String)})",
+            {"since": since, **needles},
+            boundary.LOG_TEXT_CUT,
+        )
+        self.check(errors == "0", "no server log error holds the scope key")
 
     def run_completes_across(self, a: str, b: str) -> None:
         run_id = self.call(a, "run.begin", {**self.ident, "goal": f"begun on {a}"})["run_id"]

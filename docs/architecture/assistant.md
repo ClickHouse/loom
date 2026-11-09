@@ -323,9 +323,11 @@ ClickHouse service: a deployment that finds the analyst's scope policy in anothe
 database writes nothing and reports it, naming that database in the server log.
 
 The key and the analyst's password are random and kept together, as one sealed value, in
-one row of `loom.analysis_secrets`, sealed with `server/core/secrets_at_rest.py` in the
-shape `loom secrets reseal` rewrites (`SEALED` in `server/cli/secrets.py`). Part 1 moves
-the reseal's reads under `own_write_reads` and has it skip a row that is gone. With
+one row of `loom.analysis_secrets`. The password holds a lower and an upper case letter, a
+digit and a symbol, which ClickHouse Cloud requires of a user's password. The row is
+sealed with `server/core/secrets_at_rest.py` in the shape `loom secrets reseal` rewrites
+(`SEALED` in `server/cli/secrets.py`). Part 1 moves the reseal's reads under
+`own_write_reads` and has it skip a row that is gone. With
 [part 2](#build-order), the CLI rotation and the reseal both hold the analysis lease, so
 they never interleave, and the printed rotation, which takes no lease, stores its row at
 a version from ClickHouse's clock at insert time in nanoseconds, far above any reseal's
@@ -334,14 +336,38 @@ write](#provisioning). The first write draws them under the lease below and ever
 replica reads the same row. A root-secret rotation only reseals them, so the policies
 never change key; when the key cannot be read, [provisioning](#provisioning) says what
 happens. The analyst user cannot read the key: it has no grant on `system.row_policies`
-or on `loom.analysis_secrets`, and it cannot run `EXPLAIN`. Every statement that carries
-the key runs with `log_queries = 0`, so the key is not in `system.query_log`. It is in
-ClickHouse's own access storage (on disk, or in Keeper when access is replicated), in a
-backup of the access entities, in the distributed DDL queue of a cluster that writes
-access `ON CLUSTER`, in `system.row_policies` and in the server log at `debug` level:
-all read only by whoever administers the ClickHouse host, who can read every row anyway,
-and by Loom's own user where it has `SHOW ROW POLICIES`; that user can already open the
-sealed row.
+or on `loom.analysis_secrets`, and it cannot run `EXPLAIN`.
+
+**What the query log holds.** Loom never turns query logging off: ClickHouse Cloud pins
+`log_queries` for the service's users and refuses a statement or a settings profile that
+changes it. It keeps the secrets out of what is logged instead:
+
+- Every statement that carries the key or the password runs with
+  `log_queries_cut_to_length = 1` and `log_formatted_queries = 0` (`LOG_TEXT_CUT` in
+  `server/insights/domain/analysis.py`), which ClickHouse Cloud leaves unconstrained.
+  ClickHouse then logs the statement, in `system.query_log`, in its server log and in
+  `system.opentelemetry_span_log` (Cloud traces a share of statements), as only the
+  number of characters it removed, and writes no `formatted_query`, which the cut does
+  not reach. The printed SQL sets both first, for the session it runs in.
+- ClickHouse itself leaves the password out of a logged `IDENTIFIED BY`.
+- With `LOOM_CH_LOG_COMMENT_STATEMENT_DIGEST` on, `log_comment` carries a statement's
+  shape and first 200 characters; a statement that carries a secret, or one run as the
+  analyst, carries the literal-masked shape alone.
+- An error raised inside a row policy quotes the policy, and ClickHouse logs that error
+  in `system.query_log`'s `exception` column; the probe's unsigned read raises one on
+  every table by design. So the key's two padded forms, the only places the key enters
+  the HMAC, are written in the policy as `decrypt(encrypt(pad, key), key)` (AES-256-ECB),
+  which ClickHouse evaluates to the pad and prints as `decrypt('aes-256-ecb', '[HIDDEN]')`
+  in an error message and in `SHOW CREATE ROW POLICY`. The HMAC is the same, so a
+  build N-1, which wrote the pads in clear, signs statements these policies accept.
+
+The key is in ClickHouse's own access storage (on disk, or in Keeper when access is
+replicated), in a backup of the access entities, in the distributed DDL queue of a
+cluster that writes access `ON CLUSTER`, in `system.row_policies`, which shows the
+policy's arguments in full, and in any server log line other than the statement line
+the cut shortens. All of these are read only by whoever administers the ClickHouse host,
+who can read every row anyway, and by Loom's own user where it has `SHOW ROW POLICIES`;
+that user can already open the sealed row.
 
 **Why not ClickHouse credentials in LibreChat.** A ClickHouse login in the agent would
 read every org, skip the request ledger and the exposure records, and keep no link to
@@ -376,7 +402,7 @@ stored key. Elsewhere an admin uses one of two commands:
   With [part 2](#build-order) it proves its `LOOM_JWT_SECRET` as the rotation below
   does, draws a fresh key and password, and prints a complete rotation, in the order of
   a write, with the command that runs it in one session
-  (`clickhouse-client --log_queries=0 --distributed_ddl_output_mode=throw --multiquery --queries-file <file>`):
+  (`clickhouse-client --distributed_ddl_output_mode=throw --multiquery --queries-file <file>`):
   the delete, the new password, the `KILL QUERY`, the rest of the entity set under the
   new key, a settle of `SELECT sleep(...)` statements, the `KILL QUERY` again, and last
   the `INSERT` of the new sealed row at a version from ClickHouse's clock in
@@ -385,9 +411,10 @@ stored key. Elsewhere an admin uses one of two commands:
   so it is printed by the newest build's CLI, and it is run, not kept.
 
 A printed rotation run only in part leaves analysis unavailable, by the order of a write
-below. Its statements must run in that one session: ClickHouse takes no per-statement
-settings on an access statement, and a console that sends them one by one would log the
-key in `system.query_log`.
+below. Its statements must run in that one session, after its first statement,
+`SET log_queries_cut_to_length = 1, log_formatted_queries = 0`: ClickHouse takes no
+per-statement settings on an access statement, and a console that sends them one by one
+would log the key in `system.query_log`.
 
 The allowlist lives in code with the column comments that become the agent's catalog, so
 the grants, the policies and the catalog come from one definition. The rules a write
@@ -403,11 +430,14 @@ keeps:
   `loom ch-setup`, so during a rolling upgrade a build N-1 never narrows N's grants or
   loosens N's policies. N-1 keeps answering on N's entities: its statements that name a
   column N dropped are refused until the roll forward.
-- **The order of a write.** The version is the last of the entities. A first draw by a
-  boot or `loom ch-setup`, made while no analyst user exists, stores the secrets row
-  before it creates the user. A rotation, by the CLI or the printed SQL (both with
-  [part 2](#build-order)), is a short maintenance step that keeps analysis unavailable
-  while it runs:
+- **The order of a write.** The version is the last of the entities. The main
+  profile's pins come after every policy, the canary's included: on an upgrade the older
+  profile's `log_queries = 0` stays in force until no policy holds the pads in clear.
+  They come before every grant, so a new pin is in force before the grant it guards. A
+  first draw by a boot or `loom ch-setup`, made while no analyst user exists, stores the
+  secrets row before it creates the user. A rotation, by the CLI or the printed SQL
+  (both with [part 2](#build-order)), is a short maintenance step that keeps analysis
+  unavailable while it runs:
 
   1. It deletes the secrets row, which only decides what a rotation cut short looks
      like: a lost row, which `loom doctor` maps to `--rotate-analysis-key`.
@@ -597,10 +627,20 @@ Each call writes one `agent_events` row with its row count and latency (identifi
 in `server/observability/event_args.py`) and the statement's digest and length. The
 `sql` argument joins the ledger's text keys, which record a digest, never the text; a
 restricted namespace drops text keys from the ledger, so the op also records the digest
-as `sql_digest`, an identifier key, which the citation check reads. The profile holds
-`log_queries = 0` `CONST`, so the statement text is not in `system.query_log` either;
-ClickHouse's server log records it at its `debug` level, as it records every statement.
-The rows are stored nowhere.
+as `sql_digest`, an identifier key, which the citation check reads. The analyst profile
+holds `log_queries_cut_to_length = 1` and `log_formatted_queries = 0` as `CONST`, so
+`system.query_log`, the span log and the server log record each statement the analyst
+runs without its text: its user, timing, rows read and settings, the scope and its
+signature among them. A signature reads rows only with the analyst's password, for its
+own query id, until its expiry. A statement ClickHouse refuses is logged with its error
+message, which can quote the whole statement (an unknown column's error quotes the query
+it was looked up in, the caller's statement inside the wrapper), also for a restricted
+namespace whose ledger drops the text; ClickHouse Cloud pins `log_queries_min_type`, so
+the error rows cannot be left out. Each probe adds error rows to `system.query_log`: one
+for each allowlisted table and the canary (the unsigned reads) and one for each read it
+expects refused. The deploy delta leaves the analyst's statements out of its shapes. The
+rows a statement returns are stored nowhere; an error can quote a value it failed on,
+which ClickHouse's logs keep ([stored data](#stored-data-and-erasure)).
 
 ## Isolation proof
 
@@ -622,7 +662,13 @@ viewer token. Each case must be refused or return no canary:
   version a later one replaced, with `SETTINGS final = 0` and
   `apply_row_policy_after_final = 0`;
 - `SETTINGS send_logs_level`, `use_query_condition_cache` or `max_threads` past the
-  profile;
+  profile, and statements that set `log_queries_cut_to_length` or
+  `log_formatted_queries`, whose text stays out of `system.query_log`;
+- `toUInt64(memory_key)` in the select list, `WHERE` and `PREWHERE`, also with
+  short-circuit evaluation off, filters moved or merged, and
+  `format_display_secrets_in_show_and_select = 1`: each is refused, and its error, in
+  the answer and in `system.query_log`, quotes only the caller's own row and no
+  spelling of the key;
 - `SETTINGS` that change the scope, the caps, `readonly` or `use_query_cache`, the same
   statement text run first by one org with the query cache and then by the other, a
   scope sent with an expired or forged signature, and a scope one statement read with
@@ -656,8 +702,8 @@ viewer token. Each case must be refused or return no canary:
   the row to writing the version, each of which leaves `ANALYSIS_UNAVAILABLE` or a state
   the next run finishes with the stored key;
 - `loom.analysis_secrets` and `loom.analysis_canary` read directly, and neither the
-  statement's text nor the key in `system.query_log`, the printed SQL run as printed
-  included;
+  statement's text nor the key or its pads in `system.query_log` or the server log's
+  errors;
 - reseal races:
   - a reseal whose read comes before a printed rotation and whose insert after it, which
     leaves the new key;
@@ -812,16 +858,29 @@ token.
 
 ## Stored data and erasure
 
-| Where                                       | What the assistant leaves                                                                           | How it is deleted                                     |
-| ------------------------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| `loom.assistant_service`                    | one row: the service user's email and agent id, its sealed password and agents API key              | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
-| `loom.analysis_secrets`                     | one row: the analysis key and the analyst's password, sealed                                        | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
-| `loom.analysis_canary`                      | one constant row in a reserved scope, which the probe reads                                         | holds no memory content (a `NO_MEMORY_CONTENT` entry) |
-| `loom.agent_events`                         | one row per bridge request and per tool call, under the answer's token                              | as every ledger row                                   |
-| LibreChat users, API keys, agents, sessions | the service user, its key, the agent definition and the sign-in sessions of each boot that signs in | kept; no memory content                               |
-| LibreChat `transactions`                    | token counts per answer and its message id, no content                                              | kept, a few hundred bytes per answer                  |
-| LibreChat logs                              | the service user's id and email and request ids, no message text, token or password                 | LibreChat's default: one file per day, kept 14 days   |
-| the dashboard                               | the current chat, in the tab's memory                                                               | gone when the tab closes                              |
+| Where                                       | What the assistant leaves                                                                            | How it is deleted                                       |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `loom.assistant_service`                    | one row: the service user's email and agent id, its sealed password and agents API key               | holds no memory content (a `NO_MEMORY_CONTENT` entry)   |
+| `loom.analysis_secrets`                     | one row: the analysis key and the analyst's password, sealed                                         | holds no memory content (a `NO_MEMORY_CONTENT` entry)   |
+| `loom.analysis_canary`                      | one constant row in a reserved scope, which the probe reads                                          | holds no memory content (a `NO_MEMORY_CONTENT` entry)   |
+| `loom.agent_events`                         | one row per bridge request and per tool call, under the answer's token                               | as every ledger row                                     |
+| LibreChat users, API keys, agents, sessions | the service user, its key, the agent definition and the sign-in sessions of each boot that signs in  | kept; no memory content                                 |
+| LibreChat `transactions`                    | token counts per answer and its message id, no content                                               | kept, a few hundred bytes per answer                    |
+| LibreChat logs                              | the service user's id and email and request ids, no message text, token or password                  | LibreChat's default: one file per day, kept 14 days     |
+| ClickHouse's `system.query_log`, server log | each analyst statement without its text; a refused one's error, which can quote an allowlisted value | the logs' TTL, none by default; erasure reaches neither |
+| the dashboard                               | the current chat, in the tab's memory                                                                | gone when the tab closes                                |
+
+An error ClickHouse raises on a statement can quote the value it failed on: a
+`toUInt64(title)` refused on a title quotes the title. That value is one of the caller's
+own allowlisted metadata columns (a key, a title, a user id), never a memory value or
+document text. It is kept in `system.query_log`'s `exception` column and in the server
+log (`system.text_log` included), which records every error whatever `log_queries` says,
+on every install. ClickHouse Cloud pins `log_queries_min_type`, so the error rows cannot
+be left out of `system.query_log` there, and Loom writes one profile for every install.
+Erasure does not reach either log. ClickHouse's default configuration, which the bundled
+ClickHouse uses, sets no TTL on either one, so the rows stay until an operator bounds
+them with a `<ttl>` on `query_log` and `text_log` in the server configuration. Both are
+read only by whoever administers ClickHouse and by Loom's own user.
 
 The agents API stores no questions, answers or tool outputs, so LibreChat holds nothing
 an erasure must reach. An answer is computed from the rows the answer's token reads at

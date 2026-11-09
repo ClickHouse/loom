@@ -19,16 +19,26 @@ _DIGEST_WS = re.compile(r"\s+")
 _DIGEST_LITERALS = re.compile(r"'(?:[^'\\]|\\.)*'|-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b")
 
 
-def statement_digest(sql: str) -> str:
-    """`sql:<shape12> <head>` for one statement: a 12-hex
-    sha1 of the statement with string and numeric literals masked, then its
-    first 200 characters with whitespace collapsed. Two searches with
+def _flat(sql: str) -> str:
+    return _DIGEST_WS.sub(" ", str(sql or "")).strip()
+
+
+def _shape(flat: str) -> str:
+    return "sql:" + hashlib.sha1(_DIGEST_LITERALS.sub("?", flat).encode("utf-8")).hexdigest()[:12]
+
+
+def statement_shape(sql: str) -> str:
+    """`sql:<shape12>`: a 12-hex sha1 of the statement with string and
+    numeric literals masked, so it holds none of them. Two searches with
     different query vectors share a shape; two statements that differ in
     their SELECT list or joins do not."""
+    return _shape(_flat(sql))
 
-    flat = _DIGEST_WS.sub(" ", str(sql or "")).strip()
-    shape = hashlib.sha1(_DIGEST_LITERALS.sub("?", flat).encode("utf-8")).hexdigest()[:12]
-    return f"sql:{shape} {flat[:_DIGEST_HEAD_CHARS]}"
+
+def statement_digest(sql: str) -> str:
+    """`statement_shape(sql)` then the first 200 characters, whitespace collapsed."""
+    flat = _flat(sql)
+    return f"{_shape(flat)} {flat[:_DIGEST_HEAD_CHARS]}"
 
 
 def capture_statement(sql: str, path: str) -> None:
@@ -43,4 +53,4 @@ def capture_statement(sql: str, path: str) -> None:
         log.debug("statement capture skipped: %s", exc)
 
 
-__all__ = ["capture_statement", "statement_digest"]
+__all__ = ["capture_statement", "statement_digest", "statement_shape"]

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -29,7 +30,7 @@ from server.core.sql_literal import sql_string
 # profile carries it, and a build writes the entities only when its version is
 # at least the stored one, so during a rolling upgrade build N-1 never puts
 # back its narrower grants over N's (`needs_rewrite`).
-ENTITY_VERSION = 1
+ENTITY_VERSION = 2
 
 ANALYST_USER = "loom_analyst"
 POLICY_NAME = "loom_analyst_scope"
@@ -56,6 +57,10 @@ VERSION_SETTING = "SQL_loom_analyst_version"
 DIGEST_SETTING = "SQL_loom_analyst_digest"
 # The caps profile's own stamp: the digest of the caps it holds.
 CAPS_DIGEST_SETTING = "SQL_loom_analyst_caps_digest"
+
+# Logged statement text is cut to "(removed N characters)"; the formatted copy,
+# which the cut misses, is not written. Cloud pins log_queries but not these.
+LOG_TEXT_CUT = {"log_queries_cut_to_length": 1, "log_formatted_queries": 0}
 
 _BLOCK = 64  # SHA-256 block size, for HMAC's inner and outer pads
 
@@ -268,14 +273,51 @@ def _setting(name: str) -> str:
     return f"toString(getSetting('{name}'))"
 
 
-def _hmac_sql(key: bytes, payload: str) -> str:
-    """HMAC-SHA256 of `payload` under `key` as ClickHouse computes it, spelled
-    as the key's inner and outer pads."""
+def _masked_sql(key: bytes, data: bytes) -> str:
+    """`data` as `decrypt(encrypt(data))`: ClickHouse prints every argument of
+    `decrypt` as [HIDDEN], so an error that quotes the policy shows neither
+    `data` nor `key`. A mask, not a seal: the policy text holds both."""
+    k = f"unhex('{key.hex()}')"
+    return f"decrypt('aes-256-ecb', encrypt('aes-256-ecb', unhex('{data.hex()}'), {k}), {k})"
+
+
+def _pads(key: bytes) -> tuple[bytes, bytes]:
+    """HMAC's inner and outer pads of `key`."""
     padded = key.ljust(_BLOCK, b"\0")
-    ipad = bytes(b ^ 0x36 for b in padded).hex()
-    opad = bytes(b ^ 0x5C for b in padded).hex()
-    inner = f"SHA256(concat(unhex('{ipad}'), {payload}))"
-    return f"hex(SHA256(concat(unhex('{opad}'), {inner})))"
+    return bytes(b ^ 0x36 for b in padded), bytes(b ^ 0x5C for b in padded)
+
+
+# key_spellings and policy_spellings serve the log checks (the isolation
+# tests and the mixed-version gate), kept beside the pads they spell.
+def key_spellings(key: bytes) -> list[str]:
+    """The hex spellings of `key` and its HMAC pads, and the printable runs
+    of 0x36 ('6') and 0x5C ('\\') its zero padding XORs to."""
+    return [key.hex(), *(p.hex() for p in _pads(key)), "6" * 32, "\\" * 32]
+
+
+# A hex literal in a policy's text, as written or TSV-escaped: the key and
+# its pads are spelled so.
+KEY_LITERAL = re.compile(r"unhex\(\\?'([0-9A-Fa-f]+)\\?'\)")
+
+
+def policy_spellings(select_filter: str) -> list[str]:
+    """The spellings of the key a policy filter holds; the filter may be
+    TSV-escaped."""
+    literals = KEY_LITERAL.findall(select_filter)
+    key = next((h for h in literals if len(h) == 64), None)
+    if key is None:
+        raise ValueError("the policy holds no 32-byte key literal")
+    return key_spellings(bytes.fromhex(key))
+
+
+def _hmac_sql(key: bytes, payload: str) -> str:
+    """HMAC-SHA256 of `payload` under `key` as ClickHouse computes it, with the
+    key's inner and outer pads masked as `decrypt` expressions."""
+    inner_pad, outer_pad = _pads(key)
+    ipad = _masked_sql(key, inner_pad)
+    opad = _masked_sql(key, outer_pad)
+    inner = f"SHA256(concat({ipad}, {payload}))"
+    return f"hex(SHA256(concat({opad}, {inner})))"
 
 
 def signature_filter(key: bytes) -> str:
@@ -317,14 +359,14 @@ def profile_settings() -> list[str]:
         # One live row per key: ClickHouse applies the row policy after FINAL.
         "final = 1 CONST",
         "apply_row_policy_after_final = 1 CONST",
-        # The statement text stays out of system.query_log; the ledger keeps its digest.
-        "log_queries = 0 CONST",
+        # A statement that runs is logged without its text; the ledger keeps its digest.
+        *(f"{name} = {value} CONST" for name, value in LOG_TEXT_CUT.items()),
         "read_overflow_mode = 'throw' CONST",
         "result_overflow_mode = 'throw' CONST",
         "timeout_overflow_mode = 'throw' CONST",
         "use_query_cache = 0 CONST",
         "allow_introspection_functions = 0 CONST",
-        # The server log at debug quotes the policies, key included.
+        # Server log lines sent back with a statement can quote the policies.
         "send_logs_level = 'none' CONST",
         "use_query_condition_cache = 0 CONST",
     ]
@@ -403,6 +445,14 @@ def revokes_for(grant_lines: list[str]) -> list[str]:
     return out
 
 
+def policy_sql(db: str, name: str, table: str, using: str, to: str) -> str:
+    """One row policy, replaced in place; `db` is already quoted."""
+    return (
+        f"CREATE ROW POLICY OR REPLACE `{name}` ON {db}.{table} "
+        f"AS permissive FOR SELECT USING {using} TO {to}"
+    )
+
+
 def entity_sql(
     db: str,
     password: str,
@@ -418,32 +468,32 @@ def entity_sql(
     one, then every grant and role the user holds outside the allowlist
     (`granted` and `roles` are what it holds now) is revoked, and then the
     allowlist is granted, since a table's revoke also takes the column grants
-    under it. A retired table keeps a policy that reads nothing. The stamp
-    comes last, so a write cut short is written again by the next boot. `db`
-    is already quoted."""
+    under it. The profile's pins come after every policy, so on an upgrade
+    the older profile's `log_queries = 0` holds until no policy has the pads
+    in clear, and before every grant, so a new pin is in force before the
+    grant it guards. A retired table keeps a policy that reads nothing. The
+    stamp comes last, so a write cut short is written again by the next boot.
+    `db` is already quoted."""
     user = f"`{ANALYST_USER}`"
     identified = f"IDENTIFIED WITH sha256_password BY {sql_string(password)}"
     condition = policy_filter(key)
     profile = profile_settings()
 
-    def policy(name: str, table: str, using: str, to: str) -> str:
-        return (
-            f"CREATE ROW POLICY OR REPLACE `{name}` ON {db}.{table} "
-            f"AS permissive FOR SELECT USING {using} TO {to}"
-        )
-
     out = [
         f"CREATE SETTINGS PROFILE IF NOT EXISTS {user} SETTINGS " + ", ".join(profile),
-        f"ALTER SETTINGS PROFILE {user} SETTINGS " + ", ".join(profile),
         *caps_sql(caps),
         f"CREATE USER IF NOT EXISTS {user} {identified} SETTINGS PROFILE '{CAPS_PROFILE}'",
         f"ALTER USER {user} {identified} SETTINGS PROFILE '{CAPS_PROFILE}'",
     ]
     for t in TABLES:
-        out.append(policy(OTHERS_POLICY_NAME, t.name, "1", f"ALL EXCEPT {user}"))
-        out.append(policy(POLICY_NAME, t.name, f"({t.live}) AND {condition}", user))
+        out.append(policy_sql(db, OTHERS_POLICY_NAME, t.name, "1", f"ALL EXCEPT {user}"))
+        out.append(policy_sql(db, POLICY_NAME, t.name, f"({t.live}) AND {condition}", user))
     for name in RETIRED_TABLES:
-        out.append(policy(POLICY_NAME, name, "0", user))
+        out.append(policy_sql(db, POLICY_NAME, name, "0", user))
+    out.append(f"INSERT INTO {db}.{CANARY_TABLE} (id) VALUES (0)")
+    # Last of the policies: a canary that reads under the key means all of them do.
+    out.append(policy_sql(db, POLICY_NAME, CANARY_TABLE, condition, user))
+    out.append(f"ALTER SETTINGS PROFILE {user} SETTINGS " + ", ".join(profile))
     out += [_revoke(g, user) for g in sorted(granted) if not _allowed(g)]
     out += [f"REVOKE `{role}` FROM {user}" for role in sorted(roles)]
     out += [
@@ -451,9 +501,6 @@ def entity_sql(
         for t in TABLES
     ]
     out.append(f"GRANT SELECT(id) ON {db}.{CANARY_TABLE} TO {user}")
-    out.append(f"INSERT INTO {db}.{CANARY_TABLE} (id) VALUES (0)")
-    # Last of the policies: a canary that reads under the key means all of them do.
-    out.append(policy(POLICY_NAME, CANARY_TABLE, condition, user))
     stamp = [
         *profile,
         # A string, as ClickHouse stores a number setting as `UInt64_1`.

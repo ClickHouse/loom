@@ -6,6 +6,7 @@
 # `services:` start BEFORE checkout and can't mount repo files, so CI runs the
 # container as a post-checkout step via this script. The same image as
 # compose.yaml, the latest release, so CI validates what a default install runs.
+# One mount is CI's own: dev/clickhouse-ci/log_queries_readonly.xml.
 #
 # A second ClickHouse beside a running one (one per worktree) takes its own
 # name and host ports: LOOM_CH_CONTAINER, LOOM_CH_HOST_PORT, LOOM_CH_NATIVE_HOST_PORT.
@@ -46,6 +47,7 @@ docker run -d --pull "$PULL" --name "$NAME" \
   -v "$CFG/nlp_user_settings.xml:/etc/clickhouse-server/users.d/nlp_user_settings.xml:ro" \
   -v "$CFG/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro" \
   -v "$CFG/access_control.xml:/etc/clickhouse-server/config.d/access_control.xml:ro" \
+  -v "$ROOT/dev/clickhouse-ci/log_queries_readonly.xml:/etc/clickhouse-server/users.d/log_queries_readonly.xml:ro" \
   "$IMAGE"
 # named_collections.xml is intentionally omitted: it's gitignored (built from a
 # template against an operator secret) and only powers CH SQL ai* functions,

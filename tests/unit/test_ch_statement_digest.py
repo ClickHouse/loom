@@ -10,7 +10,7 @@ import pytest
 
 from server.core import ch as _ch
 from server.core.ch import query_tag_var, statement_settings
-from server.core.ch_statement_text import statement_digest
+from server.core.ch_statement_text import statement_digest, statement_shape
 
 _A = "SELECT memory_key, cosineDistance(embedding, [0.1, -0.2, 0.3]) AS d FROM loom.memory_embeddings WHERE org = 'o' AND namespace = 'ns' ORDER BY d LIMIT 10"
 _B = "SELECT memory_key, cosineDistance(embedding, [0.9, 0.8, -0.7]) AS d FROM loom.memory_embeddings WHERE org = 'other' AND namespace = 'x' ORDER BY d LIMIT 40"
@@ -32,6 +32,20 @@ def test_the_head_is_the_first_200_characters_with_whitespace_collapsed() -> Non
     assert head.startswith("SELECT a, b FROM t WHERE c0 = 0 AND c1 = 1")
     assert len(head) == 200
     assert "\n" not in head
+
+
+def test_a_secret_or_an_analyst_statement_logs_its_shape_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(_ch.settings, "ch_log_comment_statement_digest", True)
+    secret = "CREATE USER x IDENTIFIED WITH sha256_password BY 'Aa1-not-in-the-log'"
+    with _ch.uncaptured():
+        lc = statement_settings(secret)["log_comment"]
+    assert lc.endswith(statement_shape(secret)) and "not-in-the-log" not in lc
+    caller = "SELECT * FROM (SELECT 'a caller literal') LIMIT 51"
+    with _ch.as_analyst("loom_analyst", "pw", {}):
+        lc = statement_settings(caller)["log_comment"]
+    assert lc.endswith(statement_shape(caller)) and "caller literal" not in lc
 
 
 def test_off_by_default_the_tag_is_untouched(monkeypatch: pytest.MonkeyPatch) -> None:

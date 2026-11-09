@@ -471,13 +471,13 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
             return 2
         print(
             "-- Holds the analyst password and scope key: save it to a file and run it in one "
-            "session,\n-- clickhouse-client --log_queries=0 --multiquery --queries-file <file>, "
-            "so neither reaches system.query_log.\n-- First run these two checks. The first "
-            "lists permissive row policies Loom did not write on\n-- the analysis tables: drop "
-            "or make restrictive any it returns, since the policy below for\n-- every other "
-            "user would widen them. The second lists other Loom databases on this server\n-- "
-            "writing the same analyst user: analysis needs one Loom per ClickHouse service.\n-- "
-            + "\n-- ".join(analysis.printed_checks())
+            "session,\n-- clickhouse-client --multiquery --queries-file <file>: its first "
+            "statement keeps\n-- the text of the rest out of system.query_log.\n-- First run "
+            "these two checks. The first lists permissive row policies Loom did not write "
+            "on\n-- the analysis tables: drop or make restrictive any it returns, since the "
+            "policy below for\n-- every other user would widen them. The second lists other "
+            "Loom databases on this server\n-- writing the same analyst user: analysis needs "
+            "one Loom per ClickHouse service.\n-- " + "\n-- ".join(analysis.printed_checks())
         )
         for stmt in statements:
             print(f"{stmt};")
@@ -532,7 +532,7 @@ def register_ch_setup_cli(sub: Any) -> None:
             "scope key stored sealed in loom.analysis_secrets (drawn when there is none; "
             "where LOOM_CH_USER cannot list users, a missing row is drawn again, which moves "
             "the key): run it in full with "
-            "`clickhouse-client --log_queries=0 --multiquery --queries-file <file>`, do not "
+            "`clickhouse-client --multiquery --queries-file <file>`, do not "
             "store it."
         ),
     )

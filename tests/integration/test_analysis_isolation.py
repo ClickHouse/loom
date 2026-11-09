@@ -14,7 +14,6 @@ enforces auth (an auth-off server ignores tokens); skips otherwise.
 from __future__ import annotations
 
 import os
-import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -22,6 +21,7 @@ from dataclasses import dataclass
 import httpx
 import pytest
 
+from server.insights.domain import analysis as boundary
 from tests.integration._eventually import wait_until
 from tests.integration._resources import unique_org
 
@@ -40,12 +40,13 @@ class _Seed:
     writer_b: str
 
 
-def _call(base: str, token: str, op: str, body: dict) -> httpx.Response:
+def _call(
+    base: str, token: str, op: str, body: dict, headers: dict[str, str] | None = None
+) -> httpx.Response:
     """One call, waiting out a rate limit: insights.query has a small bucket."""
+    sent = {"Authorization": f"Bearer {token}", **(headers or {})}
     for _ in range(10):
-        r = httpx.post(
-            f"{base}/v1/{op}", json=body, headers={"Authorization": f"Bearer {token}"}, timeout=60
-        )
+        r = httpx.post(f"{base}/v1/{op}", json=body, headers=sent, timeout=60)
         if r.status_code != 429 or "analysis statements as it may at once" in r.text:
             return r
         time.sleep(float(r.headers.get("Retry-After") or 1))
@@ -112,12 +113,15 @@ def seed(control_plane_url: str) -> _Seed:
     return s
 
 
-def _query(base: str, s: _Seed, sql: str, token: str | None = None) -> httpx.Response:
+def _query(
+    base: str, s: _Seed, sql: str, token: str | None = None, request_id: str | None = None
+) -> httpx.Response:
     return _call(
         base,
         token or s.viewer_a,
         "insights.query",
         {"org": s.org_a, "namespace": s.ns_a, "sql": sql},
+        {"X-Request-Id": request_id} if request_id else None,
     )
 
 
@@ -204,6 +208,50 @@ _ESCAPES = [
     "ALTER TABLE loom.memory DELETE WHERE 1",
     "CREATE TEMPORARY TABLE t (a String)",
 ]
+
+
+# Expressions that throw on a row's value, so the error quotes it: the policy
+# must drop another scope's rows before any of them is evaluated.
+_QUOTING_ERRORS = [
+    "SELECT toUInt64(memory_key) FROM loom.memory",
+    "SELECT 1 FROM loom.memory WHERE toUInt64(memory_key) = 1",
+    "SELECT 1 FROM loom.memory PREWHERE toUInt64(memory_key) = 1",
+    "SELECT 1 FROM loom.memory WHERE toUInt64(memory_key) = 1 "
+    "SETTINGS short_circuit_function_evaluation = 'disable'",
+    "SELECT 1 FROM loom.memory WHERE toUInt64(memory_key) = 1 "
+    "SETTINGS optimize_move_to_prewhere = 1, optimize_move_to_prewhere_if_final = 1, "
+    "short_circuit_function_evaluation = 'disable'",
+    "SELECT 1 FROM loom.memory WHERE toUInt64(memory_key) = 1 "
+    "SETTINGS query_plan_merge_filters = 1, short_circuit_function_evaluation = 'disable'",
+    "SELECT toUInt64(memory_key) FROM loom.memory "
+    "SETTINGS format_display_secrets_in_show_and_select = 1",
+]
+
+
+def _key_spellings(ch_client) -> list[str]:
+    """Every spelling of the scope key the log could hold."""
+    return boundary.policy_spellings(_scope_filter(ch_client, "memory"))
+
+
+@pytest.mark.parametrize("sql", _QUOTING_ERRORS)
+def test_an_error_quotes_no_value_from_another_scope(
+    control_plane_url: str, seed: _Seed, ch_client, sql: str
+) -> None:
+    request_id = f"quote-{uuid.uuid4().hex[:12]}"
+    r = _query(control_plane_url, seed, sql, request_id=request_id)
+    assert r.status_code in _REFUSED, r.text
+    for leaked in ("other-ns/", "other-org/", "deleted/"):
+        assert leaked not in r.text, r.text[:300]
+    ch_client.command("SYSTEM FLUSH LOGS")
+    logged = ch_client.query(
+        "SELECT groupArray(exception) FROM system.query_log "
+        "WHERE startsWith(query_id, {rid:String}) AND exception != ''",
+        parameters={"rid": f"{request_id}:"},
+    ).result_rows[0][0]
+    # The caller's own row is the one that threw.
+    assert any(f"own/{seed.nonce}" in e for e in logged), logged
+    for leaked in ("other-ns/", "other-org/", "deleted/", *_key_spellings(ch_client)):
+        assert not any(leaked.lower() in e.lower() for e in logged), logged
 
 
 @pytest.mark.parametrize("template", _ESCAPES)
@@ -375,15 +423,7 @@ def test_a_statement_during_a_policy_rewrite_reads_the_right_rows(
     own rows and no other org's."""
     import threading
 
-    from server.insights.domain import analysis as boundary
-
-    policies = [
-        # SHOW CREATE answers in TSV, which escapes the quotes.
-        str(ch_client.command(f"SHOW CREATE ROW POLICY `{boundary.POLICY_NAME}` ON loom.{t.name}"))
-        .replace("\\'", "'")
-        .replace("CREATE ROW POLICY", "CREATE ROW POLICY OR REPLACE", 1)
-        for t in boundary.TABLES
-    ]
+    policies = [_policy(ch_client, t.name) for t in boundary.TABLES]
     done = threading.Event()
     rewrites: list[int] = []
     failures: list[BaseException] = []
@@ -392,7 +432,7 @@ def test_a_statement_during_a_policy_rewrite_reads_the_right_rows(
         try:
             while not done.is_set():
                 for stmt in policies:
-                    ch_client.command(stmt, settings={"log_queries": 0})
+                    ch_client.command(stmt, settings=boundary.LOG_TEXT_CUT)
                 rewrites.append(1)
         except BaseException as e:  # noqa: BLE001 — reported to the test below
             failures.append(e)
@@ -439,14 +479,85 @@ def test_the_statement_text_stays_out_of_the_query_log(
     control_plane_url: str, seed: _Seed, ch_client
 ) -> None:
     marker = f"probe_{seed.nonce}"
-    r = _query(control_plane_url, seed, f"SELECT '{marker}' AS m, count() FROM loom.memory")
-    assert r.status_code == 200, r.text
+    sql = f"SELECT '{marker}' AS m"
+    # Settings in the caller's statement belong to the wrapper's subquery, and
+    # the profile pins both at the top: refused or run, the text is cut.
+    either = {200, *_REFUSED}
+    statements = {
+        f"text-{seed.nonce}": (sql, {200}),
+        f"lift0-{seed.nonce}": (f"{sql} SETTINGS log_queries_cut_to_length = 100000", either),
+        f"lift1-{seed.nonce}": (f"{sql} SETTINGS log_formatted_queries = 1", either),
+    }
+    for request_id, (statement, accepted) in statements.items():
+        r = _query(control_plane_url, seed, statement, request_id=request_id)
+        assert r.status_code in accepted, r.text
     ch_client.command("SYSTEM FLUSH LOGS")
-    logged = ch_client.query(
-        "SELECT count() FROM system.query_log WHERE user = 'loom_analyst' OR query LIKE {m:String}",
+    # Each is logged, as on a server that pins log_queries, but not its text.
+    for request_id in statements:
+        logged = ch_client.query(
+            "SELECT count() FROM system.query_log "
+            "WHERE user = {analyst:String} AND startsWith(query_id, {rid:String})",
+            parameters={"analyst": boundary.ANALYST_USER, "rid": f"{request_id}:"},
+        ).result_rows[0][0]
+        assert logged > 0, request_id
+    # This read cuts its own text, which holds the marker.
+    quoted = ch_client.query(
+        "SELECT count() FROM system.query_log "
+        "WHERE query LIKE {m:String} OR formatted_query LIKE {m:String} "
+        "OR log_comment LIKE {m:String}",
         parameters={"m": f"%{marker}%"},
+        settings=boundary.LOG_TEXT_CUT,
+    ).result_rows[0][0]
+    assert quoted == 0
+
+
+def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client) -> None:
+    """The policies hold the key and its pads as `decrypt` arguments: no
+    logged statement text or error carries one. The whole query_log is read,
+    the boot's writes included: an older build that kept the pads in clear also
+    kept the analyst out of query_log. text_log is read from the start of this
+    test, since an older build's probe errors can hold the pads there."""
+    start = ch_client.query("SELECT now()").result_rows[0][0]
+    secrets = _key_spellings(ch_client)
+
+    def refused_since_start() -> bool:
+        ch_client.command("SYSTEM FLUSH LOGS")
+        return (
+            ch_client.query(
+                "SELECT count() FROM system.query_log WHERE event_time >= {start:DateTime} "
+                "AND user = {analyst:String} AND exception LIKE '%UNKNOWN_SETTING%'",
+                parameters={"start": start, "analyst": boundary.ANALYST_USER},
+            ).result_rows[0][0]
+            > 0
+        )
+
+    # The probe's unsigned reads, which quote the policy in their errors, ran in this run.
+    wait_until(refused_since_start, max_wait=_PROBE_WAIT_S, interval=2, description="a probe")
+    logged = ch_client.query(
+        "SELECT count() FROM system.query_log "
+        "WHERE multiSearchAnyCaseInsensitive(query, {k:Array(String)}) "
+        "OR multiSearchAnyCaseInsensitive(formatted_query, {k:Array(String)}) "
+        "OR multiSearchAnyCaseInsensitive(log_comment, {k:Array(String)}) "
+        "OR multiSearchAnyCaseInsensitive(exception, {k:Array(String)})",
+        parameters={"k": secrets},
+        settings=boundary.LOG_TEXT_CUT,
     ).result_rows[0][0]
     assert logged == 0
+    # The server log records each refused read's error, whatever log_queries says.
+    quoting = ch_client.query(
+        "SELECT count() FROM system.text_log WHERE event_time >= {start:DateTime} "
+        "AND level = 'Error' AND position(message, 'SQL_loom_') > 0 "
+        "AND message LIKE '%UNKNOWN_SETTING%'",
+        parameters={"start": start},
+    ).result_rows[0][0]
+    assert quoting > 0, "no refused read reached the server log, so it was not checked"
+    errors = ch_client.query(
+        "SELECT count() FROM system.text_log WHERE event_time >= {start:DateTime} "
+        "AND level = 'Error' AND multiSearchAnyCaseInsensitive(message, {k:Array(String)})",
+        parameters={"start": start, "k": secrets},
+        settings=boundary.LOG_TEXT_CUT,
+    ).result_rows[0][0]
+    assert errors == 0
 
 
 # The cases below change the analyst's entities by hand, as an admin could,
@@ -455,8 +566,6 @@ def test_the_statement_text_stays_out_of_the_query_log(
 # entities back and waits for every process to answer again.
 _PROBE_INTERVAL_S = float(os.environ.get("LOOM_CH_ANALYSIS_PROBE_INTERVAL_S") or 60)
 _PROBE_WAIT_S = 2 * _PROBE_INTERVAL_S + 30
-# A policy statement holds the key: it stays out of system.query_log.
-_UNLOGGED = {"log_queries": 0}
 
 
 def _probed_until(base: str, s: _Seed, done, description: str) -> None:
@@ -500,12 +609,22 @@ def _rows_hidden_without_a_policy(ch_client, nonce: str) -> bool:
         ch_client.command(f"DROP TABLE IF EXISTS {table}")
 
 
-def _policy(ch_client, table: str) -> str:
-    from server.insights.domain import analysis as boundary
+def _scope_filter(ch_client, table: str) -> str:
+    """The analyst's scope policy condition on `table`, read from
+    system.row_policies: SHOW CREATE prints the key's literals as [HIDDEN]."""
+    return ch_client.query(
+        "SELECT select_filter FROM system.row_policies WHERE short_name = {p:String} "
+        "AND database = 'loom' AND table = {t:String}",
+        parameters={"p": boundary.POLICY_NAME, "t": table},
+    ).result_rows[0][0]
 
-    return str(
-        ch_client.command(f"SHOW CREATE ROW POLICY `{boundary.POLICY_NAME}` ON loom.{table}")
-    ).replace("\\'", "'")
+
+def _policy(ch_client, table: str) -> str:
+    """The analyst's scope policy on `table` as a CREATE statement."""
+    analyst = f"`{boundary.ANALYST_USER}`"
+    return boundary.policy_sql(
+        "loom", boundary.POLICY_NAME, table, _scope_filter(ch_client, table), analyst
+    )
 
 
 def test_an_extra_grant_is_revoked_by_the_probe(
@@ -533,13 +652,9 @@ def test_a_dropped_policy_reads_nothing_and_is_written_again(
     reads no row; under the server default it reads every row until the probe
     writes the policy again. The canary's policy is the one the probe signs
     its own read with."""
-    from server.insights.domain import analysis as boundary
-
     hidden = _rows_hidden_without_a_policy(ch_client, seed.nonce)
 
-    statement = _policy(ch_client, table).replace(
-        "CREATE ROW POLICY", "CREATE ROW POLICY OR REPLACE", 1
-    )
+    statement = _policy(ch_client, table)
     ch_client.command(f"DROP ROW POLICY `{boundary.POLICY_NAME}` ON loom.{table}")
     try:
         r = _query(control_plane_url, seed, "SELECT DISTINCT org FROM loom.agent_events")
@@ -555,7 +670,7 @@ def test_a_dropped_policy_reads_nothing_and_is_written_again(
             "the probe to write the policy again",
         )
     except BaseException:
-        ch_client.command(statement, settings=_UNLOGGED)
+        ch_client.command(statement, settings=boundary.LOG_TEXT_CUT)
         raise
     _answers_again(control_plane_url, seed)
 
@@ -563,31 +678,24 @@ def test_a_dropped_policy_reads_nothing_and_is_written_again(
 def test_a_canary_under_another_key_is_written_again(
     control_plane_url: str, seed: _Seed, ch_client
 ) -> None:
-    from server.insights.domain import analysis as boundary
-
     statement = _policy(ch_client, boundary.CANARY_TABLE)
-    # The key's padded forms are the policy's only hex literals.
-    keyed = re.compile(r"unhex\('([0-9A-Fa-f]+)'\)")
-    padded = keyed.findall(statement)
-    assert padded, "the canary policy names no key"
-    ch_client.command(
-        keyed.sub(lambda m: "unhex('" + "0" * len(m.group(1)) + "')", statement).replace(
-            "CREATE ROW POLICY", "CREATE ROW POLICY OR REPLACE", 1
-        ),
-        settings=_UNLOGGED,
+    other_key = boundary.policy_sql(
+        "loom",
+        boundary.POLICY_NAME,
+        boundary.CANARY_TABLE,
+        boundary.policy_filter(os.urandom(32)),
+        f"`{boundary.ANALYST_USER}`",
     )
+    ch_client.command(other_key, settings=boundary.LOG_TEXT_CUT)
     try:
         _probed_until(
             control_plane_url,
             seed,
-            lambda: keyed.findall(_policy(ch_client, boundary.CANARY_TABLE)) == padded,
+            lambda: _policy(ch_client, boundary.CANARY_TABLE) == statement,
             "the probe to write the canary's policy again",
         )
     except BaseException:
-        ch_client.command(
-            statement.replace("CREATE ROW POLICY", "CREATE ROW POLICY OR REPLACE", 1),
-            settings=_UNLOGGED,
-        )
+        ch_client.command(statement, settings=boundary.LOG_TEXT_CUT)
         raise
     _answers_again(control_plane_url, seed)
 

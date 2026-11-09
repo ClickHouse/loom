@@ -14,7 +14,6 @@ import asyncio
 import contextlib
 import json
 import logging
-import re
 import secrets
 import time
 import uuid
@@ -155,6 +154,12 @@ async def load_secrets(*, may_draw: bool) -> None:
         raise SetupRefused(refusal)
 
 
+def _drawn_password() -> str:
+    """192 random bits behind a fixed prefix that holds a lower and an upper
+    case letter, a digit and a symbol, as ClickHouse Cloud requires."""
+    return "Aa1-" + secrets.token_hex(24)
+
+
 async def _secrets_refusal(*, may_draw: bool) -> str:
     """`load_secrets`, answering Loom's own refusal as text ('' once loaded)."""
     global _loaded
@@ -165,7 +170,7 @@ async def _secrets_refusal(*, may_draw: bool) -> str:
                 "loom.analysis_secrets has no row while the analyst user may exist; "
                 "`loom ch-setup` draws the secrets"
             )
-        drawn = json.dumps({"key": secrets.token_hex(32), "password": secrets.token_hex(24)})
+        drawn = json.dumps({"key": secrets.token_hex(32), "password": _drawn_password()})
         await store.store_secrets(seal(_SECRETS_PURPOSE, drawn))
         sealed = await store.sealed_secrets()
     opened = _opened(sealed)
@@ -223,10 +228,12 @@ async def own_grant_revokes() -> list[str]:
 
 
 def printed_statements(revokes: list[str]) -> list[str]:
-    """The entity statements with `revokes` before the first grant."""
+    """The entity statements with `revokes` before the first grant, after a
+    `SET` that cuts the text of the rest from the log."""
     statements = entity_statements()
     first = next(i for i, s in enumerate(statements) if s.startswith("GRANT "))
-    return [*statements[:first], *revokes, *statements[first:]]
+    cut = ", ".join(f"{name} = {value}" for name, value in boundary.LOG_TEXT_CUT.items())
+    return [f"SET {cut}", *statements[:first], *revokes, *statements[first:]]
 
 
 def _scope_extra(org: str, namespaces: list[str], key: bytes | None = None) -> dict[str, Any]:
@@ -549,12 +556,10 @@ def _set_problem(problem: str, detail: str = "") -> None:
         )
 
 
-_KEY_LITERAL = re.compile(r"unhex\('[0-9A-Fa-f]+'\)")
-
-
 def _scrubbed(text: str) -> str:
-    """The text with any key pad a ClickHouse message quoted cut out."""
-    return _KEY_LITERAL.sub("unhex(…)", text)
+    """The text with any `unhex('…')` literal cut out: a policy's raw text
+    holds the key, and an older policy its pads."""
+    return boundary.KEY_LITERAL.sub("unhex(…)", text)
 
 
 async def _probe() -> tuple[str, bool, str]:
@@ -672,7 +677,7 @@ def _refusal(e: BaseException) -> ValidationError | None:
         return None
     if code == _MEMORY_LIMIT_EXCEEDED and ("(total)" in str(e) or "(for user)" in str(e)):
         return None  # the server's memory, not the statement's cap
-    if "SQL_loom_" in str(e) or _KEY_LITERAL.search(str(e)):
+    if "SQL_loom_" in str(e) or boundary.KEY_LITERAL.search(str(e)):
         return ValidationError(
             f"ClickHouse refused the statement (code {code}) while checking the analysis "
             "scope; a statement must not set the SQL_loom_* settings"
