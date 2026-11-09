@@ -139,7 +139,7 @@ def _recorded_tail(head: str, output: str) -> str:
     room = max(0, ERROR_CHARS - len(error_text(ToolOutputError(head))) - 1)
     window = output[-4 * ERROR_CHARS :]
     if len(output) > len(window):
-        window = window.partition("\n")[2] or _LINE_TOO_LONG
+        window = window.partition("\n")[2].strip() or _LINE_TOO_LONG
     return redact(window)[-room:] if room else ""
 
 

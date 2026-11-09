@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -181,18 +180,25 @@ async def test_a_redacted_tail_still_fits_the_record_whole(checkout: Path, tmp_p
 
 
 @pytest.mark.asyncio
-async def test_long_unbroken_output_does_not_stall_the_error(
-    checkout: Path, tmp_path: Path
+async def test_long_unbroken_output_is_redacted_only_in_a_window(
+    checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    seen: list[int] = []
+    redact = deps.redact
+
+    def measured(text: str) -> str:
+        seen.append(len(text))
+        return redact(text)
+
+    monkeypatch.setattr(deps, "redact", measured)
     env = _installer(tmp_path)
-    # 100 lines of 2000 characters with no space: each line is costly to redact.
+    # 100 lines of 2000 characters with no space: redacting all of it takes minutes.
     (tmp_path / "npm").write_text(
         "#!/bin/sh\nfor i in $(seq 100); do printf 'a.%.0s' $(seq 1000); echo; done\nexit 1\n"
     )
-    started = time.monotonic()
     with pytest.raises(RuntimeError) as failed:
         await deps.prepare_dependencies(checkout, (), env)
-    assert time.monotonic() - started < 5, "redacting the whole output is quadratic"
+    assert seen and max(seen) <= 4 * tier_health.ERROR_CHARS
     assert str(failed.value).endswith("a.a.a.")
 
 
@@ -201,7 +207,10 @@ async def test_a_last_line_longer_than_the_window_is_left_out_by_name(
     checkout: Path, tmp_path: Path
 ) -> None:
     env = _installer(tmp_path)
-    (tmp_path / "npm").write_text("#!/bin/sh\necho first\nprintf 'x%.0s' $(seq 3000)\nexit 1\n")
+    # The long line ends the output, then blank lines.
+    (tmp_path / "npm").write_text(
+        "#!/bin/sh\necho first\nprintf 'x%.0s' $(seq 3000)\necho\necho\nexit 1\n"
+    )
     with pytest.raises(RuntimeError) as failed:
         await deps.prepare_dependencies(checkout, (), env)
     assert str(failed.value).endswith(deps._LINE_TOO_LONG)
