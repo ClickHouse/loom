@@ -200,9 +200,10 @@ def test_column_refs_on_a_long_run_costs_linear_time(unit: str) -> None:
 
     def cost(n: int) -> float:
         (st,) = split_statements(text(n))
-        t0 = time.perf_counter()
+        # The parser's own CPU time: a loaded runner's other processes do not count.
+        t0 = time.process_time()
         lc.column_refs(st, {"a": {"x"}})
-        return time.perf_counter() - t0
+        return time.process_time() - t0
 
     assert_linear(cost, 2_000, 8_000, floor=0.05, bound=2.0)
 
@@ -221,9 +222,10 @@ def test_many_stars_over_a_wide_table_cost_linear_time(width: int) -> None:
 
     def cost(n: int) -> float:
         sts, known = _known(f"CREATE TABLE w ({cols});\n" + "SELECT * FROM w;\n" * n)
-        t0 = time.perf_counter()
+        # The parser's own CPU time: a loaded runner's other processes do not count.
+        t0 = time.process_time()
         facets = lc.column_facets(sts, known)
-        took = time.perf_counter() - t0
+        took = time.process_time() - t0
         assert len(facets) <= lc.STAR_READS_MAX
         return took
 
