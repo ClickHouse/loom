@@ -313,9 +313,10 @@ def test_reference_lines_of_a_statement_of_many_names_cost_linear_time(name: str
     def cost(n: int) -> float:
         names = ",\n".join(name.format(i) for i in range(n))
         sts = lang_sql_split.split_statements("SELECT 1 FROM " + names)
-        t0 = time.perf_counter()
+        # The parser's own CPU time: a loaded runner's other processes do not count.
+        t0 = time.process_time()
         facets = lo.reference_facets(sts)
-        took = time.perf_counter() - t0
+        took = time.process_time() - t0
         assert {f.line for f in facets} == set(range(1, n + 1))
         return took
 
