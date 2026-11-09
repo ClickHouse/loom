@@ -149,7 +149,7 @@ def _ended(status: int, budget: float, memory: int) -> NoReturn:
         logger.error("bounded_parse: the parse process failed with status %d", status)
         raise RuntimeError(f"the parse process failed with status {status}")
     if status == -signal.SIGKILL:
-        raise ParseTimeout("the parse process was killed twice: the container ran out of memory")
+        raise ParseTimeout("the parse process was killed (SIGKILL) twice, likely out of memory")
     raise ParseTimeout(
         f"parse ran past {memory >> 20} MB or {budget:g} CPU seconds"
         f", or crashed (its process ended by signal {-status})"
