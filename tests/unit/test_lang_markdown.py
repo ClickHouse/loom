@@ -133,3 +133,12 @@ def test_long_headings_that_differ_after_the_cut_stay_distinct() -> None:
     syms, _inc, _refs, _pre = markdown_units("a.md", text)
     assert len({s.qualified_name for s in syms}) == 3
     assert all(len(s.name) == 1000 for s in syms[1:])
+
+
+def test_a_long_heading_path_is_cut_in_a_continued_chunk() -> None:
+    text = "# " + "x" * 600 + "\n## " + "y" * 600 + "\n" + "word\n\n" * 400
+    chunks = markdown_chunks(parse_markdown("a.md", text.encode()), max_chars=200)
+    cont = [c.content.split("\n", 1)[0] for c in chunks if "(cont.)" in c.content]
+    assert cont and all(
+        line == "<!-- " + ("x" * 600 + " › " + "y" * 600)[:1000] + " (cont.) -->" for line in cont
+    )

@@ -31,7 +31,7 @@ from server.code.domain.extract.text_lines import line_at, newline_offsets
 from server.code.domain.extract.treesitter import ParsedFile
 
 FACET_KIND = "http_route"
-# not a setting: the cut the Python lane applies to a route name, kept the same here
+# not a setting: changing it renames the stored route facets it cuts (py_routes cuts at 200 too)
 _MAX_NAME = 200
 # Each body stops at the next `@Controller(` / `.route(`: an unclosed one is not read to
 # the end of the file again from every opener before it.
