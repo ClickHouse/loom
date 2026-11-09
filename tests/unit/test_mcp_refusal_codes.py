@@ -3,7 +3,8 @@
 Claude Code hands the model only an `isError` result's structuredContent, so
 the code has to be there for a client to tell a wrong argument from a missing
 grant or a missing row. Each case sends one request to both transports: HTTP
-answers `detail.code`, MCP answers `structuredContent.code`.
+answers `detail.code`, MCP answers `structuredContent.code`; an unavailable
+backend (503) answers over MCP as a JSON-RPC error whose `data.code` is HTTP's.
 """
 
 from __future__ import annotations
