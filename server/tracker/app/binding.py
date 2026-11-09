@@ -192,8 +192,14 @@ def reset_overrides_for_tests(
 def operator_repositories() -> frozenset[tuple[str, str]]:
     """(org, namespace) of every repository the operator configured, the only
     kind the deployment's map links. One read of the repository list: a caller
-    looking up many namespaces builds it once and passes it down."""
-    return frozenset((c.org, c.namespace) for c in repos.configured_repos() if c.source == "config")
+    looking up many namespaces builds it once and passes it down. None while the
+    registry is unread: which entries a page namespace skips is not known, and an
+    unbound namespace is the closed answer."""
+    try:
+        listed = repos.configured_repos()
+    except repos.RegistryUnread:
+        return frozenset()
+    return frozenset((c.org, c.namespace) for c in listed if c.source == "config")
 
 
 def tracker_namespaces_for(

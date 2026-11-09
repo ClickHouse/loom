@@ -862,6 +862,11 @@ async def test_a_revoke_on_a_process_that_never_read_the_registry(
     with pytest.raises(GrantBusyError):
         await maintainers.read_repo("clickhouse", "code-x", ch=object())
     assert reads == [True]
+    # An operator entry whose directory row is not (yet) code: its configuration says so.
+    monkeypatch.setattr(repos, "config_entry", lambda org, ns: object() if ns == "code-y" else None)
+    with pytest.raises(GrantBusyError):
+        await maintainers.read_repo("clickhouse", "code-y", ch=object())
+    assert reads == [True, True]
 
 
 async def test_a_branch_added_after_read_repo_is_reached_by_the_revoke(

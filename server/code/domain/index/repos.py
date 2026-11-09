@@ -367,12 +367,12 @@ def require_registry_read() -> None:
 
 def config_entries() -> list[RepoConfig]:
     """`configured_repos()` before the registry's first read too, for what decides
-        access: a namespace's kind and classification, whether it is a code entry. Until
-        that read no operator entry is org-readable, and no access row applies: an entry
-        carries the classification its configuration gives, so a name it lists may be one a
-    maintainer restricted since: the directory row decides that. Never for reading, fetching or
-        indexing a repository: `tests/unit/test_repo_snapshot_contract.py` pins its
-        callers."""
+    access: a namespace's kind and classification, whether it is a code entry. Until
+    that read no operator entry is org-readable and no access row applies: an entry
+    carries the classification its configuration gives, so an entry a maintainer
+    restricted through an access row reads as its configuration says until then. Never
+    for reading, fetching or indexing a repository:
+    `tests/unit/test_repo_snapshot_contract.py` pins its callers."""
     return _with_registry(_configured_from_env()) if registry_unread() else configured_repos()
 
 

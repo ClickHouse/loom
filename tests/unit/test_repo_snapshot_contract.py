@@ -21,6 +21,8 @@ CONFIG_ENTRY_READERS = {
     "identity/app/namespace_classification.py",
     "identity/app/namespace_kinds.py",
     "identity/app/token_grants.py",
+    # Whether a revoke on a never-read process must read the registry and fan out.
+    "code/app/index/maintainers.py",
     "transport/namespace_resolve.py",
 }
 # The snapshot's internals and the raw configuration: only repos.py reads them.
@@ -148,3 +150,16 @@ async def test_memory_for_file_answers_without_links_while_the_registry_is_unrea
     monkeypatch.setattr(repos, "_registry_loaded", False)
     call = SimpleNamespace(org="o", extra_namespaces=["code-x"], tags=["repo:o/x"])
     assert await for_file._linked(call, "src/a.py", ["n"]) is None
+
+
+@pytest.mark.asyncio
+async def test_a_scoped_search_and_tracker_bindings_answer_while_the_registry_is_unread(
+    monkeypatch,
+) -> None:
+    from server.code.app import repo_scope
+    from server.tracker.app import binding
+
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    assert await repo_scope.readable_repo_namespace("o", "code-x") == ""
+    assert binding.operator_repositories() == frozenset()

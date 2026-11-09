@@ -475,7 +475,8 @@ def _doctor_tier_failures() -> tuple[Any, ...] | None:
         client = get_client()
         try:
             await client.connect()
-            await repo_registry.refresh_db_repos(force=True)  # the self-service entries too
+            if not repo_registry.registry_read():  # the mirror checks may have read it
+                await repo_registry.refresh_db_repos(force=True)  # the self-service entries
             if not repo_registry.registry_read():
                 return None  # which entries are configured is unknown: say nothing
             await settings_overrides.refresh()  # the thresholds `/v1/health` grades with

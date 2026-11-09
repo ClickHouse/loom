@@ -31,10 +31,10 @@ def trunk_namespace_of(org: str, code_namespace: str) -> str:
 async def readable_repo_namespace(org: str, code_namespace: str) -> str:
     """`trunk_namespace_of`, passed through the gate for the current
     principal (VIEWER); "" when unbound, refused, or the check fails (closed)."""
-    ns = trunk_namespace_of(org, code_namespace)
-    if not ns:
-        return ""
     try:
+        ns = trunk_namespace_of(org, code_namespace)  # refuses until the registry is read
+        if not ns:
+            return ""
         return ns if await row_in_scope(org, ns, Role.VIEWER, hides_answer=False) else ""
     except Exception as e:  # noqa: BLE001 — a gate that cannot check refuses
         # One line per scoped request while the grants read is down.
