@@ -244,6 +244,7 @@ async def test_documents_and_chunks_roundtrip(
             "superseded_at": None,
             "ingested_at": now,
         },
+        over=0,
         ch=ch,
     )
 
