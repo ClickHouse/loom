@@ -44,7 +44,7 @@ def _principal(subject: str, org: str) -> AuthInfo:
     )
 
 
-def serve_probe(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+def serve_probe(monkeypatch: pytest.MonkeyPatch, handler: Any = None) -> dict[str, Any]:
     """Two write ops on both transports, one in the code plane and one outside it. The
     role gate refuses subject "intruder"; the handler raises NotFoundError when asked
     for a missing row."""
@@ -61,7 +61,7 @@ def serve_probe(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             name=name,
             input_model=_In,
             output_model=_Out,
-            handler=_handler,
+            handler=handler or _handler,
             idempotent=False,
             required_role=Role.WRITER,
         )

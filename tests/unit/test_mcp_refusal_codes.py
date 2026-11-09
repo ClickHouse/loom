@@ -107,7 +107,7 @@ def test_an_unknown_tool_is_unknown_op_as_through_loom_op() -> None:
 
 
 def test_a_registry_read_between_gate_and_handler_never_defaults_the_namespace(
-    probe: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The gate found the registry unread and checked the org only; the read that lands
     before the handler runs must not let the handler default to an unchecked namespace."""
@@ -123,8 +123,8 @@ def test_a_registry_read_between_gate_and_handler_never_defaults_the_namespace(
         defaulted.append(resolve_code_identity(inp.org, inp.namespace))
         return None
 
+    probe = serve_probe(monkeypatch, handler=_defaults)
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
-    object.__setattr__(mcp_call.TOOLS_BY_NAME[TOOL], "handler", _defaults)
     monkeypatch.setattr(repos, "_registry_loaded", False)
     r = probe["http"].post(PATH, json={}, headers={"Authorization": "Bearer alice"})
     assert r.status_code == 503, r.text
@@ -132,7 +132,6 @@ def test_a_registry_read_between_gate_and_handler_never_defaults_the_namespace(
     out = asyncio.run(
         mcp_call._call_tool(1, {"name": TOOL, "arguments": {}}, auth=probe["tokens"]["alice"])
     )
-    # A JSON-RPC error, as for any unavailable backend.
-    assert "the self-service repository registry is not read yet" in out["error"]["message"]
-    assert r.json()["detail"]["code"] == "BACKEND_UNAVAILABLE"
+    # A JSON-RPC error, as for any unavailable backend, with the code HTTP answers.
+    assert r.json()["detail"]["code"] == out["error"]["data"]["code"] == "BACKEND_UNAVAILABLE"
     assert reached == ["handler", "handler"] and defaulted == []
