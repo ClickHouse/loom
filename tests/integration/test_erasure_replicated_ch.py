@@ -31,6 +31,7 @@ _TABLES = (
     "entity_communities",
     "documents",
     "memory_code_links",
+    "memory_versions",
 )
 _VECTOR = "arrayWithConstant(3072, 0.)"
 
