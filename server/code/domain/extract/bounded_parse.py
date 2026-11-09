@@ -5,8 +5,7 @@ Some grammars take quadratic time on short repeated tokens, and some quadratic m
 replica for hours or exhaust its memory. Every parse of repository text goes through
 `parse`, which first parses the source in a child process (`parse_child`) held to
 `code_parse_memory_mb` of address space past its own and `code_parse_timeout_s` of CPU
-time, and
-raises `ParseTimeout` when that parse runs past the deadline or ends the child; each
+time, and raises `ParseTimeout` when that parse runs past the deadline or ends the child; each
 caller takes its parse failure path (an indexed file is then chunks without symbols).
 Only a source the child parsed in full within the deadline is parsed again here, where
 the same parse does the same work and so stays within the same limits (past twice the
@@ -30,6 +29,7 @@ import contextlib
 import functools
 import logging
 import selectors
+import signal
 import subprocess
 import sys
 import threading
@@ -170,6 +170,8 @@ def parse(parser: Any, source: bytes) -> Any:
         if isinstance(answer, int) and answer > 0:
             logger.error("bounded_parse: the parse process failed with status %d", answer)
             raise RuntimeError(f"the parse process failed with status {answer}")
+        if answer == -signal.SIGKILL:  # killed here: it did not answer in time
+            raise ParseTimeout(f"the parse process did not answer within {10 * budget + 5:g} s")
         if answer != parse_child.DONE:
             raise ParseTimeout(
                 f"parse ran past {settings.code_parse_memory_mb} MB or {budget:g} CPU seconds"

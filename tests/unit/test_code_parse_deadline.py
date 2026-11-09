@@ -185,11 +185,12 @@ def test_a_header_whose_parse_stops_is_read_as_not_indexed(
     assert ih._header_cache[("acme", "code", "src/a.h")] is None
 
 
-def test_two_threads_never_parse_one_grammar_at_once() -> None:
+def test_two_threads_never_parse_at_once() -> None:
     import threading
 
     import tree_sitter
     import tree_sitter_go
+    import tree_sitter_python
 
     from server.code.domain.extract import bounded_parse
 
@@ -197,10 +198,10 @@ def test_two_threads_never_parse_one_grammar_at_once() -> None:
     count = threading.Lock()
 
     class Watched:
-        """A Go parser that records how many threads are inside it."""
+        """A parser that records how many threads are inside any of them."""
 
-        def __init__(self) -> None:
-            self.language = tree_sitter.Language(tree_sitter_go.language())
+        def __init__(self, grammar: Any) -> None:
+            self.language = tree_sitter.Language(grammar.language())
             self._parser = tree_sitter.Parser(self.language)
 
         def parse(self, read: Any) -> Any:
@@ -216,8 +217,8 @@ def test_two_threads_never_parse_one_grammar_at_once() -> None:
                     active -= 1
 
     threads = [
-        threading.Thread(target=bounded_parse.parse, args=(Watched(), b"package x\n"))
-        for _ in range(4)
+        threading.Thread(target=bounded_parse.parse, args=(Watched(grammar), b"x\n"))
+        for grammar in (tree_sitter_go, tree_sitter_python) * 2
     ]
     for t in threads:
         t.start()
@@ -515,3 +516,22 @@ assert err == "" and pf is not None and len(pf.symbols) == 1, err
         [sys.executable, "-c", script], cwd=_SERVER.parent, capture_output=True, timeout=60
     )
     assert done.returncode == 0, done.stderr[-2000:]
+
+
+def test_a_child_that_does_not_answer_is_ended(monkeypatch: pytest.MonkeyPatch) -> None:
+    import signal
+
+    from server.code.domain.extract import bounded_parse
+
+    monkeypatch.setattr(bounded_parse, "_IDLE", [])
+    source = b"package x\nfunc f() {}\n"
+    assert parse_for_ingest("a.go", source)[1] == ""
+    (child,) = bounded_parse._IDLE
+    child.send_signal(signal.SIGSTOP)
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 0.05)
+    start = time.monotonic()
+    pf, err = parse_for_ingest("b.go", source)
+    assert "ParseTimeout" in err and time.monotonic() - start < 15
+    pf, err = parse_for_ingest("c.go", source)  # a fresh child
+    assert err == "" and pf is not None and len(pf.symbols) == 1
+    _end(bounded_parse._IDLE)
