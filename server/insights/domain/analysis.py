@@ -287,6 +287,8 @@ def _pads(key: bytes) -> tuple[bytes, bytes]:
     return bytes(b ^ 0x36 for b in padded), bytes(b ^ 0x5C for b in padded)
 
 
+# key_spellings and policy_spellings serve the log checks (the isolation
+# tests and the mixed-version gate), kept beside the pads they spell.
 def key_spellings(key: bytes) -> list[str]:
     """The hex spellings of `key` and its HMAC pads, and the printable runs
     of 0x36 ('6') and 0x5C ('\\') its zero padding XORs to."""
