@@ -364,7 +364,7 @@
         "ch_log_comment_statement_digest": {
           "default": false,
           "type": "boolean",
-          "description": "Append `sql:<shape12> <first 200 chars>` of each statement to its `log_comment` (\"<op> <request_id>\"), so query_log rows group by shape; a statement that carries a secret, or one run as the analyst, gets its shape alone. Off by default: readers that split log_comment on spaces gain tokens."
+          "description": "Append `sql:<shape12> <first 200 chars>` of each statement to its `log_comment` (\"<op> <request_id>\"), so query_log rows group by shape. A statement that carries a secret, or one run as the analyst, gets its shape alone. Off by default: readers that split log_comment on spaces gain tokens."
         },
         "ch_pool_maxsize": {
           "default": 64,

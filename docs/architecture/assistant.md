@@ -630,8 +630,8 @@ restricted namespace drops text keys from the ledger, so the op also records the
 as `sql_digest`, an identifier key, which the citation check reads. The analyst profile
 holds `log_queries_cut_to_length = 1` and `log_formatted_queries = 0` as `CONST`, so
 `system.query_log`, the span log and the server log record each statement the analyst
-runs without its text: its user, timing, rows read and
-settings, the scope and its signature among them. A signature reads rows only with the
+runs without its text: its user, timing, rows read and settings, the scope and its
+signature among them. A signature reads rows only with the
 analyst's password, for its own query id, until its expiry. A statement ClickHouse
 refuses is logged with its error message, which can quote the whole statement (an
 unknown column's error quotes the query it was looked up in, the caller's statement

@@ -175,7 +175,7 @@ def as_analyst(user: str, password: str, extra: dict[str, Any]) -> Iterator[None
 
 
 # Set only by `uncaptured`: statements that carry a secret stay out of
-# LOOM_CH_CAPTURE_STATEMENTS.
+# LOOM_CH_CAPTURE_STATEMENTS and log only their shape in log_comment.
 _uncaptured_var: ContextVar[bool] = ContextVar("ch_uncaptured", default=False)
 
 
@@ -462,7 +462,8 @@ def statement_settings(
     `max_execution_time` (the caller's own value wins); with
     LOOM_CH_LOG_COMMENT_STATEMENT_DIGEST the digest follows the tag in
     `log_comment` (or stands alone when no tag is set), so system.query_log
-    can be grouped per statement shape without reading the `query` text.
+    can be grouped per statement shape without reading the `query` text; a
+    statement under `uncaptured()` or `as_analyst` gets the shape alone.
 
     A read statement (SELECT / WITH) issued under a traffic
     class also carries that class's settings from
@@ -477,10 +478,9 @@ def statement_settings(
     analyst = _analyst_var.get()
     if settings.ch_log_comment_statement_digest:
         tag = str(out.get("log_comment") or "")
-        # A statement that carries a secret, or a caller's SQL run as the
-        # analyst, logs its shape alone: the head would quote its text.
-        secret = _uncaptured_var.get() or analyst is not None
-        digest = statement_shape(sql) if secret else statement_digest(sql)
+        # The head would quote a secret, or a caller's SQL run as the analyst.
+        shape_only = _uncaptured_var.get() or analyst is not None
+        digest = statement_shape(sql) if shape_only else statement_digest(sql)
         out["log_comment"] = f"{tag} {digest}".strip()
     if analyst is not None:
         # The analyst's profile pins its own caps, its time cap included: a
