@@ -1,6 +1,7 @@
 """A user erasure removes what was derived from a consolidated summary of the user's
 memories along with the summary: its version history, its verbatim chunks and entity
-vectors, and the graph rows extracted from it, tombstoning or purging; the residue
+vectors, the graph rows extracted from it and the org-wide copies promoted from it,
+tombstoning or purging, a summary written late or a link delete reopened too; the residue
 census counts the same rows. A summary that folded none of the user's memories keeps
 all of them, a rebuilt summary keeps the versions that no longer name the user, and so
 do a triple or an edge another user's memory also carries and another identity's rows

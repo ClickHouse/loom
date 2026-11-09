@@ -56,10 +56,9 @@ class _RecCH:
         return [{"mutation_id": "m", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}]
 
 
-# The statement the census and the steps share: the user's keys and those of the
-# summaries built from them, from the current rows and the history, paired with the
-# user's (namespace, src:key). What it matches:
-# tests/integration/test_erasure_consolidated_quotes_live_ch.py.
+# The user's keys and those of the summaries built from them, from the current rows and
+# the history, paired with the user's (namespace, src:key); its shape is pinned below.
+# What it matches: tests/integration/test_erasure_consolidated_quotes_live_ch.py.
 _QUOTED_KEYS = erasure_predicates.USER_QUOTED_KEY_LIST
 
 

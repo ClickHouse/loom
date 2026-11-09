@@ -655,7 +655,7 @@ async def delete_memory_versions_by_user(
     ch: _CHClient | None = None,
 ) -> int:
     """Hard-delete a user's version history across namespaces (see the
-    namespace variant), and that of the summaries built from the user's memories,
+    namespace variant), and the versions of a summary that name one of the user's keys,
     which `memory.history` reads and a rollback re-inserts. After the cache steps:
     they find an answer that quoted a summary by its history."""
     ch = ch or _default_client()

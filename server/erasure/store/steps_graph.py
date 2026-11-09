@@ -460,8 +460,8 @@ async def retire_memory_by_user(org: str, user_id: str, *, ch: _CHClient | None 
     """After every step that finds rows by the user's memory keys. In a purge it runs
     `_purge_memory_by_user`; otherwise it retires what a write made live since the first
     steps: the summaries built from the user's memories (while the user's rows still
-    name them), their shared copies, the user's rows, then the cached answers and
-    precedents that quote either."""
+    name them), the shared copies promoted from either, the user's rows, then the cached
+    answers and precedents that quote either."""
     ch = ch or _default_client()
     if purge_mode():
         return await _purge_memory_by_user(org, user_id, ch=ch)
