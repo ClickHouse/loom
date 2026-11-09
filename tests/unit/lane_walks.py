@@ -74,6 +74,12 @@ def _env(text: str) -> object:
     return env_facets(ParsedFile(path="a.py", lang="python", source=text.encode()))
 
 
+def _conftests(text: str) -> object:
+    from server.code.domain.extract.py_layouts import layout_from_texts
+
+    return layout_from_texts({}, text.split())
+
+
 def _py_layout(path: str) -> Callable[[str], object]:
     def walk(text: str) -> object:
         from server.code.domain.extract.py_layouts import layout_from_texts
@@ -111,7 +117,7 @@ def _where(n: int) -> str:
     return "[tool.setuptools.packages.find]\nwhere = [" + _numbered('"a{}",')(n) + "]\n"
 
 
-def _declared_prefix(n: int, opener: str, route: str, close: str = "')\n") -> str:
+def _declared_prefix(n: int, opener: str, route: str, close: str) -> str:
     """One prefix of n/2 characters, then n/2 characters of routes under it."""
     return opener + "a" * (n // 2) + close + _run("", route)(n // 2)
 
@@ -151,6 +157,7 @@ WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("setup-py-entry-points", _setup_py, _run('"console_scripts":[', '"a=b:c",\n', "]")),
     ("setup-py-roots", _py_layout("setup.py"), _numbered("find_packages('a{}')\n")),
     ("pyproject-roots", _py_layout("pyproject.toml"), _where),
+    ("conftest-roots", _conftests, _numbered("d{}/conftest.py\n")),
     ("dockerfile-continued-rows", _dockerfile, _run("", "a \\\n")),
     ("dockerfile-flags", _dockerfile, _run("RUN ", "--a ", "b")),
     ("dockerfile-stages", _dockerfile, _run("", "FROM a AS b\n")),
