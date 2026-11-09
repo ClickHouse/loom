@@ -620,6 +620,49 @@ async def test_a_nul_character_is_refused_before_anything_commits(
     )
 
 
+@pytest.mark.usefixtures("pg_authority")
+@pytest.mark.parametrize("journal", ["written_before_the_columns", "payload_cleared"])
+async def test_a_redact_reaches_a_revision_by_its_metadata(
+    call: Any, pg_conn: Any, org: str, journal: str
+) -> None:
+    """A redaction finds its version in the journal whatever the revision holds: one
+    written before the typed columns existed (NULL there) through its payload, and one
+    whose payload is cleared through its columns, which it then marks."""
+    ns = f"pg-{uuid.uuid4().hex[:8]}"
+    first = (await call("memory.set", _set(ns, "k", "the token is hunter2"))).json()
+    assert (await call("memory.set", _set(ns, "k", "the token was rotated"))).status_code == 200
+    await _published(pg_conn, org)
+    at = "WHERE org = $1 AND namespace = $2 AND version = $3"
+    if journal == "written_before_the_columns":
+        # An UPDATE that does not set `row` leaves the trigger out, as before the file.
+        await pg_conn.execute(
+            "UPDATE loom.memory_revisions SET agent = NULL, session_id = NULL, "
+            "memory_key = NULL, memory_type = NULL, status = NULL, source_trace = NULL, "
+            f"tombstoned = NULL, redacted_at = NULL, redaction_reason = NULL {at}",
+            org,
+            ns,
+            first["version"],
+        )
+    else:
+        await pg_conn.execute(
+            f"UPDATE loom.memory_revisions SET row = NULL {at}", org, ns, first["version"]
+        )
+    r = await call(
+        "memory.redact",
+        {"memory_id": first["memory_id"], "version": first["version"], "reason": "leak"},
+    )
+    assert r.status_code == 200 and r.json()["redacted"] is True, r.text
+    marked = await pg_conn.fetchrow(
+        "SELECT redacted_at IS NOT NULL AS redacted, redaction_reason, "
+        f"coalesce(row->>'value', '') AS value FROM loom.memory_revisions {at}",
+        org,
+        ns,
+        first["version"],
+    )
+    assert marked["redacted"] and marked["redaction_reason"].startswith("leak")
+    assert "hunter2" not in marked["value"]
+
+
 async def test_a_redact_scrubs_the_postgres_journal_and_the_clickhouse_history(
     call: Any, pg_conn: Any, org: str, ch_client: Any
 ) -> None:

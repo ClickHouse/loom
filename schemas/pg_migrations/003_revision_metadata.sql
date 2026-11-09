@@ -2,8 +2,11 @@
 -- of the journal needs the payload only for the revision's content. A trigger fills
 -- them from `row` whenever a writer sets it, whatever build it is, and leaves them when
 -- `row` is cleared; each falls back to the loom.memory column's default when `row`
--- leaves the field out. `row` may be NULL: the readers of this build read a revision's
--- content from ClickHouse's `memory_versions` then, checked against these columns.
+-- leaves the field out. A revision written before this file has them NULL, and a reader
+-- takes the field from its `row` then (`pg_memory._meta`): nothing here rewrites the
+-- journal, so the file holds the table's lock only for its catalog changes. `row` may
+-- be NULL: how each reader tolerates that is in docs/architecture/storage-authority.md,
+-- "Revision metadata".
 ALTER TABLE loom.memory_revisions
     ADD COLUMN IF NOT EXISTS agent text COLLATE "C",
     ADD COLUMN IF NOT EXISTS session_id text COLLATE "C",
@@ -38,27 +41,3 @@ DROP TRIGGER IF EXISTS memory_revisions_metadata ON loom.memory_revisions;
 CREATE TRIGGER memory_revisions_metadata
     BEFORE INSERT OR UPDATE OF row ON loom.memory_revisions
     FOR EACH ROW EXECUTE FUNCTION loom.revision_metadata();
-
--- The journal written before this file: the trigger fills each row as it is rewritten.
-UPDATE loom.memory_revisions SET row = row WHERE agent IS NULL;
-
-ALTER TABLE loom.memory_revisions
-    ALTER COLUMN agent SET NOT NULL,
-    ALTER COLUMN session_id SET NOT NULL,
-    ALTER COLUMN memory_key SET NOT NULL,
-    ALTER COLUMN memory_type SET NOT NULL,
-    ALTER COLUMN status SET NOT NULL,
-    ALTER COLUMN source_trace SET NOT NULL,
-    ALTER COLUMN tombstoned SET NOT NULL,
-    ALTER COLUMN redaction_reason SET NOT NULL;
-
--- A user's profile versions, which a redaction of a memory they were folded from scrubs:
--- on the typed columns, which hold whether or not the payload does.
-CREATE INDEX IF NOT EXISTS memory_revisions_profile_meta
-    ON loom.memory_revisions (org, namespace, user_id)
-    WHERE agent = '-' AND memory_type = 'profile';
-
--- The revisions that still hold their payload, oldest first: what clearing payloads
--- once their delivery has settled reads.
-CREATE INDEX IF NOT EXISTS memory_revisions_payload
-    ON loom.memory_revisions (committed_at) WHERE row IS NOT NULL;

@@ -113,9 +113,11 @@ A revision keeps its key (`agent`, `session_id`, `memory_key`), `memory_type`, `
 `source_trace`, whether it is a tombstone, and its redaction's time and reason in typed
 columns beside its payload (`row`). A trigger sets them from `row` whenever a writer of
 any build sets it, each falling back to the `loom.memory` column's default for a field
-`row` leaves out, and leaves them when `row` is cleared. Every reader of the journal
-matches on these columns and reads `row` only for a revision's content, which may be
-NULL:
+`row` leaves out, and leaves them when `row` is cleared. A revision written before the
+columns existed has them NULL and its payload in place, so a reader takes each from the
+column or, when it is NULL, from `row` (`pg_memory._meta`); the migration rewrites no
+revision. Every reader of the journal matches on that metadata and reads `row` only for a
+revision's content, which may be NULL:
 
 - an old version (`namespace.rollback`'s reinstated rows, `revisions_at`) is then
   ClickHouse's `memory_versions` row of the same key, served scrubbed when the columns
@@ -125,15 +127,14 @@ NULL:
   reaches its verdict again on peers read anew;
 - a redaction marks such a revision's columns, and ClickHouse's scrub reaches its text.
 
-A revision's payload is set by every commit and kept: this build clears none.
+Every commit sets a revision's payload; nothing clears it.
 
-Nine maintenance indexes do not lead with `org`: `memory_deliveries (lease_until)` and
+Eight maintenance indexes do not lead with `org`: `memory_deliveries (lease_until)` and
 `knowledge_deliveries (lease_until)` `WHERE NOT settled` (the delivery workers' queues
 across tenants), the same two `WHERE settled`, `audit_outbox (due_at)`,
-`idempotency (expires_at)`, `erased_memories (erased_at)`,
-`erased_documents (erased_at)` and `memory_revisions (committed_at) WHERE row IS NOT
-NULL` (the sweeps). All nine are local to a Postgres database; a tenant's rows are still
-found by their primary keys.
+`idempotency (expires_at)`, `erased_memories (erased_at)` and
+`erased_documents (erased_at)` (the sweeps). All eight are local to a Postgres database;
+a tenant's rows are still found by their primary keys.
 
 ### Rejected layouts
 

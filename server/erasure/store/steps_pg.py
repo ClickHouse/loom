@@ -34,7 +34,7 @@ _CONSOLIDATED_IDS = """
 WITH mine AS (
     SELECT namespace, 'src:' || k AS tag FROM (
         SELECT namespace, memory_key AS k FROM loom.memory_current WHERE org = $1 AND user_id = $2
-        UNION SELECT namespace, memory_key FROM loom.memory_revisions
+        UNION SELECT namespace, coalesce(memory_key, row->>'memory_key') FROM loom.memory_revisions
         WHERE org = $1 AND user_id = $2) AS keys),
 hits AS (
     SELECT DISTINCT c.namespace, c.memory_id FROM loom.memory_current c

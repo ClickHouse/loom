@@ -549,7 +549,7 @@ async def _refuse_moved_sources(
         "WITH s(memory_id, version) AS (SELECT * FROM unnest($3::uuid[], $4::bigint[])) "
         "SELECT EXISTS (SELECT 1 FROM loom.memory_revisions r JOIN s "
         "ON r.memory_id = s.memory_id AND r.version = s.version "
-        "WHERE r.org = $1 AND r.namespace = $2 AND r.redacted_at IS NOT NULL) "
+        f"WHERE r.org = $1 AND r.namespace = $2 AND {_meta('redacted_at', 'r')} IS NOT NULL) "
         "OR ($5 AND EXISTS (SELECT 1 FROM s WHERE NOT EXISTS ("
         "SELECT 1 FROM loom.memory_current c WHERE c.org = $1 AND c.namespace = $2 "
         "AND c.memory_id = s.memory_id AND c.version = s.version "
@@ -1444,7 +1444,8 @@ async def profile_keys_built_from(
     if pg.unstorable(org) or pg.unstorable(namespace) or pg.unstorable(user_id):
         return []
     rows = await pg.fetch(
-        f"SELECT agent, session_id, memory_key, max(version) AS newest {_PROFILE_REVISIONS} "
+        f"SELECT {_meta('agent')} AS agent, {_meta('session_id')} AS session_id, "
+        f"{_meta('memory_key')} AS memory_key, max(version) AS newest {_PROFILE_REVISIONS} "
         "GROUP BY 1, 2, 3 ORDER BY 1, 2, 3",
         org,
         namespace,
@@ -1452,6 +1453,30 @@ async def profile_keys_built_from(
         mid,
     )
     return [{**dict(r), "newest": int(r["newest"])} for r in rows]
+
+
+# A revision's metadata column, or for one written before the columns existed (NULL
+# there) its payload's field, with the loom.memory column's default
+# (`003_revision_metadata.sql`). Read as `_meta(col)`, or `_meta(col, "r")` aliased.
+_META_DEFAULTS = {
+    "agent": "''",
+    "session_id": "''",
+    "memory_key": "''",
+    "memory_type": "''",
+    "status": "'active'",
+    "source_trace": "''",
+    "redaction_reason": "''",
+}
+
+
+def _meta(col: str, alias: str = "") -> str:
+    """The journal's `col` for every revision, its typed column or its payload's field."""
+    a = f"{alias}." if alias else ""
+    if col == "tombstoned":
+        return f"coalesce({a}tombstoned, {a}row->>'tombstoned_at' IS NOT NULL)"
+    if col == "redacted_at":
+        return f"coalesce({a}redacted_at, {a}row->>'redacted_at')"
+    return f"coalesce({a}{col}, {a}row->>'{col}', {_META_DEFAULTS[col]})"
 
 
 async def history_target(org: str, memory_id: str, version: int) -> dict[str, Any] | None:
@@ -1466,25 +1491,31 @@ async def history_target(org: str, memory_id: str, version: int) -> dict[str, An
     if pg.unstorable(org):
         return None
     r = await pg.fetchrow(
-        "SELECT org, memory_id::text AS memory_id, namespace, agent, user_id, session_id, "
-        "memory_key, version, content_sha256, "
-        "CASE WHEN tombstoned THEN coalesce(row->>'tombstoned_at', '') END AS tombstoned_at "
+        f"SELECT org, memory_id::text AS memory_id, namespace, {_meta('agent')} AS agent, "
+        f"user_id, {_meta('session_id')} AS session_id, {_meta('memory_key')} AS memory_key, "
+        "version, content_sha256, row->>'tombstoned_at' AS tombstoned_at "
         "FROM loom.memory_revisions WHERE org = $1 AND memory_id = $2 AND version = $3 LIMIT 1",
         org,
         mid,
         version,
     )
-    return None if r is None else dict(r)
+    if r is None:
+        return None
+    out = dict(r)
+    # The payload's time, as ClickHouse's history gives it; unknown once it is cleared.
+    at = out["tombstoned_at"]
+    out["tombstoned_at"] = None if at is None else datetime.fromisoformat(at)
+    return out
 
 
 async def status_before(key: IdentityKey, memory_id: str, version: int) -> str:
     """`history.status_before` on the authority's revisions of `key` holding `memory_id`."""
     org, namespace, agent, user_id, session_id, memory_key = key
     status = await pg.fetchval(
-        "SELECT status FROM loom.memory_revisions WHERE org = $1 AND namespace = $2 "
-        "AND agent = $3 AND user_id = $4 AND session_id = $5 "
-        "AND memory_key = $6 AND memory_id = $7 AND version < $8 "
-        "AND status <> 'superseded' ORDER BY version DESC LIMIT 1",
+        f"SELECT {_meta('status')} FROM loom.memory_revisions WHERE org = $1 "
+        f"AND namespace = $2 AND {_meta('agent')} = $3 AND user_id = $4 "
+        f"AND {_meta('session_id')} = $5 AND {_meta('memory_key')} = $6 AND memory_id = $7 "
+        f"AND version < $8 AND {_meta('status')} <> 'superseded' ORDER BY version DESC LIMIT 1",
         org,
         namespace,
         agent,
@@ -1509,8 +1540,10 @@ async def revisions_at(
     if not by_version or pg.unstorable([org, namespace]):
         return {}
     rows = await pg.fetch(
-        "SELECT r.memory_id::text AS memory_id, r.version, r.row, r.agent, r.user_id, "
-        "r.session_id, r.memory_key, r.redacted_at, r.redaction_reason "
+        f"SELECT r.memory_id::text AS memory_id, r.version, r.row, {_meta('agent', 'r')} AS agent, "
+        f"r.user_id, {_meta('session_id', 'r')} AS session_id, "
+        f"{_meta('memory_key', 'r')} AS memory_key, {_meta('redacted_at', 'r')} AS redacted_at, "
+        f"{_meta('redaction_reason', 'r')} AS redaction_reason "
         "FROM loom.memory_revisions r "
         "JOIN unnest($3::uuid[], $4::bigint[]) AS w(memory_id, version) "
         "ON r.memory_id = w.memory_id AND r.version = w.version "
@@ -1639,8 +1672,8 @@ async def live_versions(
         "  FROM loom.memory_revisions r WHERE r.org = c.org AND r.memory_id = c.memory_id "
         "  AND r.namespace = c.namespace AND r.user_id = c.user_id "
         # The id may sit under another key too (a namespace restored into itself).
-        "  AND r.agent = c.agent AND r.session_id = c.session_id "
-        "  AND r.memory_key = c.memory_key "
+        f"  AND {_meta('agent', 'r')} = c.agent AND {_meta('session_id', 'r')} = c.session_id "
+        f"  AND {_meta('memory_key', 'r')} = c.memory_key "
         "  AND r.version <= h.version ORDER BY r.version DESC LIMIT 1)",
         org,
         *[[i[k] for i in ids] for k in range(6)],
@@ -1810,7 +1843,7 @@ async def live_heads_of(
 
 
 # The fields a redaction matches on: the heads' key columns and `row` fields, and the
-# journal's typed columns, which hold whether or not its payload does.
+# journal's metadata (`_meta`), which holds whether or not its payload does.
 _HEAD_FIELDS = {
     "agent": "agent",
     "session_id": "session_id",
@@ -1819,12 +1852,12 @@ _HEAD_FIELDS = {
     "source_trace": "row->>'source_trace'",
     "redacted_at": "row->>'redacted_at'",
 }
-_JOURNAL_FIELDS = {f: f for f in _HEAD_FIELDS}
+_JOURNAL_FIELDS = {f: _meta(f) for f in _HEAD_FIELDS}
 
 
 def _profile_built_from(f: Mapping[str, str]) -> str:
     """A profile row of the user ($3) built from the memory ($4): what a redaction of it
-    reaches (`memory_revisions_profile_meta` in the journal)."""
+    reaches."""
     return (
         f"user_id = $3 AND {f['agent']} = '-' AND {f['memory_type']} = 'profile' "
         f"AND starts_with({f['source_trace']}, 'profile.fold:') "
@@ -1921,7 +1954,7 @@ async def redact(
             "SELECT c.row FROM loom.memory_current c WHERE c.org = $1 AND c.namespace = $2 "
             "AND ((c.agent, c.user_id, c.session_id, c.memory_key) = ($5, $3, $6, $7) "
             "OR (c.agent = '-' AND c.user_id = $3 AND (c.session_id, c.memory_key) "
-            f"IN (SELECT session_id, memory_key {_PROFILE_REVISIONS}))) "
+            f"IN (SELECT {_meta('session_id')}, {_meta('memory_key')} {_PROFILE_REVISIONS}))) "
             f"{_KEY_ORDER} FOR UPDATE OF c",
             *key_args,
         )
@@ -1938,8 +1971,8 @@ async def redact(
         history = await conn.fetch(
             "SELECT version, content_sha256 FROM loom.memory_revisions "
             "WHERE org = $1 AND namespace = $2 AND user_id = $3 AND memory_id = $4 "
-            "AND agent = $5 AND session_id = $6 AND memory_key = $7 "
-            "AND version >= $8 ORDER BY version",
+            f"AND {_meta('agent')} = $5 AND {_meta('session_id')} = $6 "
+            f"AND {_meta('memory_key')} = $7 AND version >= $8 ORDER BY version",
             *key_args,
             int(version),
         )
