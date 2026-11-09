@@ -1,10 +1,13 @@
-"""The lease a Postgres-authority commit holds while its writer publishes to ClickHouse.
+"""The lease a Postgres-authority commit holds while it is published to ClickHouse.
 
-A writer sends nothing once its lease is about to end, and every insert it sends starts
-within the transit allowance of that end (`rmt_carry.under_lease`): an erasure that
-removed the delivery waits out the lease (`pg.wait_out`) and then finds every copy the
-writer could land. Past it, the delivery worker publishes the committed rows and the
-write answers PUBLICATION_PENDING. Shared by the memory and knowledge authorities.
+Its publisher (the writer, or for memory its process's publication batch) sends nothing
+once the lease is about to end, and every insert it sends starts within the transit
+allowance of that end (`rmt_carry.under_lease`): an erasure that removed the delivery
+waits out the lease (`pg.wait_out`) and then finds every copy the publisher could land.
+Past it, the delivery worker publishes the committed rows, and a write still waiting for
+them answers PUBLICATION_PENDING (the memory writes that answer at their commit:
+docs/architecture/storage-authority.md, "Publication"). Shared by the memory and
+knowledge authorities.
 """
 
 from __future__ import annotations
