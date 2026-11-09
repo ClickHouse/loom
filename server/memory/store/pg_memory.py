@@ -1707,7 +1707,9 @@ async def unpublished_keepers(
     `shas` whose memory row ClickHouse is still owed, in `scope`: the keepers an identity
     dedup that reads ClickHouse cannot see yet (a write answered at its commit).
     `head_sha`, `session_id`, `memory_key` and `memory_id`; the caller still checks each
-    against its head. Read through the namespace's undelivered revisions, which are few."""
+    against its head. Read through the namespace's deliveries still owing the row; a
+    parked one (ClickHouse kept refusing it) is left out, and the connection's statement
+    timeout bounds the read."""
     if not shas or pg.unstorable((org, namespace, agent, user_id)):
         return []
     args: list[Any] = [org, namespace, agent, user_id, list(shas), MEMORY_ROW]
@@ -1723,6 +1725,7 @@ async def unpublished_keepers(
         "r.row->>'memory_key' AS memory_key, r.memory_id::text AS memory_id "
         "FROM loom.memory_deliveries d JOIN loom.memory_revisions r USING (org, namespace, seq) "
         "WHERE d.org = $1 AND d.namespace = $2 AND d.targets & $6 <> 0 "
+        "AND d.lease_until <> 'infinity' "
         "AND r.user_id = $4 AND r.row->>'agent' = $3 AND r.content_sha256 = ANY($5::text[])"
         f"{scoped}",
         *args,

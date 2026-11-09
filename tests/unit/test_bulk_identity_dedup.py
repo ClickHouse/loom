@@ -411,6 +411,40 @@ async def test_under_postgres_a_key_rewritten_a_moment_ago_keeps_its_new_bytes(
     assert got == {new_sha: ("k", "auth-k")}
 
 
+@pytest.mark.asyncio
+async def test_under_postgres_a_keeper_delivered_between_the_two_reads_is_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The undelivered keepers are read before ClickHouse: a keeper whose delivery lands
+    in between is owed to ClickHouse at the first read and held by it at the second, so
+    one of the two finds it, never neither."""
+    from server.memory.app import bulk_set
+    from server.memory.store import pg_memory
+
+    sha = sha256_value(VALUE)
+    keeper = {"head_sha": sha, "session_id": "s1", "memory_key": "k", "memory_id": "m"}
+    delivered = False
+
+    async def _unpublished(*_a: Any, scope: Any) -> list[dict[str, Any]]:
+        return [] if delivered else [keeper]
+
+    async def _heads(keys: Any) -> dict[Any, Any]:
+        return {k: {"status": "active", "memory_id": "auth-k", "content_sha256": sha} for k in keys}
+
+    class _ClickHouseAfterTheDelivery:
+        async def query_all(self, *_a: Any, **_k: Any) -> list[dict[str, Any]]:
+            nonlocal delivered
+            found = [keeper] if delivered else []
+            delivered = True  # the flush lands once the first read has run
+            return found
+
+    monkeypatch.setattr("server.core.pg.enabled", lambda: True)
+    monkeypatch.setattr(pg_memory, "unpublished_keepers", _unpublished)
+    monkeypatch.setattr(pg_memory, "heads_by_keys", _heads)
+    got = await bulk_set._bulk_identity_dupes(_ClickHouseAfterTheDelivery(), _input())
+    assert got == {sha: ("k", "auth-k")}
+
+
 class _StubCHWithAheadHead(_StubCHWithLiveKey):
     """The live row holds other bytes, at a version from a replica whose clock is ahead."""
 
