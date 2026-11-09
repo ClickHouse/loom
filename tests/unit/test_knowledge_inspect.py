@@ -16,6 +16,7 @@ the scope.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
@@ -1299,6 +1300,8 @@ async def test_under_postgres_a_listed_document_the_authority_moved_past_is_not_
         "listed.heads: 1 document(s) rewritten or deleted in the Postgres authority since "
         "ClickHouse's copy; not listed"
     ) in out.skipped
+    # The dashboard's match for a dropped row (DocumentInspection.tsx `documentsMayBeShort`).
+    assert [s for s in out.skipped if re.match(r"^listed\.heads: \d+ ", s)]
     assert not out.listed_complete
 
 
@@ -1337,10 +1340,6 @@ async def test_under_postgres_a_failed_listing_check_lists_clickhouses_rows(
 def test_the_lines_the_dashboard_keys_on_keep_their_prefixes() -> None:
     """DocumentInspection.tsx's `documentsMayBeShort` reads a short listing from these
     two names alone, never from the wording after them."""
-    import re
 
     assert ki.DOCUMENTS_PROJECTION == "documents.projection"
     assert ki.LISTED_HEADS == "listed.heads"
-    dropped = f"{ki.LISTED_HEADS}: 1 document(s) rewritten or deleted"
-    assert re.match(r"^listed\.heads: \d+ ", dropped)
-    assert not re.match(r"^listed\.heads: \d+ ", f"{ki.LISTED_HEADS}: ValueError")
