@@ -43,7 +43,7 @@ def parse_for_ingest(path: str, source: bytes) -> tuple[ParsedFile | None, str]:
     """
     try:
         return _parse_for_ingest(path, source)
-    except ParseUnavailable as e:  # from language detection, before the parser's own catch
+    except ParseUnavailable as e:  # no fact of the file: nothing of it is written, it is read again
         logger.warning("code ingest: parse failed for %s: %s", path, e)
         return None, error_text("parse", e)  # its language unknown: its live rows stand
 
@@ -113,11 +113,9 @@ def _parse_for_ingest(path: str, source: bytes) -> tuple[ParsedFile | None, str]
     if lang == "config" and _host_islands_on() and host_kind(path):
         parser = _parse_host  # Jobs / targets / stages, invoked scripts
     if parser is not None:
-        try:
-            pf = parser(path, source)
-        except Exception as e:  # noqa: BLE001 — parse failure is per-file, not fatal
-            logger.warning("code ingest: parse failed for %s: %s", path, e)
-            return ParsedFile(path=path, lang=lang, source=source), error_text("parse", e)
+        pf, failed = _run(parser, lang, path, source)
+        if failed:
+            return pf, failed
         if lang == "shell":
             # A shell file's include targets are repository paths — resolved HERE, at
             # parse, so the full ingest and the edges-only dependents pass derive the
@@ -129,6 +127,18 @@ def _parse_for_ingest(path: str, source: bytes) -> tuple[ParsedFile | None, str]
             pf.symbols.extend(error_code_symbols(path, source))
         return pf, ""
     return ParsedFile(path=path, lang=lang, source=source), ""
+
+
+def _run(parser: Any, lang: str, path: str, source: bytes) -> tuple[ParsedFile, str]:
+    """`parser(path, source)`, or the chunk-only file and the reason it failed. A parse
+    that could not run here now is raised: `parse_for_ingest` keeps the file's rows."""
+    try:
+        return parser(path, source), ""
+    except ParseUnavailable:
+        raise
+    except Exception as e:  # noqa: BLE001 — parse failure is per-file, not fatal
+        logger.warning("code ingest: parse failed for %s: %s", path, e)
+        return ParsedFile(path=path, lang=lang, source=source), error_text("parse", e)
 
 
 def parse_timed_out(error: str) -> bool:

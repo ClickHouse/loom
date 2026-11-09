@@ -140,6 +140,8 @@ def _check_in_child(grammar: str, source: bytes, budget: float, memory: int) -> 
         status = cast("int", child.returncode)
         if answer is None and not unread:
             unread = True
+        elif answer is None:
+            raise ParseUnavailable(f"the parse process ended before reading (status {status})")
         elif status == -signal.SIGKILL and not killed:
             killed = True
         else:

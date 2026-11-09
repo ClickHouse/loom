@@ -767,7 +767,7 @@ def test_a_file_whose_parse_could_not_run_is_not_reached_and_not_cached(
     from server.code.app.index import ingest_parse
 
     def unavailable(path: str, source: bytes) -> tuple[Any, str]:
-        return None, "parse: ParseUnavailable: killed twice"
+        return None, "parse: ParseUnavailable"
 
     monkeypatch.setattr(ingest_parse, "parse_for_ingest", unavailable)
     deadline = time.monotonic() + 5

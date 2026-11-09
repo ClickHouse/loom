@@ -46,6 +46,7 @@ from server.code.app.index.ingest_stats import (
     FileIngestStats,
     error_text,
 )
+from server.code.domain.extract.bounded_parse import ParseUnavailable
 from server.code.domain.extract.chunker import Chunk
 from server.code.domain.extract.context_text import module_of
 from server.code.domain.extract.edges_treesitter import Edge
@@ -229,6 +230,8 @@ async def ingest_file(
         # successful re-ingest replaces them.
         logger.warning("code ingest: chunking failed for %s: %s", path, chunk_exc)
         stats.error = error_text("chunk", chunk_exc)
+        if isinstance(chunk_exc, ParseUnavailable):
+            return stats  # the host, not the file: its rows stand and the next pass reads it
         await _write_error_row(
             repo, org, ns, path=path, pf=pf, source=source, commit_sha=commit_sha, error=stats.error
         )
@@ -294,6 +297,8 @@ async def ingest_file(
     if scope is not None and not (wrote_chunks or wrote_symbols or wrote_edges):
         stats.identical = True
         return stats
+    if ParseUnavailable.__name__ in stats.error:
+        return stats  # a stage could not run here now: the old hash makes the next pass rerun it
     await repo.insert_rows(
         "code_files",
         [

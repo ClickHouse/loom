@@ -269,6 +269,8 @@ def _definitions_grammar(source: bytes) -> list[tuple[str, str, int, int, str]] 
     try:
         parser = Parser(Language(tl.language()))
         tree = bounded_parse.parse(parser, source)
+    except bounded_parse.ParseUnavailable:
+        raise  # the host, not the file: no answer to keep
     except Exception:  # noqa: BLE001 — no parse, or none in time: the reader falls back
         return None
     root = tree.root_node
