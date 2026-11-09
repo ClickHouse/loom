@@ -126,3 +126,10 @@ def test_a_long_qualified_name_is_cut_and_stays_distinct() -> None:
 def test_closing_hashes_come_off_and_a_heading_of_hashes_keeps_one() -> None:
     secs, _ = sections_of("## Title ##\n# #\n")
     assert [s.title for s in secs] == ["Title", "#"]
+
+
+def test_long_headings_that_differ_after_the_cut_stay_distinct() -> None:
+    text = "# t\n## " + "a" * 1000 + "x\n## " + "a" * 1000 + "y\n"
+    syms, _inc, _refs, _pre = markdown_units("a.md", text)
+    assert len({s.qualified_name for s in syms}) == 3
+    assert all(len(s.name) == 1000 for s in syms[1:])

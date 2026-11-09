@@ -52,9 +52,7 @@ KIND_SECTION = "section"
 EDGE_READS = "reads"
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
 _FENCE_RE = re.compile(r"^(```|~~~)")
-# Each title is cut, and the name and heading path built from them: a section costs at
-# most six titles whatever its depth.
-# not a setting: changing it renames the stored sections it cuts
+# not a setting: renames the stored sections it cuts; a name joins at most six cut titles
 _MAX_PATH = 1000
 _LINK_RE = re.compile(r"\]\(((?:(?!\]\()[^)\s])++)(?:\s+\"[^\"]*\")?\)")
 _CODE_REF_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)(?:\(\))?`")
@@ -145,7 +143,7 @@ def sections_of(text: str) -> tuple[list[Section], int]:
             rest = h.group(2)
             # `or`: a rest of only `#`s keeps one `#` as its title
             title = rest.rstrip().rstrip("#").rstrip() or rest[:1]
-            heads.append((i, len(h.group(1)), title.strip()[:_MAX_PATH].rstrip()))
+            heads.append((i, len(h.group(1)), _cut(title.strip())))
     out: list[Section] = []
     stack: list[str] = []
     for n, (line, level, title) in enumerate(heads):
@@ -172,11 +170,15 @@ def sections_of(text: str) -> tuple[list[Section], int]:
 
 
 def _qname(mod: str, sec: Section) -> str:
-    name = "::".join([mod, *sec.path_titles])
-    if len(name) <= _MAX_PATH:
-        return name
-    # cut, with a hash of the cut path so two cut names stay distinct
-    return name[: _MAX_PATH - 17] + "~" + hashlib.sha256(name.encode()).hexdigest()[:16]
+    return _cut("::".join([mod, *sec.path_titles]))
+
+
+def _cut(text: str) -> str:
+    """`text`, or its head and a hash of the whole past `_MAX_PATH`, so two cut texts
+    stay distinct."""
+    if len(text) <= _MAX_PATH:
+        return text
+    return text[: _MAX_PATH - 17] + "~" + hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
 def markdown_units(
