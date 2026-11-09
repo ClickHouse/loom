@@ -512,7 +512,7 @@ def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client) -> Non
     # The decrypt arguments, and the pads they evaluate to, which must never be printed.
     padded = bytes.fromhex(next(h for h in secrets if len(h) == 64)).ljust(64, b"\0")
     pads = [bytes(b ^ pad for b in padded) for pad in (0x36, 0x5C)]
-    secrets += [p.hex() for p in pads] + [p.hex().upper() for p in pads]
+    secrets += [p.hex() for p in pads]
     # The pads end in the zero-padded key's 0x36 and 0x5C bytes, printable as they are.
     secrets += ["6" * 32, "\\" * 32]
 
@@ -531,9 +531,9 @@ def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client) -> Non
     # The probe's unsigned reads, which quote the policy in their errors, ran in this run.
     wait_until(refused_since_start, max_wait=_PROBE_WAIT_S, interval=2, description="a probe")
     logged = ch_client.query(
-        "SELECT count() FROM system.query_log WHERE multiSearchAny(query, {k:Array(String)}) "
-        "OR multiSearchAny(formatted_query, {k:Array(String)}) "
-        "OR multiSearchAny(exception, {k:Array(String)})",
+        "SELECT count() FROM system.query_log WHERE multiSearchAnyCaseInsensitive(query, {k:Array(String)}) "
+        "OR multiSearchAnyCaseInsensitive(formatted_query, {k:Array(String)}) "
+        "OR multiSearchAnyCaseInsensitive(exception, {k:Array(String)})",
         parameters={"k": secrets},
         settings=boundary.LOG_TEXT_CUT,
     ).result_rows[0][0]
