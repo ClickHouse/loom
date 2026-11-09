@@ -312,9 +312,7 @@ def test_policy_spellings_reads_the_key_out_of_a_filter_escaped_or_not() -> None
     plain = boundary.policy_filter(KEY)
     escaped = plain.replace("'", "\\'")
     for text in (plain, escaped):
-        spellings = boundary.policy_spellings(text)
-        assert KEY.hex() in spellings
-        assert set(boundary.key_spellings(KEY)) <= set(spellings)
+        assert boundary.policy_spellings(text) == boundary.key_spellings(KEY)
     with pytest.raises(ValueError):
         boundary.policy_spellings("org = 'acme'")
 

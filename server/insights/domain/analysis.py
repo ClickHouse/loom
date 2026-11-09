@@ -466,12 +466,12 @@ def entity_sql(
     one, then every grant and role the user holds outside the allowlist
     (`granted` and `roles` are what it holds now) is revoked, and then the
     allowlist is granted, since a table's revoke also takes the column grants
-    under it. The profile's pins come after every policy, so an upgrade
-    never puts an older policy that holds the pads in clear in
-    system.query_log, and before
-    every grant, so a new pin is in force before the grant it guards. A retired
-    table keeps a policy that reads nothing. The stamp comes last, so a write
-    cut short is written again by the next boot. `db` is already quoted."""
+    under it. The profile's pins come after every policy, so on an upgrade
+    the older profile's `log_queries = 0` holds until no policy has the pads
+    in clear, and before every grant, so a new pin is in force before the
+    grant it guards. A retired table keeps a policy that reads nothing. The
+    stamp comes last, so a write cut short is written again by the next boot.
+    `db` is already quoted."""
     user = f"`{ANALYST_USER}`"
     identified = f"IDENTIFIED WITH sha256_password BY {sql_string(password)}"
     condition = policy_filter(key)
