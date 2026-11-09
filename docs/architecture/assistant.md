@@ -370,14 +370,15 @@ digit and a symbol, which ClickHouse Cloud requires of a user's password. The ro
 sealed with `server/core/secrets_at_rest.py` in the shape `loom secrets reseal` rewrites
 (`SEALED` in `server/cli/secrets.py`). The reseal reads under `own_write_reads`, skips
 a row that is gone and holds the analysis lease; with [part 2](#build-order) the CLI
-rotation holds it too, so they never interleave, and the printed rotation, which takes no lease, stores its row at
-a version from ClickHouse's clock at insert time in nanoseconds, far above any reseal's
-`version + 1`. A row a reseal puts back during a rotation is handled by the [order of a
-write](#provisioning). The first write draws them under the lease below and every
-replica reads the same row. A root-secret rotation only reseals them, so the policies
-never change key; when the key cannot be read, [provisioning](#provisioning) says what
-happens. The analyst user cannot read the key: it has no grant on `system.row_policies`
-or on `loom.analysis_secrets`, and it cannot run `EXPLAIN`.
+rotation holds it too, so they never interleave, and the printed rotation, which takes
+no lease, stores its row at a version from ClickHouse's clock at insert time in
+nanoseconds, far above any reseal's `version + 1`. A row a reseal puts back during a
+rotation is handled by the [order of a write](#provisioning). The first write draws them
+under the lease below and every replica reads the same row. A root-secret rotation only
+reseals them, so the policies never change key; when the key cannot be read,
+[provisioning](#provisioning) says what happens. The analyst user cannot read the key:
+it has no grant on `system.row_policies` or on `loom.analysis_secrets`, and it cannot
+run `EXPLAIN`.
 
 **What the query log holds.** Loom never turns query logging off: ClickHouse Cloud pins
 `log_queries` for the service's users and refuses a statement or a settings profile that
@@ -1035,8 +1036,8 @@ built.
 - The analysis boundary is ClickHouse's: grants, the settings profile and signed row
   policies.
 - Every tool call the agent makes reads under a token delegated from the caller's, never
-  wider than it, never longer-lived (under a sign-in session, by at most
-  `LOOM_ASSISTANT_ANSWER_TTL_S`), and revoked with it, and is ledgered as consumer
+  wider than it, never longer-lived except under a sign-in session, and then by at most
+  `LOOM_ASSISTANT_ANSWER_TTL_S`, and revoked with it, and is ledgered as consumer
   `loom-assistant`.
 - LibreChat stores no Loom token: each answer carries its own, and the service user's
   key reads nothing without one.
