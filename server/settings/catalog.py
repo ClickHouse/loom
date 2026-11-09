@@ -1037,15 +1037,11 @@ class CodeSettings(BaseModel):
     # Changed files indexed per commit; past it the rest are skipped with a warning
     # and heal on the next backfill.
     code_ingest_max_files_per_commit: int = 500
-    # CPU seconds after which a tree-sitter parse stops reading its file (raising it re-reads
-    # nothing); a parse with more than a tenth of it between two reads or after the last is
-    # refused too. A PR overlay also waits up to this long, wall-clock, past its window, which
-    # a parse near it can outlast (it runs first in a child process, then in the server).
+    # CPU seconds a tree-sitter parse may take, a tenth of them at a stretch between reads
+    # (raising it re-reads nothing); a PR overlay waits up to this long past its window.
     code_parse_timeout_s: Annotated[float, LIVE] = Field(default=3.0, gt=0)
-    # Address space (MB) a tree-sitter parse may take in the process it runs in first, to
-    # within the 64 MB that process may keep from earlier parses; a parse past it fails like
-    # a timed-out one (an indexed file becomes chunks without symbols). Paid per server
-    # process (each web worker).
+    # Address space (MB) a tree-sitter parse may take, per server process (`bounded_parse`);
+    # a parse past it fails like a timed-out one (an indexed file is chunks without symbols).
     code_parse_memory_mb: Annotated[int, LIVE] = Field(default=256, ge=128)
     # The ingest pass's own deadline (seconds), kept at the supervisor's cap;
     # `code_ingest_pass_budget_fraction` keeps a pass under it.
@@ -2922,9 +2918,9 @@ class MemorySettings(BaseModel):
     # Seconds between the starts of two cycles of the code-links sweep through the link
     # table.
     memory_code_links_sweep_interval_s: Annotated[int, LIVE] = Field(default=3600, gt=0)
-    # Seconds a branch's own read and parse of a code lesson may take, a share of the
-    # code plane's enrichment bound; past it the lesson is served as trunk last checked
-    # it.
+    # Seconds a branch's own read and parse of a code lesson may take (waiting behind another
+    # parse in the process included), a share of the code plane's enrichment bound; past it
+    # the lesson is served as trunk last checked it.
     memory_code_plane_parse_timeout_s: Annotated[float, LIVE] = Field(default=0.2, gt=0)
     # One call judges at most this many facts; a longer capture is judged in slices
     # (groups never span slices — a missed fold only keeps a paraphrase).

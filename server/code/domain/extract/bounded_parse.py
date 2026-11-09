@@ -51,7 +51,7 @@ _CHUNK = parse_child.CHUNK
 _CHILD = Path(parse_child.__file__)
 
 # Every grammar a parse may use, as the child loads it (`module:function`).
-_GRAMMARS = (
+_LOADERS = (
     "tree_sitter_bash:language",
     "tree_sitter_cpp:language",
     "tree_sitter_go:language",
@@ -79,15 +79,15 @@ class ParseTimeout(Exception):
 
 @functools.cache
 def _grammar(language: Any) -> str:
-    """The `_GRAMMARS` entry that loads `language`."""
-    for grammar in _GRAMMARS:
+    """The `_LOADERS` entry that loads `language`."""
+    for grammar in _LOADERS:
         try:
             loaded = parse_child.language(grammar)
         except Exception:  # noqa: BLE001 — a grammar that does not load matches none
             continue
         if loaded == language:
             return grammar
-    raise LookupError(f"no grammar in bounded_parse._GRAMMARS loads {language!r}")
+    raise LookupError(f"no grammar in bounded_parse._LOADERS loads {language!r}")
 
 
 def _in_child(grammar: str, source: bytes, budget: float, memory: int) -> bytes | int:

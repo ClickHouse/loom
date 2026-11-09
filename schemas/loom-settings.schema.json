@@ -1352,13 +1352,13 @@
           "default": 256,
           "minimum": 128,
           "type": "integer",
-          "description": "Address space (MB) a tree-sitter parse may take in the process it runs in first, to within the 64 MB that process may keep from earlier parses; a parse past it fails like a timed-out one (an indexed file becomes chunks without symbols). Paid per server process (each web worker)."
+          "description": "Address space (MB) a tree-sitter parse may take, per server process (`bounded_parse`); a parse past it fails like a timed-out one (an indexed file is chunks without symbols)."
         },
         "code_parse_timeout_s": {
           "default": 3.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "CPU seconds after which a tree-sitter parse stops reading its file (raising it re-reads nothing); a parse with more than a tenth of it between two reads or after the last is refused too. A PR overlay also waits up to this long, wall-clock, past its window, which a parse near it can outlast (it runs first in a child process, then in the server)."
+          "description": "CPU seconds a tree-sitter parse may take, a tenth of them at a stretch between reads (raising it re-reads nothing); a PR overlay waits up to this long past its window."
         },
         "code_path_prefixes": {
           "default": "",
@@ -3933,7 +3933,7 @@
           "default": 0.2,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds a branch's own read and parse of a code lesson may take, a share of the code plane's enrichment bound; past it the lesson is served as trunk last checked it."
+          "description": "Seconds a branch's own read and parse of a code lesson may take (waiting behind another parse in the process included), a share of the code plane's enrichment bound; past it the lesson is served as trunk last checked it."
         },
         "memory_conflict_resolver_batch": {
           "default": 40,

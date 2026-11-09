@@ -69,7 +69,7 @@ _PARSERS = {
 }
 ```
 
-and add the extension to `LANG_BY_EXTENSION` (`".rs": "rust"`). The wrapper imports the lane lazily, so an optional grammar stays optional. A new tree-sitter grammar also goes in `bounded_parse._GRAMMARS`, which every parse runs through first.
+and add the extension to `LANG_BY_EXTENSION` (`".rs": "rust"`). The wrapper imports the lane lazily, so an optional grammar stays optional. A new tree-sitter grammar also goes in `bounded_parse._LOADERS`, which every parse runs through first.
 
 ## 3. Test the lane
 

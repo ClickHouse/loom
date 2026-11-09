@@ -468,7 +468,7 @@ def test_every_grammar_the_server_imports_is_one_the_child_loads() -> None:
     from server.code.domain.declaration import _GRAMMARS
     from server.code.domain.extract import bounded_parse
 
-    listed = {g.partition(":")[0] for g in bounded_parse._GRAMMARS}
+    listed = {g.partition(":")[0] for g in bounded_parse._LOADERS}
     imported = {f"tree_sitter_{g}" for g in _GRAMMARS.values()}
     for f in _SERVER.rglob("*.py"):
         imported |= set(re.findall(r"(?:from|import) (tree_sitter_\w+)", f.read_text()))
@@ -640,3 +640,23 @@ assert parse_for_ingest("B.java", b"class B { void f() {} }")[1] == ""
         [sys.executable, "-c", script], cwd=_SERVER.parent, capture_output=True, timeout=60
     )
     assert done.returncode == 0, done.stderr[-2000:]
+
+
+def test_a_long_stretch_between_two_reads_is_refused() -> None:
+    from server.code.domain.extract import parse_child
+
+    class Burns:
+        """Reads the start, works `seconds` of CPU, then reads to the end."""
+
+        def __init__(self, seconds: float) -> None:
+            self.seconds = seconds
+
+        def parse(self, read: Any) -> None:
+            read(0, None)
+            end = time.thread_time() + self.seconds
+            while time.thread_time() < end:
+                pass
+            read(10, None)
+
+    assert parse_child._parse(Burns(0.2), b"x" * 10, 1.0) == parse_child.STOPPED
+    assert parse_child._parse(Burns(0.01), b"x" * 10, 1.0) == parse_child.DONE

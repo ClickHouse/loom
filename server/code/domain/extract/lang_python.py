@@ -708,7 +708,7 @@ def _reexport_facts(
     parsed once per (path, text). The chain is followed once per call site, so
     without the cache a package's `__init__` is re-parsed hundreds of times per
     file (pandas: 1,412 re-parses for 150 files; the ingest prefetches the same
-    texts per file). A module whose parse runs past the deadline reads as
+    texts per file). A module whose parse runs past its limits reads as
     defining and importing nothing, and is not parsed again while it stays
     in the cache."""
     try:

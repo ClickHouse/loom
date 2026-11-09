@@ -29,7 +29,7 @@ HEADER = struct.Struct("<IIdQ")
 DONE, STOPPED = b"d", b"s"
 CHUNK = 256
 _PR_SET_DUMPABLE = 4
-_RETIRE_GROWTH = 64 << 20  # past the interpreter and every grammar's mapping
+_RETIRE_GROWTH = 64 << 20  # room for every grammar's mapping and heap a parse kept
 
 
 def language(grammar: str) -> Any:
