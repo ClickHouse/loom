@@ -105,6 +105,10 @@ def test_an_entry_whose_namespace_a_member_added_is_skipped(monkeypatch, caplog)
     monkeypatch.setattr(repos, "_page_namespaces", frozenset({(ORG, "code-weave")}))
     repos._with_registry([_cfg("code-weave")])
     assert len([r for r in caplog.records if "code-weave" in r.getMessage()]) == 2
+    # A page row skips the entry before its read's page set is published.
+    monkeypatch.setattr(repos, "registry_repos", lambda: [row])
+    monkeypatch.setattr(repos, "_page_namespaces", frozenset())
+    assert repos._with_registry([_cfg("code-weave")]) == [row]
 
 
 def test_no_operator_entry_is_org_readable_before_the_registry_is_read(monkeypatch) -> None:

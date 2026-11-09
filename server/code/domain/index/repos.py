@@ -326,7 +326,7 @@ def set_registry_repos(entries: list[RepoConfig], page: frozenset[tuple[str, str
         (c.org, c.namespace) for c in _registry_repos if c.row_kind != "access"
     )
     _page_namespaces = page
-    _registry_loaded = True  # last: a reader in another thread never sees it before the rest
+    _registry_loaded = True  # last: no reader sees a first read before all of it
 
 
 def page_namespaces() -> frozenset[tuple[str, str]]:
@@ -393,8 +393,10 @@ def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:
     survives every boot. An access row whose entry is gone is dropped."""
     import dataclasses
 
-    rows = {(c.org, c.namespace): c for c in registry_repos()}
-    taken = page_namespaces()
+    entries = registry_repos()
+    rows = {(c.org, c.namespace): c for c in entries}
+    # A page row counts on its own: a later read publishes rows and page set apart.
+    taken = page_namespaces() | {k for k, c in rows.items() if c.row_kind == "page"}
     # Unread, a member's namespace is not known yet: no operator entry is org-readable.
     unread = registry_unread()
     out: list[RepoConfig] = []
@@ -426,9 +428,7 @@ def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:
             )
         )
     seen = {(c.org, c.namespace) for c in out}
-    extra = [
-        c for c in registry_repos() if (c.org, c.namespace) not in seen and c.row_kind != "access"
-    ]
+    extra = [c for c in entries if (c.org, c.namespace) not in seen and c.row_kind != "access"]
     return out + extra
 
 

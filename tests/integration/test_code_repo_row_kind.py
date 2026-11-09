@@ -126,12 +126,23 @@ async def test_the_registry_answers_only_once_read(
     monkeypatch.setattr(repos, "_registry_loaded", False)
     with pytest.raises(repos.RegistryUnread):
         repos.configured_repos()
+    # A failed read leaves it unread.
+    with monkeypatch.context() as m:
+
+        async def _down(self: CodeRepo) -> list[dict[str, Any]]:
+            raise ConnectionError("down")
+
+        m.setattr(CodeRepo, "registry_rows", _down)
+        assert not await reg.read_registry()
+    with pytest.raises(repos.RegistryUnread):
+        repos.configured_repos()
     assert await reg.read_registry()
     assert (org, "code-page") in {(c.org, c.namespace) for c in repos.configured_repos()}
 
 
-async def test_an_operator_entry_over_a_dropped_access_row_writes_a_fresh_one(org: str) -> None:
-    entry = _entry(org, "code-entry")
+async def test_an_operator_entry_over_an_inactive_access_row_writes_a_fresh_one(org: str) -> None:
+    # The entry's own token stays in the configuration, never in the access row.
+    entry = dataclasses.replace(_entry(org, "code-entry"), github_token="entry-token")
     await reg.upsert_access(
         entry, classification="restricted", join_policy="approval", created_by="o", current=None
     )
@@ -142,4 +153,21 @@ async def test_an_operator_entry_over_a_dropped_access_row_writes_a_fresh_one(or
     )
     row = await CodeRepo().code_repo_row(org, "code-entry")
     assert row is not None
-    assert (row["active"], row["row_kind"], row["classification"]) == (True, "access", "standard")
+    stamps = {"created_at", "updated_at", "version"}
+    assert {k: v for k, v in row.items() if k not in stamps} == {
+        "org": org,
+        "namespace": "code-entry",
+        "repo": "it/row-kind",
+        "git_remote": "https://github.com/it/row-kind.git",
+        "git_branch": "main",
+        "path_prefixes": [],
+        "exclude": [],
+        "classification": "standard",
+        "join_policy": "open",
+        "github_token_enc": "",
+        "created_by": "o",
+        "active": True,
+        "exclude_generated": False,
+        "scip_producer": "",
+        "row_kind": "access",
+    }
