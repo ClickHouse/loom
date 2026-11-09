@@ -368,10 +368,9 @@ The key and the analyst's password are random and kept together, as one sealed v
 one row of `loom.analysis_secrets`. The password holds a lower and an upper case letter, a
 digit and a symbol, which ClickHouse Cloud requires of a user's password. The row is
 sealed with `server/core/secrets_at_rest.py` in the shape `loom secrets reseal` rewrites
-(`SEALED` in `server/cli/secrets.py`). Part 1 moves the reseal's reads under
-`own_write_reads` and has it skip a row that is gone. With
-[part 2](#build-order), the CLI rotation and the reseal both hold the analysis lease, so
-they never interleave, and the printed rotation, which takes no lease, stores its row at
+(`SEALED` in `server/cli/secrets.py`). The reseal reads under `own_write_reads`, skips
+a row that is gone and holds the analysis lease; with [part 2](#build-order) the CLI
+rotation holds it too, so they never interleave, and the printed rotation, which takes no lease, stores its row at
 a version from ClickHouse's clock at insert time in nanoseconds, far above any reseal's
 `version + 1`. A row a reseal puts back during a rotation is handled by the [order of a
 write](#provisioning). The first write draws them under the lease below and every
@@ -688,7 +687,7 @@ which ClickHouse's logs keep ([stored data](#stored-data-and-erasure)).
 
 `tests/integration/test_analysis_isolation.py`, in the style of
 `tests/integration/test_cross_principal_leakage.py`, seeds two orgs, each with a
-canary memory and a canary ledger row, and call `insights.query` with the first org's
+canary memory and a canary ledger row, and calls `insights.query` with the first org's
 viewer token. Each case must be refused or return no canary:
 
 - a filter on the other org, a namespace outside the token, a `JOIN` or subquery over
@@ -975,10 +974,9 @@ token never reads more than the caller's own.
 
 ## Rolling upgrades
 
-`insights.query` and `insights.catalog` are new ops, and `assistant.ask` and
-`/v1/assistant/chat/completions` are a new op and route: a build that does not know
-them answers
-`UNKNOWN_OP` or 404, so a client points at them once every replica serves them. The
+`insights.query`, `insights.catalog` and `assistant.ask` are ops, and
+`/v1/assistant/chat/completions` a route, that a build before them does not know: it
+answers `UNKNOWN_OP` or 404, so a client points at them once every replica serves them. The
 analyst user, its grants and policies, `loom.analysis_secrets`, `loom.analysis_canary`
 and `loom.assistant_service` live in ClickHouse and are shared by every replica; the
 agent definition is written as [the agent definition](#the-agent-definition) says, never
@@ -1037,7 +1035,8 @@ built.
 - The analysis boundary is ClickHouse's: grants, the settings profile and signed row
   policies.
 - Every tool call the agent makes reads under a token delegated from the caller's, never
-  wider or longer-lived than it and revoked with it, and is ledgered as consumer
+  wider than it, never longer-lived (under a sign-in session, by at most
+  `LOOM_ASSISTANT_ANSWER_TTL_S`), and revoked with it, and is ledgered as consumer
   `loom-assistant`.
 - LibreChat stores no Loom token: each answer carries its own, and the service user's
   key reads nothing without one.
