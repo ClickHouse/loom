@@ -245,11 +245,11 @@ def parse(parser: Any, source: bytes) -> Any:
             return b""
         return source[offset : offset + _CHUNK]
 
-    limit = LOCK_WAIT.get()
-    if limit is None:
+    lock_wait = LOCK_WAIT.get()
+    if lock_wait is None:
         _LOCK.acquire()
-    elif (left := limit.deadline - time.monotonic()) <= 0 or not _LOCK.acquire(timeout=left):
-        limit.gave_up = True  # past the deadline, a free lock is no reason to parse
+    elif (left := lock_wait.deadline - time.monotonic()) <= 0 or not _LOCK.acquire(timeout=left):
+        lock_wait.gave_up = True  # past the deadline, a free lock is no reason to parse
         raise ParseTimeout(GAVE_UP)
     try:
         _check_in_child(_grammar(parser.language), source, budget, memory)
