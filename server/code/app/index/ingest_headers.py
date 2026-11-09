@@ -176,7 +176,8 @@ async def header_context(
     hd = HeaderDecls()
     read = 0
     # No header of one source starts after its headers have spent one parse deadline,
-    # so they spend up to about three (the last one's parse runs twice)
+    # so they spend up to about three deadlines (the last header starts just under one
+    # and its parse runs twice)
     spent = 0.0
     while read < _HEADER_CAP and spent < settings.code_parse_timeout_s:
         if not queue:

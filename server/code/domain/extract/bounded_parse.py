@@ -158,7 +158,7 @@ def _wall_bound(budget: float) -> float:
 
 class _Reply(NamedTuple):
     # `DONE` or `STOPPED`; b"" when the parse ended the child, `_SILENT` when its answer
-    # did not come within the wall bound (stopped, or never scheduled), None when the
+    # did not come within the wall bound (suspended, or never scheduled), None when the
     # request could not be written to it
     answer: bytes | None
     keep: bool  # it answered and stays for the next parse (an uppercase answer: it retires)
