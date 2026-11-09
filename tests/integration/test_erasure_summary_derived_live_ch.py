@@ -377,3 +377,25 @@ async def test_outside_a_purge_a_late_summary_reopens_its_steps(ch_client, ch) -
     assert "topic-late" not in _column(ch_client, org, shared)
     vectors = f"SELECT memory_key FROM loom.memory_embeddings FINAL{_WHERE} AND scope = 'shared'"
     assert "topic-late" not in _column(ch_client, org, f"{vectors} AND tombstoned_at IS NULL")
+
+
+async def test_a_wildcard_promote_names_its_source_and_the_users_erasure_finds_it(
+    ch_client, ch, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`memory.promote` with `agent="*"` reads alice's row; the stored copy names that
+    row, so her erasure tombstones it."""
+    from server.memory.api.models_lifecycle import MemoryPromoteInput
+    from server.memory.app import promote
+
+    org = unique_org("ersumpr")
+    _seed(ch_client, org)
+    monkeypatch.setattr(promote, "get_embedder", lambda: None)
+    await promote.handle_memory_promote(
+        MemoryPromoteInput(org=org, namespace="ns", agent="*", memory_key="user_diet")
+    )
+    stored = f"SELECT promoted_from[1] FROM loom.shared FINAL{_WHERE}"
+    assert _column(ch_client, org, stored) == [f"{org}/ns/a/alice/-/user_diet"]
+    with erasure_mutations.saga_scope(f"erasure-{org}"):
+        await _run([s for s in _STEPS if s[0] == "shared.tombstone"], org, ch)
+    live = f"SELECT memory_key FROM loom.shared FINAL{_WHERE} AND tombstoned_at IS NULL"
+    assert _column(ch_client, org, live) == []
