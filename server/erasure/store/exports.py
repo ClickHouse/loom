@@ -90,6 +90,12 @@ async def export_memory(
 _PG_TIMES = ("tombstoned_at", "created_at", "expires_at")
 
 
+# The defaults of the fields the export reads that a stored head may leave out: this
+# layer cannot import the memory store, so the copy is pinned equal to
+# `pg_memory.SPARSE_DEFAULTS` in the tests.
+_SPARSE = {"source_trace": "", "sensitivity": ""}
+
+
 async def export_memory_heads(
     org: str,
     scope_type: str,
@@ -137,13 +143,12 @@ async def export_memory_heads(
             "memory_type": head["memory_type"],
             "value": head["value"],
             "confidence": head["confidence"],
-            # A field the row leaves out is at its default (`pg_memory.SPARSE_DEFAULTS`).
-            "source_trace": head.get("source_trace", ""),
+            "source_trace": head.get("source_trace", _SPARSE["source_trace"]),
             "version": r["version"],
             "tombstoned_at": times["tombstoned_at"],
             "created_at": times["created_at"],
             "expires_at": times["expires_at"],
-            "sensitivity": head.get("sensitivity", ""),
+            "sensitivity": head.get("sensitivity", _SPARSE["sensitivity"]),
         }
         out.append(cast("MemoryExportRow", row))
     return out

@@ -299,7 +299,12 @@ async def test_a_head_that_leaves_out_its_default_fields_is_served_as_the_full_o
     call: Any, pg_conn: Any, org: str
 ) -> None:
     """A stored row may leave out a field at its loom.memory default: point reads,
-    listing and search serve such a head as they serve the full one."""
+    listing and search serve such a head as they serve the full one, and the SQL readers
+    of its fields (the cross-session heads, the usage fold, the erasure export) take a
+    missing one as its default."""
+    from server.core import pg
+    from server.erasure.store.exports import export_memory_heads
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
     from server.memory.store import pg_memory
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
@@ -334,6 +339,26 @@ async def test_a_head_that_leaves_out_its_default_fields_is_served_as_the_full_o
         await call("memory.bulk_get", {"namespace": ns, "agent": "a", "memory_keys": ["k"]})
     ).json()
     assert got["results"]["k"]["value"] == "the deploy window is tuesday", got
+    try:
+        (across,) = await pg_memory.key_heads_across_sessions(
+            org, ns, "a", "-", ["k"], scope=WHOLE_NAMESPACE
+        )
+        assert (across["head_status"], across["head_sensitivity"]) == ("active", "")
+        # A fold that saw no evidence leaves the default count, not zero.
+        await pg_memory.fold_usage([(org, ns, uuid.UUID(before["memory_id"]), 0, 0, None)])
+        folded = await pg_conn.fetchval(
+            "SELECT row->>'evidence_count' FROM loom.memory_current "
+            "WHERE org = $1 AND namespace = $2",
+            org,
+            ns,
+        )
+        assert folded == "1"
+        (exported,) = await export_memory_heads(
+            org, "namespace", ns, include_tombstoned=True, limit=9
+        )
+        assert (exported["source_trace"], exported["sensitivity"]) == ("", "")
+    finally:
+        await pg.close_pool()
 
 
 @pytest.mark.usefixtures("pg_authority")
