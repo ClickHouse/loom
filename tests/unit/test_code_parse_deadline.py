@@ -36,6 +36,22 @@ def test_a_slow_parse_stops_at_the_deadline_and_the_file_is_chunked(
     assert "ParseTimeout" in err
 
 
+def test_a_node_reads_its_text_after_the_deadline_has_passed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tree_sitter_python
+    from tree_sitter import Language, Parser
+
+    from server.code.domain.extract.bounded_parse import parse
+
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 0.2)
+    tree = parse(Parser(Language(tree_sitter_python.language())), b"x = 'a'.format(1)\n")
+    spent = time.thread_time()
+    while time.thread_time() - spent < 0.4:  # CPU time past the parse's deadline
+        pass
+    assert tree.root_node.children[0].text == b"x = 'a'.format(1)"
+
+
 def test_a_file_parsed_in_time_keeps_its_symbols() -> None:
     source = (
         "package x\n" + "".join(f"func f{i}() {{ a := 'é' }}\n" for i in range(3000))
