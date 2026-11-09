@@ -1200,10 +1200,14 @@ settings:
   # heal on the next backfill. [restart]
   # code_ingest_max_files_per_commit: 500
 
-  # CPU seconds after which a tree-sitter parse stops reading its file (raising it
-  # re-reads nothing); a PR overlay also waits up to this long, wall-clock, past its
-  # window. [live]
+  # CPU seconds a tree-sitter parse may take, a tenth of them at a stretch between reads
+  # or after the last; a PR overlay waits up to this long past its window. [live]
   # code_parse_timeout_s: 3.0
+
+  # Address space (MB) one tree-sitter parse may take; one runs at a time per server
+  # process, which holds up to this plus about 170 MB for it. Past it the file is chunks
+  # without symbols. [live]
+  # code_parse_memory_mb: 256
 
   # The ingest pass's own deadline (seconds), kept at the supervisor's cap;
   # `code_ingest_pass_budget_fraction` keeps a pass under it. [restart]
@@ -3468,9 +3472,9 @@ settings:
   # table. [live]
   # memory_code_links_sweep_interval_s: 3600
 
-  # Seconds a branch's own read and parse of a code lesson may take, a share of the code
-  # plane's enrichment bound; past it the lesson is served as trunk last checked it.
-  # [live]
+  # Seconds a branch's own read and parse of a code lesson may take (waiting behind
+  # another parse in the process included), a share of the code plane's enrichment
+  # bound; past it the lesson is served as trunk last checked it. [live]
   # memory_code_plane_parse_timeout_s: 0.2
 
   # One call judges at most this many facts; a longer capture is judged in slices

@@ -486,7 +486,7 @@ async def load_posted_overlay(
 class _Facts(NamedTuple):
     symbols: tuple[Any, ...]
     names: frozenset[str]  # the names it defines or calls
-    timed_out: bool  # its parse ran past the deadline
+    timed_out: bool  # its parse ran past its limits
 
 
 # Per file, so a push that changes one file of a PR re-parses that file alone, for
@@ -500,7 +500,7 @@ _FILE_FACTS: TtlCache[tuple[str, str], _Facts] = TtlCache(
 
 class _Edges(NamedTuple):
     edges: tuple[OverlayEdge, ...]
-    timed_out: bool  # parsing the file again ran past the deadline
+    timed_out: bool  # parsing the file again ran past its limits
 
 
 # (path, content digest, digest of the name-table rows its names bind to) -> edges.
@@ -515,8 +515,9 @@ _NAMES: TtlCache[tuple[str, str, str, str], tuple[tuple[str, str, str], ...]] = 
 # server process (each web worker, `LOOM_WEB_WORKERS`, has its own)
 _RUNNING: dict[tuple[str, str], tuple[Any, asyncio.Future[Any]]] = {}
 # Overlay parses run here, not in the default executor, so they never hold back other
-# threaded work; two threads, so one slow namespace leaves room for another
-_PARSE_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="loom-overlay-parse")
+# threaded work; one thread, since parses run one at a time per process (`bounded_parse`):
+# a queued job checks whether it is too late when it can start
+_PARSE_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="loom-overlay-parse")
 
 
 def _digest(data: bytes) -> str:
@@ -544,7 +545,7 @@ async def _in_turn[T](
     """`fn(*args)` on the parse pool, `store`d when it finishes; None when `deadline`
     passes before it can start, or a parse deadline after that before it ends. Parsing
     is CPU work: one overlay parse runs at a time per namespace in this process
-    (`scope`; parses of one grammar also wait for each other across the process,
+    (`scope`; every parse also waits for the others across the process,
     `bounded_parse`), the event loop runs at each of the parser's reads, and a request
     asking for the key already running awaits that one."""
     while (current := _RUNNING.get(scope)) is not None and current[0] != key:
@@ -727,7 +728,7 @@ async def _parse_post_image(
 def _note_left_out(ov: PrOverlay, timed_out: int) -> None:
     parts = []
     if timed_out:
-        parts.append(f"{timed_out} changed file(s) whose parse timed out")
+        parts.append(f"{timed_out} changed file(s) whose parse ran past its limits")
     if ov.unreached:
         parts.append(
             f"{ov.unreached} changed file(s) {NOT_REACHED}: the request's parse time was spent"

@@ -235,7 +235,7 @@ def _chunks_for(
         try:
             hu = host_units_of(path, source)
         except ParseTimeout:
-            return chunks, {}, []  # its shell ran past the parse deadline: the line windows stand
+            return chunks, {}, []  # its shell's parse ran past its limits: the line windows stand
         if hu is not None:
             return chunks, {}, list(hu.facets)
     if pf.lang == "python" and _py_islands_on():

@@ -11,6 +11,7 @@ from typing import Any, NamedTuple
 
 from server.code.domain.anchor import Definition, bare_name, local_name
 from server.code.domain.declaration import fingerprint_version
+from server.code.domain.extract import bounded_parse
 from server.identity.domain.read_scope import ReadFilters
 from server.memory.domain.code_change import worst
 from server.memory.domain.decision_schema import CONSTRAINT_TAG
@@ -207,12 +208,21 @@ async def _definitions_at(
     if not await code.mirror_here(org, code_namespace, head):
         return None
     named = bare_name(qualified_name)
-    parse = asyncio.gather(
-        *(code.parsed(org, code_namespace, head, p, named=named) for p in dict.fromkeys(paths))
-    )
+    # a parse waiting behind another one gives up with this read (its threads copy this)
+    seconds = settings.memory_code_plane_parse_timeout_s  # one deadline for the wait and the read
+    lock_wait = bounded_parse.LockWait(seconds)
+    token = bounded_parse.LOCK_WAIT.set(lock_wait)
     try:
-        files = await asyncio.wait_for(parse, settings.memory_code_plane_parse_timeout_s)
+        parse = asyncio.gather(
+            *(code.parsed(org, code_namespace, head, p, named=named) for p in dict.fromkeys(paths))
+        )
+    finally:
+        bounded_parse.LOCK_WAIT.reset(token)
+    try:
+        files = await asyncio.wait_for(parse, seconds)
     except (gitrepo.GitError, code.ParseFailed, TimeoutError):
+        return None
+    if lock_wait.gave_up:  # a parser may have taken the refusal for the file's own answer
         return None
     here: dict[tuple[str, str], Definition] = {}
     for f in files:

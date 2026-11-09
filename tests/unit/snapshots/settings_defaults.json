@@ -238,6 +238,7 @@
  "code_namespace": "",
  "code_org": "",
  "code_org_readable": false,
+ "code_parse_memory_mb": 256,
  "code_parse_timeout_s": 3.0,
  "code_path_prefixes": "",
  "code_pr_backfill_months": 12,

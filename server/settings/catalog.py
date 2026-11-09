@@ -1037,9 +1037,14 @@ class CodeSettings(BaseModel):
     # Changed files indexed per commit; past it the rest are skipped with a warning
     # and heal on the next backfill.
     code_ingest_max_files_per_commit: int = 500
-    # CPU seconds after which a tree-sitter parse stops reading its file (raising it re-reads
-    # nothing); a PR overlay also waits up to this long, wall-clock, past its window.
-    code_parse_timeout_s: Annotated[float, LIVE] = Field(default=3.0, gt=0)
+    # CPU seconds a tree-sitter parse may take, a tenth of them at a stretch between reads or
+    # after the last; a PR overlay waits up to this long past its window.
+    code_parse_timeout_s: Annotated[float, LIVE] = Field(
+        default=3.0, gt=0, le=3600, allow_inf_nan=False
+    )
+    # Address space (MB) one tree-sitter parse may take; one runs at a time per server process,
+    # which holds up to this plus about 170 MB for it. Past it the file is chunks without symbols.
+    code_parse_memory_mb: Annotated[int, LIVE] = Field(default=256, ge=128, le=65536)
     # The ingest pass's own deadline (seconds), kept at the supervisor's cap;
     # `code_ingest_pass_budget_fraction` keeps a pass under it.
     code_ingest_max_pass_seconds: int = 900
@@ -2915,9 +2920,9 @@ class MemorySettings(BaseModel):
     # Seconds between the starts of two cycles of the code-links sweep through the link
     # table.
     memory_code_links_sweep_interval_s: Annotated[int, LIVE] = Field(default=3600, gt=0)
-    # Seconds a branch's own read and parse of a code lesson may take, a share of the
-    # code plane's enrichment bound; past it the lesson is served as trunk last checked
-    # it.
+    # Seconds a branch's own read and parse of a code lesson may take (waiting behind another
+    # parse in the process included), a share of the code plane's enrichment bound; past it
+    # the lesson is served as trunk last checked it.
     memory_code_plane_parse_timeout_s: Annotated[float, LIVE] = Field(default=0.2, gt=0)
     # One call judges at most this many facts; a longer capture is judged in slices
     # (groups never span slices — a missed fold only keeps a paraphrase).

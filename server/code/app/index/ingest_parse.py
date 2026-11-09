@@ -9,7 +9,7 @@ from typing import Any
 
 from server.code.app.index.denylist import Denylist, default_denylist
 from server.code.app.index.ingest_stats import error_text
-from server.code.domain.extract.bounded_parse import ParseTimeout
+from server.code.domain.extract.bounded_parse import LockGaveUp, ParseTimeout
 from server.code.domain.extract.lang_detect import detect_by_extension, detect_shell, is_bats_path
 from server.code.domain.extract.lang_hosts import HostUnits, detect_host, host_kind, host_units
 from server.code.domain.extract.lang_py_islands import py_sql_units
@@ -108,7 +108,9 @@ def parse_for_ingest(path: str, source: bytes) -> tuple[ParsedFile | None, str]:
         try:
             pf = parser(path, source)
         except Exception as e:  # noqa: BLE001 — parse failure is per-file, not fatal
-            logger.warning("code ingest: parse failed for %s: %s", path, e)
+            # a read that gave up waiting for another parse took its fallback: no warning
+            log = logger.debug if isinstance(e, LockGaveUp) else logger.warning
+            log("code ingest: parse failed for %s: %s", path, e)
             return ParsedFile(path=path, lang=lang, source=source), error_text("parse", e)
         if lang == "shell":
             # A shell file's include targets are repository paths — resolved HERE, at
@@ -124,7 +126,7 @@ def parse_for_ingest(path: str, source: bytes) -> tuple[ParsedFile | None, str]:
 
 
 def parse_timed_out(error: str) -> bool:
-    """Whether `parse_for_ingest`'s reason says the parse ran past its deadline."""
+    """Whether `parse_for_ingest`'s reason says the parse ran past its limits."""
     return error.startswith(f"parse: {ParseTimeout.__name__}")
 
 

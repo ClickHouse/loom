@@ -1348,11 +1348,19 @@
           "type": "boolean",
           "description": "True lets every authenticated principal of the org read every configured code namespace (right for public or org-internal repos); false leaves reads to the namespace's own visibility and grants. Writes stay grant-driven. Per-entry \"org_readable\" in LOOM_CODE_REPOS_JSON."
         },
+        "code_parse_memory_mb": {
+          "default": 256,
+          "maximum": 65536,
+          "minimum": 128,
+          "type": "integer",
+          "description": "Address space (MB) one tree-sitter parse may take; one runs at a time per server process, which holds up to this plus about 170 MB for it. Past it the file is chunks without symbols."
+        },
         "code_parse_timeout_s": {
           "default": 3.0,
           "exclusiveMinimum": 0,
+          "maximum": 3600,
           "type": "number",
-          "description": "CPU seconds after which a tree-sitter parse stops reading its file (raising it re-reads nothing); a PR overlay also waits up to this long, wall-clock, past its window."
+          "description": "CPU seconds a tree-sitter parse may take, a tenth of them at a stretch between reads or after the last; a PR overlay waits up to this long past its window."
         },
         "code_path_prefixes": {
           "default": "",
@@ -3927,7 +3935,7 @@
           "default": 0.2,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds a branch's own read and parse of a code lesson may take, a share of the code plane's enrichment bound; past it the lesson is served as trunk last checked it."
+          "description": "Seconds a branch's own read and parse of a code lesson may take (waiting behind another parse in the process included), a share of the code plane's enrichment bound; past it the lesson is served as trunk last checked it."
         },
         "memory_conflict_resolver_batch": {
           "default": 40,
