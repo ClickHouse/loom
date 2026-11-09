@@ -216,26 +216,41 @@ async def test_the_link_recheck_reads_nothing_while_the_registry_is_unread(monke
 async def test_a_source_sync_retires_removed_sources_while_the_registry_is_unread(
     monkeypatch,
 ) -> None:
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
     from server.knowledge.app import source_sync
 
-    order: list[str] = []
+    src = SimpleNamespace(org="o", namespace="code-x", name="docs")
+    retired: list[str] = []
 
-    async def sources() -> list[object]:
-        return []
+    async def active() -> list[object]:
+        return [src]
 
-    async def retire(*_a: object, **_k: object) -> None:
-        order.append("retire")
+    async def pending() -> list[object]:
+        return [src]
 
-    async def usable(_found: object) -> list[object]:
-        order.append("usable")
-        raise repos.RegistryUnread("not read")
+    async def inactive(_pairs: object) -> set[object]:
+        return set()
 
-    monkeypatch.setattr(source_sync.store, "all_active_sources", sources)
-    monkeypatch.setattr(source_sync, "_retire_removed_sources", retire)
-    monkeypatch.setattr(source_sync, "_usable", usable)
+    @asynccontextmanager
+    async def turn(_src: object):  # type: ignore[no-untyped-def]
+        yield None
+
+    async def retire_all(s: object, _run: object, _result: object) -> None:
+        retired.append(s.name)  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    monkeypatch.setattr(source_sync.store, "all_active_sources", active)
+    monkeypatch.setattr(source_sync.store, "pending_delete_sources", pending)
+    monkeypatch.setattr(source_sync.store, "inactive_namespaces", inactive)
+    monkeypatch.setattr(source_sync, "_source_turn", turn)
+    monkeypatch.setattr(source_sync, "_retire_all", retire_all)
+    # The trunk check reads the code registry and refuses, after the retirement.
     with pytest.raises(repos.RegistryUnread):
         await source_sync.run_sync()
-    assert order == ["retire", "usable"]
+    assert retired == ["docs"]
 
 
 def test_a_name_whose_cached_directory_row_is_restricted_is_not_suggested(monkeypatch) -> None:
@@ -272,3 +287,35 @@ async def test_a_refused_plane_call_is_not_told_the_namespace_is_unknown_while_u
     monkeypatch.setattr(access_refusal, "is_plane_tool", lambda name: True)
     auth = SimpleNamespace(org="o", can_access=lambda org, ns: False)
     assert await mcp_auth._plane_namespace("loom_code_search", auth, "code-x") == (None, False)
+
+
+@pytest.mark.asyncio
+async def test_a_restricted_token_mint_refuses_a_name_of_unknown_kind_while_unread(
+    monkeypatch,
+) -> None:
+    # A page branch the directory read missed would otherwise get a writer grant.
+    from server.identity.app import namespace_kinds, token_grants
+
+    written: list[object] = []
+
+    async def kinds(org: str) -> dict[str, str]:
+        return {"team-kb": "memory"}  # the directory read fell back: code-x unknown
+
+    async def restricted(org: str, ns: str) -> bool:
+        return True
+
+    async def insert(rows: list[object]) -> None:
+        written.extend(rows)
+
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    monkeypatch.setattr(namespace_kinds, "kind_map", kinds)
+    monkeypatch.setattr(token_grants.grants_repo, "insert_rows", insert)
+    with pytest.raises(repos.RegistryUnread):
+        await token_grants.grant_restricted_to_token(
+            "o", "sa", "me", {"code-x": "writer"}, is_restricted=restricted
+        )
+    assert written == []
+    assert await token_grants.grant_restricted_to_token(
+        "o", "sa", "me", {"team-kb": "writer"}, is_restricted=restricted
+    ) == ["team-kb"]

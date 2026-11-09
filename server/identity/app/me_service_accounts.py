@@ -123,10 +123,7 @@ async def _bound_trackers(org: str, subject: str, parent: AuthInfo, repos: list[
     if not repos:
         return out
     if registry_unread():
-        # The operator repositories, and so the trackers bound to them, are not known
-        # yet: refuse before the mint rather than mint a token missing their grants.
-        # Refused unless every name is known not to be code: the kinds fall back to
-        # the configuration, which lists no page branch yet, when the directory fails.
+        # Unread: refuse unless every name is known not to be code.
         kinds = await namespace_kinds.kind_map(org)
         if any(kinds.get(ns, "code") in ("code", "") for ns in repos):
             require_registry_read()

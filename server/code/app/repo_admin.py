@@ -484,9 +484,7 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
     # (and is retired here) or after (and sees the repository gone). Sources first, so
     # a call that fails between the two leaves the repository registered to retry.
     ch = get_client()
-    # The account claim is the one `code.repo.set_access` holds from its read of the
-    # registry row to its write, so it cannot write the row back to life; a busy claim
-    # refuses before anything is written.
+    # set_access's account claim: it cannot write the row back to life; busy refuses.
     async with (
         sources_lease(input.org, input.namespace),
         account_change(input.org, input.namespace),
@@ -749,10 +747,8 @@ async def handle_code_repo_set_access(input: Any) -> Any:
     subject, _org = current_caller()
     from server.code.app.index import maintainers
 
-    # The account claim every writer that rewrites the directory row holds, and an add
-    # from the page too, so no add lands between the registry row's read and its write;
-    # a fan-out write onto this branch holds the admins claims: it lands before the sync
-    # below, or sees both rows.
+    # The account claim (every directory-row writer's, and an add's); the admins claims
+    # order a fan-out write onto this branch before the sync below.
     async with (
         account_change(input.org, input.namespace),
         admins_change(input.org, maintainers.repo_claim_key(str(cfg.repo))),
