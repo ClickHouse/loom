@@ -667,11 +667,10 @@ async def commit_versions(
     whatever refusal the head at commit calls for."""
     started = time.monotonic()
     stored = [encode_row(r) for r in rows]
-    # Built before the transaction: no lock waits on it.
-    sparse = [sparse_row(r) for r in stored]
     if any(r["namespace"] in POLICY_SCOPE_NAMES for r in stored):
         # A namespace's generation shares its key with the policy generations.
         raise ValidationError("'*' and '' are not namespace names")
+    sparse = [sparse_row(r) for r in stored]
     per_row = [targets] * len(stored) if isinstance(targets, int) else list(targets)
     per_row = [
         t | (DECISION_RECORD if deleted_decision(r) else 0)
