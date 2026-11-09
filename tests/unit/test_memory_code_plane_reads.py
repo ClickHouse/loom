@@ -480,8 +480,8 @@ async def test_a_lesson_read_whose_parse_gave_up_waiting_is_read_as_unreadable(
     def swallowing(path: str, data: bytes, named: str) -> Any:
         try:
             bounded_parse.parse(parser, data)
-        except bounded_parse.ParseTimeout:
-            pass  # read as a file that defines nothing
+        except Exception:  # noqa: BLE001 — a parser that reads any failure as defining nothing
+            pass
         return memory_links.FileAt([], [])
 
     async def mirror_here(org: str, cns: str, commit: str) -> bool:

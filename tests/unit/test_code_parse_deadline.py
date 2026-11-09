@@ -204,6 +204,40 @@ def test_a_header_whose_parse_stops_is_read_as_not_indexed(
     assert ih._header_cache[("acme", "code", "src/a.h")] is None
 
 
+def test_a_header_whose_parse_could_not_run_is_not_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.code.app.index import ingest_headers as ih
+    from server.code.app.index.ingest_stats import FileIngestStats
+    from server.code.domain.extract import bounded_parse
+    from server.code.domain.extract.treesitter import parse_cpp
+
+    pf = parse_cpp("src/a.cpp", b"void f() { g(); }\n")
+    monkeypatch.setattr(ih, "_needs_header", lambda pf, hd: True)
+    monkeypatch.setattr(ih, "_header_cache", {})
+
+    def unavailable(parser: Any, source: bytes) -> Any:
+        raise bounded_parse.ParseUnavailable("killed from outside")
+
+    async def header_text(repo: Any, org: str, ns: str, path: str) -> tuple[str, bool]:
+        return "int f();\n", True
+
+    async def none(*a: Any) -> list[str]:
+        return []
+
+    class Repo:
+        async def live_paths_present(self, org: str, ns: str, paths: list[str]) -> set[str]:
+            return {"src/a.h"}
+
+    monkeypatch.setattr(bounded_parse, "parse", unavailable)
+    monkeypatch.setattr(ih, "_header_text", header_text)
+    monkeypatch.setattr(ih, "_present_includes", none)
+    stats = FileIngestStats(path="src/a.cpp")
+    with pytest.raises(bounded_parse.ParseUnavailable):
+        asyncio.run(ih.header_context(Repo(), "acme", "code", pf, "src/a.cpp", stats))
+    assert ("acme", "code", "src/a.h") not in ih._header_cache  # read again next time
+
+
 @pytest.mark.usefixtures("fresh_child")
 def test_two_threads_never_parse_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
     import threading
@@ -559,7 +593,7 @@ def test_a_child_that_does_not_answer_is_ended(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(settings, "code_parse_timeout_s", 0.05)
     start = time.monotonic()
     pf, err = parse_for_ingest("b.go", source)
-    assert "ParseTimeout" in err and time.monotonic() - start < 15
+    assert "ParseUnavailable" in err and time.monotonic() - start < 15
     pf, err = parse_for_ingest("c.go", source)  # a fresh child
     assert err == "" and pf is not None and len(pf.symbols) == 1
 
@@ -671,7 +705,7 @@ def test_a_parse_whose_caller_gives_up_does_not_wait_past_it() -> None:
     try:
         with bounded_parse._LOCK:  # another parse holds the process's turn
             start = time.monotonic()
-            with pytest.raises(bounded_parse.ParseTimeout, match="waiting"):
+            with pytest.raises(bounded_parse.ParseUnavailable, match="waiting"):
                 bounded_parse.parse(parser, b"package x\n")
             assert time.monotonic() - start < 2 and limit.gave_up
     finally:
@@ -688,7 +722,7 @@ def test_a_parse_whose_caller_already_gave_up_does_not_run() -> None:
     limit = bounded_parse.LockWait(0.0)  # the lock is free, the deadline passed
     waits = bounded_parse.LOCK_WAIT.set(limit)
     try:
-        with pytest.raises(bounded_parse.ParseTimeout, match="waiting"):
+        with pytest.raises(bounded_parse.ParseUnavailable, match="waiting"):
             bounded_parse.parse(parser, b"package x\n")
     finally:
         bounded_parse.LOCK_WAIT.reset(waits)
