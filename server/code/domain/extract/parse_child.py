@@ -43,14 +43,15 @@ def language(grammar: str) -> Any:
 def _parse(parser: Any, source: bytes, budget: float) -> bytes:
     last_read = time.thread_time()
     deadline = last_read + budget
-    stopped = False
+    stopped = whole = False
     longest = 0.0  # the longest stretch between reads
 
     def read(offset: int, _point: Any) -> bytes:
-        nonlocal stopped, last_read, longest
+        nonlocal stopped, whole, last_read, longest
         now = time.thread_time()
         longest, last_read = max(longest, now - last_read), now
         if offset >= len(source):
+            whole = True
             return b""
         if stopped or last_read > deadline:
             stopped = True
@@ -63,7 +64,8 @@ def _parse(parser: Any, source: bytes, budget: float) -> bytes:
     # refused (real files take a few milliseconds at most).
     end = time.thread_time()
     longest = max(longest, end - last_read)
-    return STOPPED if stopped or end > deadline or longest > budget / 10 else DONE
+    within = whole and not stopped and end <= deadline and longest <= budget / 10
+    return DONE if within else STOPPED
 
 
 def _within(soft: int, inherited: tuple[int, int]) -> int:

@@ -41,7 +41,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import IO, Any, NoReturn, cast
+from typing import IO, Any, NamedTuple, NoReturn, cast
 
 from server.code.domain.extract import parse_child
 
@@ -103,14 +103,11 @@ def _in_child(grammar: str, source: bytes, budget: float, memory: int) -> bytes 
     while True:
         if child is None:
             child = _start()
-        answer = _ask(child, grammar, source, budget, memory)
-        if answer in (parse_child.DONE, parse_child.STOPPED):
+        answer, keep = _ask(child, grammar, source, budget, memory)
+        if keep:
             _idle = child
+        if answer in (parse_child.DONE, parse_child.STOPPED, _SILENT):
             return answer
-        if answer == _SILENT:
-            return answer
-        if answer in (parse_child.DONE.upper(), parse_child.STOPPED.upper()):
-            return answer.lower()  # it answered, then retired
         status = cast("int", child.returncode)
         if answer is None and not unread:
             unread = True
@@ -161,13 +158,18 @@ def _wall_bound(budget: float) -> float:
     return 10 * budget + 5
 
 
+class _Reply(NamedTuple):
+    # `DONE` or `STOPPED`; b"" when the parse ended the child, `_SILENT` when its answer
+    # did not come within the wall bound (stopped, or never scheduled), None when the
+    # request could not be written to it
+    answer: bytes | None
+    keep: bool  # it answered and stays for the next parse (an uppercase answer: it retires)
+
+
 def _ask(
     child: subprocess.Popen[bytes], grammar: str, source: bytes, budget: float, memory: int
-) -> bytes | None:
-    """One child's answer byte; b"" when the parse ended it, `_SILENT` when its answer
-    did not come within ten deadlines and five seconds of the request (stopped, or
-    never scheduled), None when the request could not be written to it. A child that
-    does not answer `DONE` or `STOPPED` is reaped."""
+) -> _Reply:
+    """One child's reply; a child not kept is reaped."""
     stdin, stdout = cast("IO[bytes]", child.stdin), cast("IO[bytes]", child.stdout)
     name = grammar.encode()
     answer: bytes | None = None
@@ -184,10 +186,13 @@ def _ask(
     except BrokenPipeError:
         pass  # the child had ended
     finally:
-        if answer not in (parse_child.DONE, parse_child.STOPPED):
+        keep = answer in (parse_child.DONE, parse_child.STOPPED)
+        if not keep:
             child.kill()
             _close(child)
-    return answer
+    if answer in (parse_child.DONE.upper(), parse_child.STOPPED.upper()):
+        answer = answer.lower()
+    return _Reply(answer, keep)
 
 
 def _close(child: subprocess.Popen[bytes]) -> None:
