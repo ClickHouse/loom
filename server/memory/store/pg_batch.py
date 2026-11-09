@@ -338,7 +338,7 @@ async def _served_documents(
 
     # A copy is another commit than the writer's, perhaps one on the primary alone: the
     # heads are read again durably, and every document is decided from that read.
-    if any(_copy(d, heads) for e in waiting for d in e.documents):
+    if any(_newer_copy(d, heads) for e in waiting for d in e.documents):
         heads = await pg_memory.heads_owing(keys, durable=True)
 
     sent: dict[int, dict[tuple[Any, ...], dict[str, Any]]] = {}
@@ -358,7 +358,7 @@ async def _served_documents(
 _Heads = dict[Any, tuple[dict[str, Any], int]]
 
 
-def _copy(doc: Mapping[str, Any], heads: _Heads) -> bool:
+def _newer_copy(doc: Mapping[str, Any], heads: _Heads) -> bool:
     """Whether the key's head is a newer copy of the document's row
     (`pg_memory.newer_copy`) that owes no document of its own."""
     head, owed = heads.get(identity_key(doc), (None, 0))
@@ -372,7 +372,7 @@ def _served(doc: dict[str, Any], heads: _Heads) -> dict[str, Any] | None:
         return None
     if int(head["version"]) == int(doc["version"]):
         return doc
-    return _onto(doc, head) if _copy(doc, heads) else None
+    return _onto(doc, head) if _newer_copy(doc, heads) else None
 
 
 def _onto(doc: Mapping[str, Any], head: Mapping[str, Any]) -> dict[str, Any]:

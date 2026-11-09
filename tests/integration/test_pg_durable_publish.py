@@ -146,7 +146,7 @@ async def test_the_boot_check_writes_the_message_without_waiting(
         await asyncio.wait_for(pg.check_durable_message(), timeout=5)  # rolled back: no wait
 
 
-async def test_a_connection_lost_before_the_commit_sends_nothing(
+async def test_a_connection_lost_in_a_transaction_is_postgres_unavailable(
     admin_conn: Any, short_waits: None
 ) -> None:
     from server.core import pg

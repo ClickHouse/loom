@@ -205,13 +205,13 @@ async def _still_heads(claims: list[Claimed], deadline: float) -> list[Claimed]:
         return claims
     keys = [identity_key(c.row) for c in claims]
     heads = await pg_memory.heads_by_keys(keys, include_tombstoned=True)
-    if any(_copy(c, heads) for c in claims):
+    if any(_newer_copy(c, heads) for c in claims):
         heads = await pg_memory.heads_by_keys(keys, include_tombstoned=True, durable=True)
         pg_lease.check_room(deadline)
     return [replace(c, row=row) for c in claims if (row := _served(c, heads)) is not None]
 
 
-def _copy(c: Claimed, heads: dict[Any, dict[str, Any]]) -> bool:
+def _newer_copy(c: Claimed, heads: dict[Any, dict[str, Any]]) -> bool:
     """Whether `c`'s key's head is a newer copy of its revision (`pg_memory.newer_copy`)."""
     head = heads.get(identity_key(c.row))
     return head is not None and pg_memory.newer_copy(head, c.row)
