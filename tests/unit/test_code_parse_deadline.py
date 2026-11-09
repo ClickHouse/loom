@@ -35,17 +35,18 @@ def test_a_slow_parse_stops_at_the_deadline_and_the_file_is_chunked(
     from server.code.domain.extract import bounded_parse
 
     monkeypatch.setattr(settings, "code_parse_timeout_s", 0.2)
-    monkeypatch.setattr(bounded_parse, "_IDLE", [])
+    monkeypatch.setattr(bounded_parse, "_idle", None)
     start = time.monotonic()
     pf, err = parse_for_ingest(path, source)
     assert time.monotonic() - start < 5
     assert pf is not None and pf.symbols == [] and pf.source == source
     assert "ParseTimeout" in err
-    (child,) = bounded_parse._IDLE  # kept: it answered
+    child = bounded_parse._idle  # kept: it answered
+    assert child is not None
     pf, err = parse_for_ingest("ok.go", b"package x\nfunc f() {}\n")
     assert err == "" and pf is not None and len(pf.symbols) == 1
-    assert bounded_parse._IDLE == [child]
-    _end(bounded_parse._IDLE)
+    assert bounded_parse._idle is child
+    _end(bounded_parse._idle)
 
 
 # Parses, then sets every thread's CPU clock past the deadline and reads a node's text
@@ -447,21 +448,22 @@ def test_a_child_that_ended_while_idle_is_replaced_without_failing_the_parse(
 ) -> None:
     from server.code.domain.extract import bounded_parse
 
-    monkeypatch.setattr(bounded_parse, "_IDLE", [])
+    monkeypatch.setattr(bounded_parse, "_idle", None)
     source = b"package x\nfunc f() {}\n"
     assert parse_for_ingest("a.go", source)[1] == ""
-    for child in bounded_parse._IDLE:
-        child.kill()  # ends while idle; the pool still holds it
-        child.wait()
+    child = bounded_parse._idle
+    assert child is not None
+    child.kill()  # ends while idle; it is still the idle child
+    child.wait()
     pf, err = parse_for_ingest("b.go", source)
     assert err == "" and pf is not None and len(pf.symbols) == 1
-    _end(bounded_parse._IDLE)
+    _end(bounded_parse._idle)
 
 
-def _end(children: list[Any]) -> None:
+def _end(child: Any) -> None:
     from server.code.domain.extract import bounded_parse
 
-    for child in children:
+    if child is not None:
         child.kill()
         bounded_parse._close(child)
 
@@ -471,16 +473,17 @@ def test_a_child_reads_its_next_request_under_no_earlier_limit(
 ) -> None:
     from server.code.domain.extract import bounded_parse, parse_child
 
-    monkeypatch.setattr(bounded_parse, "_IDLE", [])
+    monkeypatch.setattr(bounded_parse, "_idle", None)
     grammar = "tree_sitter_go:language"
     assert bounded_parse._in_child(grammar, b"package x\n", 3.0, 256 << 20) == parse_child.DONE
-    (child,) = bounded_parse._IDLE
+    child = bounded_parse._idle
+    assert child is not None
     # a limit the next request's 8 MB source would not fit under
     assert bounded_parse._in_child(grammar, b"package x\n", 3.0, 4 << 20) == parse_child.DONE
     big = b"package x\n// " + b"x" * (8 << 20)
     assert bounded_parse._in_child(grammar, big, 3.0, 256 << 20) == parse_child.DONE
-    assert bounded_parse._IDLE == [child]
-    _end(bounded_parse._IDLE)
+    assert bounded_parse._idle is child
+    _end(bounded_parse._idle)
 
 
 def test_a_parse_in_the_server_past_twice_the_deadline_stops(
@@ -523,10 +526,11 @@ def test_a_child_that_does_not_answer_is_ended(monkeypatch: pytest.MonkeyPatch) 
 
     from server.code.domain.extract import bounded_parse
 
-    monkeypatch.setattr(bounded_parse, "_IDLE", [])
+    monkeypatch.setattr(bounded_parse, "_idle", None)
     source = b"package x\nfunc f() {}\n"
     assert parse_for_ingest("a.go", source)[1] == ""
-    (child,) = bounded_parse._IDLE
+    child = bounded_parse._idle
+    assert child is not None
     child.send_signal(signal.SIGSTOP)
     monkeypatch.setattr(settings, "code_parse_timeout_s", 0.05)
     start = time.monotonic()
@@ -534,4 +538,25 @@ def test_a_child_that_does_not_answer_is_ended(monkeypatch: pytest.MonkeyPatch) 
     assert "ParseTimeout" in err and time.monotonic() - start < 15
     pf, err = parse_for_ingest("c.go", source)  # a fresh child
     assert err == "" and pf is not None and len(pf.symbols) == 1
-    _end(bounded_parse._IDLE)
+    _end(bounded_parse._idle)
+
+
+def test_the_memory_setting_decides_the_refusal() -> None:
+    """An input of about 200 MB: refused at 128 MB, parsed at 512 MB. In a process held
+    to 1 GB, which the child inherits but does not reach either way."""
+    script = """
+import resource
+resource.setrlimit(resource.RLIMIT_AS, (1 << 30, 1 << 30))
+from server.code.app.index.ingest_parse import parse_for_ingest
+from server.settings import settings
+settings.code_parse_timeout_s = 30.0
+source = b"a<-" * 2_400
+settings.code_parse_memory_mb = 128
+assert "ParseTimeout" in parse_for_ingest("a.cpp", source)[1]
+settings.code_parse_memory_mb = 512
+assert parse_for_ingest("a.cpp", source)[1] == ""
+"""
+    done = subprocess.run(
+        [sys.executable, "-c", script], cwd=_SERVER.parent, capture_output=True, timeout=60
+    )
+    assert done.returncode == 0, done.stderr[-2000:]

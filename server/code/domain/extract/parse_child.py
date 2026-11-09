@@ -4,13 +4,15 @@ grammar's name length, the source length, CPU seconds, address-space bytes), the
 (`module:function`) and the source; the address space is what the parse may take past
 the process's own when it starts. The process parses it, reading the source in chunks
 until the CPU seconds are spent, and answers one byte: `DONE` (read in full and finished
-within the CPU seconds) or `STOPPED` (past them). A parse past the address-space limit,
-or well past the CPU seconds after its last read (the kernel's RLIMIT_CPU, whole
-seconds), ends the process: no answer. Imports nothing of the server.
+within the CPU seconds) or `STOPPED` (past them), uppercase when the process then exits
+because it grew. A parse past the address-space limit, or well past the CPU seconds
+after its last read (the kernel's RLIMIT_CPU, whole seconds), ends the process: no
+answer. Imports nothing of the server.
 """
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import importlib
 import math
@@ -26,6 +28,7 @@ HEADER = struct.Struct("<IIdQ")
 DONE, STOPPED = b"d", b"s"
 CHUNK = 256
 _PR_SET_DUMPABLE = 4
+_RETIRE_GROWTH = 64 << 20  # past the interpreter and every grammar's mapping
 
 
 def language(grammar: str) -> Any:
@@ -70,12 +73,17 @@ def _address_space() -> int:
 
 def main() -> int:
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    # the first process the kernel ends when memory runs out (before the server); written
+    # while /proc/self is still this process's own
+    with contextlib.suppress(OSError):
+        Path("/proc/self/oom_score_adj").write_text("1000")
     # not dumpable: a parse ended by a signal starts no core dump handler either
     if sys.platform == "linux":
         ctypes.CDLL(None).prctl(_PR_SET_DUMPABLE, 0, 0, 0, 0)
     inherited_cpu = resource.getrlimit(resource.RLIMIT_CPU)
     inherited_as = resource.getrlimit(resource.RLIMIT_AS)
     stdin, stdout = sys.stdin.buffer, sys.stdout.buffer
+    start = _address_space()
     parsers: dict[str, Any] = {}
     while header := stdin.read(HEADER.size):
         grammar_len, source_len, budget, memory = HEADER.unpack(header)
@@ -100,8 +108,13 @@ def main() -> int:
         # the next request is read under the limits this process started with
         resource.setrlimit(resource.RLIMIT_CPU, inherited_cpu)
         resource.setrlimit(resource.RLIMIT_AS, inherited_as)
-        stdout.write(answer)
+        # Memory a parse freed stays mapped and would raise the next parse's limit: a
+        # process grown past its start by more than a parse's own memory retires.
+        retire = _address_space() > start + _RETIRE_GROWTH
+        stdout.write(answer.upper() if retire else answer)
         stdout.flush()
+        if retire:
+            return 0
     return 0
 
 

@@ -29,7 +29,6 @@ import contextlib
 import functools
 import logging
 import selectors
-import signal
 import subprocess
 import sys
 import threading
@@ -63,7 +62,8 @@ _GRAMMARS = (
 # take the GIL; a tree-sitter parser is not safe to enter twice, and most are shared).
 _LOCK = threading.Lock()
 
-_IDLE: list[subprocess.Popen[bytes]] = []  # the child waiting for its next parse (`_LOCK`)
+_idle: subprocess.Popen[bytes] | None = None  # the child waiting for its next parse (`_LOCK`)
+_SILENT = b"?"  # no answer within the wall bound
 
 
 class ParseTimeout(Exception):
@@ -84,11 +84,13 @@ def _grammar(language: Any) -> str:
 
 
 def _in_child(grammar: str, source: bytes, budget: float, memory: int) -> bytes | int:
-    """The child's answer for one parse, `parse_child.DONE` or `STOPPED`; or, when the
-    parse ended the child, its exit status (negative: the signal that ended it)."""
-    child = _IDLE.pop() if _IDLE else None
-    if child is None or (answer := _ask(child, grammar, source, budget, memory)) is None:
-        # none idle, or it ended while idle, before reading the request
+    """The child's answer for one parse: `parse_child.DONE`, `STOPPED`, or `_SILENT`
+    (it was ended for not answering); or, when the parse ended the child, its exit
+    status (negative: the signal that ended it)."""
+    global _idle
+    child, _idle = _idle, None
+    answer = None if child is None else _ask(child, grammar, source, budget, memory)
+    if answer is None:  # none idle, or it ended while idle, before reading the request
         try:
             child = subprocess.Popen(
                 [sys.executable, "-I", str(_CHILD)],
@@ -100,16 +102,17 @@ def _in_child(grammar: str, source: bytes, budget: float, memory: int) -> bytes 
             logger.error("bounded_parse: the parse process did not start: %s", e)
             raise
         answer = _ask(child, grammar, source, budget, memory)
-    return answer or cast("int", child.returncode)
+    return answer or cast("int", cast("subprocess.Popen[bytes]", child).returncode)
 
 
 def _ask(
     child: subprocess.Popen[bytes], grammar: str, source: bytes, budget: float, memory: int
 ) -> bytes | None:
-    """One child's answer byte, b"" when the parse ended it (it is then reaped); None
-    when the request could not be written to it. A child whose answer does not come
-    within ten deadlines and five seconds of the request (stopped, or never scheduled)
-    counts as ended."""
+    """One child's answer, lowercased; b"" when the parse ended it, `_SILENT` when its
+    answer did not come within ten deadlines and five seconds of the request (stopped,
+    or never scheduled), None when the request could not be written to it. A child that
+    ends, goes silent or retires (an uppercase answer) is reaped; any other is kept."""
+    global _idle
     stdin, stdout = cast("IO[bytes]", child.stdin), cast("IO[bytes]", child.stdout)
     name = grammar.encode()
     answer: bytes | None = None
@@ -117,7 +120,7 @@ def _ask(
         stdin.write(parse_child.HEADER.pack(len(name), len(source), budget, memory))
         stdin.write(name + source)
         stdin.flush()
-        answer = b""
+        answer = _SILENT
         with selectors.DefaultSelector() as waiting:  # not select(): no descriptor cap
             waiting.register(stdout, selectors.EVENT_READ)
             if waiting.select(10 * budget + 5):
@@ -125,12 +128,12 @@ def _ask(
     except BrokenPipeError:
         pass  # the child had ended
     finally:
-        if answer:
-            _IDLE.append(child)
+        if answer in (parse_child.DONE, parse_child.STOPPED):
+            _idle = child
         else:
             child.kill()
             _close(child)
-    return answer
+    return answer.lower() if answer else answer
 
 
 def _close(child: subprocess.Popen[bytes]) -> None:
@@ -170,7 +173,7 @@ def parse(parser: Any, source: bytes) -> Any:
         if isinstance(answer, int) and answer > 0:
             logger.error("bounded_parse: the parse process failed with status %d", answer)
             raise RuntimeError(f"the parse process failed with status {answer}")
-        if answer == -signal.SIGKILL:  # killed here: it did not answer in time
+        if answer == _SILENT:
             raise ParseTimeout(f"the parse process did not answer within {10 * budget + 5:g} s")
         if answer != parse_child.DONE:
             raise ParseTimeout(
