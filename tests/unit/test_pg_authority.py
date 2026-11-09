@@ -139,6 +139,25 @@ def test_a_row_that_leaves_out_its_default_fields_reads_as_the_full_row() -> Non
     first, second = pg_memory.decode_row(sparse), pg_memory.decode_row(sparse)
     first["tags"].append("x")
     assert second["tags"] == []
+    # A value other than its default is stored, a falsy one included.
+    changed = {
+        "evidence_count": 0,
+        "pinned": 1,
+        "tags": ["x"],
+        "status": "superseded",
+        "char_limit": 0,
+    }
+    kept = pg_memory.sparse_row({**full, **changed})
+    assert {c: kept[c] for c in changed} == changed
+    assert pg_memory.decode_row(kept) == pg_memory.decode_row({**full, **changed})
+
+
+def test_the_fields_sql_reads_as_stored_are_never_left_out() -> None:
+    """The profile reach matches on `row->>'agent'` and `row->>'memory_type'`
+    (`memory_revisions_profile`, `_profile_built_from`), and other statements read the key,
+    the value and the creation time as stored: none has a default a row may leave out."""
+    read_as_stored = {"agent", "memory_type", "memory_key", "session_id", "value", "created_at"}
+    assert not read_as_stored & pg_memory.SPARSE_DEFAULTS.keys()
 
 
 def test_a_row_round_trips_at_clickhouse_precision() -> None:
