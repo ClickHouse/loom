@@ -95,7 +95,6 @@ class HistoryTarget:
     session_id: str
     memory_key: str
     version: int
-    tombstoned_at: Any
     org: str
     memory_id: str
     content_sha256: str  # the hash of the version's text, which its search rows carry too
@@ -111,7 +110,6 @@ class HistoryTarget:
             session_id=str(r.get("session_id") or ""),
             memory_key=str(r.get("memory_key") or ""),
             version=int(r.get("version") or 0),
-            tombstoned_at=r.get("tombstoned_at"),
             content_sha256=str(r.get("content_sha256") or ""),
         )
 
@@ -245,13 +243,13 @@ async def find_history_target(
     ch = ch or _default_client()
     cols = (
         "org, memory_id, namespace, agent, user_id, session_id, memory_key, version, "
-        "tombstoned_at, toStringCutToZero(content_sha256) AS content_sha256"
+        "toStringCutToZero(content_sha256) AS content_sha256"
     )
     at = "org = {org:String} AND memory_id = {mid:UUID} AND version = {v:UInt64}"
     r = await ch.query_one(
         f"""
         SELECT org, toString(memory_id) AS memory_id, namespace, agent, user_id, session_id,
-               memory_key, version, tombstoned_at, content_sha256
+               memory_key, version, content_sha256
         FROM (
             SELECT {cols} FROM loom.memory_versions WHERE {at}
             UNION ALL

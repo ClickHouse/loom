@@ -14,7 +14,6 @@ ALTER TABLE loom.memory_revisions
     ADD COLUMN IF NOT EXISTS memory_type text,
     ADD COLUMN IF NOT EXISTS status text,
     ADD COLUMN IF NOT EXISTS source_trace text,
-    ADD COLUMN IF NOT EXISTS tombstoned boolean,
     ADD COLUMN IF NOT EXISTS redacted_at text,
     ADD COLUMN IF NOT EXISTS redaction_reason text,
     ALTER COLUMN row DROP NOT NULL;
@@ -29,7 +28,6 @@ BEGIN
         NEW.memory_type := coalesce(NEW.row->>'memory_type', '');
         NEW.status := coalesce(NEW.row->>'status', 'active');
         NEW.source_trace := coalesce(NEW.row->>'source_trace', '');
-        NEW.tombstoned := NEW.row->>'tombstoned_at' IS NOT NULL;
         NEW.redacted_at := NEW.row->>'redacted_at';
         NEW.redaction_reason := coalesce(NEW.row->>'redaction_reason', '');
     END IF;

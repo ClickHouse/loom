@@ -1444,8 +1444,8 @@ async def profile_keys_built_from(
     if pg.unstorable(org) or pg.unstorable(namespace) or pg.unstorable(user_id):
         return []
     rows = await pg.fetch(
-        f"SELECT {_meta('agent')} AS agent, {_meta('session_id')} AS session_id, "
-        f"{_meta('memory_key')} AS memory_key, max(version) AS newest {_PROFILE_REVISIONS} "
+        "SELECT row->>'agent' AS agent, row->>'session_id' AS session_id, "
+        f"row->>'memory_key' AS memory_key, max(version) AS newest {_PROFILE_REVISIONS} "
         "GROUP BY 1, 2, 3 ORDER BY 1, 2, 3",
         org,
         namespace,
@@ -1472,8 +1472,6 @@ _META_DEFAULTS = {
 def _meta(col: str, alias: str = "") -> str:
     """The journal's `col` for every revision, its typed column or its payload's field."""
     a = f"{alias}." if alias else ""
-    if col == "tombstoned":
-        return f"coalesce({a}tombstoned, {a}row->>'tombstoned_at' IS NOT NULL)"
     if col == "redacted_at":
         return f"coalesce({a}redacted_at, {a}row->>'redacted_at')"
     return f"coalesce({a}{col}, {a}row->>'{col}', {_META_DEFAULTS[col]})"
@@ -1493,19 +1491,13 @@ async def history_target(org: str, memory_id: str, version: int) -> dict[str, An
     r = await pg.fetchrow(
         f"SELECT org, memory_id::text AS memory_id, namespace, {_meta('agent')} AS agent, "
         f"user_id, {_meta('session_id')} AS session_id, {_meta('memory_key')} AS memory_key, "
-        "version, content_sha256, row->>'tombstoned_at' AS tombstoned_at "
+        "version, content_sha256 "
         "FROM loom.memory_revisions WHERE org = $1 AND memory_id = $2 AND version = $3 LIMIT 1",
         org,
         mid,
         version,
     )
-    if r is None:
-        return None
-    out = dict(r)
-    # The payload's time, as ClickHouse's history gives it; unknown once it is cleared.
-    at = out["tombstoned_at"]
-    out["tombstoned_at"] = None if at is None else datetime.fromisoformat(at)
-    return out
+    return None if r is None else dict(r)
 
 
 async def status_before(key: IdentityKey, memory_id: str, version: int) -> str:
@@ -1567,11 +1559,11 @@ async def revisions_at(
             r["memory_key"],
         ):
             continue
-        out[at] = copy if r["redacted_at"] is None else scrubbed(copy, r)
+        out[at] = copy if r["redacted_at"] is None else _scrubbed(copy, r)
     return out
 
 
-def scrubbed(row: MemoryRow, journal: Mapping[str, Any]) -> MemoryRow:
+def _scrubbed(row: MemoryRow, journal: Mapping[str, Any]) -> MemoryRow:
     """`row` with the text a redaction clears (`_SCRUB_VALUES`) cleared, and the
     redaction's time and reason from its revision's columns."""
     return row.model_copy(
@@ -1853,6 +1845,9 @@ _HEAD_FIELDS = {
     "redacted_at": "row->>'redacted_at'",
 }
 _JOURNAL_FIELDS = {f: _meta(f) for f in _HEAD_FIELDS}
+# A profile revision keeps its payload for good, so the journal's profile reach matches
+# on `row`, which `memory_revisions_profile` indexes.
+_PROFILE_JOURNAL_FIELDS = {f: f"row->>'{f}'" for f in _HEAD_FIELDS}
 
 
 def _profile_built_from(f: Mapping[str, str]) -> str:
@@ -1868,7 +1863,7 @@ def _profile_built_from(f: Mapping[str, str]) -> str:
 # The user's profile revisions built from the memory, redacted or not.
 _PROFILE_REVISIONS = (
     "FROM loom.memory_revisions WHERE org = $1 AND namespace = $2 AND "
-    + _profile_built_from(_JOURNAL_FIELDS)
+    + _profile_built_from(_PROFILE_JOURNAL_FIELDS)
 )
 
 
@@ -1883,14 +1878,16 @@ def _redacted_in(*, journal: bool, scrubbed_too: bool = False) -> str:
     or a profile version already redacted keeps its first, and is left out unless
     `scrubbed_too` (a retry waits out its publishers all the same)."""
     f = _JOURNAL_FIELDS if journal else _HEAD_FIELDS
+    p = _PROFILE_JOURNAL_FIELDS if journal else _HEAD_FIELDS
     key = (
         f"user_id = $3 AND {f['agent']} = $5 AND {f['session_id']} = $6 AND {f['memory_key']} = $7"
     )
     unscrubbed = "" if scrubbed_too else f" AND {f['redacted_at']} IS NULL"
+    profile_unscrubbed = "" if scrubbed_too else f" AND {p['redacted_at']} IS NULL"
     return (
         f"org = $1 AND namespace = $2 AND (({key} AND memory_id = $4::uuid AND (version = $8 "
         f"OR (version = ANY($9::bigint[]){unscrubbed}))) "
-        f"OR ({_profile_built_from(f)}{unscrubbed}))"
+        f"OR ({_profile_built_from(p)}{profile_unscrubbed}))"
     )
 
 
@@ -1954,7 +1951,7 @@ async def redact(
             "SELECT c.row FROM loom.memory_current c WHERE c.org = $1 AND c.namespace = $2 "
             "AND ((c.agent, c.user_id, c.session_id, c.memory_key) = ($5, $3, $6, $7) "
             "OR (c.agent = '-' AND c.user_id = $3 AND (c.session_id, c.memory_key) "
-            f"IN (SELECT {_meta('session_id')}, {_meta('memory_key')} {_PROFILE_REVISIONS}))) "
+            f"IN (SELECT row->>'session_id', row->>'memory_key' {_PROFILE_REVISIONS}))) "
             f"{_KEY_ORDER} FOR UPDATE OF c",
             *key_args,
         )
