@@ -326,7 +326,7 @@ Report a namespace's documents, read-only.
 | `chunks` | `ChunkTotals` | Live chunks by embedding model, and how many knowledge.search can return. |
 | `decisions` | `DecisionTotals` | Decision rows citing a document of the namespace, by stage. |
 | `listed` | `list[InspectDocument]` | The newest live documents, at most `sample_limit`, newest first. |
-| `listed_complete` | `bool` | True when `listed` holds every live document and the count was read. |
+| `listed_complete` | `bool` | True when `listed` holds every live document and the count was read, and, under the Postgres authority, ClickHouse held every document the namespace committed. |
 | `findings` | `list[DocumentFinding]` | One per check that ran over the documents and chunks; a clean check is an `info` finding with count 0. |
 | `coverage` | `ReportCoverage` | Which document checks ran and which were skipped. |
 | `ingestions` | `IngestionTotals` | knowledge.ingest jobs by state, and the sources with a job and no live document (a first ingest, or one after a delete, queued or failed). |

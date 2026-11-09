@@ -949,3 +949,44 @@ async def test_a_settled_delivery_and_an_artifact_alone_are_read_as_the_fragment
     )
     await pg_documents.complete(org, ns, uri, int(row["version"]), token=2)
     assert await pg_documents.owed_originals(org, ns) == set()  # settled: published
+
+
+async def test_inspect_says_what_clickhouse_does_not_hold_and_lists_only_served_documents(
+    call: Any, pg_conn: Any, org: str, ns: str
+) -> None:
+    """knowledge.inspect reads ClickHouse's documents: a newer version committed in
+    Postgres whose delivery is parked is counted in `skipped`, the older ClickHouse row
+    leaves the listing (knowledge.get serves the newer one), and the listing is not
+    called complete."""
+    from server.knowledge.store import pg_documents
+    from server.knowledge.store.pg_documents import decode_row
+
+    moved, kept = "docs/moved.md", "docs/kept.md"
+    await call("knowledge.upsert", {"source_uri": kept, "content": "# Kept\nStays."})
+    await call("knowledge.upsert", {"source_uri": moved, "content": "# Moved\nOld."})
+    before = await call("knowledge.inspect", {"sample_limit": 10})
+    assert {d["source_uri"] for d in before["listed"]} == {kept, moved}
+    assert before["listed_complete"] is True
+
+    head = await _head(pg_conn, org, ns, moved)
+    newer = {**decode_row(head["row"]), "version": time.time_ns(), "content": "# Moved\nNew."}
+    await pg_documents.commit(
+        [newer], over={moved: head["version"]}, targets={moved: pg_documents.DOCUMENT_ROW}
+    )
+    await pg_conn.execute(  # parked: ClickHouse keeps the older row
+        "UPDATE loom.knowledge_deliveries SET lease_until = 'infinity', attempts = 10, "
+        "fenced_until = now() WHERE org = $1 AND namespace = $2 AND NOT settled",
+        org,
+        ns,
+    )
+
+    after = await call("knowledge.inspect", {"sample_limit": 10})
+    assert [d["source_uri"] for d in after["listed"]] == [kept]
+    assert after["listed_complete"] is False
+    assert (
+        "projection: 0 document commits not yet in ClickHouse and 1 parked after "
+        "LOOM_PG_DELIVERY_MAX_ATTEMPTS refusals; the document sections may miss them"
+    ) in after["skipped"]
+    assert any(s.startswith("listed: 1 documents rewritten") for s in after["skipped"])
+    got = await call("knowledge.get", {"source_uri": moved})
+    assert got["content"] == "# Moved\nNew."

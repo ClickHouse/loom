@@ -877,6 +877,14 @@ A document whose source URI or writer's id holds text a Postgres key column cann
 has no head: it is read from ClickHouse, and any write of it (a delete, a metadata edit,
 a restore) is refused (422), so only an erasure removes it.
 
+`knowledge.inspect`'s document sections (the totals by format and scheme, the chunks,
+the listed documents) read ClickHouse, so they can miss a commit it does not have yet.
+The report reads the namespace's unpublished deliveries once: any owed or parked makes
+`skipped` say how many (`projection: …`), as does a Postgres that does not answer, and
+`listed_complete` false. A listed row is kept only while `get_many_by_uris` serves it at
+the version ClickHouse listed, live; a document rewritten or deleted in Postgres since
+leaves the listing, counted in `skipped`.
+
 An erasure's `pg_knowledge.delete` step, after `pg_memory.delete`, runs on a connection
 of its own in one transaction:
 

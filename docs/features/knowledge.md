@@ -730,7 +730,11 @@ bounds the listed documents and every finding's samples.
   `ingestion_id` of the `knowledge.ingest` job that published it (empty for a text
   write), its retired versions, its live chunks (searchable, unembedded, under another
   model, distinct versions, characters per chunk) and its decisions. `listed_complete`
-  says whether the list holds every live document.
+  says whether the list holds every live document. Under the Postgres authority the
+  document sections read ClickHouse, which can trail what Postgres committed: `skipped`
+  counts the commits it does not have yet, and a listed document is kept only while
+  `knowledge.get` serves it at that version
+  ([storage authority](../architecture/storage-authority.md#knowledge-documents)).
 - **`decisions`**: the live decision rows whose `source_resource_id` cites a section of
   a document (`knowledge:<namespace>/<source_uri>#<section>`, as
   `loom decisions extract` writes it), per listed document and for the namespace. A
