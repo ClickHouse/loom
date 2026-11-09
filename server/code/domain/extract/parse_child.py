@@ -91,10 +91,12 @@ def main() -> int:
         space = _within(_address_space() + memory, inherited_as)
         resource.setrlimit(resource.RLIMIT_CPU, (cpu, inherited_cpu[1]))
         resource.setrlimit(resource.RLIMIT_AS, (space, inherited_as[1]))
+        # any exception mid-parse (a limit hit in Python's own allocations) ends the
+        # process, as a limit hit in the parser does
         try:
             answer = _parse(parsers[grammar], source, budget)
-        except Exception:  # noqa: BLE001 — past a limit in Python's own allocations or the
-            os.abort()  # callback's: a signal, as in the parser's
+        except Exception:  # noqa: BLE001 — see above
+            os.abort()
         # the next request is read under the limits this process started with
         resource.setrlimit(resource.RLIMIT_CPU, inherited_cpu)
         resource.setrlimit(resource.RLIMIT_AS, inherited_as)

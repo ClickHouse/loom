@@ -495,3 +495,23 @@ def test_a_parse_in_the_server_past_twice_the_deadline_stops(
     parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_go.language()))
     with pytest.raises(bounded_parse.ParseTimeout, match="in the server"):
         bounded_parse.parse(parser, _SLOW[0][1])
+
+
+def test_a_child_on_a_descriptor_past_1024_answers() -> None:
+    import resource
+
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if hard != resource.RLIM_INFINITY and hard < 1200:
+        pytest.skip("this host allows fewer than 1200 open files")
+    script = """
+import os, resource
+resource.setrlimit(resource.RLIMIT_NOFILE, (1200, resource.getrlimit(resource.RLIMIT_NOFILE)[1]))
+held = [os.dup(0) for _ in range(1100)]
+from server.code.app.index.ingest_parse import parse_for_ingest
+pf, err = parse_for_ingest("a.go", b"package x\\nfunc f() {}\\n")
+assert err == "" and pf is not None and len(pf.symbols) == 1, err
+"""
+    done = subprocess.run(
+        [sys.executable, "-c", script], cwd=_SERVER.parent, capture_output=True, timeout=60
+    )
+    assert done.returncode == 0, done.stderr[-2000:]

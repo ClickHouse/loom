@@ -11,7 +11,7 @@ caller takes its parse failure path (an indexed file is then chunks without symb
 Only a source the child parsed in full within the deadline is parsed again here, where
 the same parse does the same work and so stays within the same limits (past twice the
 deadline it stops reading, in case it does not). A child serves one parse at a time and
-is kept for the next; one past a limit is replaced. One parse runs at a time in each
+is kept for the next; one that ended is replaced. One parse runs at a time in each
 server process, child included, so a server process holds at most one memory limit's
 worth of parse at once (the trees its callers keep are not counted). The child is the
 server's interpreter with `-I` and an empty environment; it bounds resources and is no
@@ -29,7 +29,7 @@ from __future__ import annotations
 import contextlib
 import functools
 import logging
-import select
+import selectors
 import subprocess
 import sys
 import threading
@@ -63,8 +63,7 @@ _GRAMMARS = (
 # take the GIL; a tree-sitter parser is not safe to enter twice, and most are shared).
 _LOCK = threading.Lock()
 
-_IDLE: list[subprocess.Popen[bytes]] = []  # children waiting for their next parse
-_IDLE_LOCK = threading.Lock()
+_IDLE: list[subprocess.Popen[bytes]] = []  # the child waiting for its next parse (`_LOCK`)
 
 
 class ParseTimeout(Exception):
@@ -77,8 +76,8 @@ def _grammar(language: Any) -> str:
     for grammar in _GRAMMARS:
         try:
             loaded = parse_child.language(grammar)
-        except ImportError:
-            continue  # an optional grammar not installed
+        except Exception:  # noqa: BLE001 — a grammar that does not load matches none
+            continue
         if loaded == language:
             return grammar
     raise LookupError(f"no grammar in bounded_parse._GRAMMARS loads {language!r}")
@@ -87,8 +86,7 @@ def _grammar(language: Any) -> str:
 def _in_child(grammar: str, source: bytes, budget: float, memory: int) -> bytes | int:
     """The child's answer for one parse, `parse_child.DONE` or `STOPPED`; or, when the
     parse ended the child, its exit status (negative: the signal that ended it)."""
-    with _IDLE_LOCK:
-        child = _IDLE.pop() if _IDLE else None
+    child = _IDLE.pop() if _IDLE else None
     if child is None or (answer := _ask(child, grammar, source, budget, memory)) is None:
         # none idle, or it ended while idle, before reading the request
         try:
@@ -109,8 +107,9 @@ def _ask(
     child: subprocess.Popen[bytes], grammar: str, source: bytes, budget: float, memory: int
 ) -> bytes | None:
     """One child's answer byte, b"" when the parse ended it (it is then reaped); None
-    when the request could not be written to it. A child that answers nothing within
-    ten deadlines and five seconds (stopped, or never scheduled) counts as ended."""
+    when the request could not be written to it. A child whose answer does not come
+    within ten deadlines and five seconds of the request (stopped, or never scheduled)
+    counts as ended."""
     stdin, stdout = cast("IO[bytes]", child.stdin), cast("IO[bytes]", child.stdout)
     name = grammar.encode()
     answer: bytes | None = None
@@ -119,14 +118,15 @@ def _ask(
         stdin.write(name + source)
         stdin.flush()
         answer = b""
-        if select.select([stdout], [], [], 10 * budget + 5)[0]:
-            answer = stdout.read(1)
+        with selectors.DefaultSelector() as waiting:  # not select(): no descriptor cap
+            waiting.register(stdout, selectors.EVENT_READ)
+            if waiting.select(10 * budget + 5):
+                answer = stdout.read(1)
     except BrokenPipeError:
         pass  # the child had ended
     finally:
         if answer:
-            with _IDLE_LOCK:
-                _IDLE.append(child)
+            _IDLE.append(child)
         else:
             child.kill()
             _close(child)
