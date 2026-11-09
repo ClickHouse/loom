@@ -5,6 +5,7 @@ and `loom sql-access` writes whole rows that give a user exactly one scope."""
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -270,9 +271,19 @@ def test_the_restricted_config_is_read_before_the_registry_is(
     monkeypatch.setattr(sql_access, "config_entries", repos.config_entries)
     monkeypatch.setattr(repos.settings, "code_self_service_enabled", True)
     monkeypatch.setattr(repos, "_registry_loaded", False)
+    entries = [
+        {
+            "org": "acme",
+            "namespace": "code-private",
+            "repo": "acme/private",
+            "classification": "restricted",
+        },
+        {"org": "acme", "namespace": "code-open", "repo": "acme/open"},
+    ]
+    monkeypatch.setattr(repos.settings, "code_repos_json", json.dumps(entries))
     with pytest.raises(repos.RegistryUnread):
         repos.configured_repos()
-    assert isinstance(sql_access.config_restricted(), set)
+    assert sql_access.config_restricted() == {("acme", "code-private")}
 
 
 def test_a_new_user_exists_before_its_scope_and_is_granted_last() -> None:

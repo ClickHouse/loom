@@ -85,11 +85,15 @@ It holds the 31 whole UTC days before today and today so far; each statement rea
 `ops`, a mean across rows), and `latency_p50_ms` and `latency_p95_ms`, approximate and per
 row: they do not combine across rows. Every `day` but today's is a whole day.
 
-### What a ledger read costs
+### What a read costs
 
-A view runs the caller's filter on the rows it returns, so a filter on `ts` or `day` narrows
-the answer, not what is read. Each read of a ledger view reads the grant's whole scope over
-the window: at most from the start of the month the window opens in, usually close to the
+A view runs the caller's filter on the rows it returns, so a filter on `ts`, `day`,
+`thread_id` or `memory_key` narrows the answer, not what is read. Every read of
+`sql_v1_memories`, `sql_v1_memory_history` and `sql_v1_conversations` reads the grant's whole
+scope: the history sorts every version in it, and the conversations view groups every turn
+in it, content included. These grow with what the scope stores, and a wide scope can exceed
+the read caps below. Each read of a ledger view reads the grant's whole scope over the
+window: at most from the start of the month the window opens in, usually close to the
 window itself. A wider grant (`*` namespaces, `--all`) reads more. The SQL user's read caps
 apply to that read (`LOOM_CH_ANALYSIS_MAX_ROWS_TO_READ`, `_MAX_EXECUTION_S`,
 `_MAX_MEMORY_BYTES`, `_MAX_THREADS`), so a busy scope can exceed them: narrow the grant, or
