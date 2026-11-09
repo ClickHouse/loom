@@ -737,6 +737,8 @@ class _Inspect:
         if not rows:
             return []
         rows = await self.served(rows)
+        if not rows:
+            return []
         uris = [str(r["source_uri"]) for r in rows]
         # Without the server's model, nothing says which chunks search serves.
         chunks = (

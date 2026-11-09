@@ -1306,6 +1306,20 @@ async def test_under_postgres_a_listed_document_the_authority_moved_past_is_not_
 
 
 @pytest.mark.asyncio
+async def test_under_postgres_a_listing_whose_every_row_moved_reads_nothing_more(
+    stubs: Stubs, authority: _Authority
+) -> None:
+    """Every listed row rewritten or deleted in the authority: nothing is listed, no
+    chunk, version or job read runs for an empty listing, and `skipped` counts both."""
+    _whole(stubs)
+    authority.served = {"docs/b.md": (10, False), "docs/b.md#v2": (4, True)}
+    out = await ki.handle_knowledge_inspect(_inp())
+    assert out.listed == [] and not out.listed_complete
+    assert not {"document_chunks", "document_retired_versions", "source_jobs"} & set(stubs.calls)
+    assert any(s.startswith("listed.heads: 2 document(s) ") for s in out.skipped)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["down", "error"])
 async def test_under_postgres_a_failed_listing_check_lists_clickhouses_rows(
     stubs: Stubs, authority: _Authority, monkeypatch: pytest.MonkeyPatch, failure: str
