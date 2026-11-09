@@ -363,7 +363,7 @@ async def me_service_accounts_create(
         restricted_roles = await token_grants.restricted_roles(
             org, subject, delegated, requested_role
         )
-        is_code = await token_grants.code_namespace_test(
+        is_code = await token_grants.code_namespace_predicate(
             org, list(restricted_roles), namespace_classification.is_restricted
         )
         sa_subject = new_token_subject(org, name, subject)

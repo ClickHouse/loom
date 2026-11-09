@@ -294,7 +294,7 @@ def test_token_mint_happy_path_when_auth_not_required(
 
     monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
     monkeypatch.setattr("server.identity.app.token_grants.grant_restricted_to_token", no_restricted)
-    monkeypatch.setattr("server.identity.app.token_grants.code_namespace_test", no_code)
+    monkeypatch.setattr("server.identity.app.token_grants.code_namespace_predicate", no_code)
     r = client.post(
         "/v1/admin/token.mint",
         json={

@@ -356,9 +356,9 @@ def _no_repo_job_sandbox() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _code_registry_read() -> Iterator[None]:
-    """The code ingest pass, the compiler tiers, the PR history and the code CLI run
-    only once the self-service registry has been read; unit tests fake that read. A
-    test of an unread registry resets it (`repo_registry.reset_for_tests`)."""
+    """Every reader of the configured repositories refuses until the self-service
+    registry has been read; unit tests fake that read. A test of an unread registry
+    sets `repos._registry_loaded` itself."""
     from server.code.domain.index import repos
 
     before = repos._registry_loaded

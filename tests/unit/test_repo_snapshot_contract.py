@@ -316,11 +316,11 @@ async def test_a_restricted_token_mint_refuses_a_name_of_unknown_kind_while_unre
     monkeypatch.setattr(repos, "_registry_loaded", False)
     monkeypatch.setattr(namespace_kinds, "kind_map", kinds)
     monkeypatch.setattr(token_grants.grants_repo, "insert_rows", insert)
+    # The mints call this before they save the token; it refuses then.
     with pytest.raises(repos.RegistryUnread):
-        await token_grants.grant_restricted_to_token(
-            "o", "sa", "me", {"code-x": "writer"}, is_restricted=restricted
-        )
+        await token_grants.code_namespace_predicate("o", ["code-x"], restricted)
     assert written == []
+    is_code = await token_grants.code_namespace_predicate("o", ["team-kb"], restricted)
     assert await token_grants.grant_restricted_to_token(
-        "o", "sa", "me", {"team-kb": "writer"}, is_restricted=restricted
+        "o", "sa", "me", {"team-kb": "writer"}, is_code_namespace=is_code, is_restricted=restricted
     ) == ["team-kb"]

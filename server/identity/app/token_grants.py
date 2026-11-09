@@ -103,7 +103,7 @@ def refuse_unread_code(
     has no kind in `kinds` (the directory's, which fall back to the configuration, and
     that lists no page branch then). `configured_too` also refuses a code namespace
     of a known kind or an operator entry: its bound trackers are not known yet."""
-    from server.code.domain.index.repos import config_entry, registry_unread, require_registry_read
+    from server.code.domain.index.repos import RegistryUnread, config_entry, registry_unread
 
     if not registry_unread():
         return
@@ -111,10 +111,10 @@ def refuse_unread_code(
         listed = config_entry(org, n) is not None
         kind = kinds.get(n, "")
         if (not listed and kind == "") or (configured_too and (listed or kind == "code")):
-            require_registry_read()
+            raise RegistryUnread("the self-service repository registry is not read yet; retry")
 
 
-async def code_namespace_test(
+async def code_namespace_predicate(
     org: str, names: list[str], is_restricted: Callable[[str, str], Awaitable[bool]]
 ) -> Callable[[str, str], bool]:
     """How `grant_restricted_to_token` tells a code namespace, read once: a caller that
@@ -142,8 +142,8 @@ async def grant_restricted_to_token(
     creator: str,
     ns_roles: dict[str, str],
     *,
+    is_code_namespace: Callable[[str, str], bool],
     is_restricted: Any = None,
-    is_code_namespace: Any = None,
 ) -> list[str]:
     """Write one direct grant per RESTRICTED namespace in ``ns_roles`` for
     the token's own subject. Returns the namespaces granted."""
@@ -151,8 +151,6 @@ async def grant_restricted_to_token(
         from server.identity.app.namespace_classification import is_restricted as _isr
 
         is_restricted = _isr
-    if is_code_namespace is None:
-        is_code_namespace = await code_namespace_test(org, list(ns_roles), is_restricted)
     granted: list[str] = []
     rows: list[dict[str, Any]] = []
     now = naive_utc_now_seconds()

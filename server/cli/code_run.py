@@ -96,6 +96,7 @@ async def _then_disconnect(coro: asyncio.Future[int] | Coroutine[Any, Any, int])
         # A repository added from the Repositories page lives in the registry, not in
         # LOOM_CODE_REPOS_JSON: read it before the subcommand resolves its namespace.
         from server.code.app.index.repo_registry import refresh_db_repos
+        from server.code.domain.index.repos import RegistryUnread
 
         await get_client().connect()
         async with model_command():
@@ -104,6 +105,10 @@ async def _then_disconnect(coro: asyncio.Future[int] | Coroutine[Any, Any, int])
             started = True
             try:
                 return int(await coro)
+            except RegistryUnread:
+                raise SystemExit(
+                    "the self-service repository registry could not be read; retry"
+                ) from None
             finally:
                 # Some native commands close their own client. Reopen it for
                 # buffered-write drain/retirement before leaving enrollment.
@@ -161,7 +166,7 @@ def _run(name: str, coro: asyncio.Future[int] | Coroutine[Any, Any, int]) -> int
         if isinstance(e, Terminated):
             log.warning("cli.code.%s: terminated", name)
             raise SystemExit(rc) from None
-        if not isinstance(e, KeyboardInterrupt):
+        if not isinstance(e, KeyboardInterrupt | SystemExit):  # an exit says its own why
             log.exception("cli.code.%s: failed", name)
         raise
     finally:
