@@ -23,7 +23,7 @@ import pytest
 
 from server.insights.domain import analysis as boundary
 from tests.integration._eventually import wait_until
-from tests.integration._resources import unique_org
+from tests.integration._resources import ch_client_from_env, unique_org
 
 _REFUSED = {403, 422}
 
@@ -254,17 +254,21 @@ def test_an_error_quotes_no_value_from_another_scope(
         assert not any(leaked.lower() in e.lower() for e in logged), logged
 
 
-@pytest.fixture
-def prefix(ch_client) -> str:
+@pytest.fixture(scope="module")
+def prefix() -> str:
     """The prefix this ClickHouse takes custom settings under, found as Loom finds it."""
-    for p in boundary.SETTING_PREFIXES:
-        try:
-            ch_client.command("SELECT 1", settings={f"{p}loom_probe": "1"})
-        except Exception as e:
-            if "UNKNOWN_SETTING" not in str(e):
-                raise  # no answer: the run must not guess
-            continue  # not a prefix this server takes
-        return p
+    client = ch_client_from_env()
+    try:
+        for p in boundary.SETTING_PREFIXES:
+            try:
+                client.command("SELECT 1", settings={f"{p}loom_probe": "1"})
+            except Exception as e:
+                if "UNKNOWN_SETTING" not in str(e):
+                    raise  # no answer: the run must not guess
+                continue  # not a prefix this server takes
+            return p
+    finally:
+        client.close()
     pytest.fail(f"ClickHouse takes custom settings under none of {boundary.SETTING_PREFIXES}")
 
 

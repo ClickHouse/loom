@@ -158,7 +158,9 @@ async def load_secrets(*, may_draw: bool) -> None:
     change by themselves: a signing-secret rotation only reseals them (`loom
     secrets reseal`). `may_draw` draws them when there are none: `loom
     ch-setup`, or a boot whose server user can see that no analyst user exists
-    yet. Run under the analysis lease, so one caller draws them."""
+    yet. The first load in a process also finds the server's custom settings
+    prefix (`store.setting_prefix`). Run under the analysis lease, so one caller
+    draws them."""
     if refusal := await _secrets_refusal(may_draw=may_draw):
         raise SetupRefused(refusal)
 

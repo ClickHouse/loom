@@ -426,8 +426,7 @@ class Scenario:
         # An older build's probe errors can hold the pads in clear in the
         # server log: its search starts now.
         since = sql(self.ch_port, "SELECT now()")
-        needles = {"k": "[" + ", ".join(map(sql_string, secrets)) + "]"}
-        self.logs_hold_no_key(since, needles)
+        self.logs_hold_no_key(since, {"k": "[" + ", ".join(map(sql_string, secrets)) + "]"})
 
     def answers_insights(self, label: str) -> bool:
         """Whether `label` answers insights.query within SETTLE_S: a process
