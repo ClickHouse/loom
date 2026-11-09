@@ -1013,7 +1013,6 @@ async def test_no_sync_before_the_self_service_registry_is_read(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     monkeypatch.setattr(repo_registry, "registry_read", lambda: False)
-    _code_rows(monkeypatch, {"code-x", "code-y"})  # told by their directory rows
     ch = _FakeCH([_admin("code-x", "alice")])
     assert await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch) == 0
     assert ch.inserted == []

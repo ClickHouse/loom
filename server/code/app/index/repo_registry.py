@@ -4,10 +4,10 @@ beside LOOM_CODE_REPOS_JSON.
 The environment variable is the operator's; this table is everyone's. A
 person adds a repository (or a branch of one) from the Repositories page,
 becomes its first maintainer, and the ingest worker clones and indexes it.
-``configured_repos()`` stays synchronous — it is on the authz hot path — so
-this module keeps an in-process snapshot refreshed by ``refresh_db_repos``
-(boot and every ``code_repos_refresh_seconds`` on every process, every ingest
-pass, every code.repos call, and at once after an add).
+``config_entries()`` (authorization) and ``configured_repos()`` (every other
+reader) stay synchronous, so this module keeps an in-process snapshot refreshed by
+``refresh_db_repos`` (boot and every ``code_repos_refresh_seconds`` on every process,
+every ingest pass, every code.repos call, and at once after an add).
 
 A private remote's token is stored encrypted (Fernet keyed from the JWT
 secret with a domain separator) and never returned over the wire.

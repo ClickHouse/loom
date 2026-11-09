@@ -42,7 +42,7 @@ async def readable_repo_namespace(org: str, code_namespace: str) -> str:
             return ""
         return ns if await row_in_scope(org, ns, Role.VIEWER, hides_answer=False) else ""
     except RegistryUnread:
-        return ""  # which entries are configured is not known yet: closed
+        return ""  # unread: closed, and no gate failure worth a warning per request
     except Exception as e:  # noqa: BLE001 — a gate that cannot check refuses
         # One line per scoped request while the grants read is down.
         log.warning("repository namespace gate failed (closed): %s", e)
