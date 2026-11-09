@@ -536,8 +536,10 @@ its own wait covers every row its transaction read.
   timeout does not cover a commit's standby wait); the client's command timeout cancels
   a wait that outlasts it and raises, and nothing claimed is sent.
 - A writer's flush sends its own commits, which returned from their wait.
-- A newer copy of a head (a pin, a touch) that a document is built onto, and the live
-  decision writers a record retirement keeps, are other sessions' commits. They are
+- A head newer than the revision a delivery claimed (a copy, a pin or a touch, that a
+  document is built onto; a delete, other content or a redaction, that settles the
+  document unsent), and the live decision writers a record retirement keeps, are other
+  sessions' commits. They are
   read again in `pg.durable_transaction()`, whose COMMIT carries a transactional logical
   message (prefix `loom.durable`) so that it waits for the standbys on the connection
   that read the rows, and decided from that read. `decision.record` checks its writers

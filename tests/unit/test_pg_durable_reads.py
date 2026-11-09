@@ -192,6 +192,11 @@ def _head(version: int, sha: str = "a" * 64) -> dict[str, Any]:
         pytest.param(lambda c: c.row, 0, id="own revision: no durable read"),
         pytest.param(lambda c: _head(9), 1, id="newer copy: read again durably"),
         pytest.param(lambda c: None, 0, id="no head: nothing sent"),
+        pytest.param(
+            lambda c: {**_head(9), "tombstoned_at": "2026-01-01 00:00:00"},
+            1,
+            id="newer delete: settled unsent only from a durable read",
+        ),
     ],
 )
 def test_still_heads_reads_durably_only_for_another_commit(

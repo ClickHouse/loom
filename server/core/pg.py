@@ -8,7 +8,9 @@ request holds a connection past its budget. A commit is acknowledged only as dur
 the server's standby configuration allows (`server.core.pg_profile` checks that at
 boot): the statement timeout does not cover its standby wait, which ends at the
 standbys' flush or at the client's command timeout, a cancel that leaves the commit on
-the primary alone and raises (`outcome_unknown` from `transaction`).
+the primary alone and raises. `transaction` reports it `outcome_unknown`; a single
+statement outside one reports it as not committed, so it writes only what a failover
+may lose: a lease, a claim, a counter.
 
 A failure to reach Postgres answers 503 POSTGRES_UNAVAILABLE: with the authority
 down, writes and authoritative reads fail closed, never fall back to ClickHouse.
@@ -17,6 +19,7 @@ down, writes and authoritative reads fail closed, never fall back to ClickHouse.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import weakref
@@ -315,10 +318,8 @@ def _terminate(conn: Any) -> None:
     from the pool, and a call on it would replace the block's error."""
     import asyncpg
 
-    try:
+    with contextlib.suppress(asyncpg.InterfaceError):
         conn.terminate()
-    except asyncpg.InterfaceError:
-        pass
 
 
 async def _release(pool: Any, conn: Any) -> None:
