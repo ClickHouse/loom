@@ -862,6 +862,13 @@ async def test_a_revoke_on_a_process_that_never_read_the_registry(
     with pytest.raises(GrantBusyError):
         await maintainers.read_repo("clickhouse", "code-x", ch=object())
     assert reads == [True]
+    # The revoke itself, on that memory namespace: nothing to fan out, nothing refused.
+    assert (
+        await maintainers.revoke_repo_maintainer(
+            "clickhouse", "team-kb", "alice", repo=None, ch=object()
+        )
+        == 0
+    )
     # An operator entry whose directory row is not (yet) code: its configuration says so.
     monkeypatch.setattr(repos, "config_entry", lambda org, ns: object() if ns == "code-y" else None)
     with pytest.raises(GrantBusyError):

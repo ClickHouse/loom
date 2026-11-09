@@ -172,7 +172,8 @@ async def read_registry(ch: Any | None = None) -> bool:
 def registry_read() -> bool:
     """The snapshot holds what loom.code_repos held at some read, or there is no registry
     (self-service off): False while every read since the process started failed. Reads
-    `repos.registry_unread`, which owns the flag."""
+    `repos.registry_unread`, which owns the flag: app modules read this one (and tests
+    patch it), modules outside the code plane's app layer read that one."""
     return not registry_unread()
 
 

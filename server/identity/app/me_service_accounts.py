@@ -108,10 +108,17 @@ def _invalid(message: str) -> HTTPException:
     return HTTPException(status_code=422, detail={"code": "VALIDATION_FAILED", "message": message})
 
 
+async def _kinds(org: str, names: list[str]) -> list[str]:
+    from server.identity.app import namespace_kinds
+
+    kinds = await namespace_kinds.kind_map(org)
+    return [kinds.get(ns, "") for ns in names]
+
+
 async def _bound_trackers(org: str, subject: str, parent: AuthInfo, repos: list[str]) -> list[str]:
     """The restricted tracker records bound to `repos` that the caller holds a grant on and
     the parent token reaches; the history code ops read issues and PRs there."""
-    from server.code.domain.index.repos import RegistryUnread, config_entry, registry_unread
+    from server.code.domain.index.repos import RegistryUnread, registry_unread
     from server.tracker.app.binding import (
         operator_repositories,
         refresh_overrides,
@@ -121,7 +128,7 @@ async def _bound_trackers(org: str, subject: str, parent: AuthInfo, repos: list[
     out: list[str] = []
     if not repos:
         return out
-    if registry_unread() and any(config_entry(org, ns) for ns in repos):
+    if registry_unread() and any(k == "code" for k in await _kinds(org, repos)):
         # The operator repositories, and so the trackers bound to them, are not known
         # yet: refuse before the mint rather than mint a token missing their grants.
         raise RegistryUnread("the self-service repository registry is not read yet; retry")

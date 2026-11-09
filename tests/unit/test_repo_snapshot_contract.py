@@ -21,7 +21,6 @@ CONFIG_ENTRY_READERS = {
     "identity/app/namespace_classification.py",
     "identity/app/namespace_kinds.py",
     "identity/app/token_grants.py",
-    "identity/app/me_service_accounts.py",
     # Whether a revoke on a never-read process must read the registry and fan out.
     "code/app/index/maintainers.py",
     "transport/namespace_resolve.py",
@@ -175,7 +174,13 @@ async def test_a_service_account_bound_to_repositories_is_not_minted_while_unrea
 
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
     monkeypatch.setattr(repos, "_registry_loaded", False)
-    monkeypatch.setattr(repos, "config_entry", lambda org, ns: object() if ns == "code-x" else None)
+    from server.identity.app import namespace_kinds
+
+    async def kinds(org: str) -> dict[str, str]:
+        # code-x is a branch added from the page: its directory row says code
+        return {"code-x": "code", "team-kb": "memory"}
+
+    monkeypatch.setattr(namespace_kinds, "kind_map", kinds)
     with pytest.raises(repos.RegistryUnread):
         await me_service_accounts._bound_trackers("o", "s", object(), ["code-x"])  # type: ignore[arg-type]
     assert await me_service_accounts._bound_trackers("o", "s", object(), []) == []  # type: ignore[arg-type]

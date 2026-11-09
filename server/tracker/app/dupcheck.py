@@ -24,6 +24,7 @@ import time
 from datetime import datetime
 from typing import Any
 
+from server.code.domain.index.repos import registry_unread
 from server.core.llm_free import reads_llm_free
 from server.llm import customer
 from server.settings import settings
@@ -173,7 +174,8 @@ async def _with_links(
     final = out.model_copy(
         update={k: d.get(k) for k in ("items", "closest", "nearest", "related_prs", "answer")},
     )
-    if wall is None and code_ns:
+    # An answer from before the code registry's first read is narrower: not kept.
+    if wall is None and code_ns and not registry_unread():
         remember_answer(org, code_ns, title, final)
     return final
 
