@@ -9,7 +9,7 @@ file is:
 
 * a ``section`` symbol per heading, qualified name `<module>::<H1>::<H2>…`
   from the heading text (the file's `module_scope`, headings as written; a
-  name over 1,000 characters is cut and ends in a hash of the cut path),
+  title or name over 1,000 characters is cut and ends in a hash of the whole),
   signature the `#` line, span from the heading to the next heading of the
   same or a higher level, doc the first paragraph; a file with a single H1
   is that section's parent;
