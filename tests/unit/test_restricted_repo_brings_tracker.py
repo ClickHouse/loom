@@ -135,7 +135,8 @@ async def test_the_tracker_record_is_viewer_whatever_the_role_handed_in(
         "server.tracker.domain.namespaces.tracker_namespace",
         lambda o, n: object() if n == "tracker-private" else None,
     )
-    is_code = await tg.code_namespace_predicate(ORG, ["tracker-private"], _isr)
+    monkeypatch.setattr("server.identity.app.namespace_classification.is_restricted", _isr)
+    is_code = await tg.code_namespace_predicate(ORG, ["tracker-private"])
     await tg.grant_restricted_to_token(
         ORG,
         "sa:t",

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -114,14 +114,13 @@ def refuse_unread_code(
             raise RegistryUnread("the self-service repository registry is not read yet; retry")
 
 
-async def code_namespace_predicate(
-    org: str, names: list[str], is_restricted: Callable[[str, str], Awaitable[bool]]
-) -> Callable[[str, str], bool]:
+async def code_namespace_predicate(org: str, names: list[str]) -> Callable[[str, str], bool]:
     """How `grant_restricted_to_token` tells a code namespace, read once: a caller that
     writes a token first calls this before that write, so a refusal
     (`refuse_unread_code`, for the restricted names) strands nothing."""
     from server.code.domain.index.repos import config_entry
     from server.identity.app import namespace_kinds
+    from server.identity.app.namespace_classification import is_restricted
     from server.tracker.domain.namespaces import tracker_namespace
 
     restricted = [n for n in names if await is_restricted(org, n)]

@@ -363,9 +363,7 @@ async def me_service_accounts_create(
         restricted_roles = await token_grants.restricted_roles(
             org, subject, delegated, requested_role
         )
-        is_code = await token_grants.code_namespace_predicate(
-            org, list(restricted_roles), namespace_classification.is_restricted
-        )
+        is_code = await token_grants.code_namespace_predicate(org, list(restricted_roles))
         sa_subject = new_token_subject(org, name, subject)
         minted = delegated.mint(sa_subject)
         now = naive_utc_now_seconds()  # after the mint: the row is never older than the token's iat

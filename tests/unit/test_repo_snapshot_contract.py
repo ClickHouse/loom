@@ -140,11 +140,18 @@ def test_the_doctor_reads_the_registry_before_its_mirror_checks(monkeypatch) -> 
     from server.cli import doctor
     from server.code.app.index import mirrors
 
-    order: list[str] = []
-    monkeypatch.setattr(doctor, "_read_code_registry", lambda: order.append("registry"))
-    monkeypatch.setattr(mirrors, "doctor_checks", lambda: order.append("mirrors") or [])
-    doctor._code_mirror_checks()
-    assert order == ["registry", "mirrors"]
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    monkeypatch.setattr(repos, "_registry_repos", repos._registry_repos)
+    monkeypatch.setattr(repos, "_registry_namespaces", repos._registry_namespaces)
+    monkeypatch.setattr(repos, "_page_namespaces", repos._page_namespaces)
+    monkeypatch.setattr(
+        doctor, "_read_code_registry", lambda: repos.set_registry_repos([], frozenset())
+    )
+    monkeypatch.setattr(
+        mirrors, "doctor_checks", lambda: [("ok", "PASS", str(len(repos.configured_repos())))]
+    )
+    assert doctor._code_mirror_checks() == [("ok", "PASS", "0")]
 
 
 @pytest.mark.asyncio
@@ -301,7 +308,7 @@ async def test_a_restricted_token_mint_refuses_a_name_of_unknown_kind_while_unre
     monkeypatch,
 ) -> None:
     # A page branch the directory read missed would otherwise get a writer grant.
-    from server.identity.app import namespace_kinds, token_grants
+    from server.identity.app import namespace_classification, namespace_kinds, token_grants
 
     written: list[object] = []
 
@@ -317,12 +324,13 @@ async def test_a_restricted_token_mint_refuses_a_name_of_unknown_kind_while_unre
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
     monkeypatch.setattr(repos, "_registry_loaded", False)
     monkeypatch.setattr(namespace_kinds, "kind_map", kinds)
+    monkeypatch.setattr(namespace_classification, "is_restricted", restricted)
     monkeypatch.setattr(token_grants.grants_repo, "insert_rows", insert)
     # The mints call this before they save the token; it refuses then.
     with pytest.raises(repos.RegistryUnread):
-        await token_grants.code_namespace_predicate("o", ["code-x"], restricted)
+        await token_grants.code_namespace_predicate("o", ["code-x"])
     assert written == []
-    is_code = await token_grants.code_namespace_predicate("o", ["team-kb"], restricted)
+    is_code = await token_grants.code_namespace_predicate("o", ["team-kb"])
     assert await token_grants.grant_restricted_to_token(
         "o", "sa", "me", {"team-kb": "writer"}, is_code_namespace=is_code, is_restricted=restricted
     ) == ["team-kb"]
