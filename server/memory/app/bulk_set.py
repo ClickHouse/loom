@@ -1475,8 +1475,8 @@ async def _bulk_conflict_verdicts(
     pending: list[tuple[Any, ...]],
     value_vectors: list[list[float]],
     *,
+    floors: dict[str, tuple[float, float]],
     cap: int | None = None,
-    floors: dict[str, tuple[float, float]] | None = None,
 ) -> dict[int, Any]:
     """check_on_commit for every searchable entry, concurrency-bounded. Keys are
     indexes into memory_rows; values are ConflictResults. A bulk past the cap (`cap`,
@@ -1499,7 +1499,9 @@ async def _bulk_conflict_verdicts(
     # The namespace's policy and each type's threshold, read once for the batch; one that
     # cannot be read is left to each fact's check, which reads it again.
     policy = await _namespace_policy(input.org, input.namespace)
-    floors = {} if floors is None else floors  # (threshold, reach) by type, kept for the commit
+    if not pending[:cap]:
+        return out
+    # floors: (threshold, reach) by type, kept on the call's state for the commit
     for mt in dict.fromkeys(str(entry_metas[idx][0].memory_type) for idx, *_ in pending[:cap]):
         if mt not in floors and (floor := await _type_floor(input.org, input.namespace, mt)):
             floors[mt] = floor

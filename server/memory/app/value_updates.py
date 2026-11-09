@@ -287,10 +287,6 @@ async def _peers_joined(
     return [dict(r) for r in rows]
 
 
-# The most value-update peers weighed per row.
-_PEERS_PER_ROW = 8
-
-
 async def _peers_codes_first(
     ch: Any,
     *,
@@ -316,7 +312,7 @@ async def _peers_codes_first(
         "dim": len(embedding),
         "max_dist": 1.0 - float(min_cosine),
     }
-    rows = await nearest_peer_rows(ch, params, request_scope(), limit=_PEERS_PER_ROW)
+    rows = await nearest_peer_rows(ch, params, request_scope(), limit=8)  # as the join's LIMIT 8
     return [
         {
             "memory_id": str(r["memory_id"]),
@@ -373,10 +369,10 @@ async def link_value_updates(
             return None
         return emb
 
-    # Peers for a batch of rows come from one statement
-    # (`_peers_many`); the per-row statement remains for batch = 0 and for a
-    # batch that failed. Rows are grouped by embedding dimension so one
-    # statement's `dim` holds for all of them.
+    # Peers for a batch of rows come from one statement (`_peers_many`); the per-row
+    # statement remains for batch = 0, for a batch that failed and under
+    # LOOM_MEMORY_BULK_PEER_READ=per_fact. Rows are grouped by embedding dimension so
+    # one statement's `dim` holds for all of them.
     from server.settings import settings as _s
 
     batch = int(_s.memory_write_candidate_batch)

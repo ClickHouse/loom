@@ -508,8 +508,9 @@ async def check_on_commit(
     `new_valid_at`: the new row's validity date when the writer supplied one; it decides
     which side of a templated substitution `newest_wins` retires.
 
-    `candidate_rows`: the peers a caller already read (`peer_rows`, under the Postgres
-    authority); the peer and pinned statements are skipped. `resolved_threshold`: the
+    `candidate_rows`: the peers a caller already read (a bulk call's
+    `candidate_rows_many`, or `peer_rows` under the Postgres authority), pinned arm
+    included; the peer and pinned statements are skipped. `resolved_threshold`: the
     type's conflict threshold, when the caller read it; the lookups are skipped."""
     # Non-searchable types (episodic) carry no embedding → skip cleanly.
     if not new_embedding:
@@ -548,7 +549,8 @@ async def check_on_commit(
     else:
         rows = await nearest_peer_rows(ch, params, scope)
     keyed = memory_type in KEY_IDENTIFIED_TYPES
-    # Rows passed in (`peer_rows`) carry their pinned arm already; a decision needs none.
+    # Rows passed in (`candidate_rows_many`, `peer_rows`) carry their pinned arm already;
+    # a decision needs none.
     if candidate_rows is None and not keyed:
         rows += await _foreign_pinned_rows(ch, params, scope, rows)
     rows = await _without_erased(org, namespace, rows)

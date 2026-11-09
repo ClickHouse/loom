@@ -2509,11 +2509,8 @@ class MemorySettings(BaseModel):
     # the write path; matches the per-fact concurrency so wall time stays flat.
     # 0 = one statement per fact.
     memory_write_candidate_batch: int = 6
-    # How a bulk write and the value-update linking read each fact's peers: batched = one
-    # join of the namespace's full vectors per memory_write_candidate_batch facts; per_fact
-    # = each fact's two-stage, codes-first read, as memory.set's, which holds one
-    # statement's memory at any scope size but may pick a different peer where distances
-    # tie at the last place.
+    # How a bulk write reads each fact's peers: batched = one join per
+    # memory_write_candidate_batch facts; per_fact = memory.set's codes-first read per fact.
     memory_bulk_peer_read: Literal["batched", "per_fact"] = "batched"
 
     # Cosine ≥ this with a canonical-form mismatch marks a write 'duplicate'

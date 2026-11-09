@@ -62,6 +62,7 @@ async def test_each_bulk_fact_reads_its_own_peers_codes_first(monkeypatch) -> No
         [(e, f"value {i}", None, None, None) for i, e in enumerate(entries)],
         [(i, None, None, None) for i in range(3)],
         [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]],
+        floors={},
     )
     assert set(out) == {0, 1, 2}  # every fact checked, none left unchecked by a failure
     peer_reads = [sql for sql, _ in ch.query_all_calls if "cosineDistance" in sql]
@@ -72,42 +73,6 @@ async def test_each_bulk_fact_reads_its_own_peers_codes_first(monkeypatch) -> No
         "k1",
         "k2",
     ]
-
-
-@pytest.mark.asyncio
-async def test_check_on_commit_with_prefetched_rows_issues_no_peer_statement(monkeypatch) -> None:
-    ch = StubCH()
-    monkeypatch.setattr(conflicts, "get_client", lambda: ch)
-    rows = [
-        {
-            "memory_id": "p1",
-            "memory_key": "user_city",
-            "value": "Lisbon",
-            "pinned": False,
-            "agent": "a",
-            "user_id": "u",
-            "session_id": "s",
-            "run_id": "-",
-            "valid_at": None,
-            "dist": 0.05,
-        }
-    ]
-    res = await conflicts.check_on_commit(
-        org="o",
-        namespace="ns",
-        agent="a",
-        memory_type="semantic",
-        memory_key="user_home_city",
-        new_value="Lisbon",
-        new_embedding=[0.1, 0.2],
-        candidate_rows=rows,
-        resolved_threshold=0.85,
-        resolved_policy="auto_reinforce",
-    )
-    # Only the allowlist read hit ClickHouse; no threshold lookups, no peer statement.
-    assert len(ch.query_one_calls) == 0
-    assert all("conflict_allowlist" in sql for sql, _ in ch.query_all_calls)
-    assert res.verdict == "merge" and res.peers[0].memory_key == "user_city"
 
 
 @pytest.mark.asyncio
@@ -237,7 +202,7 @@ async def test_a_bulk_type_threshold_that_cannot_be_read_is_read_by_each_fact(
 
     monkeypatch.setattr(conflicts, "_resolve_threshold", threshold)
     put, metas, pending, vectors = _bulk(2)
-    out = await bulk_set._bulk_conflict_verdicts(put, [{}] * 2, metas, pending, vectors)
+    out = await bulk_set._bulk_conflict_verdicts(put, [{}] * 2, metas, pending, vectors, floors={})
     assert set(out) == {0, 1}  # both checked
     assert len(calls) == 3  # the batch's failed read, then one per fact
 
@@ -256,7 +221,7 @@ async def test_an_append_only_bulk_write_clears_every_entry_without_a_peer_read(
     monkeypatch.setattr(conflicts, "get_client", lambda: ch)
     reads = _no_reads(monkeypatch, "append_only")
     put, metas, pending, vectors = _bulk(3)
-    out = await bulk_set._bulk_conflict_verdicts(put, [{}] * 3, metas, pending, vectors)
+    out = await bulk_set._bulk_conflict_verdicts(put, [{}] * 3, metas, pending, vectors, floors={})
     assert [out[i].verdict for i in range(3)] == ["clear"] * 3
     assert reads == ["n"]  # read once for the batch
     assert not [sql for sql, _ in ch.query_all_calls if "cosineDistance" in sql]
@@ -274,7 +239,34 @@ def test_a_narrowed_bulk_writer_is_refused_by_another_users_pinned_peer(monkeypa
     put, metas, pending, vectors = _bulk(1)
     out = _run_as(
         _pinned("U"),
-        lambda: bulk_set._bulk_conflict_verdicts(put, [{}], metas, pending, vectors),
+        lambda: bulk_set._bulk_conflict_verdicts(put, [{}], metas, pending, vectors, floors={}),
     )
     assert out[0].verdict == "rejected" and out[0].pinned_blocker_id == "v1"
     assert all(p.memory_id != "v1" for p in out[0].peers)
+
+
+@pytest.mark.asyncio
+async def test_a_batched_bulk_call_reads_its_configuration_once_and_peers_per_batch(
+    monkeypatch,
+) -> None:
+    """The default read: the call reads the policy and the type's threshold once, the
+    facts' peers in one batched statement, and no fact reads either again."""
+    from server.memory.app import bulk_set
+
+    monkeypatch.setattr(settings, "memory_bulk_peer_read", "batched")
+    ch = StubCH()
+    monkeypatch.setattr(conflicts, "get_client", lambda: ch)
+    reads = _no_reads(monkeypatch, "auto_reinforce")
+    thresholds: list[str] = []
+
+    async def threshold(org: str, namespace: str, memory_type: str | None = None) -> float:
+        thresholds.append(str(memory_type))
+        return 0.85
+
+    monkeypatch.setattr(conflicts, "_resolve_threshold", threshold)
+    put, metas, pending, vectors = _bulk(3)
+    out = await bulk_set._bulk_conflict_verdicts(put, [{}] * 3, metas, pending, vectors, floors={})
+    assert set(out) == {0, 1, 2}
+    assert reads == ["n"] and thresholds == ["semantic"]
+    peer_reads = [sql for sql, _ in ch.query_all_calls if "cosineDistance" in sql]
+    assert len(peer_reads) == 1 and "qidx" in peer_reads[0]  # one batched join for three

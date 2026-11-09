@@ -3859,7 +3859,7 @@
             "per_fact"
           ],
           "type": "string",
-          "description": "How a bulk write and the value-update linking read each fact's peers: batched = one join of the namespace's full vectors per memory_write_candidate_batch facts; per_fact = each fact's two-stage, codes-first read, as memory.set's, which holds one statement's memory at any scope size but may pick a different peer where distances tie at the last place."
+          "description": "How a bulk write reads each fact's peers: batched = one join per memory_write_candidate_batch facts; per_fact = memory.set's codes-first read per fact."
         },
         "memory_calibration_namespace_miss_ttl_s": {
           "default": 60.0,
