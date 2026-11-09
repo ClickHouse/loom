@@ -12,10 +12,11 @@ the same parse does the same work and so stays within the same limits (past twic
 deadline it stops reading, in case it does not). A child serves one parse at a time and
 is kept for the next; one that ended is replaced. One parse runs at a time in each
 server process, child included, so a server process holds at most one memory limit's
-worth of parse at once (the trees its callers keep are not counted). The child is the
-server's interpreter with `-I` and an empty environment; it bounds resources and is no
-sandbox. The pool stays in `domain/`, beside the parsers that call it: the child is a
-local process, no ClickHouse or network. The limits hold on Linux.
+worth of parse at once, plus up to 64 MB the child kept from earlier parses (the trees
+its callers keep are not counted). The child is the server's interpreter with `-I` and
+an empty environment; it bounds resources and is no sandbox. The pool stays in
+`domain/`, beside the parsers that call it: the child is a local process, no ClickHouse
+or network. The limits hold on Linux.
 
 The parse here reads the source `_CHUNK` bytes at a time through a callback: the binding
 holds the GIL while it parses, and the callback is where another thread can take it, so
@@ -90,7 +91,9 @@ def _in_child(grammar: str, source: bytes, budget: float, memory: int) -> bytes 
     global _idle
     child, _idle = _idle, None
     answer = None if child is None else _ask(child, grammar, source, budget, memory)
-    if answer is None:  # none idle, or it ended while idle, before reading the request
+    if (
+        child is None or answer is None
+    ):  # none idle, or it ended while idle, before reading the request
         try:
             child = subprocess.Popen(
                 [sys.executable, "-I", str(_CHILD)],
@@ -102,7 +105,7 @@ def _in_child(grammar: str, source: bytes, budget: float, memory: int) -> bytes 
             logger.error("bounded_parse: the parse process did not start: %s", e)
             raise
         answer = _ask(child, grammar, source, budget, memory)
-    return answer or cast("int", cast("subprocess.Popen[bytes]", child).returncode)
+    return answer or cast("int", child.returncode)
 
 
 def _ask(

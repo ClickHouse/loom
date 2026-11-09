@@ -186,7 +186,7 @@ def test_a_header_whose_parse_stops_is_read_as_not_indexed(
     assert ih._header_cache[("acme", "code", "src/a.h")] is None
 
 
-def test_two_threads_never_parse_at_once() -> None:
+def test_two_threads_never_parse_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
     import threading
 
     import tree_sitter
@@ -195,6 +195,7 @@ def test_two_threads_never_parse_at_once() -> None:
 
     from server.code.domain.extract import bounded_parse
 
+    monkeypatch.setattr(bounded_parse, "_idle", None)
     active, most = 0, 0
     count = threading.Lock()
 
@@ -226,6 +227,7 @@ def test_two_threads_never_parse_at_once() -> None:
     for t in threads:
         t.join()
     assert most == 1
+    _end(bounded_parse._idle)
 
 
 def test_headers_whose_parses_stop_spend_the_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -555,6 +557,8 @@ settings.code_parse_memory_mb = 128
 assert "ParseTimeout" in parse_for_ingest("a.cpp", source)[1]
 settings.code_parse_memory_mb = 512
 assert parse_for_ingest("a.cpp", source)[1] == ""
+from server.code.domain.extract import bounded_parse
+assert bounded_parse._idle is None  # it grew past 64 MB and retired
 """
     done = subprocess.run(
         [sys.executable, "-c", script], cwd=_SERVER.parent, capture_output=True, timeout=60
