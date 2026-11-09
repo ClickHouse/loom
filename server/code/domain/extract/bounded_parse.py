@@ -25,7 +25,8 @@ The parse here reads the source `_CHUNK` bytes at a time through a callback: the
 holds the GIL while it parses, and the callback is where another thread can take it, so
 a parse run in a thread lets the event loop run every few tens of milliseconds. Work
 between reads and after the last one holds the GIL, for at most a tenth of the deadline
-at a stretch (the child refuses a parse past that).
+at a stretch (the child refuses a parse past that). The binding's own progress callback
+is not used: it builds its arguments with a format code Python 3.12 rejects, and crashes.
 """
 
 from __future__ import annotations
@@ -123,7 +124,9 @@ def _in_child(grammar: str, source: bytes, budget: float, memory: int) -> bytes 
 def _refuse(answer: bytes | int, budget: float, memory: int) -> NoReturn:
     """The error for a child's answer other than `DONE`."""
     if answer == parse_child.STOPPED:
-        raise ParseTimeout(f"parse stopped after {budget:g} CPU seconds")
+        raise ParseTimeout(
+            f"parse ran past {budget:g} CPU seconds, or {budget / 10:g} s at a stretch"
+        )
     if answer == _SILENT:
         raise ParseTimeout(f"the parse process did not answer within {_wall_bound(budget):g} s")
     status = cast("int", answer)
@@ -144,6 +147,7 @@ def _start() -> subprocess.Popen[bytes]:
             [sys.executable, "-I", str(_CHILD)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,  # a limit hit is its exit status, not a log line
             env={},
             start_new_session=True,  # a terminal's Ctrl-C is the server's to take
         )
