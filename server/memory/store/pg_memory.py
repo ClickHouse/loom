@@ -1720,7 +1720,7 @@ async def fold_usage(
         )
         UPDATE loom.memory_current c SET row = c.row || jsonb_build_object(
             'evidence_count', greatest(coalesce((c.row->>'evidence_count')::bigint, 1), l.ev),
-            'recall_count', greatest(coalesce((c.row->>'recall_count')::bigint, 0), l.rc),
+            'recall_count', greatest((c.row->>'recall_count')::bigint, l.rc),
             'last_recalled_at', CASE
                 WHEN l.lra IS NULL THEN c.row->'last_recalled_at'
                 WHEN c.row->>'last_recalled_at' IS NULL THEN to_jsonb(l.lra)
