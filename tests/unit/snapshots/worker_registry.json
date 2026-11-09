@@ -155,6 +155,20 @@
    }
   },
   {
+   "deadline_seconds()": 60.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 10,
+   "interval_seconds": 2,
+   "max_pass_seconds": null,
+   "name": "knowledge_pg_delivery",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.knowledge.workers.pg_delivery:run_pass"
+   }
+  },
+  {
    "deadline_seconds()": 900.0,
    "due_scope": null,
    "first_pass_due": null,
@@ -886,6 +900,20 @@
    }
   },
   {
+   "deadline_seconds()": 60.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 10,
+   "interval_seconds": 2,
+   "max_pass_seconds": null,
+   "name": "knowledge_pg_delivery",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.knowledge.workers.pg_delivery:run_pass"
+   }
+  },
+  {
    "deadline_seconds()": 900.0,
    "due_scope": null,
    "first_pass_due": null,
@@ -1416,6 +1444,20 @@
    "owned_tables": [],
    "pass_callable": {
     "id": "server.memory.workers.pg_delivery:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 60.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 10,
+   "interval_seconds": 2,
+   "max_pass_seconds": null,
+   "name": "knowledge_pg_delivery",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.knowledge.workers.pg_delivery:run_pass"
    }
   },
   {

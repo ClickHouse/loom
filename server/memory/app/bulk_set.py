@@ -12,7 +12,7 @@ from contextlib import nullcontext
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
-from server.core import pg
+from server.core import pg, pg_lease
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now
 from server.core.error_summary import error_summary
@@ -531,8 +531,8 @@ async def _land_batch(
             cause = failed[0]
             state.unpublished = (
                 cause
-                if isinstance(cause, pg_memory.PublicationPending)
-                else pg_memory.PublicationPending.after(cause)
+                if isinstance(cause, pg_lease.PublicationPending)
+                else pg_lease.PublicationPending.after(cause)
             )
     try:
         if committed is None and isinstance(embedding_done, BaseException):
@@ -576,7 +576,7 @@ async def _publish_batch(
             await memory_repo.insert_memory_versions(state.memory_rows, ch=ch)
 
     async def _insert_embedding_rows() -> None:
-        with pg_memory.leased(committed.deadline if committed is not None else None):
+        with pg_lease.leased(committed.deadline if committed is not None else None):
             await memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch)
         if committed is not None:
             embedded = {str(r.get("memory_key")) for r in state.embedding_rows}

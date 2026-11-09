@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 from typing import Any, Literal
 
 from server.core.datetimes import naive_utc_now
+from server.core.pg_lease import PublicationPending
 from server.memory.api.models_crud import MemorySetInput
 from server.memory.api.models_learnings import (
     LearningsListInput,
@@ -324,7 +326,9 @@ async def _do_promote(
 
     if source_kind == "memory_supporters":
         await _promote_via_shared(org, namespace, candidate_row, approver, reason)
-    else:
+        return
+    # Committed, published by the delivery worker: the decision is recorded as made.
+    with contextlib.suppress(PublicationPending):
         await _promote_via_memory_set(org, namespace, candidate_row, approver, reason)
 
 
@@ -466,19 +470,20 @@ async def _do_promote_to_knowledge(
         f": {reason}" if reason else ""
     )
 
-    await handle_knowledge_upsert(
-        KnowledgeUpsertInput(
-            org=org,
-            namespace=namespace,
-            content=content,
-            source_uri=source_uri,
-            title=title,
-            tags=tags,
-            source_class=source_class,
-            metadata={
-                "promoted_from_candidate_id": str(candidate_row["candidate_id"]),
-                "rationale": rationale,
-            },
-        )
+    request = KnowledgeUpsertInput(
+        org=org,
+        namespace=namespace,
+        content=content,
+        source_uri=source_uri,
+        title=title,
+        tags=tags,
+        source_class=source_class,
+        metadata={
+            "promoted_from_candidate_id": str(candidate_row["candidate_id"]),
+            "rationale": rationale,
+        },
     )
+    # Committed, published by the delivery worker: the decision is recorded as made.
+    with contextlib.suppress(PublicationPending):
+        await handle_knowledge_upsert(request)
     return source_uri

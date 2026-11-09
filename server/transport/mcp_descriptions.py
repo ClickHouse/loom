@@ -1096,7 +1096,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "knowledge.bulk_add": (
         "Ingest many documents in one call. Use for genuine bulk "
         "imports (a folder of policies, a docs site dump) — not for "
-        "individual snippets."
+        "individual snippets. Each source_uri at most once."
     ),
     "knowledge.bulk_delete": (
         "Delete many documents by source_uri in one call. DESTRUCTIVE. "

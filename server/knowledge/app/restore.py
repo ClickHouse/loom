@@ -11,13 +11,13 @@ the ordering and what it cannot take back in docs/architecture/failure-and-recov
 from __future__ import annotations
 
 import asyncio
-import time
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from server.core.ch import own_write_reads
 from server.core.datetimes import naive_utc_now
 from server.core.errors import BackendUnavailableError, PreconditionFailedError
+from server.core.pg_lease import PublicationPending
 from server.core.shielded import shielded
 from server.erasure.app import ledger_reads
 from server.erasure.domain.scopes import may_cover
@@ -28,6 +28,7 @@ from server.knowledge.store import chunks as chunks_repo
 from server.knowledge.store import documents as documents_repo
 from server.knowledge.store import restore as restore_repo
 from server.knowledge.store.documents import DocumentRow
+from server.knowledge.store.pg_documents import DocumentErased, HeadMoved
 
 _NO_ORIGINAL = {"blob_path": "", "blob_size": 0, "blob_content_type": "", "original_filename": ""}
 
@@ -67,6 +68,9 @@ async def _claimed(
     """The restore under the source's claim, from the re-read to the write back; `at` is
     the delete's time on the retired row."""
     org, ns, uri = doc.org, doc.namespace, doc.source_uri
+    # Under the Postgres authority a document whose keys it cannot store is refused (422)
+    # before anything is brought back: its write-back and its undo would both be refused.
+    documents_repo.check_storable([doc.model_dump()])
     async with ingest_run.claim_source(org, ns, uri) as held:
         if not held:
             raise BackendUnavailableError(
@@ -76,6 +80,14 @@ async def _claimed(
         if current is None or current.version != doc.version:
             raise PreconditionFailedError(
                 "the document changed while it was restored; call knowledge.restore again"
+            )
+        # A delete's retirement of the chunks still to land would retire them again after
+        # this restore brought them back.
+        if await documents_repo.publication_may_land(org, ns, uri):
+            raise BackendUnavailableError(
+                "a publication of this source may still land (a parked one waits for an"
+                " operator); call knowledge.restore again",
+                operation="knowledge.restore",
             )
         versions = await restore_repo.retired_by_delete(org, ns, uri, doc.revision, at)
         # Without the delete's rows, a restore that failed after the chunks left them
@@ -108,20 +120,30 @@ async def _write_back(
         dropped = {**dropped, "artifact_sha256": ""}  # the sweep took it too
     if caller_gone.is_set():
         return _answer(doc, restored=False, reason="not_restorable")
-    restored_version = _later_than(doc.version)
+    restored_version = documents_repo.version_past(doc.version)
     try:
         if versions:
             await restore_repo.unretire(org, ns, uri, versions, at)
+        # Over the version read under the claim: a text write takes no claim, and one
+        # committed since refuses this restore (under the Postgres authority).
         await documents_repo.insert_one(
             documents_repo.build_document_row(
                 doc, version=restored_version, superseded_at=None, **dropped
-            )
+            ),
+            over=doc.version,
         )
         live = await chunks_repo.count_active_for_doc(org, ns, uri)
         # An erasure registered while this ran may have passed the rows already.
         covering = await _ledger_covering(doc, signed=signed)
-    except BaseException:  # the claim's timeout cancels too: the undo must run
+    except BaseException as e:  # the claim's timeout cancels too: the undo must run
         await _undo_after_failure(doc, ingestions, restored_version, at, signed=signed)
+        if isinstance(e, DocumentErased):  # an erasure removed it since: as any erasure
+            return _answer(doc, restored=False, reason="not_restorable")
+        if isinstance(e, PublicationPending):  # committed, then taken back: not committed
+            raise BackendUnavailableError(
+                "the restore was taken back; call knowledge.restore again",
+                operation="knowledge.restore",
+            ) from e
         raise
     if covering or caller_gone.is_set():
         await _undo(doc, ingestions, restored_version, at, purge=_purging(covering))
@@ -155,17 +177,26 @@ async def _undo(
     its row deleted under a purge, else the newest row written back retired."""
     org, ns, uri = doc.org, doc.namespace, doc.source_uri
     if purge:
+        # Under the Postgres authority the restored head and any delivery of it go first,
+        # so no publication brings the row back.
+        await documents_repo.drop_committed(org, ns, uri, restored)
         await restore_repo.delete_row(org, ns, uri, restored)
     else:
         newest = await documents_repo.get_one(org, ns, uri, include_superseded=True)
         if newest is not None and newest.revision == doc.revision:
-            await documents_repo.insert_one(
-                documents_repo.build_document_row(
-                    newest,
-                    version=_later_than(max(restored, newest.version)),
-                    superseded_at=newest.superseded_at or at,
+            try:
+                await documents_repo.insert_one(
+                    documents_repo.build_document_row(
+                        newest,
+                        version=documents_repo.version_past(max(restored, newest.version)),
+                        superseded_at=newest.superseded_at or at,
+                    ),
+                    over=newest.version,
                 )
-            )
+            except PublicationPending:
+                pass  # the retired row is committed: the delivery worker publishes it
+            except (HeadMoved, DocumentErased):
+                pass  # a later write took the source, or an erasure removed it
     await _relist(doc, ingestions, at)
 
 
@@ -174,12 +205,6 @@ async def _relist(doc: DocumentRow, ingestions: list[int], at: datetime) -> None
         await chunks_repo.mark_doc_superseded(
             doc.org, doc.namespace, doc.source_uri, only_version=version, when=at
         )
-
-
-def _later_than(version: int) -> int:
-    """A version that wins over `version` under ReplacingMergeTree, even when the replica
-    that wrote it runs a clock ahead of this one."""
-    return max(time.time_ns(), version + 1)
 
 
 def _answer(doc: DocumentRow, **fields: Any) -> KnowledgeRestoreOutput:

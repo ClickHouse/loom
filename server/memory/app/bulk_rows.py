@@ -17,6 +17,7 @@ from fastapi import HTTPException
 
 from server.core.datetimes import parse_iso_dt, to_naive_utc
 from server.core.hashing import sha256_value as _content_sha256
+from server.core.pg_lease import PublicationPending
 from server.memory.api.models_bulk import (
     BLACKLISTED,
     LOCKED,
@@ -40,7 +41,7 @@ from server.memory.domain.expire_reasons import carried_reason
 from server.memory.domain.memory_types import is_embedded
 from server.memory.domain.procedural_contract import retype_for as _procedural_retype
 from server.memory.domain.sensitive_retention import sensitive_retention
-from server.memory.store.pg_memory import PublicationPending, policy_part
+from server.memory.store.pg_memory import policy_part
 from server.memory.store.rows import next_version, version_over
 
 if TYPE_CHECKING:

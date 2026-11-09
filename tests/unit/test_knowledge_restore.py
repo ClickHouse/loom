@@ -16,8 +16,8 @@ import anyio
 import anyio.lowlevel
 import pytest
 
-from server.core import shielded
-from server.core.errors import BackendUnavailableError, PreconditionFailedError
+from server.core import pg, shielded
+from server.core.errors import BackendUnavailableError, PreconditionFailedError, ValidationError
 from server.erasure.app.ledger_reads import LEDGER_CLOCK_MARGIN_S
 from server.knowledge.api.models_knowledge import KnowledgeRestoreInput
 from server.knowledge.app import restore
@@ -81,16 +81,22 @@ class _World:
         self.erasure = False
         self.original: object | None = object()
         self.held = True
+        self.over: list[int] = []  # the version each write was made over
+        self.dropped_commits: list[int] = []  # Postgres commits a purge undo took back
+        self.undo_error: BaseException | None = None  # raised by the second insert
         w = self
 
         async def get_one(*_a: Any, **_k: Any) -> DocumentRow | None:
             return w.reads[0] if len(w.reads) == 1 else w.reads.pop(0)
 
-        async def insert_one(row: dict[str, Any]) -> None:
+        async def insert_one(row: dict[str, Any], *, over: int, **_: Any) -> None:
             if w.insert_error is not None:
                 error, w.insert_error = w.insert_error, None
                 raise error
             w.inserted.append(row)
+            w.over.append(over)
+            if len(w.inserted) == 2 and w.undo_error is not None:
+                raise w.undo_error
 
         async def retired_by_delete(*_a: Any) -> list[int]:
             return w.retired
@@ -122,6 +128,9 @@ class _World:
         async def delete_row(_o: str, _n: str, _u: str, version: int) -> None:
             w.deleted_rows.append(version)
 
+        async def drop_committed(_o: str, _n: str, _u: str, version: int) -> None:
+            w.dropped_commits.append(version)
+
         async def unretire(_o: str, _n: str, _u: str, vs: list[int], at: datetime) -> None:
             w.unretired.append((vs, at))
 
@@ -148,6 +157,7 @@ class _World:
         monkeypatch.setattr(restore.chunks_repo, "count_active_for_doc", count_active)
         monkeypatch.setattr(restore.chunks_repo, "mark_doc_superseded", mark_doc_superseded)
         monkeypatch.setattr(restore.restore_repo, "delete_row", delete_row)
+        monkeypatch.setattr(restore.documents_repo, "drop_committed", drop_committed)
         monkeypatch.setattr("server.knowledge.app.ingest_run.claim_source", claim)
 
 
@@ -165,6 +175,7 @@ def test_a_deleted_document_and_its_chunks_come_back(monkeypatch: pytest.MonkeyP
     (row,) = w.inserted
     assert row["superseded_at"] is None and row["version"] > 7
     assert (row["doc_id"], row["revision"], row["blob_path"]) == ("d1", 3, "sha")
+    assert w.over == [7]  # over the version read under the claim: a commit's precondition
 
 
 def test_a_document_never_written_is_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -307,6 +318,8 @@ def test_a_purge_registered_during_the_restore_deletes_its_row(
     assert _restore().reason == "not_restorable"
     (row,) = w.inserted
     assert w.deleted_rows == [row["version"]] and w.retired_again == [(41, _AT)]
+    # Under the Postgres authority the restored head and its delivery go too.
+    assert w.dropped_commits == [row["version"]]
 
 
 def test_a_namespace_erasure_is_never_a_purge(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -524,8 +537,8 @@ def test_a_cancelled_request_takes_its_restore_back_under_the_claim(
     async def main() -> None:
         async with anyio.create_task_group() as tg:
 
-            async def insert_then_cancel(row: dict[str, Any]) -> None:
-                await record(row)
+            async def insert_then_cancel(row: dict[str, Any], **kw: Any) -> None:
+                await record(row, **kw)
                 events.append("insert")
                 if len(w.inserted) == 1:
                     tg.cancel_scope.cancel()
@@ -575,3 +588,97 @@ def test_a_request_cancelled_before_the_writes_writes_nothing(
     asyncio.run(main())
     assert not (w.inserted or w.unretired or w.retired_again or w.deleted_rows)
     assert events == ["released"]
+
+
+def test_a_restore_taken_back_after_its_commit_answers_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under the Postgres authority the write-back can commit and then not publish
+    (PUBLICATION_PENDING); the undo then commits the row retired again, so the restore
+    did not happen and the answer must say to call it again, never "committed"."""
+    from server.core.errors import BackendUnavailableError
+    from server.core.pg_lease import PublicationPending
+
+    w = _World(monkeypatch, _doc())
+    w.insert_error = PublicationPending()
+    with pytest.raises(BackendUnavailableError, match="call knowledge.restore again"):
+        _restore()
+    (retired,) = w.inserted  # the undo's row: the document stays deleted
+    assert retired["superseded_at"] is not None
+
+
+def test_an_undo_whose_retirement_is_pending_still_answers_not_restored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An erasure turned up while the restore ran, and the undo's retired row committed
+    and was left to the delivery worker (PUBLICATION_PENDING): what is committed is the
+    document deleted again, so the answer is "not restorable", never "committed"."""
+    from server.core.pg_lease import PublicationPending
+
+    w = _World(monkeypatch, _doc())
+    w.undo_error = PublicationPending()
+    w.ledger_rows = [{"scope_type": "user_id", "scope_value": "u1", "purge": False}]
+    w.erasure_after = 1
+    assert _restore().reason == "not_restorable"
+    assert w.inserted[-1]["superseded_at"] is not None
+
+
+@pytest.mark.parametrize("refusal", ["moved", "erased"])
+def test_an_undo_refused_by_another_write_or_an_erasure_still_retires_the_chunks(
+    monkeypatch: pytest.MonkeyPatch, refusal: str
+) -> None:
+    """The undo's retired row is refused: a later write took the source, or an erasure
+    removed it. The chunks the restore brought back are retired again all the same."""
+    from server.knowledge.store.pg_documents import DocumentErased, HeadMoved
+
+    w = _World(monkeypatch, _doc())
+    w.undo_error = HeadMoved("doc://a") if refusal == "moved" else DocumentErased()
+    w.ledger_rows = [{"scope_type": "user_id", "scope_value": "u1", "purge": False}]
+    w.erasure_after = 1
+    assert _restore().reason == "not_restorable"
+    assert w.retired_again == [(41, _AT)]
+
+
+def test_a_write_back_an_erasure_refused_answers_not_restorable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An erasure removed the document after the restore read it: the commit is refused
+    by its evidence, and the restore answers as for any erasure, not with a 404."""
+    from server.knowledge.store.pg_documents import DocumentErased
+
+    w = _World(monkeypatch, _doc())
+    w.insert_error = DocumentErased()
+    assert _restore().reason == "not_restorable"
+    assert w.retired_again == [(41, _AT)]
+
+
+def test_a_restore_waits_while_the_delete_is_still_being_published(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under the Postgres authority the delete's retirement may still land: a restore then
+    would have its chunks retired again after it brought them back."""
+    from server.core.errors import BackendUnavailableError
+
+    w = _World(monkeypatch, _doc())
+
+    async def owed(*a: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(restore.documents_repo, "publication_may_land", owed)
+    with pytest.raises(BackendUnavailableError, match="may still land"):
+        _restore()
+    assert w.inserted == [] and w.unretired == []
+
+
+@pytest.mark.parametrize("key", ["source_uri", "user_id"])
+def test_a_document_postgres_cannot_key_is_refused_before_anything_comes_back(
+    monkeypatch: pytest.MonkeyPatch, key: str
+) -> None:
+    """Under the Postgres authority a source URI or user id holding a NUL cannot be
+    committed: the restore answers 422 before it unretires a chunk, since its write-back
+    and its undo would both be refused and leave the chunks live under the deleted row."""
+    w = _World(monkeypatch, _doc(**{key: "doc://a\x00b"}))
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    with pytest.raises(ValidationError):
+        _restore(**({"source_uri": "doc://a\x00b"} if key == "source_uri" else {}))
+    assert w.inserted == [] and w.unretired == []

@@ -2323,7 +2323,7 @@
         "document_blob_gc_enabled": {
           "default": true,
           "type": "boolean",
-          "description": "The sweep that deletes originals no live document points at: those of deleted and re-uploaded documents, and of documents that retention (retention_documents_days, a namespace's retention_days) aged out. Their bucket objects go with them; a walk of the bucket deletes any object left."
+          "description": "The sweep that deletes originals no live document points at: those of deleted and re-uploaded documents, and of documents that retention (retention_documents_days, a namespace's retention_days; the ClickHouse authority only) aged out. Their bucket objects go with them; a walk of the bucket deletes any object left."
         },
         "document_blob_gc_interval_seconds": {
           "default": 3600,
@@ -2975,6 +2975,12 @@
           "default": true,
           "type": "boolean",
           "description": "True: noise sections rank below the knowledge hits close to the query and stay out of context.pack and memory.stack. False: they are served like any section."
+        },
+        "knowledge_orphan_chunk_min_age_seconds": {
+          "default": 3600,
+          "minimum": 60,
+          "type": "integer",
+          "description": "Seconds a no-row source's chunks must have aged before a delete retires them (a first write's are younger); never less than an ingest pass plus 5 minutes of clock skew."
         },
         "knowledge_repo_docs_list_ttl_s": {
           "default": 60.0,
@@ -5425,12 +5431,12 @@
           "default": 500,
           "minimum": 1,
           "type": "integer",
-          "description": "Revisions one delivery pass publishes."
+          "description": "Deliveries one pass of each delivery worker publishes; also the expired deletion evidence and settled knowledge deliveries one pass sweeps."
         },
         "pg_delivery_enabled": {
           "default": true,
           "type": "boolean",
-          "description": "Background delivery of committed revisions a request did not publish."
+          "description": "Background delivery of committed memory revisions and knowledge documents a request did not publish (the pg_delivery and knowledge_pg_delivery workers)."
         },
         "pg_delivery_idle_interval_seconds": {
           "default": 10,
@@ -5446,13 +5452,13 @@
           "default": 30,
           "minimum": 5,
           "type": "integer",
-          "description": "Seconds the delivery worker holds a revision's delivery before another may take it; also how long the conflict resolver sets aside a row whose flagged peer is not yet in ClickHouse."
+          "description": "Seconds the delivery workers hold a memory revision's or a knowledge document's delivery before another may take it; also how long the conflict resolver sets aside a row whose flagged peer is not yet in ClickHouse."
         },
         "pg_delivery_max_attempts": {
           "default": 10,
           "minimum": 1,
           "type": "integer",
-          "description": "Times a delivery is tried before it is parked: a search document it cannot build is published as a stub for the embedding worker; a memory row ClickHouse keeps refusing is left out of claims and of its namespace's watermark, and counted in /v1/health?include=postgres (`postgres.parked_deliveries`). An audit row waiting in the outbox (a row an erasure moved there, or one a claim deferred because the holder it replaced may still insert it) is parked the same way (`postgres.parked_audits`). An unavailable ClickHouse counts no attempt."
+          "description": "Times a delivery is tried before it is parked: a search document it cannot build is published as a stub for the embedding worker; a memory row ClickHouse keeps refusing is left out of claims and of its namespace's watermark, and counted in /v1/health?include=postgres (`postgres.parked_deliveries`). An audit row waiting in the outbox (a row an erasure moved there, or one a claim deferred because the holder it replaced may still insert it) is parked the same way (`postgres.parked_audits`), and so is a knowledge document's row (`postgres.parked_knowledge_deliveries`). An unavailable ClickHouse counts no attempt."
         },
         "pg_durability": {
           "default": "synchronous",
@@ -5467,7 +5473,13 @@
           "default": 24,
           "minimum": 1,
           "type": "integer",
-          "description": "Hours an erased memory's id is kept as deletion evidence, refusing a write built from a head read before the erasure (longer than any request holds a head); a `namespace.restore` into its namespace leaves the memory out meanwhile."
+          "description": "Hours an erased memory's id, or an erased knowledge document's `doc_id`, is kept as deletion evidence, refusing a write built from a head read before the erasure (longer than any request holds a head); a `namespace.restore` into its namespace leaves the memory out meanwhile."
+        },
+        "pg_erasure_evidence_page_rows": {
+          "default": 10000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Document ids an erasure reads from ClickHouse per statement, and keeps as deletion evidence per insert: what one page of a large scope holds in memory."
         },
         "pg_lease_margin_seconds": {
           "default": 1.0,
@@ -5749,17 +5761,17 @@
         "retention_documents_days": {
           "default": 0,
           "type": "integer",
-          "description": "Days `loom.documents` rows are kept; 0 = forever."
+          "description": "Days `loom.documents` rows are kept; 0 = forever. The Postgres authority refuses it."
         },
         "retention_memory_days": {
           "default": 0,
           "type": "integer",
-          "description": "Days `loom.memory` rows are kept; 0 = forever."
+          "description": "Days `loom.memory` rows are kept; 0 = forever. The Postgres authority refuses it."
         },
         "retention_memory_embeddings_days": {
           "default": 0,
           "type": "integer",
-          "description": "Days `loom.memory_embeddings` rows are kept; 0 = forever."
+          "description": "Days `loom.memory_embeddings` rows are kept; 0 = forever. The Postgres authority refuses it."
         },
         "retention_reconcile_enabled": {
           "default": true,

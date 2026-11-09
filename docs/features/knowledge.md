@@ -638,7 +638,9 @@ last earlier build is gone; a sync writes only the files that changed.
 namespace, a synced one included, and every ingested file too, which it turns into a
 text document: in a namespace that holds ingested files, rechunk each text document
 with `--source-uri`, and relabel an ingested file by a new `knowledge.ingest` of its
-original.
+original. A reindex and `loom rechunk` rewrite the content they read, over its version:
+under the Postgres authority a source written since refuses the rewrite (409, a rechunk
+lists it under `failed`) instead of being replaced by the older text.
 
 **Collapse and narrowing.** Collapsing keeps the best window of a long section, leaving room for another section.
 `narrow_spans` returns one sentence pair instead of a whole section, for one extra batched embed call.
@@ -801,10 +803,13 @@ bounds the listed documents and every finding's samples.
     407).
   - `ingest_content_rejected` (`contract_violation`): the extractor refused the file, or
     the server refused what it made of it (`incomplete_extraction` without
-    `allow_partial`, `no_text`, `too_large`). `resource_limit`: the extractor passed its
-    own memory or output limit, or its artifact was over
-    `LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES`. The earlier revision, if any, still
-    serves.
+    `allow_partial`, `no_text`, `too_large`, or `unstorable_text`: under the Postgres
+    authority, a source URI or writer's id holding a NUL character or a lone surrogate,
+    in a job an older build queued; `knowledge.ingest` refuses such a key with 422
+    `VALIDATION_FAILED` before queueing it).
+    `resource_limit`: the extractor passed its own memory or output limit, or its
+    artifact was over `LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES`. The earlier
+    revision, if any, still serves.
   - `ingest_failed_on_server` (`system_state`): the job failed on the server's side,
     neither the file's nor the extractor's fault: a store or embedder outage that used up
     `knowledge_ingest_max_attempts`, runs cut off before they finished (both
@@ -852,15 +857,22 @@ it requires `confirm_duplicate_uri` equal to `duplicate_uri` so a mis-picked dro
 cannot supersede the wrong document.
 
 A delete is a soft delete: the rows stay, marked superseded, and `include_superseded`
-reads them. No table TTL removes them unless an operator configured one
-(`LOOM_RETENTION_CHUNKS_DAYS`, `LOOM_RETENTION_DOCUMENTS_DAYS`, both 0 by default). The
-stored original stays until the `document_blob_gc` worker finds no live document naming
-it: every `LOOM_DOCUMENT_BLOB_GC_INTERVAL_SECONDS` it removes, one namespace at a time,
-the originals of deleted and re-uploaded documents and of documents a retention TTL
-removed, so originals age out with their documents. It spares an original written in the
-last `LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS` (3600): a concurrent upload of the same bytes
-may be about to name it. A re-upload that fails after storing its bytes keeps the
-document's current download: no write deletes the original a document names.
+reads them. A delete of a source with no document row retires only its chunks older than
+`LOOM_KNOWLEDGE_ORPHAN_CHUNK_MIN_AGE_SECONDS` (never less than an ingest pass plus five
+minutes), since every writer inserts a new source's chunks before its row: a younger
+chunk may be a first write's still to commit, and keeps serving. No table TTL removes
+them unless an operator configured one (`LOOM_RETENTION_CHUNKS_DAYS`,
+`LOOM_RETENTION_DOCUMENTS_DAYS`, both 0 by default; the Postgres authority refuses the
+second). The stored original stays until the `document_blob_gc` worker finds no live
+document naming it: every `LOOM_DOCUMENT_BLOB_GC_INTERVAL_SECONDS` it removes, one
+namespace at a time, the originals of deleted and re-uploaded documents and of documents
+a retention TTL removed, so originals age out with their documents. It spares an
+original written in the last `LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS` (3600): a concurrent
+upload of the same bytes may be about to name it. A re-upload that fails after storing
+its bytes keeps the document's current download: no write deletes the original a
+document names. Under the Postgres authority the sweep keeps an original a committed
+write names while its live document row is still owed to ClickHouse, parked included,
+and a user's erasure keeps one that another user's such commit names.
 
 With a bucket, the min age must outlast a write from the start of its upload to its row
 landing, since the store may date an object from the start of its upload. The settings
@@ -910,20 +922,29 @@ removed it, so the restored document has none) or `none`. Otherwise `reason` say
 | `not_restorable`    | A delete did not retire it (an erasure superseded it, or it has no chunks), an erasure reached it or its original, or one still covers it. |
 | `expired`           | The delete is more than 89 days old.                                                                                                       |
 
-Restore asks for the signature a delete leaves (chunks of the document's revision, listed
-as retired at the row's own `superseded_at`) and reads the erasure ledger
+Restore asks for the signature a delete leaves (chunks of the document's revision,
+listed as retired at the row's own `superseded_at`) and reads the erasure ledger
 (`loom.erasure_requests`) before and after it writes, so it never brings back what an
 erasure reached. The ledger keeps a request 90 days, so a restore reaches deletes of the
 last 89. `if_revision` restores only when the deleted document is at that revision
 (`knowledge.get` with `include_superseded=true` reads it). Restore takes the source's
-claim, as an ingest's publish and a metadata edit do, and refuses with
-`PRECONDITION_FAILED` when the document changed between its read and its write; calling it
-again is safe. Datasets published from the document were deleted with it and stay deleted,
-and the sweep may have removed its original or an ingested file's extraction artifact;
-ingesting the file again brings both back. A document a source sync retired is retired
-again by the next sync if the source no longer lists it. How restore orders its reads and
-writes against erasures, other writes and the sweep, and the cases it cannot take back:
-[failure and recovery](../architecture/failure-and-recovery.md#knowledge-restore).
+claim, as an ingest's publish, a metadata edit and a delete of an already deleted source
+do, and refuses with `PRECONDITION_FAILED` when the document changed between its read
+and its write; calling it again is safe. Under the Postgres authority it also answers
+503 `BACKEND_UNAVAILABLE`, and calling it again is safe too, while a publication of the
+source may still land (the delete's retirement of the chunks, or any earlier write's:
+until its delivery lands, a parked one until an operator retries it, and for the insert
+bound after the delivery worker finished one it took over), and when a write-back that
+committed could not publish and was taken back. A document whose source URI or writer's
+id holds text Postgres cannot store (a NUL character, a lone surrogate) is refused there
+with 422 `VALIDATION_FAILED` before anything is brought back ([storage
+authority](../architecture/storage-authority.md#knowledge-documents)). Datasets
+published from the document were deleted with it and stay deleted, and the sweep may
+have removed its original or an ingested file's extraction artifact; ingesting the file
+again brings both back. A document a source sync retired is retired again by the next
+sync if the source no longer lists it. How restore orders its reads and writes against
+erasures, other writes and the sweep, and the cases it cannot take back: [failure and
+recovery](../architecture/failure-and-recovery.md#knowledge-restore).
 
 ## Ingesting files
 
@@ -960,10 +981,14 @@ chunk's `chunk_metadata` carries its `locator` (line span, char span, TOML key p
 page or deck slide span, sheet and row span) and block ids, and its `keys` the exact
 names it defines or reads. Text writes (`knowledge.add`, `upsert`) number revisions too.
 Ingests of one source run one at a time, in the order they were asked, so
-`expected_revision` guards an ingest against another; a text write takes no such claim,
-so one that races a write of the same source can reuse its revision number, and the
-later version wins (an ingest a later write of the source overtook, a text write, a
-metadata edit or a delete, fails `revision_conflict`).
+`expected_revision` guards an ingest against another; a text write takes no such claim.
+Under the ClickHouse authority a text write that races a write of the same source can
+reuse its revision number, and the later version wins. Under the Postgres authority
+each write commits over the version it read, so the later of two racing writes is
+refused with 409 `PRECONDITION_FAILED` and each revision number is taken once
+([storage authority](../architecture/storage-authority.md#knowledge-documents)). Either
+way an ingest a later write of the source overtook (a text write, a metadata edit or a
+delete) fails `revision_conflict`.
 
 `knowledge.ingest_status` follows a job: `pending`, `processing` (with its `stage`:
 `parse`, `embed`, `publish`), then `ready`, `partial`, `failed` or `cancelled`, with the
@@ -1307,7 +1332,8 @@ curl -s localhost:7777/v1/knowledge.search -H "Authorization: Bearer $LOOM_API_K
 - **A cold namespace has no lexical leg** until its statistics exist; results are
   vector-only in the meantime.
 - **`bulk_add` does not supersede.** It behaves like `add` per document; use `upsert`
-  per document to replace.
+  per document to replace. A batch names each `source_uri` at most once; one that
+  repeats a source is refused (422) with nothing written.
 - **Knowledge is not belief-revised.** Two documents can contradict each other; Loom
   flags identical content, not conflicting content. Claims that must be judged against
   each other belong in memory.

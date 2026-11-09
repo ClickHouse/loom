@@ -43,13 +43,19 @@ def test_rechunk_reupserts_every_live_document_from_stored_content(
         if uri == "kb://b":
             return None  # vanished between list and read
         return NS(
-            content="# H\n\nbody", title="A", description="d", tags=["t"], metadata='{"k": 1}'
+            content="# H\n\nbody",
+            title="A",
+            description="d",
+            tags=["t"],
+            metadata='{"k": 1}',
+            version=7,
         )
 
     upserts: list[Any] = []
 
-    async def _upsert(inp: Any) -> Any:
+    async def _upsert(inp: Any, *, read_version: int | None = None) -> Any:
         upserts.append(inp)
+        assert read_version == 7  # a write since the read is refused, never undone
         return NS(chunks_created=5, chunks_superseded=3)
 
     monkeypatch.setattr(documents_repo, "list_with_chunk_counts", _list)
@@ -125,3 +131,29 @@ def test_lexical_stats_rebuild_deletes_then_reinserts_from_live_rows_per_plane()
     ch = _FakeCH({})
     asyncio.run(rebuild(ch, org="o", namespace="ns", planes=("memory",)))
     assert [s.split(" ")[2] for s, _ in ch.executed] == ["loom.memory_term_freq"]
+
+
+def test_rechunk_counts_a_committed_write_awaiting_publication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PUBLICATION_PENDING says the document committed: rechunked, not failed."""
+    from server.cli import ops
+    from server.core.pg_lease import PublicationPending
+    from server.knowledge.store import documents as documents_repo
+
+    pages = [[{"source_uri": "kb://a", "ingested_at": datetime(2026, 1, 2, tzinfo=UTC)}]]
+
+    async def _list(org: str, ns: str, **kw: Any) -> list[Any]:
+        return pages.pop(0) if pages else []
+
+    async def _get_one(org: str, ns: str, uri: str, **kw: Any) -> Any:
+        return NS(content="body", title="A", description="", tags=[], metadata="", version=1)
+
+    async def _pending(inp: Any, **kw: Any) -> Any:
+        raise PublicationPending()
+
+    monkeypatch.setattr(documents_repo, "list_with_chunk_counts", _list)
+    monkeypatch.setattr(documents_repo, "get_one", _get_one)
+    monkeypatch.setattr("server.knowledge.app.writes.handle_knowledge_upsert", _pending)
+    out = asyncio.run(ops.rechunk_namespace("o", "ns", page_size=100))
+    assert (out["rechunked"], out["failed"]) == (1, [])

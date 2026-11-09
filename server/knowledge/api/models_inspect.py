@@ -19,7 +19,8 @@ InspectSeverity = Literal["info", "warning"]
 # missing_access: the stored original could not be read (`original_gone`), or the
 #   extractor refused the server's credential (401, 403, 407);
 # bad_content: the extractor rejected the file, or the server refused what it made of it
-#   (an incomplete extraction without allow_partial, no text, too many chunks);
+#   (an incomplete extraction without allow_partial, no text, too many chunks, a row
+#   Postgres cannot store);
 # retrying: an open job whose last attempt hit another outage (a store or embedder), or a
 #   retried job a worker is running again; retries_exhausted: failed after such an outage
 #   used up knowledge_ingest_max_attempts, or after runs cut off before they finished;

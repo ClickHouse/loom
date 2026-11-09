@@ -307,7 +307,8 @@ REFUSED_CREDENTIAL_RE = "^the extractor(.s capabilities)? answered (401|403|407)
 # extractor's, not the file's. Every code not named is the source's: the extractor's own
 # refusals (format_mismatch, encoding, corrupt, resource_limit when it passes its own memory
 # or output limit, ...) and the server's of what it made (incomplete_extraction, no_text,
-# too_large, resource_limit for an artifact over document_extractor_max_artifact_bytes).
+# too_large, unstorable_text, resource_limit for an artifact over
+# document_extractor_max_artifact_bytes).
 FAILURE_CLASS_SQL = (
     "multiIf(job_code = '', '', "
     f"job_code = 'original_gone' OR ({_OUTAGE} AND match(error_message, "

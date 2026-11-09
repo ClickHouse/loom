@@ -18,6 +18,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+from server.core import rmt_carry
+from server.core.ch import late_send, start_guard, write_limit_s
 from server.core.hashing import sha256_document_text
 from server.core.repo_base import _CHClient, _default_client
 from server.knowledge.domain.chunking import Chunk, embedding_text
@@ -302,25 +304,45 @@ async def _record_supersessions(
     (cleared only once the base parts it covers merge away) that turns the
     codes-first vector read off (ClickHouse issue #119885). An ingestion
     written after this statement carries a newer doc_version and stays live,
-    even in the same second. `params` must carry `org` and `ns`."""
+    even in the same second. `params` must carry `org` and `ns`.
+
+    Sent under a publication's lease (`pg_lease.leased`), it starts by the lease's end
+    and runs no longer than the write limit, as the lease's inserts do
+    (`rmt_carry.send_deadline`, `ch.write_limit_s`), so an erasure or a restore that
+    waited the lease out (`pg.insert_bound_s`) finds no retirement landing after it. Its
+    deadline is drawn once: the client's reconnect retry keeps it, so one that would
+    start later is refused as a late send even while the lease has time left."""
     if when is not None:
         at_sql = "{when:DateTime}"
         params = {**params, "when": when}
     else:
         at_sql = "now()"
-    await ch.execute(
-        f"""
-        INSERT INTO {SUPERSESSIONS_TABLE}
-            (org, namespace, embedding_model, source_uri, doc_version, superseded_at)
-        SELECT DISTINCT org, namespace, embedding_model, source_uri, doc_version, {at_sql}
-        FROM loom.chunks
-        WHERE org = {{org:String}}
-          AND namespace = {{ns:String}}
-          AND {" AND ".join(where)}
-          AND {LIVE_CHUNK_SQL}
-        """,
-        params=params,
-    )
+    guard, limit = "", None
+    if rmt_carry.sent_under_lease():
+        deadline = await rmt_carry.measured_send_deadline(ch)
+        params = {**params, "send_by_ms": round(deadline * 1000)}
+        guard = f" AND {start_guard('{send_by_ms:Int64}')}"
+        limit = {"max_execution_time": write_limit_s()}
+    try:
+        await ch.execute(
+            f"""
+            INSERT INTO {SUPERSESSIONS_TABLE}
+                (org, namespace, embedding_model, source_uri, doc_version, superseded_at)
+            SELECT DISTINCT org, namespace, embedding_model, source_uri, doc_version, {at_sql}
+            FROM loom.chunks
+            WHERE org = {{org:String}}
+              AND namespace = {{ns:String}}
+              AND {" AND ".join(where)}
+              AND {LIVE_CHUNK_SQL}{guard}
+            """,
+            params=params,
+            settings=limit,
+        )
+    except Exception as e:
+        late = late_send(e, "a chunk retirement")
+        if late is not None:
+            raise late from None  # a fresh send, under a fresh lease, may go
+        raise
 
 
 async def count_active_for_doc(
@@ -366,9 +388,11 @@ async def count_active_by_uri(
     namespace: str,
     source_uris: list[str],
     *,
+    before_version: int | None = None,
     ch: _CHClient | None = None,
 ) -> dict[str, int]:
-    """Per-uri active chunk counts in one CH query.
+    """Per-uri active chunk counts in one CH query, with `before_version` only those of
+    older versions.
 
     URIs with no active chunks are omitted from the result — callers
     should default-zero on miss.
@@ -376,6 +400,11 @@ async def count_active_by_uri(
     if not source_uris:
         return {}
     ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "ns": namespace, "uris": source_uris}
+    older = ""
+    if before_version is not None:
+        older = " AND doc_version < {before:UInt64}"
+        params["before"] = before_version
     rows = await ch.query_all(
         """
         SELECT source_uri, count() AS n
@@ -385,31 +414,92 @@ async def count_active_by_uri(
           AND source_uri IN {uris:Array(String)}
           AND """
         + LIVE_CHUNK_SQL
+        + older
         + """
         GROUP BY source_uri
         """,
-        params={"org": org, "ns": namespace, "uris": source_uris},
+        params=params,
     )
     return {r["source_uri"]: int(r["n"]) for r in rows}
+
+
+async def delete_versions(
+    org: str,
+    namespace: str,
+    versions: Sequence[tuple[str, int]],
+    *,
+    ch: _CHClient | None = None,
+) -> None:
+    """Delete the chunk rows of these (source, version) pairs: a write's own chunks of a
+    document an erasure removed since it was read, so its text and author do not outlive
+    the erasure as retired rows."""
+    if not versions:
+        return
+    ch = ch or _default_client()
+    await ch.execute(
+        "DELETE FROM loom.chunks WHERE org = {org:String} AND namespace = {ns:String} "
+        "AND (source_uri, doc_version) IN {rows:Array(Tuple(String, UInt64))} "
+        "SETTINGS lightweight_deletes_sync = 2",
+        params={"org": org, "ns": namespace, "rows": [(u, int(v)) for u, v in versions]},
+    )
+
+
+async def retire_versions(
+    org: str,
+    namespace: str,
+    versions: Sequence[tuple[str, int]],
+    *,
+    embedding_model: str,
+    when: datetime,
+    ch: _CHClient | None = None,
+) -> None:
+    """Retire these (source, version) pairs' chunks of `embedding_model`: a write's own
+    chunks of versions it did not publish. The supersession rows are written from the
+    pairs, not read off loom.chunks, so they also retire rows of an insert that timed out
+    and lands after them."""
+    if not versions:
+        return
+    ch = ch or _default_client()
+    await ch.insert(
+        SUPERSESSIONS_TABLE,
+        [  # supersession rows, not chunk rows (which `build_chunk_rows` alone writes)
+            dict(
+                org=org,
+                namespace=namespace,
+                embedding_model=embedding_model,
+                source_uri=uri,
+                doc_version=int(version),
+                superseded_at=when,
+            )
+            for uri, version in versions
+        ],
+        settings={"async_insert": 0, "wait_for_async_insert": 1},
+    )
 
 
 async def mark_docs_superseded(
     org: str,
     namespace: str,
-    source_uris: list[str],
+    before: Mapping[str, int],
     *,
     when: datetime | None = None,
     ch: _CHClient | None = None,
 ) -> None:
-    """Bulk variant of `mark_doc_superseded`: retire every chunk for the
-    listed URIs in one statement."""
-    if not source_uris:
+    """Bulk variant of `mark_doc_superseded(before_version=...)`: for each source in
+    `before`, retire its chunk versions older than `before[source_uri]`, in one
+    statement."""
+    if not before:
         return
     ch = ch or _default_client()
+    uris = sorted(before)
     await _record_supersessions(
         ch,
-        ["source_uri IN {uris:Array(String)}"],
-        {"org": org, "ns": namespace, "uris": source_uris},
+        [
+            "source_uri IN {uris:Array(String)}",
+            "doc_version < arrayElement({befores:Array(UInt64)},"
+            " indexOf({uris:Array(String)}, source_uri))",
+        ],
+        {"org": org, "ns": namespace, "uris": uris, "befores": [int(before[u]) for u in uris]},
         when,
     )
 

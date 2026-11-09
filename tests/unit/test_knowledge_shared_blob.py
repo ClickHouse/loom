@@ -74,6 +74,8 @@ def _prior(**over: object) -> SimpleNamespace:
         content="an earlier text",  # not the new one: the writer becomes its author
         user_id="-",  # written by no end user: its original carries to any writer
         revision=1,
+        version=1,
+        doc_id="d-1",
     )
     for k, v in over.items():
         setattr(row, k, v)
@@ -106,8 +108,17 @@ def test_a_re_upload_that_fails_after_its_put_keeps_the_live_download(monkeypatc
     monkeypatch.setattr(chunks_repo, "count_active_for_doc", _one)
     monkeypatch.setattr(chunks_repo, "mark_doc_superseded", _none)
     monkeypatch.setattr(documents_repo, "get_one", _get_one)
+
+    async def _embed_many(texts):
+        return [[0.0] * 4 for _ in texts]
+
+    monkeypatch.setattr(chunks_repo, "insert_chunks", _none)  # chunks go in before the row
+    # The refused write retires its own chunk version: no original is touched.
+    monkeypatch.setattr(chunks_repo, "retire_versions", _none)
     monkeypatch.setattr(documents_repo, "insert_one", _refused)
-    monkeypatch.setattr(kh, "get_embedder", lambda: SimpleNamespace(model_name="f", dim=4))
+    monkeypatch.setattr(
+        kh, "get_embedder", lambda: SimpleNamespace(model_name="f", dim=4, embed_many=_embed_many)
+    )
     with pytest.raises(RuntimeError, match="insert refused"):
         asyncio.run(kh.handle_knowledge_upsert(_add()))
     assert store.put_calls == 1  # stored, then the write failed: no release ran

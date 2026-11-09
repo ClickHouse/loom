@@ -6,13 +6,17 @@ collapses to the latest version of each doc.
 
 from __future__ import annotations
 
+import asyncio
+import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence, Set
 from datetime import UTC, datetime
 from typing import Any, TypedDict, cast
 
 from pydantic import BaseModel, ConfigDict
 
+from server.core.ch import sequential_reads
+from server.core.errors import BackendUnavailableError
 from server.core.hashing import hash_text, sha256_document_text
 from server.core.repo_base import _CHClient, _default_client
 from server.core.rmt_carry import register
@@ -105,32 +109,14 @@ async def get_one(
     """Fetch one document by (org, namespace, source_uri).
 
     include_superseded=False returns only the live row; True returns the
-    latest row regardless of supersede state (audit/replay).
+    latest row regardless of supersede state (audit/replay). Under the Postgres
+    authority the newer of the source's head and ClickHouse's row answers
+    (`get_many_by_uris`).
     """
-    ch = ch or _default_client()
-    where = [
-        "org = {org:String}",
-        "namespace = {ns:String}",
-        "source_uri = {uri:String}",
-    ]
-    if not include_superseded:
-        where.append("superseded_at IS NULL")
-    row = await ch.query_one(
-        f"""
-        SELECT org, namespace, source_uri, doc_id, title, description, content,
-               tags, metadata, version, superseded_at, ingested_at, blob_path, blob_size,
-               toString(blob_content_type) AS blob_content_type,
-               original_filename, content_sha256, blob_erased_at,
-               agent, user_id, session_id, actor, toString(source_class) AS source_class,
-               revision, toString(format) AS format, artifact_sha256, parser, coverage,
-               ingestion_id
-        FROM loom.documents FINAL
-        WHERE {" AND ".join(where)}
-        LIMIT 1
-        """,
-        params={"org": org, "ns": namespace, "uri": source_uri},
+    found = await get_many_by_uris(
+        org, namespace, [source_uri], include_superseded=include_superseded, ch=ch
     )
-    return _hydrate(row) if row else None
+    return found[0] if found else None
 
 
 async def revision_by_ingestion(
@@ -140,7 +126,16 @@ async def revision_by_ingestion(
     row of it that names the job, the latest or not: a later write of the
     source (a text write, which names no job) does not hide it. Read without
     FINAL; None when no row names the job (it did not publish, or merges have
-    folded its row into a later write's)."""
+    folded its row into a later write's). Under the Postgres authority a commit not yet
+    published counts (`pg_documents.committed_revision`)."""
+    from server.core import pg
+
+    if pg.enabled():
+        from server.knowledge.store import pg_documents
+
+        committed = await pg_documents.committed_revision(org, namespace, source_uri, ingestion_id)
+        if committed is not None:
+            return committed
     ch = ch or _default_client()
     row = await ch.query_one(
         "SELECT revision FROM loom.documents"
@@ -189,9 +184,70 @@ async def get_many_by_uris(
     include_superseded: bool = False,
     ch: _CHClient | None = None,
 ) -> list[DocumentRow]:
-    """Bulk read across N URIs in one round-trip. Empty list → no CH call."""
+    """Bulk read across N URIs in one round-trip. Empty list → no CH call.
+
+    Under the Postgres authority each source's head and its latest ClickHouse row are
+    read, and the newer version answers: the head serves a commit ClickHouse does not
+    have yet, and ClickHouse a write of a build that commits no heads (one serving
+    beside this one in a rolling upgrade, or after a rollback), which the source's next
+    commit adopts (`pg_documents.commit`). A head that owes nothing while ClickHouse
+    holds no row at its version, read where every write is, was erased by such a build:
+    it is dropped, not served."""
+    from server.core import pg
+
     if not source_uris:
         return []
+    if not pg.enabled():
+        return [
+            _hydrate(r) for r in await _read(org, namespace, source_uris, include_superseded, ch)
+        ]
+    from server.knowledge.store import pg_documents
+
+    heads = await pg_documents.heads(org, namespace, source_uris)
+    newest = {r["source_uri"]: r for r in await _read(org, namespace, source_uris, True, ch)}
+    # A head that owes nothing is published: a replica showing nothing at its version is
+    # behind, or a build that keeps no heads erased it (a purge leaves older writers'
+    # rows). Confirmed where every write is, then dropped.
+    unbacked = [
+        u
+        for u, h in heads.items()
+        if not h.owed and int(newest.get(u, {}).get("version", 0)) < int(h.row["version"])
+    ]
+    if unbacked:
+        with sequential_reads():
+            confirmed = {
+                r["source_uri"]: r for r in await _read(org, namespace, unbacked, True, ch)
+            }
+        for uri in unbacked:
+            got = confirmed.get(uri)
+            if got is not None and int(got["version"]) >= int(heads[uri].row["version"]):
+                newest[uri] = got
+                continue
+            await pg_documents.drop_unbacked(org, namespace, uri, int(heads[uri].row["version"]))
+            heads.pop(uri)
+            if got is not None:
+                newest[uri] = got
+            else:
+                newest.pop(uri, None)
+    for uri, head in heads.items():
+        # At one version ClickHouse's copy answers: it differs only by a stamp made in
+        # place (an older build's erasure tombstone, an erased original).
+        if uri not in newest or int(newest[uri]["version"]) < int(head.row["version"]):
+            newest[uri] = head.row
+    return [
+        _hydrate(r) for r in newest.values() if include_superseded or r.get("superseded_at") is None
+    ]
+
+
+async def _read(
+    org: str,
+    namespace: str,
+    source_uris: list[str],
+    include_superseded: bool,
+    ch: _CHClient | None,
+) -> list[dict[str, Any]]:
+    """The sources' latest loom.documents rows in ClickHouse (only live ones unless
+    `include_superseded`)."""
     ch = ch or _default_client()
     where = [
         "org = {org:String}",
@@ -200,7 +256,7 @@ async def get_many_by_uris(
     ]
     if not include_superseded:
         where.append("superseded_at IS NULL")
-    rows = await ch.query_all(
+    return await ch.query_all(
         f"""
         SELECT org, namespace, source_uri, doc_id, title, description, content,
                tags, metadata, version, superseded_at, ingested_at, blob_path, blob_size,
@@ -214,7 +270,6 @@ async def get_many_by_uris(
         """,
         params={"org": org, "ns": namespace, "uris": source_uris},
     )
-    return [_hydrate(r) for r in rows]
 
 
 async def live_versions(
@@ -431,6 +486,18 @@ class DocumentInsertRow(TypedDict):
     ingestion_id: str
 
 
+def version_of(doc: DocumentRow | None) -> int:
+    """The version a writer read: the document's, or 0 for none."""
+    return doc.version if doc is not None else 0
+
+
+def version_past(version: int = 0) -> int:
+    """A new document version: the clock's, and past `version` (the one its writer read),
+    so it wins under ReplacingMergeTree and a head commit even when the writer of
+    `version` runs a clock ahead of this host."""
+    return max(time.time_ns(), version + 1)
+
+
 def build_document_row(existing: DocumentRow | None = None, /, **fields: Any) -> DocumentInsertRow:
     """The one way to build a loom.documents row for insert.
 
@@ -481,36 +548,208 @@ def build_document_row(existing: DocumentRow | None = None, /, **fields: Any) ->
 async def insert_one(
     row: DocumentInsertRow,
     *,
+    over: int,
+    retire_older: bool = False,
+    built_from: str = "",
     ch: _CHClient | None = None,
 ) -> None:
-    """Insert one document row.
+    """Insert one document row, written over the source's version `over` (0: none),
+    the one its writer read. `built_from`: the `doc_id` of the live document the row
+    carries columns from (its original, its author), refused once an erasure removed it.
 
     async_insert=0 so the row is visible to the next FINAL read — callers
-    depend on the search-visibility contract.
+    depend on the search-visibility contract. Under the Postgres authority the row
+    is first committed as the source's head (`pg_documents.HeadMoved` when the head
+    is no longer `over`), then published here. `retire_older`: the source's chunk
+    versions older than this row's are retired too, after a new version's row and
+    before a tombstone's (`publish`).
     """
-    ch = ch or _default_client()
-    await ch.insert(
-        "loom.documents",
-        [cast(dict[str, Any], row)],
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
+    await insert_many(
+        [row],
+        over={row["source_uri"]: over},
+        retire_older={row["source_uri"]} if retire_older else frozenset(),
+        built_from=[built_from] if built_from else [],
+        ch=ch,
     )
 
 
 async def insert_many(
     rows: list[DocumentInsertRow],
     *,
+    over: Mapping[str, int],
+    retire_older: Set[str] = frozenset(),
+    built_from: Sequence[str] = (),
     ch: _CHClient | None = None,
 ) -> int:
-    """Bulk insert — returns the number written. Empty → 0, no CH call."""
+    """Bulk insert of one namespace's rows, each written over the version
+    `over[source_uri]` its writer read — returns the number written. Empty → 0, no
+    CH call. For the sources in `retire_older`, the chunk versions older than the
+    row's are retired: after a new version's row, so the old text stops serving only
+    when the new one is published, and before a tombstone's (`publish`). Under the
+    Postgres authority the rows are committed as heads first, and a publication cut off
+    here (the row or the retirement) is finished by the delivery worker. `built_from`:
+    as `insert_one`'s, for every row."""
+    from server.core import pg
+
     if not rows:
         return 0
+    if not pg.enabled():
+        try:
+            await publish(rows, ch=ch, retire_older=retire_older)
+        except asyncio.CancelledError as e:  # its row may land: the writer keeps its chunks
+            pg.mark_commit_in_flight(e)
+            raise
+        return len(rows)
+    from server.knowledge.store import pg_documents
+
+    targets = {
+        r["source_uri"]: pg_documents.DOCUMENT_ROW
+        | (pg_documents.RETIRE_OLDER if r["source_uri"] in retire_older else 0)
+        for r in rows
+    }
+    deadline = await pg_documents.commit(rows, over=over, targets=targets, built_from=built_from)
+    try:
+        return await _publish_committed(rows, deadline, retire_older, ch)
+    except asyncio.CancelledError as e:  # committed: the worker publishes it
+        pg.mark_commit_in_flight(e)
+        raise
+
+
+async def _publish_committed(
+    rows: list[DocumentInsertRow],
+    deadline: float,
+    retire_older: Set[str],
+    ch: _CHClient | None,
+) -> int:
+    """A commit's own publication under its lease, then its deliveries cleared; any
+    failure answers PUBLICATION_PENDING (the worker publishes the rows)."""
+    from server.core import pg_lease
+    from server.knowledge.store import pg_documents
+
+    try:
+        # Under the commit's lease: past it the delivery worker publishes the rows, and an
+        # erasure that removed the delivery waits out the lease, not this request.
+        with pg_lease.leased(deadline):
+            await publish(rows, ch=ch, retire_older=retire_older)
+    except Exception as e:  # any failure: the write is committed, and the worker publishes it
+        raise pg_lease.PublicationPending.after(OlderNotRetired.unwrap(e)) from e
+    try:
+        await pg_documents.complete_own(rows)
+    except Exception as e:  # published: the delivery stays, and the worker finishes it
+        raise pg_lease.PublicationPending.after(e) from e
+    return len(rows)
+
+
+async def drop_committed(org: str, namespace: str, source_uri: str, version: int) -> None:
+    """Under the Postgres authority, take back a commit at `version`: its head, while it
+    is still that version, and its delivery (a restore's purge undo), then wait out
+    that delivery's lease, so no publisher of it lands the row after the caller deletes
+    it from ClickHouse."""
+    from server.core import pg
+
+    if pg.enabled():
+        from server.knowledge.store import pg_documents
+
+        await pg.wait_out(await pg_documents.drop_version(org, namespace, source_uri, version))
+
+
+async def publication_may_land(org: str, namespace: str, source_uri: str) -> bool:
+    """Under the Postgres authority, whether a publication of the source may still land
+    in ClickHouse (its row, and its retirement of older chunks): one owed, or one the
+    worker finished whose replaced request may still be sending
+    (`pg_documents.publication_may_land`)."""
+    from server.core import pg
+
+    if not pg.enabled():
+        return False
+    from server.knowledge.store import pg_documents
+
+    return await pg_documents.publication_may_land(org, namespace, source_uri)
+
+
+def check_storable(rows: Sequence[Mapping[str, Any]]) -> None:
+    """Under the Postgres authority, refuse (422 VALIDATION_FAILED) a row whose key
+    columns (its source URI, its user id) hold text Postgres cannot store, before its
+    writer writes anything for it; the commit would refuse it after its chunks. Other
+    text is kept exactly (`pg_documents.encode_row`)."""
+    from server.core import pg
+
+    if pg.enabled():
+        from server.knowledge.store import pg_documents
+
+        for r in rows:
+            pg_documents.refuse_unstorable_keys(r)
+
+
+def _versions(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    """Each row's version by its source: a batch holds one row per source."""
+    return {str(r["source_uri"]): int(r["version"]) for r in rows}
+
+
+class OlderNotRetired(BackendUnavailableError):
+    """503 — the document rows are in loom.documents, and retiring their sources' older
+    chunk versions failed: the new version is published, and the old one still serves
+    beside it until the retirement runs again (a repeat of the write, or the delivery
+    worker under the Postgres authority). `cause` is the error."""
+
+    def __init__(self, cause: Exception) -> None:
+        super().__init__("the document is written; its earlier version still serves")
+        self.cause = cause
+
+    @staticmethod
+    def unwrap(e: Exception) -> Exception:
+        """`e`, or for a retirement that failed with the row in, the retirement's own
+        error (its cause chain kept)."""
+        return e.cause if isinstance(e, OlderNotRetired) else e
+
+
+async def publish(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    retire_older: Set[str] = frozenset(),
+    ch: _CHClient | None = None,
+) -> None:
+    """The rows into loom.documents, visible to the next FINAL read, and for the sources
+    in `retire_older` their chunk versions older than the row's retired: a writer's own
+    rows, or a committed delivery the Postgres authority's worker publishes again
+    (ReplacingMergeTree(version): a second copy of a version collapses into the first,
+    and a retirement repeated retires nothing more).
+
+    A new version's older chunks are retired once its row is in, so the old text serves
+    until the new one does. A tombstone's are retired before its row: once a delete is
+    visible, a restore (which reads it under the source's claim) finds its chunks
+    already retired and brings them back, and no retirement lands after it."""
+    from server.knowledge.store import chunks as chunks_repo
+
     ch = ch or _default_client()
+    retiring = [r for r in rows if r["source_uri"] in retire_older]
+    deletes = [r for r in retiring if r.get("superseded_at") is not None]
+    versions = [r for r in retiring if r.get("superseded_at") is None]
+    if deletes:
+        await chunks_repo.mark_docs_superseded(
+            str(deletes[0]["org"]),
+            str(deletes[0]["namespace"]),
+            _versions(deletes),
+            # A batch's rows come from one write: a tombstone retires them as of its delete.
+            when=deletes[0]["superseded_at"],
+            ch=ch,
+        )
     await ch.insert(
         "loom.documents",
-        cast(list[dict[str, Any]], rows),
+        [dict(r) for r in rows],
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
-    return len(rows)
+    if not versions:
+        return
+    try:
+        await chunks_repo.mark_docs_superseded(
+            str(versions[0]["org"]),
+            str(versions[0]["namespace"]),
+            _versions(versions),
+            ch=ch,
+        )
+    except Exception as e:  # any failure: the rows are in, and the caller must know
+        raise OlderNotRetired(e) from e
 
 
 async def agent_opens(

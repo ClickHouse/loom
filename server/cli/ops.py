@@ -64,6 +64,7 @@ async def rechunk_namespace(
     (sections + breadcrumb) and embedder replace the chunks, old chunks are
     superseded, and the term-frequency views see the new rows. Blobs are
     carried forward by upsert. Returns counts; `dry_run` only lists."""
+    from server.core.pg_lease import PublicationPending
     from server.knowledge.api.models_knowledge import KnowledgeUpsertInput
     from server.knowledge.app.writes import handle_knowledge_upsert
     from server.knowledge.store import documents as documents_repo
@@ -121,8 +122,15 @@ async def rechunk_namespace(
                     description=row.description or "",
                     tags=list(row.tags or []),
                     metadata=meta if isinstance(meta, dict) else {},
-                )
+                ),
+                # Under the Postgres authority a write since the read refuses this one.
+                read_version=row.version,
             )
+        except PublicationPending:
+            # Committed: the delivery worker publishes the row, and the answer carries
+            # no chunk count, so `chunks_after` leaves this document out.
+            out["rechunked"] += 1
+            continue
         except Exception as e:  # noqa: BLE001 — one bad document must not stop the pass
             out["failed"].append(f"{uri}: {type(e).__name__}: {e}")
             continue

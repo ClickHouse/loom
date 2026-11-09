@@ -400,12 +400,12 @@ Fields for every `knowledge` op: [operations/knowledge.md](operations/knowledge.
 | --- | --- | --- | --- | --- | --- |
 | [`knowledge.add`](operations/knowledge.md#knowledgeadd) | WHAT: Ingest a document into the knowledge base for later retrieval via loom_search. | writer | idempotent | yes |  |
 | [`knowledge.bulk_add`](operations/knowledge.md#knowledgebulk_add) | Batched ingestion: many documents in one CH round-trip. | writer | idempotent | yes |  |
-| [`knowledge.bulk_delete`](operations/knowledge.md#knowledgebulk_delete) | Tombstone multiple documents by source_uri in one lightweight UPDATE. | writer | idempotent | no | yes |
+| [`knowledge.bulk_delete`](operations/knowledge.md#knowledgebulk_delete) | Soft-delete multiple documents by source_uri, in one commit. | writer | idempotent | no | yes |
 | [`knowledge.dataset_approve`](operations/knowledge.md#knowledgedataset_approve) | Approve a dataset's schema, retyping the columns named: its rows are typed again from the stored extraction under a new snapshot. | writer | write | no | yes |
 | [`knowledge.dataset_get`](operations/knowledge.md#knowledgedataset_get) | The typed datasets an ingested file's tables became: their schemas, what needs a person's answer, the rows rejected and, on request, the first rows. | viewer | read | no |  |
 | [`knowledge.dedup_list`](operations/knowledge.md#knowledgededup_list) | List cross-URI doc duplicates and (optionally) chunk-overlap clusters. | admin | idempotent | no |  |
 | [`knowledge.dedup_resolve`](operations/knowledge.md#knowledgededup_resolve) | Resolve one document duplicate pair. | admin | idempotent | no | yes |
-| [`knowledge.delete`](operations/knowledge.md#knowledgedelete) | Soft-delete a document by source_uri: tombstones all live chunks and version-bumps the documents row. | writer | idempotent | yes | yes |
+| [`knowledge.delete`](operations/knowledge.md#knowledgedelete) | Soft-delete a document by source_uri: writes its tombstone. | writer | idempotent | yes | yes |
 | [`knowledge.formats`](operations/knowledge.md#knowledgeformats) | The document formats this deployment reads, as `knowledge.ingest` sends them to its extractors, and the upload's limits. | viewer | read | no |  |
 | [`knowledge.get`](operations/knowledge.md#knowledgeget) | Fetch a single document by source_uri. | viewer | read | yes |  |
 | [`knowledge.ingest`](operations/knowledge.md#knowledgeingest) | Extract an uploaded file (the extractor service parses it, the server checks what it returns) and publish it as a document revision, asynchronously: the answer names the job, and… | writer | write | no |  |

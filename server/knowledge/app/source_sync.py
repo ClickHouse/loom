@@ -100,6 +100,7 @@ from server.core import leases
 from server.core.ch import sequential_reads
 from server.core.errors import OverloadedError, ValidationError
 from server.core.hashing import sha256_text
+from server.core.pg_lease import PublicationPending
 from server.core.secrets_at_rest import unseal
 from server.knowledge.api.models_knowledge import KnowledgeDeleteInput, KnowledgeUpsertInput
 from server.knowledge.app import extractors, writes
@@ -1002,22 +1003,22 @@ async def write_document(
     if not free:
         return False
     pass_context.check_stop()  # a stopped pass or a lost lease writes nothing
-    await writes.handle_knowledge_upsert(
-        KnowledgeUpsertInput(
-            org=src.org,
-            namespace=src.namespace,
-            source_uri=uri,
-            content=content,
-            title=str(f.get("name") or ""),
-            description=convert.description_of(content),
-            tags=tags,
-            metadata=metadata,
-            original_bytes_b64=base64.b64encode(original).decode() if original else None,
-            original_filename=str(f.get("name") or "") if original else "",
-            blob_content_type=str(f.get("mimeType") or "") if original else "",
-            source_class="imported",
-        )
+    request = KnowledgeUpsertInput(
+        org=src.org,
+        namespace=src.namespace,
+        source_uri=uri,
+        content=content,
+        title=str(f.get("name") or ""),
+        description=convert.description_of(content),
+        tags=tags,
+        metadata=metadata,
+        original_bytes_b64=base64.b64encode(original).decode() if original else None,
+        original_filename=str(f.get("name") or "") if original else "",
+        blob_content_type=str(f.get("mimeType") or "") if original else "",
+        source_class="imported",
     )
+    with contextlib.suppress(PublicationPending):  # committed; the worker publishes it
+        await writes.handle_knowledge_upsert(request)
     return True
 
 
@@ -1029,10 +1030,14 @@ async def retire(src: KnowledgeSource, uri: str) -> bool:
     if not ours:
         return False
     pass_context.check_stop()
-    out = await writes.handle_knowledge_delete(
-        KnowledgeDeleteInput(org=src.org, namespace=src.namespace, source_uri=uri)
-    )
-    if out.deleted:
+    try:
+        out = await writes.handle_knowledge_delete(
+            KnowledgeDeleteInput(org=src.org, namespace=src.namespace, source_uri=uri)
+        )
+        deleted = out.deleted
+    except PublicationPending:  # the delete is committed; the worker publishes it
+        deleted = True
+    if deleted:
         await audit.emit(
             "knowledge.delete",
             org=src.org,
@@ -1040,7 +1045,7 @@ async def retire(src: KnowledgeSource, uri: str) -> bool:
             actor=SYNC_WORKER_ACTOR,
             subject={"source_uri": uri, "source_name": src.name},
         )
-    return out.deleted
+    return deleted
 
 
 async def _write_state(src: KnowledgeSource, read: dict[str, str], turn: TurnResult) -> None:

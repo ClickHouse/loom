@@ -1249,6 +1249,41 @@ def test_a_failed_retirement_of_a_removed_source_counts_as_a_failure(
     assert world.sources[-1].pending_delete
 
 
+def test_a_committed_write_that_awaits_publication_counts_as_written(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PUBLICATION_PENDING says the write committed and is not to be made again: the
+    file counts as written, with no wait that would write it again next pass."""
+    from server.core.pg_lease import PublicationPending
+
+    world.files = [_file("doc1", DOCS, REV1)]
+
+    async def _pending(inp: Any) -> Any:
+        raise PublicationPending()
+
+    monkeypatch.setattr(writes, "handle_knowledge_upsert", _pending)
+    result = asyncio.run(source_sync.run_sync())
+    assert (result.changed, result.failed) == (1, 0)
+    assert "doc1" not in _detail(world).get("file_waits", {})
+
+
+def test_a_committed_retirement_that_awaits_publication_counts_as_retired(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core.pg_lease import PublicationPending
+
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
+    asyncio.run(source_sync.run_sync())
+    world.sources = [_source(active=False, pending_delete=True, credential_enc="")]
+
+    async def _pending(inp: Any) -> Any:
+        raise PublicationPending()
+
+    monkeypatch.setattr(writes, "handle_knowledge_delete", _pending)
+    result = asyncio.run(source_sync.run_sync())
+    assert result.failed == 0 and result.retired == 1
+
+
 def test_a_deck_over_the_size_bound_is_unconverted(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:

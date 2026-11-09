@@ -296,7 +296,8 @@ class KnowledgeBulkAddInput(BaseModel):
 
     org: str
     namespace: str
-    # The documents to add (1-500), each chunked and embedded like a `knowledge.add`.
+    # The documents to add (1-500), each chunked and embedded like a `knowledge.add`;
+    # each `source_uri` at most once, or the call is refused (422) with nothing written.
     entries: list[_KnowledgeBulkEntry] = Field(..., min_length=1, max_length=500)
     # The agent writing the documents, stored on each and on every chunk for
     # provenance; an end-user token's signed `agent` takes its place. Empty = '-'.
@@ -566,9 +567,12 @@ class KnowledgeListOutput(BaseModel):
 
 
 class KnowledgeDeleteInput(BaseModel):
-    """Soft-delete a document by source_uri: tombstones all live chunks
-    and version-bumps the documents row. Searches stop returning it
-    immediately; hard delete follows the 365d TTL.
+    """Soft-delete a document by source_uri: writes its tombstone.
+
+    The tombstone retires the chunk versions older than it (a write committing beside
+    the delete keeps its own). Searches stop returning it immediately; the row stays
+    until an erasure, or a retention TTL an operator set under the ClickHouse authority,
+    removes it.
 
     For right-to-erasure, use the erasure plane — it cascades across
     external systems too.
@@ -581,8 +585,14 @@ class KnowledgeDeleteInput(BaseModel):
 
 
 class KnowledgeDeleteOutput(BaseModel):
-    deleted: bool  # true if any live chunks were tombstoned
-    # How many live chunks were tombstoned; 0 when the document was already gone.
+    # True when a live document was tombstoned, or leftover chunks of a deleted or never
+    # committed source were retired.
+    deleted: bool
+    # The chunks the delete retired; 0 when it had none, or when a deleted source was
+    # restored or written again before the delete took its claim. For a live document,
+    # those it held when the delete read it; with no document row, those older than the
+    # orphan age; already deleted, those up to its tombstone. A write committing beside
+    # the delete keeps its own chunks.
     chunks_tombstoned: int
 
 
@@ -637,13 +647,15 @@ class KnowledgeUpdateMetadataInput(BaseModel):
     tags: list[str] | None = None
     # When True, rewrite every chunk with the new title + description in its
     # context (re-embedded, re-scored by the lexical leg), routed through the upsert
-    # flow for identical supersession semantics (same content, fresh chunks). A
-    # document ingested from a file is refused (422): ingest it again instead.
+    # flow for identical supersession semantics (same content, fresh chunks). It runs
+    # also when the metadata is already current. A document ingested from a file is
+    # refused (422): ingest it again instead.
     reindex: bool = False
 
 
 class KnowledgeUpdateMetadataOutput(BaseModel):
-    # True when a new version was written; False when every field already matched.
+    # True when the title, description or tags changed; a reindex's rewrite shows in
+    # chunks_reindexed.
     updated: bool
     # Echo the post-update state so the client doesn't need to refetch.
     title: str = ""
@@ -656,10 +668,13 @@ class KnowledgeUpdateMetadataOutput(BaseModel):
 
 
 class KnowledgeBulkDeleteInput(BaseModel):
-    """Tombstone multiple documents by source_uri in one lightweight UPDATE.
+    """Soft-delete multiple documents by source_uri, in one commit.
 
-    Symmetric with knowledge.bulk_add. All source_uris are tombstoned
-    together; the per-doc result tracks chunks tombstoned per uri.
+    One tombstone per live document, each retiring its source's older chunk versions.
+    Symmetric with knowledge.bulk_add. The per-doc result counts the live chunks each
+    uri held when the delete read it (for one with no document row, only those older than
+    the orphan age; for one already deleted, only those up to its tombstone), 0 for one
+    restored or written again before the delete took its claim.
     """
 
     org: str
@@ -670,13 +685,15 @@ class KnowledgeBulkDeleteInput(BaseModel):
 
 class _KnowledgeBulkDeleteResult(BaseModel):
     source_uri: str
+    # The chunks the delete retired, counted as `knowledge.delete`'s; 0 if restored or
+    # written again before the delete took its claim.
     chunks_tombstoned: int
 
 
 class KnowledgeBulkDeleteOutput(BaseModel):
     # One result per input URI, in input order, with its tombstoned chunk count (0 if none).
     deleted: list[_KnowledgeBulkDeleteResult]
-    # Sum of the chunks tombstoned across every URI.
+    # Sum of each source's count, a source named twice counted once (`deleted` repeats it).
     total_chunks_tombstoned: int
 
 

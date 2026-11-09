@@ -245,6 +245,44 @@ async def test_do_promote_to_knowledge_builds_correct_input(
 
 
 @pytest.mark.asyncio
+async def test_a_promotion_whose_write_awaits_publication_is_made(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PUBLICATION_PENDING says the document committed: the promotion answers its
+    source URI, so the review records its decision, rather than failing a write the
+    caller is told not to repeat."""
+    from server.core.pg_lease import PublicationPending
+    from server.knowledge.app import writes as knowledge_handler
+    from server.memory.app import learnings as h
+
+    async def pending_upsert(inp):
+        raise PublicationPending()
+
+    monkeypatch.setattr(knowledge_handler, "handle_knowledge_upsert", pending_upsert)
+    source_uri = await h._do_promote_to_knowledge(
+        "clickhouse", "finance", _candidate(candidate_id="cid-abc"), "alice@example.com", ""
+    )
+    assert source_uri == "learning://cid-abc"
+
+
+@pytest.mark.asyncio
+async def test_a_memory_promotion_whose_write_awaits_publication_is_made(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The memory half as the knowledge half: a `memory.set` answering
+    PUBLICATION_PENDING is a made write."""
+    from server.core.pg_lease import PublicationPending
+    from server.memory.app import learnings as h
+
+    async def pending(*a, **kw):
+        raise PublicationPending()
+
+    monkeypatch.setattr(h, "_promote_via_memory_set", pending)
+    candidate = {**_candidate(candidate_id="cid-abc"), "source_kind": "conversation_seeder"}
+    await h._do_promote("clickhouse", "finance", candidate, "alice@example.com", "")
+
+
+@pytest.mark.asyncio
 async def test_promote_idempotent_already_promoted_returns_existing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

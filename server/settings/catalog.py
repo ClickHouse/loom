@@ -2105,6 +2105,9 @@ class KnowledgeSettings(BaseModel):
     # Characters between chunk starts: below chunk_size the chunks overlap; above it
     # the step is chunk_size, so no text falls between chunks.
     knowledge_chunk_stride: Annotated[int, LIVE] = 1230
+    # Seconds a no-row source's chunks must have aged before a delete retires them (a first
+    # write's are younger); never less than an ingest pass plus 5 minutes of clock skew.
+    knowledge_orphan_chunk_min_age_seconds: int = Field(default=3600, ge=60)
 
     # ---- server-side ingestion (knowledge.upload, knowledge.ingest) ----
     # Largest file POST /v1/knowledge.upload accepts, in bytes; a larger body is
@@ -5036,10 +5039,11 @@ class StorageSettings(BaseModel):
     """Storage: document originals, per-table retention and warm-tier moves."""
 
     # ---- document originals (loom.document_blobs) ----
-    # The sweep that deletes originals no live document points at: those of
-    # deleted and re-uploaded documents, and of documents that retention
-    # (retention_documents_days, a namespace's retention_days) aged out. Their bucket
-    # objects go with them; a walk of the bucket deletes any object left.
+    # The sweep that deletes originals no live document points at: those of deleted
+    # and re-uploaded documents, and of documents that retention
+    # (retention_documents_days, a namespace's retention_days; the ClickHouse authority
+    # only) aged out. Their bucket objects go with them; a walk of the bucket deletes
+    # any object left.
     document_blob_gc_enabled: bool = True
     # Pages of 1,000 bucket keys the sweep's walk reads a pass, from where the last
     # stopped: one walk takes a pass per this many thousand keys.
@@ -5084,15 +5088,16 @@ class StorageSettings(BaseModel):
     retention_audit_log_days: int = 0
     # Days `loom.agent_events` rows are kept; 0 = forever.
     retention_agent_events_days: int = 0
-    # Days `loom.memory` rows are kept; 0 = forever.
+    # Days `loom.memory` rows are kept; 0 = forever. The Postgres authority refuses it.
     retention_memory_days: int = 0
-    # Days `loom.memory_embeddings` rows are kept; 0 = forever.
+    # Days `loom.memory_embeddings` rows are kept; 0 = forever. The Postgres authority
+    # refuses it.
     retention_memory_embeddings_days: int = 0
     # Days `loom.conversations` rows are kept; 0 = forever.
     retention_conversations_days: int = 0
     # Days `loom.chunks` rows are kept; 0 = forever.
     retention_chunks_days: int = 0
-    # Days `loom.documents` rows are kept; 0 = forever.
+    # Days `loom.documents` rows are kept; 0 = forever. The Postgres authority refuses it.
     retention_documents_days: int = 0
     # The supervisor re-applies table TTLs from settings + namespace rows on
     # this timer as metadata changes (materialize_ttl_after_modify = 0): rows
@@ -5183,17 +5188,19 @@ class StorageSettings(BaseModel):
     # Seconds the writing request holds its revisions' delivery; past it, the delivery
     # worker or a waiting admission in the namespace publishes them instead.
     pg_request_lease_seconds: int = Field(default=5, ge=1)
-    # Seconds the delivery worker holds a revision's delivery before another may take it;
-    # also how long the conflict resolver sets aside a row whose flagged peer is not yet
-    # in ClickHouse.
+    # Seconds the delivery workers hold a memory revision's or a knowledge document's
+    # delivery before another may take it; also how long the conflict resolver sets aside
+    # a row whose flagged peer is not yet in ClickHouse.
     pg_delivery_lease_seconds: int = Field(default=30, ge=5)
-    # Background delivery of committed revisions a request did not publish.
+    # Background delivery of committed memory revisions and knowledge documents a request
+    # did not publish (the pg_delivery and knowledge_pg_delivery workers).
     pg_delivery_enabled: bool = True
     # Seconds between delivery passes while there is work.
     pg_delivery_interval_seconds: int = 2
     # Seconds between delivery passes that found nothing.
     pg_delivery_idle_interval_seconds: int = 10
-    # Revisions one delivery pass publishes.
+    # Deliveries one pass of each delivery worker publishes; also the expired deletion
+    # evidence and settled knowledge deliveries one pass sweeps.
     pg_delivery_batch_rows: int = Field(default=500, ge=1)
     # Memories one Postgres commit of a `namespace.restore` writes; each batch commits
     # within a request's lease (`pg_request_lease_seconds`).
@@ -5204,12 +5211,17 @@ class StorageSettings(BaseModel):
     # /v1/health?include=postgres (`postgres.parked_deliveries`). An audit row waiting
     # in the outbox (a row an erasure moved there, or one a claim deferred because the
     # holder it replaced may still insert it) is parked the same way
-    # (`postgres.parked_audits`). An unavailable ClickHouse counts no attempt.
+    # (`postgres.parked_audits`), and so is a knowledge document's row
+    # (`postgres.parked_knowledge_deliveries`). An unavailable ClickHouse counts no attempt.
     pg_delivery_max_attempts: int = Field(default=10, ge=1)
-    # Hours an erased memory's id is kept as deletion evidence, refusing a write built
-    # from a head read before the erasure (longer than any request holds a head); a
-    # `namespace.restore` into its namespace leaves the memory out meanwhile.
+    # Hours an erased memory's id, or an erased knowledge document's `doc_id`, is kept as
+    # deletion evidence, refusing a write built from a head read before the erasure
+    # (longer than any request holds a head); a `namespace.restore` into its namespace
+    # leaves the memory out meanwhile.
     pg_erasure_evidence_hours: int = Field(default=24, ge=1)
+    # Document ids an erasure reads from ClickHouse per statement, and keeps as deletion
+    # evidence per insert: what one page of a large scope holds in memory.
+    pg_erasure_evidence_page_rows: int = Field(default=10_000, ge=1)
 
     # ---- timeouts, budgets and caches ----
     # Longest wait, in seconds, between retries of a failed dashboard-asset publish (the

@@ -74,13 +74,19 @@ checkout.
    `loom migrate --dry-run --strict`. It lists what the boot will apply and stops on
    ledger problems ([troubleshooting](./troubleshooting.md#migrations-pending-or-checksum-drift)).
    If the release declares a table rebuild, run `scripts/ops/table_rebuild.py` for that
-   table now.
+   table now. A deployment of the Postgres authority moving to a build that keeps
+   knowledge document heads in Postgres unsets `LOOM_RETENTION_DOCUMENTS_DAYS` now, by
+   hand: the newer build refuses to boot with it set, and under that authority no
+   retention TTL reaches `loom.documents`, and a namespace's `retention_days` does not
+   reach `loom.chunks` either
+   ([rolling upgrades](../architecture/rolling-upgrades.md), rule 38).
 3. Deploy the new image. The first container to boot applies the migrations; the others
    wait for it and then find nothing pending.
 4. Wait for `/v1/health` to report `status: ok` and an empty `schema.pending` before
    routing traffic to it. The [zero-downtime pair](./deployment.md#zero-downtime-pair)
-   does steps 2 to 4 for you: `redeploy.sh` runs the strict dry run in its preflight and
-   swaps only after the new colour is ready.
+   does steps 2 to 4 for you, except unsetting the setting step 2 names: `redeploy.sh`
+   runs the strict dry run in its preflight and swaps only after the new colour is
+   ready.
 5. Run the release's backfills, if any ([maintenance](./maintenance.md#backfills-and-repairs)).
 6. Update client plugins when the release mentions a plugin change: hooks run on the
    client machine and change only through the client's plugin manager
@@ -132,6 +138,16 @@ checkout.
     SELECT org, namespace, memory_key FROM loom.shared FINAL
     WHERE tombstoned_at IS NULL AND arrayExists(x -> splitByChar('/', x)[3] = '*', promoted_from)
     ```
+
+11. A deployment of the Postgres authority that moves to a build keeping knowledge
+    document heads in Postgres (`002_knowledge_documents.sql`), a roll forward after a
+    rollback included: once the newer build serves alone, run again every erasure that
+    completed while a replica of an older build served since the newer build first
+    served. An older build's erasure removes no head or delivery: an erased document's
+    text stays in `loom.knowledge_heads` until the erasure runs again, and a delivery it
+    left is published again by the delivery worker
+    ([rolling upgrades](../architecture/rolling-upgrades.md), rule 38). Do it before
+    retrying a parked delivery.
 
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in

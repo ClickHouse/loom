@@ -489,6 +489,16 @@ mark an erasure put on it meanwhile: deleting it could leave the source with no 
 a merge may fold the delete's row into it at any moment. When no row of the source is left
 (a purge took them all), it writes nothing back.
 
+Under the Postgres authority restore writes through the document heads ([storage
+authority](storage-authority.md#knowledge-documents)). It refuses, retryably, while a
+publication of the source may still land in ClickHouse (one owed, or one the delivery
+worker took over and settled within the insert bound of its lease), since a delete's
+retirement of the chunks could otherwise land after it brought them back. Its write-back
+commits over the version it read, so a text write that took the source meanwhile refuses
+it (409). One that commits and cannot publish is undone and answers 503. A purge undo
+also takes back the restored head and its delivery, and waits out that delivery's lease
+before it deletes the ClickHouse row.
+
 A restore whose caller goes away (the client disconnects, the request is cancelled)
 before it answers still runs to its end under the claim and takes itself back, since no
 audit row would record it; its undo finishes before the claim is given up. A caller that
@@ -498,8 +508,8 @@ the restore standing with no audit row, as any audited write can.
 What it cannot take back:
 
 - A restore cut off before its undo leaves the chunks searchable under a retired row;
-  calling it again finishes it, unless a delete runs first, which lists those chunks at a
-  new time and leaves the document past restoring.
+  calling it again finishes it. A delete that runs first retires those chunks stamped at
+  the document's own delete, so a restore still finds them.
 - An erasure that registers and completes between its two ledger reads, followed by a
   failure of the undo (or of the second read and the undo, or the process ending between
   them): the row stays live, and a later call answers `live`.
@@ -511,15 +521,20 @@ What it cannot take back:
   row names an original that is gone (and answers `kept`); the download then fails. Any
   write that names an existing original again shares this window.
 
-Concurrent writes: a text write (`knowledge.add`, `knowledge.upsert`) and a delete take no
-claim. A text write that lands on the same source during a restore can leave both
-versions' chunks searchable, as it can during a delete, until the next write of that
-source. One that started before the restore stores its row under a lower version, so the
-restored row hides it, as a delete's row hides one that started before the delete: write
-it again. When a restore takes itself back after a later write's row won, it leaves that
-row as it is and retires only its own chunks. A delete that lands during a restore can
-leave the document live with no searchable chunks (`chunks_restored: 0`), which a second
-delete settles.
+Concurrent writes: a text write (`knowledge.add`, `knowledge.upsert`) and the delete of a
+live document take no claim. Under the ClickHouse authority, a text write that lands on
+the same source during a restore can leave both versions' chunks searchable, as it can
+during a delete, until the next write of that source; one that started before the
+restore stores its row under a lower version, so the restored row hides it, as a
+delete's row hides one that started before the delete: write it again. Under the
+Postgres authority, whichever of the two commits second answers 409 and retires its own
+chunks. When a restore takes itself back after a later write's row won, it leaves that
+row as it is and retires only its own chunks. A delete of an already deleted source
+retires its leftover chunks under the source's claim, reading the document again under
+it with sequential consistency: one a restore brought back meanwhile is live then and
+keeps its chunks. It retires and counts only the chunks up to the tombstone; a newer
+write's chunks, still to commit, stay, and a delete that finds only those answers that
+nothing was deleted.
 
 ## Invariants
 

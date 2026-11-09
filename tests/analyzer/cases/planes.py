@@ -599,7 +599,9 @@ async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
     await K.mark_doc_superseded(
         ORG, NS, "doc://a", embedding_model="m" if f else None, when=_DT, ch=ch
     )
-    await K.mark_docs_superseded(ORG, NS, ["doc://a"], when=_DT, ch=ch)
+    await K.mark_docs_superseded(ORG, NS, {"doc://a": 5}, when=_DT, ch=ch)
+    await K.retire_versions(ORG, NS, [("doc://a", 5)], embedding_model="m", when=_DT, ch=ch)
+    await K.delete_versions(ORG, NS, [("doc://a", 5)], ch=ch)
     await D.get_many_by_uris(ORG, NS, ["doc://a"], include_superseded=f, ch=ch)
     await D.get_one(ORG, NS, "doc://a", include_superseded=f, ch=ch)
     await D.list_with_chunk_counts(

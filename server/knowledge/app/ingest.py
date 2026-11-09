@@ -43,8 +43,14 @@ def _uuid(value: str) -> str | None:
 
 async def handle_knowledge_ingest(input: KnowledgeIngestInput) -> KnowledgeIngestOutput:
     from server.knowledge.app.writes import authorship
+    from server.knowledge.store import documents as documents_repo
 
     author = authorship(input)
+    # Under the Postgres authority a key a commit cannot store is refused here (422),
+    # before the job spends an extraction and an embedding to fail at its publish.
+    documents_repo.check_storable(
+        [{"org": input.org, "namespace": input.namespace, "source_uri": input.source_uri, **author}]
+    )
     upload_id = _uuid(input.upload_id)
     upload = (
         await ingestions.get_upload(input.org, input.namespace, upload_id) if upload_id else None

@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 from clickhouse_connect.driver.exceptions import DatabaseError
 
-from server.core import pg, shielded
+from server.core import ch_errors, pg, pg_lease, shielded
 from server.core.errors import BackendTimeoutError, BackendUnavailableError, OverloadedError
 from server.core.paths import PG_MIGRATIONS_DIR
 from server.core.pg_profile import durability_verdict
@@ -234,12 +234,11 @@ def _outbox_pass(
 
 def _clickhouse(monkeypatch: pytest.MonkeyPatch, *, answers: bool) -> None:
     """Whether ClickHouse answers the probe a failed publish makes."""
-    from server.memory.app import pg_delivery
 
     async def _probe() -> bool:
         return answers
 
-    monkeypatch.setattr(pg_delivery, "_clickhouse_answers", _probe)
+    monkeypatch.setattr(ch_errors, "clickhouse_answers", _probe)
 
 
 def _audits(namespace: str, *hashes: str) -> list[dict[str, str]]:
@@ -339,8 +338,6 @@ async def test_a_connection_failure_counts_only_while_clickhouse_answers(
     refused, however the outage shows (a refused connect, a connect timeout, a proxy)."""
     from clickhouse_connect.driver.exceptions import OperationalError
 
-    from server.memory.app import pg_delivery
-
     _clickhouse(monkeypatch, answers=answers)
     for error in (
         OperationalError("Network Error: Server disconnected"),
@@ -348,13 +345,13 @@ async def test_a_connection_failure_counts_only_while_clickhouse_answers(
         OperationalError("HTTP driver received HTTP status 503"),
         BackendUnavailableError("down"),
     ):
-        assert await pg_delivery._refused_nothing(error, probe=True) is not answers
+        assert await ch_errors.refused_nothing(error, probe=True) is not answers
     # A refusal by ClickHouse itself, and the client's own deadline, count either way.
     for error in (
         DatabaseError("Code: 159. Timeout exceeded"),
         BackendTimeoutError("slow", statement_class="write", timeout_s=60),
     ):
-        assert await pg_delivery._refused_nothing(error, probe=True) is False
+        assert await ch_errors.refused_nothing(error, probe=True) is False
 
 
 @pytest.mark.parametrize(
@@ -467,6 +464,15 @@ def test_the_erasure_locks_heads_in_the_commits_order() -> None:
     from server.erasure.store import steps_pg
 
     assert steps_pg._KEY_ORDER == pg_memory._KEY_ORDER.replace("c.", "")
+
+
+def test_the_knowledge_erasure_locks_heads_in_the_commits_order() -> None:
+    """As for memory heads: a different order would let an erasure and a document
+    commit deadlock on two heads."""
+    from server.erasure.store import steps_pg
+    from server.knowledge.store import pg_documents
+
+    assert steps_pg._KNOWLEDGE_KEY_ORDER == pg_documents._KEY_ORDER
 
 
 def test_the_exports_times_are_times_the_authority_stores() -> None:
@@ -806,10 +812,10 @@ def test_a_lease_ends_its_margin_early(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.settings import settings
 
     monkeypatch.setattr(settings, "pg_lease_margin_seconds", 0.5)
-    assert pg_memory.lease_deadline(settings.pg_request_lease_seconds, 100.0) == (
+    assert pg_lease.lease_deadline(settings.pg_request_lease_seconds, 100.0) == (
         100.0 + settings.pg_request_lease_seconds - 0.5
     )
-    assert pg_memory.lease_deadline(settings.pg_delivery_lease_seconds, 0.0) == (
+    assert pg_lease.lease_deadline(settings.pg_delivery_lease_seconds, 0.0) == (
         settings.pg_delivery_lease_seconds - 0.5
     )
 
@@ -1649,7 +1655,7 @@ async def test_a_failed_publish_counts_once_and_the_last_one_parks(
 
     async def _publish(claims: list[pg_memory.Claimed], *, stub: bool = False) -> None:
         if claims[0].seq == 2:
-            raise pg_memory.PublicationPending()
+            raise pg_lease.PublicationPending()
         raise RuntimeError("refused")
 
     async def _record(
@@ -1706,9 +1712,9 @@ async def test_a_last_attempt_its_lease_ran_out_on_publishes_its_stub_under_a_ne
     renewals: list[int] = []
 
     async def _publish(claims: list[pg_memory.Claimed], *, stub: bool = False) -> None:
-        pg_memory.check_lease(claims[0].deadline)
+        pg_lease.check_lease(claims[0].deadline)
         if not stub:
-            raise pg_memory.PublicationPending()  # the embedder outlasted the lease
+            raise pg_lease.PublicationPending()  # the embedder outlasted the lease
         stubs.extend(claims)
 
     async def _renew(claims: list[pg_memory.Claimed]) -> list[pg_memory.Claimed]:
@@ -1833,7 +1839,7 @@ async def test_a_refused_audit_row_fails_the_attempt_after_the_search_document_i
 
     monkeypatch.setattr(pg_delivery, "_still_heads", _all_heads)
     monkeypatch.setattr(pg_memory, "complete", _complete)
-    monkeypatch.setattr(pg_memory, "check_lease", lambda deadline: None)
+    monkeypatch.setattr(pg_lease, "check_lease", lambda deadline: None)
     monkeypatch.setattr("server.core.ch.get_client", lambda: object())
     claim = _claim(4, pg_memory.SEARCH_DOC | pg_memory.AUDIT_ROW)
     with pytest.raises(RuntimeError, match="audit_log refused"):
@@ -2267,7 +2273,7 @@ async def test_a_committed_revision_is_recorded_once_and_its_fence_never_its_ans
     from server.memory.app import high_fence, update
     from server.settings import settings
 
-    pending = None if published else pg_memory.PublicationPending()
+    pending = None if published else pg_lease.PublicationPending()
     recorded: list[str] = []
     dropped: list[tuple[str, str, str]] = []
 
@@ -2337,7 +2343,7 @@ async def test_a_revisions_cancelled_child_is_raised_beside_a_pending_one(
         return SimpleNamespace(seqs=[1], deadline=None)
 
     async def _pending(*_: Any, **__: Any) -> None:
-        raise pg_memory.PublicationPending()
+        raise pg_lease.PublicationPending()
 
     async def _cancelled(*_: Any, **__: Any) -> None:
         raise asyncio.CancelledError()
@@ -2355,7 +2361,7 @@ async def test_a_revisions_cancelled_child_is_raised_beside_a_pending_one(
     monkeypatch.setattr(memory_repo, "insert_embedding_rows", _pending)
     monkeypatch.setattr(pg_publish, "publish", _pending)
     assert isinstance(
-        await update._publish_revision(committed, emb, None), pg_memory.PublicationPending
+        await update._publish_revision(committed, emb, None), pg_lease.PublicationPending
     )
 
 
@@ -2985,7 +2991,6 @@ async def test_a_spent_claim_whose_stub_fails_is_parked(monkeypatch: pytest.Monk
 async def test_the_probe_is_a_plain_read_of_clickhouse(
     monkeypatch: pytest.MonkeyPatch, answer: Any, up: bool
 ) -> None:
-    from server.memory.app import pg_delivery
 
     class _CH:
         async def query_one(self, sql: str, params: Any = None) -> Any:
@@ -2995,7 +3000,7 @@ async def test_the_probe_is_a_plain_read_of_clickhouse(
             return answer
 
     monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
-    assert await pg_delivery._clickhouse_answers() is up
+    assert await ch_errors.clickhouse_answers() is up
 
 
 @pytest.mark.asyncio
@@ -3045,14 +3050,12 @@ async def test_an_admission_helping_counts_no_connection_failure(
     """It does not probe: a failed connection refuses nothing."""
     from clickhouse_connect.driver.exceptions import OperationalError
 
-    from server.memory.app import pg_delivery
-
     async def _probe() -> bool:
         raise AssertionError("an admission helping does not probe")
 
-    monkeypatch.setattr(pg_delivery, "_clickhouse_answers", _probe)
+    monkeypatch.setattr(ch_errors, "clickhouse_answers", _probe)
     error = OperationalError("Network Error: Server disconnected")
-    assert await pg_delivery._refused_nothing(error, probe=False) is True
+    assert await ch_errors.refused_nothing(error, probe=False) is True
 
 
 @pytest.mark.asyncio
@@ -3358,7 +3361,7 @@ async def test_a_restore_refused_by_an_erasure_answers_not_found(
     [
         (pg.PostgresUnavailableError("down"), False),
         (pg.PostgresUnavailableError("lost", outcome_unknown=True), True),
-        (pg_memory.PublicationPending(), True),
+        (pg_lease.PublicationPending(), True),
         (pg_memory.AdmissionContendedError("moved"), False),
         (BackendTimeoutError("slow insert"), True),
         (BackendUnavailableError("reconnected"), True),
@@ -3968,7 +3971,7 @@ async def test_a_restore_commits_in_batches_and_leaves_a_pending_rest_to_the_wor
     async def _insert(rows: Any, *, ch: Any, publish_now: bool = True) -> int:
         calls.append((len(rows), publish_now))
         if len(calls) == 2:
-            raise pg_memory.PublicationPending()
+            raise pg_lease.PublicationPending()
         return len(rows)
 
     monkeypatch.setattr(pg, "enabled", lambda: True)
@@ -4252,7 +4255,7 @@ async def test_a_copy_whose_publication_is_pending_is_done(
         return SimpleNamespace(rows=rows)
 
     async def _publish(*_: Any, **__: Any) -> None:
-        raise pg_memory.PublicationPending()
+        raise pg_lease.PublicationPending()
 
     monkeypatch.setattr(pg, "enabled", lambda: True)
     monkeypatch.setattr("server.memory.store.lifecycle.check_memory_rows", lambda rows: None)
@@ -4347,7 +4350,7 @@ async def test_a_cleared_page_is_announced_before_its_vectors_retire(
         return SimpleNamespace(rows=rows)
 
     async def _publish(*_: Any, **__: Any) -> None:
-        raise pg_memory.PublicationPending()
+        raise pg_lease.PublicationPending()
 
     async def _announce(rows: Any) -> None:
         announced.extend(rows)
@@ -4622,7 +4625,7 @@ async def test_an_update_whose_retirement_fails(
     kw = {"searchable": False, "high": False, "record": _ok, "exact": False, "op": "memory.update"}
     if authority == "postgres":
         pending = await update._land_revision(*args, **kw)
-        assert isinstance(pending, pg_memory.PublicationPending)
+        assert isinstance(pending, pg_lease.PublicationPending)
     else:
         with pytest.raises(RuntimeError, match="retire refused"):
             await update._land_revision(*args, **kw)
@@ -4759,7 +4762,7 @@ def test_a_send_under_a_lease_starts_by_the_leases_end(monkeypatch: pytest.Monke
         assert rmt_carry.send_deadline() == pytest.approx(1_700_000_015, abs=1)
     with rmt_carry.under_lease(time.monotonic() - 10):
         assert rmt_carry.send_deadline() == pytest.approx(1_700_000_005, abs=1)
-    with pytest.raises(pg_memory.PublicationPending), pg_memory.leased(time.monotonic() - 1):
+    with pytest.raises(pg_lease.PublicationPending), pg_lease.leased(time.monotonic() - 1):
         pass
 
 
@@ -4809,7 +4812,7 @@ async def test_a_deleted_decisions_record_retires_where_it_is_published(
     monkeypatch.setattr(pg_publish, "next_version", _version)
     monkeypatch.setattr(pg_memory, "live_decision_writers", _live)
     monkeypatch.setattr(pg_memory, "complete", _complete)
-    monkeypatch.setattr(pg_memory, "check_lease", lambda deadline: None)
+    monkeypatch.setattr(pg_lease, "check_lease", lambda deadline: None)
     monkeypatch.setattr(pg_publish, "tombstone_decision_records", _records)
     owing = [owe("a", "k1", 1), owe("a", "k2", 2), owe("b", "k3", 3)]
     assert await pg_publish.retire_decision_records(owing, deadline=0.0, ch=object()) is None
@@ -5528,7 +5531,7 @@ async def test_a_publish_retires_the_old_vectors_and_records_it_owes(
     calls.clear()
     completed.clear()
     fail = True
-    with pytest.raises(pg_memory.PublicationPending):
+    with pytest.raises(pg_lease.PublicationPending):
         await pg_publish.publish(committed, ch=object())
     assert calls == ["vectors bare=True"] and completed == []
 
@@ -6706,3 +6709,16 @@ async def test_the_worker_stops_its_stubs_past_the_pass_deadline(monkeypatch, sp
             [*(_claim(seq, 1) for seq in range(1, spent + 1)), _claim(9, 0)], run
         )
     assert (stubbed, renewed) == ([1], [])
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["retention_memory_days", "retention_memory_embeddings_days", "retention_documents_days"],
+)
+@pytest.mark.asyncio
+async def test_the_postgres_profile_refuses_a_ttl_on_a_table_it_holds(monkeypatch, field) -> None:
+    from server.core import pg_profile
+
+    monkeypatch.setattr(pg_profile.settings, field, 30)
+    with pytest.raises(RuntimeError, match="Unset them"):
+        await pg_profile.start()

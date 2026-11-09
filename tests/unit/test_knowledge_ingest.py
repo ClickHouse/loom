@@ -27,6 +27,7 @@ from server.core.errors import (
     OverloadedError,
     PreconditionFailedError,
 )
+from server.core.pg import PostgresUnavailableError
 from server.knowledge.api.models_knowledge import (
     KnowledgeIngestCancelInput,
     KnowledgeIngestInput,
@@ -165,7 +166,17 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
         w.log.append("chunks")
         return len(rows)
 
-    async def insert_one(row: dict[str, Any], **_: Any) -> None:
+    async def insert_one(row: dict[str, Any], *, retire_older: bool = False, **_: Any) -> None:
+        await _insert_row(row)
+        if retire_older:  # as the funnel does once the row is in
+            try:
+                await mark_doc_superseded(
+                    row["org"], row["namespace"], row["source_uri"], before_version=row["version"]
+                )
+            except Exception as e:
+                raise documents_repo.OlderNotRetired(e) from e
+
+    async def _insert_row(row: dict[str, Any]) -> None:
         if w.fail_document is not None:
             w.late_documents.append(dict(row))
             raise w.fail_document
@@ -263,6 +274,24 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
 
     monkeypatch.setattr(chunks_repo, "count_active_for_doc", count_active_for_doc)
 
+    async def count_active_by_uri(
+        org: str, ns: str, uris: list[str], *, before_version: int | None = None, **_: Any
+    ) -> dict[str, int]:
+        bound = 2**63 if before_version is None else before_version
+        found = {
+            u: sum(
+                1
+                for c in w.chunks
+                if c["source_uri"] == u
+                and c["doc_version"] not in w.dead
+                and c["doc_version"] < bound
+            )
+            for u in uris
+        }
+        return {u: n for u, n in found.items() if n}
+
+    monkeypatch.setattr(chunks_repo, "count_active_by_uri", count_active_by_uri)
+
     async def count_version(org: str, ns: str, uri: str, version: int, **_: Any) -> int:
         if version in w.dead:
             return 0
@@ -270,6 +299,12 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
 
     monkeypatch.setattr(chunks_repo, "count_version", count_version)
     monkeypatch.setattr(chunks_repo, "mark_doc_superseded", mark_doc_superseded)
+
+    async def mark_docs_superseded(org: str, ns: str, before: Any, **kw: Any) -> None:
+        for uri, bound in before.items():
+            await mark_doc_superseded(org, ns, uri, before_version=bound)
+
+    monkeypatch.setattr(chunks_repo, "mark_docs_superseded", mark_docs_superseded)
     monkeypatch.setattr(documents_repo, "insert_one", insert_one)
     monkeypatch.setattr(documents_repo, "get_one", get_one)
 
@@ -1174,17 +1209,28 @@ def test_a_failure_after_the_document_row_ends_the_job_published(
     assert world.superseded[-1] == ("repo://retention.sql", world.documents[-1]["version"])
 
 
-def test_an_ingest_a_later_text_write_overtook_fails_and_retires_its_chunks(world: World) -> None:
-    """A text write takes no claim: one that took its version after this
-    publish's would outrank its row, so the ingest fails `revision_conflict`
-    rather than report a revision no reader sees."""
+def test_a_failed_retirement_is_reported_with_its_own_cause_chain(
+    world: World, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The job ends published, and the log names the retirement's own error, its cause
+    chain kept, with no loop back through the wrapper the funnel raised."""
     _run(world, _ingest(world, _upload(world)))
-    world.documents[-1]["version"] = 2**62  # a write stamped later than any job's version
-    job_id = _ingest(world, _upload(world))
-    assert _run(world, job_id) == "failed"
-    job = world.job(job_id)
-    assert job is not None and job["error_code"] == "revision_conflict"
-    assert world.retired == [job["doc_version"]] and len(world.documents) == 1
+    root = RuntimeError("connection reset")
+    error = BackendTimeoutError("timed out")
+    error.__cause__ = root
+    world.fail_retire_older = error
+    with caplog.at_level("WARNING", logger=ingest_run.log.name):
+        assert _run(world, _ingest(world, _upload(world))) == "ready"
+    [record] = [r for r in caplog.records if "a step after its row failed" in r.getMessage()]
+    assert "BackendTimeoutError" in record.getMessage()
+    assert record.exc_info is not None
+    chain: list[BaseException] = []
+    link: BaseException | None = record.exc_info[1]
+    while link is not None:  # the retirement's error and its own cause, no loop
+        assert link not in chain
+        chain.append(link)
+        link = link.__cause__
+    assert chain == [error, root]
 
 
 def test_a_reindex_of_an_ingested_document_is_refused_and_writes_nothing(world: World) -> None:
@@ -1331,8 +1377,16 @@ def test_a_retry_publishes_over_a_write_that_landed_while_it_waited(world: World
     assert world.job(job_id)["revision"] == 2  # type: ignore[index]
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        BackendTimeoutError("timed out"),
+        # The Postgres authority's commit sent, its answer lost: it may have committed.
+        PostgresUnavailableError("connection lost", outcome_unknown=True),
+    ],
+)
 def test_a_document_insert_that_timed_out_and_landed_later_ends_the_job_published(
-    world: World, settings_override: Any
+    world: World, settings_override: Any, error: Exception
 ) -> None:
     """A client-side timeout does not stop the insert: the run stops as a crash
     would and leaves the job processing at its publish stage, chunks live. When
@@ -1341,7 +1395,7 @@ def test_a_document_insert_that_timed_out_and_landed_later_ends_the_job_publishe
     has not, the next run retires them and the job fails."""
     settings_override(knowledge_ingest_max_attempts=1)
     _run(world, _ingest(world, _upload(world)))
-    world.fail_document = BackendTimeoutError("timed out")
+    world.fail_document = error
     job_id = _ingest(world, _upload(world))
     assert _run(world, job_id) == "processing" and world.retired == []
     job = world.job(job_id)
@@ -1386,6 +1440,16 @@ def test_a_document_deleted_after_a_late_insert_stays_deleted(world: World, merg
     assert _run(world, job_id) == "ready" and world.job(job_id)["revision"] == 2  # type: ignore[index]
     assert (len(world.documents), len(world.chunks)) == (documents, chunks)
     assert world.documents[-1]["superseded_at"] is not None
+
+
+def test_a_postgres_refusal_that_committed_nothing_retries_the_job(world: World) -> None:
+    """A commit refused before it was sent (its lock timed out under an erasure) wrote
+    nothing: the job retries with its backoff instead of waiting out an uncertain
+    insert."""
+    world.fail_document = PostgresUnavailableError("lock timeout")
+    job_id = _ingest(world, _upload(world))
+    assert _run(world, job_id) == "pending" and world.left_to_expire == 0
+    assert world.job(job_id)["error_code"] == "retrying"  # type: ignore[index]
 
 
 def test_a_cancel_after_an_uncertain_insert_waits_for_the_job_to_settle(world: World) -> None:
@@ -1970,3 +2034,63 @@ def test_a_fault_on_the_next_revision_fails_typed_and_the_earlier_one_keeps_serv
         if c["doc_version"] not in world.dead
     ]
     assert live == served
+
+
+def test_a_job_publishes_above_a_prior_written_by_a_host_whose_clock_runs_ahead(
+    world: World,
+) -> None:
+    """The source's latest row carries a version ahead of this host's clock: the job's
+    version is past it, so the commit replaces the head instead of refusing a row below
+    it as another write's."""
+    _run(world, _ingest(world, _upload(world)))
+    ahead = time.time_ns() + 10**12  # written by a host 1000 s ahead
+    world.documents[-1] = {**world.documents[-1], "version": ahead}
+    job_id = _ingest(world, _upload(world))
+    assert _run(world, job_id) == "ready"
+    assert world.documents[-1]["version"] > ahead
+    assert world.job(job_id)["revision"] == 2  # type: ignore[index]
+
+
+def test_a_full_postgres_outage_leaves_a_due_job_pending_with_no_attempt_counted(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Postgres unreachable before the run starts: the pass fails at the job's first read
+    of it, which comes before an attempt is counted, so the job waits and runs once
+    Postgres answers, its attempts intact (as the runbook says)."""
+    from server.core.pg import PostgresUnavailableError
+    from server.knowledge.store import documents as documents_repo
+
+    job_id = _ingest(world, _upload(world))
+    before = dict(world.job(job_id) or {})
+
+    async def down(*a: Any, **kw: Any) -> Any:
+        raise PostgresUnavailableError("connection refused")
+
+    monkeypatch.setattr(documents_repo, "revision_by_ingestion", down)
+    with pytest.raises(PostgresUnavailableError):
+        _run(world, job_id)
+    job = world.job(job_id)
+    assert job is not None and job["state"] == "pending"
+    assert job["attempts"] == before["attempts"]
+
+
+def test_a_text_postgres_cannot_store_fails_the_job_before_its_chunks(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Under the Postgres authority a source URI holding a NUL character could not be
+    committed (a key column is Postgres text). `knowledge.ingest` refuses it (422)
+    before any work; a job an older build queued fails `unstorable_text`, the request's
+    fault, having written no chunk, instead of a server defect after them."""
+    from server.core import pg
+    from server.core.errors import ValidationError
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    with pytest.raises(ValidationError):
+        _ingest(world, _upload(world), source_uri="repo://retention\x00.sql")
+    monkeypatch.setattr(pg, "enabled", lambda: False)  # queued by a build without the check
+    job_id = _ingest(world, _upload(world), source_uri="repo://retention\x00.sql")
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    assert _run(world, job_id) == "failed"
+    job = world.job(job_id)
+    assert job is not None and job["error_code"] == "unstorable_text"
+    assert world.chunks == [] and world.documents == []

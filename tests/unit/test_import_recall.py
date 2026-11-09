@@ -498,3 +498,50 @@ async def test_make_writer_over_http_posts_with_the_token(monkeypatch) -> None:
     await writer("profile.set", {"label": "x"})
     await closer()
     assert seen == [("/v1/profile.set", "Bearer T")]
+
+
+@pytest.mark.asyncio
+async def test_a_write_awaiting_publication_is_done_over_http_and_in_process(monkeypatch) -> None:
+    """PUBLICATION_PENDING says the write committed and is not to be repeated: neither
+    writer counts it as failed. Any other 503 still fails."""
+    import argparse
+
+    import httpx
+
+    from server.cli import import_recall
+    from server.core.pg_lease import PublicationPending
+
+    codes = {"/v1/knowledge.add": "PUBLICATION_PENDING", "/v1/memory.set": "BACKEND_UNAVAILABLE"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, json={"detail": {"code": codes[request.url.path]}})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw)
+    )
+    writer, closer = await import_recall._make_writer(
+        argparse.Namespace(base_url="http://loom.test/", token="T"), dict, timeout_s=1.0
+    )
+    await writer("knowledge.add", {})
+    with pytest.raises(httpx.HTTPStatusError):
+        await writer("memory.set", {})
+    await closer()
+
+    class _CH:
+        async def connect(self) -> None: ...
+
+        async def disconnect(self) -> None: ...
+
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
+
+    async def _pending(p):
+        raise PublicationPending()
+
+    writer, closer = await import_recall._make_writer(
+        argparse.Namespace(base_url=None, token=None),
+        lambda: {"knowledge.add": _pending},
+        timeout_s=1.0,
+    )
+    await writer("knowledge.add", {})
+    await closer()

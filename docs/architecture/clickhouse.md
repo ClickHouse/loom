@@ -656,6 +656,10 @@ with `purge=true`, runner state, and the supersession rows `knowledge.restore` r
   only the row mask: rows vanish from every read at once and bytes leave at the next merge.
   Narrow tables keep `ALTER TABLE … DELETE`. The
   saga polls each mutation by an embedded tag, and a residue census checks the result.
+- **A refused knowledge write's own chunks**: under the Postgres authority, a write
+  refused because an erasure removed the document it was built from deletes the chunk
+  rows it inserted (lightweight `DELETE FROM loom.chunks` by source and version,
+  `chunks.delete_versions`), so its text and author do not outlive the erasure.
 - **Remaining `ALTER … UPDATE/DELETE` call sites** are listed in
   `tests/unit/test_clickhouse_mutation_inventory.py`, which fails on a new one until it is
   classified there.
@@ -810,14 +814,19 @@ sequentially consistent read sees every insert acknowledged before it began. On 
 self-hosted ReplicatedMergeTree it waits only for inserts written with `insert_quorum`
 and `insert_quorum_parallel = 0`, which ClickHouse refuses for async inserts (and which
 serializes every insert into a table), so a read on one replica can still miss a row
-another replica acknowledged a moment ago. The guarantees built on it, the sign-in attempt
-recounts, the single signing-key retire, `task.create`'s idempotency key (a retry finds
-the task the first call stored), the single `code.coverage.ready` event, and the document
-bucket's walk and user erasure among them, hold exactly on Cloud and a single server. A
-self-hosted replicated cluster must send every Loom process to one replica; `loom
-doctor`'s `replica_consistency` line warns while `loom.auth_attempts`,
-`loom.signing_keys`, `loom.tasks`, `loom.task_events`, `loom.document_blobs` or
-`loom.blob_uploads` has more than one.
+another replica acknowledged a moment ago. Guarantees built on it include the sign-in
+attempt recounts, the single signing-key retire, `task.create`'s idempotency key (a
+retry finds the task the first call stored), the single `code.coverage.ready` event, the
+document bucket's walk and user erasure, a knowledge delete's read after a restore and,
+under the Postgres authority, three more: the read that drops a knowledge head
+ClickHouse no longer holds, the erasure's read of the document ids it refuses afterwards
+([storage authority](storage-authority.md#knowledge-documents)) and the originals
+sweep's ClickHouse read after its read of the unpublished commits
+([knowledge](../features/knowledge.md#replacing-editing-and-deleting)). They hold
+exactly on Cloud and a single server. A self-hosted replicated cluster must send every
+Loom process to one replica; `loom doctor`'s `replica_consistency` line warns while
+`loom.auth_attempts`, `loom.signing_keys`, `loom.tasks`, `loom.task_events`,
+`loom.document_blobs`, `loom.blob_uploads` or `loom.documents` has more than one.
 
 **Keeper reads.** The Keeper keys that carry state between replicas (the namespace write
 keys, graph projections and writes, claims and leases) are read through each replica's own

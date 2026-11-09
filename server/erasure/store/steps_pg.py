@@ -8,17 +8,23 @@ memory it removed reads its peers anew: `pg_memory.PeerErased`); a user's scope 
 the consolidated rows the user's memories fed in their own namespace. It then waits out
 every publisher that may still be sending what it deleted: a publisher stops sending
 when its lease is about to end, an insert it sent before then starts within the
-transit allowance of the lease's end (`pg_memory.leased`), and it runs for at most
+transit allowance of the lease's end (`pg_lease.leased`), and it runs for at most
 the write limit (`ch.write_limit_s`, `pg.wait_out`). The ClickHouse steps that follow
 then find every copy that arrives within that bound.
+
+`pg_knowledge.delete` does the same for knowledge documents: it removes the scope's
+heads and deliveries under the namespaces' document lock, keeps the document ids of
+every version of the scope's documents as evidence that refuses a write built from
+them (`loom.erased_documents`), and waits out the removed deliveries' publishers.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import Any
 
 from server.core import pg
+from server.settings import settings
 
 # The consolidated rows a user's memories fed, under another identity: tagged
 # `consolidated` and `src:<key>` with a key the user wrote in the row's own namespace
@@ -63,6 +69,11 @@ _AUDIT_ROW = 4
 # unaliased (pinned equal in test_pg_authority).
 _KEY_ORDER = "ORDER BY org, namespace, agent, user_id, session_id, memory_key"
 
+# The order every locker of knowledge heads takes them in: a copy of
+# `pg_documents._KEY_ORDER`, which this layer cannot import (pinned equal in
+# test_pg_authority).
+_KNOWLEDGE_KEY_ORDER = "ORDER BY org, namespace, source_uri"
+
 _BUMP_SCOPES = (
     "INSERT INTO loom.scope_generations AS g (org, scope, generation) "
     'SELECT $1, ns, 1 FROM unnest($2::text[]) AS ns ORDER BY ns COLLATE "C" '
@@ -71,18 +82,8 @@ _BUMP_SCOPES = (
 
 
 async def _erase(org: str, namespaces: list[str] | None, user_id: str | None) -> int:
-    """The scope's rows out of Postgres, then the wait for their publishers. A user's
-    scope can grow by a namespace that sorts before one it holds, against a concurrent
-    erasure's order: Postgres then aborts one side, which runs again."""
-    import asyncpg
-
-    for attempt in range(1, 4):
-        try:
-            removed, leases = await _erase_once(org, namespaces, user_id)
-            break
-        except asyncpg.exceptions.DeadlockDetectedError:
-            if attempt == 3:
-                raise
+    """The scope's rows out of Postgres, then the wait for their publishers."""
+    removed, leases = await _after_deadlocks(_erase_once, org, namespaces, user_id)
     # A delivery another holder finished is kept settled until the insert bound has
     # passed after its lease and any fence (`pg_memory.sweep_settled`): its lease is
     # among these.
@@ -90,9 +91,27 @@ async def _erase(org: str, namespaces: list[str] | None, user_id: str | None) ->
     return removed
 
 
-async def _earlier_run(conn: Any, org: str, namespaces: list[str] | None) -> list[float]:
+async def _after_deadlocks(
+    once: Callable[..., Awaitable[tuple[int, list[float]]]], *args: Any
+) -> tuple[int, list[float]]:
+    """`once(*args)`, run again after a deadlock: a user's scope can grow by a namespace
+    that sorts before one it holds, against a concurrent erasure's order, and Postgres
+    then aborts one side. The third attempt's deadlock is raised."""
+    import asyncpg
+
+    for _ in range(2):
+        try:
+            return await once(*args)
+        except asyncpg.exceptions.DeadlockDetectedError:
+            pass
+    return await once(*args)
+
+
+async def _earlier_run(
+    conn: Any, org: str, namespaces: list[str] | None, table: str = "loom.erased_memories"
+) -> list[float]:
     """An earlier run of this erasure that removed rows and stopped before its wait, as a
-    lease: its evidence says until when a publisher of them may still land one
+    lease: its evidence (`table`) says until when a publisher of them may still land one
     (`quiet_at`), and this run, which finds them gone, waits as long. Read before this run
     deletes anything. A user's scope has no column to read the evidence by: the org's
     stands for it, another erasure's wait in the org included."""
@@ -102,7 +121,7 @@ async def _earlier_run(conn: Any, org: str, namespaces: list[str] | None) -> lis
         where += " AND namespace = ANY($2::text[])"
         params.append(namespaces)
     left_s = await conn.fetchval(
-        f"SELECT extract(epoch FROM max(quiet_at) - now()) FROM loom.erased_memories WHERE {where}",
+        f"SELECT extract(epoch FROM max(quiet_at) - now()) FROM {table} WHERE {where}",
         *params,
     )
     # `pg.wait_out` adds the insert bound to a lease; `quiet_at` holds it already.
@@ -227,6 +246,194 @@ async def delete_pg_memory_by_user(org: str, user_id: str) -> int:
     return await _erase(org, None, user_id)
 
 
+async def _erase_knowledge(org: str, namespaces: list[str] | None, user_id: str | None) -> int:
+    """The scope's knowledge heads and deliveries (`loom.knowledge_heads`,
+    `loom.knowledge_deliveries`) out of Postgres, their documents' ids kept as deletion
+    evidence, then the wait for the publishers of those deliveries, so the documents
+    step below finds every copy they could land."""
+    removed, leases = await _after_deadlocks(_erase_knowledge_once, org, namespaces, user_id)
+    await pg.wait_out(leases)
+    return removed
+
+
+async def _erase_knowledge_once(
+    org: str, namespaces: list[str] | None, user_id: str | None
+) -> tuple[int, list[float]]:
+    # A large scope outlasts a request's statement budget: its own connection, with none.
+    async with pg.dedicated() as conn, conn.transaction():
+        # Idle in this transaction while each ClickHouse evidence read runs.
+        await conn.execute(f"SET LOCAL idle_in_transaction_session_timeout = {_evidence_idle_ms()}")
+        arg: list[str] | str  # the namespaces, or the user
+        scoped: list[str] | None  # None: a user's scope reads the org's evidence
+        if user_id is None:
+            names = sorted(set(namespaces or []))
+            where, arg, scoped = "org = $1 AND namespace = ANY($2::text[])", names, names
+            await _lock_knowledge(conn, org, names)
+        else:
+            where, arg, scoped = "org = $1 AND user_id = $2", user_id, None
+            await _lock_user_knowledge(conn, org, user_id)
+        earlier = await _earlier_run(conn, org, scoped, "loom.erased_documents")
+        # Locks in a commit's order: heads by key, then the deliveries.
+        await conn.execute(
+            f"SELECT 1 FROM loom.knowledge_heads WHERE {where} {_KNOWLEDGE_KEY_ORDER} FOR UPDATE",
+            org,
+            arg,
+        )
+        # A parked delivery's last send is covered by its `fenced_until`, and a settled
+        # one's (taken over and finished) replaced request by its lease.
+        leases = await conn.fetch(
+            f"DELETE FROM loom.knowledge_deliveries d WHERE {where} RETURNING d.namespace, "
+            f"d.row->>'doc_id' AS doc_id, {pg.LEASE_LEFT_S} AS left_s",
+            org,
+            arg,
+        )
+        heads = await conn.fetch(
+            f"DELETE FROM loom.knowledge_heads WHERE {where} "
+            "RETURNING namespace, row->>'doc_id' AS doc_id",
+            org,
+            arg,
+        )
+        left = [float(r["left_s"]) for r in leases]
+        # Every version's doc_id, ClickHouse's too, read under the namespaces' locks: a
+        # write built from a read of any of them, one a later write replaced included,
+        # keeps its id and is refused. A write that reads after the erasure carries none
+        # (a new version takes a fresh id, and a deleted document lends none).
+        quiet_s = max(left) + pg.insert_bound_s() if left else 0.0
+        removed = sorted({(r["namespace"], r["doc_id"]) for r in [*leases, *heads] if r["doc_id"]})
+        await _keep_evidence(conn, org, removed, quiet_s)
+        async for page in documents_in_clickhouse(org, scoped, user_id):
+            await _keep_evidence(conn, org, page, quiet_s)
+    return len(heads) + len(leases), [*left, *earlier]
+
+
+async def documents_in_clickhouse(
+    org: str, namespaces: list[str] | None, user_id: str | None, *, ch: Any = None
+) -> AsyncIterator[list[tuple[str, str]]]:
+    """The (namespace, doc_id) of every loom.documents version of the scope ClickHouse
+    holds, merged-away ones aside, page by page along the table's key (each namespace
+    by source URI), each read sequentially consistent: a version another replica
+    acknowledged is among them. A user's scope first reads the namespaces holding the
+    user's rows."""
+    from server.core.ch import get_client, sequential_reads
+
+    ch = ch or get_client()
+    size = settings.pg_erasure_evidence_page_rows
+    mine = "" if user_id is None else " AND user_id = {uid:String}"
+    if user_id is None:
+        names = sorted(namespaces or [])
+    else:
+        with sequential_reads():
+            rows = await ch.query_all(
+                "SELECT DISTINCT namespace FROM loom.documents "
+                "WHERE org = {org:String} AND user_id = {uid:String} ORDER BY namespace",
+                params={"org": org, "uid": user_id},
+            )
+        names = [str(r["namespace"]) for r in rows]
+    for ns in names:
+        params: dict[str, Any] = {
+            "org": org,
+            "ns": ns,
+            "uid": user_id,
+            "n": size,
+            "uri": "",
+            "id": "",
+        }
+        while True:
+            with sequential_reads():
+                rows = await ch.query_all(
+                    "SELECT DISTINCT source_uri, toString(doc_id) AS id FROM loom.documents "
+                    f"WHERE org = {{org:String}} AND namespace = {{ns:String}}{mine} "
+                    # The plain bound is what the key analysis uses (it skips the
+                    # granules before it); the tuple orders ids within a source.
+                    "AND source_uri >= {uri:String} "
+                    "AND (source_uri, id) > ({uri:String}, {id:String}) "
+                    "ORDER BY source_uri, id LIMIT {n:UInt32}",
+                    params=params,
+                )
+            page = [(str(r["source_uri"]), str(r["id"])) for r in rows]
+            if page:
+                yield [(ns, doc_id) for _, doc_id in page]
+            if len(page) < size:
+                break
+            params["uri"], params["id"] = page[-1]
+
+
+def _evidence_idle_ms() -> int:
+    """How long the erasure's transaction may sit idle while one ClickHouse evidence read
+    runs: every attempt the client makes of it (`ch_replica_bound_retries` more after the
+    first, each up to the read timeout) and 10 s for its reconnects, never below the
+    pool's own limit; 0 (none) when reads are unbounded."""
+    from server.core.ch import class_timeout_s
+
+    read_s = class_timeout_s("read")
+    if read_s <= 0:
+        return 0
+    attempts = 1 + settings.ch_replica_bound_retries
+    return max(int(pg.idle_timeout_ms()), int((read_s * attempts + 10) * 1000))
+
+
+async def _keep_evidence(conn: Any, org: str, gone: list[tuple[str, str]], quiet_s: float) -> None:
+    if not gone:
+        return
+    await conn.execute(
+        "INSERT INTO loom.erased_documents AS e (org, namespace, doc_id, quiet_at) "
+        "SELECT $1, ns, id, now() + make_interval(secs => $4) "
+        "FROM unnest($2::text[], $3::text[]) AS g(ns, id) "
+        "ON CONFLICT (org, namespace, doc_id) DO UPDATE SET erased_at = now(), "
+        "quiet_at = GREATEST(e.quiet_at, EXCLUDED.quiet_at)",
+        org,
+        [ns for ns, _ in gone],
+        [doc_id for _, doc_id in gone],
+        quiet_s,
+    )
+
+
+async def _lock_knowledge(conn: Any, org: str, namespaces: list[str]) -> None:
+    """These namespaces' document lock alone (`pg.KNOWLEDGE_LOCK_KEY`), in the sorted
+    order the caller passes: their commits wait for this transaction."""
+    for ns in namespaces:
+        await conn.execute(f"SELECT pg_advisory_xact_lock({pg.KNOWLEDGE_LOCK_KEY})", org, ns)
+
+
+async def _lock_user_knowledge(conn: Any, org: str, user_id: str) -> None:
+    """Lock every namespace holding the user's documents, reading again once they are
+    locked until no namespace more holds one: a commit landed meanwhile is in scope."""
+    locked: set[str] = set()
+    while True:
+        held = {
+            r["namespace"]
+            for r in await conn.fetch(
+                "SELECT namespace FROM loom.knowledge_heads WHERE org = $1 AND user_id = $2 "
+                "UNION SELECT namespace FROM loom.knowledge_deliveries "
+                "WHERE org = $1 AND user_id = $2",
+                org,
+                user_id,
+            )
+        }
+        if held <= locked:
+            return
+        await _lock_knowledge(conn, org, sorted(held - locked))
+        locked |= held
+
+
+async def delete_pg_knowledge_by_namespace(org: str, namespace: str | Sequence[str]) -> int:
+    names = [
+        n
+        for n in ([namespace] if isinstance(namespace, str) else namespace)
+        if not pg.unstorable(n)
+    ]
+    if pg.unstorable(org) or not names:
+        return 0
+    return await _erase_knowledge(org, names, None)
+
+
+async def delete_pg_knowledge_by_user(org: str, user_id: str) -> int:
+    """The knowledge the user wrote, in any namespace of the org."""
+    if pg.unstorable((org, user_id)):
+        return 0
+    return await _erase_knowledge(org, None, user_id)
+
+
 async def delete_pg_idempotency(org: str) -> int:
     """The org's replay answers: as loom.idempotency's step, the scope is the org (no
     column names the namespace or the end user). A claim a request in flight holds is
@@ -268,6 +475,8 @@ PG_CENSUS: dict[str, str] = {
     "pg:loom.memory_current": "pg_memory.delete",
     "pg:loom.memory_revisions": "pg_memory.delete",
     "pg:loom.idempotency": "idempotency.delete",
+    "pg:loom.knowledge_heads": "pg_knowledge.delete",
+    "pg:loom.knowledge_deliveries": "pg_knowledge.delete",
 }
 # The Postgres tables that hold none, with the reason.
 PG_NO_MEMORY_CONTENT: dict[str, str] = {
@@ -285,6 +494,11 @@ PG_NO_MEMORY_CONTENT: dict[str, str] = {
         "deletion evidence: the namespace and id of each erased memory, when, and when "
         "its publishers are quiet; no content; swept after LOOM_PG_ERASURE_EVIDENCE_HOURS."
     ),
+    "loom.erased_documents": (
+        "deletion evidence: the namespace and doc_id of each version of an erased knowledge "
+        "document, when, and when its publishers are quiet; no content; swept after "
+        "LOOM_PG_ERASURE_EVIDENCE_HOURS."
+    ),
     "loom.audit_outbox": (
         "audit rows on their way to loom.audit_log, which outlives an erasure: keys and "
         "ids, never values; deleted once published, or parked with their last_error."
@@ -292,13 +506,20 @@ PG_NO_MEMORY_CONTENT: dict[str, str] = {
 }
 
 
-# The Postgres tables a namespace's memory lives in, which the in-use check reads.
-PG_IN_USE_TABLES = ("loom.memory_current", "loom.memory_revisions")
+# The Postgres tables a namespace's memory or knowledge documents live in, which the
+# in-use check reads.
+PG_IN_USE_TABLES = (
+    "loom.memory_current",
+    "loom.memory_revisions",
+    "loom.knowledge_heads",
+    "loom.knowledge_deliveries",
+)
 
 
 async def pg_holds_namespace(org: str, namespace: str) -> bool:
-    """Whether the Postgres authority holds a memory head or revision of (org, namespace):
-    one committed but not yet delivered to ClickHouse is in no census table there."""
+    """Whether the Postgres authority holds a memory head or revision, or a knowledge
+    document head or delivery, of (org, namespace): one committed but not yet delivered
+    to ClickHouse is in no census table there."""
     if not pg.enabled() or pg.unstorable(org) or pg.unstorable(namespace):
         return False
     branches = [f"SELECT 1 FROM {t} WHERE org = $1 AND namespace = $2" for t in PG_IN_USE_TABLES]
@@ -330,7 +551,7 @@ async def pg_residue(org: str, scope_type: str, scope_value: str | Sequence[str]
     # namespace is refused (`pg_memory.MemoryErased`), so the scope's own rows are the
     # residue.
     async with pg.dedicated() as conn:
-        for table in ("loom.memory_current", "loom.memory_revisions"):
+        for table in PG_IN_USE_TABLES:
             in_scope = await conn.fetchval(
                 f"SELECT count(*) FROM {table} WHERE org = $1 AND {pred}", org, arg
             )

@@ -320,11 +320,15 @@ async def start() -> list[str]:
     files a process that applies none skipped."""
     from server.core.schema import pg_migrate
 
-    if settings.retention_memory_days or settings.retention_memory_embeddings_days:
+    if (
+        settings.retention_memory_days
+        or settings.retention_memory_embeddings_days
+        or settings.retention_documents_days
+    ):
         raise RuntimeError(
-            "LOOM_RETENTION_MEMORY_DAYS and LOOM_RETENTION_MEMORY_EMBEDDINGS_DAYS are "
-            "ClickHouse TTLs; under the Postgres authority they would delete ClickHouse's "
-            "copies alone. Unset them."
+            "LOOM_RETENTION_MEMORY_DAYS, LOOM_RETENTION_MEMORY_EMBEDDINGS_DAYS and "
+            "LOOM_RETENTION_DOCUMENTS_DAYS are ClickHouse TTLs; under the Postgres "
+            "authority they would delete ClickHouse's copies alone. Unset them."
         )
     await pg.open_pool()
     pending: list[str] = []

@@ -5,6 +5,7 @@ importers send their ops through."""
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import logging
@@ -14,6 +15,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.cli._client import refused_for_agent, resolve_token
+from server.core.pg_lease import PublicationPending
 
 log = logging.getLogger(__name__)
 
@@ -741,6 +743,18 @@ def _cmd_import_recall(args: argparse.Namespace) -> int:
 _OpHandlers = dict[str, Callable[[dict[str, Any]], Awaitable[Any]]]
 
 
+def _publication_pending(r: Any) -> bool:
+    """Whether a write's answer is PUBLICATION_PENDING: committed, not to be repeated."""
+    if r.status_code != 503:
+        return False
+    try:
+        body = r.json()
+    except ValueError:
+        return False
+    detail = body.get("detail") if isinstance(body, dict) else None
+    return isinstance(detail, dict) and detail.get("code") == PublicationPending.code
+
+
 async def _make_writer(
     args: argparse.Namespace, inproc_ops: Callable[[], _OpHandlers], *, timeout_s: float
 ) -> tuple[Any, Any]:
@@ -761,6 +775,8 @@ async def _make_writer(
 
         async def _http_writer(op: str, payload: dict[str, Any]) -> None:
             r = await client.post(f"{base}/v1/{op}", json=_recall_jsonable(payload))
+            if _publication_pending(r):
+                return  # committed; the server's delivery worker publishes it
             r.raise_for_status()
 
         return _http_writer, client.aclose
@@ -787,7 +803,8 @@ async def _make_writer(
         handler = handlers.get(op)
         if handler is None:
             raise ValueError(f"unknown op {op!r}")
-        await handler(payload)
+        with contextlib.suppress(PublicationPending):  # committed; the worker publishes it
+            await handler(payload)
 
     async def close() -> None:
         try:

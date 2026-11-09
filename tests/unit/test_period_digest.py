@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from server.core import pg_lease
 from server.memory.app.period_digest import (
     PERIOD_DIGEST_PROMPT_VERSION,
     PERIOD_KEY_PREFIX,
@@ -607,7 +608,7 @@ async def test_a_documented_version_owes_its_document_and_writes_it_under_the_le
     async def _publish(committed: Any, **_: Any) -> None:
         calls.append("publish")
         if not published:
-            raise pg_memory.PublicationPending()
+            raise pg_lease.PublicationPending()
 
     class _CH:
         async def insert(self, table: str, rows: Any, settings: Any = None) -> None:

@@ -2,13 +2,14 @@
 and bucket objects no row names.
 
 The one place outside erasure that deletes an original. A document delete, a
-re-upload with other bytes and a retention TTL on `loom.documents` all leave
-the old original behind; this pass deletes every original that no live
-document (`LIVE_ORIGINAL_SQL`) names and nothing has written for at least
-`document_blob_min_age_seconds`. A write stores its original before the
-document row that names it, so a younger original may belong to a write still
-in flight; the delete repeats the age check, so an original stored again
-between the read and the delete keeps its new row.
+re-upload with other bytes and a retention TTL on `loom.documents` all leave the old
+original behind; this pass deletes every original that no live document
+(`LIVE_ORIGINAL_SQL`) names, nor, under the Postgres authority, a live document of
+an unpublished commit (`blobs.owed_originals`, read before each page), and nothing
+has written for at least `document_blob_min_age_seconds`. A write stores its
+original before the document row that names it, so a younger original may belong to
+a write still in flight; the delete repeats the age check, so an original stored
+again between the read and the delete keeps its new row.
 
 It walks one namespace at a time, each read bounded by the namespace and a
 batch, so no statement scans every tenant's documents at once.
@@ -70,10 +71,13 @@ async def sweep_namespace(org: str, namespace: str, min_age_s: int) -> int:
     again this pass."""
     deleted, after = 0, ""
     for _ in range(_MAX_BATCHES):
+        # Before the candidates: a commit that publishes in between is read there.
+        owed = await blobs.owed_originals(org, namespace)
         found = await blobs.unreferenced(org, namespace, min_age_s, _BATCH, after=after)
         if not found:
             break
-        result = await blobs.delete(org, namespace, found, min_age_s=min_age_s)
+        doomed = [s for s in found if s not in owed]
+        result = await blobs.delete(org, namespace, doomed, min_age_s=min_age_s)
         deleted += result.gone
         if result.kept:
             pass_context.note_failure(
