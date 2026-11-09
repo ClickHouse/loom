@@ -2916,6 +2916,24 @@ async def test_a_commits_gap_with_erased_seqs_is_checked_on_the_rows_left() -> N
 
 
 @pytest.mark.asyncio
+async def test_a_commits_gap_with_a_cleared_payload_is_not_cleared_from_the_journal() -> None:
+    """A revision of the gap whose payload was cleared after its delivery cannot be judged
+    from the journal: the commit does not clear the gap, and the write reaches its
+    verdict again on peers read anew, rather than decoding a missing row."""
+    seen: list[Any] = []
+
+    class _Conn:
+        async def fetch(self, sql: str, *args: Any) -> list[dict[str, Any]]:
+            return [{"row": {"memory_id": "m12"}}, {"row": None}]
+
+    admission = pg_memory.Admission(
+        generations={("o", "n"): 10}, gap_check=lambda rows: seen.append(rows) or True
+    )
+    assert await pg_memory._gap_cleared(_Conn(), admission, {("o", "n"): 13}) is False
+    assert seen == []
+
+
+@pytest.mark.asyncio
 async def test_a_redaction_finds_a_version_clickhouse_does_not_hold_yet(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
