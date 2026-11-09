@@ -6954,14 +6954,40 @@ async def test_a_connection_lost_in_a_transaction_is_503_not_the_drivers_error(
             raise asyncpg.exceptions.ConnectionDoesNotExistError("connection was closed")
 
 
-def test_a_durable_read_on_a_demoted_primary_is_the_read_only_outage() -> None:
+@pytest.mark.asyncio
+async def test_a_durable_read_on_a_demoted_primary_is_the_read_only_outage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Its logical message cannot take an xid in recovery (XX000), which counts as the
-    demoted primary's 25006: the pool is expired and the caller gets a 503."""
+    demoted primary's 25006: the caller gets a 503 and the pool is expired."""
     from server.core import pg
 
     class _InRecovery(Exception):
         sqlstate = "XX000"
 
-    e = _InRecovery("cannot assign TransactionIds during recovery")
-    assert pg._read_only(e) and pg.is_outage(e)
+    class _Demoted(_PgConn):
+        async def execute(self, *a: object) -> str:
+            raise _InRecovery("cannot assign TransactionIds during recovery")
+
+    expired: list[bool] = []
+    conn = _Demoted()
+
+    class _Pool:
+        async def acquire(self, **_: float) -> _PgConn:
+            return conn
+
+        async def release(self, c: _PgConn, **_: float) -> None:
+            return None
+
+        async def expire_connections(self) -> None:
+            expired.append(True)
+
+    async def _pool() -> _Pool:
+        return _Pool()
+
+    monkeypatch.setattr(pg, "_pool_for_loop", _pool)
+    with pytest.raises(pg.PostgresUnavailableError):
+        async with pg.durable_transaction() as c:
+            await c.fetch("SELECT 1")
+    assert expired == [True] and conn.terminated
     assert not pg.is_outage(_InRecovery("some other internal error"))
