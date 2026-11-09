@@ -22,7 +22,7 @@ from server.insights.api.models_analysis import InsightsQueryInput
 from server.insights.app import analysis as app
 from server.insights.domain import analysis as boundary
 
-SECRETS = (bytes(range(32)), "Aa1-pw")
+SECRETS = (bytes(range(32)), "pw")
 
 
 @pytest.fixture
