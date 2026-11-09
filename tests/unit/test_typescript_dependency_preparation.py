@@ -192,7 +192,7 @@ async def test_long_unbroken_output_is_redacted_only_in_a_window(
 
     monkeypatch.setattr(deps, "redact", measured)
     env = _installer(tmp_path)
-    # 100 lines of 2000 characters with no space: redacting all of it takes minutes.
+    # 200 KB of long unbroken tokens: redaction must see only a bounded window of it.
     (tmp_path / "npm").write_text(
         "#!/bin/sh\nfor i in $(seq 100); do printf 'a.%.0s' $(seq 1000); echo; done\nexit 1\n"
     )
