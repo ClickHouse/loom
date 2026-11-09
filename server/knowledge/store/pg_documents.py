@@ -386,22 +386,19 @@ async def claim_due(limit: int) -> tuple[list[Delivery], float]:
     publishes ClickHouse refused before (`failed`)."""
     lease_s = float(settings.pg_delivery_lease_seconds)  # the worker's, as memory's
     started = time.monotonic()  # before the claim: the lease runs from its start
-    # In a transaction, whose COMMIT waits out the standbys with no statement timeout:
-    # once the claim returns, the rows it read are on them (`pg.durable_transaction`).
-    async with pg.transaction() as conn:
-        got = await conn.fetch(
-            "UPDATE loom.knowledge_deliveries d SET lease_token = d.lease_token + 1, "
-            "lease_until = now() + make_interval(secs => $2) "
-            "FROM (SELECT org, namespace, source_uri, version FROM loom.knowledge_deliveries "
-            "WHERE lease_until < now() AND NOT settled ORDER BY lease_until LIMIT $1 "
-            "FOR UPDATE SKIP LOCKED) due "
-            "WHERE (d.org, d.namespace, d.source_uri, d.version) = "
-            "(due.org, due.namespace, due.source_uri, due.version) "
-            "RETURNING d.org, d.namespace, d.source_uri, d.version, d.row, d.targets, "
-            "d.lease_token, d.attempts",
-            limit,
-            lease_s,
-        )
+    got = await pg.fetch(
+        "UPDATE loom.knowledge_deliveries d SET lease_token = d.lease_token + 1, "
+        "lease_until = now() + make_interval(secs => $2) "
+        "FROM (SELECT org, namespace, source_uri, version FROM loom.knowledge_deliveries "
+        "WHERE lease_until < now() AND NOT settled ORDER BY lease_until LIMIT $1 "
+        "FOR UPDATE SKIP LOCKED) due "
+        "WHERE (d.org, d.namespace, d.source_uri, d.version) = "
+        "(due.org, due.namespace, due.source_uri, due.version) "
+        "RETURNING d.org, d.namespace, d.source_uri, d.version, d.row, d.targets, "
+        "d.lease_token, d.attempts",
+        limit,
+        lease_s,
+    )
     claims = [
         Delivery(
             str(r["org"]),

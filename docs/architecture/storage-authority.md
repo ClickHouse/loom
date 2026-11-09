@@ -531,17 +531,18 @@ ClickHouse only once the synchronous standbys hold it. A row becomes visible onl
 its own commit's standby wait ended, so a later commit that writes WAL and returns from
 its own wait covers every row its transaction read.
 
-- The claims of the delivery worker, the audit outbox and the knowledge delivery worker
-  run in a transaction, whose COMMIT waits out the standbys with no statement timeout;
-  an UPDATE that claimed rows wrote WAL. A wait that is cancelled raises, and nothing
-  claimed is sent.
+- A claim of the delivery worker, the audit outbox or the knowledge delivery worker is
+  an UPDATE of the rows it claims, so its commit waits for the standbys (the statement
+  timeout does not cover a commit's standby wait); the client's command timeout cancels
+  a wait that outlasts it and raises, and nothing claimed is sent.
 - A writer's flush sends its own commits, which returned from their wait.
 - A newer copy of a head (a pin, a touch) that a document is built onto, and the live
   decision writers a record retirement keeps, are other sessions' commits. They are
   read again in `pg.durable_transaction()`, whose COMMIT carries a transactional logical
   message (prefix `loom.durable`) so that it waits for the standbys on the connection
   that read the rows, and decided from that read. `decision.record` checks its writers
-  this way after its record lands, so it waits for one more standby round trip.
+  this way after its record lands, and a delete of a decision retires its record this
+  way in its flush, so each waits for one more standby round trip.
 
 The rule for any path: a ClickHouse send fed by a Postgres read sends only what the
 caller committed or claimed, or reads durably first. A decision that only changes

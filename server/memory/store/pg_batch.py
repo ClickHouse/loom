@@ -336,28 +336,16 @@ async def _served_documents(
     keys = [identity_key(d) for e in waiting for d in e.documents]
     heads = await pg_memory.heads_owing(keys) if keys else {}
 
-    def copy(doc: dict[str, Any]) -> bool:
-        """Whether the key's head is a newer copy of the document's row that owes no
-        document of its own."""
-        head, owed = heads.get(identity_key(doc), (None, 0))
-        return head is not None and not owed & SEARCH_DOC and pg_memory.newer_copy(head, doc)
-
-    def served(doc: dict[str, Any]) -> dict[str, Any] | None:
-        head, _ = heads.get(identity_key(doc), (None, 0))
-        if head is None or head.get("redacted_at") is not None:
-            return None
-        if int(head["version"]) == int(doc["version"]):
-            return doc
-        return _onto(doc, head) if copy(doc) else None
-
     # A copy is another commit than the writer's, perhaps one on the primary alone: the
-    # heads are read again durably, and every document is decided again from that read.
-    if any(copy(d) for e in waiting for d in e.documents):
+    # heads are read again durably, and every document is decided from that read.
+    if any(_copy(d, heads) for e in waiting for d in e.documents):
         heads = await pg_memory.heads_owing(keys, durable=True)
 
     sent: dict[int, dict[tuple[Any, ...], dict[str, Any]]] = {}
     for e in waiting:
-        sent[id(e)] = {_doc_key(d): out for d in e.documents if (out := served(d)) is not None}
+        sent[id(e)] = {
+            _doc_key(d): out for d in e.documents if (out := _served(d, heads)) is not None
+        }
         moved = {_doc_key(d) for d in e.documents} - sent[id(e)].keys()
         e.stale = [
             seq
@@ -365,6 +353,26 @@ async def _served_documents(
             if _doc_key(row) in moved
         ]
     return sent
+
+
+_Heads = dict[Any, tuple[dict[str, Any], int]]
+
+
+def _copy(doc: Mapping[str, Any], heads: _Heads) -> bool:
+    """Whether the key's head is a newer copy of the document's row
+    (`pg_memory.newer_copy`) that owes no document of its own."""
+    head, owed = heads.get(identity_key(doc), (None, 0))
+    return head is not None and not owed & SEARCH_DOC and pg_memory.newer_copy(head, doc)
+
+
+def _served(doc: dict[str, Any], heads: _Heads) -> dict[str, Any] | None:
+    """The document to send for `doc` (`_served_documents`), None for none."""
+    head, _ = heads.get(identity_key(doc), (None, 0))
+    if head is None or head.get("redacted_at") is not None:
+        return None
+    if int(head["version"]) == int(doc["version"]):
+        return doc
+    return _onto(doc, head) if _copy(doc, heads) else None
 
 
 def _onto(doc: Mapping[str, Any], head: Mapping[str, Any]) -> dict[str, Any]:

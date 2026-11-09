@@ -200,26 +200,31 @@ async def _still_heads(claims: list[Claimed], deadline: float) -> list[Claimed]:
 
     A copy is another commit than the claim's, perhaps one on the primary alone: the
     heads are read again durably (`pg_memory.heads_by_keys`) and the documents built
-    from that read (`pg_lease.check_room`)."""
+    from that read; a standby wait that ended the lease is an outage (`pg_lease.check_room`)."""
     if not claims:
         return claims
     keys = [identity_key(c.row) for c in claims]
     heads = await pg_memory.heads_by_keys(keys, include_tombstoned=True)
-    if any(_served(c, heads)[1] for c in claims):
+    if any(_copy(c, heads) for c in claims):
         heads = await pg_memory.heads_by_keys(keys, include_tombstoned=True, durable=True)
         pg_lease.check_room(deadline)
-    return [replace(c, row=row) for c in claims if (row := _served(c, heads)[0]) is not None]
+    return [replace(c, row=row) for c in claims if (row := _served(c, heads)) is not None]
 
 
-def _served(c: Claimed, heads: dict[Any, dict[str, Any]]) -> tuple[dict[str, Any] | None, bool]:
-    """The row `c`'s document is built from (`_still_heads`), None for none, and whether
-    it is a newer copy rather than the claim's own revision."""
+def _copy(c: Claimed, heads: dict[Any, dict[str, Any]]) -> bool:
+    """Whether `c`'s key's head is a newer copy of its revision (`pg_memory.newer_copy`)."""
+    head = heads.get(identity_key(c.row))
+    return head is not None and pg_memory.newer_copy(head, c.row)
+
+
+def _served(c: Claimed, heads: dict[Any, dict[str, Any]]) -> dict[str, Any] | None:
+    """The row `c`'s document is built from (`_still_heads`), None for none."""
     head = heads.get(identity_key(c.row))
     if head is None or head.get("redacted_at") is not None:
-        return None, False
+        return None
     if int(head["version"]) <= int(c.row["version"]):
-        return c.row, False
-    return (head, True) if pg_memory.newer_copy(head, c.row) else (None, False)
+        return c.row
+    return head if pg_memory.newer_copy(head, c.row) else None
 
 
 async def _retire_old_vectors(

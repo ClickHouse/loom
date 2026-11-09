@@ -2,8 +2,8 @@
 
 A commit whose standby wait was cancelled is visible on the primary alone; a failover
 loses it. A ClickHouse send fed by a Postgres read must therefore send only what the
-caller committed or claimed (`pg.durable_transaction`), or read durably
-(`pg_memory._read`). These tests pin who reads what, and the gate's placement.
+caller committed or claimed, or read durably first (`pg.durable_transaction`,
+`pg_memory._read`). These tests pin who reads what, and the gate's placement.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ _NOT_READS = {
     "pg_memory": {
         "encode_row", "decode_row", "encode_audit", "decode_audit", "protection",
         "heads_unchanged", "unchanged", "policy_scopes", "policy_part", "deleted_decision",
-        "embedded", "commit_versions", "complete", "complete_each", "hand_over",
+        "embedded", "newer_copy", "commit_versions", "complete", "complete_each", "hand_over",
         "claim_due", "defer_audits", "release", "renew", "sweep_settled", "claim_outbox",
         "drop_outbox", "fail_outbox", "sweep_erasure_evidence", "record_failure", "redact",
         "fold_usage",
@@ -341,24 +341,6 @@ def test_a_retirement_read_durably_within_its_lease_is_sent(
         pg_publish.retire_decision_records([owed], deadline=_a_lease(), ch=None)  # type: ignore[arg-type]
     )
     assert error is None and sent == ["retired", "cleared"]
-
-
-@pytest.mark.parametrize("claim", ["claim_due", "claim_outbox"])
-def test_the_memory_claims_commit_in_a_transaction(
-    monkeypatch: pytest.MonkeyPatch, claim: str
-) -> None:
-    """A claim's COMMIT, with no statement timeout, waits out the standbys: once it
-    returns, the rows it claimed are on them. An UPDATE that claimed rows wrote WAL, so it
-    needs no logical message."""
-    log: list[str] = []
-    _fake_transaction(monkeypatch, log)
-
-    async def not_in_one(*a: Any, **k: Any) -> Any:
-        raise AssertionError("claimed outside a transaction")
-
-    monkeypatch.setattr(pg, "fetch", not_in_one)
-    asyncio.run(getattr(pg_memory, claim)(10))
-    assert log == ["begin", "read", "commit"]
 
 
 def test_a_retirement_that_reads_its_own_writers_reads_them_durably(

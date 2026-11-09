@@ -944,46 +944,42 @@ async def claim_due(limit: int, *, scope: tuple[str, str] | None = None) -> list
         where += " AND org = $4 AND namespace = $5"
         order = "seq"
         args += list(scope)
-    # In a transaction, whose COMMIT waits out the standbys with no statement timeout:
-    # once the claim returns, the rows it read are on them (`pg.durable_transaction`).
-    async with pg.transaction() as conn:
-        rows = await conn.fetch(
-            f"""
-            WITH due AS (
-                SELECT org, namespace, seq, held, {order} AS claim_order,
-                       {pg.LEASE_LEFT_S} AS replaced_lease_s,
-                       attempts + held::int >= $3
-                       AND (targets & {SEARCHED} <> {SEARCH_DOC}
-                            OR (held AND attempts >= $3)) AS parks
-                FROM loom.memory_deliveries d
-                WHERE {where}
-                ORDER BY {order}
-                LIMIT $1
-                FOR UPDATE SKIP LOCKED
-            )
-            , claimed AS (
-            UPDATE loom.memory_deliveries d
-            SET lease_token = d.lease_token + 1,
-                attempts = d.attempts + d.held::int,
-                held = false,
-                -- Parked: the last holder's send may still land within its lease.
-                fenced_until = CASE WHEN due.parks THEN GREATEST(d.fenced_until, d.lease_until)
-                                    ELSE d.fenced_until END,
-                lease_until = CASE WHEN due.parks THEN 'infinity'::timestamptz
-                                   ELSE now() + make_interval(secs => $2) END,
-                last_error = CASE WHEN d.held THEN 'stopped mid-publish' ELSE d.last_error END
-            FROM due, loom.memory_revisions r
-            WHERE (d.org, d.namespace, d.seq) = (due.org, due.namespace, due.seq)
-              AND (r.org, r.namespace, r.seq) = (d.org, d.namespace, d.seq)
-            RETURNING d.org, d.namespace, d.seq, d.targets, d.lease_token, d.attempts,
-                      due.parks AS parked, due.held AS taken_over, r.row, r.audit,
-                      due.claim_order, due.replaced_lease_s
-            )
-            -- An UPDATE returns its rows in no order: the claims come back in the order taken.
-            SELECT * FROM claimed ORDER BY claim_order, org, namespace, seq
-            """,
-            *args,
+    rows = await pg.fetch(
+        f"""
+        WITH due AS (
+            SELECT org, namespace, seq, held, {order} AS claim_order,
+                   {pg.LEASE_LEFT_S} AS replaced_lease_s,
+                   attempts + held::int >= $3
+                   AND (targets & {SEARCHED} <> {SEARCH_DOC} OR (held AND attempts >= $3)) AS parks
+            FROM loom.memory_deliveries d
+            WHERE {where}
+            ORDER BY {order}
+            LIMIT $1
+            FOR UPDATE SKIP LOCKED
         )
+        , claimed AS (
+        UPDATE loom.memory_deliveries d
+        SET lease_token = d.lease_token + 1,
+            attempts = d.attempts + d.held::int,
+            held = false,
+            -- Parked: the last holder's send may still land within its lease.
+            fenced_until = CASE WHEN due.parks THEN GREATEST(d.fenced_until, d.lease_until)
+                                ELSE d.fenced_until END,
+            lease_until = CASE WHEN due.parks THEN 'infinity'::timestamptz
+                               ELSE now() + make_interval(secs => $2) END,
+            last_error = CASE WHEN d.held THEN 'stopped mid-publish' ELSE d.last_error END
+        FROM due, loom.memory_revisions r
+        WHERE (d.org, d.namespace, d.seq) = (due.org, due.namespace, due.seq)
+          AND (r.org, r.namespace, r.seq) = (d.org, d.namespace, d.seq)
+        RETURNING d.org, d.namespace, d.seq, d.targets, d.lease_token, d.attempts,
+                  due.parks AS parked, due.held AS taken_over, r.row, r.audit,
+                  due.claim_order, due.replaced_lease_s
+        )
+        -- An UPDATE returns its rows in no order: the claims come back in the order taken.
+        SELECT * FROM claimed ORDER BY claim_order, org, namespace, seq
+        """,
+        *args,
+    )
     for r in rows:
         if r["parked"]:
             log.error(
@@ -1144,20 +1140,18 @@ async def claim_outbox(limit: int) -> tuple[list[dict[str, Any]], float]:
     started = time.monotonic()
     # 0 is no bound on a read: the claim allows it the insert bound.
     read_s = float(settings.ch_timeout_read_s) or pg.insert_bound_s()
-    # Its COMMIT waits out the standbys, as `claim_due`'s does.
-    async with pg.transaction() as conn:
-        rows = await conn.fetch(
-            "WITH first AS (SELECT org, namespace FROM loom.audit_outbox "
-            "  WHERE due_at <= now() ORDER BY due_at LIMIT 1 FOR UPDATE SKIP LOCKED), "
-            "due AS (SELECT o.org, o.namespace, o.row_hash FROM loom.audit_outbox o "
-            "  JOIN first USING (org, namespace) WHERE o.due_at <= now() "
-            "  ORDER BY o.due_at LIMIT $1 FOR UPDATE OF o SKIP LOCKED) "
-            "UPDATE loom.audit_outbox o SET due_at = now() + make_interval(secs => $2) FROM due "
-            "WHERE (o.org, o.namespace, o.row_hash) = (due.org, due.namespace, due.row_hash) "
-            "RETURNING o.audit",
-            limit,
-            read_s + pg.insert_bound_s(),
-        )
+    rows = await pg.fetch(
+        "WITH first AS (SELECT org, namespace FROM loom.audit_outbox "
+        "  WHERE due_at <= now() ORDER BY due_at LIMIT 1 FOR UPDATE SKIP LOCKED), "
+        "due AS (SELECT o.org, o.namespace, o.row_hash FROM loom.audit_outbox o "
+        "  JOIN first USING (org, namespace) WHERE o.due_at <= now() "
+        "  ORDER BY o.due_at LIMIT $1 FOR UPDATE OF o SKIP LOCKED) "
+        "UPDATE loom.audit_outbox o SET due_at = now() + make_interval(secs => $2) FROM due "
+        "WHERE (o.org, o.namespace, o.row_hash) = (due.org, due.namespace, due.row_hash) "
+        "RETURNING o.audit",
+        limit,
+        read_s + pg.insert_bound_s(),
+    )
     return [decode_audit(r["audit"]) for r in rows], started + read_s
 
 

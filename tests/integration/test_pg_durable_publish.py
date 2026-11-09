@@ -118,12 +118,18 @@ async def test_a_role_without_superuser_may_write_the_message(admin_conn: Any) -
     role = f"loom_durable_{uuid.uuid4().hex[:8]}"
     await admin_conn.execute(f"CREATE ROLE {role} LOGIN PASSWORD 'durable'")
     try:
-        dsn = os.environ["LOOM_PG_DSN"].replace("loom:loomdev@", f"{role}:durable@", 1)
-        conn = await asyncpg.connect(dsn)
+        from urllib.parse import urlsplit, urlunsplit
+
+        from server.core import pg
+
+        parts = urlsplit(os.environ["LOOM_PG_DSN"])
+        host = parts.netloc.rsplit("@", 1)[-1]
+        conn = await asyncpg.connect(urlunsplit(parts._replace(netloc=f"{role}:durable@{host}")))
         try:
+            assert await conn.fetchval("SELECT current_user") == role
             tx = conn.transaction()
             await tx.start()
-            await conn.execute("SELECT pg_logical_emit_message(true, 'loom.durable', '')")
+            await conn.execute(pg._DURABLE_MESSAGE)  # the statement the boot checks
             await tx.rollback()  # the boot's check commits nothing either
         finally:
             await conn.close()
