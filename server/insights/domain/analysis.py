@@ -288,7 +288,7 @@ def _masked_sql(key: bytes, data: bytes) -> str:
     return f"decrypt('aes-256-ecb', unhex('{sealed.hex()}'), unhex('{key.hex()}'))"
 
 
-def hmac_sql(key: bytes, payload: str) -> str:
+def _hmac_sql(key: bytes, payload: str) -> str:
     """HMAC-SHA256 of `payload` under `key` as ClickHouse computes it, with the
     key's inner and outer pads masked as `decrypt` expressions."""
     padded = key.ljust(_BLOCK, b"\0")
@@ -307,7 +307,7 @@ def signature_filter(key: bytes) -> str:
         f"concat(toString(length({org})), ':', {org}, toString(length({ns})), ':', {ns}, "
         f"toString(length({exp})), ':', {exp}, initialQueryID())"
     )
-    return f"toUInt64OrZero({exp}) > toUnixTimestamp(now()) AND {sig} = {hmac_sql(key, payload)}"
+    return f"toUInt64OrZero({exp}) > toUnixTimestamp(now()) AND {sig} = {_hmac_sql(key, payload)}"
 
 
 def policy_filter(key: bytes) -> str:
