@@ -116,3 +116,14 @@ async def test_a_retried_attempt_that_finds_clickhouse_short_of_memory_is_a_503(
     with pytest.raises(OverloadedError):
         await c._with_retry("query_all", fn)
     assert calls["n"] == 2 and c.reconnects == 1
+
+
+async def test_a_stream_open_that_finds_clickhouse_short_of_memory_is_a_503() -> None:
+    # `raw_stream` opens through the retry ladder without `_with_retry`'s pool slot; the
+    # ladder maps the error for both.
+    fn, calls = _raising(_USER_NOW)
+    c = _client()
+    c._ensure_state()  # as raw_stream does before it opens
+    with pytest.raises(OverloadedError):
+        await c._retry_ladder("raw_stream", fn, cls="read")
+    assert calls["n"] == 1

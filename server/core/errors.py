@@ -127,17 +127,17 @@ class GrantBusyError(LoomServerError):
 
 
 class OverloadedError(LoomServerError):
-    """503 — too busy, retry: the ClickHouse pool or its streams, the document
-    bucket's transfers or streams, an override's lock, a namespace's document-source
-    lease, the blacklist's regex matchers, or a conversation delete or compaction stayed
-    contended. The pool: every pooled connection was busy past `ch_pool_wait_ms`; the
-    lock or lease: a sibling held it past its wait; the matchers: the org's share of them
-    stayed busy, and the write is refused rather than stored unchecked; a conversation
-    delete or compaction: writes to the thread's embeddings kept landing; insights.query
-    while its replica's probe has no answer from ClickHouse; any statement that met
-    ClickHouse short of the server's or the user's memory. Safe to resend
-    on an idempotent op, or when it came before the handler ran; `retry_after_s` is the
-    wait."""
+    """503 — too busy, retry: the ClickHouse pool or its streams, ClickHouse's shared
+    memory, the document bucket's transfers or streams, an override's lock, a
+    namespace's document-source lease, the blacklist's regex matchers, or a conversation
+    delete or compaction stayed contended. The pool: every pooled connection was busy past
+    `ch_pool_wait_ms`; ClickHouse's memory: a statement found the server's or the
+    ClickHouse user's memory, which every query shares, used up; the lock or lease: a
+    sibling held it past its wait; the matchers: the org's share of them stayed busy, and
+    the write is refused rather than stored unchecked; a conversation delete or
+    compaction: writes to the thread's embeddings kept landing; insights.query while its
+    replica's probe has no answer from ClickHouse. Safe to resend on an idempotent op, or
+    when it came before the handler ran; `retry_after_s` is the wait."""
 
     code = "OVERLOADED"
     status_code = 503

@@ -1008,18 +1008,23 @@ class CHClient:
         took = await self._acquire_slot(op_name)
         try:
             return await self._retry_ladder(op_name, fn, cls=cls)
-        except Exception as e:
-            # Whichever attempt met it, the server's or the user's memory running short
-            # under every query's load is a 503 the caller retries, not a 500. A
-            # statement's own cap is the caller's (`_raise_if_caller_cap`).
-            if is_shared_memory_limit(e):
-                raise _short_of_memory(op_name, e) from e
-            raise
         finally:
             if took:
                 self._release_slot()
 
     async def _retry_ladder(self, op_name: str, fn, *, cls: str):  # type: ignore[no-untyped-def]
+        """`_attempts`, with ClickHouse short of the server's or the user's memory, under
+        every query's load, answered as a 503 the caller retries rather than a 500,
+        whichever attempt met it. A statement's own cap is the caller's
+        (`_raise_if_caller_cap`)."""
+        try:
+            return await self._attempts(op_name, fn, cls=cls)
+        except Exception as e:
+            if is_shared_memory_limit(e):
+                raise _short_of_memory(op_name, e) from e
+            raise
+
+    async def _attempts(self, op_name: str, fn, *, cls: str):  # type: ignore[no-untyped-def]
         seen = int(self._generation)
         try:
             return await self._bounded(op_name, cls, fn)

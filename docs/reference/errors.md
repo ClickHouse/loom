@@ -658,7 +658,7 @@ Raised in `server/transport/mcp_auth.py`. Category `auth`, retryable: no.
 
 #### `OVERLOADED`
 
-HTTP 503, raised as `server.core.errors.OverloadedError`. 503 — too busy, retry: the ClickHouse pool or its streams, the document bucket's transfers or streams, an override's lock, a namespace's document-source lease, the blacklist's regex matchers, or a… Category `capacity`, retryable: yes for an idempotent op, no for another op once it ran. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 503, raised as `server.core.errors.OverloadedError`. 503 — too busy, retry: the ClickHouse pool or its streams, ClickHouse's shared memory, the document bucket's transfers or streams, an override's lock, a namespace's document-source lease, the… Category `capacity`, retryable: yes for an idempotent op, no for another op once it ran. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `OVERRIDE_NOT_STORED`
 
