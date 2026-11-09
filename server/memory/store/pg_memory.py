@@ -1,9 +1,9 @@
 """Every Postgres statement of the memory authority (the Postgres storage profile).
 
-`loom.memory_current` holds the head of each key as the complete loom.memory row,
-which is what `loom.memory FINAL` would serve: a row replaces the head only when
-its version is not older, as ReplacingMergeTree(version) decides. Each commit
-also appends the rows to `loom.memory_revisions`, numbered per namespace by the
+`loom.memory_current` holds the head of each key, the row `loom.memory FINAL` would
+serve, stored without the fields at their default (`sparse_row`): a row replaces the
+head only when its version is not older, as ReplacingMergeTree(version) decides. Each
+commit also appends the rows to `loom.memory_revisions`, numbered per namespace by the
 namespace's generation, and records what they owe ClickHouse in
 `loom.memory_deliveries`. The transaction is short and does no other I/O.
 
@@ -109,6 +109,12 @@ def encode_row(row: Mapping[str, Any]) -> dict[str, Any]:
 # first version may leave unset (`rows.FIRST_VERSION_DEFAULTS`). Every other field is
 # always stored, a default-valued one included.
 SPARSE_DEFAULTS: Mapping[str, Any] = FIRST_VERSION_DEFAULTS
+
+
+def sparse_row(encoded: Mapping[str, Any]) -> dict[str, Any]:
+    """An encoded row as it is stored: without the fields at their default
+    (`SPARSE_DEFAULTS`), which every reader fills back (`decode_row`)."""
+    return {c: v for c, v in encoded.items() if c not in SPARSE_DEFAULTS or v != SPARSE_DEFAULTS[c]}
 
 
 def decode_row(stored: Mapping[str, Any]) -> dict[str, Any]:
@@ -664,6 +670,7 @@ async def commit_versions(
     if any(r["namespace"] in POLICY_SCOPE_NAMES for r in stored):
         # A namespace's generation shares its key with the policy generations.
         raise ValidationError("'*' and '' are not namespace names")
+    sparse = [sparse_row(r) for r in stored]
     per_row = [targets] * len(stored) if isinstance(targets, int) else list(targets)
     per_row = [
         t | (DECISION_RECORD if deleted_decision(r) else 0)
@@ -727,7 +734,7 @@ async def commit_versions(
             [int(r["version"]) for r in head_rows],
             [seqs[heads[k]][2] for k in keys],
             [str(r.get("content_sha256") or "") for r in head_rows],
-            head_rows,
+            [sparse[heads[k]] for k in keys],
         )
         await conn.execute(
             _INSERT_REVISIONS,
@@ -741,7 +748,7 @@ async def commit_versions(
             [str(r.get("actor") or "") for r in stored],
             [str(r.get("source_class") or "") for r in stored],
             [request_id] * len(stored),
-            stored,
+            sparse,
             [encode_audit(a) for a in audits],
         )
         await conn.execute(

@@ -73,7 +73,7 @@ and every tenant index leads with `org`.
 | --------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `loom.authority`            | singleton                                                  | the recorded authority, its epoch and the deployment id                                                                                                                                                               |
 | `loom.scope_generations`    | `(org, scope)`                                             | the last revision number of a namespace, or a policy generation (`scope = '*'`, org `''` for the global one)                                                                                                          |
-| `loom.memory_current`       | `(org, namespace, agent, user_id, session_id, memory_key)` | the head of each key: the complete `loom.memory` row as JSON, with `memory_id`, `version`, `seq`, `content_sha256` beside it                                                                                          |
+| `loom.memory_current`       | `(org, namespace, agent, user_id, session_id, memory_key)` | the head of each key: its `loom.memory` row as JSON, without its default fields, with `memory_id`, `version`, `seq`, `content_sha256` beside it                                                                       |
 | `loom.memory_revisions`     | `(org, namespace, seq)`                                    | every committed row, append-only (a redaction scrubs one in place), with its hash-only audit row and its metadata in typed columns ([revision metadata](#revision-metadata))                                          |
 | `loom.memory_deliveries`    | `(org, namespace, seq)`                                    | the targets a revision still owes ClickHouse (bits: 1 memory row, 2 search document, 4 audit row, 8 a deleted decision's record, 16 the old vectors), its lease and fencing token; deleted when the last target lands |
 | `loom.idempotency`          | `(org, key_hash)`                                          | an op's request digest, its state (`running`, `committed`, `done`), the revisions it committed, its answer, a lease and its token                                                                                     |
@@ -85,7 +85,7 @@ and every tenant index leads with `org`.
 | `loom.erased_documents`     | `(org, namespace, doc_id)`                                 | deletion evidence: the `doc_id` of every version of each document an erasure removed, ClickHouse's included, refused at a commit; no content, kept `LOOM_PG_ERASURE_EVIDENCE_HOURS`                                   |
 
 A head is the row `loom.memory FINAL` would serve: a commit replaces it only when its
-version is not older, as `ReplacingMergeTree(version)` decides. Holding the whole row
+version is not older, as `ReplacingMergeTree(version)` decides. Holding the row
 keeps every one of the write paths that build `loom.memory` rows unchanged
 (`server/memory/store/rows.py`): they all reach the commit through the one insert
 funnel, `insert_memory_versions`. The row keeps ClickHouse's precision (whole-second
@@ -97,7 +97,11 @@ A stored row (a head, or a revision's payload) may leave out a field at its
 (`rows.FIRST_VERSION_DEFAULTS`, `pg_memory.SPARSE_DEFAULTS`): every reader takes a
 missing field as that default, `decode_row` in Python and `coalesce` (or a test that
 holds for NULL) in SQL. Every other field is always stored, a default-valued one
-included. This build stores every field.
+included. A commit stores each row without the fields at their default
+(`pg_memory.sparse_row`), which keeps it smaller: most of a row's fields hold their
+default, and every stored field repeats its name. The writers that change a stored row in
+place (the usage fold, a redaction) merge fields into it, and may store a field at its
+default.
 
 A memory id is not unique within an org: a namespace restored from another's snapshot
 keeps the memory ids under newer versions. Every head read by id therefore names its

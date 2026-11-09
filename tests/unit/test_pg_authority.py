@@ -132,16 +132,43 @@ def test_a_row_that_leaves_out_its_default_fields_reads_as_the_full_row() -> Non
             now=datetime(2026, 1, 2, 3, 4, 5),
         )
     )
-    sparse = {
-        c: v
-        for c, v in full.items()
-        if c not in pg_memory.SPARSE_DEFAULTS or v != pg_memory.SPARSE_DEFAULTS[c]
-    }
+    sparse = pg_memory.sparse_row(full)
     assert len(sparse) < len(full)
+    assert sparse["value"] == full["value"]
+    assert all(c not in sparse for c, v in pg_memory.SPARSE_DEFAULTS.items() if full[c] == v)
     assert pg_memory.decode_row(sparse) == pg_memory.decode_row(full)
     first, second = pg_memory.decode_row(sparse), pg_memory.decode_row(sparse)
     first["tags"].append("x")
     assert second["tags"] == []
+    # A value other than its default is stored, a falsy one included.
+    changed = {
+        "evidence_count": 0,
+        "pinned": 1,
+        "tags": ["x"],
+        "status": "superseded",
+        "char_limit": 0,
+    }
+    kept = pg_memory.sparse_row({**full, **changed})
+    assert {c: kept[c] for c in changed} == changed
+    assert pg_memory.decode_row(kept) == pg_memory.decode_row({**full, **changed})
+
+
+def test_the_fields_read_as_stored_are_never_left_out() -> None:
+    """The profile reach matches on `row->>'agent'` and `row->>'memory_type'`
+    (`memory_revisions_profile`, `_profile_built_from`), other statements read the key and
+    session, the value and the creation time as stored, and the erasure export reads the
+    type, value and confidence from the stored JSON: none has a default a row may leave
+    out."""
+    read_as_stored = {
+        "agent",
+        "memory_type",
+        "memory_key",
+        "session_id",
+        "value",
+        "created_at",
+        "confidence",
+    }
+    assert not read_as_stored & pg_memory.SPARSE_DEFAULTS.keys()
 
 
 def test_a_row_round_trips_at_clickhouse_precision() -> None:

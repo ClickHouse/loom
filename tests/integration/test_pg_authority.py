@@ -298,10 +298,10 @@ async def test_a_revisions_metadata_is_kept_from_its_row_and_outlives_it(
 async def test_a_head_that_leaves_out_its_default_fields_is_served_as_the_full_one(
     call: Any, pg_conn: Any, org: str
 ) -> None:
-    """A stored row may leave out a field at its loom.memory default: point reads,
-    listing and search serve such a head as they serve the full one, and the SQL readers
-    of its fields (the journal's revisions, the cross-session heads, the usage fold, the
-    erasure export) take a missing one as its default."""
+    """A commit stores a row without the fields at their loom.memory default: a point read
+    serves such a head as it serves the full one, listing and search find it and bulk_get
+    serves its value, and the journal's revisions, the cross-session heads, the usage fold
+    and the erasure export take a missing field as its default."""
     from server.core import pg
     from server.erasure.store.exports import export_memory_heads
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
@@ -313,25 +313,26 @@ async def test_a_head_that_leaves_out_its_default_fields_is_served_as_the_full_o
     ).status_code == 200
     await _published(pg_conn, org)
     get = {"namespace": ns, "agent": "a", "memory_key": "k"}
-    before = (await call("memory.get", get)).json()
+    tables = ("memory_current", "memory_revisions")
 
-    def sparse(stored: dict[str, Any]) -> dict[str, Any]:
-        defaults = pg_memory.SPARSE_DEFAULTS
-        return {c: v for c, v in stored.items() if c not in defaults or v != defaults[c]}
+    async def store(table: str, row: dict[str, Any]) -> None:
+        await pg_conn.execute(
+            f"UPDATE loom.{table} SET row = $3 WHERE org = $1 AND namespace = $2", org, ns, row
+        )
 
+    # The row as a build storing every field would: the defaults filled back in.
     full: dict[str, dict[str, Any]] = {}
-    for table in ("memory_current", "memory_revisions"):
+    for table in tables:
         stored = await pg_conn.fetchval(
             f"SELECT row FROM loom.{table} WHERE org = $1 AND namespace = $2", org, ns
         )
-        assert len(sparse(stored)) < len(stored)
-        full[table] = stored
-        await pg_conn.execute(
-            f"UPDATE loom.{table} SET row = $3 WHERE org = $1 AND namespace = $2",
-            org,
-            ns,
-            sparse(stored),
-        )
+        assert pg_memory.sparse_row(stored) == stored  # the commit left its defaults out
+        full[table] = pg_memory.encode_row(pg_memory.decode_row(stored))
+        assert len(full[table]) > len(stored)
+        await store(table, full[table])
+    before = (await call("memory.get", get)).json()
+    for table in tables:
+        await store(table, pg_memory.sparse_row(full[table]))
     assert (await call("memory.get", get)).json() == before
     listed = (await call("memory.list", {"namespace": ns, "agent": "a"})).json()
     assert [e["memory_key"] for e in listed["entries"]] == ["k"], listed
@@ -3156,7 +3157,8 @@ async def test_a_same_key_write_in_another_session_retires_a_first_write_at_once
     statuses = {
         r["session_id"]: r["status"]
         for r in await pg_conn.fetch(
-            "SELECT session_id, row->>'status' AS status FROM loom.memory_current "
+            "SELECT session_id, coalesce(row->>'status', 'active') AS status "
+            "FROM loom.memory_current "
             "WHERE org = $1 AND namespace = $2",
             org,
             ns,
