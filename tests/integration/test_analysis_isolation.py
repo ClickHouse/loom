@@ -474,42 +474,40 @@ def test_the_statement_text_stays_out_of_the_query_log(
 ) -> None:
     marker = f"probe_{seed.nonce}"
     sql = f"SELECT '{marker}' AS m"
-    r = _query(control_plane_url, seed, sql, request_id=f"text-{seed.nonce}")
-    assert r.status_code == 200, r.text
     # Settings in the caller's statement belong to the wrapper's subquery, and
     # the profile pins both at the top: refused or run, the text is cut.
-    for n, setting in enumerate(
-        ("log_queries_cut_to_length = 100000", "log_formatted_queries = 1")
-    ):
-        lifted = f"{sql} SETTINGS {setting}"
-        r = _query(control_plane_url, seed, lifted, request_id=f"lift{n}-{seed.nonce}")
+    statements = {
+        f"text-{seed.nonce}": sql,
+        f"lift0-{seed.nonce}": f"{sql} SETTINGS log_queries_cut_to_length = 100000",
+        f"lift1-{seed.nonce}": f"{sql} SETTINGS log_formatted_queries = 1",
+    }
+    for request_id, statement in statements.items():
+        r = _query(control_plane_url, seed, statement, request_id=request_id)
         assert r.status_code in {200, *_REFUSED}, r.text
     ch_client.command("SYSTEM FLUSH LOGS")
-    # Both are logged, as on a server that pins log_queries, but not their text;
-    # this read cuts its own, which holds the marker.
-    ran, lift0, lift1, quoted = ch_client.query(
-        "SELECT countIf(user = {analyst:String} AND startsWith(query_id, {ran:String})), "
-        "countIf(user = {analyst:String} AND startsWith(query_id, {lift0:String})), "
-        "countIf(user = {analyst:String} AND startsWith(query_id, {lift1:String})), "
-        "countIf(query LIKE {m:String} OR formatted_query LIKE {m:String}) "
-        "FROM system.query_log",
-        parameters={
-            "analyst": boundary.ANALYST_USER,
-            "ran": f"text-{seed.nonce}:",
-            "lift0": f"lift0-{seed.nonce}:",
-            "lift1": f"lift1-{seed.nonce}:",
-            "m": f"%{marker}%",
-        },
+    # Each is logged, as on a server that pins log_queries, but not its text;
+    # these reads cut their own, which hold the marker.
+    for request_id in statements:
+        logged = ch_client.query(
+            "SELECT count() FROM system.query_log "
+            "WHERE user = {analyst:String} AND startsWith(query_id, {rid:String})",
+            parameters={"analyst": boundary.ANALYST_USER, "rid": f"{request_id}:"},
+        ).result_rows[0][0]
+        assert logged > 0, request_id
+    quoted = ch_client.query(
+        "SELECT count() FROM system.query_log "
+        "WHERE query LIKE {m:String} OR formatted_query LIKE {m:String}",
+        parameters={"m": f"%{marker}%"},
         settings=boundary.LOG_TEXT_CUT,
-    ).result_rows[0]
-    assert ran > 0 and lift0 > 0 and lift1 > 0
+    ).result_rows[0][0]
     assert quoted == 0
 
 
 def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client) -> None:
     """The policies hold the key and its pads as `decrypt` arguments: no
     logged statement text or error, the boot's writes and the probe's refused
-    reads included, carries one."""
+    reads included, carries one. The whole log is read: a build before version
+    2 pinned log_queries = 0 for the analyst, so it left no such rows."""
     start = ch_client.query("SELECT now()").result_rows[0][0]
     secrets = re.findall(r"unhex\('([0-9a-f]+)'\)", _scope_filter(ch_client, "memory"))
     # The decrypt arguments, and the pads they evaluate to, which must never be printed.
