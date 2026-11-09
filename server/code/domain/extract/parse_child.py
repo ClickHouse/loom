@@ -74,7 +74,7 @@ def _address_space() -> int:
 def main() -> int:
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     # the first process the kernel ends when memory runs out (before the server); written
-    # while /proc/self is still this process's own
+    # before the process is made non-dumpable, which hands /proc/self to root
     with contextlib.suppress(OSError):
         Path("/proc/self/oom_score_adj").write_text("1000")
     # not dumpable: a parse ended by a signal starts no core dump handler either

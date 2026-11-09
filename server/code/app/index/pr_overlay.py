@@ -515,9 +515,9 @@ _NAMES: TtlCache[tuple[str, str, str, str], tuple[tuple[str, str, str], ...]] = 
 # server process (each web worker, `LOOM_WEB_WORKERS`, has its own)
 _RUNNING: dict[tuple[str, str], tuple[Any, asyncio.Future[Any]]] = {}
 # Overlay parses run here, not in the default executor, so they never hold back other
-# threaded work; two threads, so a parse queues behind the one running (parses run one
-# at a time per process, `bounded_parse`)
-_PARSE_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="loom-overlay-parse")
+# threaded work; one thread, since parses run one at a time per process (`bounded_parse`):
+# a queued job checks whether it is too late when it can start
+_PARSE_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="loom-overlay-parse")
 
 
 def _digest(data: bytes) -> str:

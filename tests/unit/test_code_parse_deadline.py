@@ -583,12 +583,12 @@ def test_a_parse_whose_child_the_kernel_killed_runs_again(
     def start() -> Any:
         child = real()
         if not started:  # the first child is killed from outside mid-parse
-            threading.Timer(0.2, child.send_signal, (signal.SIGKILL,)).start()
+            threading.Timer(0.1, child.send_signal, (signal.SIGKILL,)).start()
         started.append(child)
         return child
 
     monkeypatch.setattr(bounded_parse, "_start", start)
-    source = b"package x\nvar s = " + b"`" * 12_000  # parses in about a second
+    source = b"package x\nvar s = " + b"`" * 16_000  # parses in over a second
     pf, err = parse_for_ingest("a.go", source)
     assert err == "" and pf is not None and len(started) == 2
     _end(bounded_parse._idle)
