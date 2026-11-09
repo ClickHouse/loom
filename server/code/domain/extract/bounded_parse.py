@@ -18,9 +18,10 @@ worth of parse at once: `code_parse_memory_mb` plus up to about 170 MB, the chil
 40 MB, up to 64 MB it kept from earlier parses, and as much again in the server, which
 takes fresh what the child's parse reused. The trees its callers keep are not counted.
 The child is the server's interpreter with `-I` and an empty environment, so it loads
-the grammars from that interpreter's own site-packages (no `PYTHONPATH`, no user site);
-it bounds resources and is no sandbox, a local process started from `domain/` beside
-the parsers that call it (no ClickHouse or network). The limits hold on Linux.
+the grammars from that interpreter's own site-packages (no `PYTHONPATH`, no user site).
+The child bounds resources and is no sandbox: a local process with no ClickHouse or
+network access, started from `domain/` beside the parsers that call it. The limits hold
+on Linux.
 
 The parse here reads the source `_CHUNK` bytes at a time through a callback: the binding
 holds the GIL while it parses, and the callback is where another thread can take it, so
