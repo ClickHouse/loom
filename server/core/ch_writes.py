@@ -1,7 +1,8 @@
 """The deduplication settings `CHClient.insert` adds to every write
 (`dedup_settings`, `insert_dedup_token`), and the settings a call site passes
 for a batched insert (`batched_insert_settings`), a waited async insert
-(`async_insert_settings`) or a committed one (`committed_insert_settings`).
+(`async_insert_settings`) or a committed one (`committed_insert_settings`), and the
+blocks an insert spanning many partitions is split into (`partition_blocks`).
 Each returns a new dict the caller may change. A committed insert uses
 `committed_insert_settings` in a module that also batches, or where
 `tests/unit/test_read_your_write_inserts.py` pins its table committed; elsewhere the
@@ -11,12 +12,35 @@ literal dict is the same.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable, Hashable
 from typing import Any
 
 from server.settings import settings
 
 # not a setting: a ceiling above the wait windows' reach, so the live windows decide the flush
 _ASYNC_INSERT_MAX_QUERY_NUMBER = 10_000
+# ClickHouse Cloud pins `max_partitions_per_insert_block` at 100 (READONLY): an insert
+# block spanning more partitions is refused with TOO_MANY_PARTS.
+# not a setting: ClickHouse's limit, which a larger value would exceed
+MAX_PARTITIONS_PER_INSERT = 100
+
+
+def partition_blocks(
+    rows: list[dict[str, Any]],
+    partition: Callable[[dict[str, Any]], Hashable],
+    cap: int = MAX_PARTITIONS_PER_INSERT,
+) -> list[list[dict[str, Any]]]:
+    """`rows` as one block, or, when they span more than `cap` partitions
+    (`partition(row)`), blocks of at most `cap` partitions each; none for no rows."""
+    if not rows:
+        return []
+    by_part: dict[Hashable, list[dict[str, Any]]] = {}
+    for r in rows:
+        by_part.setdefault(partition(r), []).append(r)
+    if len(by_part) <= cap:
+        return [rows]
+    groups = list(by_part.values())
+    return [[r for g in groups[i : i + cap] for r in g] for i in range(0, len(groups), cap)]
 
 
 def committed_insert_settings() -> dict[str, Any]:

@@ -686,7 +686,7 @@ HTTP 409, raised as `server.core.errors.PreconditionFailedError`. 409 — `if_ma
 
 #### `PROJECTION_BEHIND`
 
-HTTP 503, raised as `server.memory.app.pg_admission.ProjectionBehindError`. 503 — earlier commits in this namespace have not reached search, so a conflict check, a search, a search trace, a blacklist sweep or a namespace.inventory now would miss them. Category `capacity`, retryable: yes for an idempotent op, no for another op once it ran.
+HTTP 503, raised as `server.memory.app.pg_admission.ProjectionBehindError`. 503 — earlier commits in this namespace are not yet in ClickHouse, so a read of ClickHouse that must see every write the namespace committed would miss them. Category `capacity`, retryable: yes for an idempotent op, no for another op once it ran.
 
 #### `PUBLICATION_PENDING`
 

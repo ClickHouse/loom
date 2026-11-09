@@ -820,32 +820,14 @@ async def _commit_revision(
 async def _publish_revision(
     committed: pg_memory.Committed, emb_rows: list[dict[str, Any]], ch: Any
 ) -> pg_lease.PublicationPending | None:
-    """A committed revision's publication and search document: the first of those that
-    failed, as pending."""
-    import server.memory.store as memory_repo
+    """A committed revision published with its search document: the failure, as pending."""
     from server.memory.store import pg_publish
 
-    async def _document() -> None:
-        try:
-            with pg_lease.leased(committed.deadline):
-                await memory_repo.insert_embedding_rows(emb_rows, ch=ch)
-            await pg_memory.complete(committed.seqs, pg_memory.SEARCH_DOC)
-        except pg_lease.PublicationPending:
-            raise  # the lease ran out before the insert (`leased`)
-        except Exception as e:
-            raise pg_lease.PublicationPending.after(e) from e
-
-    done = await asyncio.gather(
-        pg_publish.publish(committed, ch=ch),
-        *([_document()] if emb_rows else []),
-        return_exceptions=True,
-    )
-    # publish and _document turn every failure into PublicationPending; anything else (a
-    # child's cancellation) is raised as itself, whichever child it came from
-    for d in done:
-        if isinstance(d, BaseException) and not isinstance(d, pg_lease.PublicationPending):
-            raise d
-    return next((d for d in done if isinstance(d, pg_lease.PublicationPending)), None)
+    try:
+        await pg_publish.publish(committed, documents=emb_rows, ch=ch)
+    except pg_lease.PublicationPending as e:
+        return e
+    return None
 
 
 async def _refuse_blacklisted(

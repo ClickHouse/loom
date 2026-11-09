@@ -384,22 +384,30 @@ async def handle_memory_history(input: MemoryHistoryInput) -> MemoryHistoryOutpu
     """Version history of one memory_key, newest-first, including
     tombstoned/redacted rows — the audit trail. Read from the append-only mirror
     loom.memory_versions; the RMT rows in loom.memory are not a history — a merge keeps only
-    the head.
+    the head. Under Postgres it waits until ClickHouse holds the namespace's committed rows,
+    a write that answered at its commit among them, and reads sequentially when it waited.
     """
-    import server.memory.store as memory_repo
+    from contextlib import nullcontext
 
-    rows = await memory_repo.list_history(
-        memory_repo.Identity(
-            org=input.org,
-            namespace=input.namespace,
-            agent=input.agent,
-            user_id=input.user_id,
-            session_id=input.session_id,
-        ),
-        input.memory_key,
-        limit=input.limit,
-        scope=request_scope(),
-    )
+    import server.memory.store as memory_repo
+    from server.core.ch import sequential_reads
+    from server.memory.app.search import pg_validation
+    from server.memory.store import pg_memory
+
+    behind = await pg_validation.admit(input.org, [input.namespace], owed=pg_memory.MEMORY_ROW)
+    with sequential_reads() if behind else nullcontext():
+        rows = await memory_repo.list_history(
+            memory_repo.Identity(
+                org=input.org,
+                namespace=input.namespace,
+                agent=input.agent,
+                user_id=input.user_id,
+                session_id=input.session_id,
+            ),
+            input.memory_key,
+            limit=input.limit,
+            scope=request_scope(),
+        )
     out_rows = [
         _MemoryHistoryRow(
             memory_id=r.memory_id,

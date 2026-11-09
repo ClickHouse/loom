@@ -106,10 +106,15 @@ def _decode_value(raw: Any) -> Any:
 
 async def handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
     """memory.list, then one exposure-ledger row for the keys it returned: the list op is the
-    widest read a token can make."""
+    widest read a token can make. Under Postgres it reads once ClickHouse holds every memory
+    row the namespace committed (503 PROJECTION_BEHIND past the wait): a write answers at
+    its commit, and the caller's own write is listed."""
     from server.core.ch import own_write_reads
+    from server.memory.app.search import pg_validation
+    from server.memory.store import pg_memory
 
     input = _cap_viewer_list_limit(input)
+    await pg_validation.admit(input.org, [input.namespace], owed=pg_memory.MEMORY_ROW)
     with own_write_reads():
         out = await _handle_memory_list(input)
     _record_read_exposure("memory.list", input, [e.memory_key for e in out.entries])

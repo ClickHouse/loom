@@ -468,6 +468,12 @@ FOR SHARE OF c
 
 _HEADS_BY_KEYS = f"SELECT c.row {_EXACT_KEYS}"
 
+_HEADS_OWING = f"""
+SELECT c.row, coalesce(d.targets, 0) AS owed {_EXACT_KEYS}
+LEFT JOIN loom.memory_deliveries d
+  ON d.org = c.org AND d.namespace = c.namespace AND d.seq = c.seq
+"""
+
 _LOCK_HEADS = f"""
 SELECT c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key, c.row
 {_EXACT_KEYS}
@@ -789,6 +795,34 @@ async def complete(
         return
     async with pg.transaction() as conn:
         await _complete_in(conn, seqs, done, tokens)
+
+
+async def complete_each(landed: Sequence[tuple[tuple[str, str, int], int]]) -> None:
+    """`complete` for deliveries that each landed other targets, (seq, done) apiece,
+    held under `COMMIT_TOKEN`, in one transaction: all locked first, in seq order, as
+    every holder locks them, then each `done` cleared."""
+    by_done: dict[int, list[tuple[str, str, int]]] = {}
+    for seq, done in landed:
+        by_done.setdefault(done, []).append(seq)
+    if not by_done:
+        return
+    async with pg.transaction() as conn:
+        await _lock_held(conn, _held_keys([seq for seq, _ in landed], COMMIT_TOKEN))
+        for done, seqs in by_done.items():
+            await _complete_in(conn, seqs, done, COMMIT_TOKEN)
+
+
+async def hand_over(seqs: Sequence[tuple[str, str, int]]) -> None:
+    """End the commit's lease (`COMMIT_TOKEN`) on these deliveries, which still owe a
+    target their publisher will not send: the delivery worker, or an admission waiting
+    on them, takes them at once."""
+    if not seqs:
+        return
+    await pg.execute(
+        f"UPDATE loom.memory_deliveries d SET lease_until = LEAST(d.lease_until, now()) "
+        f"FROM {_HELD_LIST} WHERE {_HELD_MATCH} AND NOT d.settled",
+        *_held_keys(seqs, COMMIT_TOKEN),
+    )
 
 
 # The claims ($1..$4: org, namespace, seq, token) and the delivery each holds under its
@@ -1325,6 +1359,16 @@ async def heads_by_keys(
     return {identity_key(r["row"]): decode_row(r["row"]) for r in rows}
 
 
+async def heads_owing(keys: Sequence[IdentityKey]) -> dict[IdentityKey, tuple[dict[str, Any], int]]:
+    """The heads of exact keys, deleted ones included, each with the targets its own
+    delivery still owes (0 once settled); a key with none is absent."""
+    keys = [k for k in keys if not pg.unstorable(k)]
+    if not keys:
+        return {}
+    rows = await pg.fetch(_HEADS_OWING, *_key_arrays(keys))
+    return {identity_key(r["row"]): (decode_row(r["row"]), int(r["owed"])) for r in rows}
+
+
 async def head_by_id(
     memory_id: str,
     *,
@@ -1685,6 +1729,25 @@ async def consolidated_heads(org: str, namespace: str, source_key: str) -> list[
         f"src:{source_key}",
     )
     return [dict(r) for r in rows]
+
+
+async def live_key_heads(
+    org: str, namespace: str, keys: Sequence[str], *, scope: Any
+) -> list[dict[str, Any]]:
+    """The live heads of `keys` in `namespace`, of every identity `scope` may read: what a
+    write's same-key read decides on, current at the commit, where ClickHouse may not
+    hold a write that answered at it yet."""
+    wanted = sorted({k for k in keys if not pg.unstorable(k)})
+    if not wanted or pg.unstorable((org, namespace)):
+        return []  # no head holds what Postgres cannot store
+    args: list[Any] = [org, namespace, wanted]
+    rows = await pg.fetch(
+        "SELECT row FROM loom.memory_current WHERE org = $1 AND namespace = $2 "
+        "AND memory_key = ANY($3::text[]) AND row->>'tombstoned_at' IS NULL"
+        f"{_scope_sql(scope, args)}",
+        *args,
+    )
+    return [decode_row(r["row"]) for r in rows]
 
 
 async def live_heads_of(

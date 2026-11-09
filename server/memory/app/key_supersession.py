@@ -16,6 +16,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import server.memory.store as memory_repo
+from server.core import pg
 from server.core.naming import is_anonymous_user, session_spellings
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
@@ -28,6 +29,7 @@ from server.memory.app.auto_resolution import (
     settle_retirements,
 )
 from server.memory.domain import lock
+from server.memory.store import pg_memory
 
 log = logging.getLogger(__name__)
 
@@ -145,6 +147,21 @@ async def keys_held_elsewhere(
         "own_user": user,
         "own_sessions": session_spellings(str(writer["session_id"])),
     }
+    if pg.enabled():
+        # The authority's heads: a first write of the key elsewhere answers at its
+        # commit, before ClickHouse holds it.
+        own = set(params["own_sessions"])
+        heads = await pg_memory.live_key_heads(
+            org, namespace, params["keys"], scope=request_scope()
+        )
+        return {
+            str(h["memory_key"])
+            for h in heads
+            if str(h["user_id"]) == user
+            and not (str(h["agent"]) == params["own_agent"] and str(h["session_id"]) in own)
+            and h.get("sensitivity") != "high"
+            and h.get("status") in ("active", "conflicted")
+        }
     in_scope = scope_and(request_scope(), params)
     rows = await ch.query_all(
         f"""
@@ -160,6 +177,50 @@ async def keys_held_elsewhere(
         params=params,
     )
     return {str(r["memory_key"]) for r in rows}
+
+
+_SUPERSEDABLE = ("active", "duplicate", "conflicted")
+
+
+async def _live_same_key_rows(
+    org: str, namespace: str, keys: list[str], *, ch: Any
+) -> list[dict[str, Any]]:
+    """The live rows of `keys` in the writer's read scope that a same-key write may retire,
+    each with its identity, value and `pinned`. Under Postgres the authority's heads: a
+    first write of the key in another session answers at its commit, before ClickHouse
+    holds it."""
+    if pg.enabled():
+        heads = await pg_memory.live_key_heads(org, namespace, keys, scope=request_scope())
+        return [
+            {
+                "memory_id": str(h["memory_id"]),
+                **{c: h[c] for c in ("namespace", "agent", "user_id", "session_id")},
+                "memory_key": h["memory_key"],
+                "value": h.get("value"),
+                "pinned": h.get("pinned"),
+            }
+            for h in heads
+            if h.get("status") in _SUPERSEDABLE
+        ]
+    # The rows this write inserted moments ago must be visible so they are recognised as
+    # the new rows and not retired themselves (CH Cloud replicas; no-op on plain
+    # MergeTree).
+    params: dict[str, Any] = {"org": org, "ns": namespace, "keys": keys}
+    # A write retires only rows inside the writer's read scope.
+    in_scope = scope_and(request_scope(), params)
+    rows: list[dict[str, Any]] = await ch.query_all(
+        f"""
+        SELECT toString(memory_id) AS memory_id, namespace, agent, user_id, session_id,
+               memory_key, value, pinned
+        FROM loom.memory FINAL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND memory_key IN {{keys:Array(String)}} AND tombstoned_at IS NULL
+          AND status IN ('active', 'duplicate', 'conflicted'){in_scope}
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params=params,
+    )
+    return rows
 
 
 async def supersede_same_key_rows(
@@ -188,24 +249,7 @@ async def supersede_same_key_rows(
         keys = sorted({str(r.get("memory_key") or "") for r in new_rows} - {""})
         if not keys:
             return 0
-        # The rows this write inserted moments ago must be visible so they are
-        # recognised as the new rows and not retired themselves (CH Cloud
-        # replicas; no-op on plain MergeTree).
-        params: dict[str, Any] = {"org": org, "ns": namespace, "keys": keys}
-        # A write retires only rows inside the writer's read scope.
-        in_scope = scope_and(request_scope(), params)
-        live = await ch.query_all(
-            f"""
-            SELECT toString(memory_id) AS memory_id, namespace, agent, user_id, session_id,
-                   memory_key, value, pinned
-            FROM loom.memory FINAL
-            WHERE org = {{org:String}} AND namespace = {{ns:String}}
-              AND memory_key IN {{keys:Array(String)}} AND tombstoned_at IS NULL
-              AND status IN ('active', 'duplicate', 'conflicted'){in_scope}
-            SETTINGS select_sequential_consistency = 1
-            """,
-            params=params,
-        )
+        live = await _live_same_key_rows(org, namespace, keys, ch=ch)
         victims = same_key_victims(new_rows, live)
         if not victims:
             return 0

@@ -328,6 +328,7 @@
  "observe_extract_max_events_per_session",
  "observe_extract_notes_min_observations",
  "observe_skip_tools",
+ "pg_publish_interval_ms",
  "provider_check_timeout_s",
  "readiness_check_timeout_s",
  "schema_status_ttl_s",

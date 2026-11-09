@@ -479,12 +479,15 @@ def _settle_results(state: _BulkWriteState, plan: BulkVerdictPlan) -> None:
 
 
 async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
-    """Phase 10: the two core writes — the memory rows and their embedding
-    rows — gathered, each a committed insert. Once the memory rows are in, the
-    batch is announced even when the embedding insert or the tail after it fails:
-    a retry of the same values writes nothing and would announce nothing."""
+    """Phase 10: the two core writes, the memory rows and their embedding rows. Under
+    Postgres the batch is committed and published through the publication batch, then
+    announced. On ClickHouse the two are gathered, each a committed insert, and once the
+    memory rows are in the batch is announced even when the embedding insert or the tail
+    after it fails: a retry of the same values writes nothing and would announce
+    nothing."""
 
-    if state.memory_rows:
+    if state.memory_rows and not pg.enabled():
+        # Under Postgres the commit orders the batch after a delete (`write_fence`).
         first = state.memory_rows[0]
         lifted = await lift_above_deletes(
             first["org"], first["namespace"], state.memory_rows, state.embedding_rows, ch=ch
@@ -514,31 +517,35 @@ async def _land_batch(
     committed: pg_memory.Committed | None,
     retire: dict[str, tuple[Any, int]],
 ) -> None:
-    """The batch's rows published (or, on ClickHouse, inserted), lifted above a delete
-    that landed meanwhile, their old vectors retired, and the batch announced."""
+    """The batch's rows published (or, on ClickHouse, inserted, lifted above a delete
+    that landed meanwhile and their old vectors retired), and the batch announced."""
     import server.memory.store as memory_repo
+    from server.observability.otel import traced
 
-    first = state.memory_rows[0] if state.memory_rows else {}
-    memory_done, embedding_done = await _publish_batch(state, committed, ch)
-    if committed is None:
-        if isinstance(memory_done, BaseException):
-            raise memory_done
-    else:
-        # Committed: a failure here leaves the publication to the delivery worker. The
-        # batch's follow-ups still run, and the caller is told last (`_bulk_set_once`).
-        failed = [d for d in (memory_done, embedding_done) if isinstance(d, BaseException)]
-        if failed:
-            cause = failed[0]
-            state.unpublished = (
-                cause
-                if isinstance(cause, pg_lease.PublicationPending)
-                else pg_lease.PublicationPending.after(cause)
-            )
+    if committed is not None:
+        try:
+            try:
+                # Waits for its flush: what follows (its projections, the overtaken-edge
+                # check) reads its rows in ClickHouse.
+                with traced("pg.publish", wait=True):
+                    await pg_publish.publish(committed, documents=state.embedding_rows, ch=ch)
+            except pg_lease.PublicationPending as e:
+                # Committed: the batch's follow-ups still run, and the caller is told
+                # last (`_bulk_set_once`).
+                state.unpublished = e
+            # The entries' versions were drawn before the batch embedded: a slow batch
+            # indexes its own BM25 stats.
+            after_write.index_late_rows(state.embedding_rows, ch=ch)
+        finally:  # committed: a failed follow-up must not also skip the announcement
+            await _fence_and_announce(state, ch=ch)
+        return
+    embedding_error = await _insert_batch(state, ch)
     try:
-        if committed is None and isinstance(embedding_done, BaseException):
-            raise embedding_done
+        if embedding_error is not None:
+            raise embedding_error
         if state.memory_rows:
             # A memory.delete_version that landed after the fence read: the rows go above it.
+            first = state.memory_rows[0]
             lifted = await lift_after_insert(
                 first["org"], first["namespace"], state.memory_rows, state.embedding_rows, ch=ch
             )
@@ -546,58 +553,29 @@ async def _land_batch(
                 for res in state.results:
                     res.version = lifted.get((res.memory_key, res.version), res.version)
                 retire = _vectors_to_retire(state)
-        # The entries' versions were drawn before the batch embedded: a slow batch indexes
-        # its own BM25 stats.
         after_write.index_late_rows(state.embedding_rows, ch=ch)
-        if committed is None:  # under Postgres the publish retired them (`OLD_VECTORS`)
-            await memory_repo.retire_vectors_for_keys(list(retire.values()), ch=ch)
-    except Exception as e:
-        _raise_unpublished(state, e)
-        raise
+        await memory_repo.retire_vectors_for_keys(list(retire.values()), ch=ch)
     finally:  # the rows are in: a failed lift or retire must not also skip the fence
         await _fence_and_announce(state, ch=ch)
 
 
-async def _publish_batch(
-    state: _BulkWriteState, committed: pg_memory.Committed | None, ch: Any
-) -> tuple[BaseException | None, BaseException | None]:
-    """The batch's memory rows and embedding rows, written beside each other: each insert's
-    error, or None. A committed batch cancelled meanwhile is still announced, and fenced
-    by the caller."""
+async def _insert_batch(state: _BulkWriteState, ch: Any) -> BaseException | None:
+    """On the ClickHouse authority: the batch's memory rows and embedding rows, written
+    beside each other. Raises what refused the memory rows; returns what refused the
+    embedding rows, raised once the batch is announced."""
     import server.memory.store as memory_repo
 
     # The two core writes are independent rows of two tables and each is a ~260 ms committed
     # insert on ClickHouse Cloud, so they are gathered, as on the point path (`memory.set`).
-    async def _insert_memory_rows() -> None:
-        if committed is not None:
-            await pg_publish.publish(committed, ch=ch)
-        else:
-            # Full version rows (revision or first version), so the typed insert checks them.
-            await memory_repo.insert_memory_versions(state.memory_rows, ch=ch)
-
-    async def _insert_embedding_rows() -> None:
-        with pg_lease.leased(committed.deadline if committed is not None else None):
-            await memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch)
-        if committed is not None:
-            embedded = {str(r.get("memory_key")) for r in state.embedding_rows}
-            await pg_memory.complete(
-                [
-                    q
-                    for q, r in zip(committed.seqs, committed.rows, strict=True)
-                    if str(r["memory_key"]) in embedded
-                ],
-                pg_memory.SEARCH_DOC,
-            )
-
-    try:
-        done = await asyncio.gather(
-            _insert_memory_rows(), _insert_embedding_rows(), return_exceptions=True
-        )
-    except asyncio.CancelledError:
-        if committed is not None:
-            await _bulk_announce(state)
-        raise
-    return done[0], done[1]
+    memory_done, embedding_done = await asyncio.gather(
+        # Full version rows (revision or first version), so the typed insert checks them.
+        memory_repo.insert_memory_versions(state.memory_rows, ch=ch),
+        memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch),
+        return_exceptions=True,
+    )
+    if isinstance(memory_done, BaseException):
+        raise memory_done
+    return embedding_done if isinstance(embedding_done, BaseException) else None
 
 
 async def _fence_and_announce(state: _BulkWriteState, *, ch: Any) -> None:

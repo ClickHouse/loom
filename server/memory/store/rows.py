@@ -804,6 +804,12 @@ def parse_memory_value(raw: Any) -> Any:
         return raw
 
 
+def created_month(row: Mapping[str, Any]) -> str:
+    """The partition of a loom.memory or loom.memory_embeddings row,
+    `toYYYYMM(created_at)`, for splitting an insert by partition (`partition_blocks`)."""
+    return str(row.get("created_at") or "")[:7]
+
+
 def _hydrate(row: dict[str, Any]) -> MemoryRow:
     """Convert a CH row dict into a typed MemoryRow."""
     value = parse_memory_value(row.get("value"))

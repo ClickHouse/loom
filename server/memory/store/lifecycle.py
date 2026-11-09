@@ -368,10 +368,11 @@ async def insert_documented_versions(
 ) -> bool:
     """Write `rows` with their search documents (`documents`, one embedding row for each),
     rechecking no head. Whether the rows reached ClickHouse: False when their publication
-    is pending, which is done. A failed document is logged, not raised; under Postgres the
-    commit owes it and it is written within the commit's lease, so an erasure waits it out
-    and the delivery worker builds one a failure left. On ClickHouse the rows, then their
-    documents."""
+    is pending, which is done. Under Postgres the commit owes the documents and they are
+    published with the rows, within the commit's lease, so an erasure waits them out and
+    the delivery worker builds one a failure left; a refused document leaves the
+    publication pending, so False, though the rows may be in. On ClickHouse the rows,
+    then their documents; a failed document is logged, not raised."""
     if len(documents) != len(rows):
         raise ValueError("one search document per row")
     if not pg.enabled():
@@ -385,13 +386,7 @@ async def insert_documented_versions(
     owed = pg_memory.MEMORY_ROW | pg_memory.SEARCH_DOC | pg_memory.AUDIT_ROW
     committed = await pg_publish.commit(rows, targets=owed)
     try:
-        with pg_lease.leased(committed.deadline):
-            await insert_embedding_rows(documents, ch=ch)
-        await _settle_documents(committed, [True] * len(rows))
-    except Exception as e:  # noqa: BLE001 — the commit stands; the delivery worker builds them
-        _log.warning("search documents not written, owed: %s", error_summary(e))
-    try:
-        await pg_publish.publish(committed, ch=ch)
+        await pg_publish.publish(committed, documents=documents, ch=ch)
     except pg_lease.PublicationPending:
         _log.info("committed %d version row(s) left for the delivery worker", len(rows))
         return False

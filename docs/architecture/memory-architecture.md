@@ -1134,7 +1134,9 @@ carries the sweep's `expire_reason` marker; every other version drops it (a
 `namespace.rollback` to a time the tombstone held writes it back as it was), and no caller
 may write it. `memory.update` and `memory.update_by_id` revise a row and are not lifted: a
 revision that races a delete stays deleted. If the fence's read fails, the write keeps its
-version; `memory.set`'s answer names the degradation.
+version; `memory.set`'s answer names the degradation. Under the Postgres authority there is
+no fence: a delete since the write read the key's head refuses its commit, and the write
+starts over with a version drawn after it ([storage authority](storage-authority.md#the-write-path)).
 
 `memory.delete_version` removes one version a caller read (`memory.get` and the list ops
 return it as `version` and, exact for a JavaScript caller, as the decimal string

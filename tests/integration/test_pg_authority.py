@@ -91,6 +91,108 @@ def _set(ns: str, key: str, value: str, **extra: Any) -> dict[str, Any]:
     }
 
 
+# A delivery staged over a revision's own, which is settled once its flush landed and
+# stays until the delivery worker sweeps it.
+_OVER_SETTLED = (
+    " ON CONFLICT (org, namespace, seq) DO UPDATE SET targets = EXCLUDED.targets, "
+    "lease_token = EXCLUDED.lease_token, lease_until = EXCLUDED.lease_until, "
+    "fenced_until = EXCLUDED.fenced_until, held = false"
+)
+
+
+async def _published(pg_conn: Any, org: str) -> None:
+    """Wait until every delivery of `org` has landed: a memory.set answers at its commit,
+    and its flush follows within LOOM_PG_PUBLISH_INTERVAL_MS."""
+
+    async def landed() -> bool:
+        owed = await pg_conn.fetchval(
+            "SELECT count(*) FROM loom.memory_deliveries WHERE org = $1 AND NOT settled", org
+        )
+        return owed == 0
+
+    await eventually(landed, description="the org's deliveries published")
+
+
+@pytest.mark.usefixtures("pg_authority")
+async def test_a_write_is_listed_and_rolled_back_right_after_it_answers(
+    call: Any, org: str
+) -> None:
+    """memory.set answers at its commit; memory.list and namespace.rollback's plan, which
+    read ClickHouse, wait for its flush and see it."""
+    ns = f"pg-{uuid.uuid4().hex[:8]}"
+    assert (await call("memory.set", _set(ns, "first", "the first fact"))).status_code == 200
+    await asyncio.sleep(1.5)
+    as_of = datetime.now(UTC)
+    await asyncio.sleep(1.5)
+    assert (
+        await call("memory.set", _set(ns, "born", "a fact written just now"))
+    ).status_code == 200
+    listed = (await call("memory.list", {"namespace": ns, "agent": "a"})).json()
+    assert {e["memory_key"] for e in listed["entries"]} == {"first", "born"}, listed
+    plan = await call("namespace.rollback", {"namespace": ns, "as_of": as_of.isoformat()})
+    assert plan.status_code == 200, plan.text
+    assert [a["memory_key"] for a in plan.json()["sample"]] == ["born"], plan.text
+
+
+@pytest.mark.usefixtures("pg_authority")
+@pytest.mark.parametrize("read", ["history", "get_as_of", "get_by_id_as_of"])
+async def test_a_read_of_clickhouses_history_right_after_a_write_sees_it(
+    call: Any, org: str, read: str
+) -> None:
+    """A write answers at its commit; memory.history and an `as_of` replay, which read
+    ClickHouse's history, wait for its flush and see it."""
+    ns = f"pg-{uuid.uuid4().hex[:8]}"
+    written = await call("memory.set", _set(ns, "k", "a fact written just now"))
+    assert written.status_code == 200, written.text
+    now = (datetime.now(UTC) + timedelta(seconds=1)).isoformat()
+    key = {"namespace": ns, "agent": "a", "memory_key": "k"}
+    if read == "history":
+        r = await call("memory.history", key)
+        assert r.status_code == 200 and len(r.json()["rows"]) == 1, r.text
+    elif read == "get_as_of":
+        r = await call("memory.get", {**key, "as_of": now})
+        assert r.status_code == 200 and r.json()["value"] == "a fact written just now", r.text
+    else:
+        r = await call("memory.get_by_id", {"memory_id": written.json()["memory_id"], "as_of": now})
+        assert r.status_code == 200 and r.json()["found"], r.text
+
+
+@pytest.mark.usefixtures("pg_authority")
+async def test_writes_made_together_share_their_clickhouse_inserts(
+    call: Any, pg_conn: Any, org: str, ch_client: Any
+) -> None:
+    """Twenty writes to as many namespaces, made at once, share the publication batch's
+    inserts into loom.memory rather than making a part each, and every one is
+    published."""
+    tag = uuid.uuid4().hex[:8]
+    namespaces = [f"pg-{tag}-{i}" for i in range(20)]
+    started = datetime.now(UTC) - timedelta(seconds=1)
+    answers = await asyncio.gather(
+        *(
+            call("memory.set", _set(ns, "k", f"fact {i} of the batch"))
+            for i, ns in enumerate(namespaces)
+        )
+    )
+    assert [r.status_code for r in answers] == [200] * 20, [r.text for r in answers]
+    await _published(pg_conn, org)
+    rows = ch_client.query(
+        "SELECT count() FROM loom.memory FINAL WHERE org = {o:String} "
+        "AND namespace IN {ns:Array(String)}",
+        settings=_SEQUENTIAL,
+        parameters={"o": org, "ns": namespaces},
+    ).result_rows[0][0]
+    assert rows == 20
+    ch_client.command("SYSTEM FLUSH LOGS")
+    # The flushes' own inserts, by their query tag: one each, not one per write.
+    flushes = ch_client.query(
+        "SELECT count() FROM system.query_log WHERE type = 'QueryFinish' "
+        "AND query_kind = 'Insert' AND has(tables, 'loom.memory') "
+        "AND startsWith(log_comment, 'pg_batch.flush') AND event_time >= {t:DateTime}",
+        parameters={"t": started.replace(tzinfo=None)},
+    ).result_rows[0][0]
+    assert 0 < flushes < 20, flushes
+
+
 async def test_a_write_is_the_postgres_head_and_its_clickhouse_rows(
     call: Any, pg_conn: Any, org: str, ch_client: Any
 ) -> None:
@@ -120,12 +222,8 @@ async def test_a_write_is_the_postgres_head_and_its_clickhouse_rows(
     assert revision["version"] == out["version"]
     assert revision["source_class"] == "asserted" and revision["actor"]
     assert revision["audit"]["event_type"] == "memory.revision"
-    assert (
-        await pg_conn.fetchval(
-            "SELECT count(*) FROM loom.memory_deliveries WHERE org = $1 AND namespace = $2", org, ns
-        )
-        == 0
-    )
+    # Answered at the commit; the publication batch's flush delivers it.
+    await _published(pg_conn, org)
     got = (await call("memory.get", {"namespace": ns, "agent": "a", "memory_key": "k"})).json()
     assert got["value"] == "the deploy window is tuesday"
     assert (got["memory_id"], got["version"], got["content_sha256"]) == (
@@ -295,11 +393,13 @@ async def test_an_unpublished_commit_is_published_by_the_next_admission(
     assert r.status_code == 200, r.text
     assert (
         await pg_conn.fetchval(
-            # A delivery taken over stays settled (no target left) for the insert bound.
+            # A delivery taken over stays settled (no target left) for the insert bound;
+            # the second write's own is its flush's.
             "SELECT count(*) FROM loom.memory_deliveries "
-            "WHERE org = $1 AND namespace = $2 AND targets <> 0",
+            "WHERE org = $1 AND namespace = $2 AND seq = $3 AND targets <> 0",
             org,
             ns,
+            seq,
         )
         == 0
     )
@@ -824,6 +924,7 @@ async def test_the_sweep_labels_its_key_whatever_other_key_holds_its_id(
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     scanned = (await call("memory.set", _set(ns, "k", "the vault password is hunter2"))).json()
+    await _published(pg_conn, org)
     head = await _head_row(pg_conn, org, ns)
     assert head["sensitivity"] == ""  # the candidate's level is stated, not detected
     assert _live_sweep_vectors(ch_client, org, ns, "a") >= 1
@@ -1242,6 +1343,7 @@ async def test_only_a_claim_taken_over_mid_publish_counts_an_attempt(
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     assert (await call("memory.set", _set(ns, "k", "a fact to deliver"))).status_code == 200
+    await _published(pg_conn, org)
 
     async def _due() -> list[Any]:
         # Its revision owing its memory row again, with the lease run out.
@@ -1557,6 +1659,7 @@ async def test_a_summary_only_the_authority_holds_goes_with_its_last_source(
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     for key in ("k1", "summary"):
         assert (await call("memory.set", _set(ns, key, f"a fact {key}"))).status_code == 200
+    await _published(pg_conn, org)
     # The summary's revision naming k1 as its source is committed, its delivery owed.
     await _unpublished(
         pg_conn, org, ns, "summary", {"tags": ["consolidated", "src:k1"]}, pg_memory.MEMORY_ROW
@@ -2293,6 +2396,7 @@ async def test_scoped_claims_come_back_in_journal_order(call: Any, pg_conn: Any,
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     for i in range(6):
         assert (await call("memory.set", _set(ns, f"k{i}", f"fact {i}"))).status_code == 200
+    await _published(pg_conn, org)
     seqs = [
         r["seq"]
         for r in await pg_conn.fetch(
@@ -2335,6 +2439,7 @@ async def test_a_delivery_past_its_attempts_is_parked_or_gets_its_stub_at_its_cl
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     for i in range(6):
         assert (await call("memory.set", _set(ns, f"k{i}", f"fact {i}"))).status_code == 200
+    await _published(pg_conn, org)
     seqs = [
         r["seq"]
         for r in await pg_conn.fetch(
@@ -2470,6 +2575,7 @@ async def test_a_redaction_fences_the_claim_still_sending_the_old_text(
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     first = (await call("memory.set", _set(ns, "k", "the token is hunter2"))).json()
     assert (await call("memory.set", _set(ns, "k", "the token was rotated"))).status_code == 200
+    await _published(pg_conn, org)
     seq = await pg_conn.fetchval(
         "SELECT seq FROM loom.memory_revisions WHERE org = $1 AND namespace = $2 AND version = $3",
         org,
@@ -2480,7 +2586,8 @@ async def test_a_redaction_fences_the_claim_still_sending_the_old_text(
     # claim since: its holder (a slow publish) would renew it under the same token.
     await pg_conn.execute(
         "INSERT INTO loom.memory_deliveries (org, namespace, seq, targets, lease_token, "
-        "lease_until) VALUES ($1, $2, $3, $4, 2, now() - interval '10 minutes')",
+        "lease_until) VALUES ($1, $2, $3, $4, 2, now() - interval '10 minutes')"
+        f"{_OVER_SETTLED}",
         org,
         ns,
         seq,
@@ -2550,6 +2657,7 @@ async def test_a_redaction_reads_a_live_claims_lease_and_leaves_a_parked_one_par
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     first = (await call("memory.set", _set(ns, "k", "the token is hunter2"))).json()
     assert (await call("memory.set", _set(ns, "k", "the token was rotated"))).status_code == 200
+    await _published(pg_conn, org)
     seq = await pg_conn.fetchval(
         "SELECT seq FROM loom.memory_revisions WHERE org = $1 AND namespace = $2 AND version = $3",
         org,
@@ -2564,7 +2672,8 @@ async def test_a_redaction_reads_a_live_claims_lease_and_leaves_a_parked_one_par
     )
     await pg_conn.execute(
         "INSERT INTO loom.memory_deliveries (org, namespace, seq, targets, lease_token, "
-        f"lease_until, fenced_until) VALUES ($1, $2, $3, $4, 2, {until}, {fence})",
+        f"lease_until, fenced_until) VALUES ($1, $2, $3, $4, 2, {until}, {fence})"
+        f"{_OVER_SETTLED}",
         org,
         ns,
         seq,
@@ -2665,6 +2774,7 @@ async def test_a_claim_on_a_just_replaced_lease_moves_its_audit_row_to_the_outbo
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     assert (await call("memory.set", _set(ns, "k", "a fact"))).status_code == 200
+    await _published(pg_conn, org)
     seq = await pg_conn.fetchval(
         "SELECT seq FROM loom.memory_revisions WHERE org = $1 AND namespace = $2", org, ns
     )
@@ -2718,6 +2828,7 @@ async def test_a_claim_measures_the_lease_it_replaced_by_its_fence(
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     assert (await call("memory.set", _set(ns, "k", "a fact"))).status_code == 200
+    await _published(pg_conn, org)
     seq = await pg_conn.fetchval(
         "SELECT seq FROM loom.memory_revisions WHERE org = $1 AND namespace = $2", org, ns
     )
@@ -2748,6 +2859,7 @@ async def test_a_user_erasure_run_again_waits_out_what_an_earlier_run_removed(
 
     ns, user = f"pg-{uuid.uuid4().hex[:8]}", f"u-{uuid.uuid4().hex[:6]}"
     assert (await call("memory.set", _set(ns, "k", "a fact", user_id=user))).status_code == 200
+    await _published(pg_conn, org)
     seq = await pg_conn.fetchval(
         "SELECT seq FROM loom.memory_revisions WHERE org = $1 AND namespace = $2", org, ns
     )
@@ -2766,6 +2878,87 @@ async def test_a_user_erasure_run_again_waits_out_what_an_earlier_run_removed(
         assert removed == 0 and 15 < max(leases) <= 20
     finally:
         await pg.close_pool()
+
+
+@pytest.mark.usefixtures("pg_authority")
+async def test_a_same_key_write_in_another_session_retires_a_first_write_at_once(
+    call: Any, pg_conn: Any, org: str
+) -> None:
+    """Under `newest_wins`, the same user's write of a key in another session retires the
+    first one, which answered at its commit, though ClickHouse may not hold it yet: the
+    supersession reads the authority's heads."""
+    ns = f"pg-{uuid.uuid4().hex[:8]}"
+    registered = await call(
+        "namespace.register",
+        {"namespace": ns, "owner_email": "w@example.com", "default_conflict_policy": "newest_wins"},
+    )
+    assert registered.status_code == 200, registered.text
+    for session, value in (("s1", "the editor is vim"), ("s2", "the editor is helix")):
+        w = await call(
+            "memory.set",
+            _set(ns, "user/pref/editor", value, user_id="u", session_id=session),
+        )
+        assert w.status_code == 200, w.text
+    statuses = {
+        r["session_id"]: r["status"]
+        for r in await pg_conn.fetch(
+            "SELECT session_id, row->>'status' AS status FROM loom.memory_current "
+            "WHERE org = $1 AND namespace = $2",
+            org,
+            ns,
+        )
+    }
+    assert statuses == {"s1": "superseded", "s2": "active"}
+
+
+@pytest.mark.usefixtures("pg_authority")
+async def test_a_handed_over_delivery_is_due_at_once_and_only_under_the_commits_token(
+    call: Any, pg_conn: Any, org: str
+) -> None:
+    """A flush hands over what it will not send (`pg_memory.hand_over`): the commit's
+    lease on it ends now, so the delivery worker takes it at once; a delivery another
+    publisher has taken since, under a newer token, keeps its lease."""
+    from server.core import pg
+    from server.memory.store import pg_memory
+
+    ns = f"pg-{uuid.uuid4().hex[:8]}"
+    for key in ("k1", "k2"):
+        assert (await call("memory.set", _set(ns, key, f"a fact {key}"))).status_code == 200
+    await _published(pg_conn, org)
+    an_hour = timedelta(hours=1)
+    mine = await _unpublished(
+        pg_conn, org, ns, "k1", {"tags": ["x"]}, pg_memory.MEMORY_ROW, an_hour
+    )
+    taken = await _unpublished(
+        pg_conn, org, ns, "k2", {"tags": ["x"]}, pg_memory.MEMORY_ROW, an_hour
+    )
+    await pg_conn.execute(
+        "UPDATE loom.memory_deliveries SET lease_token = lease_token + 1 "
+        "WHERE (org, namespace, seq) = ($1, $2, $3)",
+        org,
+        ns,
+        taken,
+    )
+    try:
+        await pg_memory.hand_over([(org, ns, mine), (org, ns, taken)])
+    finally:
+        await pg.close_pool()
+    due = {
+        r["seq"]: r["due"]
+        for r in await pg_conn.fetch(
+            "SELECT seq, lease_until <= now() AS due FROM loom.memory_deliveries "
+            "WHERE org = $1 AND namespace = $2 AND seq = ANY($3::bigint[])",
+            org,
+            ns,
+            [mine, taken],
+        )
+    }
+    assert due == {mine: True, taken: False}
+    await pg_conn.execute(  # the worker would wait out the taken one's hour
+        "UPDATE loom.memory_deliveries SET lease_until = now() WHERE org = $1 AND seq = $2",
+        org,
+        taken,
+    )
 
 
 async def _owing_old_vectors(pg_conn: Any, org: str, ns: str) -> int:
@@ -2976,6 +3169,7 @@ async def test_the_worker_retires_the_old_vectors_a_revision_owes_in_clickhouse(
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     assert (await call("memory.set", _set(ns, "k", "an embedded fact"))).status_code == 200
+    await _published(pg_conn, org)
     seq = await _owing_old_vectors(pg_conn, org, ns)
 
     def live_vectors() -> int:
@@ -3300,6 +3494,8 @@ async def test_a_write_made_unembedded_over_an_embedded_key_retires_its_vectors(
     elif op == "memory.update":
         body = {"namespace": ns, "memory_key": "k", "value": value}
     assert (await call(op, body)).status_code == 200
+    # The retirement rides the write's publication, after its commit answered.
+    await _published(pg_conn, org)
     live = ch_client.query(
         "SELECT count() FROM loom.memory_embeddings FINAL WHERE org = {o:String} "
         "AND namespace = {n:String} AND memory_key = 'k' AND tombstoned_at IS NULL",
@@ -3336,6 +3532,7 @@ async def test_a_claim_that_lost_its_delivery_moves_no_audit_row(
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     assert (await call("memory.set", _set(ns, "k", "a fact"))).status_code == 200
+    await _published(pg_conn, org)
     seq = await pg_conn.fetchval(
         "SELECT seq FROM loom.memory_revisions WHERE org = $1 AND namespace = $2", org, ns
     )
@@ -3389,6 +3586,7 @@ async def test_an_erasure_run_again_waits_out_what_an_earlier_run_removed(
     held, idle = (f"pg-{uuid.uuid4().hex[:8]}" for _ in range(2))
     for ns in (held, idle):
         assert (await call("memory.set", _set(ns, "k", "a fact"))).status_code == 200
+    await _published(pg_conn, org)
     seq = await pg_conn.fetchval(
         "SELECT seq FROM loom.memory_revisions WHERE org = $1 AND namespace = $2", org, held
     )
@@ -3427,6 +3625,7 @@ async def test_a_fenced_holder_is_waited_out_after_its_delivery_moves_on(
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     first = (await call("memory.set", _set(ns, "k", "the token is hunter2"))).json()
     assert (await call("memory.set", _set(ns, "k", "the token was rotated"))).status_code == 200
+    await _published(pg_conn, org)
     seq = await pg_conn.fetchval(
         "SELECT seq FROM loom.memory_revisions WHERE org = $1 AND namespace = $2 AND version = $3",
         org,
@@ -3522,6 +3721,7 @@ async def test_a_failed_publish_parks_its_delivery_with_the_time_it_failed(
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     assert (await call("memory.set", _set(ns, "k", "a fact"))).status_code == 200
+    await _published(pg_conn, org)
     seq = await pg_conn.fetchval(
         "SELECT seq FROM loom.memory_revisions WHERE org = $1 AND namespace = $2", org, ns
     )
@@ -4233,7 +4433,6 @@ async def test_a_restore_whose_publication_goes_pending_is_published_by_the_work
     from server.identity.api.models import _SnapshotMemoryRow
     from server.memory.app import snapshot_rows
     from server.memory.app.pg_delivery import deliver_namespace
-    from server.memory.store import pg_publish
     from server.settings import settings
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
@@ -4258,22 +4457,25 @@ async def test_a_restore_whose_publication_goes_pending_is_published_by_the_work
             memories, org=org, target_namespace=ns, rebind_agent=None, version_base=1, actor="t"
         )
     )
-    real = pg_publish.publish_rows
+    from server.memory.store import inserts
+
+    real = inserts.insert_memory_versions
     failed: list[int] = []
 
-    async def _refused_once(*args: Any, **kwargs: Any) -> None:
-        if not failed:
+    async def _refused_once(rows: Any, **kwargs: Any) -> int:
+        # The first batch's publication: its flush's insert into loom.memory.
+        if kwargs.get("published") and not failed:
             failed.append(1)
             raise TimeoutError("ClickHouse did not answer")
-        await real(*args, **kwargs)
+        return await real(rows, **kwargs)
 
     monkeypatch.setattr(settings, "pg_restore_batch_rows", 2)
-    monkeypatch.setattr(pg_publish, "publish_rows", _refused_once)
+    monkeypatch.setattr(inserts, "insert_memory_versions", _refused_once)
     ch = get_client()
     await ch.connect()
     try:
         assert await snapshot_rows.insert_version_rows(rows, ch=ch) is True
-        monkeypatch.setattr(pg_publish, "publish_rows", real)
+        monkeypatch.setattr(inserts, "insert_memory_versions", real)
         # Only the refused batch may still hold its writer's lease; the rest are due at once.
         leased = await pg_conn.fetchval(
             "SELECT count(*) FROM loom.memory_deliveries WHERE org = $1 AND namespace = $2 "
@@ -4326,6 +4528,7 @@ async def test_an_erasure_keeps_the_audit_row_clickhouse_never_got(
 
     ns, user = f"pg-{uuid.uuid4().hex[:8]}", f"u-{uuid.uuid4().hex[:6]}"
     assert (await call("memory.set", _set(ns, "k", "a fact", user_id=user))).status_code == 200
+    await _published(pg_conn, org)
     seq = await pg_conn.fetchval(
         "SELECT seq FROM loom.memory_revisions WHERE org = $1 AND namespace = $2", org, ns
     )
@@ -4546,9 +4749,18 @@ async def test_list_and_bulk_get_serve_what_the_authority_holds(
     # A search's barrier publishes it to ClickHouse first.
     assert (await call("memory.search", {"namespace": ns, "query": "fact"})).status_code == 200
     try:
-        await inserts.insert_memory_versions([rewrite], publish_now=False)  # left unpublished
+        await inserts.insert_memory_versions([rewrite], publish_now=False)
     finally:
         await pg.close_pool()
+    # Parked, so no barrier publishes it: ClickHouse keeps the older row.
+    await pg_conn.execute(
+        "UPDATE loom.memory_deliveries SET lease_until = 'infinity', fenced_until = now() "
+        "WHERE org = $1 AND namespace = $2 AND seq = (SELECT max(seq) FROM "
+        "loom.memory_revisions WHERE org = $1 AND namespace = $2 AND row->>'memory_key' = "
+        "'rewritten')",
+        org,
+        ns,
+    )
     await asyncio.sleep(1.5)  # past the 'high' row's retention window
     for key in ("deleted", "scrubbed"):
         r = await call("memory.delete", {"namespace": ns, "agent": "a", "memory_key": key})
@@ -4605,6 +4817,7 @@ async def test_parked_heads_page_in_the_deliveries_key_order(
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     for key in ("a", "b", "c", "d"):
         assert (await call("memory.set", _set(ns, key, f"the {key} fact"))).status_code == 200
+    await _published(pg_conn, org)
     seqs = await pg_conn.fetch(
         "SELECT seq, row->>'memory_key' AS key FROM loom.memory_revisions "
         "WHERE org = $1 AND namespace = $2 ORDER BY seq",
@@ -4657,6 +4870,7 @@ async def test_an_org_blacklist_sweep_reaches_a_head_clickhouse_keeps_refusing(
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     secret = f"tok-{uuid.uuid4().hex[:10]}"
     assert (await call("memory.set", _set(ns, "k", "nothing to refuse"))).status_code == 200
+    await _published(pg_conn, org)
     # The authority's head carries the secret and its delivery is parked: ClickHouse
     # holds only the older text.
     await pg_conn.execute(

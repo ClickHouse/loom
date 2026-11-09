@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from server.core.errors import ValidationError
 from server.memory.domain.rollback import plan_rollback, version_at
 
 
@@ -257,3 +258,34 @@ async def test_a_rollback_a_503_cuts_off_is_audited_with_what_landed(
             NamespaceRollbackInput(org="o", namespace="n", as_of=datetime.now(UTC), dry_run=False)
         )
     assert audited == []  # nothing landed, nothing to audit
+
+
+async def test_the_plan_is_read_after_the_namespace_is_published(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under Postgres a write answers at its commit: the plan's first read of ClickHouse's
+    history waits until it holds the memory rows the namespace committed."""
+    from server.identity.api.models import NamespaceRollbackInput
+    from server.identity.app import namespace_rollback as handler
+    from server.memory.app import namespace_rollback as memory_rollback
+    from server.memory.app.search import pg_validation
+    from server.memory.store import pg_memory
+
+    order: list[str] = []
+
+    async def _admit(org: str, namespaces: list[str], **kw: object) -> bool:
+        order.append(f"admit {namespaces} owed={kw.get('owed')}")
+        return False
+
+    async def _earliest(*_a: object, **_k: object) -> int:
+        order.append("earliest")
+        return 0
+
+    monkeypatch.setattr(pg_validation, "admit", _admit)
+    monkeypatch.setattr(handler, "get_client", lambda: object())
+    monkeypatch.setattr(memory_rollback, "earliest_version", _earliest)
+    with pytest.raises(ValidationError):
+        await handler.handle_namespace_rollback(
+            NamespaceRollbackInput(org="o", namespace="n", as_of=datetime.now(UTC))
+        )
+    assert order == [f"admit ['n'] owed={pg_memory.MEMORY_ROW}", "earliest"]

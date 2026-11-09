@@ -258,7 +258,6 @@ server/code/domain/search_scope.py::PATTERN_MAX
 server/code/domain/successor.py::_MAX_LINES
 server/code/domain/successor.py::_MAX_TOKENS
 server/code/store/backport_gaps.py::MAX_ROWS
-server/code/store/index/rows.py::MAX_NAMESPACES_PER_INSERT
 server/code/workers/backport_gaps.py::INSERT_EVERY
 server/code/workers/embed_recovery.py::_MAX_SCANS_PER_TABLE
 server/code/workers/graph_stats.py::_CARD_READ_BATCH

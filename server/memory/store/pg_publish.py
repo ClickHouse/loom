@@ -1,11 +1,11 @@
 """Commit loom.memory rows to the Postgres authority, then publish them to ClickHouse.
 
 The commit is the write: once it returns, the revision, its hash-only audit row
-and what it owes ClickHouse are durable. Publication follows at once, from the
-rows as committed, under the delivery lease the commit took (`COMMIT_TOKEN`). A
-publication cut off by a crash or a failed insert leaves the delivery for the
-delivery worker, which publishes the same rows again: loom.memory and
-loom.memory_embeddings are ReplacingMergeTree(version), so a second copy of a
+and what it owes ClickHouse are durable. Publication goes through the process's
+batch (`pg_batch`), from the rows as committed, under the delivery lease the commit
+took (`COMMIT_TOKEN`). A publication cut off by a crash or a failed insert leaves the
+delivery for the delivery worker, which publishes the same rows again: loom.memory
+and loom.memory_embeddings are ReplacingMergeTree(version), so a second copy of a
 version collapses into the first, and an audit row already stored is skipped by
 its hash.
 """
@@ -29,7 +29,6 @@ from server.memory.store import pg_memory
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.pg_memory import (
     AUDIT_ROW,
-    COMMIT_TOKEN,
     MEMORY_ROW,
     Admission,
     Committed,
@@ -96,9 +95,9 @@ async def commit(
     idempotent: bool = False,
     publisher_lease: bool = True,
 ) -> Committed:
-    """The commit alone, for a writer that publishes its search document beside the row.
-    `idempotent`: these are the op's own rows, which the request's idempotency key
-    records as committed (another write the request makes is not the op's answer).
+    """The commit alone; `publish` sends it. `idempotent`: these are the op's own rows,
+    which the request's idempotency key records as committed (another write the request
+    makes is not the op's answer).
     `publisher_lease` False: nobody publishes it here, so the delivery worker may at once."""
     from server.core import idempotency
 
@@ -118,36 +117,24 @@ async def commit(
 
 
 async def publish(
-    committed: Committed, *, ch: _CHClient | None = None, retried: bool = False
+    committed: Committed,
+    *,
+    ch: _CHClient | None = None,
+    retried: bool = False,
+    documents: Sequence[Mapping[str, Any]] = (),
+    wait: bool = True,
 ) -> None:
-    """Insert a commit's rows and audit rows into ClickHouse (`publish_rows`), then retire
-    the old vectors it owes, then the decision records. The commit stands whatever fails
-    here: a failed insert or vector retirement is PublicationPending (`committed`), never
-    an error a retry without an idempotency key would write again, and leaves the rest to
-    the delivery worker; a record left owed is the worker's without a word to the caller."""
-    ch = ch or _default_client()
-    owing = [
-        OwedRecord(row, seq, COMMIT_TOKEN)
-        for row, seq in zip(committed.rows, committed.seqs, strict=True)
-        if pg_memory.deleted_decision(row)
-    ]
-    try:
-        await publish_rows(
-            committed.rows,
-            committed.audits,
-            committed.seqs,
-            tokens=COMMIT_TOKEN,
-            deadline=committed.deadline,
-            retried=retried,
-            ch=ch,
-        )
-        await _retire_owed(committed, ch=ch)
-        if owing:
-            await retire_decision_records(owing, deadline=committed.deadline, ch=ch)
-    except pg_lease.PublicationPending:
-        raise
-    except Exception as e:  # committed: any failure to publish is PublicationPending
-        raise pg_lease.PublicationPending.after(e) from e
+    """Publish a commit through this process's batch (`pg_batch`): its rows, audit rows
+    and the search `documents` its writer built, in one flush with every other commit
+    queued, then the old vectors it retires and the decision records. The commit stands
+    whatever fails there: a failed insert or vector retirement is PublicationPending
+    (`committed`), never an error a retry without an idempotency key would write again,
+    and leaves the rest to the delivery worker; a record left owed is the worker's
+    without a word to the caller. `wait` False: return at once, at the commit; the
+    flush's outcome is logged."""
+    from server.memory.store import pg_batch
+
+    await pg_batch.submit(committed, documents=documents, retried=retried, ch=ch, wait=wait)
 
 
 async def publish_rows(
@@ -210,23 +197,6 @@ async def retire_old_vectors(
             [(identity_key(r), int(r["version"])) for r in rows], ch=ch, bare=True
         )
     await pg_memory.complete(seqs, pg_memory.OLD_VECTORS, tokens=tokens)
-
-
-async def _retire_owed(committed: Committed, *, ch: _CHClient) -> None:
-    """`retire_old_vectors` for the commit's rows that owe it."""
-    owing = [
-        (q, r)
-        for q, r, t in zip(committed.seqs, committed.rows, committed.targets, strict=True)
-        if t & pg_memory.OLD_VECTORS
-    ]
-    if owing:
-        await retire_old_vectors(
-            [r for _, r in owing],
-            [q for q, _ in owing],
-            tokens=COMMIT_TOKEN,
-            deadline=committed.deadline,
-            ch=ch,
-        )
 
 
 class OwedRecord(NamedTuple):

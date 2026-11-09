@@ -168,3 +168,133 @@ async def test_count_only_lists_no_page(monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_count_only_is_hidden_from_the_mcp_listing() -> None:
     assert "count_only" in mcp_schemas._HIDDEN_OP_PROPS["memory.list"]
+
+
+@pytest.mark.parametrize("as_of", [None, datetime(2026, 9, 19, 11, 0, 0)])
+async def test_the_list_waits_for_the_namespaces_memory_rows(
+    monkeypatch: pytest.MonkeyPatch, as_of: datetime | None
+) -> None:
+    """Under Postgres a write answers at its commit: memory.list reads ClickHouse once it
+    holds the memory rows the namespace committed, so the caller's own write is listed;
+    an `as_of` replay too, since the history it reads holds a write only once flushed."""
+    from server.memory.api.models_crud import MemoryListInput
+    from server.memory.app.search import pg_validation
+    from server.memory.store import pg_memory
+
+    admitted: list[tuple[Any, ...]] = []
+
+    async def _admit(org: str, namespaces: list[str], **kw: Any) -> bool:
+        admitted.append((org, namespaces, kw.get("owed")))
+        return False
+
+    async def _listed(input: Any) -> Any:
+        return mq.MemoryListOutput(entries=[], truncated=False)
+
+    monkeypatch.setattr(pg_validation, "admit", _admit)
+    monkeypatch.setattr(mq, "_handle_memory_list", _listed)
+    monkeypatch.setattr(mq, "_record_read_exposure", lambda *a: None)
+    await mq.handle_memory_list(MemoryListInput(org="o", namespace="n", agent="a", as_of=as_of))
+    assert admitted == [("o", ["n"], pg_memory.MEMORY_ROW)]
+
+
+@pytest.mark.parametrize("as_of", [None, datetime(2026, 9, 19, 11, 0, 0)])
+async def test_a_get_replay_waits_for_the_namespaces_memory_rows(
+    monkeypatch: pytest.MonkeyPatch, as_of: datetime | None
+) -> None:
+    """A point read answers from the authority's heads; an `as_of` replay reads
+    ClickHouse's history, so it waits, as memory.list does, for the write that answered at
+    its commit."""
+    import server.memory.store as memory_repo
+    from server.memory.api.models_crud import MemoryGetInput
+    from server.memory.app import handlers
+    from server.memory.app.search import pg_validation
+    from server.memory.store import pg_memory
+
+    admitted: list[tuple[Any, ...]] = []
+
+    async def _admit(org: str, namespaces: list[str], **kw: Any) -> bool:
+        admitted.append((org, namespaces, kw.get("owed")))
+        return False
+
+    async def _row(*_a: Any, **_k: Any) -> Any:
+        return None
+
+    monkeypatch.setattr(pg_validation, "admit", _admit)
+    monkeypatch.setattr(memory_repo, "get_by_key", _row)
+    identity = memory_repo.Identity(org="o", namespace="n", agent="a", user_id="-", session_id="-")
+    get = MemoryGetInput(org="o", namespace="n", agent="a", memory_key="k", as_of=as_of)
+    assert await handlers._point_lookup(identity, get) is None
+    assert admitted == ([("o", ["n"], pg_memory.MEMORY_ROW)] if as_of else [])
+
+
+async def test_history_and_a_get_by_id_replay_wait_for_the_namespaces_memory_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """memory.history and a memory.get_by_id `as_of` replay read ClickHouse's history, so
+    each waits for a write that answered at its commit; a current get_by_id reads the
+    authority and waits for nothing."""
+    import server.memory.store as memory_repo
+    from server.memory.api.models_crud import MemoryGetByIdInput
+    from server.memory.api.models_temporal import MemoryHistoryInput
+    from server.memory.app import curation, handlers, id_namespace
+    from server.memory.app.search import pg_validation
+    from server.memory.store import pg_memory
+
+    admitted: list[tuple[Any, ...]] = []
+
+    async def _admit(org: str, namespaces: list[str], **kw: Any) -> bool:
+        admitted.append((org, namespaces, kw.get("owed")))
+        return False
+
+    async def _none(*_a: Any, **_k: Any) -> Any:
+        return None
+
+    async def _no_rows(*_a: Any, **_k: Any) -> list[Any]:
+        return []
+
+    async def _ns(*_a: Any, **_k: Any) -> str:
+        return "n"
+
+    monkeypatch.setattr(pg_validation, "admit", _admit)
+    monkeypatch.setattr(memory_repo, "get_by_id", _none)
+    monkeypatch.setattr(memory_repo, "list_history", _no_rows)
+    monkeypatch.setattr(id_namespace, "namespace_for_id", _ns)
+    await curation.handle_memory_history(
+        MemoryHistoryInput(org="o", namespace="n", agent="a", memory_key="k")
+    )
+    assert admitted == [("o", ["n"], pg_memory.MEMORY_ROW)]
+    mid = "00000000-0000-0000-0000-000000000001"
+    await handlers.handle_memory_get_by_id(MemoryGetByIdInput(org="o", memory_id=mid))
+    assert len(admitted) == 1
+    replay = MemoryGetByIdInput(org="o", memory_id=mid, as_of=datetime(2026, 9, 19, 11, 0, 0))
+    await handlers.handle_memory_get_by_id(replay)
+    assert admitted[1:] == [("o", ["n"], pg_memory.MEMORY_ROW)]
+
+
+@pytest.mark.parametrize("behind", [False, True])
+async def test_history_reads_sequentially_once_the_barrier_waited(
+    monkeypatch: pytest.MonkeyPatch, behind: bool
+) -> None:
+    """A wait at the barrier means the flush landed moments ago: history then reads with
+    sequential consistency, so a lagging replica does not miss it."""
+    import server.memory.store as memory_repo
+    from server.core import ch as core_ch
+    from server.memory.api.models_temporal import MemoryHistoryInput
+    from server.memory.app import curation
+    from server.memory.app.search import pg_validation
+
+    async def _admit(*_a: Any, **_k: Any) -> bool:
+        return behind
+
+    seen: list[bool] = []
+
+    async def _history(*_a: Any, **_k: Any) -> list[Any]:
+        seen.append(core_ch.sequential_reads_active())
+        return []
+
+    monkeypatch.setattr(pg_validation, "admit", _admit)
+    monkeypatch.setattr(memory_repo, "list_history", _history)
+    await curation.handle_memory_history(
+        MemoryHistoryInput(org="o", namespace="n", agent="a", memory_key="k")
+    )
+    assert seen == [behind]

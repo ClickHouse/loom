@@ -5505,6 +5505,13 @@
           "type": "integer",
           "description": "Milliseconds an admission waits for earlier commits in its scope to reach search before answering 503 PROJECTION_BEHIND; a diagnostic report waits as long, then reads on and names `projection` in `skipped`."
         },
+        "pg_publish_interval_ms": {
+          "default": 250,
+          "maximum": 2000,
+          "minimum": 0,
+          "type": "integer",
+          "description": "Average ms between a process's publication flushes (one insert per table each), capped at half `LOOM_PG_PROJECTION_WAIT_MS`; bursts up to a second's worth; 0: none."
+        },
         "pg_request_lease_seconds": {
           "default": 5,
           "minimum": 1,
