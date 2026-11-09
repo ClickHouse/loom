@@ -461,7 +461,7 @@ print("refused")
         timeout=60,
     )
     assert done.returncode == 0 and "refused" in done.stdout, done.stderr[-2000:]
-    assert "ended with status -" in done.stderr  # logged: the limit ended its process
+    assert "ended by signal" in done.stderr  # logged: the limit ended its process
 
 
 def test_every_grammar_the_server_imports_is_one_the_child_loads() -> None:

@@ -40,7 +40,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import IO, Any, cast
+from typing import IO, Any, NoReturn, cast
 
 from server.code.domain.extract import parse_child
 
@@ -118,6 +118,24 @@ def _in_child(grammar: str, source: bytes, budget: float, memory: int) -> bytes 
         else:
             return status
         child = None
+
+
+def _refuse(answer: bytes | int, budget: float, memory: int) -> NoReturn:
+    """The error for a child's answer other than `DONE`."""
+    if answer == parse_child.STOPPED:
+        raise ParseTimeout(f"parse stopped after {budget:g} CPU seconds")
+    if answer == _SILENT:
+        raise ParseTimeout(f"the parse process did not answer within {_wall_bound(budget):g} s")
+    status = cast("int", answer)
+    if status > 0:
+        logger.error("bounded_parse: the parse process failed with status %d", status)
+        raise RuntimeError(f"the parse process failed with status {status}")
+    if status == -signal.SIGKILL:
+        raise ParseTimeout("the parse process was killed twice: memory ran out around it")
+    raise ParseTimeout(
+        f"parse ran past {memory >> 20} MB or {budget:g} CPU seconds"
+        f" (its process ended by signal {-status})"
+    )
 
 
 def _start() -> subprocess.Popen[bytes]:
@@ -200,20 +218,8 @@ def parse(parser: Any, source: bytes) -> Any:
 
     with _LOCK:
         answer = _in_child(_grammar(parser.language), source, budget, memory)
-        if answer == parse_child.STOPPED:
-            raise ParseTimeout(f"parse stopped after {budget:g} CPU seconds")
-        if isinstance(answer, int) and answer > 0:
-            logger.error("bounded_parse: the parse process failed with status %d", answer)
-            raise RuntimeError(f"the parse process failed with status {answer}")
-        if answer == -signal.SIGKILL:
-            raise ParseTimeout("the parse process was killed twice: memory ran out around it")
-        if answer == _SILENT:
-            raise ParseTimeout(f"the parse process did not answer within {_wall_bound(budget):g} s")
         if answer != parse_child.DONE:
-            raise ParseTimeout(
-                f"parse ran past {memory >> 20} MB or {budget:g} CPU seconds"
-                f" (its process ended with status {answer!r})"
-            )
+            _refuse(answer, budget, memory)
         deadline = time.thread_time() + 2 * budget
         try:
             tree = parser.parse(read)
