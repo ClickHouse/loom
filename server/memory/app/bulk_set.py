@@ -600,17 +600,20 @@ async def _commit_batch(
 ) -> pg_memory.Committed:
     """The batch's commit to the Postgres authority: its verdicts' generations and every
     key's protection as the batch read it are checked again inside (AdmissionMoved,
-    HeadMoved); a row with a vector owes ClickHouse its search document too. `retire`:
+    HeadMoved); a row with a vector of its own version owes ClickHouse its search
+    document too, not an earlier row of a key the batch writes twice. `retire`:
     keys whose replaced vectors the locked head cannot show (a winner left without its
     type's vector, a key the batch embedded earlier, a failed lookup); they owe
     OLD_VECTORS. The commit adds any row over an embedded head itself."""
 
-    embedded = {str(r.get("memory_key")) for r in state.embedding_rows}
+    # The publication clears a revision's search document only for the version it was
+    # built from, so only that version owes one.
+    embedded = {(identity_key(r), int(r["version"])) for r in state.embedding_rows}
     read = {identity_key(r): state.existing_rows.get(r["memory_key"]) for r in state.memory_rows}
     targets = [
         pg_memory.MEMORY_ROW
         | pg_memory.AUDIT_ROW
-        | (pg_memory.SEARCH_DOC if str(r["memory_key"]) in embedded else 0)
+        | (pg_memory.SEARCH_DOC if (identity_key(r), int(r["version"])) in embedded else 0)
         | (pg_memory.OLD_VECTORS if _owes_retirement(r, retire) else 0)
         for r in state.memory_rows
     ]
