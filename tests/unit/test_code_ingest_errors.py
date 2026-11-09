@@ -306,34 +306,3 @@ async def test_deep_recursion_retries_once_under_a_deeper_limit_and_restores_it(
 
     with pytest.raises(ValueError):
         await ingest_edges._with_deep_recursion(_boom)
-
-
-@pytest.mark.asyncio
-async def test_a_parse_that_could_not_run_writes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
-    from server.code.domain.extract import bounded_parse
-
-    def _unavailable(path: str, source: bytes) -> Any:
-        raise bounded_parse.ParseUnavailable("killed twice")
-
-    monkeypatch.setitem(ingest_parse._PARSERS, "cpp", _unavailable)
-    repo = _StubRepo()
-    stats = await _ingest(repo)
-    assert stats.skipped and stats.error == "parse: ParseUnavailable"
-    assert repo.inserts == []  # its live rows stand; no new hash, so the next pass reads it
-
-
-@pytest.mark.asyncio
-async def test_an_edge_stage_that_could_not_run_leaves_the_file_row(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from server.code.domain.extract import bounded_parse
-
-    def _unavailable(pf: Any, header: Any = None) -> Any:
-        raise bounded_parse.ParseUnavailable("killed twice")
-
-    monkeypatch.setattr(ingest_edges, "collect_call_names", _unavailable)
-    repo = _StubRepo()
-    stats = await _ingest(repo)
-    assert stats.error == "edges: ParseUnavailable"
-    assert repo.file_rows() == []  # the old hash stands: the next pass runs the file again
-    assert not any(t == "code_edges" for t, _ in repo.inserts)

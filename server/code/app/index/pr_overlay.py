@@ -585,8 +585,8 @@ async def _file_facts(
     scope: tuple[str, str], path: str, source: bytes, digest: str, deadline: float
 ) -> tuple[Any, _Facts] | None:
     """(parsed file or None when cached, facts) of one post-image file; None when it is
-    not cached and `deadline` passes before its parse can start, its parse has not
-    ended one parse deadline after it, or it could not run here now."""
+    not cached and `deadline` passes before its parse can start, or its parse has not
+    ended one parse deadline after it."""
     key = (path, digest)
     hit = _FILE_FACTS.get(key)
     if hit is not None:
@@ -595,25 +595,18 @@ async def _file_facts(
         scope,
         key,
         deadline,
-        lambda result: _FILE_FACTS.put(key, cast("tuple[Any, _Facts]", result)[1]),
+        lambda result: _FILE_FACTS.put(key, result[1]),
         _parsed_facts,
         path,
         source,
     )
 
 
-def _parsed_facts(path: str, source: bytes) -> tuple[Any, _Facts] | None:
-    """None when the parse could not run here now: the file counts as not reached."""
-    from server.code.app.index.ingest_parse import (
-        parse_for_ingest,
-        parse_timed_out,
-        parse_unavailable,
-    )
+def _parsed_facts(path: str, source: bytes) -> tuple[Any, _Facts]:
+    from server.code.app.index.ingest_parse import parse_for_ingest, parse_timed_out
     from server.code.domain.extract.edges_treesitter import collect_call_names
 
     pf, err = parse_for_ingest(path, source)
-    if parse_unavailable(err):
-        return None
     timed_out = parse_timed_out(err)
     if pf is None or not pf.symbols:
         return None, _Facts((), frozenset(), timed_out)
@@ -627,20 +620,14 @@ def _parsed_facts(path: str, source: bytes) -> tuple[Any, _Facts] | None:
 
 def _file_edges(
     pf: Any, path: str, source: bytes, table: dict[str, list[tuple[str, str, str]]]
-) -> _Edges | None:
+) -> _Edges:
     """The calls and inherits edges of one post-image file; `pf` is its parse when this
-    request already holds it. None when a parse could not run here now (not reached)."""
-    from server.code.app.index.ingest_parse import (
-        parse_for_ingest,
-        parse_timed_out,
-        parse_unavailable,
-    )
+    request already holds it."""
+    from server.code.app.index.ingest_parse import parse_for_ingest, parse_timed_out
     from server.code.domain.extract.edges_treesitter import extract_edges_and_misses
 
     if pf is None:
         pf, err = parse_for_ingest(path, source)
-        if parse_unavailable(err):
-            return None
         timed_out = parse_timed_out(err)
         if pf is None or timed_out:
             return _Edges((), timed_out)
@@ -716,7 +703,7 @@ async def _parse_post_image(
         edges = _FILE_EDGES.get(key)
         if edges is None and pf is not None:
             # binding the tree in hand is no parse: in a thread, outside the turn
-            edges = cast("_Edges", await asyncio.to_thread(_file_edges, pf, p, source, table))
+            edges = await asyncio.to_thread(_file_edges, pf, p, source, table)
             _FILE_EDGES.put(key, edges)
         elif edges is None:
             edges = await _in_turn(
@@ -744,8 +731,7 @@ def _note_left_out(ov: PrOverlay, timed_out: int) -> None:
         parts.append(f"{timed_out} changed file(s) whose parse ran past its limits")
     if ov.unreached:
         parts.append(
-            f"{ov.unreached} changed file(s) {NOT_REACHED}: the request's parse time was spent,"
-            " or the parse could not run here"
+            f"{ov.unreached} changed file(s) {NOT_REACHED}: the request's parse time was spent"
         )
     ov.note = "; ".join(parts)
 

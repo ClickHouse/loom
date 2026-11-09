@@ -7,8 +7,7 @@ import logging
 from typing import Any
 
 from server.code.app.index.ingest_edges import _derive_edges, _with_deep_recursion
-from server.code.app.index.ingest_stats import FileIngestStats, error_text
-from server.code.domain.extract.bounded_parse import ParseUnavailable
+from server.code.app.index.ingest_stats import FileIngestStats
 from server.code.domain.extract.edges_treesitter import Edge
 from server.code.domain.extract.lang_sql_dialect import CONF_FOLDER, FACET_DIALECT
 from server.code.domain.extract.lang_sql_model import SQL_LANG, Facet
@@ -184,7 +183,7 @@ async def _reconcile_edges_and_misses(
     stats: FileIngestStats,
     *,
     write_guards: bool = True,
-) -> list[Edge] | None:
+) -> list[Edge]:
     """Derive this parse's edges and declined sites against the CURRENT name
     table and key-diff them against the live rows: unchanged keys are kept
     (never re-inserted), new ones inserted, vanished ones tombstoned. Shared
@@ -192,15 +191,9 @@ async def _reconcile_edges_and_misses(
     so the guard stage can derive its records from them. `write_guards`
     keeps the guard diff here (the dependents path, which re-resolves edges
     and so re-derives their guards); `ingest_file` runs the guard stage
-    itself, scoped by the heal. None, with the error recorded, when a parse the edges need
-    could not run here now: the live edges and declined sites stand."""
+    itself, scoped by the heal."""
     # ---- edges -------------------------------------------------------------
-    try:
-        edges, misses = await _derive_edges(repo, org, ns, pf, path, stats)
-    except ParseUnavailable as unavailable:
-        logger.warning("code ingest: edge extraction could not run for %s: %s", path, unavailable)
-        stats.error = "; ".join(x for x in (stats.error, error_text("edges", unavailable)) if x)
-        return None
+    edges, misses = await _derive_edges(repo, org, ns, pf, path, stats)
 
     existing_edges = await repo.live_edges_for_path(org, ns, path, "treesitter")
 

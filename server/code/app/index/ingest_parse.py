@@ -9,7 +9,7 @@ from typing import Any
 
 from server.code.app.index.denylist import Denylist, default_denylist
 from server.code.app.index.ingest_stats import error_text
-from server.code.domain.extract.bounded_parse import ParseTimeout, ParseUnavailable
+from server.code.domain.extract.bounded_parse import ParseTimeout
 from server.code.domain.extract.lang_detect import detect_by_extension, detect_shell, is_bats_path
 from server.code.domain.extract.lang_hosts import HostUnits, detect_host, host_kind, host_units
 from server.code.domain.extract.lang_py_islands import py_sql_units
@@ -41,14 +41,6 @@ def parse_for_ingest(path: str, source: bytes) -> tuple[ParsedFile | None, str]:
     `code.coverage.files_errored` and the Health tile read them; without it a file
     indexed without symbols would look healthy.
     """
-    try:
-        return _parse_for_ingest(path, source)
-    except ParseUnavailable as e:  # no fact of the file: nothing of it is written, it is read again
-        logger.warning("code ingest: parse failed for %s: %s", path, e)
-        return None, error_text("parse", e)  # its language unknown: its live rows stand
-
-
-def _parse_for_ingest(path: str, source: bytes) -> tuple[ParsedFile | None, str]:
     lang = _lane_language(lang_for_path(path), path, source)
     if not lang and _statement_records_on() and is_sql_path(path):
         lang = SQL_LANG  # `.sql.j2`: the runner renders it, the splitter reads it as text
@@ -113,9 +105,11 @@ def _parse_for_ingest(path: str, source: bytes) -> tuple[ParsedFile | None, str]
     if lang == "config" and _host_islands_on() and host_kind(path):
         parser = _parse_host  # Jobs / targets / stages, invoked scripts
     if parser is not None:
-        pf, failed = _run(parser, lang, path, source)
-        if failed:
-            return pf, failed
+        try:
+            pf = parser(path, source)
+        except Exception as e:  # noqa: BLE001 — parse failure is per-file, not fatal
+            logger.warning("code ingest: parse failed for %s: %s", path, e)
+            return ParsedFile(path=path, lang=lang, source=source), error_text("parse", e)
         if lang == "shell":
             # A shell file's include targets are repository paths — resolved HERE, at
             # parse, so the full ingest and the edges-only dependents pass derive the
@@ -129,26 +123,9 @@ def _parse_for_ingest(path: str, source: bytes) -> tuple[ParsedFile | None, str]
     return ParsedFile(path=path, lang=lang, source=source), ""
 
 
-def _run(parser: Any, lang: str, path: str, source: bytes) -> tuple[ParsedFile, str]:
-    """`parser(path, source)`, or the chunk-only file and the reason it failed. A parse
-    that could not run here now is raised: `parse_for_ingest` keeps the file's rows."""
-    try:
-        return parser(path, source), ""
-    except ParseUnavailable:
-        raise
-    except Exception as e:  # noqa: BLE001 — parse failure is per-file, not fatal
-        logger.warning("code ingest: parse failed for %s: %s", path, e)
-        return ParsedFile(path=path, lang=lang, source=source), error_text("parse", e)
-
-
 def parse_timed_out(error: str) -> bool:
     """Whether `parse_for_ingest`'s reason says the parse ran past its limits."""
     return error.startswith(f"parse: {ParseTimeout.__name__}")
-
-
-def parse_unavailable(error: str) -> bool:
-    """Whether `parse_for_ingest`'s reason says the parse could not run here now."""
-    return error.startswith(f"parse: {ParseUnavailable.__name__}")
 
 
 def parse_for_round(

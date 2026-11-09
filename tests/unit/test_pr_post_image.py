@@ -759,18 +759,3 @@ def test_a_queued_parse_started_too_late_is_dropped(monkeypatch: pytest.MonkeyPa
     assert asyncio.run(queued()) is None
     assert sorted(calls) == ["one.go", "two.go"]  # the late job never ran
     assert po._FILE_FACTS.get(("c.go", "c")) is None
-
-
-def test_a_file_whose_parse_could_not_run_is_not_reached_and_not_cached(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from server.code.app.index import ingest_parse
-
-    def unavailable(path: str, source: bytes) -> tuple[Any, str]:
-        return None, "parse: ParseUnavailable"
-
-    monkeypatch.setattr(ingest_parse, "parse_for_ingest", unavailable)
-    deadline = time.monotonic() + 5
-    got = asyncio.run(po._file_facts(("acme", "ns"), "u.go", b"x", "u", deadline))
-    assert got is None and po._FILE_FACTS.get(("u.go", "u")) is None
-    assert po._file_edges(None, "u.go", b"x", {}) is None

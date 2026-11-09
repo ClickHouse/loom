@@ -204,40 +204,6 @@ def test_a_header_whose_parse_stops_is_read_as_not_indexed(
     assert ih._header_cache[("acme", "code", "src/a.h")] is None
 
 
-def test_a_header_whose_parse_could_not_run_is_not_cached(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from server.code.app.index import ingest_headers as ih
-    from server.code.app.index.ingest_stats import FileIngestStats
-    from server.code.domain.extract import bounded_parse
-    from server.code.domain.extract.treesitter import parse_cpp
-
-    pf = parse_cpp("src/a.cpp", b"void f() { g(); }\n")
-    monkeypatch.setattr(ih, "_needs_header", lambda pf, hd: True)
-    monkeypatch.setattr(ih, "_header_cache", {})
-
-    def unavailable(parser: Any, source: bytes) -> Any:
-        raise bounded_parse.ParseUnavailable("killed from outside")
-
-    async def header_text(repo: Any, org: str, ns: str, path: str) -> tuple[str, bool]:
-        return "int f();\n", True
-
-    async def none(*a: Any) -> list[str]:
-        return []
-
-    class Repo:
-        async def live_paths_present(self, org: str, ns: str, paths: list[str]) -> set[str]:
-            return {"src/a.h"}
-
-    monkeypatch.setattr(bounded_parse, "parse", unavailable)
-    monkeypatch.setattr(ih, "_header_text", header_text)
-    monkeypatch.setattr(ih, "_present_includes", none)
-    stats = FileIngestStats(path="src/a.cpp")
-    with pytest.raises(bounded_parse.ParseUnavailable):
-        asyncio.run(ih.header_context(Repo(), "acme", "code", pf, "src/a.cpp", stats))
-    assert ("acme", "code", "src/a.h") not in ih._header_cache  # read again next time
-
-
 @pytest.mark.usefixtures("fresh_child")
 def test_two_threads_never_parse_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
     import threading
@@ -593,7 +559,7 @@ def test_a_child_that_does_not_answer_is_ended(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(settings, "code_parse_timeout_s", 0.05)
     start = time.monotonic()
     pf, err = parse_for_ingest("b.go", source)
-    assert "ParseUnavailable" in err and time.monotonic() - start < 15
+    assert "ParseTimeout" in err and time.monotonic() - start < 15
     pf, err = parse_for_ingest("c.go", source)  # a fresh child
     assert err == "" and pf is not None and len(pf.symbols) == 1
 
@@ -706,7 +672,7 @@ def test_a_parse_whose_caller_gives_up_does_not_wait_past_it() -> None:
     try:
         with bounded_parse._LOCK:  # another parse holds the process's turn
             start = time.monotonic()
-            with pytest.raises(bounded_parse.ParseUnavailable, match="waiting"):
+            with pytest.raises(bounded_parse.ParseTimeout, match="waiting"):
                 bounded_parse.parse(parser, b"package x\n")
             assert time.monotonic() - start < 2 and limit.gave_up
     finally:
@@ -723,14 +689,14 @@ def test_a_parse_whose_caller_already_gave_up_does_not_run() -> None:
     limit = bounded_parse.LockWait(0.0)  # the lock is free, the deadline passed
     waits = bounded_parse.LOCK_WAIT.set(limit)
     try:
-        with pytest.raises(bounded_parse.ParseUnavailable, match="waiting"):
+        with pytest.raises(bounded_parse.ParseTimeout, match="waiting"):
             bounded_parse.parse(parser, b"package x\n")
     finally:
         bounded_parse.LOCK_WAIT.reset(waits)
     assert limit.gave_up
 
 
-def test_a_parse_whose_children_the_kernel_killed_twice_is_unavailable(
+def test_a_parse_whose_children_the_kernel_killed_twice_is_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import signal
@@ -753,75 +719,4 @@ def test_a_parse_whose_children_the_kernel_killed_twice_is_unavailable(
     monkeypatch.setattr(settings, "code_parse_timeout_s", 10.0)
     source = b"package x\nvar s = " + b"`" * 16_000  # parses in over a second
     pf, err = parse_for_ingest("a.go", source)
-    assert "ParseUnavailable" in err and len(started) == 2
-
-
-def test_the_shell_detector_does_not_answer_for_a_parse_that_could_not_run(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from server.code.domain.extract import bounded_parse
-    from server.code.domain.extract.lang_detect import detect_shell
-
-    def unavailable(parser: Any, source: bytes) -> Any:
-        raise bounded_parse.ParseUnavailable("killed twice")
-
-    monkeypatch.setattr(bounded_parse, "parse", unavailable)
-    with pytest.raises(bounded_parse.ParseUnavailable):
-        detect_shell("tests/queries/tool", b"a=(1 2)\necho hi\n")
-
-
-def test_ingest_records_a_shell_detection_that_could_not_run_as_a_parse_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from server.code.app.index.ingest_parse import parse_unavailable
-    from server.code.domain.extract import bounded_parse
-
-    def unavailable(parser: Any, source: bytes) -> Any:
-        raise bounded_parse.ParseUnavailable("killed twice")
-
-    monkeypatch.setattr(bounded_parse, "parse", unavailable)
-    pf, err = parse_for_ingest("tests/run", b"a=(1 2)\necho hi\n")
-    assert pf is None and parse_unavailable(err)
-
-
-def test_an_edge_parse_that_could_not_run_keeps_the_live_edges(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from server.code.app.index import ingest_edges, ingest_reconcile
-    from server.code.app.index.ingest_stats import FileIngestStats
-    from server.code.domain.extract import bounded_parse
-    from server.code.domain.extract.treesitter import parse_cpp
-
-    def unavailable(*a: Any, **k: Any) -> Any:
-        raise bounded_parse.ParseUnavailable("killed twice")
-
-    async def no_header(*a: Any) -> None:
-        return None
-
-    class Repo:
-        rows: list[Any] = []
-
-        async def live_edges_for_path(self, *a: Any) -> list[dict[str, Any]]:
-            raise AssertionError("the live edges were read to be replaced")
-
-        async def insert_rows(self, table: str, rows: list[Any]) -> None:
-            self.rows.extend(rows)
-
-    monkeypatch.setattr(ingest_edges, "header_context", no_header)
-    monkeypatch.setattr(ingest_edges, "collect_call_names", unavailable)  # the edge run's parse
-    monkeypatch.setattr(ingest_edges, "_resolve_lane_includes", no_header)
-    pf = parse_cpp("src/a.cpp", b"void f() { g(); }\n")
-    stats = FileIngestStats(path="src/a.cpp")
-    repo = Repo()
-    got = asyncio.run(
-        ingest_reconcile._reconcile_edges_and_misses(
-            repo,  # type: ignore[arg-type]
-            "o",
-            "n",
-            pf,
-            "src/a.cpp",
-            "c" * 40,
-            stats,
-        )
-    )
-    assert got is None and repo.rows == [] and "ParseUnavailable" in stats.error
+    assert "ParseTimeout" in err and len(started) == 2

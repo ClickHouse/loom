@@ -5,10 +5,9 @@ Some grammars take quadratic time on short repeated tokens, and some quadratic m
 replica for hours or exhaust its memory. Every parse of repository text goes through
 `parse`, which first parses the source in a child process (`parse_child`) held to
 `code_parse_memory_mb` of address space past its own and `code_parse_timeout_s` of
-CPU time, and raises `ParseTimeout` when that parse runs past the deadline or a signal
-other than SIGKILL ends the child: a fact of the source. The other errors `parse` raises
-are not. Each caller takes its parse failure path (an indexed file is then chunks
-without symbols).
+CPU time, and raises `ParseTimeout` when that parse runs past a limit, ends the child,
+or cannot run here (the child silent, or killed twice from outside); each caller takes
+its parse failure path (an indexed file is then chunks without symbols).
 
 Only a source the child parsed in full within the deadline is parsed again here, where
 the same parse does the same work and so stays within the same limits (past twice the
@@ -91,13 +90,8 @@ _SILENT = b"?"  # no answer within the wall bound
 
 
 class ParseTimeout(Exception):
-    """The parse ran past `code_parse_timeout_s` or `code_parse_memory_mb`: a fact of the
-    source, which a caller may cache."""
-
-
-class ParseUnavailable(RuntimeError):
-    """The parse could not run here now (its process gave no answer or was killed from
-    outside, or the caller's wait for the lock ran out): no fact of the source."""
+    """The parse ran past `code_parse_timeout_s` or `code_parse_memory_mb`, or could not
+    run here; a caller reads it as the file's parse failing."""
 
 
 @functools.cache
@@ -134,14 +128,12 @@ def _check_in_child(grammar: str, source: bytes, budget: float, memory: int) -> 
                 f"parse ran past {budget:g} CPU seconds, or {budget / 10:g} s at a stretch"
             )
         if answer == _SILENT:
-            raise ParseUnavailable(
-                f"the parse process did not answer within {_wall_bound(budget):g} s"
-            )
+            raise ParseTimeout(f"the parse process did not answer within {_wall_bound(budget):g} s")
         status = cast("int", child.returncode)
         if answer is None and not unread:
             unread = True
-        elif answer is None:
-            raise ParseUnavailable(f"the parse process ended before reading (status {status})")
+        elif answer is None and status <= 0:
+            raise ParseTimeout(f"the parse process ended before reading (status {status})")
         elif status == -signal.SIGKILL and not killed:
             killed = True
         else:
@@ -155,7 +147,7 @@ def _ended(status: int, budget: float, memory: int) -> NoReturn:
         logger.error("bounded_parse: the parse process failed with status %d", status)
         raise RuntimeError(f"the parse process failed with status {status}")
     if status == -signal.SIGKILL:
-        raise ParseUnavailable("the parse process was killed twice: memory ran out around it")
+        raise ParseTimeout("the parse process was killed twice: memory ran out around it")
     raise ParseTimeout(
         f"parse ran past {memory >> 20} MB or {budget:g} CPU seconds"
         f", or crashed (its process ended by signal {-status})"
@@ -228,8 +220,9 @@ def _close(child: subprocess.Popen[bytes]) -> None:
 
 def parse(parser: Any, source: bytes) -> Any:
     """`parser.parse(source)`, raising `ParseTimeout` past the deadline or the memory
-    limit; `ParseUnavailable` when it could not run here now, `RuntimeError` or `OSError`
-    when the child fails or cannot start, `LookupError` for a grammar not in `_LOADERS`."""
+    limit (or when its process gave no answer, was killed twice from outside, or the
+    caller's wait for the lock ran out); `RuntimeError` or `OSError` when the child fails
+    or cannot start, `LookupError` for a grammar not in `_LOADERS`."""
     from server.settings import settings
 
     budget = settings.code_parse_timeout_s
@@ -255,7 +248,7 @@ def parse(parser: Any, source: bytes) -> Any:
         _LOCK.acquire()
     elif (left := limit.deadline - time.monotonic()) <= 0 or not _LOCK.acquire(timeout=left):
         limit.gave_up = True  # past the deadline, a free lock is no reason to parse
-        raise ParseUnavailable("gave up waiting for another parse in this process")
+        raise ParseTimeout("gave up waiting for another parse in this process")
     try:
         _check_in_child(_grammar(parser.language), source, budget, memory)
         deadline = time.thread_time() + 2 * budget
