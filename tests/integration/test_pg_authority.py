@@ -96,7 +96,8 @@ def _set(ns: str, key: str, value: str, **extra: Any) -> dict[str, Any]:
 _OVER_SETTLED = (
     " ON CONFLICT (org, namespace, seq) DO UPDATE SET targets = EXCLUDED.targets, "
     "lease_token = EXCLUDED.lease_token, lease_until = EXCLUDED.lease_until, "
-    "fenced_until = EXCLUDED.fenced_until, held = false"
+    "fenced_until = EXCLUDED.fenced_until, attempts = EXCLUDED.attempts, "
+    "last_error = EXCLUDED.last_error, held = EXCLUDED.held"
 )
 
 
@@ -462,7 +463,8 @@ async def test_an_unpublished_commit_is_published_by_the_next_admission(
         )
         await pg_conn.execute(
             "INSERT INTO loom.memory_deliveries (org, namespace, seq, targets, lease_until) "
-            "VALUES ($1, $2, $3, 3, now() - interval '1 second')",
+            "VALUES ($1, $2, $3, 3, now() - interval '1 second')"
+            f"{_OVER_SETTLED}",
             org,
             ns,
             seq,
@@ -628,6 +630,91 @@ async def test_a_nul_character_is_refused_before_anything_commits(
         )
         == 0
     )
+
+
+@pytest.mark.usefixtures("pg_authority")
+async def test_a_delivered_revision_loses_its_payload_and_its_old_version_still_serves(
+    call: Any, pg_conn: Any, org: str, ch_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Past LOOM_PG_REVISION_PAYLOAD_MINUTES the sweep of a settled delivery leaves its
+    revision its typed columns and no payload (a profile revision keeps its payload): a
+    rollback reinstates its content from ClickHouse's history, and a redaction of it
+    marks its columns and scrubs ClickHouse's copy."""
+    from server.core import pg
+    from server.memory.store import pg_memory
+    from server.settings import settings
+
+    ns = f"pg-{uuid.uuid4().hex[:8]}"
+    first = (await call("memory.set", _set(ns, "k", "the token is hunter2"))).json()
+    await asyncio.sleep(1.5)
+    as_of = datetime.now(UTC)
+    await asyncio.sleep(1.5)
+    assert (await call("memory.set", _set(ns, "k", "the token was rotated"))).status_code == 200
+    assert (await call("memory.set", _set(ns, "p", "a profile's fold"))).status_code == 200
+    await _published(pg_conn, org)
+    # A profile revision, which a redaction's reach matches on `row`.
+    await pg_conn.execute(
+        "UPDATE loom.memory_revisions SET row = row || "
+        "jsonb_build_object('agent', '-', 'memory_type', 'profile') "
+        "WHERE org = $1 AND namespace = $2 AND memory_key = 'p'",
+        org,
+        ns,
+    )
+    # Every delivery settled past the sweep's age.
+    await pg_conn.execute(
+        "UPDATE loom.memory_deliveries SET lease_until = now() - interval '2 hours' "
+        "WHERE org = $1 AND namespace = $2",
+        org,
+        ns,
+    )
+    monkeypatch.setattr(settings, "pg_revision_payload_minutes", 60)
+    try:
+        while (await pg_memory.sweep_settled(1000))[0]:
+            pass
+    finally:
+        await pg.close_pool()
+    assert (
+        await pg_conn.fetchval(
+            "SELECT count(*) FROM loom.memory_revisions "
+            "WHERE org = $1 AND namespace = $2 AND row IS NULL AND memory_key = 'k'",
+            org,
+            ns,
+        )
+        == 2
+    )
+    assert await pg_conn.fetchval(
+        "SELECT row IS NOT NULL FROM loom.memory_revisions "
+        "WHERE org = $1 AND namespace = $2 AND row->>'memory_type' = 'profile'",
+        org,
+        ns,
+    )
+    rolled = await call(
+        "namespace.rollback", {"namespace": ns, "as_of": as_of.isoformat(), "dry_run": False}
+    )
+    assert rolled.status_code == 200 and rolled.json()["reinstate"] == 1, rolled.text
+    got = (await call("memory.get", {"namespace": ns, "agent": "a", "memory_key": "k"})).json()
+    assert got["value"] == "the token is hunter2", got
+    r = await call(
+        "memory.redact",
+        {"memory_id": first["memory_id"], "version": first["version"], "reason": "leak"},
+    )
+    assert r.status_code == 200 and r.json()["redacted"] is True, r.text
+    marked = await pg_conn.fetchrow(
+        "SELECT row IS NULL AS cleared, redacted_at IS NOT NULL AS redacted, redaction_reason "
+        "FROM loom.memory_revisions WHERE org = $1 AND namespace = $2 AND version = $3",
+        org,
+        ns,
+        first["version"],
+    )
+    assert (marked["cleared"], marked["redacted"]) == (True, True)
+    assert marked["redaction_reason"].startswith("leak"), dict(marked)
+    history = ch_client.query(
+        "SELECT value FROM loom.memory_versions WHERE org = {o:String} AND namespace = {n:String} "
+        "AND version = {v:UInt64}",
+        settings=_SEQUENTIAL,
+        parameters={"o": org, "n": ns, "v": first["version"]},
+    ).result_rows
+    assert history and all("hunter2" not in str(v) for (v,) in history), history
 
 
 @pytest.mark.usefixtures("pg_authority")
@@ -1320,7 +1407,8 @@ async def test_a_search_sees_through_its_barrier(call: Any, pg_conn: Any, org: s
         )
         await pg_conn.execute(
             "INSERT INTO loom.memory_deliveries (org, namespace, seq, targets, lease_until) "
-            "VALUES ($1, $2, $3, 3, now() - interval '1 second')",
+            "VALUES ($1, $2, $3, 3, now() - interval '1 second')"
+            f"{_OVER_SETTLED}",
             org,
             ns,
             seq,
@@ -1472,7 +1560,8 @@ async def test_only_a_claim_taken_over_mid_publish_counts_an_attempt(
             "INSERT INTO loom.memory_deliveries (org, namespace, seq, targets, lease_until) "
             "SELECT org, namespace, seq, 1, now() - interval '1 s' FROM loom.memory_revisions "
             "WHERE org = $1 AND namespace = $2 "
-            "ON CONFLICT (org, namespace, seq) DO UPDATE SET lease_until = EXCLUDED.lease_until",
+            "ON CONFLICT (org, namespace, seq) DO UPDATE SET targets = EXCLUDED.targets, "
+            "lease_until = EXCLUDED.lease_until",
             org,
             ns,
         )
@@ -1810,7 +1899,10 @@ async def test_a_summary_left_a_source_is_downgraded_with_its_vectors_and_search
     head = await _head_row(pg_conn, org, ns, "summary")
     assert head["status"] == "conflicted" and "stale-source:k1" in head["tags"]
     owed = await pg_conn.fetchval(
-        "SELECT count(*) FROM loom.memory_deliveries WHERE org = $1 AND namespace = $2", org, ns
+        "SELECT count(*) FROM loom.memory_deliveries WHERE org = $1 AND namespace = $2 "
+        "AND NOT settled",
+        org,
+        ns,
     )
     assert owed == 0
     found = await call("memory.search", {"namespace": ns, "query": "a summary of k1 and k2"})
@@ -2530,7 +2622,8 @@ async def test_scoped_claims_come_back_in_journal_order(call: Any, pg_conn: Any,
     for seq in seqs:  # newest first, so the table's own order is not the answer
         await pg_conn.execute(
             "INSERT INTO loom.memory_deliveries (org, namespace, seq, targets, lease_until) "
-            "VALUES ($1, $2, $3, 1, now() - interval '1 second') ON CONFLICT DO NOTHING",
+            "VALUES ($1, $2, $3, 1, now() - interval '1 second')"
+            f"{_OVER_SETTLED}",
             org,
             ns,
             seq,
@@ -2576,7 +2669,8 @@ async def test_a_delivery_past_its_attempts_is_parked_or_gets_its_stub_at_its_cl
         await pg_conn.execute(
             "INSERT INTO loom.memory_deliveries "
             "(org, namespace, seq, targets, lease_until, attempts, held) "
-            "VALUES ($1, $2, $3, $4, now() - interval '1 second', $5, $6)",
+            "VALUES ($1, $2, $3, $4, now() - interval '1 second', $5, $6)"
+            f"{_OVER_SETTLED}",
             org,
             ns,
             seq,
@@ -2859,7 +2953,8 @@ async def test_a_retried_redaction_waits_out_a_copy_it_scrubbed_before(
     )
     await pg_conn.execute(
         "INSERT INTO loom.memory_deliveries (org, namespace, seq, targets, lease_token, "
-        "lease_until) VALUES ($1, $2, $3, $4, 2, now() + interval '30 seconds')",
+        "lease_until) VALUES ($1, $2, $3, $4, 2, now() + interval '30 seconds')"
+        f"{_OVER_SETTLED}",
         org,
         ns,
         copy_seq,
@@ -2901,7 +2996,8 @@ async def test_a_claim_on_a_just_replaced_lease_moves_its_audit_row_to_the_outbo
     )
     await pg_conn.execute(
         "INSERT INTO loom.memory_deliveries (org, namespace, seq, targets, lease_token, "
-        "lease_until) VALUES ($1, $2, $3, $4, 2, now() + interval '30 seconds')",
+        "lease_until) VALUES ($1, $2, $3, $4, 2, now() + interval '30 seconds')"
+        f"{_OVER_SETTLED}",
         org,
         ns,
         seq,
@@ -2956,7 +3052,8 @@ async def test_a_claim_measures_the_lease_it_replaced_by_its_fence(
     await pg_conn.execute(
         "INSERT INTO loom.memory_deliveries (org, namespace, seq, targets, lease_token, "
         "lease_until, fenced_until) VALUES ($1, $2, $3, $4, 2, now() - interval '1 second', "
-        "now() + interval '20 seconds')",
+        "now() + interval '20 seconds')"
+        f"{_OVER_SETTLED}",
         org,
         ns,
         seq,
@@ -2986,7 +3083,8 @@ async def test_a_user_erasure_run_again_waits_out_what_an_earlier_run_removed(
     )
     await pg_conn.execute(
         "INSERT INTO loom.memory_deliveries (org, namespace, seq, targets, lease_token, "
-        "lease_until) VALUES ($1, $2, $3, $4, 2, now() + interval '20 seconds')",
+        "lease_until) VALUES ($1, $2, $3, $4, 2, now() + interval '20 seconds')"
+        f"{_OVER_SETTLED}",
         org,
         ns,
         seq,
@@ -3134,7 +3232,8 @@ async def _unpublished(
         )
         await pg_conn.execute(
             "INSERT INTO loom.memory_deliveries (org, namespace, seq, targets, lease_until) "
-            "VALUES ($1, $2, $3, $4, now() + $5::interval)",
+            "VALUES ($1, $2, $3, $4, now() + $5::interval)"
+            f"{_OVER_SETTLED}",
             org,
             ns,
             seq,
@@ -3660,7 +3759,8 @@ async def test_a_claim_that_lost_its_delivery_moves_no_audit_row(
     owed = pg_memory.MEMORY_ROW | pg_memory.AUDIT_ROW
     await pg_conn.execute(
         "INSERT INTO loom.memory_deliveries (org, namespace, seq, targets, lease_token, "
-        "lease_until) VALUES ($1, $2, $3, $4, 3, now() + interval '30 seconds')",
+        "lease_until) VALUES ($1, $2, $3, $4, 3, now() + interval '30 seconds')"
+        f"{_OVER_SETTLED}",
         org,
         ns,
         seq,
@@ -3713,7 +3813,8 @@ async def test_an_erasure_run_again_waits_out_what_an_earlier_run_removed(
     )
     await pg_conn.execute(
         "INSERT INTO loom.memory_deliveries (org, namespace, seq, targets, lease_token, "
-        "lease_until) VALUES ($1, $2, $3, $4, 2, now() + interval '20 seconds')",
+        "lease_until) VALUES ($1, $2, $3, $4, 2, now() + interval '20 seconds')"
+        f"{_OVER_SETTLED}",
         org,
         held,
         seq,
@@ -3724,8 +3825,11 @@ async def test_an_erasure_run_again_waits_out_what_an_earlier_run_removed(
         assert removed == 2 and 15 < first <= 20
         removed, (again,) = await steps_pg._erase_once(org, [held], None)
         assert removed == 0 and 15 < again <= first
-        assert await steps_pg._erase_once(org, [idle], None) == (2, [])
-        assert await steps_pg._erase_once(org, [idle], None) == (0, [])
+        # The idle namespace's deliveries settled: their leases ended, nothing to wait out.
+        removed, leases = await steps_pg._erase_once(org, [idle], None)
+        assert removed == 2 and all(left <= 0 for left in leases), leases
+        removed, leases = await steps_pg._erase_once(org, [idle], None)
+        assert removed == 0 and all(left <= 0 for left in leases), leases
     finally:
         await pg.close_pool()
 
@@ -3755,7 +3859,8 @@ async def test_a_fenced_holder_is_waited_out_after_its_delivery_moves_on(
     )
     await pg_conn.execute(
         "INSERT INTO loom.memory_deliveries (org, namespace, seq, targets, lease_token, "
-        "lease_until) VALUES ($1, $2, $3, $4, 2, now() + interval '30 seconds')",
+        "lease_until) VALUES ($1, $2, $3, $4, 2, now() + interval '30 seconds')"
+        f"{_OVER_SETTLED}",
         org,
         ns,
         seq,
@@ -3820,8 +3925,8 @@ async def test_a_fenced_holder_is_waited_out_after_its_delivery_moves_on(
             # A retry fences the delivery again: the sweep still keeps it for the first.
             assert 25 < await _redact() <= 30
             assert await _kept()
-            bound = pg.insert_bound_s()
-            # Its lease past the insert bound, the fence past but inside it: kept.
+            bound = pg_memory.settled_age_s()
+            # Its lease past the sweep's age, the fence past but inside it: kept.
             await _settled_since(lease=-(bound + 5), fence=-(bound - 5))
             assert await _kept()
             await _settled_since(lease=-(bound + 5), fence=-(bound + 5))
@@ -3902,7 +4007,8 @@ async def test_a_parked_delivery_always_keeps_what_a_wait_covers(
     with pytest.raises(asyncpg.exceptions.CheckViolationError):
         await pg_conn.execute(
             "INSERT INTO loom.memory_deliveries (org, namespace, seq, targets, lease_until) "
-            "VALUES ($1, $2, $3, 1, 'infinity')",
+            "VALUES ($1, $2, $3, 1, 'infinity')"
+            f"{_OVER_SETTLED}",
             org,
             ns,
             seq,
@@ -4671,7 +4777,8 @@ async def test_an_erasure_keeps_the_audit_row_clickhouse_never_got(
         )
     await pg_conn.execute(
         "INSERT INTO loom.memory_deliveries (org, namespace, seq, targets, lease_until, "
-        "fenced_until) VALUES ($1, $2, $3, 4, 'infinity', now() - interval '1 hour')",
+        "fenced_until) VALUES ($1, $2, $3, 4, 'infinity', now() - interval '1 hour')"
+        f"{_OVER_SETTLED}",
         org,
         ns,
         seq,

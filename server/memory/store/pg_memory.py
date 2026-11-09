@@ -862,21 +862,22 @@ async def _complete_in(
     transaction already holds is taken again at no cost)."""
     keys = _held_keys(seqs, tokens)
     await _lock_held(conn, keys)
-    # Deleted when nothing is left, else updated: one dead row per delivery, not two.
-    await conn.execute(
-        f"DELETE FROM loom.memory_deliveries d USING {_HELD_LIST} WHERE {_HELD_MATCH} "
-        f"AND d.targets & ~$5::smallint = 0 AND d.lease_token = {COMMIT_TOKEN}",
-        *keys,
-        done,
-    )
+    # Settled when nothing is left: the delivery pass sweeps it past the insert bound and
+    # LOOM_PG_REVISION_PAYLOAD_MINUTES, and clears its revision's payload then
+    # (`sweep_settled`). Its lease ends now when another holder took it over (the request
+    # it replaced may still have an insert in flight), and one insert bound ago when its
+    # writer finished it, which has nothing in flight: an erasure or a redaction then
+    # waits nothing for it (`pg.wait_out`).
     await conn.execute(
         "UPDATE loom.memory_deliveries d SET targets = d.targets & ~$5::smallint, "
-        "lease_until = CASE WHEN d.targets & ~$5::smallint = 0 THEN now() "
-        f"ELSE d.lease_until END FROM {_HELD_LIST} WHERE {_HELD_MATCH} "
+        "lease_until = CASE WHEN d.targets & ~$5::smallint <> 0 THEN d.lease_until "
+        f"WHEN d.lease_token = {COMMIT_TOKEN} THEN now() - make_interval(secs => $6) "
+        f"ELSE now() END FROM {_HELD_LIST} WHERE {_HELD_MATCH} "
         # No dead row for a delivery that owed none of them.
         "AND d.targets & $5::smallint <> 0",
         *keys,
         done,
+        pg.insert_bound_s(),
     )
 
 
@@ -1080,21 +1081,37 @@ async def parked_count() -> int:
     )
 
 
-async def sweep_settled(limit: int) -> int:
+def settled_age_s() -> float:
+    """Seconds a settled delivery is kept before the sweep takes it: past the insert bound
+    and LOOM_PG_REVISION_PAYLOAD_MINUTES."""
+    return max(pg.insert_bound_s(), settings.pg_revision_payload_minutes * 60.0)
+
+
+async def sweep_settled(limit: int) -> tuple[int, int]:
     """Delete up to `limit` settled deliveries (`complete`) whose lease and fence
-    (`fenced_until`) are both older than the insert bound: no publisher they replaced can
-    still land a row."""
-    n = await pg.fetchval(
+    (`fenced_until`) are both older than the insert bound and than
+    LOOM_PG_REVISION_PAYLOAD_MINUTES, and clear their revisions' payloads (`row`): no
+    publisher they replaced can still land a row, ClickHouse's `memory_versions` holds the
+    content, and the journal keeps the metadata (`003_revision_metadata.sql`). A profile
+    revision keeps its payload: a redaction's reach into the profiles matches on it.
+    Returns how many deliveries went, and how many payloads with them."""
+    r = await pg.fetchrow(
         "WITH gone AS (DELETE FROM loom.memory_deliveries WHERE ctid IN ("
         "  SELECT ctid FROM loom.memory_deliveries "
         "  WHERE lease_until < now() - make_interval(secs => $1) AND settled "
         "  AND (fenced_until IS NULL OR fenced_until < now() - make_interval(secs => $1)) "
-        "  ORDER BY lease_until LIMIT $2 FOR UPDATE SKIP LOCKED) RETURNING 1) "
-        "SELECT count(*) FROM gone",
-        pg.insert_bound_s(),
+        "  ORDER BY lease_until LIMIT $2 FOR UPDATE SKIP LOCKED) "
+        "  RETURNING org, namespace, seq), "
+        "cleared AS (UPDATE loom.memory_revisions r SET row = NULL FROM gone "
+        "  WHERE (r.org, r.namespace, r.seq) = (gone.org, gone.namespace, gone.seq) "
+        "  AND r.row IS NOT NULL "
+        "  AND NOT (r.row->>'agent' = '-' AND r.row->>'memory_type' = 'profile') "
+        "  RETURNING 1) "
+        "SELECT (SELECT count(*) FROM gone) AS swept, (SELECT count(*) FROM cleared) AS cleared",
+        settled_age_s(),
         limit,
     )
-    return int(n)
+    return int(r["swept"]), int(r["cleared"])
 
 
 async def parked_audits_count() -> int:

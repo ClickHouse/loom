@@ -979,6 +979,7 @@
  "pg_publish_interval_ms": 250,
  "pg_request_lease_seconds": 5,
  "pg_restore_batch_rows": 500,
+ "pg_revision_payload_minutes": 60,
  "pg_statement_timeout_ms": 5000,
  "platform_admins": "",
  "policy_cache_ttl_seconds": 30,

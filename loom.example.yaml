@@ -5003,6 +5003,11 @@ settings:
   # evidence and settled knowledge deliveries one pass sweeps. [restart]
   # pg_delivery_batch_rows: 500
 
+  # Minutes a settled delivery is kept before the delivery pass sweeps it and clears its
+  # revision's payload (`row`), keeping its metadata; ClickHouse's history serves it.
+  # [live]
+  # pg_revision_payload_minutes: 60
+
   # Memories one Postgres commit of a `namespace.restore` writes; each batch commits
   # within a request's lease (`pg_request_lease_seconds`). [restart]
   # pg_restore_batch_rows: 500

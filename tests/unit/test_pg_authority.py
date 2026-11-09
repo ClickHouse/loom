@@ -984,7 +984,12 @@ async def test_the_delivery_worker_claims_its_batch_and_idles_without_postgres(
     monkeypatch.setattr(pg_memory, "claim_due", _claim)
     monkeypatch.setattr(idempotency, "sweep_expired", _sweep)
     monkeypatch.setattr(pg_memory, "sweep_erasure_evidence", _sweep)
-    monkeypatch.setattr(pg_memory, "sweep_settled", _sweep)
+
+    async def _sweep_settled(limit: int) -> tuple[int, int]:
+        asked.append(limit)
+        return 0, 0
+
+    monkeypatch.setattr(pg_memory, "sweep_settled", _sweep_settled)
 
     async def _claim_outbox(limit: int) -> tuple[list[object], float]:
         asked.append(limit)
@@ -992,7 +997,7 @@ async def test_the_delivery_worker_claims_its_batch_and_idles_without_postgres(
 
     monkeypatch.setattr(pg_memory, "claim_outbox", _claim_outbox)
     assert (await worker.run_pass()).claimed == 0
-    # claims, idempotency keys, evidence, settled deliveries, the audit outbox
+    # claims, idempotency keys, evidence, settled deliveries, payloads, the audit outbox
     assert asked == [7, 7, 7, 7, 7]
     assert settings.pg_delivery_enabled and settings.pg_delivery_idle_interval_seconds > 0
 

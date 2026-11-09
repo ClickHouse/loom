@@ -5207,6 +5207,9 @@ class StorageSettings(BaseModel):
     # Deliveries one pass of each delivery worker publishes; also the expired deletion
     # evidence and settled knowledge deliveries one pass sweeps.
     pg_delivery_batch_rows: int = Field(default=500, ge=1)
+    # Minutes a settled delivery is kept before the delivery pass sweeps it and clears its
+    # revision's payload (`row`), keeping its metadata; ClickHouse's history serves it.
+    pg_revision_payload_minutes: Annotated[int, LIVE] = Field(default=60, ge=1)
     # Memories one Postgres commit of a `namespace.restore` writes; each batch commits
     # within a request's lease (`pg_request_lease_seconds`).
     pg_restore_batch_rows: int = Field(default=500, ge=1)

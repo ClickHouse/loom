@@ -84,9 +84,9 @@ _BUMP_SCOPES = (
 async def _erase(org: str, namespaces: list[str] | None, user_id: str | None) -> int:
     """The scope's rows out of Postgres, then the wait for their publishers."""
     removed, leases = await _after_deadlocks(_erase_once, org, namespaces, user_id)
-    # A delivery another holder finished is kept settled until the insert bound has
-    # passed after its lease and any fence (`pg_memory.sweep_settled`): its lease is
-    # among these.
+    # A delivery another holder finished is kept settled at least until the insert
+    # bound has passed after its lease and any fence (`pg_memory.sweep_settled`): its
+    # lease is among these.
     await pg.wait_out(leases)
     return removed
 

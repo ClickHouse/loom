@@ -5524,6 +5524,12 @@
           "type": "integer",
           "description": "Memories one Postgres commit of a `namespace.restore` writes; each batch commits within a request's lease (`pg_request_lease_seconds`)."
         },
+        "pg_revision_payload_minutes": {
+          "default": 60,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Minutes a settled delivery is kept before the delivery pass sweeps it and clears its revision's payload (`row`), keeping its metadata; ClickHouse's history serves it."
+        },
         "pg_statement_timeout_ms": {
           "default": 5000,
           "minimum": 100,
