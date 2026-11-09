@@ -219,7 +219,7 @@ async def link_value_updates(
     ch: Any = None,
 ) -> UpdateReport:
     """For every freshly written memory row (dicts with memory_id, memory_key,
-    memory_type, value, valid_at, created_at), find value-update peers and
+    memory_type, value, valid_at), find value-update peers and
     write the supersession onto the older side (`agent`: the write's, named on an owed
     record). Returns what was linked."""
     import server.memory.store as memory_repo

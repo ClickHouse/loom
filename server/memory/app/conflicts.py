@@ -173,9 +173,9 @@ async def same_key_mark(
 
 
 async def resolve_conflict_floor(org: str, namespace: str, memory_type: str) -> tuple[float, float]:
-    """(threshold, max_distance) for one namespace + memory_type — the two
-    numbers `check_on_commit` resolves before its statement, exposed so a bulk
-    writer resolves them once per type instead of once per fact."""
+    """(threshold, max_distance) for one namespace and memory_type, as `check_on_commit`
+    resolves them, for callers that need them without a check (the Postgres admission's
+    gap check, decision extraction)."""
     threshold = await _resolve_threshold(org, namespace, memory_type=memory_type)
     return threshold, _peer_query_distance(threshold)
 

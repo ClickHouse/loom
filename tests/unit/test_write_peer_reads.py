@@ -47,13 +47,14 @@ async def test_each_bulk_fact_reads_its_own_peers_codes_first(monkeypatch) -> No
         SimpleNamespace(memory_type="semantic", memory_key=f"k{i}", valid_at=None) for i in range(3)
     ]
     put = SimpleNamespace(org="o", namespace="ns", agent="a", run_id="-", valid_at=None)
-    await bulk_set._bulk_conflict_verdicts(
+    out = await bulk_set._bulk_conflict_verdicts(
         put,
         [{}, {}, {}],
         [(e, f"value {i}", None, None, None) for i, e in enumerate(entries)],
         [(i, None, None, None) for i in range(3)],
         [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]],
     )
+    assert set(out) == {0, 1, 2}  # every fact checked, none left unchecked by a failure
     peer_reads = [sql for sql, _ in ch.query_all_calls if "cosineDistance" in sql]
     assert len(peer_reads) == 3  # one stage A per fact; no candidate, no stage B
     assert all(_codes_first(sql) for sql in peer_reads)
@@ -134,7 +135,6 @@ async def test_value_update_peers_are_read_codes_first_then_by_key(monkeypatch) 
                 "pinned": 0,
                 "run_id": "-",
                 "valid_at": datetime(2023, 5, 23),
-                "created_at": datetime(2026, 1, 1),
             }
         ],
     ]
@@ -145,7 +145,6 @@ async def test_value_update_peers_are_read_codes_first_then_by_key(monkeypatch) 
             "memory_type": "semantic",
             "value": "x",
             "valid_at": datetime(2023, 5, 30),
-            "created_at": datetime(2026, 1, 2),
         },
         {
             "memory_id": "n1",
@@ -153,7 +152,6 @@ async def test_value_update_peers_are_read_codes_first_then_by_key(monkeypatch) 
             "memory_type": "semantic",
             "value": "User's personal best for 5k is 22 minutes",
             "valid_at": datetime(2023, 5, 30),
-            "created_at": datetime(2026, 1, 2),
         },
     ]
     rep = await value_updates.link_value_updates(
