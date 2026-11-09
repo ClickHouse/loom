@@ -279,9 +279,8 @@ def _setting(name: str) -> str:
 
 
 def _masked_bytes(key: bytes, data: bytes) -> str:
-    """`data` as a `decrypt` expression, whose arguments ClickHouse prints as [HIDDEN]."""
-    if len(key) != 32:
-        raise ValueError("the scope key must be 32 bytes, as aes-256-ecb takes")
+    """`data` as a `decrypt` expression, whose arguments ClickHouse prints as
+    [HIDDEN]. The scope key is 32 bytes, as aes-256-ecb takes."""
     padder = padding.PKCS7(128).padder()
     # The key sits beside the ciphertext: this masks the pads in ClickHouse's
     # printing, it does not keep them secret. ECB is deterministic, so every

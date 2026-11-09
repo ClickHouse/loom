@@ -652,8 +652,9 @@ viewer token. Each case must be refused or return no canary:
 - on `loom.memory` itself: a deleted memory, a memory tombstoned by an erasure, and a
   version a later one replaced, with `SETTINGS final = 0` and
   `apply_row_policy_after_final = 0`;
-- `SETTINGS send_logs_level`, `use_query_condition_cache`, `log_queries_cut_to_length`
-  or `max_threads` past the profile;
+- `SETTINGS send_logs_level`, `use_query_condition_cache` or `max_threads` past the
+  profile, and a statement that sets `log_queries_cut_to_length` and
+  `log_formatted_queries`, whose text stays out of `system.query_log`;
 - `toUInt64(memory_key)` in the select list, `WHERE` and `PREWHERE`, also with
   short-circuit evaluation off and filters moved or merged: each is refused, and its
   error, in the answer and in `system.query_log`, quotes only the caller's own row;

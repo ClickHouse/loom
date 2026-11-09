@@ -194,7 +194,6 @@ _ESCAPES = [
     "SELECT memory_key FROM loom.memory SETTINGS use_query_cache = 1",
     "SELECT memory_key FROM loom.memory SETTINGS send_logs_level = 'trace'",
     "SELECT memory_key FROM loom.memory SETTINGS use_query_condition_cache = 1",
-    "SELECT memory_key FROM loom.memory SETTINGS log_queries_cut_to_length = 100000",
     "SELECT memory_key FROM loom.memory SETTINGS max_threads = 1000",
     # A scope signed with another key, and one past its expiry.
     "SELECT memory_key FROM loom.memory SETTINGS SQL_loom_sig = '" + "AB" * 32 + "'",
@@ -242,7 +241,6 @@ def test_an_error_quotes_no_value_from_another_scope(
         "SELECT groupArray(exception) FROM system.query_log "
         "WHERE startsWith(query_id, {rid:String}) AND exception != ''",
         parameters={"rid": f"{request_id}:"},
-        settings=boundary.LOG_TEXT_CUT,
     ).result_rows[0][0]
     # The caller's own row is the one that threw.
     assert any(f"own/{seed.nonce}" in e for e in logged), logged
@@ -479,7 +477,7 @@ def test_the_statement_text_stays_out_of_the_query_log(
     r = _query(control_plane_url, seed, sql, request_id=f"text-{seed.nonce}")
     assert r.status_code == 200, r.text
     # A statement cannot lift the profile's cut: refused or run, its text is cut.
-    lifted = f"{sql} SETTINGS log_queries_cut_to_length = 100000"
+    lifted = f"{sql} SETTINGS log_queries_cut_to_length = 100000, log_formatted_queries = 1"
     r = _query(control_plane_url, seed, lifted, request_id=f"lift-{seed.nonce}")
     assert r.status_code in {200, *_REFUSED}, r.text
     ch_client.command("SYSTEM FLUSH LOGS")
@@ -488,7 +486,8 @@ def test_the_statement_text_stays_out_of_the_query_log(
     ran, lifted_rows, quoted = ch_client.query(
         "SELECT countIf(user = {analyst:String} AND startsWith(query_id, {ran:String})), "
         "countIf(user = {analyst:String} AND startsWith(query_id, {lift:String})), "
-        "countIf(query LIKE {m:String}) FROM system.query_log",
+        "countIf(query LIKE {m:String} OR formatted_query LIKE {m:String}) "
+        "FROM system.query_log",
         parameters={
             "analyst": boundary.ANALYST_USER,
             "ran": f"text-{seed.nonce}:",
@@ -503,10 +502,9 @@ def test_the_statement_text_stays_out_of_the_query_log(
 
 
 def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client) -> None:
-    """Every policy holds the key as hex literals, which the server's boot
-    wrote and the probe's refused reads quote: no logged statement text or
-    error carries one. The whole log is read, the boot's writes included, so
-    it needs a ClickHouse that no older build served under the same key."""
+    """The policies hold the key and its pads as `decrypt` arguments: no
+    logged statement text or error, the boot's writes and the probe's refused
+    reads included, carries one."""
     start = ch_client.query("SELECT now()").result_rows[0][0]
     secrets = re.findall(r"unhex\('([0-9a-f]+)'\)", _scope_filter(ch_client, "memory"))
     # The decrypt arguments, and the pads they evaluate to, which must never be printed.
@@ -523,7 +521,6 @@ def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client) -> Non
                 "SELECT count() FROM system.query_log WHERE event_time >= {start:DateTime} "
                 "AND user = {analyst:String} AND exception LIKE '%UNKNOWN_SETTING%'",
                 parameters={"start": start, "analyst": boundary.ANALYST_USER},
-                settings=boundary.LOG_TEXT_CUT,
             ).result_rows[0][0]
             > 0
         )
