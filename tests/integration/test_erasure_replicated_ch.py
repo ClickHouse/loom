@@ -15,7 +15,8 @@ from tests.integration._resources import ch_client_from_env, unique_org
 
 NS = "repl"
 USER = "u1"
-# The tables the steps below read and mutate.
+# The tables the steps below read and mutate: a step that reads one outside this list
+# fails here with an unknown table.
 _TABLES = (
     "memory",
     "memory_embeddings",
@@ -34,6 +35,7 @@ _TABLES = (
     "memory_versions",
 )
 _VECTOR = "arrayWithConstant(3072, 0.)"
+_SUMMARY = "00000000-0000-4000-8000-0000000000c1"
 
 
 @pytest.fixture
@@ -128,6 +130,23 @@ def _seed(raw: Any, db: str, org: str) -> None:
         f"INSERT INTO {db}.entity_communities (org, namespace, entity, community_id, label)"
         f" VALUES ('{org}', '{NS}', 'oslo', 1, 'oslo')"
     )
+    # a summary of the user's k1 under '-', its history, a chunk and a row link
+    tags = "['consolidated', 'src:k1']"
+    for table in ("memory", "memory_versions"):
+        raw.command(
+            f"INSERT INTO {db}.{table} (org, namespace, agent, user_id, session_id, memory_key,"
+            f" version, memory_id, tags) VALUES ('{org}', '{NS}', 'a', '-', '-', 'topic', 1,"
+            f" '{_SUMMARY}', {tags})"
+        )
+    raw.command(
+        f"INSERT INTO {db}.memory_chunks (org, namespace, agent, user_id, session_id,"
+        " parent_memory_key, chunk_index, content, embedding)"
+        f" SELECT '{org}', '{NS}', 'a', '-', '-', 'topic', 0, 'summary chunk', {_VECTOR}"
+    )
+    raw.command(
+        f"INSERT INTO {db}.entity_triple_rows (org, namespace, memory_id, user_id, subject,"
+        f" relation, object) VALUES ('{org}', '{NS}', '{_SUMMARY}', '-', 's', 'r', 'o')"
+    )
     for who, version in (("u2", 1), (USER, 2)):
         raw.command(
             f"INSERT INTO {db}.documents (org, namespace, source_uri, content, version, user_id)"
@@ -145,11 +164,13 @@ async def test_the_user_steps_and_a_clear_mutate_replicated_tables(
     org = unique_org("erasure-repl")
     _seed(raw, db, org)
 
-    assert await steps_memory.tombstone_memory_chunks_by_user(org, USER, ch=ch) == 1
+    # the user's chunk and the summary's
+    assert await steps_memory.tombstone_memory_chunks_by_user(org, USER, ch=ch) == 2
     assert await steps_graph.tombstone_source_links_by_user(org, USER, ch=ch) == 2
-    assert await steps_graph.delete_entity_graph_by_user(org, USER, ch=ch) == 2
-    assert await steps_graph.delete_entity_communities_by_user(org, USER, ch=ch) == 1
-    assert await steps_graph.delete_graph_links_by_user(org, USER, ch=ch) == 2
+    # the triple, the edge and the community, then two key links and the summary's row link
+    assert await steps_graph.delete_graph_links_by_user(org, USER, ch=ch) == 6
+    # the summary's history
+    assert await steps_memory.delete_memory_versions_by_user(org, USER, ch=ch) == 1
     with purge_scope(True):
         assert await steps_memory.tombstone_documents_by_user(org, USER, ch=ch) == 1
     counts = await bulk_tombstone_scope(org=org, namespace=NS, user_id=USER, ch=ch)
