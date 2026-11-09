@@ -593,7 +593,9 @@ def test_a_parse_is_kept_when_its_request_went_away(monkeypatch: pytest.MonkeyPa
     assert po._FILE_FACTS.get(("a.go", "a")) == po._Facts(("a.go",), frozenset(), False)
 
 
-def test_another_namespace_does_not_wait_for_its_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_another_namespace_is_not_held_to_the_first_ones_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # the turn is per namespace; the pool's one thread still runs jobs in order
     monkeypatch.setattr(po, "_parsed_facts", _slow_facts(0.3))
 

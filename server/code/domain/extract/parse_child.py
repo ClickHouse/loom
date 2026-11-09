@@ -66,8 +66,18 @@ def _parse(parser: Any, source: bytes, budget: float) -> bytes:
 
 
 def _within(soft: int, inherited: tuple[int, int]) -> int:
-    """`soft`, lowered to the inherited soft limit."""
-    return soft if inherited[0] == resource.RLIM_INFINITY else min(soft, inherited[0])
+    """`soft`, lowered to the inherited soft limit and kept under a finite hard one (past
+    a hard CPU limit the kernel kills, which reads as memory running out elsewhere)."""
+    if inherited[0] != resource.RLIM_INFINITY:
+        soft = min(soft, inherited[0])
+    if inherited[1] != resource.RLIM_INFINITY:
+        soft = min(soft, inherited[1] - 1)
+    return soft
+
+
+def _cpu() -> float:
+    usage = resource.getrusage(resource.RUSAGE_SELF)
+    return usage.ru_utime + usage.ru_stime
 
 
 def _address_space() -> int:
@@ -101,9 +111,7 @@ def main() -> int:
             import tree_sitter
 
             parsers[grammar] = tree_sitter.Parser(language(grammar))
-        usage = resource.getrusage(resource.RUSAGE_SELF)
-        cpu = math.ceil(usage.ru_utime + usage.ru_stime + budget) + 1
-        cpu = _within(cpu, inherited_cpu)
+        cpu = _within(math.ceil(_cpu() + budget) + 1, inherited_cpu)
         space = _within(_address_space() + memory, inherited_as)
         resource.setrlimit(resource.RLIMIT_CPU, (cpu, inherited_cpu[1]))
         resource.setrlimit(resource.RLIMIT_AS, (space, inherited_as[1]))
@@ -118,6 +126,9 @@ def main() -> int:
         # process grown more than `_RETIRE_GROWTH` past its start (its grammars included)
         # retires.
         retire = _address_space() > start + _RETIRE_GROWTH
+        # and one near an inherited CPU limit, so the next parse gets its whole deadline
+        need = math.ceil(_cpu() + 2 * budget) + 1
+        retire = retire or _within(need, inherited_cpu) < need
         stdout.write(answer.upper() if retire else answer)
         stdout.flush()
         if retire:
