@@ -43,6 +43,7 @@ async def test_each_bulk_fact_reads_its_own_peers_codes_first(monkeypatch) -> No
 
     ch = StubCH()
     monkeypatch.setattr(conflicts, "get_client", lambda: ch)
+    _no_reads(monkeypatch, "auto_reinforce")  # the batch's policy and threshold reads answer
     entries = [
         SimpleNamespace(memory_type="semantic", memory_key=f"k{i}", valid_at=None) for i in range(3)
     ]
@@ -205,6 +206,32 @@ def _no_reads(monkeypatch: pytest.MonkeyPatch, policy: str) -> list[str]:
     monkeypatch.setattr(conflicts, "_resolve_duplicate_threshold", threshold)
     monkeypatch.setattr(conflicts, "_allowlisted_keys", no_allowlist)
     return reads
+
+
+@pytest.mark.asyncio
+async def test_a_bulk_type_threshold_that_cannot_be_read_is_read_by_each_fact(
+    monkeypatch,
+) -> None:
+    """The batch reads each type's threshold once; when that read fails, every fact's
+    check reads it again rather than going unchecked."""
+    from server.memory.app import bulk_set
+
+    ch = StubCH()
+    monkeypatch.setattr(conflicts, "get_client", lambda: ch)
+    _no_reads(monkeypatch, "auto_reinforce")
+    calls: list[str] = []
+
+    async def threshold(org: str, namespace: str, memory_type: str | None = None) -> float:
+        calls.append(namespace)
+        if len(calls) == 1:
+            raise RuntimeError("the batch's read fails")
+        return 0.85
+
+    monkeypatch.setattr(conflicts, "_resolve_threshold", threshold)
+    put, metas, pending, vectors = _bulk(2)
+    out = await bulk_set._bulk_conflict_verdicts(put, [{}] * 2, metas, pending, vectors)
+    assert set(out) == {0, 1}  # both checked
+    assert len(calls) == 3  # the batch's failed read, then one per fact
 
 
 @pytest.mark.asyncio

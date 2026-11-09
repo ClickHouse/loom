@@ -345,6 +345,7 @@ async def _bulk_verdicts(
         state.pending,
         value_vectors,
         cap=state.conflict_check_cap,
+        floors=state.floors,
     )
     clock.mark("verdicts")
     plan = _apply_verdicts(state, emb_idx_of, verdicts)
@@ -683,16 +684,15 @@ async def _commit_batch(
 
 async def _reach_of(state: _BulkWriteState) -> list[tuple[str, str, list[float], float]]:
     """Each embedded entry's (type, key, vector, how far its conflict check reaches),
-    the reach resolved once per type."""
+    the reach the verdict phase read for its type, else read here."""
     from server.memory.app.conflicts import resolve_conflict_floor
 
-    reach: dict[str, float] = {}
     out = []
     for r in state.embedding_rows:
         mt = str(r["memory_type"])
-        if mt not in reach:
-            reach[mt] = (await resolve_conflict_floor(str(r["org"]), str(r["namespace"]), mt))[1]
-        out.append((mt, str(r["memory_key"]), list(r["embedding"]), reach[mt]))
+        if mt not in state.floors:
+            state.floors[mt] = await resolve_conflict_floor(str(r["org"]), str(r["namespace"]), mt)
+        out.append((mt, str(r["memory_key"]), list(r["embedding"]), state.floors[mt][1]))
     return out
 
 
@@ -1423,12 +1423,12 @@ async def _namespace_policy(org: str, namespace: str) -> str | None:
         return None
 
 
-async def _type_threshold(org: str, namespace: str, memory_type: str) -> float | None:
-    """The type's conflict threshold, or None when it cannot be read."""
+async def _type_floor(org: str, namespace: str, memory_type: str) -> tuple[float, float] | None:
+    """The type's (conflict threshold, reach), or None when it cannot be read."""
     from server.memory.app.conflicts import resolve_conflict_floor
 
     try:
-        return (await resolve_conflict_floor(org, namespace, memory_type))[0]
+        return await resolve_conflict_floor(org, namespace, memory_type)
     except Exception as e:  # noqa: BLE001 — each fact's check resolves it again
         log.warning("bulk_set: threshold lookup failed for %r: %s", memory_type, e)
         return None
@@ -1442,6 +1442,7 @@ async def _bulk_conflict_verdicts(
     value_vectors: list[list[float]],
     *,
     cap: int | None = None,
+    floors: dict[str, tuple[float, float]] | None = None,
 ) -> dict[int, Any]:
     """check_on_commit for every searchable entry, concurrency-bounded. Keys are
     indexes into memory_rows; values are ConflictResults. A bulk past the cap (`cap`,
@@ -1464,19 +1465,20 @@ async def _bulk_conflict_verdicts(
     # The namespace's policy and each type's threshold, read once for the batch; one that
     # cannot be read is left to each fact's check, which reads it again.
     policy = await _namespace_policy(input.org, input.namespace)
-    thresholds: dict[str, float | None] = {}
+    floors = {} if floors is None else floors  # (threshold, reach) by type, kept for the commit
     for idx, _t, _x, _k in pending[:cap]:
         mt = str(entry_metas[idx][0].memory_type)
-        if mt not in thresholds:
-            thresholds[mt] = await _type_threshold(input.org, input.namespace, mt)
+        if mt not in floors and (floor := await _type_floor(input.org, input.namespace, mt)):
+            floors[mt] = floor
 
     async def _one(idx: int, vec: list[float]) -> None:
         entry, serialized, _t, _e, _x = entry_metas[idx]
+        floor = floors.get(str(entry.memory_type))
         async with sem:
             try:
                 out[idx] = await check_on_commit(
                     resolved_policy=policy,
-                    resolved_threshold=thresholds.get(str(entry.memory_type)),
+                    resolved_threshold=floor[0] if floor else None,
                     org=input.org,
                     namespace=input.namespace,
                     agent=input.agent,

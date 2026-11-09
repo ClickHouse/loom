@@ -174,8 +174,8 @@ async def same_key_mark(
 
 async def resolve_conflict_floor(org: str, namespace: str, memory_type: str) -> tuple[float, float]:
     """(threshold, max_distance) for one namespace and memory_type, as `check_on_commit`
-    resolves them, for callers that need them without a check (the Postgres admission's
-    gap check, decision extraction)."""
+    resolves them: for a caller that reads them once for many checks, or needs them
+    without one."""
     threshold = await _resolve_threshold(org, namespace, memory_type=memory_type)
     return threshold, _peer_query_distance(threshold)
 
@@ -422,24 +422,24 @@ async def check_on_commit(
     allowlisted_keys: set[str] | None = None,
 ) -> ConflictResult:
     """Run the 4-step algorithm. Caller raises 409 on verdict=='rejected'
-        and applies merge/conflict flags on insert.
+    and applies merge/conflict flags on insert.
 
-        `resolved_duplicate_threshold` / `resolved_policy` / `allowlisted_keys`
-    : the namespace reads a point write prefetched in one round
-        trip (`prefetch_write_config`); None reads them here.
+    `resolved_duplicate_threshold` / `resolved_policy` / `allowlisted_keys`: the
+    namespace reads a caller already made (a point write's `prefetch_write_config`, a
+    bulk call's one policy read); None reads them here.
 
-        `new_run_id`: a write made under a run keeps its own row.
-        A canonical-form match with a peer from another run, or from no run,
-        is returned as `duplicate` (insert, status='duplicate', `duplicate_of`
-        the peer) rather than `merge` (no insert), so the run's `run_id`-scoped
-        reads find what the run wrote. Same-run restatements still merge.
+    `new_run_id`: a write made under a run keeps its own row.
+    A canonical-form match with a peer from another run, or from no run,
+    is returned as `duplicate` (insert, status='duplicate', `duplicate_of`
+    the peer) rather than `merge` (no insert), so the run's `run_id`-scoped
+    reads find what the run wrote. Same-run restatements still merge.
 
-        `new_valid_at`: the new row's validity date when the writer supplied one; it decides
-        which side of a templated substitution `newest_wins` retires.
+    `new_valid_at`: the new row's validity date when the writer supplied one; it decides
+    which side of a templated substitution `newest_wins` retires.
 
-        `candidate_rows`: the peers a caller already read (`peer_rows`, under the Postgres
-        authority); the peer and pinned statements are skipped. `resolved_threshold`: the
-        type's conflict threshold, when the caller read it; the lookups are skipped."""
+    `candidate_rows`: the peers a caller already read (`peer_rows`, under the Postgres
+    authority); the peer and pinned statements are skipped. `resolved_threshold`: the
+    type's conflict threshold, when the caller read it; the lookups are skipped."""
     # Non-searchable types (episodic) carry no embedding → skip cleanly.
     if not new_embedding:
         return ConflictResult(verdict="clear", peers=[])

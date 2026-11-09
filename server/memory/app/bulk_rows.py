@@ -175,6 +175,8 @@ class _BulkWriteState:
     existing_lookup_ok: bool = False
     # Under the Postgres authority: the scope generations the verdicts are reached at.
     generations: dict[tuple[str, str], int] = field(default_factory=dict)
+    # Each memory type's (conflict threshold, reach), read once per call.
+    floors: dict[str, tuple[float, float]] = field(default_factory=dict)
     # A commit whose publication is left to the delivery worker: raised once the batch's
     # follow-ups ran.
     unpublished: PublicationPending | None = None
