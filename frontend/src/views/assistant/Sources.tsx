@@ -29,7 +29,9 @@ export function Sources({ citations }: { citations: Citation[] }) {
                   component="button"
                   type="button"
                   size="sm"
-                  onClick={() => (c.kind === "memory" ? inspect(c.ref) : openDocument(c.ref))}
+                  // A cited key may be any writer's: the wildcard reads it whichever agent,
+                  // user or session it is filed under.
+                  onClick={() => (c.kind === "memory" ? inspect(c.ref, { agent: "*" }) : openDocument(c.ref))}
                 >
                   {label(c)}
                 </Link>
@@ -46,6 +48,14 @@ export function Sources({ citations }: { citations: Citation[] }) {
 }
 
 function label(c: Citation): string {
-  if (c.kind === "sql") return "the SQL query this answer ran";
+  if (c.kind === "sql") {
+    // The statement's first line tells one query of the answer from another.
+    const first =
+      c.text
+        .replace(/^```sql\s*/i, "")
+        .trim()
+        .split("\n")[0] ?? "";
+    return `SQL query: ${first.length > 80 ? `${first.slice(0, 79)}…` : first}`;
+  }
   return c.text.replace(/^\[|\]$/g, "");
 }

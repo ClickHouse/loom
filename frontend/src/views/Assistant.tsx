@@ -198,7 +198,12 @@ export function Assistant() {
           against this namespace's model budget. The conversation stays in this tab: Loom stores none of it.
         </p>
         {/* A new namespace or token scope starts a new conversation. */}
-        <AssistantChat key={scope} namespace={namespace} blocked={chatGate} />
+        <AssistantChat
+          key={`${whoami?.subject ?? "-"}/${scope}`}
+          conversationKey={`${whoami?.subject ?? "-"}/${scope}`}
+          namespace={namespace}
+          blocked={chatGate}
+        />
       </Panel>
 
       <Panel as="section" aria-labelledby="assistant-inspect" className="mb-5">

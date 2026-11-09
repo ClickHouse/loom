@@ -111,7 +111,7 @@ for (const width of [1400, 375]) {
       const sources = chat.getByRole("list", { name: "Sources" });
       await expect(sources.getByRole("listitem")).toHaveCount(4);
       await expect(sources.getByRole("button", { name: "memory:billing/invoices@v3" })).toBeVisible();
-      await expect(sources).toContainText("the SQL query this answer ran");
+      await expect(sources).toContainText("SQL query: SELECT account, count() FROM invoices");
       await expect(sources).toContainText("code citations are not checked");
 
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
@@ -159,10 +159,12 @@ test("a refusal before the stream and an error event inside it are shown in the 
           detail: { code: "OVERLOADED", message: "the assistant is already answering 4 questions", retry_after_s: 5 },
         },
       });
+    // The route's one error inside a stream ends it: no [DONE] follows.
+    const error = { code: "ASSISTANT_UPSTREAM_FAILED", message: "LibreChat ended the answer with an error" };
     return r.fulfill({
       status: 200,
       contentType: "text/event-stream",
-      body: `data: ${JSON.stringify({ id: "c", choices: [{ delta: { content: "Partly" } }] })}\n\ndata: ${JSON.stringify({ error: { code: "RATE_LIMITED", message: "the namespace's model cost cap is spent" } })}\n\ndata: [DONE]\n\n`,
+      body: `data: ${JSON.stringify({ id: "c", choices: [{ delta: { content: "Partly" } }] })}\n\ndata: ${JSON.stringify({ error })}\n\n`,
     });
   });
   await ask(page, "Who owns billing?");
@@ -170,7 +172,7 @@ test("a refusal before the stream and an error event inside it are shown in the 
   // The refused question waits in the field.
   await expect(page.getByRole("textbox", { name: "Question" })).toHaveValue("Who owns billing?");
   await page.getByRole("button", { name: "Ask", exact: true }).click();
-  await expect(page.getByRole("alert").filter({ hasText: "model cost cap is spent" })).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "The assistant could not finish this answer" })).toBeVisible();
   await expect(conversation(page)).toContainText("Partly");
 });
 

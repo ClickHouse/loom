@@ -390,7 +390,9 @@ export async function post<T>(path: string, body: unknown, signal?: AbortSignal)
 }
 
 /** POST JSON and answer the ok Response unread, for a body that streams (the assistant's
- *  chat). `signal` is required: a stream is bounded by its caller, not the 60 s default. */
+ *  chat). `signal` is required: a stream is bounded by its caller, not the 60 s default.
+ *  The request counts as done for the progress bar and the view's call span once its
+ *  headers arrive: the caller shows that the body is still coming in. */
 export async function postStreaming(
   path: string,
   body: unknown,

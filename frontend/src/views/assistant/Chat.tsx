@@ -9,10 +9,11 @@ import { AnswerText } from "./AnswerText";
 import { Sources } from "./Sources";
 
 /**
- * The assistant's chat. The conversation lives in this component, in the tab's memory:
- * Loom stores none of it, so each question goes with every earlier question and answer.
- * The parent keys it by namespace and token scope, so a change of either starts a new
- * conversation (and an answer still streaming is stopped).
+ * The assistant's chat. The conversation lives in the tab's memory, kept under
+ * `conversationKey` (the signed-in subject, the namespace and the token scope) so it is
+ * still there after opening a cited document and coming back: Loom stores none of it,
+ * so each question goes with the earlier questions and answers. A change of key starts
+ * a new conversation (and an answer still streaming is stopped).
  */
 
 type TurnState = "answering" | "done" | "stopped" | "failed" | "refused";
@@ -35,6 +36,7 @@ const REFUSAL_LEAD: Record<string, string> = {
   AUTH_INSUFFICIENT: "The assistant refused this request:",
   MODEL_CALLS_DISABLED: "Model calls are switched off for this organization:",
   ASSISTANT_UNAVAILABLE: "The assistant is not available:",
+  ASSISTANT_UPSTREAM_FAILED: "The assistant could not finish this answer:",
   STREAM_ENDED: "The answer was cut off:",
 };
 
@@ -49,29 +51,59 @@ function refusalText(e: unknown): string {
 
 const isAbort = (e: unknown) => e instanceof DOMException && e.name === "AbortError";
 
-/** The messages a new question goes with: every turn shown, but a question refused before
- *  any answer (it was never answered, and the person asks again), and no empty answer. */
+// What one request may carry (server/assistant/api/models.py): the earlier messages, newest
+// kept, and each message's length.
+const MAX_HISTORY = 50;
+const MAX_MESSAGE_CHARS = 20_000;
+
+/** The messages a new question goes with: the turns shown, but a question refused before
+ *  any answer (it was never answered, and the person asks again) and no empty answer; the
+ *  newest `MAX_HISTORY`, each cut to `MAX_MESSAGE_CHARS`. */
 export function conversation(turns: Turn[], question: string): ChatMessage[] {
-  const out: ChatMessage[] = [];
+  const history: ChatMessage[] = [];
   for (const t of turns) {
     if (t.state === "refused") continue;
-    out.push({ role: "user", content: t.question });
-    if (t.answer.trim()) out.push({ role: "assistant", content: t.answer });
+    history.push({ role: "user", content: t.question.slice(0, MAX_MESSAGE_CHARS) });
+    if (t.answer.trim()) history.push({ role: "assistant", content: t.answer.slice(0, MAX_MESSAGE_CHARS) });
   }
-  out.push({ role: "user", content: question });
-  return out;
+  return [...history.slice(-MAX_HISTORY), { role: "user", content: question }];
 }
 
-export function AssistantChat({ namespace, blocked }: { namespace: string; blocked: string | null }) {
-  const [turns, setTurns] = useState<Turn[]>([]);
+// Each conversation of this tab by its key; an answer cut off by leaving the page shows as stopped.
+const kept = new Map<string, Turn[]>();
+const keptTurns = (key: string): Turn[] =>
+  (kept.get(key) ?? []).map((t) => (t.state === "answering" ? { ...t, state: "stopped" } : t));
+
+export function AssistantChat({
+  namespace,
+  blocked,
+  conversationKey,
+}: {
+  namespace: string;
+  blocked: string | null;
+  conversationKey: string;
+}) {
+  const [turns, setTurns] = useState<Turn[]>(() => keptTurns(conversationKey));
   const [draft, setDraft] = useState("");
   const [unavailable, setUnavailable] = useState<string | null>(null);
   const [announce, setAnnounce] = useState("");
   const controller = useRef<AbortController | null>(null);
-  const nextId = useRef(1);
+  const nextId = useRef(Math.max(0, ...turns.map((t) => t.id)) + 1);
   const field = useRef<HTMLTextAreaElement>(null);
   const stopButton = useRef<HTMLButtonElement>(null);
+  const retryButton = useRef<HTMLButtonElement>(null);
   const answering = turns.some((t) => t.state === "answering");
+
+  useEffect(() => {
+    kept.set(conversationKey, turns);
+  }, [conversationKey, turns]);
+  // The form unmounts for the unavailable state, and back: the focus goes with it.
+  const wasUnavailable = useRef(false);
+  useEffect(() => {
+    if (unavailable !== null) retryButton.current?.focus();
+    else if (wasUnavailable.current) field.current?.focus();
+    wasUnavailable.current = unavailable !== null;
+  }, [unavailable]);
 
   // Leaving the page (or the namespace, which remounts this) closes the answer's request.
   useEffect(() => () => controller.current?.abort(), []);
@@ -158,7 +190,7 @@ export function AssistantChat({ namespace, blocked }: { namespace: string; block
             </>
           }
         />
-        <Button type="secondary" htmlType="button" onClick={() => setUnavailable(null)}>
+        <Button ref={retryButton} type="secondary" htmlType="button" onClick={() => setUnavailable(null)}>
           Try again
         </Button>
       </div>

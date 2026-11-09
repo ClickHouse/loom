@@ -57,7 +57,7 @@ export function parseBlocks(text: string): Block[] {
       i++;
       continue;
     }
-    if (line.includes("|") && i + 1 < lines.length && TABLE_RULE.test(lines[i + 1]) && lines[i + 1].includes("-")) {
+    if (startsTable(lines, i)) {
       const header = cells(line);
       const rows: string[][] = [];
       i += 2;
@@ -87,12 +87,17 @@ export function parseBlocks(text: string): Block[] {
       lines[i].trim() &&
       !FENCE.test(lines[i]) &&
       !HEADING.test(lines[i]) &&
-      !(para.length && ITEM.test(lines[i]))
+      !(para.length && (ITEM.test(lines[i]) || startsTable(lines, i)))
     )
       para.push(lines[i++]);
     out.push({ kind: "paragraph", text: para.join("\n") });
   }
   return out;
+}
+
+/** A table's header line at `i`: a line with a cell bar, then a rule line. */
+function startsTable(lines: string[], i: number): boolean {
+  return lines[i].includes("|") && i + 1 < lines.length && TABLE_RULE.test(lines[i + 1]) && lines[i + 1].includes("-");
 }
 
 function blocks(text: string): ReactNode[] {

@@ -33,19 +33,29 @@ export interface ChatHandlers {
 function citationOf(raw: unknown): Citation | null {
   if (!isRecord(raw) || typeof raw.text !== "string") return null;
   const str = (v: unknown) => (typeof v === "string" ? v : "");
-  return { kind: str(raw.kind), text: raw.text, verified: raw.verified === true, reason: str(raw.reason), ref: str(raw.ref) };
+  return {
+    kind: str(raw.kind),
+    text: raw.text,
+    verified: raw.verified === true,
+    reason: str(raw.reason),
+    ref: str(raw.ref),
+  };
 }
 
 /** An error event's payload as an ApiError; `status` 0 says it came inside the stream. */
-function streamError(raw: unknown): ApiError {
+function streamError(raw: unknown, requestId: string): ApiError {
   const detail = isRecord(raw) ? raw : {};
   const message = typeof raw === "string" ? raw : typeof detail.message === "string" ? detail.message : "";
   const code = typeof detail.code === "string" ? detail.code : "";
-  return new ApiError({ status: 0, code, message, detail });
+  return new ApiError({ status: 0, code, message, detail, requestId });
 }
 
+/** The answer stopped before `[DONE]`: its connection was lost. */
+const streamEnded = (requestId: string) =>
+  new ApiError({ status: 0, code: "STREAM_ENDED", message: "the answer stopped before it was complete", requestId });
+
 /** One server-sent event's data: true at `[DONE]`. */
-function readEvent(data: string, on: ChatHandlers): boolean {
+function readEvent(data: string, on: ChatHandlers, requestId: string): boolean {
   if (data === "[DONE]") return true;
   let chunk: unknown;
   try {
@@ -54,7 +64,7 @@ function readEvent(data: string, on: ChatHandlers): boolean {
     return false; // not a chunk: nothing to show
   }
   if (!isRecord(chunk)) return false;
-  if (chunk.error) throw streamError(chunk.error);
+  if (chunk.error) throw streamError(chunk.error, requestId);
   if (chunk.object === "loom.citations") {
     const all = Array.isArray(chunk.citations) ? chunk.citations : [];
     on.onCitations?.(all.map(citationOf).filter((c): c is Citation => c !== null));
@@ -84,12 +94,21 @@ export async function streamAssistantChat(
     signal,
   );
   if (!r.body) throw new ApiError({ status: r.status, message: "the answer carried no body" });
+  const requestId = r.headers.get("X-Request-Id") ?? "";
   const reader = r.body.getReader();
   const decoder = new TextDecoder();
   let buffered = "";
   try {
     for (;;) {
-      const { value, done } = await reader.read();
+      let read: ReadableStreamReadResult<Uint8Array>;
+      try {
+        read = await reader.read();
+      } catch (e) {
+        // The caller's abort stays an abort; a connection lost mid-answer cut it short.
+        if (signal.aborted) throw e;
+        throw streamEnded(requestId);
+      }
+      const { value, done } = read;
       if (done) break;
       buffered += decoder.decode(value, { stream: true }).replace(/\r\n?/g, "\n");
       // An event ends at a blank line; its data lines join with newlines.
@@ -101,7 +120,7 @@ export async function streamAssistantChat(
           .filter((line) => line.startsWith("data:"))
           .map((line) => line.slice(line.startsWith("data: ") ? 6 : 5))
           .join("\n");
-        if (data && readEvent(data, on)) return;
+        if (data && readEvent(data, on, requestId)) return;
       }
     }
   } finally {
@@ -110,5 +129,5 @@ export async function streamAssistantChat(
     });
   }
   // The server always ends with [DONE]: a stream that stops short lost its connection.
-  throw new ApiError({ status: 0, code: "STREAM_ENDED", message: "the answer stopped before it was complete" });
+  throw streamEnded(requestId);
 }
