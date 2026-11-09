@@ -520,6 +520,13 @@ def test_the_exports_times_are_times_the_authority_stores() -> None:
     assert set(exports._PG_TIMES) <= pg_memory.DATETIME_COLS
 
 
+def test_the_exports_defaults_are_the_authoritys() -> None:
+    """A head may leave out a default field: the export fills it as `decode_row` would."""
+    from server.erasure.store import exports
+
+    assert exports._SPARSE == {c: pg_memory.SPARSE_DEFAULTS[c] for c in exports._SPARSE}
+
+
 @pytest.mark.parametrize("bad", ["u\x00", "u\ud800"])
 def test_an_erasure_of_a_scope_postgres_cannot_store_finds_nothing_there(
     monkeypatch, bad: str

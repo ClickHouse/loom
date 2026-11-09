@@ -96,8 +96,8 @@ A stored row (a head, or a revision's payload) may leave out a field at its
 `loom.memory` default, the ones a first version may leave unset
 (`rows.FIRST_VERSION_DEFAULTS`, `pg_memory.SPARSE_DEFAULTS`): every reader takes a
 missing field as that default, `decode_row` in Python and `coalesce` (or a test that
-holds for NULL) in SQL. The identity, the value, the type, the version and the stamps
-have no default and are always stored. This build stores every field.
+holds for NULL) in SQL. Every other field is always stored, a default-valued one
+included. This build stores every field.
 
 A memory id is not unique within an org: a namespace restored from another's snapshot
 keeps the memory ids under newer versions. Every head read by id therefore names its

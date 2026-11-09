@@ -105,23 +105,17 @@ def encode_row(row: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
-# The fields a stored row may leave out, each at its loom.memory DDL default: those a
-# first version may leave unset (`rows.FIRST_VERSION_DEFAULTS`). The identity, the value,
-# the type, the version and the stamps have no default and are always stored.
+# The only fields a stored row may leave out, each at its loom.memory DDL default: those a
+# first version may leave unset (`rows.FIRST_VERSION_DEFAULTS`). Every other field is
+# always stored, a default-valued one included.
 SPARSE_DEFAULTS: Mapping[str, Any] = FIRST_VERSION_DEFAULTS
 
 
-def with_defaults(stored: Mapping[str, Any]) -> dict[str, Any]:
-    """A stored row's JSON with each field it leaves out at its default
-    (`SPARSE_DEFAULTS`), as ClickHouse fills it."""
+def decode_row(stored: Mapping[str, Any]) -> dict[str, Any]:
+    """The insertable loom.memory row back from its JSON, each field it leaves out at its
+    default (`SPARSE_DEFAULTS`), as ClickHouse fills it."""
     out = {c: list(v) if isinstance(v, list) else v for c, v in SPARSE_DEFAULTS.items()}
     out.update(stored)
-    return out
-
-
-def decode_row(stored: Mapping[str, Any]) -> dict[str, Any]:
-    """The insertable loom.memory row back from its JSON (`with_defaults`)."""
-    out = with_defaults(stored)
     for col in DATETIME_COLS:
         val = out.get(col)
         if isinstance(val, str):
@@ -1855,7 +1849,7 @@ _HEAD_FIELDS = {
     "session_id": "session_id",
     "memory_key": "memory_key",
     "memory_type": "row->>'memory_type'",
-    "source_trace": "coalesce(row->>'source_trace', '')",
+    "source_trace": "row->>'source_trace'",
     "redacted_at": "row->>'redacted_at'",
 }
 # The key arm's fields (the profile arm reads `_PROFILE_JOURNAL_FIELDS`).
