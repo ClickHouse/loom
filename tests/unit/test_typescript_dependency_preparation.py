@@ -234,6 +234,19 @@ async def test_a_credential_cut_at_the_window_start_is_not_kept(
 
 
 @pytest.mark.asyncio
+async def test_a_last_line_the_window_holds_whole_is_kept(checkout: Path, tmp_path: Path) -> None:
+    env = _installer(tmp_path)
+    # With its newline the last line fills the window exactly.
+    width = 4 * tier_health.ERROR_CHARS - 1
+    (tmp_path / "npm").write_text(
+        f"#!/bin/sh\necho first\nprintf 'x%.0s' $(seq {width})\necho\nexit 1\n"
+    )
+    with pytest.raises(RuntimeError) as failed:
+        await deps.prepare_dependencies(checkout, (), env)
+    assert str(failed.value).endswith("xxx")
+
+
+@pytest.mark.asyncio
 async def test_an_install_timeout_is_recorded_as_a_timeout(
     checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

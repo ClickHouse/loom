@@ -137,7 +137,8 @@ def _recorded_tail(head: str, output: str) -> str:
     whole lines of a bounded window: redaction is quadratic on a long token, and a line
     cut at the window's start can lose the scheme a credential pattern needs."""
     room = max(0, ERROR_CHARS - len(error_text(ToolOutputError(head))) - 1)
-    window = output[-4 * ERROR_CHARS :]
+    # One character more, so a window that starts on a line keeps that line.
+    window = output[-4 * ERROR_CHARS - 1 :]
     if len(output) > len(window):
         window = window.partition("\n")[2].strip() or _LINE_TOO_LONG
     return redact(window)[-room:] if room else ""
