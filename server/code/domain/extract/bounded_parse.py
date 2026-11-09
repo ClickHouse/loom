@@ -247,7 +247,8 @@ def parse(parser: Any, source: bytes) -> Any:
     """`parser.parse(source)`, raising `ParseTimeout` past the deadline or the memory
     limit, or when it could not run in its process or the caller's wait for the lock ran
     out; `RuntimeError` or `OSError` when the child fails or cannot start, `LookupError`
-    for a grammar not in `_LOADERS`."""
+    for a grammar not in `_LOADERS`, or tree-sitter or a grammar loaded from outside the
+    interpreter's site-packages."""
     from server.settings import settings
 
     budget = settings.code_parse_timeout_s
