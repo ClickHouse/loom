@@ -295,6 +295,20 @@ def _svelte(text: str) -> object:
     return markup_sites(parse_svelte("a.svelte", text.encode()), {})
 
 
+def _py_routes(text: str) -> object:
+    from server.code.domain.extract.lang_python import parse_python
+    from server.code.domain.extract.py_routes import py_facets
+
+    return py_facets(parse_python("a.py", text.encode()))
+
+
+def _env(text: str) -> object:
+    from server.code.domain.extract.env_reads import env_facets
+    from server.code.domain.extract.treesitter import ParsedFile
+
+    return env_facets(ParsedFile(path="a.py", lang="python", source=text.encode()))
+
+
 def _dbt(text: str) -> object:
     from server.code.domain.extract.lang_sql_jinja import jinja_units
 
@@ -315,6 +329,10 @@ def _links(n: int) -> str:
     return "# a\n" + "".join(f"[a](a{i})\n" for i in range(n // 8))
 
 
+def _inline_templates(n: int) -> str:
+    return "".join(f"@Component({{template:`<a-b{i}>`}})class A{i}{{}}\n" for i in range(n // 40))
+
+
 # (id, walk, the text of about n characters it walks)
 _WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("markdown-heading-spaces", _markdown, _run("# a", " ", "b")),
@@ -326,17 +344,18 @@ _WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("dockerfile-stages", _dockerfile, _run("", "FROM a AS b\n")),
     ("jenkinsfile-steps", _jenkinsfile, _run("", "sh 'a'\n")),
     ("angular-sites", _angular, _run("", "<a-b>\n")),
-    (
-        "angular-inline-templates",
-        _angular_inline,
-        _run("", "@Component({template:`<a-b>`})class A{}\n"),
-    ),
+    ("angular-inline-templates", _angular_inline, _inline_templates),
     ("vue-sites", _vue, _run("<template>\n", "<A/>\n", "\n</template>\n")),
     ("vue-macro-members", _vue, _run("<script setup>\ndefineProps({", "a:1,", "})\n</script>\n")),
     ("svelte-sites", _svelte, _run("", "<A/>\n")),
     ("dbt-raw-blocks", _dbt, _run("", "{% raw %}a{% endraw %}")),
     ("dbt-unclosed-tags", _dbt, _run("{{ config(", "tags=[", ") }}")),
     ("cmake-rows", _cmake, _run("", "a\n")),
+    ("python-route-rows", _py_routes, _run("", "app.add_url_rule('a')\n")),
+    ("python-unclosed-include-router", _py_routes, _run("", "a.include_router(a,")),
+    ("python-unclosed-add-url-rule", _py_routes, _run("", "a.add_url_rule('a'")),
+    ("python-unclosed-route", _py_routes, _run("import starlette.routing\n", "Route('a'")),
+    ("python-env-reads", _env, _run("", "os.environ['A']\n")),
 ]
 _WALK_N = 100_000
 _WALK_BOUND_S = 5.0  # a linear walk over 4N takes about a second here at most

@@ -11,6 +11,7 @@ from server.code.domain.extract import lang_sql as ls
 from server.code.domain.extract import lang_sql_facets
 from server.code.domain.extract import lang_sql_jinja as lj
 from server.code.domain.extract.lang_python import module_scope
+from server.code.domain.extract.text_lines import newline_offsets
 from tests.unit.code_fixtures import grows_linearly
 
 _J2 = """\
@@ -208,4 +209,4 @@ def test_a_dbt_file_of_many_tags_reads_in_linear_time(unit: str) -> None:
 def test_an_unclosed_statement_tag_names_no_macro_call() -> None:
     for tail in ("> 0\n", "> {{ var('n') }}"):  # the second ends the file in `}}`
         text = "{{ dollars(x) }}\nselect a from t where b like '{%'\nand coalesce(c, 0) " + tail
-        assert lj._calls(text, set(), lj._newlines(text)) == {"dollars": 1}, tail
+        assert lj._calls(text, set(), newline_offsets(text)) == {"dollars": 1}, tail

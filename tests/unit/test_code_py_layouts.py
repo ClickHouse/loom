@@ -403,3 +403,12 @@ def test_the_layout_is_read_off_the_event_loop(monkeypatch):
     monkeypatch.setattr(pl, "layout_from_texts", layout)
     asyncio.run(ingest_resolve._py_layout(None, "o", "n", {"setup.py"}))  # type: ignore[arg-type]
     assert threads and threads[0] is not threading.main_thread()
+
+
+def test_a_list_inside_an_unclosed_entry_point_list_is_read_once():
+    text = 'setup(entry_points={"console_scripts": ["a=m:f",\n"gui_scripts": ["g=m:h"]})\n'
+    eps = pl.entry_points_from_manifest("setup.py", text)
+    assert [(e.name, e.group, e.line) for e in eps] == [
+        ("a", "console_scripts", 1),
+        ("g", "console_scripts", 2),
+    ]

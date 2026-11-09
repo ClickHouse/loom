@@ -39,7 +39,8 @@ import re
 from typing import Any
 
 from server.code.domain.extract.lang_sql_model import Facet
-from server.code.domain.extract.treesitter import ParsedFile, line_of
+from server.code.domain.extract.text_lines import line_at, newline_offsets
+from server.code.domain.extract.treesitter import ParsedFile
 
 FACET_ROUTE = "http_route"
 FACET_COMMAND = "command"
@@ -69,17 +70,21 @@ _PREFIX_DECL_RE = re.compile(
     re.M,
 )
 _PREFIX_KW_RE = re.compile(r"\b(?:url_)?prefix\s*=\s*" + _STR)
+# A call's arguments stop at the next same call: an unclosed one is not searched on to
+# the end of the file from each.
 _INCLUDE_ROUTER_RE = re.compile(
-    r"\.include_router\(\s*([\w.]+)\s*,[^)]*?\bprefix\s*=\s*" + _STR,
+    r"\.include_router\(\s*([\w.]+)\s*,(?:(?!\.include_router\()[^)])*?\bprefix\s*=\s*" + _STR,
 )
-_ADD_URL_RULE_RE = re.compile(r"\.add_url_rule\(\s*" + _STR + r"([^)]*)\)")
+_ADD_URL_RULE_RE = re.compile(r"\.add_url_rule\(\s*" + _STR + r"((?:(?!\.add_url_rule\()[^)])*)\)")
 _AIOHTTP_RES = (
     re.compile(r"\bweb\.(" + _HTTP + r"|view)\(\s*" + _STR),
     re.compile(r"\.add_(" + _HTTP + r"|view)\(\s*" + _STR),
 )
 _AIOHTTP_ROUTE_RE = re.compile(r"\.add_route\(\s*['\"](\w+|\*)['\"]\s*,\s*" + _STR)
 _DJANGO_RE = re.compile(r"\b(?:path|re_path|url)\(\s*" + _STR + r"\s*,(?!\s*include\b)")
-_STARLETTE_RE = re.compile(r"\b(Route|WebSocketRoute)\(\s*" + _STR + r"([^)]*)\)")
+_STARLETTE_RE = re.compile(
+    r"\b(Route|WebSocketRoute)\(\s*" + _STR + r"((?:(?!\b(?:WebSocket)?Route\()[^)])*)\)"
+)
 _TORNADO_RE = re.compile(r"\(\s*r?['\"](/[^'\"]*)['\"]\s*,\s*[\w.]+\s*[,)]")
 _ADD_PARSER_RE = re.compile(r"\.add_parser\(\s*" + _STR)
 
@@ -199,22 +204,25 @@ def _one_decorator(
 
 def _registrations(text: str, path: str, col: _Collector) -> None:
     """Routes and commands named in calls rather than decorators."""
+    newlines = newline_offsets(text)
     for m in _ADD_URL_RULE_RE.finditer(text):
         for meth in _methods(m.group(2), "ANY"):
-            col.add(FACET_ROUTE, f"{meth} {_url_join('', m.group(1))}", line_of(text, m.start()))
+            col.add(
+                FACET_ROUTE, f"{meth} {_url_join('', m.group(1))}", line_at(newlines, m.start())
+            )
     for rx in _AIOHTTP_RES:
         for m in rx.finditer(text):
             verb = "ANY" if m.group(1) == "view" else m.group(1).upper()
-            col.add(FACET_ROUTE, f"{verb} {m.group(2)}", line_of(text, m.start()))
+            col.add(FACET_ROUTE, f"{verb} {m.group(2)}", line_at(newlines, m.start()))
     for m in _AIOHTTP_ROUTE_RE.finditer(text):
         verb = "ANY" if m.group(1) == "*" else m.group(1).upper()
-        col.add(FACET_ROUTE, f"{verb} {m.group(2)}", line_of(text, m.start()))
+        col.add(FACET_ROUTE, f"{verb} {m.group(2)}", line_at(newlines, m.start()))
     if posixpath.basename(path) == "urls.py" or "django.urls" in text or "django.conf.urls" in text:
         for m in _DJANGO_RE.finditer(text):
-            col.add(FACET_ROUTE, f"ANY {_django_path(m.group(1))}", line_of(text, m.start()))
+            col.add(FACET_ROUTE, f"ANY {_django_path(m.group(1))}", line_at(newlines, m.start()))
     if "starlette.routing" in text or "fastapi.routing" in text:
         for m in _STARLETTE_RE.finditer(text):
-            line = line_of(text, m.start())
+            line = line_at(newlines, m.start())
             if m.group(1) == "WebSocketRoute":
                 col.add(FACET_ROUTE, f"WS {m.group(2)}", line)
             else:
@@ -222,9 +230,9 @@ def _registrations(text: str, path: str, col: _Collector) -> None:
                     col.add(FACET_ROUTE, f"{meth} {m.group(2)}", line)
     if "tornado" in text:
         for m in _TORNADO_RE.finditer(text):
-            col.add(FACET_ROUTE, f"ANY {m.group(1)}", line_of(text, m.start()), 0.9)
+            col.add(FACET_ROUTE, f"ANY {m.group(1)}", line_at(newlines, m.start()), 0.9)
     for m in _ADD_PARSER_RE.finditer(text):
-        col.add(FACET_COMMAND, m.group(1), line_of(text, m.start()))
+        col.add(FACET_COMMAND, m.group(1), line_at(newlines, m.start()))
 
 
 def py_facets(pf: ParsedFile) -> list[Facet]:

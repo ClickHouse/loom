@@ -23,11 +23,11 @@ Pure: regexes over the source; the file's path supplies the convention.
 
 from __future__ import annotations
 
-import bisect
 import posixpath
 import re
 
 from server.code.domain.extract.lang_sql_model import Facet
+from server.code.domain.extract.text_lines import line_at, newline_offsets
 from server.code.domain.extract.treesitter import ParsedFile
 
 FACET_KIND = "http_route"
@@ -86,10 +86,10 @@ def route_facets(pf: ParsedFile) -> list[Facet]:
     text = pf.source.decode("utf-8", "replace")
     out: list[Facet] = []
     seen: set[tuple[str, int]] = set()
-    newlines = [m.start() for m in re.finditer("\n", text)]
+    newlines = newline_offsets(text)
 
-    def line_of(offset: int) -> int:  # by bisection: a count from the top per route is quadratic
-        return bisect.bisect_left(newlines, offset) + 1
+    def line_of(offset: int) -> int:
+        return line_at(newlines, offset)
 
     def add(name: str, line: int, conf: float) -> None:
         if (name, line) in seen:

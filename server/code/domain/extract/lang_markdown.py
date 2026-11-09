@@ -136,8 +136,8 @@ def sections_of(text: str) -> tuple[list[Section], int]:
         if h:
             # The closing `#`s off in Python: a pattern that matches them after a lazy
             # title backtracks cubically on a run of spaces.
-            text = h.group(2)
-            title = text.rstrip().rstrip("#").rstrip() or text[:1]
+            rest = h.group(2)
+            title = rest.rstrip().rstrip("#").rstrip() or rest[:1]
             heads.append((i, len(h.group(1)), title.strip()))
     out: list[Section] = []
     stack: list[str] = []

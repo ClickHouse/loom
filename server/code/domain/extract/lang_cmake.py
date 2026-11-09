@@ -49,7 +49,8 @@ from server.code.domain.extract.edges_treesitter import Edge
 from server.code.domain.extract.lang_sql_model import Facet
 from server.code.domain.extract.treesitter import ParsedFile, Symbol
 
-# `\b`: a command starts after a `)`, a blank or a comment, never inside a word
+# `\b` changes no match (a command starts after a `)`, a blank or a comment) but keeps a
+# search from every offset linear
 _COMMAND_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*+)\s*+\(")
 
 LANG_CMAKE = "cmake"

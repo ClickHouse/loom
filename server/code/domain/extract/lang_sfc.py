@@ -27,7 +27,6 @@ rows by a targeted backfill over its `.svelte` / `.astro` tree.
 
 from __future__ import annotations
 
-import bisect
 import posixpath
 import re
 from typing import Any
@@ -48,6 +47,7 @@ from server.code.domain.extract.lang_vue import (
     sfc_blocks,
     synthetic_script,
 )
+from server.code.domain.extract.text_lines import line_at, newline_offsets
 from server.code.domain.extract.treesitter import ParsedFile, Symbol
 from server.code.domain.extract.ts_config import strip_comments
 
@@ -326,11 +326,10 @@ def markup_sites(
     body = "\n".join(row if i not in covered else "" for i, row in enumerate(lines, start=1))
     bindings = import_bindings(pf) if bindings is None else bindings
 
-    # by bisection in the newlines found once: a count from the top per site is quadratic
-    newlines = [m.start() for m in re.finditer("\n", body)]
+    newlines = newline_offsets(body)
 
     def line_of(offset: int) -> int:
-        return 1 + bisect.bisect_left(newlines, offset)
+        return line_at(newlines, offset)
 
     out: list[tuple[int, str, str]] = []
     for m in _TAG_RE.finditer(body):

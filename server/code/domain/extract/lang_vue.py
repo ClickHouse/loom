@@ -40,7 +40,6 @@ targeted backfill over its `.vue` tree, never by a heal.
 
 from __future__ import annotations
 
-import bisect
 import posixpath
 import re
 from dataclasses import dataclass
@@ -51,6 +50,7 @@ from server.code.domain.extract.lang_python import module_scope
 from server.code.domain.extract.lang_typescript import LANG_JS, LANG_TS, parse_typescript_text
 from server.code.domain.extract.lang_typescript_imports import import_bindings
 from server.code.domain.extract.lang_typescript_refs import reference_edges
+from server.code.domain.extract.text_lines import line_at, newline_offsets
 from server.code.domain.extract.treesitter import ParsedFile, Symbol
 
 KIND_COMPONENT_SIGNATURE = "component"
@@ -320,11 +320,10 @@ def template_sites(
     base = block.body_start
     out: list[tuple[int, str, str]] = []
 
-    # by bisection in the newlines found once: a count from the top per site is quadratic
-    newlines = [m.start() for m in re.finditer("\n", body)]
+    newlines = newline_offsets(body)
 
     def line_of(offset: int) -> int:
-        return base + bisect.bisect_left(newlines, offset)
+        return base - 1 + line_at(newlines, offset)
 
     for m in _TAG_RE.finditer(body):
         text = m.group(1)

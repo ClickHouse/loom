@@ -239,3 +239,9 @@ def test_ingest_dispatch_is_gated(monkeypatch: pytest.MonkeyPatch) -> None:
     assert pf is not None and [s.name for s in pf.symbols] == ["style_check", "build"]
     assert pf.includes == ["ci/praktika/main.py", "tests/ci/run_style.sh"]
     assert pf.tree is None  # chunk-only: the line-window chunker, as for every config file
+
+
+def test_a_row_that_is_no_instruction_keeps_its_continuation_rows() -> None:
+    # Docker joins a `\` row with the next, so `RUN tests` is not an instruction of its own.
+    islands, _ = lh.dockerfile_islands(["run make \\", "RUN tests", "RUN lint"])
+    assert [(i.text, i.line) for i in islands] == [("lint", 3)]
