@@ -35,7 +35,12 @@ from server.core.numbers import FLOAT32_MAX, float32
 from server.core.pg_lease import lease_deadline
 from server.memory.domain import lock as _lock
 from server.memory.domain.memory_types import is_embedded
-from server.memory.domain.redaction_lineage import REDACTED_VALUE, Version, later_copies
+from server.memory.domain.redaction_lineage import (
+    REDACTED_VALUE,
+    Version,
+    is_content_hash,
+    later_copies,
+)
 from server.memory.store.rows import (
     FIRST_VERSION_DEFAULTS,
     IdentityKey,
@@ -791,6 +796,19 @@ def embedded(row: Mapping[str, Any]) -> bool:
     return is_embedded(str(row.get("memory_type")), str(row.get("sensitivity") or ""))
 
 
+def newer_copy(head: Mapping[str, Any], row: Mapping[str, Any]) -> bool:
+    """Whether `head` is a newer copy of `row` (a pin, a touch, a status): live, embedded
+    and of the same content by hash, so `row`'s search document serves it. Another
+    commit than `row`'s: a publisher reads it again durably before sending it."""
+    return (
+        int(head["version"]) > int(row["version"])
+        and head.get("tombstoned_at") is None
+        and embedded(head)
+        and is_content_hash(str(head.get("content_sha256") or ""))
+        and head.get("content_sha256") == row.get("content_sha256")
+    )
+
+
 async def complete(
     seqs: Sequence[tuple[str, str, int]], done: int, *, tokens: Sequence[int] | int = COMMIT_TOKEN
 ) -> None:
@@ -926,8 +944,9 @@ async def claim_due(limit: int, *, scope: tuple[str, str] | None = None) -> list
         where += " AND org = $4 AND namespace = $5"
         order = "seq"
         args += list(scope)
-    # The claim commits once the standbys hold what it read (`pg.durable_transaction`).
-    async with pg.durable_transaction() as conn:
+    # In a transaction, whose COMMIT waits out the standbys with no statement timeout:
+    # once the claim returns, the rows it read are on them (`pg.durable_transaction`).
+    async with pg.transaction() as conn:
         rows = await conn.fetch(
             f"""
             WITH due AS (
@@ -1125,7 +1144,8 @@ async def claim_outbox(limit: int) -> tuple[list[dict[str, Any]], float]:
     started = time.monotonic()
     # 0 is no bound on a read: the claim allows it the insert bound.
     read_s = float(settings.ch_timeout_read_s) or pg.insert_bound_s()
-    async with pg.durable_transaction() as conn:
+    # Its COMMIT waits out the standbys, as `claim_due`'s does.
+    async with pg.transaction() as conn:
         rows = await conn.fetch(
             "WITH first AS (SELECT org, namespace FROM loom.audit_outbox "
             "  WHERE due_at <= now() ORDER BY due_at LIMIT 1 FOR UPDATE SKIP LOCKED), "

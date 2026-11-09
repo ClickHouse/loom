@@ -17,7 +17,7 @@ import logging
 import time
 from collections.abc import Iterator
 
-from server.core import rmt_carry
+from server.core import pg, rmt_carry
 from server.core.error_summary import error_summary
 from server.core.errors import LoomServerError
 from server.settings import settings
@@ -63,8 +63,6 @@ def check_room(deadline: float) -> None:
     """`check_lease` after a durable read (`pg.durable_transaction`): a standby wait that
     ended the lease is a Postgres outage, which a pass releases uncounted, not a late
     send counted as the delivery's attempt."""
-    from server.core import pg
-
     if time.monotonic() >= deadline:
         raise pg.PostgresUnavailableError("the standby wait outlasted the lease")
 

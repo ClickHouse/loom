@@ -222,10 +222,10 @@ def test_a_claim_is_leased_for_the_delivery_workers_lease(monkeypatch: pytest.Mo
             return []
 
     @asynccontextmanager
-    async def durable_transaction():  # type: ignore[no-untyped-def]
+    async def transaction():  # type: ignore[no-untyped-def]
         yield _Conn()
 
-    monkeypatch.setattr(pg, "durable_transaction", durable_transaction)
+    monkeypatch.setattr(pg, "transaction", transaction)
     monkeypatch.setattr(settings, "pg_delivery_lease_seconds", 30)
     monkeypatch.setattr(settings, "pg_request_lease_seconds", 5)
     claims, deadline = asyncio.run(pg_documents.claim_due(10))

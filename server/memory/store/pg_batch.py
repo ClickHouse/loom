@@ -34,7 +34,6 @@ from server.core.ch_errors import is_connection_failure, is_passing_state
 from server.core.ch_writes import partition_blocks
 from server.core.error_summary import error_summary
 from server.core.repo_base import _CHClient, _default_client
-from server.memory.domain.redaction_lineage import is_content_hash
 from server.memory.store import inserts, pg_memory, pg_publish
 from server.memory.store.pg_memory import AUDIT_ROW, MEMORY_ROW, SEARCH_DOC, Committed
 from server.memory.store.rows import created_month, identity_key, search_document_row
@@ -338,18 +337,10 @@ async def _served_documents(
     heads = await pg_memory.heads_owing(keys) if keys else {}
 
     def copy(doc: dict[str, Any]) -> bool:
-        """Whether the key's head is a newer copy of the document's row."""
+        """Whether the key's head is a newer copy of the document's row that owes no
+        document of its own."""
         head, owed = heads.get(identity_key(doc), (None, 0))
-        return (
-            head is not None
-            and head.get("redacted_at") is None
-            and int(head["version"]) > int(doc["version"])
-            and not owed & SEARCH_DOC
-            and head.get("tombstoned_at") is None
-            and pg_memory.embedded(head)
-            and is_content_hash(str(head.get("content_sha256") or ""))
-            and head.get("content_sha256") == doc.get("content_sha256")
-        )
+        return head is not None and not owed & SEARCH_DOC and pg_memory.newer_copy(head, doc)
 
     def served(doc: dict[str, Any]) -> dict[str, Any] | None:
         head, _ = heads.get(identity_key(doc), (None, 0))

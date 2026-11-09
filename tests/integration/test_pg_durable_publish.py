@@ -110,26 +110,25 @@ async def test_a_durable_transaction_waits_for_the_standby(
         assert await conn.fetchval("SELECT 1") == 1
 
 
-@pytest.mark.parametrize("durability, refused", [("synchronous", True), ("local", False)])
-async def test_no_standby_named_refuses_under_synchronous_only(
-    admin_conn: Any,
-    short_waits: None,
-    monkeypatch: pytest.MonkeyPatch,
-    durability: str,
-    refused: bool,
-) -> None:
-    from server.core import pg
-    from server.settings import settings
+async def test_a_role_without_superuser_may_write_the_message(admin_conn: Any) -> None:
+    """The boot's check passes for an ordinary role: the message function is the
+    public's to run."""
+    import asyncpg
 
-    monkeypatch.setattr(settings, "pg_durability", durability)
-    async with _standbys(admin_conn, ""):
-        if refused:
-            with pytest.raises(pg.PostgresUnavailableError):
-                async with pg.durable_transaction():
-                    pass
-        else:
-            async with pg.durable_transaction():
-                pass
+    role = f"loom_durable_{uuid.uuid4().hex[:8]}"
+    await admin_conn.execute(f"CREATE ROLE {role} LOGIN PASSWORD 'durable'")
+    try:
+        dsn = os.environ["LOOM_PG_DSN"].replace("loom:loomdev@", f"{role}:durable@", 1)
+        conn = await asyncpg.connect(dsn)
+        try:
+            tx = conn.transaction()
+            await tx.start()
+            await conn.execute("SELECT pg_logical_emit_message(true, 'loom.durable', '')")
+            await tx.rollback()  # the boot's check commits nothing either
+        finally:
+            await conn.close()
+    finally:
+        await admin_conn.execute(f"DROP ROLE {role}")
 
 
 async def test_the_boot_check_writes_the_message_without_waiting(

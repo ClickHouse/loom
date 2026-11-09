@@ -60,9 +60,7 @@ primary on promotion and promotes only a standby that holds every acknowledged c
 Configure it in its strict synchronous mode: at least one synchronous standby
 required, and writes refused rather than acknowledged by the primary alone when none
 is attached. A manager that is not strict empties `synchronous_standby_names` when its
-standby drops, and commits are then acknowledged by the primary alone. Under
-`LOOM_PG_DURABILITY=synchronous` the delivery workers then publish nothing to ClickHouse
-until a standby is named again.
+standby drops, and commits are then acknowledged by the primary alone.
 
 Loom checks the standby setting at boot, and `GET /v1/health?include=postgres` reports
 `postgres.standby` while it serves: `synchronous` when the standbys a commit waits for
@@ -105,8 +103,9 @@ waits for them, up to `LOOM_PG_STATEMENT_TIMEOUT_MS` plus one second, and then a
 the primary alone. The delivery worker publishes it to ClickHouse only once the standbys
 hold it, so a failover in between leaves nothing of it in ClickHouse
 ([storage authority](../architecture/storage-authority.md#only-durable-revisions-are-published)).
-Each delivery claim commits a transactional logical message with the prefix
-`loom.durable`, so a change-data-capture consumer of the database receives it; the boot
+A publisher that sends another session's commit reads it again in a transaction that
+commits a transactional logical message with the prefix `loom.durable`, so a
+change-data-capture consumer of the database receives one per such read; the boot
 refuses a role that may not write one.
 
 `GET /v1/health` reports `storage_authority` and, under Postgres, `pg_ok`; with

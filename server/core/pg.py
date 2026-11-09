@@ -456,35 +456,25 @@ async def transaction() -> AsyncIterator[Any]:
         raise
 
 
-# The last statement before a durable transaction's COMMIT: the commit waits for the
-# synchronous standbys (a transactional logical message makes it write WAL, whatever
-# else the transaction wrote), and the setting naming them is read as it starts.
-_DURABLE_MESSAGE = (
-    "SELECT set_config('synchronous_commit', 'on', true), "
-    "current_setting('synchronous_standby_names') AS names, "
-    "pg_logical_emit_message(true, 'loom.durable', '')"
-)
+# A transactional logical message: the commit that carries it writes WAL, so it waits
+# for the synchronous standbys even when the transaction wrote nothing else.
+_DURABLE_MESSAGE = "SELECT pg_logical_emit_message(true, 'loom.durable', '')"
 
 
 @asynccontextmanager
 async def durable_transaction() -> AsyncIterator[Any]:
-    """`transaction`, for a read whose rows go to ClickHouse: once it returns, every row
-    the block read is on the synchronous standbys. A row is visible only after its own
-    commit's standby wait ended (a cancelled wait leaves it on the primary alone), so it
-    was committed before this transaction's commit, which waits for the standbys. The
-    read and the commit share one connection: a failover in between fails the commit,
-    never another primary's. A cancelled wait raises (`outcome_unknown`): nothing read
-    may be sent. Under LOOM_PG_DURABILITY=synchronous an empty `synchronous_standby_names`
-    (commits on the primary alone) refuses before the commit; one emptied during the
-    wait is not seen, which is why the HA manager must be strict
-    (docs/operations/postgres.md)."""
+    """`transaction`, for a read of other sessions' commits whose rows go to ClickHouse:
+    once it returns, every row the block read is on the synchronous standbys. A row is
+    visible only after its own commit's standby wait ended (a cancelled wait leaves it on
+    the primary alone), so it was committed before this transaction's commit, which
+    writes a logical message and waits for the standbys. The read and the commit share
+    one connection: a failover in between fails the commit, never another primary's. A
+    cancelled wait raises (`outcome_unknown`): nothing read may be sent. A claim needs no
+    message: an UPDATE that claimed rows wrote WAL, and one that claimed none has nothing
+    to send."""
     async with transaction() as conn:
         yield conn
-        names = (await conn.fetchrow(_DURABLE_MESSAGE))["names"]
-        if settings.pg_durability == "synchronous" and not str(names).strip():
-            raise PostgresUnavailableError(
-                "synchronous_standby_names is empty: commits are on the primary alone"
-            )
+        await conn.execute(_DURABLE_MESSAGE)
 
 
 async def check_durable_message() -> None:

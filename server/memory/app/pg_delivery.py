@@ -20,7 +20,6 @@ from typing import Any
 
 from server.core import ch_errors, pg, pg_lease
 from server.core.error_summary import error_summary
-from server.memory.domain.redaction_lineage import is_content_hash
 from server.memory.store import pg_memory, pg_publish
 from server.memory.store.pg_memory import Claimed
 from server.memory.store.rows import identity_key, parse_memory_value, search_document_row
@@ -206,30 +205,21 @@ async def _still_heads(claims: list[Claimed], deadline: float) -> list[Claimed]:
         return claims
     keys = [identity_key(c.row) for c in claims]
     heads = await pg_memory.heads_by_keys(keys, include_tombstoned=True)
-    if any(_is_copy(c, _served(c, heads)) for c in claims):
+    if any(_served(c, heads)[1] for c in claims):
         heads = await pg_memory.heads_by_keys(keys, include_tombstoned=True, durable=True)
         pg_lease.check_room(deadline)
-    return [replace(c, row=row) for c in claims if (row := _served(c, heads)) is not None]
+    return [replace(c, row=row) for c in claims if (row := _served(c, heads)[0]) is not None]
 
 
-def _is_copy(c: Claimed, row: dict[str, Any] | None) -> bool:
-    return row is not None and row is not c.row
-
-
-def _served(c: Claimed, heads: dict[Any, dict[str, Any]]) -> dict[str, Any] | None:
-    """The row `c`'s document is built from (`_still_heads`), None for none."""
+def _served(c: Claimed, heads: dict[Any, dict[str, Any]]) -> tuple[dict[str, Any] | None, bool]:
+    """The row `c`'s document is built from (`_still_heads`), None for none, and whether
+    it is a newer copy rather than the claim's own revision."""
     head = heads.get(identity_key(c.row))
     if head is None or head.get("redacted_at") is not None:
-        return None
+        return None, False
     if int(head["version"]) <= int(c.row["version"]):
-        return c.row
-    copy = (
-        head.get("tombstoned_at") is None
-        and pg_memory.embedded(head)
-        and is_content_hash(str(head.get("content_sha256") or ""))
-        and head.get("content_sha256") == c.row.get("content_sha256")
-    )
-    return head if copy else None
+        return c.row, False
+    return (head, True) if pg_memory.newer_copy(head, c.row) else (None, False)
 
 
 async def _retire_old_vectors(

@@ -128,26 +128,26 @@ def test_every_caller_of_a_journal_read_is_classified() -> None:
 
 
 class _Conn:
-    def __init__(self, log: list[str], names: str = "FIRST 1 (s)") -> None:
-        self.log, self.names = log, names
+    def __init__(self, log: list[str]) -> None:
+        self.log = log
 
     async def fetch(self, sql: str, *args: Any) -> list[Any]:
         self.log.append("read")
         return []
 
-    async def fetchrow(self, sql: str, *args: Any) -> dict[str, Any]:
-        assert "pg_logical_emit_message(true" in sql and "synchronous_commit" in sql
+    async def execute(self, sql: str, *args: Any) -> str:
+        assert "pg_logical_emit_message(true" in sql
         self.log.append("message")
-        return {"names": self.names}
+        return "SELECT 1"
 
 
-def _fake_transaction(monkeypatch: pytest.MonkeyPatch, log: list[str], names: str) -> None:
+def _fake_transaction(monkeypatch: pytest.MonkeyPatch, log: list[str]) -> None:
     from contextlib import asynccontextmanager
 
     @asynccontextmanager
     async def transaction():  # type: ignore[no-untyped-def]
         log.append("begin")
-        yield _Conn(log, names)
+        yield _Conn(log)
         log.append("commit")
 
     monkeypatch.setattr(pg, "transaction", transaction)
@@ -157,7 +157,7 @@ def test_durable_transaction_writes_its_message_last_before_the_commit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     log: list[str] = []
-    _fake_transaction(monkeypatch, log, "FIRST 1 (s)")
+    _fake_transaction(monkeypatch, log)
 
     async def run() -> None:
         async with pg.durable_transaction() as conn:
@@ -165,27 +165,6 @@ def test_durable_transaction_writes_its_message_last_before_the_commit(
 
     asyncio.run(run())
     assert log == ["begin", "read", "message", "commit"]
-
-
-@pytest.mark.parametrize("durability, refused", [("synchronous", True), ("local", False)])
-def test_an_empty_standby_setting_refuses_under_synchronous_only(
-    monkeypatch: pytest.MonkeyPatch, durability: str, refused: bool
-) -> None:
-    log: list[str] = []
-    _fake_transaction(monkeypatch, log, "")
-    monkeypatch.setattr(settings, "pg_durability", durability)
-
-    async def run() -> None:
-        async with pg.durable_transaction() as conn:
-            await conn.fetch("SELECT 1")
-
-    if refused:
-        with pytest.raises(pg.PostgresUnavailableError):
-            asyncio.run(run())
-        assert "commit" not in log  # raised in the block: rolled back
-    else:
-        asyncio.run(run())
-        assert log[-1] == "commit"
 
 
 def _claim(version: int, sha: str = "a") -> pg_memory.Claimed:
@@ -364,35 +343,22 @@ def test_a_retirement_read_durably_within_its_lease_is_sent(
     assert error is None and sent == ["retired", "cleared"]
 
 
-def _entered(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """`pg.durable_transaction` faked: each entry logged, every statement answers no rows."""
-    from contextlib import asynccontextmanager
-
-    log: list[str] = []
-
-    class _Conn:
-        async def fetch(self, sql: str, *args: Any) -> list[Any]:
-            log.append("read")
-            return []
-
-    @asynccontextmanager
-    async def durable_transaction():  # type: ignore[no-untyped-def]
-        log.append("durable")
-        yield _Conn()
-
-    async def not_durable(*a: Any, **k: Any) -> Any:
-        raise AssertionError("read outside a durable transaction")
-
-    monkeypatch.setattr(pg, "durable_transaction", durable_transaction)
-    monkeypatch.setattr(pg, "fetch", not_durable)
-    return log
-
-
 @pytest.mark.parametrize("claim", ["claim_due", "claim_outbox"])
-def test_the_memory_claims_are_durable(monkeypatch: pytest.MonkeyPatch, claim: str) -> None:
-    log = _entered(monkeypatch)
+def test_the_memory_claims_commit_in_a_transaction(
+    monkeypatch: pytest.MonkeyPatch, claim: str
+) -> None:
+    """A claim's COMMIT, with no statement timeout, waits out the standbys: once it
+    returns, the rows it claimed are on them. An UPDATE that claimed rows wrote WAL, so it
+    needs no logical message."""
+    log: list[str] = []
+    _fake_transaction(monkeypatch, log)
+
+    async def not_in_one(*a: Any, **k: Any) -> Any:
+        raise AssertionError("claimed outside a transaction")
+
+    monkeypatch.setattr(pg, "fetch", not_in_one)
     asyncio.run(getattr(pg_memory, claim)(10))
-    assert log == ["durable", "read"]
+    assert log == ["begin", "read", "commit"]
 
 
 def test_a_retirement_that_reads_its_own_writers_reads_them_durably(

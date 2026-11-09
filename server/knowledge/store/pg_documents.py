@@ -386,8 +386,9 @@ async def claim_due(limit: int) -> tuple[list[Delivery], float]:
     publishes ClickHouse refused before (`failed`)."""
     lease_s = float(settings.pg_delivery_lease_seconds)  # the worker's, as memory's
     started = time.monotonic()  # before the claim: the lease runs from its start
-    # The claim commits once the standbys hold what it read (`pg.durable_transaction`).
-    async with pg.durable_transaction() as conn:
+    # In a transaction, whose COMMIT waits out the standbys with no statement timeout:
+    # once the claim returns, the rows it read are on them (`pg.durable_transaction`).
+    async with pg.transaction() as conn:
         got = await conn.fetch(
             "UPDATE loom.knowledge_deliveries d SET lease_token = d.lease_token + 1, "
             "lease_until = now() + make_interval(secs => $2) "
