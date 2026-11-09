@@ -148,7 +148,7 @@ MEMORY_KEYS_IN = "hasAny(memory_keys, {keys:Array(String)})"
 # its community, another entity name). The entity belongs to the user when
 # every memory linking it in the co-occurrence graph is the user's (or a summary
 # of theirs) and at least one is — the exclusive-ownership rule, read from the edge link
-# table, so this runs before graph_links.delete removes those rows. A row
+# table before the links go. A row
 # whose LABEL is such an entity goes too: the label text is the residue, and
 # the communities worker relabels on its next pass from the edges that remain.
 USER_COMMUNITY_ENTITIES = (

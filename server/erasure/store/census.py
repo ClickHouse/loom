@@ -205,7 +205,7 @@ _CENSUS: tuple[Substrate, ...] = (
     ),
     # The three derived tables reach the user scope through the keys of the
     # window they quote (cache, precedents) or the entities only the user's
-    # memories linked (communities) — parent-key predicates, as for the graph
+    # memories or summaries of them linked (communities) — parent-key predicates, as for the graph
     # links. Read at census time from loom.memory's tombstoned rows and the
     # edge links; under a purge the memory rows are gone and the predicates
     # read 0, as `USER_CHUNKS` does.

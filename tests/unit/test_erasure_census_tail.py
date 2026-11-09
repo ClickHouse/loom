@@ -675,7 +675,7 @@ async def _async_noop(*a, **kw):
     return None
 
 
-async def test_both_sagas_run_entity_vectors_delete_after_the_graph_step(monkeypatch) -> None:
+async def test_entity_vectors_delete_sits_beside_the_graph_steps(monkeypatch) -> None:
     calls = _record_steps(monkeypatch)
     await h._saga_namespace("o", ["lme-1"], completed=set(), row={}, external=False)
     assert calls.index("entity_vectors.delete") == calls.index("entity_graph.delete") + 1, calls
