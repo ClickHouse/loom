@@ -54,7 +54,7 @@ const isAbort = (e: unknown) => e instanceof DOMException && e.name === "AbortEr
 // What one request may carry (server/assistant/api/models.py): the earlier messages, newest
 // kept, and each message's length.
 const MAX_HISTORY = 50;
-const MAX_MESSAGE_CHARS = 20_000;
+export const MAX_MESSAGE_CHARS = 20_000;
 
 /** The messages a new question goes with: the turns shown, but a question refused before
  *  any answer (it was never answered, and the person asks again) and no empty answer; the
@@ -120,7 +120,7 @@ export function AssistantChat({
 
   const ask = () => {
     const question = draft.trim();
-    if (!question || answering || blocked) return;
+    if (!question || question.length > MAX_MESSAGE_CHARS || answering || blocked) return;
     const id = nextId.current++;
     const messages = conversation(turns, question);
     const mine = new AbortController();
@@ -197,7 +197,14 @@ export function AssistantChat({
     );
 
   const sendBlocked =
-    blocked ?? (answering ? "An answer is still coming in." : draft.trim() ? null : "Type a question.");
+    blocked ??
+    (answering
+      ? "An answer is still coming in."
+      : !draft.trim()
+        ? "Type a question."
+        : draft.length > MAX_MESSAGE_CHARS
+          ? `A question is at most ${MAX_MESSAGE_CHARS.toLocaleString("en-US")} characters.`
+          : null);
   return (
     <div className="space-y-4">
       {turns.length > 0 && (

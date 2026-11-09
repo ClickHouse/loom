@@ -54,6 +54,8 @@ export function Assistant() {
   // again with another scope (the page stays mounted) drops what the old one read.
   const tokenScope = tokenReadScope(storedToken());
   const scope = `${identity?.org}/${identity?.namespace}/${tokenScope?.readScope ?? "-"}/${tokenScope?.readUserId ?? "-"}`;
+  // The chat's conversation is the signed-in person's too: it remounts and is kept under one key.
+  const chatKey = `${whoami?.subject ?? "-"}/${scope}`;
   const inventory = useScopedRead<NamespaceInventory>(scope);
   const inspection = useScopedRead<MemoryInspection>(scope);
   const documents = useScopedRead<KnowledgeInspection>(scope);
@@ -195,15 +197,11 @@ export function Assistant() {
         <SectionHeading id="assistant-chat" level={2} label="Ask the assistant" />
         <p className="text-sm text-text-muted mb-3 max-w-[72ch]">
           Ask about what this namespace holds. The assistant reads with your access and calls a model, which counts
-          against this namespace's model budget. The conversation stays in this tab: Loom stores none of it.
+          against this namespace's model budget. The conversation stays in this tab until it reloads: Loom stores none
+          of it.
         </p>
         {/* A new namespace or token scope starts a new conversation. */}
-        <AssistantChat
-          key={`${whoami?.subject ?? "-"}/${scope}`}
-          conversationKey={`${whoami?.subject ?? "-"}/${scope}`}
-          namespace={namespace}
-          blocked={chatGate}
-        />
+        <AssistantChat key={chatKey} conversationKey={chatKey} namespace={namespace} blocked={chatGate} />
       </Panel>
 
       <Panel as="section" aria-labelledby="assistant-inspect" className="mb-5">

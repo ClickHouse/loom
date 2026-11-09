@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { axeViolations } from "../../test/axe";
 import { useStore } from "../../lib/state";
-import { AssistantChat, conversation } from "./Chat";
+import { AssistantChat, conversation, MAX_MESSAGE_CHARS } from "./Chat";
 
 // The chat posts OpenAI's chat body to /v1/assistant/chat/completions and reads the
 // server-sent chunks the route streams (server/assistant/app/routes.py): `data: {chunk}`
@@ -236,6 +236,43 @@ describe("AssistantChat", () => {
     // Another key (another subject, namespace or scope) starts empty.
     render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
     expect(screen.queryByText("Who owns billing?")).not.toBeInTheDocument();
+  });
+
+  it("shows an answer cut off by leaving the chat as stopped when it comes back", async () => {
+    const s = sse();
+    answers.push(() => s);
+    const k = key();
+    const { unmount } = render(<AssistantChat conversationKey={k} namespace="team" blocked={null} />);
+    await ask("Who owns billing?");
+    await act(async () => s.text("Ada"));
+    await screen.findByText("Ada");
+    unmount();
+    render(<AssistantChat conversationKey={k} namespace="team" blocked={null} />);
+    expect(screen.getByText("Ada")).toBeInTheDocument();
+    expect(screen.getByText("Stopped.")).toBeInTheDocument();
+    // Nothing is still answering: the next question can be asked.
+    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
+    answers.push(() => {
+      const next = sse();
+      queueMicrotask(() => {
+        next.text("Grace.");
+        next.done();
+      });
+      return next;
+    });
+    await ask("And payroll?");
+    expect(await screen.findByText("Grace.")).toBeInTheDocument();
+  });
+
+  it("asks nothing with a question longer than the route accepts, and says why", async () => {
+    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    const user = userEvent.setup();
+    const field = screen.getByLabelText("Question");
+    await user.click(field);
+    await user.paste("x".repeat(MAX_MESSAGE_CHARS + 1));
+    await user.keyboard("{Enter}");
+    expect(calls).toHaveLength(0);
+    expect(screen.getByText(/A question is at most 20,000 characters/)).toBeInTheDocument();
   });
 
   it("sends the newest messages the route accepts, each cut to its length", () => {

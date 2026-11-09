@@ -8,8 +8,8 @@ import { CodeBlock } from "./CodeBlock";
  * React text node: HTML in it shows as written, an image or a link shows as its Markdown
  * source, and a URL is not made a link. A citation (`[memory:<key>@v<version>]`,
  * `[doc:<uri> § <section>]`, `[code:<path>:<line>]`) shows as written; the answer's Sources
- * list links each one the server verified. A heading is drawn as a bold line, keeping the page's heading
- * outline its own.
+ * list links each one the server verified. A heading is drawn as a bold line, keeping the
+ * page's heading outline its own.
  */
 export function AnswerText({ text }: { text: string }) {
   return <div className="space-y-2 text-sm text-text break-words">{blocks(text)}</div>;
