@@ -32,6 +32,7 @@ from server.code.app.index.ingest_resolve import (
     _resolve_lane_includes,
 )
 from server.code.app.index.ingest_stats import FileIngestStats, error_text
+from server.code.domain.extract.bounded_parse import ParseUnavailable
 from server.code.domain.extract.edges_treesitter import (
     Edge,
     HeaderDecls,
@@ -169,6 +170,20 @@ async def _py_class_bases(
     return out
 
 
+async def _header_or_none(
+    repo: Any, org: str, ns: str, pf: ParsedFile, path: str, stats: FileIngestStats
+) -> HeaderDecls | None:
+    """`header_context`; None when the read fails (the file binds what it alone binds). A
+    parse that could not run here now is raised: the caller keeps the live rows."""
+    try:
+        return await header_context(repo, org, ns, pf, path, stats)
+    except ParseUnavailable:
+        raise
+    except Exception as hdr_exc:  # noqa: BLE001 — degrade to the one-file result
+        logger.debug("code ingest: header lookup failed for %s: %s", path, hdr_exc)
+        return None
+
+
 async def _derive_edges(
     repo: CodeRepo,
     org: str,
@@ -180,15 +195,11 @@ async def _derive_edges(
     """This parse's edges and declined sites against the current name table, the class's
     header consulted first (a header read that fails binds what the file alone binds). A
     failing extraction is an index error on the file, never a lost chunk or symbol."""
-    header: HeaderDecls | None = None
     if path.endswith(HEADER_EXTS):
         # this header's chunks were just rewritten above (or are about to be
         # read again): the text a source file cached from them is stale
         forget_header(org, ns, path)
-    try:
-        header = await header_context(repo, org, ns, pf, path, stats)
-    except Exception as hdr_exc:  # noqa: BLE001 — degrade to the one-file result
-        logger.debug("code ingest: header lookup failed for %s: %s", path, hdr_exc)
+    header = await _header_or_none(repo, org, ns, pf, path, stats)
 
     async def _run() -> tuple[list[Edge], list[Any]]:
         await _resolve_lane_includes(repo, org, ns, pf)
@@ -249,6 +260,8 @@ async def _derive_edges(
 
     try:
         return await _with_deep_recursion(_run)
+    except ParseUnavailable:
+        raise  # the host, not the file: the caller keeps the live rows
     except Exception as edge_exc:  # noqa: BLE001 — chunks + symbols are already durable
         logger.warning("code ingest: edge extraction failed for %s: %s", path, edge_exc)
         stats.error = "; ".join(x for x in (stats.error, error_text("edges", edge_exc)) if x)

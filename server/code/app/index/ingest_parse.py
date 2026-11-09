@@ -45,7 +45,7 @@ def parse_for_ingest(path: str, source: bytes) -> tuple[ParsedFile | None, str]:
         return _parse_for_ingest(path, source)
     except ParseUnavailable as e:  # from language detection, before the parser's own catch
         logger.warning("code ingest: parse failed for %s: %s", path, e)
-        return ParsedFile(path=path, lang="", source=source), error_text("parse", e)
+        return None, error_text("parse", e)  # its language unknown: its live rows stand
 
 
 def _parse_for_ingest(path: str, source: bytes) -> tuple[ParsedFile | None, str]:

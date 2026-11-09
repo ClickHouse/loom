@@ -781,4 +781,47 @@ def test_ingest_records_a_shell_detection_that_could_not_run_as_a_parse_failure(
 
     monkeypatch.setattr(bounded_parse, "parse", unavailable)
     pf, err = parse_for_ingest("tests/run", b"a=(1 2)\necho hi\n")
-    assert pf is not None and pf.symbols == [] and parse_unavailable(err)
+    assert pf is None and parse_unavailable(err)
+
+
+def test_an_edge_parse_that_could_not_run_keeps_the_live_edges(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.code.app.index import ingest_edges, ingest_reconcile
+    from server.code.app.index.ingest_stats import FileIngestStats
+    from server.code.domain.extract import bounded_parse
+    from server.code.domain.extract.treesitter import parse_cpp
+
+    def unavailable(*a: Any, **k: Any) -> Any:
+        raise bounded_parse.ParseUnavailable("killed twice")
+
+    async def no_header(*a: Any) -> None:
+        return None
+
+    class Repo:
+        rows: list[Any] = []
+
+        async def live_edges_for_path(self, *a: Any) -> list[dict[str, Any]]:
+            raise AssertionError("the live edges were read to be replaced")
+
+        async def insert_rows(self, table: str, rows: list[Any]) -> None:
+            self.rows.extend(rows)
+
+    monkeypatch.setattr(ingest_edges, "header_context", no_header)
+    monkeypatch.setattr(ingest_edges, "collect_call_names", unavailable)  # the edge run's parse
+    monkeypatch.setattr(ingest_edges, "_resolve_lane_includes", no_header)
+    pf = parse_cpp("src/a.cpp", b"void f() { g(); }\n")
+    stats = FileIngestStats(path="src/a.cpp")
+    repo = Repo()
+    got = asyncio.run(
+        ingest_reconcile._reconcile_edges_and_misses(
+            repo,  # type: ignore[arg-type]
+            "o",
+            "n",
+            pf,
+            "src/a.cpp",
+            "c" * 40,
+            stats,
+        )
+    )
+    assert got is None and repo.rows == [] and "ParseUnavailable" in stats.error

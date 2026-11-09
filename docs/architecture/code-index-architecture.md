@@ -205,7 +205,10 @@ grammar or a tree-sitter parse past `code_parse_timeout_s` or `code_parse_memory
 (`bounded_parse`, one parse at a time), degrades to a chunk-only file with
 `code_files.index_error` set; `code.index_errors` reports it; a TLA+ spec instead falls
 back to its regex reader. A parse past its limits anywhere else takes its caller's
-fallback and records no error.
+fallback and records no error. A parse that could not run here now (`ParseUnavailable`:
+its process silent or killed from outside, or its caller's wait for the lock run out)
+is no fact of the file: no cache keeps it, ingest records it as an error and keeps the
+file's live edges, and a PR overlay counts the file as not reached.
 Tree-sitter modules import lazily, so a server with the code workers off boots without the
 `code` extras.
 
