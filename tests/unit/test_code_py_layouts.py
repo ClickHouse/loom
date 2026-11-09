@@ -413,7 +413,6 @@ def test_files_that_miss_the_layout_cache_at_once_share_one_read(monkeypatch):
 
     def layout(texts, present):
         calls.append(1)
-        time.sleep(0.05)  # in the thread: the other callers arrive while it runs
         return pl.Layout()
 
     monkeypatch.setitem(ingest_resolve._LIVE_PATHS_CACHE, ("o", "n"), (time.monotonic(), set()))

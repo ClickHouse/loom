@@ -403,7 +403,7 @@ def layout_from_texts(texts: dict[str, str], present: Iterable[str]) -> Layout:
         roots.update(dict.fromkeys(roots_from_manifest(p, text)))
         eps.extend(entry_points_from_manifest(p, text))
     roots.update(dict.fromkeys(conftest_roots(present)))
-    return Layout(tuple(list(roots)[:MAX_ROOTS]), tuple(eps), tuple(manifests), notes)
+    return Layout(tuple(roots)[:MAX_ROOTS], tuple(eps), tuple(manifests), notes)
 
 
 # ---------------------------------------------------------------------------

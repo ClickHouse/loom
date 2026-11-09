@@ -8,7 +8,8 @@ a function's blast radius never names the document that specifies it. Here a Mar
 file is:
 
 * a ``section`` symbol per heading, qualified name `<module>::<H1>::<H2>…`
-  from the heading text (the file's `module_scope`, headings as written),
+  from the heading text (the file's `module_scope`, headings as written; a
+  name over 1,000 characters is cut and ends in a hash of the cut path),
   signature the `#` line, span from the heading to the next heading of the
   same or a higher level, doc the first paragraph; a file with a single H1
   is that section's parent;
@@ -53,6 +54,7 @@ _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
 _FENCE_RE = re.compile(r"^(```|~~~)")
 # A section repeats its ancestors' titles in its qualified name and heading path: the
 # titles and both are cut, so a section costs at most this much whatever its depth.
+# not a setting: changing it renames the stored sections it cuts
 _MAX_PATH = 1000
 _LINK_RE = re.compile(r"\]\(((?:(?!\]\()[^)\s])++)(?:\s+\"[^\"]*\")?\)")
 _CODE_REF_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)(?:\(\))?`")
@@ -141,7 +143,7 @@ def sections_of(text: str) -> tuple[list[Section], int]:
             # The closing `#`s off in Python: a pattern that matches them after a lazy
             # title backtracks cubically on a run of spaces.
             rest = h.group(2)
-            # `or`: a rest of only `#`s keeps its first, as the old pattern's title did
+            # `or`: a rest of only `#`s keeps one `#` as its title
             title = rest.rstrip().rstrip("#").rstrip() or rest[:1]
             heads.append((i, len(h.group(1)), title.strip()[:_MAX_PATH].rstrip()))
     out: list[Section] = []
@@ -173,8 +175,8 @@ def _qname(mod: str, sec: Section) -> str:
     name = "::".join([mod, *sec.path_titles])
     if len(name) <= _MAX_PATH:
         return name
-    # cut, with a hash of the whole so two cut names stay distinct
-    return name[: _MAX_PATH - 17] + "~" + hashlib.sha1(name.encode()).hexdigest()[:16]
+    # cut, with a hash of the cut path so two cut names stay distinct
+    return name[: _MAX_PATH - 17] + "~" + hashlib.sha256(name.encode()).hexdigest()[:16]
 
 
 def markdown_units(

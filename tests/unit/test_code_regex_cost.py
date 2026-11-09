@@ -347,6 +347,11 @@ def _where(n: int) -> str:
     return "[tool.setuptools.packages.find]\nwhere = [" + _numbered('"a{}",')(n) + "]\n"
 
 
+def _prefixed_routes(n: int) -> str:
+    prefixes = _run("", "a.include_router(r, prefix='/aaaaaaaaaaaaaaaa')\n")(n // 2)
+    return prefixes + _run("", "@r.get('/b')\ndef f(): pass\n")(n // 2)
+
+
 def _inline_templates(n: int) -> str:
     return "".join(f"@Component({{template:`<a-b{i}>`}})class A{i}{{}}\n" for i in range(n // 40))
 
@@ -388,6 +393,7 @@ _WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("cmake-rows", _cmake, _run("", "a\n")),
     ("python-route-rows", _py_routes, _run("", "app.add_url_rule('a')\n")),
     ("python-unclosed-include-router", _py_routes, _run("", "a.include_router(a,")),
+    ("python-repeated-prefix", _py_routes, _prefixed_routes),
     ("python-unclosed-add-url-rule", _py_routes, _run("", "a.add_url_rule('a'")),
     ("python-unclosed-route", _py_routes, _run("import starlette.routing\n", "Route('a'")),
     ("python-env-reads", _env, _run("", "os.environ['A']\n")),

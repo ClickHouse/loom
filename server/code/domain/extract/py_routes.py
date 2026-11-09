@@ -123,7 +123,9 @@ def _prefixes(text: str) -> dict[str, str]:
         out[m.group(1).rsplit(".", 1)[-1]] = kw.group(1) if kw else ""
     for m in _INCLUDE_ROUTER_RE.finditer(text):
         name = m.group(1).rsplit(".", 1)[-1]
-        out[name] = _url_join(m.group(2), out.get(name, ""))
+        # cut: a route name keeps only `_MAX_NAME` characters, and a prefix joined again
+        # per call would otherwise grow with every call
+        out[name] = _url_join(m.group(2), out.get(name, ""))[: 2 * _MAX_NAME]
     return out
 
 
