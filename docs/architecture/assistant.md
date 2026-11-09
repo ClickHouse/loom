@@ -40,8 +40,9 @@ flowchart LR
 Each request names its namespace: the `X-Loom-Namespace` header on the chat route (the
 token's default namespace when absent), the `namespace` field on `assistant.ask`. The
 caller needs `viewer` there, and the answer's model spend is charged there. The chat
-route, `assistant.ask` and its MCP tool and generated SDK methods, and the dashboard's
-chat are built; the SDKs' streaming clients are not yet.
+route, `assistant.ask` and its MCP tool, the generated SDK methods, the SDKs' streaming
+clients (`agent.assistant.stream` in Python, `loom.assistant.stream` in TypeScript) and
+the dashboard's chat are built.
 
 `loom_assistant_ask` is in no curated MCP roster and, while `experimental`, not in the
 `all` listing either: each call spends model budget, so an agent calls it by name on
@@ -1005,8 +1006,8 @@ by an older build.
    Built.
 4. The bridge: the chat route and `assistant.ask`, with the answer's token, the
    refusals, the budget share, the per-process limit, the spend on the answer's ledger
-   row, the answer's id on its tool calls' rows, and the citation check (built); then
-   the SDKs' streaming clients.
+   row, the answer's id on its tool calls' rows, the citation check and the SDKs'
+   streaming clients. Built.
 5. The chat on the dashboard's Assistant page, on the signed-in session and the page's
    namespace, with a Stop button that closes the request and each answer's checked
    citations under it. Built.

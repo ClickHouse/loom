@@ -11,10 +11,12 @@
  * `knowledge.bulk_add`, and so on for every group. Both forms are the same
  * call; the dotted name is the one that appears in the server's ledger.
  * `loom.knowledge` also uploads a file and follows its ingest job
- * (`upload`, `waitForIngest`, `ingestFile`; see `files.ts`).
+ * (`upload`, `waitForIngest`, `ingestFile`; see `files.ts`), and
+ * `loom.assistant` also streams an answer (`stream`; see `assistant.ts`).
  */
 
 import { AccountClient } from "./account.js";
+import { type AssistantChat, assistantChat } from "./assistant.js";
 import { type Capabilities, capabilities as fetchCapabilities } from "./capabilities.js";
 import { DEFAULT_SERVER, LocalCredential, StoredLogin, sameServer, signedInServer } from "./credentials.js";
 import { AuthError, LoomError } from "./errors.js";
@@ -72,12 +74,19 @@ export class LoomClient {
     for (const group of new Set(OPS.map((o) => o.group))) {
       const ops = this.group(group as Groups);
       Object.defineProperty(this, group, {
-        // `loom.knowledge` also sends files (`files.ts`); `group("knowledge")` is the ops alone.
-        value: group === "knowledge" ? Object.assign(ops, knowledgeFiles(this.transport)) : ops,
+        // `loom.knowledge` also sends files (`files.ts`), `loom.assistant` also streams
+        // (`assistant.ts`); `group(...)` is the ops alone.
+        value: Object.assign(ops, this.extras(group)),
         enumerable: false,
         writable: false,
       });
     }
+  }
+
+  private extras(group: string): object {
+    if (group === "knowledge") return knowledgeFiles(this.transport);
+    if (group === "assistant") return assistantChat(this.transport);
+    return {};
   }
 
   /** Call one operation by its dotted name; input and output are typed by `OpMap`. */
@@ -134,8 +143,9 @@ export class LoomClient {
 
 /** The generated groups as properties: `loom.memory`, `loom.knowledge`, … */
 export interface LoomClient extends LoomClientGroups {}
-export type LoomClientGroups = { readonly [G in Exclude<Groups, "knowledge">]: GroupClient<G> } & {
+export type LoomClientGroups = { readonly [G in Exclude<Groups, "knowledge" | "assistant">]: GroupClient<G> } & {
   readonly knowledge: GroupClient<"knowledge"> & KnowledgeFiles;
+  readonly assistant: GroupClient<"assistant"> & AssistantChat;
 };
 
 /**

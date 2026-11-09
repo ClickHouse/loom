@@ -10,6 +10,15 @@ export type {
 } from "./account.js";
 export type { Body, Scope } from "./agent.js";
 export { Agent, Datapack, SENTINEL } from "./agent.js";
+export type {
+  AskInput,
+  AssistantAnswer,
+  AssistantChat,
+  AssistantCitation,
+  AssistantEvent,
+  AssistantTurn,
+} from "./assistant.js";
+export { ASSISTANT_ROUTE } from "./assistant.js";
 export type { ProbeResult } from "./capabilities.js";
 export { Capabilities, capabilities, probe } from "./capabilities.js";
 export type {

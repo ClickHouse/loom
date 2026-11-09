@@ -54,7 +54,7 @@ got = await agent.memory.get(memory_key="deploy_window")
 hits = await agent.memory.search("when do we deploy")
 ```
 
-The `Agent` exposes 27 client modules: `client`, `account`, `deployment`, `memory`, `working_memory`, `knowledge`, `conversations`, `profile`, `context`, `facts`, `learnings`, `conflicts`, `blacklist`, `grants`, `erasure`, `cost`, `audit`, `namespaces`, `procedure`, `run`, `tasks`, `policy`, `decision`, `calibration`, `briefs`, `code`, `tracker`. Each of the named ones is the hand-written layer over a wire-op group on the Loom server (`account` and `deployment` cover the routes outside the op registry: service accounts, MCP setup, model settings, worker health); `client` holds every served op as a generated method (below).
+The `Agent` exposes 28 client modules: `client`, `account`, `deployment`, `assistant`, `memory`, `working_memory`, `knowledge`, `conversations`, `profile`, `context`, `facts`, `learnings`, `conflicts`, `blacklist`, `grants`, `erasure`, `cost`, `audit`, `namespaces`, `procedure`, `run`, `tasks`, `policy`, `decision`, `calibration`, `briefs`, `code`, `tracker`. Each of the named ones is the hand-written layer over a wire-op group on the Loom server (`account`, `deployment` and `assistant` cover the routes outside the op registry: service accounts, MCP setup, model settings, worker health, the assistant's streamed chat); `client` holds every served op as a generated method (below).
 
 Full guide: [docs/reference/python-sdk.md](https://github.com/ClickHouse/loom/blob/main/docs/reference/python-sdk.md). Deployment paths (how an operator stands up the server): [docs/operations/deployment.md](https://github.com/ClickHouse/loom/blob/main/docs/operations/deployment.md).
 
@@ -117,6 +117,27 @@ async with Agent(org="acme", namespace="support", agent="triage-bot") as bot:
 the first call instead. Name your agent: `""`, `"-"` and `"*"` default to
 `sdk-python:<script>` with a warning, because an anonymous agent is every
 other anonymous caller to the ledger, the mentor and the cost views.
+
+## Ask the assistant
+
+The Loom assistant answers a question about a namespace as your token: it reads
+only what you may read, and each answer spends from the namespace's daily model
+cost cap. `stream` yields the text as it is written, then one `AssistantAnswer`
+whose citations the server checked against Loom:
+
+```python
+from loom import AssistantText
+
+async for event in bot.assistant.stream("When are production deploys frozen?"):
+    if isinstance(event, AssistantText):
+        print(event.text, end="")
+    elif not event.verified:
+        print("\n(no verified citation: treat the answer as unsupported)")
+```
+
+`ask` returns the `AssistantAnswer` whole; `history` carries earlier turns and
+`namespace` asks about another namespace you can read. An answer that began is
+never resent, nor one refused with a 429: asking again is a new answer with its own spend.
 
 ## Sessions and tools: what an agent framework holds
 
