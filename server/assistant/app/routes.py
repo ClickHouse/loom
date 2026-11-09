@@ -24,7 +24,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.requests import ClientDisconnect
 
-from server.assistant.app import bridge, service
+from server.assistant.app import bridge, citations, service
 from server.auth.authz import check_acted_for
 from server.auth.bearer import missing_bearer, verify_bearer_header
 from server.auth.context import set_current_auth
@@ -311,6 +311,7 @@ async def _whole(chunks: AsyncIterator[bytes], held: _Held) -> JSONResponse:
                     "finish_reason": "stop",
                 }
             ],
+            "citations": [c.model_dump() for c in answer.citations],
             "usage": {
                 "prompt_tokens": answer.prompt_tokens,
                 "completion_tokens": answer.completion_tokens,
@@ -323,3 +324,4 @@ async def _whole(chunks: AsyncIterator[bytes], held: _Held) -> JSONResponse:
 
 def attach(app: Any) -> None:
     app.include_router(router)
+    citations.set_app(app)  # each citation is checked through Loom's own routes

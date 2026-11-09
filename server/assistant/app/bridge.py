@@ -21,8 +21,8 @@ from typing import Any, NoReturn
 
 import httpx
 
-from server.assistant.api.models import MAX_HISTORY, MAX_MESSAGE_CHARS
-from server.assistant.app import service
+from server.assistant.api.models import MAX_HISTORY, MAX_MESSAGE_CHARS, AssistantCitation
+from server.assistant.app import citations, service
 from server.auth.authz import check_authorized
 from server.auth.delegation import delegate
 from server.auth.jwt import AuthInfo
@@ -75,6 +75,8 @@ class Ticket:
     api_key: str = field(repr=False)
     token: str = field(repr=False)
     slot: int
+    # The caller's subject: its answer's tool calls are ledgered under it.
+    subject: str
 
     def release(self) -> None:
         """Give the answer's slot back; a second call does nothing."""
@@ -93,6 +95,8 @@ class Answer:
     # LibreChat's stream began: from here the answer is charged.
     started: bool = False
     error: str = ""
+    # Each citation the answer wrote, checked (citations.verify), once it ended.
+    citations: list[AssistantCitation] = field(default_factory=list)
 
 
 def admitted_messages(messages: Any) -> list[dict[str, str]]:
@@ -227,7 +231,7 @@ async def open_answer(auth: AuthInfo, org: str, namespace: str) -> Ticket:
     except BaseException:
         _give_back(org, namespace, slot)
         raise
-    return Ticket(org, namespace, agent_id, api_key, token, slot)
+    return Ticket(org, namespace, agent_id, api_key, token, slot, auth.subject)
 
 
 def _give_back(org: str, namespace: str, slot: int) -> None:
@@ -245,7 +249,8 @@ async def stream(
     LOOM_ASSISTANT_ANSWER_TTL_S. LibreChat unreachable, refusing, ending the answer with
     an error or running past the limit raises ASSISTANT_UPSTREAM_FAILED, naming none of
     LibreChat's text. Once LibreChat's stream has begun, the answer's spend is charged
-    however it ends."""
+    however it ends. An answer that ended keeps its slot through its citation checks and
+    ends with their `loom.citations` event, then `[DONE]`."""
     body = {
         "model": ticket.agent_id,
         "messages": messages,
@@ -258,6 +263,7 @@ async def stream(
     ttl = float(settings.assistant_answer_ttl_s)
     timeout = httpx.Timeout(ttl, connect=_CONNECT_S)
     deadline = asyncio.get_running_loop().time() + ttl
+    answered = False  # LibreChat's stream ended: the slot is held through the checks
     try:
         async with httpx.AsyncClient(
             base_url=str(settings.assistant_librechat_url), timeout=timeout
@@ -296,16 +302,43 @@ async def stream(
                     yield (line + "\n\n").encode()
             finally:
                 await r.aclose()
+        answered = True
     except httpx.HTTPError as e:
         log.warning("reaching LibreChat for an answer failed: %s", e)
         raise AssistantUpstreamError(f"LibreChat could not be reached ({error_kind(e)})") from e
     except TimeoutError as e:
         raise AssistantUpstreamError(f"the answer ran past {int(ttl)} s") from e
     finally:
-        ticket.release()
+        if not answered:
+            ticket.release()
         if answer.started:
             _charge(answer)
+    yield await _checked(ticket, answer)
     yield b"data: [DONE]\n\n"
+
+
+async def _checked(ticket: Ticket, answer: Answer) -> bytes:
+    """The answer's citations, checked inside its slot (the checks are the answer's
+    too), as the stream's `loom.citations` event; the slot is given back after."""
+    try:
+        answer.citations = await citations.verify(
+            "".join(answer.text),
+            org=ticket.org,
+            namespace=ticket.namespace,
+            token=ticket.token,
+            run_id=answer.run_id,
+            subject=ticket.subject,
+        )
+    finally:
+        ticket.release()
+    event = {
+        "object": "loom.citations",
+        "id": answer.run_id,
+        # The usage chunk's shape: a client that guards for no choices skips it.
+        "choices": [],
+        "citations": [c.model_dump() for c in answer.citations],
+    }
+    return f"data: {json.dumps(event)}\n\n".encode()
 
 
 def _redacted(ticket: Ticket, text: str) -> str:
@@ -394,8 +427,13 @@ async def ask(auth: AuthInfo, org: str, namespace: str, messages: Any) -> Answer
     await authorize(auth, org, namespace)
     ticket = await open_answer(auth, org, namespace)
     answer = Answer()
-    async for _ in stream(ticket, kept, answer):
-        pass
+    try:
+        async for _ in stream(ticket, kept, answer):
+            pass
+    finally:
+        # The slot comes back even when the stream stops before its own release (a charge
+        # that fails); a second release does nothing.
+        ticket.release()
     return answer
 
 

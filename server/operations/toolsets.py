@@ -395,6 +395,14 @@ ASSISTANT_FORCED_ARGS: dict[str, dict[str, object]] = {
 }
 
 
+# Arguments no assistant call keeps: a call's own `run_id` would file its ledger and
+# exposure rows under a run of the model's choosing, not the answer's (`X-Loom-Run-Id`),
+# and the answer's citations are checked by the answer's run. On memory.search it is
+# also a filter (rows written under one run): the assistant gives that recall up, since
+# an answer is about a namespace, not about one agent's run.
+ASSISTANT_DROPPED_ARGS: frozenset[str] = frozenset({"run_id"})
+
+
 # The assistant reads of one writer's rows: they match the writer exactly, so a call that
 # names no `agent` is refused, and the listing marks it required.
 ASSISTANT_NAMED_AGENT_OPS: frozenset[str] = frozenset({"memory.aggregate", "memory.provenance"})

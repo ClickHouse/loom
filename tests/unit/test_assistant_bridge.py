@@ -167,7 +167,14 @@ def test_an_answer_runs_the_seeded_agent_with_its_own_token(world: _World) -> No
     assert "".join(answer.text) == "Seven memories." and answer.run_id == "chatcmpl-1"
     # The bridge's own ledger row shares the run its tool calls are ledgered under.
     assert run == "chatcmpl-1"
-    assert chunks[-1] == b"data: [DONE]\n\n" and len(chunks) == 4
+    # The agent's three chunks, the checked citations, then the end.
+    assert chunks[-1] == b"data: [DONE]\n\n" and len(chunks) == 5
+    assert json.loads(chunks[-2][6:]) == {
+        "object": "loom.citations",
+        "id": "chatcmpl-1",
+        "choices": [],
+        "citations": [],
+    }
 
 
 def test_the_answer_token_is_viewer_on_the_namespace_for_one_answer(world: _World) -> None:
@@ -321,7 +328,7 @@ def test_only_the_callers_text_turns_reach_the_agent() -> None:
 
 
 def test_a_logged_librechat_error_names_neither_secret() -> None:
-    ticket = bridge.Ticket(ORG, NS, "agent_1", "sk-secret", "answer.jwt." + "x" * 400, 7)
+    ticket = bridge.Ticket(ORG, NS, "agent_1", "sk-secret", "answer.jwt." + "x" * 400, 7, "alice")
     echoed = f"bad request: parent_message_id={ticket.token} key=sk-secret"
     logged = bridge._redacted(ticket, echoed)
     assert "answer.jwt" not in logged and "sk-secret" not in logged
@@ -329,7 +336,7 @@ def test_a_logged_librechat_error_names_neither_secret() -> None:
 
 
 def test_a_ticket_prints_neither_secret() -> None:
-    ticket = bridge.Ticket(ORG, NS, "agent_1", "sk-secret", "answer.jwt", 7)
+    ticket = bridge.Ticket(ORG, NS, "agent_1", "sk-secret", "answer.jwt", 7, "alice")
     assert "sk-secret" not in repr(ticket) and "answer.jwt" not in repr(ticket)
 
 
@@ -387,6 +394,8 @@ def client(world: _World, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, list[di
     monkeypatch.setattr(routes, "emit_agent_event", emit)
     app = FastAPI()
     register_exception_handler(app)
+    # `attach` hands the app to the citation checks: restored after the test.
+    monkeypatch.setattr(routes.citations, "_app", None)
     routes.attach(app)
     return TestClient(app), rows
 
@@ -414,7 +423,7 @@ def test_the_chat_route_streams_the_agents_chunks(client: Any) -> None:
     r = http.post(ROUTE, headers=HEADERS, json={"stream": True, "messages": QUESTION})
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
     events = [line for line in r.text.split("\n\n") if line]
-    assert events[-1] == "data: [DONE]" and len(events) == 4
+    assert events[-1] == "data: [DONE]" and len(events) == 5
     (row,) = rows
     assert row["success"] is True and row["cost"] > 0
     # The streamed body runs in a task of its own; the row still names the answer.
@@ -752,7 +761,7 @@ def test_an_error_chunk_echoing_the_token_logs_no_part_of_it(
 ) -> None:
     opened = asyncio.run(bridge.open_answer(_caller(), ORG, NS))
     token = "Zq9T" + "k" * 60
-    ticket = bridge.Ticket(ORG, NS, opened.agent_id, opened.api_key, token, opened.slot)
+    ticket = bridge.Ticket(ORG, NS, opened.agent_id, opened.api_key, token, opened.slot, "alice")
     # `{"message": "` is 13 characters: the token starts at 295, across the 300-character
     # cut, where a cut before the redaction would leave its first five in the log.
     message = "x" * 263 + f" parent_message_id={token}"
@@ -1032,3 +1041,64 @@ def test_answers_draw_a_rate_limit_bucket_of_their_own(monkeypatch: pytest.Monke
     # The namespace's default bucket is whole: answers spent none of its tokens.
     first = limiter.check(NS, "namespace.summary", org=ORG, actor="alice")
     assert first.allowed and first.remaining == ratelimit.DEFAULT_LIMITS["default"].capacity - 1
+
+
+def test_an_answers_checked_citations_reach_every_surface(
+    world: _World, client: tuple[Any, list[dict[str, Any]]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.assistant.api.models import AssistantAskInput, AssistantCitation
+    from server.assistant.app import ask
+
+    checked = [
+        AssistantCitation(kind="memory", text="[memory:a/b/c@v3]", verified=True, ref="a/b/c")
+    ]
+    asked: list[str] = []
+
+    async def verify(text: str, **_kw: Any) -> list[AssistantCitation]:
+        asked.append(text)
+        return checked
+
+    monkeypatch.setattr(bridge.citations, "verify", verify)
+    wire = [c.model_dump() for c in checked]
+    http, _ = client
+    # The stream's last event before [DONE].
+    r = http.post(ROUTE, headers=HEADERS, json={"stream": True, "messages": QUESTION})
+    events = [line for line in r.text.split("\n\n") if line]
+    assert json.loads(events[-2][6:])["citations"] == wire
+    # The whole answer.
+    r = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
+    assert r.json()["citations"] == wire
+    # assistant.ask.
+    monkeypatch.setattr(ask, "current_auth", lambda: _caller())
+    out = asyncio.run(
+        ask.handle_assistant_ask(AssistantAskInput(org=ORG, namespace=NS, question="q"))
+    )
+    assert [c.model_dump() for c in out.citations] == wire
+    # Each checked the answer's own text.
+    assert asked and all(text == "Seven memories." for text in asked)
+
+
+def test_the_citation_checks_run_inside_the_answers_slot(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    held: list[bool] = []
+
+    async def verify(_text: str, **_kw: Any) -> list[Any]:
+        held.append(bool(bridge._running.get((ORG, NS))))
+        return []
+
+    monkeypatch.setattr(bridge.citations, "verify", verify)
+    _answer(_caller(), QUESTION)
+    assert held == [True] and bridge._running == {}
+
+
+def test_the_op_gives_its_slot_back_when_charging_fails(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(_answer: Any) -> None:
+        raise RuntimeError("the price table is unreadable")
+
+    monkeypatch.setattr(bridge, "_charge", broken)
+    with pytest.raises(RuntimeError):
+        asyncio.run(bridge.ask(_caller(), ORG, NS, QUESTION))
+    assert bridge._running == {}
