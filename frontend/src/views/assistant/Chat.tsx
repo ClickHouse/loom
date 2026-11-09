@@ -1,0 +1,248 @@
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { Button } from "@clickhouse/click-ui/Button";
+import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
+import { type ChatMessage, type Citation, streamAssistantChat } from "../../api/assistantChat";
+import { Alert, Unavailable } from "../../components/ui";
+import { ApiError } from "../../lib/errors";
+import { humanizeError } from "../../lib/format";
+import { AnswerText } from "./AnswerText";
+import { Sources } from "./Sources";
+
+/**
+ * The assistant's chat. The conversation lives in this component, in the tab's memory:
+ * Loom stores none of it, so each question goes with every earlier question and answer.
+ * The parent keys it by namespace and token scope, so a change of either starts a new
+ * conversation (and an answer still streaming is stopped).
+ */
+
+type TurnState = "answering" | "done" | "stopped" | "failed" | "refused";
+
+interface Turn {
+  id: number;
+  question: string;
+  answer: string;
+  state: TurnState;
+  error?: string;
+  /** The answer's citations as the server checked them; absent until the answer ends, or
+   *  from a server that sends none. */
+  citations?: Citation[];
+}
+
+// The lead-in for each refusal the chat route answers; the server's own words follow.
+const REFUSAL_LEAD: Record<string, string> = {
+  RATE_LIMITED: "The assistant cannot answer in this namespace right now:",
+  OVERLOADED: "The assistant is busy:",
+  AUTH_INSUFFICIENT: "The assistant refused this request:",
+  MODEL_CALLS_DISABLED: "Model calls are switched off for this organization:",
+  ASSISTANT_UNAVAILABLE: "The assistant is not available:",
+  STREAM_ENDED: "The answer was cut off:",
+};
+
+function refusalText(e: unknown): string {
+  if (!(e instanceof ApiError)) return humanizeError(e);
+  const lead = REFUSAL_LEAD[e.code];
+  const said = (e.serverMessage || e.code).replace(/\.$/, "");
+  const text = lead ? `${lead} ${said}.` : humanizeError(e);
+  const retry = e.detail.retry_after_s;
+  return typeof retry === "number" && retry > 0 ? `${text} Try again in ${Math.ceil(retry)} s.` : text;
+}
+
+const isAbort = (e: unknown) => e instanceof DOMException && e.name === "AbortError";
+
+/** The messages a new question goes with: every turn shown, but a question refused before
+ *  any answer (it was never answered, and the person asks again), and no empty answer. */
+export function conversation(turns: Turn[], question: string): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  for (const t of turns) {
+    if (t.state === "refused") continue;
+    out.push({ role: "user", content: t.question });
+    if (t.answer.trim()) out.push({ role: "assistant", content: t.answer });
+  }
+  out.push({ role: "user", content: question });
+  return out;
+}
+
+export function AssistantChat({ namespace, blocked }: { namespace: string; blocked: string | null }) {
+  const [turns, setTurns] = useState<Turn[]>([]);
+  const [draft, setDraft] = useState("");
+  const [unavailable, setUnavailable] = useState<string | null>(null);
+  const [announce, setAnnounce] = useState("");
+  const controller = useRef<AbortController | null>(null);
+  const nextId = useRef(1);
+  const field = useRef<HTMLTextAreaElement>(null);
+  const stopButton = useRef<HTMLButtonElement>(null);
+  const answering = turns.some((t) => t.state === "answering");
+
+  // Leaving the page (or the namespace, which remounts this) closes the answer's request.
+  useEffect(() => () => controller.current?.abort(), []);
+
+  const update = (id: number, change: (t: Turn) => Partial<Turn>) =>
+    setTurns((ts) => ts.map((t) => (t.id === id ? { ...t, ...change(t) } : t)));
+
+  const finish = (id: number, change: Partial<Turn>, said: string) => {
+    // The Stop button unmounts with the answer: a focus on it goes back to the question field.
+    if (document.activeElement === stopButton.current) field.current?.focus();
+    update(id, () => change);
+    setAnnounce(said);
+  };
+
+  const ask = () => {
+    const question = draft.trim();
+    if (!question || answering || blocked) return;
+    const id = nextId.current++;
+    const messages = conversation(turns, question);
+    const mine = new AbortController();
+    controller.current = mine;
+    setTurns((ts) => [...ts, { id, question, answer: "", state: "answering" }]);
+    setDraft("");
+    setAnnounce("The assistant is answering.");
+    let streamed = false;
+    streamAssistantChat(
+      namespace,
+      messages,
+      {
+        onText: (text) => {
+          streamed = true;
+          update(id, (t) => ({ answer: t.answer + text }));
+        },
+        onCitations: (citations) => update(id, () => ({ citations })),
+      },
+      mine.signal,
+    )
+      .then(() => finish(id, { state: "done" }, "The answer is complete."))
+      .catch((e: unknown) => {
+        if (isAbort(e)) {
+          finish(id, { state: "stopped" }, "The answer was stopped.");
+          return;
+        }
+        // A refusal before the stream started is an HTTP error (status set); one inside
+        // the stream is an error event (status 0) after part of the answer.
+        const before = e instanceof ApiError && e.status !== 0 && !streamed;
+        if (before && e.code === "ASSISTANT_UNAVAILABLE") {
+          // Nothing to ask until the deployment sets the assistant up: the turn goes, and
+          // the question waits in the field for a later try.
+          setTurns((ts) => ts.filter((t) => t.id !== id));
+          setDraft((d) => d || question);
+          setUnavailable(e.serverMessage || "");
+          setAnnounce("");
+          return;
+        }
+        // A refused question was never answered: it waits in the field to be asked again.
+        if (before) setDraft((d) => d || question);
+        finish(id, { state: before ? "refused" : "failed", error: refusalText(e) }, "");
+      })
+      .finally(() => {
+        if (controller.current === mine) controller.current = null;
+      });
+  };
+
+  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Enter asks, Shift+Enter starts a new line; an input method's Enter commits its text.
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      ask();
+    }
+  };
+
+  if (unavailable !== null)
+    return (
+      <div className="space-y-3" data-testid="assistant-chat-unavailable">
+        <Alert
+          role="status"
+          state="neutral"
+          size="medium"
+          text={
+            <>
+              <strong>The assistant is not available on this deployment.</strong>{" "}
+              {unavailable && <span className="break-words">{unavailable}</span>}
+            </>
+          }
+        />
+        <Button type="secondary" htmlType="button" onClick={() => setUnavailable(null)}>
+          Try again
+        </Button>
+      </div>
+    );
+
+  const sendBlocked =
+    blocked ?? (answering ? "An answer is still coming in." : draft.trim() ? null : "Type a question.");
+  return (
+    <div className="space-y-4">
+      {turns.length > 0 && (
+        <ol className="space-y-4" aria-label="Conversation">
+          {turns.map((t) => (
+            <li key={t.id} className="space-y-2">
+              <div className="rounded-lg bg-surface-2 p-3">
+                <p className="section-label">You</p>
+                <p className="text-sm text-text whitespace-pre-wrap break-words">{t.question}</p>
+              </div>
+              <div className="px-3" aria-busy={t.state === "answering" || undefined}>
+                <p className="section-label">Assistant</p>
+                {t.answer && <AnswerText text={t.answer} />}
+                {t.state === "answering" && !t.answer && <p className="text-sm text-text-muted">Answering…</p>}
+                {t.state === "done" && t.citations && <Sources citations={t.citations} />}
+                {t.state === "stopped" && <p className="text-xs text-text-muted mt-1">Stopped.</p>}
+                {t.error && (
+                  <div className="mt-2">
+                    <Alert role="alert" state="danger" size="small" text={t.error} />
+                  </div>
+                )}
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+      <form
+        className="space-y-2"
+        aria-label="Ask the assistant"
+        onSubmit={(e) => {
+          e.preventDefault();
+          ask();
+        }}
+      >
+        <TextAreaField
+          ref={field}
+          id="assistant-question"
+          label="Question"
+          placeholder="What does this namespace know about invoices?"
+          rows={3}
+          value={draft}
+          onChange={(v) => setDraft(v)}
+          onKeyDown={onKeyDown}
+          aria-describedby="assistant-question-hint"
+        />
+        <p id="assistant-question-hint" className="text-xs text-text-muted">
+          Enter asks, Shift+Enter adds a line. Each answer's citations are checked against Loom as you when it ends.
+        </p>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {turns.length > 0 && !answering && (
+            <Button
+              type="secondary"
+              htmlType="button"
+              onClick={() => {
+                // The button goes with the conversation: the focus goes to the question field.
+                setTurns([]);
+                field.current?.focus();
+              }}
+            >
+              Clear the conversation
+            </Button>
+          )}
+          {answering && (
+            <Button ref={stopButton} type="secondary" htmlType="button" onClick={() => controller.current?.abort()}>
+              Stop
+            </Button>
+          )}
+          <Unavailable reason={sendBlocked}>
+            <Button type="primary" htmlType="submit">
+              Ask
+            </Button>
+          </Unavailable>
+        </div>
+      </form>
+      <p className="sr-only" role="status">
+        {announce}
+      </p>
+    </div>
+  );
+}

@@ -315,11 +315,17 @@ function asDashboardCall(path: string, body: unknown): unknown {
 /** The one request path every authenticated call rides: the inflight counter, the view's
  *  call count, the bounded signal, and a typed ApiError (status, server code, message,
  *  request id) for any non-2xx — never a "403: {json}" string. Answers the ok Response. */
-async function request(method: "GET" | "POST", path: string, body?: unknown, signal?: AbortSignal): Promise<Response> {
+async function request(
+  method: "GET" | "POST",
+  path: string,
+  body?: unknown,
+  signal?: AbortSignal,
+  headers: Record<string, string> = {},
+): Promise<Response> {
   _bump(+1);
   noteCallStart(); // the view's call count and span
   try {
-    return await send(method, path, body, signal, false);
+    return await send(method, path, body, signal, false, headers);
   } finally {
     _bump(-1);
     noteCallEnd();
@@ -332,6 +338,7 @@ async function send(
   body: unknown,
   signal: AbortSignal | undefined,
   retried: boolean,
+  headers: Record<string, string>,
 ): Promise<Response> {
   const sent = token();
   // Another tab may have stored another person's token a moment ago, before this one heard
@@ -349,11 +356,15 @@ async function send(
     method === "POST"
       ? {
           method,
-          headers: { "Content-Type": raw ? "application/octet-stream" : "application/json", ...authHeader() },
+          headers: {
+            "Content-Type": raw ? "application/octet-stream" : "application/json",
+            ...headers,
+            ...authHeader(),
+          },
           body: raw ? body : JSON.stringify(asDashboardCall(path, body)),
           signal: boundedSignal(signal),
         }
-      : { method, headers: authHeader(), signal: boundedSignal(signal) },
+      : { method, headers: { ...headers, ...authHeader() }, signal: boundedSignal(signal) },
   );
   if (r.status === 401 && sent) {
     // The first refusal of the stored token ends the session, before any await, so
@@ -362,7 +373,7 @@ async function send(
     if (ending) signInRejected?.();
     // A single-user install has no sign-in: the stale token is gone (this refusal or a
     // concurrent one dropped it), so the call goes again without it.
-    if (isAuthDisabled() && !retried) return send(method, path, body, signal, true);
+    if (isAuthDisabled() && !retried) return send(method, path, body, signal, true, headers);
     // A call raced by another tab's sign-in is not sent again under a token this tab has
     // not checked: Retry sends it, and the error says so instead of "sign in again".
     if (!ending && token() && ownsToken(token())) throw new ApiError({ status: 401, code: "SIGNED_IN_ELSEWHERE" });
@@ -376,6 +387,17 @@ async function send(
 
 export async function post<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
   return (await request("POST", path, body, signal)).json();
+}
+
+/** POST JSON and answer the ok Response unread, for a body that streams (the assistant's
+ *  chat). `signal` is required: a stream is bounded by its caller, not the 60 s default. */
+export async function postStreaming(
+  path: string,
+  body: unknown,
+  headers: Record<string, string>,
+  signal: AbortSignal,
+): Promise<Response> {
+  return request("POST", path, body, signal, headers);
 }
 
 /** POST a file's bytes as the body (`/v1/knowledge.upload?...`), parsed as JSON. Pass a
