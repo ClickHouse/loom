@@ -1,0 +1,899 @@
+{
+ "setup": {
+  "host": "one shared host, 32 cores, 61 GB RAM; other workloads ran beside it (1-minute load 13 to 165, recorded per op)",
+  "clickhouse": "26.10, max_server_memory_usage 12 GiB",
+  "postgres": "16, no standby, shared_buffers 2 GB",
+  "embedder": "fake-ngram-3072 (two 3072-dimension BFloat16 vectors per embedding row)",
+  "server": "one uvicorn process from source, background workers off",
+  "load": "bench/scale_load.py load-ch / load-pg; 2.4 versions per key; 12 monthly partitions",
+  "shapes": {
+   "single": "one org, one namespace, one agent, user '-'",
+   "zipf": "10,000 namespaces over 1,000 orgs, Zipf exponent 1, 4 agents and 100 users per namespace"
+  },
+  "concurrency": 5,
+  "calls_per_op": 400,
+  "bulk_set_entries": 20
+ },
+ "runs": {
+  "single_250k_postgres": {
+   "shape": "single",
+   "authority": "postgres",
+   "build": "0fc4fc67c",
+   "parts_before": {
+    "memory": {
+     "parts": 14,
+     "rows": 250914,
+     "bytes": 22896424,
+     "uncompressed": 126850562
+    },
+    "memory_versions": {
+     "parts": 14,
+     "rows": 600903,
+     "bytes": 66233837,
+     "uncompressed": 303842436
+    },
+    "memory_embeddings": {
+     "parts": 55,
+     "rows": 250903,
+     "bytes": 3314686843,
+     "uncompressed": 3424093444
+    }
+   },
+   "ops": {
+    "memory.get": {
+     "n": 400,
+     "p50_ms": 28.5,
+     "p99_ms": 140.0,
+     "mean_ms": 32.7,
+     "errors": {},
+     "outcomes": {},
+     "seconds": 2.6,
+     "new_parts_per_s": {},
+     "host_load_1m": 13.4
+    },
+    "memory.set": {
+     "n": 400,
+     "p50_ms": 406.3,
+     "p99_ms": 7282.0,
+     "mean_ms": 506.2,
+     "errors": {},
+     "outcomes": {
+      "written": 400
+     },
+     "seconds": 40.6,
+     "new_parts_per_s": {
+      "memory": 3.38,
+      "memory_versions": 3.38,
+      "memory_embeddings": 3.38
+     },
+     "host_load_1m": 27.5
+    },
+    "memory.bulk_set": {
+     "n": 39,
+     "p50_ms": 21613.5,
+     "p99_ms": 41906.3,
+     "mean_ms": 22691.9,
+     "errors": {
+      "503:": 1
+     },
+     "outcomes": {
+      "written": 780,
+      "unchecked": 2
+     },
+     "seconds": 189.2,
+     "new_parts_per_s": {
+      "memory": 0.14,
+      "memory_versions": 0.13,
+      "memory_embeddings": 0.13
+     },
+     "host_load_1m": 87.3
+    },
+    "memory.search": {
+     "n": 400,
+     "p50_ms": 696.6,
+     "p99_ms": 2445.9,
+     "mean_ms": 744.7,
+     "errors": {},
+     "outcomes": {
+      "hits": 4000
+     },
+     "seconds": 59.9,
+     "new_parts_per_s": {},
+     "host_load_1m": 54.6
+    }
+   },
+   "vector": [
+    {
+     "org": "scale-one",
+     "namespace": "big",
+     "agent": "agent0",
+     "user_id": "-",
+     "rows": 0,
+     "parts": 56,
+     "search": {
+      "n": 20,
+      "p50_ms": 561.2,
+      "p99_ms": 907.7,
+      "mean_ms": 584.5,
+      "errors": {},
+      "outcomes": {
+       "hits": 200
+      }
+     },
+     "vector_statements": 20,
+     "vector_p50_ms": 272.0,
+     "vector_max_ms": 328.0,
+     "read_rows": 325549,
+     "read_mib": 149.7,
+     "memory_mib": 78.8
+    }
+   ],
+   "parts_after": {
+    "memory": {
+     "parts": 14,
+     "rows": 252114,
+     "bytes": 23195638,
+     "uncompressed": 127487810
+    },
+    "memory_versions": {
+     "parts": 14,
+     "rows": 602103,
+     "bytes": 66515397,
+     "uncompressed": 304460484
+    },
+    "memory_embeddings": {
+     "parts": 56,
+     "rows": 252103,
+     "bytes": 3330725354,
+     "uncompressed": 3440665166
+    }
+   },
+   "pg": {
+    "memory_current": {
+     "rows": 252103,
+     "heap": 362921984,
+     "toast": 8192,
+     "indexes": 46219264,
+     "per_row": 1622.9
+    },
+    "memory_revisions": {
+     "rows": 602103,
+     "heap": 1219895296,
+     "toast": 8192,
+     "indexes": 74858496,
+     "per_row": 2150.4
+    },
+    "memory_deliveries": {
+     "rows": 20,
+     "heap": 131072,
+     "toast": 8192,
+     "indexes": 65536,
+     "per_row": 10240.0
+    }
+   }
+  },
+  "single_250k_clickhouse": {
+   "shape": "single",
+   "authority": "clickhouse",
+   "build": "0fc4fc67c",
+   "parts_before": {
+    "memory": {
+     "parts": 14,
+     "rows": 252114,
+     "bytes": 23195638,
+     "uncompressed": 127487810
+    },
+    "memory_versions": {
+     "parts": 14,
+     "rows": 602103,
+     "bytes": 66515397,
+     "uncompressed": 304460484
+    },
+    "memory_embeddings": {
+     "parts": 56,
+     "rows": 252103,
+     "bytes": 3330725354,
+     "uncompressed": 3440665166
+    }
+   },
+   "ops": {
+    "memory.get": {
+     "n": 400,
+     "p50_ms": 37.6,
+     "p99_ms": 273.3,
+     "mean_ms": 48.4,
+     "errors": {},
+     "outcomes": {},
+     "seconds": 3.9,
+     "new_parts_per_s": {},
+     "host_load_1m": 38.0
+    },
+    "memory.set": {
+     "n": 400,
+     "p50_ms": 464.2,
+     "p99_ms": 1519.9,
+     "mean_ms": 500.5,
+     "errors": {},
+     "outcomes": {
+      "written": 400
+     },
+     "seconds": 40.3,
+     "new_parts_per_s": {
+      "memory": 9.93,
+      "memory_versions": 9.93,
+      "memory_embeddings": 9.93
+     },
+     "host_load_1m": 37.7
+    },
+    "memory.bulk_set": {
+     "n": 40,
+     "p50_ms": 22104.0,
+     "p99_ms": 57220.2,
+     "mean_ms": 28796.1,
+     "errors": {},
+     "outcomes": {
+      "written": 800,
+      "unchecked": 9
+     },
+     "seconds": 239.9,
+     "new_parts_per_s": {
+      "memory": 0.17,
+      "memory_versions": 0.17,
+      "memory_embeddings": 0.17
+     },
+     "host_load_1m": 165.4
+    },
+    "memory.search": {
+     "n": 400,
+     "p50_ms": 739.0,
+     "p99_ms": 2703.4,
+     "mean_ms": 821.7,
+     "errors": {},
+     "outcomes": {
+      "hits": 4000
+     },
+     "seconds": 66.1,
+     "new_parts_per_s": {},
+     "host_load_1m": 82.7
+    }
+   },
+   "vector": [
+    {
+     "org": "scale-one",
+     "namespace": "big",
+     "agent": "agent0",
+     "user_id": "-",
+     "rows": 0,
+     "parts": 59,
+     "search": {
+      "n": 20,
+      "p50_ms": 560.4,
+      "p99_ms": 866.1,
+      "mean_ms": 635.3,
+      "errors": {},
+      "outcomes": {
+       "hits": 200
+      }
+     },
+     "vector_statements": 20,
+     "vector_p50_ms": 274.0,
+     "vector_max_ms": 575.0,
+     "read_rows": 323864,
+     "read_mib": 155.6,
+     "memory_mib": 79.6
+    }
+   ],
+   "parts_after": {
+    "memory": {
+     "parts": 17,
+     "rows": 253314,
+     "bytes": 23554407,
+     "uncompressed": 128129727
+    },
+    "memory_versions": {
+     "parts": 17,
+     "rows": 603303,
+     "bytes": 66845867,
+     "uncompressed": 305084161
+    },
+    "memory_embeddings": {
+     "parts": 59,
+     "rows": 253303,
+     "bytes": 3346773672,
+     "uncompressed": 3457236588
+    }
+   }
+  },
+  "single_250k_optimize_postgres": {
+   "before": [
+    {
+     "org": "scale-one",
+     "namespace": "big",
+     "agent": "agent0",
+     "user_id": "-",
+     "rows": 0,
+     "parts": 59,
+     "search": {
+      "n": 20,
+      "p50_ms": 671.3,
+      "p99_ms": 5767.5,
+      "mean_ms": 965.8,
+      "errors": {},
+      "outcomes": {
+       "hits": 200
+      }
+     },
+     "vector_statements": 20,
+     "vector_p50_ms": 312.0,
+     "vector_max_ms": 5012.0,
+     "read_rows": 339566,
+     "read_mib": 185.4,
+     "memory_mib": 102.8
+    }
+   ],
+   "after": [
+    {
+     "org": "scale-one",
+     "namespace": "big",
+     "agent": "agent0",
+     "user_id": "-",
+     "rows": 0,
+     "parts": 14,
+     "search": {
+      "n": 20,
+      "p50_ms": 392.0,
+      "p99_ms": 1502.4,
+      "mean_ms": 472.2,
+      "errors": {},
+      "outcomes": {
+       "hits": 200
+      }
+     },
+     "vector_statements": 20,
+     "vector_p50_ms": 159.5,
+     "vector_max_ms": 723.0,
+     "read_rows": 291103,
+     "read_mib": 164.6,
+     "memory_mib": 106.7
+    }
+   ],
+   "optimize_s": 114.5,
+   "table_parts": {
+    "memory": {
+     "parts": 15,
+     "rows": 277643,
+     "bytes": 25754468,
+     "uncompressed": 137516879
+    },
+    "memory_versions": {
+     "parts": 15,
+     "rows": 627731,
+     "bytes": 68953845,
+     "uncompressed": 314133284
+    },
+    "memory_embeddings": {
+     "parts": 14,
+     "rows": 277628,
+     "bytes": 3646524273,
+     "uncompressed": 3787336151
+    }
+   }
+  },
+  "single_500k_clickhouse_partial": {
+   "shape": "single",
+   "authority": "clickhouse",
+   "build": "unknown",
+   "parts_before": {
+    "memory": {
+     "parts": 28,
+     "rows": 527653,
+     "bytes": 47741961,
+     "uncompressed": 263999487
+    },
+    "memory_versions": {
+     "parts": 28,
+     "rows": 1227731,
+     "bytes": 135468125,
+     "uncompressed": 617782436
+    },
+    "memory_embeddings": {
+     "parts": 66,
+     "rows": 527628,
+     "bytes": 6949098761,
+     "uncompressed": 7199403394
+    }
+   },
+   "ops": {
+    "memory.get": {
+     "n": 400,
+     "p50_ms": 114.8,
+     "p99_ms": 1838.5,
+     "mean_ms": 241.5,
+     "errors": {},
+     "outcomes": {},
+     "seconds": 19.4,
+     "new_parts_per_s": {},
+     "clickhouse": {
+      "statements_per_call": 3.2,
+      "read_mib_per_call": 0.3,
+      "max_statement_memory_mib": 53.0,
+      "failed_statements": 0
+     },
+     "host_load_1m": 27.0
+    },
+    "memory.set": {
+     "n": 400,
+     "p50_ms": 618.5,
+     "p99_ms": 6758.3,
+     "mean_ms": 734.8,
+     "errors": {},
+     "outcomes": {
+      "written": 400
+     },
+     "seconds": 59.0,
+     "new_parts_per_s": {
+      "memory": 6.78,
+      "memory_versions": 6.78,
+      "memory_embeddings": 6.78
+     },
+     "clickhouse": {
+      "statements_per_call": 20.9,
+      "read_mib_per_call": 276.3,
+      "max_statement_memory_mib": 255.9,
+      "failed_statements": 32
+     },
+     "host_load_1m": 41.4
+    }
+   }
+  },
+  "single_500k_vector_clickhouse": {
+   "org": "scale-one",
+   "namespace": "big",
+   "agent": "agent0",
+   "user_id": "-",
+   "rows": 0,
+   "parts": 69,
+   "search": {
+    "n": 10,
+    "p50_ms": 622.1,
+    "p99_ms": 2027.6,
+    "mean_ms": 822.2,
+    "errors": {},
+    "outcomes": {
+     "hits": 100
+    }
+   },
+   "vector_statements": 10,
+   "vector_p50_ms": 300.5,
+   "vector_max_ms": 959.0,
+   "read_rows": 560640,
+   "read_mib": 282.8,
+   "memory_mib": 154.3
+  },
+  "zipf_200k_postgres": {
+   "shape": "zipf",
+   "authority": "postgres",
+   "build": "unknown",
+   "parts_before": {
+    "memory": {
+     "parts": 13,
+     "rows": 200010,
+     "bytes": 32197929,
+     "uncompressed": 105436195
+    },
+    "memory_versions": {
+     "parts": 13,
+     "rows": 480000,
+     "bytes": 51461310,
+     "uncompressed": 243857980
+    },
+    "memory_embeddings": {
+     "parts": 52,
+     "rows": 200000,
+     "bytes": 2640582268,
+     "uncompressed": 2729945111
+    }
+   },
+   "ops": {
+    "memory.get": {
+     "n": 400,
+     "p50_ms": 92.9,
+     "p99_ms": 558.7,
+     "mean_ms": 119.1,
+     "errors": {},
+     "outcomes": {},
+     "seconds": 9.6,
+     "new_parts_per_s": {},
+     "clickhouse": {
+      "statements_per_call": 12.9,
+      "read_mib_per_call": 1.0,
+      "max_statement_memory_mib": 15.3,
+      "failed_statements": 0
+     },
+     "host_load_1m": 26.5
+    },
+    "memory.set": {
+     "n": 400,
+     "p50_ms": 453.5,
+     "p99_ms": 4860.7,
+     "mean_ms": 657.9,
+     "errors": {},
+     "outcomes": {
+      "written": 400
+     },
+     "seconds": 52.9,
+     "new_parts_per_s": {
+      "memory": 2.83,
+      "memory_versions": 2.83,
+      "memory_embeddings": 2.83
+     },
+     "clickhouse": {
+      "statements_per_call": 16.3,
+      "read_mib_per_call": 34.9,
+      "max_statement_memory_mib": 49.3,
+      "failed_statements": 0
+     },
+     "host_load_1m": 36.1
+    },
+    "memory.bulk_set": {
+     "n": 32,
+     "p50_ms": 2283.5,
+     "p99_ms": 6125.7,
+     "mean_ms": 2888.4,
+     "errors": {
+      "503:": 8
+     },
+     "outcomes": {
+      "written": 640
+     },
+     "seconds": 26.9,
+     "new_parts_per_s": {
+      "memory": 0.71,
+      "memory_versions": 0.71,
+      "memory_embeddings": 0.71
+     },
+     "clickhouse": {
+      "statements_per_call": 15.9,
+      "read_mib_per_call": 379.4,
+      "max_statement_memory_mib": 265.7,
+      "failed_statements": 0
+     },
+     "host_load_1m": 41.2
+    },
+    "memory.search": {
+     "n": 400,
+     "p50_ms": 347.0,
+     "p99_ms": 1848.8,
+     "mean_ms": 464.0,
+     "errors": {},
+     "outcomes": {
+      "hits": 2082
+     },
+     "seconds": 37.3,
+     "new_parts_per_s": {},
+     "clickhouse": {
+      "statements_per_call": 17.5,
+      "read_mib_per_call": 16.6,
+      "max_statement_memory_mib": 44.8,
+      "failed_statements": 5
+     },
+     "host_load_1m": 46.8
+    }
+   },
+   "vector": [
+    {
+     "org": "scale-z0",
+     "namespace": "ns0",
+     "agent": "agent0",
+     "user_id": "u26",
+     "rows": 15166,
+     "parts": 54,
+     "search": {
+      "n": 20,
+      "p50_ms": 378.4,
+      "p99_ms": 1899.8,
+      "mean_ms": 467.2,
+      "errors": {},
+      "outcomes": {
+       "hits": 200
+      }
+     },
+     "vector_statements": 20,
+     "vector_p50_ms": 117.0,
+     "vector_max_ms": 1490.0,
+     "read_rows": 28722,
+     "read_mib": 51.8,
+     "memory_mib": 39.0
+    },
+    {
+     "org": "scale-z0",
+     "namespace": "ns1",
+     "agent": "agent0",
+     "user_id": "u15",
+     "rows": 8851,
+     "parts": 53,
+     "search": {
+      "n": 20,
+      "p50_ms": 290.7,
+      "p99_ms": 1009.5,
+      "mean_ms": 376.7,
+      "errors": {},
+      "outcomes": {
+       "hits": 200
+      }
+     },
+     "vector_statements": 20,
+     "vector_p50_ms": 68.0,
+     "vector_max_ms": 150.0,
+     "read_rows": 28794,
+     "read_mib": 38.0,
+     "memory_mib": 37.3
+    },
+    {
+     "org": "scale-z0",
+     "namespace": "ns2",
+     "agent": "agent0",
+     "user_id": "u26",
+     "rows": 6285,
+     "parts": 53,
+     "search": {
+      "n": 20,
+      "p50_ms": 173.9,
+      "p99_ms": 419.5,
+      "mean_ms": 233.6,
+      "errors": {},
+      "outcomes": {
+       "hits": 200
+      }
+     },
+     "vector_statements": 20,
+     "vector_p50_ms": 68.5,
+     "vector_max_ms": 279.0,
+     "read_rows": 29132,
+     "read_mib": 42.9,
+     "memory_mib": 35.1
+    }
+   ],
+   "parts_after": {
+    "memory": {
+     "parts": 18,
+     "rows": 201210,
+     "bytes": 32594441,
+     "uncompressed": 106085190
+    },
+    "memory_versions": {
+     "parts": 18,
+     "rows": 481200,
+     "bytes": 51829645,
+     "uncompressed": 244490015
+    },
+    "memory_embeddings": {
+     "parts": 56,
+     "rows": 201200,
+     "bytes": 2656659940,
+     "uncompressed": 2746520113
+    }
+   },
+   "pg": {
+    "memory_current": {
+     "rows": 201200,
+     "heap": 277061632,
+     "toast": 8192,
+     "indexes": 44613632,
+     "per_row": 1598.8
+    },
+    "memory_revisions": {
+     "rows": 481200,
+     "heap": 971620352,
+     "toast": 8192,
+     "indexes": 62562304,
+     "per_row": 2149.2
+    },
+    "memory_deliveries": {
+     "rows": 0,
+     "heap": 0,
+     "toast": 8192,
+     "indexes": 81920,
+     "per_row": 0
+    }
+   }
+  },
+  "zipf_200k_clickhouse_partial": {
+   "shape": "zipf",
+   "authority": "clickhouse",
+   "build": "unknown",
+   "parts_before": {
+    "memory": {
+     "parts": 18,
+     "rows": 186494,
+     "bytes": 30315916,
+     "uncompressed": 101494423
+    },
+    "memory_versions": {
+     "parts": 14,
+     "rows": 445992,
+     "bytes": 47943636,
+     "uncompressed": 227353394
+    },
+    "memory_embeddings": {
+     "parts": 56,
+     "rows": 201200,
+     "bytes": 2656819363,
+     "uncompressed": 2749921913
+    }
+   },
+   "ops": {
+    "memory.get": {
+     "n": 400,
+     "p50_ms": 119.6,
+     "p99_ms": 763.1,
+     "mean_ms": 163.8,
+     "errors": {},
+     "outcomes": {},
+     "seconds": 13.2,
+     "new_parts_per_s": {},
+     "clickhouse": {
+      "statements_per_call": 14.9,
+      "read_mib_per_call": 1.2,
+      "max_statement_memory_mib": 16.2,
+      "failed_statements": 0
+     },
+     "host_load_1m": 35.8
+    },
+    "memory.set": {
+     "n": 400,
+     "p50_ms": 909.3,
+     "p99_ms": 28070.7,
+     "mean_ms": 1529.1,
+     "errors": {},
+     "outcomes": {
+      "written": 400
+     },
+     "seconds": 123.0,
+     "new_parts_per_s": {
+      "memory": 3.25,
+      "memory_versions": 3.25,
+      "memory_embeddings": 3.25
+     },
+     "clickhouse": {
+      "statements_per_call": 21.8,
+      "read_mib_per_call": 35.5,
+      "max_statement_memory_mib": 65.6,
+      "failed_statements": 1
+     },
+     "host_load_1m": 67.4
+    },
+    "memory.bulk_set": {
+     "n": 40,
+     "p50_ms": 2016.1,
+     "p99_ms": 4021.6,
+     "mean_ms": 2350.6,
+     "errors": {},
+     "outcomes": {
+      "written": 800
+     },
+     "seconds": 19.6,
+     "new_parts_per_s": {
+      "memory": 2.04,
+      "memory_versions": 2.04,
+      "memory_embeddings": 2.04
+     },
+     "clickhouse": {
+      "statements_per_call": 17.8,
+      "read_mib_per_call": 260.6,
+      "max_statement_memory_mib": 263.9,
+      "failed_statements": 0
+     },
+     "host_load_1m": 79.3
+    }
+   }
+  },
+  "zipf_200k_postgres_store": {
+   "sizes": {
+    "memory_current": {
+     "rows": 200000,
+     "heap": 274587648,
+     "toast": 8192,
+     "indexes": 44122112,
+     "per_row": 1593.6
+    },
+    "memory_revisions": {
+     "rows": 480000,
+     "heap": 969154560,
+     "toast": 8192,
+     "indexes": 62349312,
+     "per_row": 2149.0
+    },
+    "memory_deliveries": {
+     "rows": 0,
+     "heap": 0,
+     "toast": 8192,
+     "indexes": 24576,
+     "per_row": 0
+    }
+   },
+   "vacuum_s": {
+    "memory_current": 0.49,
+    "memory_revisions": 0.56
+   },
+   "dump_org": {
+    "org": "scale-z0",
+    "seconds": 8.89,
+    "bytes": 350813651
+   },
+   "vacuum_with_dead_rows_s": {
+    "memory_current": {
+     "dead": 52122,
+     "live": 186491,
+     "seconds": 0.57
+    },
+    "memory_revisions": {
+     "dead": 120482,
+     "live": 445877,
+     "seconds": 0.89
+    }
+   }
+  },
+  "zipf_200k_erasure_postgres": {
+   "user": {
+    "org": "scale-z0",
+    "user_id": "u40",
+    "keys": 590,
+    "status": 200,
+    "seconds": 235.4,
+    "body": {
+     "status": "completed",
+     "failure_reason": "",
+     "residue_count": 0,
+     "steps": 48
+    }
+   },
+   "org": {
+    "org": "scale-z1",
+    "namespaces": 10,
+    "keys": 14125,
+    "status": 200,
+    "seconds": 184.0,
+    "body": {
+     "status": "completed",
+     "failure_reason": "",
+     "residue_count": 0,
+     "steps": 48
+    }
+   }
+  },
+  "zipf_200k_erasure_clickhouse": {
+   "user": {
+    "org": "scale-z2",
+    "user_id": "u60",
+    "keys": 113,
+    "status": 504,
+    "seconds": 185.71,
+    "body": {
+     "detail": {
+      "code": "BACKEND_TIMEOUT",
+      "message": "ClickHouse write statement exceeded 60 s",
+      "statement_class": "write",
+      "timeout_s": 60.0,
+      "category": "dependency",
+      "retryable": true
+     },
+     "steps": 0
+    }
+   },
+   "org": {
+    "org": "scale-z0",
+    "namespaces": 10,
+    "keys": 52071,
+    "status": 200,
+    "seconds": 236.29,
+    "body": {
+     "status": "failed",
+     "failure_reason": "memory.tombstone: BACKEND_TIMEOUT: ClickHouse read statement exceeded 30 s",
+     "residue_count": 0,
+     "steps": 0
+    }
+   }
+  }
+ }
+}
