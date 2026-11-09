@@ -158,6 +158,31 @@ async def test_a_read_of_clickhouses_history_right_after_a_write_sees_it(
 
 
 @pytest.mark.usefixtures("pg_authority")
+@pytest.mark.parametrize("keeper", ["just_written", "deleted", "rewritten"])
+async def test_a_bulk_write_of_bytes_another_key_holds_is_judged_on_the_authority(
+    call: Any, org: str, keeper: str
+) -> None:
+    """Identity dedup holds an entry whose bytes a live key of the identity holds, even
+    one written a moment ago, which answered at its commit; a key deleted or rewritten
+    since holds them no more, whatever ClickHouse holds yet, and the entry is written."""
+    ns = f"pg-{uuid.uuid4().hex[:8]}"
+    value = f"the {keeper} keeper's fact {uuid.uuid4().hex[:6]}"
+    assert (await call("memory.set", _set(ns, "a", value))).status_code == 200
+    if keeper == "deleted":
+        gone = await call("memory.delete", {"namespace": ns, "agent": "a", "memory_key": "a"})
+        assert gone.status_code == 200, gone.text
+    elif keeper == "rewritten":
+        assert (await call("memory.set", _set(ns, "a", "another fact"))).status_code == 200
+    out = await call(
+        "memory.bulk_set",
+        {"namespace": ns, "agent": "a", "entries": [{"memory_key": "b", "value": value}]},
+    )
+    assert out.status_code == 200, out.text
+    written = [r["memory_key"] for r in out.json()["written"] if r.get("version")]
+    assert written == ([] if keeper == "just_written" else ["b"]), out.text
+
+
+@pytest.mark.usefixtures("pg_authority")
 async def test_writes_made_together_share_their_clickhouse_inserts(
     call: Any, pg_conn: Any, org: str, ch_client: Any
 ) -> None:

@@ -180,21 +180,40 @@ async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, 
                 "shas": _shas,
                 "live": list(LIVE_STATUSES),
             }
+            # Under own_session the keeper must be in the caller's session too.
+            in_scope = scope_and(request_scope(), params)
+            # The hash filter only narrows the keys: each key's newest version is
+            # compared, so a superseded version not yet merged away is never a keeper.
+            identity = (
+                "org = {org:String} AND namespace = {ns:String}"
+                " AND agent = {agent:String} AND user_id = {uid:String}" + in_scope
+            )
+            _rows = await ch.query_all(
+                f"""
+                SELECT argMax(content_sha256, version) AS head_sha, session_id, memory_key,
+                       toString(argMax(memory_id, version)) AS memory_id
+                FROM loom.memory
+                WHERE {identity}
+                  AND (session_id, memory_key) IN (
+                      SELECT session_id, memory_key FROM loom.memory
+                      WHERE {identity} AND content_sha256 IN {{shas:Array(String)}}
+                  )
+                GROUP BY session_id, memory_key
+                HAVING head_sha IN {{shas:Array(String)}}
+                   AND argMax(tombstoned_at IS NULL, version) = 1
+                   AND argMax(status, version) IN {{live:Array(String)}}
+                ORDER BY head_sha, memory_key, session_id
+                SETTINGS select_sequential_consistency = 1
+                """,
+                params=params,
+            )
             if pg.enabled():
-                # The authority's heads: a keeper written moments ago answered at its
-                # commit, before ClickHouse held it, and one rewritten or deleted since
-                # is not one.
-                _rows = await pg_memory.identity_keepers(
-                    input.org,
-                    input.namespace,
-                    input.agent,
-                    input.user_id,
-                    _shas,
-                    statuses=LIVE_STATUSES,
-                    scope=request_scope(),
+                # A keeper written a moment ago answered at its commit, before ClickHouse
+                # held it: the authority's undelivered revisions add it, and every keeper
+                # found is checked against its head there.
+                _rows = await _keepers_on_the_authority(
+                    input, _with_unpublished(_rows, await _unpublished_keepers(input, _shas))
                 )
-            else:
-                _rows = await _keepers_on_clickhouse(ch, params)
             for _r in _rows:
                 identity_dupes.setdefault(
                     hash_text(_r["head_sha"]), (str(_r["memory_key"]), str(_r["memory_id"]))
@@ -204,37 +223,48 @@ async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, 
     return identity_dupes
 
 
-async def _keepers_on_clickhouse(ch: Any, params: dict[str, Any]) -> list[dict[str, Any]]:
-    """`_bulk_identity_dupes`'s read on the ClickHouse authority: each key of the identity
-    whose newest version is live and holds one of the hashes. Under own_session the
-    keeper must be in the caller's session too."""
-    in_scope = scope_and(request_scope(), params)
-    # The hash filter only narrows the keys: each key's newest version is
-    # compared, so a superseded version not yet merged away is never a keeper.
-    identity = (
-        "org = {org:String} AND namespace = {ns:String}"
-        " AND agent = {agent:String} AND user_id = {uid:String}" + in_scope
+async def _unpublished_keepers(input: MemoryBulkSetInput, shas: list[str]) -> list[dict[str, Any]]:
+    """The keepers of the batch's hashes that ClickHouse is still owed."""
+    return await pg_memory.unpublished_keepers(
+        input.org, input.namespace, input.agent, input.user_id, shas, scope=request_scope()
     )
-    rows: list[dict[str, Any]] = await ch.query_all(
-        f"""
-        SELECT argMax(content_sha256, version) AS head_sha, session_id, memory_key,
-               toString(argMax(memory_id, version)) AS memory_id
-        FROM loom.memory
-        WHERE {identity}
-          AND (session_id, memory_key) IN (
-              SELECT session_id, memory_key FROM loom.memory
-              WHERE {identity} AND content_sha256 IN {{shas:Array(String)}}
-          )
-        GROUP BY session_id, memory_key
-        HAVING head_sha IN {{shas:Array(String)}}
-           AND argMax(tombstoned_at IS NULL, version) = 1
-           AND argMax(status, version) IN {{live:Array(String)}}
-        ORDER BY head_sha, memory_key, session_id
-        SETTINGS select_sequential_consistency = 1
-        """,
-        params=params,
-    )
-    return rows
+
+
+def _with_unpublished(
+    found: list[dict[str, Any]], unpublished: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """ClickHouse's keepers and the undelivered ones, each key once, in the order the
+    ClickHouse statement gives (hash, key, session), so the same keeper wins either way."""
+    seen = {(r["session_id"], r["memory_key"]) for r in found}
+    rows = found + [r for r in unpublished if (r["session_id"], r["memory_key"]) not in seen]
+    return sorted(rows, key=lambda r: (hash_text(r["head_sha"]), r["memory_key"], r["session_id"]))
+
+
+async def _keepers_on_the_authority(
+    input: MemoryBulkSetInput, rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The keepers ClickHouse found whose head on the authority is still live and holds
+    those bytes: an entry is never dropped as a copy of a value rewritten or deleted
+    since, which ClickHouse may not hold yet."""
+    keys = [
+        (
+            input.org,
+            input.namespace,
+            input.agent,
+            input.user_id,
+            str(r["session_id"]),
+            str(r["memory_key"]),
+        )
+        for r in rows
+    ]
+    heads = await pg_memory.heads_by_keys(keys)
+    return [
+        r | {"memory_id": str(h["memory_id"])}  # the authority's id
+        for k, r in zip(keys, rows, strict=True)
+        if (h := heads.get(k)) is not None
+        and str(h.get("status") or "active") in LIVE_STATUSES
+        and str(h.get("content_sha256") or "") == hash_text(r["head_sha"])
+    ]
 
 
 async def _bulk_resolve_entities(ch: Any, input: MemoryBulkSetInput) -> dict[str, str]:

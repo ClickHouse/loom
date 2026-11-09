@@ -1700,29 +1700,31 @@ async def live_heads_in(
     return [decode_row(r["row"]) for r in rows]
 
 
-async def identity_keepers(
-    org: str,
-    namespace: str,
-    agent: str,
-    user_id: str,
-    shas: Sequence[str],
-    *,
-    statuses: Sequence[str],
-    scope: Any,
+async def unpublished_keepers(
+    org: str, namespace: str, agent: str, user_id: str, shas: Sequence[str], *, scope: Any
 ) -> list[dict[str, Any]]:
-    """The keys of one identity (any session) whose live head, of one of `statuses`, holds
-    one of the content hashes `shas`, in `scope`: `head_sha`, `session_id`, `memory_key`
-    and `memory_id`, by hash, then key, then session. Current at the commit, where
-    ClickHouse may not hold a write that answered at it yet."""
+    """The keys of one identity (any session) committed with one of the content hashes
+    `shas` whose memory row ClickHouse is still owed, in `scope`: the keepers an identity
+    dedup that reads ClickHouse cannot see yet (a write answered at its commit).
+    `head_sha`, `session_id`, `memory_key` and `memory_id`; the caller still checks each
+    against its head. Read through the namespace's undelivered revisions, which are few."""
     if not shas or pg.unstorable((org, namespace, agent, user_id)):
         return []
-    args: list[Any] = [org, namespace, agent, user_id, list(shas), list(statuses)]
+    args: list[Any] = [org, namespace, agent, user_id, list(shas), MEMORY_ROW]
+    scoped = ""
+    if scope.narrowed:
+        args.append(scope.user_id)
+        scoped += f" AND r.user_id = ${len(args)}"
+        if scope.scope == "own_session":
+            args.append(scope.session_id)
+            scoped += f" AND r.row->>'session_id' = ${len(args)}"
     rows = await pg.fetch(
-        "SELECT content_sha256 AS head_sha, session_id, memory_key, memory_id::text AS memory_id "
-        "FROM loom.memory_current WHERE org = $1 AND namespace = $2 AND agent = $3 "
-        "AND user_id = $4 AND content_sha256 = ANY($5::text[]) "
-        "AND row->>'tombstoned_at' IS NULL AND coalesce(row->>'status', 'active') = ANY($6::text[])"
-        f"{_scope_sql(scope, args)} ORDER BY content_sha256, memory_key, session_id",
+        "SELECT DISTINCT r.content_sha256 AS head_sha, r.row->>'session_id' AS session_id, "
+        "r.row->>'memory_key' AS memory_key, r.memory_id::text AS memory_id "
+        "FROM loom.memory_deliveries d JOIN loom.memory_revisions r USING (org, namespace, seq) "
+        "WHERE d.org = $1 AND d.namespace = $2 AND NOT d.settled AND d.targets & $6 <> 0 "
+        "AND r.user_id = $4 AND r.row->>'agent' = $3 AND r.content_sha256 = ANY($5::text[])"
+        f"{scoped}",
         *args,
     )
     return [dict(r) for r in rows]
