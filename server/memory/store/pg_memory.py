@@ -1231,6 +1231,9 @@ async def record_failure(
     return int(done.split()[-1])
 
 
+# ---- reads -------------------------------------------------------------------
+
+
 async def _read(sql: str, *args: Any, durable: bool) -> list[Any]:
     """`pg.fetch`, or with `durable` inside `pg.durable_transaction`, for rows that go
     to ClickHouse when another session may have committed them: returned once the
@@ -1239,9 +1242,6 @@ async def _read(sql: str, *args: Any, durable: bool) -> list[Any]:
         return await pg.fetch(sql, *args)
     async with pg.durable_transaction() as conn:
         return list(await conn.fetch(sql, *args))
-
-
-# ---- reads -------------------------------------------------------------------
 
 
 def _scope_sql(scope: Any, args: list[Any]) -> str:

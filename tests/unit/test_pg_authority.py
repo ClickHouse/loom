@@ -1243,7 +1243,7 @@ def _fake_connection(monkeypatch: pytest.MonkeyPatch, tx: _FakeTx) -> None:
             return False
 
         async def execute(self, sql: str) -> None:
-            assert sql == "SET LOCAL statement_timeout = 0"  # the commit's own bound
+            raise AssertionError(f"the transaction ran {sql!r} of its own")
 
     @asynccontextmanager
     async def _connection():
@@ -2757,27 +2757,18 @@ async def test_a_cancel_while_the_connection_is_released_is_marked_only_after_th
     assert pg.may_have_committed(raised.value) is landed
 
 
-@pytest.mark.parametrize("at", ["start", "statement_timeout"])
 @pytest.mark.asyncio
-async def test_a_cancel_before_the_commit_is_not_marked(
-    monkeypatch: pytest.MonkeyPatch, at: str
-) -> None:
+async def test_a_cancel_before_the_commit_is_not_marked(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.core import pg
 
     class _Cancelled(_PgConn):
-        async def execute(self, *a: object) -> str:
-            if at == "statement_timeout":
-                raise asyncio.CancelledError()
-            return "SET"
-
         def transaction(self) -> Any:
             tx = super().transaction()
-            if at == "start":
 
-                async def _start() -> None:
-                    raise asyncio.CancelledError()
+            async def _start() -> None:
+                raise asyncio.CancelledError()
 
-                tx.start = _start
+            tx.start = _start
             return tx
 
     _pg_pool(monkeypatch, _Cancelled())

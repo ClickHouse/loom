@@ -93,8 +93,8 @@ async def check_durability() -> Durability:
     except asyncpg.InsufficientPrivilegeError as e:
         raise DurabilityRefused(
             "this role may not run pg_logical_emit_message, which a publisher's durable "
-            "re-read commits: GRANT EXECUTE ON FUNCTION pg_logical_emit_message(boolean, "
-            "text, text) TO it"
+            "re-read commits: GRANT EXECUTE on its text overload to the role (`\\df "
+            "pg_logical_emit_message` lists that overload's arguments on this Postgres)"
         ) from e
     names, sync = await standby_state()
     verdict = durability_verdict(settings.pg_durability, names, sync)

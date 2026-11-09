@@ -336,8 +336,6 @@ async def _served_documents(
     keys = [identity_key(d) for e in waiting for d in e.documents]
     heads = await pg_memory.heads_owing(keys) if keys else {}
 
-    # A copy is another commit than the writer's, perhaps one on the primary alone: the
-    # heads are read again durably, and every document is decided from that read.
     if any(_newer_copy(d, heads) for e in waiting for d in e.documents):
         heads = await pg_memory.heads_owing(keys, durable=True)
 
