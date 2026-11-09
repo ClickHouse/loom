@@ -35,6 +35,7 @@ from server.core.ch_errors import (
     error_code,
     error_line,
     is_replica_bound_error,
+    is_shared_memory_limit,
     is_transient_network_error,
     is_unknown_quantized_setting,
     strip_quantized_setting,
@@ -1004,6 +1005,14 @@ class CHClient:
                         operation=op_name,
                     ) from retry_error
             _raise_if_caller_cap(e)
+            if is_shared_memory_limit(e):
+                # The server's or the user's memory ran short under every query's load,
+                # not this statement's own cap: a 503 the caller retries, not a 500.
+                from server.core.errors import OverloadedError
+
+                raise OverloadedError(
+                    "ClickHouse is short of memory; retry shortly", retry_after_s=5
+                ) from e
             if not is_replica_bound_error(e):
                 raise
             last: BaseException = e

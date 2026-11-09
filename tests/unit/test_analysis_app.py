@@ -83,10 +83,6 @@ def _named_in_the_log_only(caplog: pytest.LogCaptureFixture, problem: str, name:
     [
         ("Code: 202. DB::Exception: Too many simultaneous queries", RateLimitedError),
         ("Code: 516. DB::Exception: loom_analyst: Authentication failed", AnalysisUnavailableError),
-        (
-            "Code: 241. DB::Exception: (total) memory limit exceeded: would use 9 GiB",
-            OverloadedError,
-        ),
         ("Code: 241. DB::Exception: Memory limit (for query) exceeded", ValidationError),
         ("Code: 62. DB::Exception: Syntax error", ValidationError),
     ],
@@ -96,6 +92,18 @@ def test_clickhouse_errors_are_answered_by_their_cause(
 ) -> None:
     monkeypatch.setattr(app.store, "run_statement", _failing(message))
     with pytest.raises(answer):
+        asyncio.run(app.handle_insights_query(_query()))
+
+
+def test_clickhouse_short_of_memory_is_answered_as_overloaded(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    # The client answers the server's or the user's memory running short as a 503.
+    async def run(*args: Any, **kwargs: Any) -> Any:
+        raise OverloadedError("ClickHouse is short of memory; retry shortly", retry_after_s=5)
+
+    monkeypatch.setattr(app.store, "run_statement", run)
+    with pytest.raises(OverloadedError, match="short of memory"):
         asyncio.run(app.handle_insights_query(_query()))
 
 

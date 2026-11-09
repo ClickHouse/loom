@@ -134,8 +134,8 @@ class OverloadedError(LoomServerError):
     lock or lease: a sibling held it past its wait; the matchers: the org's share of them
     stayed busy, and the write is refused rather than stored unchecked; a conversation
     delete or compaction: writes to the thread's embeddings kept landing; insights.query
-    while its replica's probe has no answer from ClickHouse, or while ClickHouse is short
-    of memory. Safe to resend
+    while its replica's probe has no answer from ClickHouse; any statement that met
+    ClickHouse short of the server's or the user's memory. Safe to resend
     on an idempotent op, or when it came before the handler ran; `retry_after_s` is the
     wait."""
 
