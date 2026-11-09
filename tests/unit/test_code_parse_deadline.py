@@ -5,6 +5,8 @@ from __future__ import annotations
 import ast
 import asyncio
 import pathlib
+import subprocess
+import sys
 import time
 from typing import Any
 
@@ -34,6 +36,37 @@ def test_a_slow_parse_stops_at_the_deadline_and_the_file_is_chunked(
     assert time.monotonic() - start < 5
     assert pf is not None and pf.symbols == [] and pf.source == source
     assert "ParseTimeout" in err
+
+
+# Parses, then sets every thread's CPU clock past the deadline and reads a node's text
+# from another thread, as the event loop reads a tree a worker thread parsed.
+_READ_AFTER_DEADLINE = """
+import faulthandler, threading, time
+faulthandler.dump_traceback_later(30, exit=True)  # a read that spins: dump where, and fail
+import tree_sitter_python
+from tree_sitter import Language, Parser
+from server.code.domain.extract.bounded_parse import parse
+tree = parse(Parser(Language(tree_sitter_python.language())), b"x = 'a'.format(1)\\n")
+time.thread_time = lambda: float("inf")
+texts = []
+reader = threading.Thread(target=lambda: texts.append(tree.root_node.children[0].text))
+reader.start()
+reader.join()
+print(texts[0].decode())
+"""
+
+
+def test_a_node_reads_its_text_after_the_deadline_has_passed() -> None:
+    # In a child process: a read that spins is killed with it, not left running here.
+    done = subprocess.run(
+        [sys.executable, "-c", _READ_AFTER_DEADLINE],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=_SERVER.parent,
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "x = 'a'.format(1)"
 
 
 def test_a_file_parsed_in_time_keeps_its_symbols() -> None:

@@ -42,12 +42,15 @@ def parse(parser: Any, source: bytes) -> Any:
     budget = settings.code_parse_timeout_s
     deadline = time.thread_time() + budget  # waiting on the lock costs no CPU time
     expired = False
+    parsed = False
 
     def read(offset: int, _point: Any) -> bytes:
         nonlocal expired
         if offset >= len(source):
             return b""  # the end, read in full
-        if expired or time.thread_time() > deadline:
+        # The tree reads its text back through this callback (`Node.text`), any time
+        # later: the deadline holds only while the parse runs.
+        if not parsed and (expired or time.thread_time() > deadline):
             expired = True
             return b""
         return source[offset : offset + _CHUNK]
@@ -57,6 +60,7 @@ def parse(parser: Any, source: bytes) -> Any:
         lock = _LOCKS.setdefault(parser.language, threading.Lock())
     with lock:
         tree = parser.parse(read)
+    parsed = True
     if expired:
         raise ParseTimeout(f"parse stopped after {budget:g} CPU seconds")
     return tree
