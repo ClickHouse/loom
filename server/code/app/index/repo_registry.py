@@ -177,6 +177,14 @@ def registry_read() -> bool:
     return not registry_unread()
 
 
+def readiness_check() -> Any:
+    """Reported, not required: until the first read a code op answers 503 and an
+    operator entry a page namespace skips is not known."""
+    from server.core import readiness
+
+    return readiness.result(registry_read(), "the self-service repository registry is not read")
+
+
 async def start_refresher(ch: Any | None = None) -> asyncio.Task[None]:
     """Every process loads the registry before it serves and re-reads it every
     ``code_repos_refresh_seconds``, so an added repository or a new restriction

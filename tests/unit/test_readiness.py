@@ -136,6 +136,7 @@ def test_boot_registers_every_check(monkeypatch) -> None:
         "keyring",
         "grant_watermark",
         "tracker_registry",
+        "code_registry",
         "runtime_overrides",
         "calibration",
         "config_drift",

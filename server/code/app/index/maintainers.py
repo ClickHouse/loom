@@ -567,7 +567,9 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
     from server.code.app.index.repo_registry import registry_read
 
     if not registry_read():
-        if (org, namespace) not in _UNSYNCED:
+        from server.code.domain.index.repos import config_entry
+
+        if config_entry(org, namespace) is not None and (org, namespace) not in _UNSYNCED:
             _UNSYNCED.add((org, namespace))
             log.warning(
                 "repo maintainers: %s/%s not synced — the self-service registry is not read yet",

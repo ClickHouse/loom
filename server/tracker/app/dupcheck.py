@@ -63,6 +63,9 @@ async def handle_tracker_duplicate_check(
     # A tracker namespace addressed by name is a single read; a code namespace (or
     # `namespaces`) reads every tracker record the caller may.
     requested = list(input.namespaces or [])
+    # Read before anything the answer is built from: one computed before the code
+    # registry's first read is narrower, and is not kept.
+    cache = not registry_unread()
     explicit = tracker_namespace(input.org, input.namespace) is not None and not requested
     linked = [] if explicit else await common.linked_trackers(input.org, input.namespace)
     # the code namespace the call named (pr_check reads it)
@@ -75,9 +78,6 @@ async def handle_tracker_duplicate_check(
     # The PRs that may already address the draft are searched while the checks run, on the
     # code namespace the call was addressed at.
     wants_prs = bool(input.related_prs) and not explicit
-    # Read before anything the answer is built from: one computed before the code
-    # registry's first read is narrower, and is not kept.
-    cache = not registry_unread()
     pr_task = _start_pr_check(input.org, code_ns, title, body) if wants_prs else None
     deadline = dl.start_deadline()
     try:

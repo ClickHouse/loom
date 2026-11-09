@@ -784,7 +784,7 @@ def register_readiness_checks(ch: Any) -> None:
     module that keeps a piece of warm-up state owns its check; ClickHouse and
     the ledger are cached."""
     from server.auth import keyring, revocation
-    from server.code.app.index import mirrors, sandbox
+    from server.code.app.index import mirrors, repo_registry, sandbox
     from server.core import deployment_config, grant_cache, model_work_gate, pg_profile, readiness
     from server.memory.app import embedder_calibration
     from server.tracker.app import registry_sources
@@ -811,6 +811,7 @@ def register_readiness_checks(ch: Any) -> None:
     readiness.register("keyring", keyring.readiness_check)
     readiness.register("grant_watermark", grant_cache.readiness_check, required=False)
     readiness.register("tracker_registry", registry_sources.readiness_check)
+    readiness.register("code_registry", repo_registry.readiness_check, required=False)
     readiness.register("runtime_overrides", _overrides_ready)
     readiness.register("calibration", embedder_calibration.readiness_check)
     readiness.register("config_drift", deployment_config.readiness_check)
