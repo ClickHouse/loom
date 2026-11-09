@@ -1032,21 +1032,8 @@ def test_a_write_clickhouse_refuses_is_a_kept_finding_and_not_done(
         assert ready_now is False and problem.startswith("writing or probing loom_analyst failed")
 
 
-def test_a_drawn_password_has_every_character_class(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_drawn_password_has_every_character_class() -> None:
     # ClickHouse Cloud refuses a user whose password lacks one.
-    monkeypatch.setattr(app, "_loaded", None)
-    stored: list[str] = []
-
-    async def read() -> str | None:
-        return stored[-1] if stored else None
-
-    async def write(sealed: str) -> None:
-        stored.append(sealed)
-
-    monkeypatch.setattr(app.store, "sealed_secrets", read)
-    monkeypatch.setattr(app.store, "store_secrets", write)
-    asyncio.run(app.load_secrets(may_draw=True))
-    key, password = app._secrets()
-    assert len(stored) == 1 and len(key) == 32
+    password = app._drawn_password()
     for character_class in ("[a-z]", "[A-Z]", "[0-9]", "[^A-Za-z0-9]"):
         assert re.search(character_class, password), character_class

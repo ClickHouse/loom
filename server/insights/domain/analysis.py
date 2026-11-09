@@ -445,7 +445,8 @@ def entity_sql(
     one, then every grant and role the user holds outside the allowlist
     (`granted` and `roles` are what it holds now) is revoked, and then the
     allowlist is granted, since a table's revoke also takes the column grants
-    under it. A retired table keeps a policy that reads nothing. The stamp
+    under it. The profile's pins come after every policy and before every
+    grant. A retired table keeps a policy that reads nothing. The stamp
     comes last, so a write cut short is written again by the next boot. `db`
     is already quoted."""
     user = f"`{ANALYST_USER}`"
@@ -455,7 +456,6 @@ def entity_sql(
 
     out = [
         f"CREATE SETTINGS PROFILE IF NOT EXISTS {user} SETTINGS " + ", ".join(profile),
-        f"ALTER SETTINGS PROFILE {user} SETTINGS " + ", ".join(profile),
         *caps_sql(caps),
         f"CREATE USER IF NOT EXISTS {user} {identified} SETTINGS PROFILE '{CAPS_PROFILE}'",
         f"ALTER USER {user} {identified} SETTINGS PROFILE '{CAPS_PROFILE}'",
@@ -465,6 +465,12 @@ def entity_sql(
         out.append(policy_sql(db, POLICY_NAME, t.name, f"({t.live}) AND {condition}", user))
     for name in RETIRED_TABLES:
         out.append(policy_sql(db, POLICY_NAME, name, "0", user))
+    out.append(f"INSERT INTO {db}.{CANARY_TABLE} (id) VALUES (0)")
+    # Last of the policies: a canary that reads under the key means all of them do.
+    out.append(policy_sql(db, POLICY_NAME, CANARY_TABLE, condition, user))
+    # The pins after every policy: an older profile keeps the analyst's
+    # statements out of the log while a policy may still quote the key.
+    out.append(f"ALTER SETTINGS PROFILE {user} SETTINGS " + ", ".join(profile))
     out += [_revoke(g, user) for g in sorted(granted) if not _allowed(g)]
     out += [f"REVOKE `{role}` FROM {user}" for role in sorted(roles)]
     out += [
@@ -472,9 +478,6 @@ def entity_sql(
         for t in TABLES
     ]
     out.append(f"GRANT SELECT(id) ON {db}.{CANARY_TABLE} TO {user}")
-    out.append(f"INSERT INTO {db}.{CANARY_TABLE} (id) VALUES (0)")
-    # Last of the policies: a canary that reads under the key means all of them do.
-    out.append(policy_sql(db, POLICY_NAME, CANARY_TABLE, condition, user))
     stamp = [
         *profile,
         # A string, as ClickHouse stores a number setting as `UInt64_1`.

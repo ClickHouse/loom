@@ -61,6 +61,16 @@ def test_a_version_names_one_set_of_grants_and_policies() -> None:
     }
 
 
+def test_the_pins_come_after_every_policy_and_before_every_grant() -> None:
+    # An older profile keeps the log off while a policy may still hold the pads in clear.
+    pins = next(
+        i for i, s in enumerate(SQL) if s.startswith("ALTER SETTINGS PROFILE `loom_analyst`")
+    )
+    policies = [i for i, s in enumerate(SQL) if s.startswith("CREATE ROW POLICY")]
+    grants = [i for i, s in enumerate(SQL) if s.startswith("GRANT ")]
+    assert max(policies) < pins < min(grants)
+
+
 def test_the_canary_policy_is_the_last_policy() -> None:
     policies = [s for s in SQL if s.startswith("CREATE ROW POLICY")]
     assert f".{boundary.CANARY_TABLE} " in policies[-1]

@@ -227,6 +227,16 @@ _QUOTING_ERRORS = [
 ]
 
 
+def _key_spellings(ch_client) -> list[str]:
+    """The policy's `decrypt` arguments, and the pads they evaluate to, as the
+    log could spell them: no logged text or error may hold one."""
+    secrets = re.findall(r"unhex\('([0-9a-f]+)'\)", _scope_filter(ch_client, "memory"))
+    padded = bytes.fromhex(next(h for h in secrets if len(h) == 64)).ljust(64, b"\0")
+    pads = [bytes(b ^ pad for b in padded) for pad in (0x36, 0x5C)]
+    # The pads end in the zero-padded key's 0x36 and 0x5C bytes, printable as they are.
+    return [*secrets, *(p.hex() for p in pads), "6" * 32, "\\" * 32]
+
+
 @pytest.mark.parametrize("sql", _QUOTING_ERRORS)
 def test_an_error_quotes_no_value_from_another_scope(
     control_plane_url: str, seed: _Seed, ch_client, sql: str
@@ -244,8 +254,8 @@ def test_an_error_quotes_no_value_from_another_scope(
     ).result_rows[0][0]
     # The caller's own row is the one that threw.
     assert any(f"own/{seed.nonce}" in e for e in logged), logged
-    for leaked in ("other-ns/", "other-org/", "deleted/"):
-        assert not any(leaked in e for e in logged), logged
+    for leaked in ("other-ns/", "other-org/", "deleted/", *_key_spellings(ch_client)):
+        assert not any(leaked.lower() in e.lower() for e in logged), logged
 
 
 @pytest.mark.parametrize("template", _ESCAPES)
@@ -483,10 +493,9 @@ def test_the_statement_text_stays_out_of_the_query_log(
     }
     for request_id, statement in statements.items():
         r = _query(control_plane_url, seed, statement, request_id=request_id)
-        assert r.status_code in {200, *_REFUSED}, r.text
+        assert r.status_code in ({200} if statement == sql else {200, *_REFUSED}), r.text
     ch_client.command("SYSTEM FLUSH LOGS")
-    # Each is logged, as on a server that pins log_queries, but not its text;
-    # these reads cut their own, which hold the marker.
+    # Each is logged, as on a server that pins log_queries, but not its text.
     for request_id in statements:
         logged = ch_client.query(
             "SELECT count() FROM system.query_log "
@@ -494,6 +503,7 @@ def test_the_statement_text_stays_out_of_the_query_log(
             parameters={"analyst": boundary.ANALYST_USER, "rid": f"{request_id}:"},
         ).result_rows[0][0]
         assert logged > 0, request_id
+    # This read cuts its own text, which holds the marker.
     quoted = ch_client.query(
         "SELECT count() FROM system.query_log "
         "WHERE query LIKE {m:String} OR formatted_query LIKE {m:String}",
@@ -509,13 +519,7 @@ def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client) -> Non
     reads included, carries one. The whole log is read: a build before version
     2 pinned log_queries = 0 for the analyst, so it left no such rows."""
     start = ch_client.query("SELECT now()").result_rows[0][0]
-    secrets = re.findall(r"unhex\('([0-9a-f]+)'\)", _scope_filter(ch_client, "memory"))
-    # The decrypt arguments, and the pads they evaluate to, which must never be printed.
-    padded = bytes.fromhex(next(h for h in secrets if len(h) == 64)).ljust(64, b"\0")
-    pads = [bytes(b ^ pad for b in padded) for pad in (0x36, 0x5C)]
-    secrets += [p.hex() for p in pads]
-    # The pads end in the zero-padded key's 0x36 and 0x5C bytes, printable as they are.
-    secrets += ["6" * 32, "\\" * 32]
+    secrets = _key_spellings(ch_client)
 
     def refused_since_start() -> bool:
         ch_client.command("SYSTEM FLUSH LOGS")
