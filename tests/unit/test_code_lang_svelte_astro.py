@@ -187,3 +187,9 @@ def test_barrel_alias_map_reads_the_shadcn_idiom_and_direct_reexports() -> None:
         "Content",
     )
     assert "Props" not in m  # a type re-export is not a component
+
+
+def test_an_event_with_modifiers_names_its_handler() -> None:
+    src = b"<form on:submit|preventDefault={save}></form>\n<a on:click|preventDefault|once={go}></a>\n"
+    sites = markup_sites(parse_file("src/F.svelte", src), {})
+    assert [(line, name) for line, name, _kind in sites] == [(1, "save"), (2, "go")]

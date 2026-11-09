@@ -36,6 +36,7 @@ extractor stamp with the other lane modules.
 
 from __future__ import annotations
 
+import hashlib
 import posixpath
 import re
 from dataclasses import dataclass, field
@@ -51,8 +52,8 @@ EDGE_READS = "reads"
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
 _FENCE_RE = re.compile(r"^(```|~~~)")
 # A section repeats its ancestors' titles in its qualified name and heading path: the
-# titles and both are cut, so a file of deep sections under long titles stays linear.
-_MAX_PATH = 2000
+# titles and both are cut, so a section costs at most this much whatever its depth.
+_MAX_PATH = 1000
 _LINK_RE = re.compile(r"\]\(((?:(?!\]\()[^)\s])++)(?:\s+\"[^\"]*\")?\)")
 _CODE_REF_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)(?:\(\))?`")
 _NOISE_REFS: frozenset[str] = frozenset(
@@ -140,6 +141,7 @@ def sections_of(text: str) -> tuple[list[Section], int]:
             # The closing `#`s off in Python: a pattern that matches them after a lazy
             # title backtracks cubically on a run of spaces.
             rest = h.group(2)
+            # `or`: a rest of only `#`s keeps its first, as the old pattern's title did
             title = rest.rstrip().rstrip("#").rstrip() or rest[:1]
             heads.append((i, len(h.group(1)), title.strip()[:_MAX_PATH].rstrip()))
     out: list[Section] = []
@@ -168,7 +170,11 @@ def sections_of(text: str) -> tuple[list[Section], int]:
 
 
 def _qname(mod: str, sec: Section) -> str:
-    return "::".join([mod, *sec.path_titles])[:_MAX_PATH]
+    name = "::".join([mod, *sec.path_titles])
+    if len(name) <= _MAX_PATH:
+        return name
+    # cut, with a hash of the whole so two cut names stay distinct
+    return name[: _MAX_PATH - 17] + "~" + hashlib.sha1(name.encode()).hexdigest()[:16]
 
 
 def markdown_units(

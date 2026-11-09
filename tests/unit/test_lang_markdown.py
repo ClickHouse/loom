@@ -114,10 +114,10 @@ def test_reference_edges_read_backticked_names_once_each() -> None:
     ], "an ambiguous bare name binds nothing; a qualified mention picks its suffix"
 
 
-def test_a_qualified_name_is_cut_to_two_thousand_characters() -> None:
+def test_a_long_qualified_name_is_cut_and_stays_distinct() -> None:
     # Every section's qualified name repeats its ancestors' titles.
-    syms, _inc, _refs, _pre = markdown_units(
-        "a.md", "# " + "x" * 1500 + "\n## " + "y" * 1500 + "\n"
-    )
-    assert [len(s.qualified_name) for s in syms] == [1503, 2000]
-    assert syms[1].qualified_name.startswith("a::" + "x" * 1500 + "::y")
+    text = "# " + "x" * 600 + "\n## " + "y" * 600 + "\n### a\n### b\n"
+    syms, _inc, _refs, _pre = markdown_units("a.md", text)
+    names = [s.qualified_name for s in syms]
+    assert [len(n) for n in names] == [603, 1000, 1000, 1000]
+    assert names[1].startswith("a::" + "x" * 600 + "::y") and len(set(names)) == 4

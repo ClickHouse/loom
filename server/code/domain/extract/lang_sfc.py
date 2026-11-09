@@ -56,7 +56,7 @@ _FENCE = "---"
 # `onClick={save}` (Astro client islands): the braces hold a bare name or a call of it
 # Not after a `|`: a search from each `on` of a modifier chain would rescan the chain.
 _EVENT_RE = re.compile(
-    r"(?<![\w|])on:?[A-Za-z]++(?:\|[a-z]++)*+\s*=\s*\{\s*([A-Za-z_$][\w$]*)\s*[(}]"
+    r"(?<![\w|])on:?[A-Za-z]++(?:\|[A-Za-z]++)*+\s*=\s*\{\s*([A-Za-z_$][\w$]*)\s*[(}]"
 )
 # any `{ … name( … }` expression: `{format(row)}`, `{#if check(x)}`, `{@html render(x)}`,
 # `{#each sort(items) as item}` — the first identifier that is called

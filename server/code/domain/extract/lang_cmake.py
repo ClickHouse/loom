@@ -221,6 +221,7 @@ def commands(text: str) -> list[Command]:
             doc = []
             continue
         start_line = line
+        line += text.count("\n", i, m.end())  # `\s*+` may cross lines before the `(`
         args, j, nl = _read_args(text, m.end())
         line += nl
         out.append(
