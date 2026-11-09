@@ -236,7 +236,7 @@ NON_EXTRACTOR_MODULES: dict[str, str] = {
         "`loom code backfill --paths-file`"
     ),
     "text_lines.py": (
-        "the line of an offset, for the route, environment and template lanes outside the stamp"
+        "the line of an offset, for the route, environment, template and dbt lanes outside the stamp"
     ),
     "ts_routes.py": (
         "HTTP route facets for TypeScript/JavaScript files: file-system, "
