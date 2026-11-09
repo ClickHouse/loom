@@ -24,9 +24,9 @@ Then it writes from each build and reads from the other, and checks:
   so N hands the lease over to it.
 
 The rules these check are docs/architecture/rolling-upgrades.md. ClickHouse
-runs in a throwaway container (the CI image and config), so the gate needs
-docker; without it, or `git`, it skips with exit 0, or fails with `--require`
-(CI).
+runs in a throwaway container on its default config, so custom settings take
+`SQL_`. The gate needs docker; without it, or `git`, it skips with exit 0, or
+fails with `--require` (CI).
 
     python scripts/gates/mixed_version.py [--base REV] [--keep] [--require]
 """
@@ -401,7 +401,7 @@ class Scenario:
         # N first: it answers only once its own entities are written and probed.
         for label in ("N", "N-1"):
             self.check(self.answers_insights(label), f"{label} answers insights.query")
-        names = self.setting_names()
+        names = boundary.SettingNames("SQL_")  # the gate runs the default config
         version = sql(
             self.ch_port,
             "SELECT trim(BOTH '\\'' FROM value) FROM system.settings_profile_elements "
@@ -444,18 +444,6 @@ class Scenario:
             if r.status_code == 200 or time.monotonic() > deadline:
                 return r.status_code == 200
             time.sleep(2)
-
-    def setting_names(self) -> boundary.SettingNames:
-        """The analysis settings under the first prefix this ClickHouse takes."""
-        for prefix in boundary.SETTING_PREFIXES:
-            try:
-                sql(self.ch_port, "SELECT 1", settings={f"{prefix}loom_probe": "1"})
-            except RuntimeError as e:
-                if "UNKNOWN_SETTING" not in str(e):
-                    raise  # no answer: the gate must not guess
-                continue  # not a prefix this server takes
-            return boundary.SettingNames(prefix)
-        raise RuntimeError(f"ClickHouse takes none of {boundary.SETTING_PREFIXES}")
 
     def logs_hold_no_key(self, since: str, needles: dict[str, str], setting_prefix: str) -> None:
         """No statement text or error in query_log, and no server log error
