@@ -62,11 +62,9 @@ A `loom.code_repos` row's `row_kind` says what it is:
 pass and after an add. Until the snapshot's first read it raises `RegistryUnread`
 (self-service on), since the entries a page namespace skips are not known yet; the
 modules that decide access read `config_entries()`, which lists the entries before that
-read with none org-readable (`tests/unit/test_repo_snapshot_contract.py`). Outside the
-code plane, while `loom.code_repos` cannot be read since boot, `memory.redact`, the
-knowledge source ops and a token mint naming a restricted code namespace (or one of
-unknown kind) answer 503; memory reads, search and `memory.for_file` answer without code
-links. Retiring an entry (`code/app/index/retire.py`) deactivates its rows, runs an
+read with none org-readable (`tests/unit/test_repo_snapshot_contract.py`). An op that
+needs the full list answers 503 in that window; memory reads, search and
+`memory.for_file` answer without code links. Retiring an entry (`code/app/index/retire.py`) deactivates its rows, runs an
 erasure saga over every `code_*` table for the namespace, and removes the mirror when no
 other entry uses it on the host that served the call; every other host's sweep removes
 its own copy.
