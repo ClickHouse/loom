@@ -106,6 +106,44 @@ def test_a_lost_applied_file_refuses_but_a_newer_builds_file_is_served(tmp_path:
     assert pg_migrate.plan(applied, files) == []
 
 
+def test_a_row_that_leaves_out_its_default_fields_reads_as_the_full_row() -> None:
+    """A stored row may leave out a field at its loom.memory default: it reads back as the
+    row that stores every field, a list default a fresh list each time."""
+    from server.memory.store.rows import build_first_version_row
+
+    full = pg_memory.encode_row(
+        build_first_version_row(
+            {
+                "org": "o",
+                "namespace": "n",
+                "agent": "a",
+                "user_id": "-",
+                "session_id": "-",
+                "memory_key": "k",
+                "memory_type": "semantic",
+                "value": '"v"',
+                "value_json": "{}",
+                "confidence": 1.0,
+                "version": 7,
+                "content_sha256": "0" * 64,
+                "actor": "t",
+                "source_class": "asserted",
+            },
+            now=datetime(2026, 1, 2, 3, 4, 5),
+        )
+    )
+    sparse = {
+        c: v
+        for c, v in full.items()
+        if c not in pg_memory.SPARSE_DEFAULTS or v != pg_memory.SPARSE_DEFAULTS[c]
+    }
+    assert len(sparse) < len(full)
+    assert pg_memory.decode_row(sparse) == pg_memory.decode_row(full)
+    first, second = pg_memory.decode_row(sparse), pg_memory.decode_row(sparse)
+    first["tags"].append("x")
+    assert second["tags"] == []
+
+
 def test_a_row_round_trips_at_clickhouse_precision() -> None:
     mid = uuid.uuid4()
     row = {
@@ -2912,7 +2950,7 @@ async def test_a_commits_gap_with_erased_seqs_is_checked_on_the_rows_left() -> N
 
     admission = pg_memory.Admission(generations={("o", "n"): 10}, gap_check=_check)
     assert await pg_memory._gap_cleared(_Conn(), admission, {("o", "n"): 13}) is True
-    assert seen == [[{"memory_id": "m12"}]]
+    assert [[r["memory_id"] for r in rows] for rows in seen] == [["m12"]]
 
 
 @pytest.mark.asyncio
