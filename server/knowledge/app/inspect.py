@@ -795,9 +795,7 @@ class _Inspect:
         # newer-of rule, with the head an older build purged, is what a reader is served,
         # and a version-only copy of that rule could drift from it.
         try:
-            got = await documents_repo.get_many_by_uris(
-                i.org, i.namespace, uris, include_superseded=True
-            )
+            got = await documents_repo.get_many_by_uris(i.org, i.namespace, uris)
         except pg.PostgresUnavailableError:
             self.down()
             return rows
@@ -812,9 +810,7 @@ class _Inspect:
         kept = [
             r
             for r in rows
-            if (d := heads.get(str(r["source_uri"]))) is not None
-            and d.superseded_at is None
-            and d.version == int(r["version"])
+            if (d := heads.get(str(r["source_uri"]))) is not None and d.version == int(r["version"])
         ]
         if len(kept) < len(rows):
             self.documents_whole = False

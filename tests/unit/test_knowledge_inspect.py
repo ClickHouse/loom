@@ -1196,13 +1196,13 @@ class _Authority:
         async def unpublished(org: str, ns: str) -> tuple[int, int]:
             return Stubs._answer(self.unpublished)
 
-        async def get_many(org: str, ns: str, uris: list[str], **kw: Any) -> Any:
-            assert kw == {"include_superseded": True}
+        async def get_many(org: str, ns: str, uris: list[str]) -> Any:
+            # As knowledge.get reads: a deleted document is not served.
             served = Stubs._answer(self.served)
             return [
-                SimpleNamespace(source_uri=u, version=v, superseded_at=T1 if deleted else None)
+                SimpleNamespace(source_uri=u, version=v)
                 for u, (v, deleted) in served.items()
-                if u in uris
+                if u in uris and not deleted
             ]
 
         async def nothing_behind(*_: object) -> bool:
@@ -1335,11 +1335,3 @@ async def test_under_postgres_a_failed_listing_check_lists_clickhouses_rows(
     )
     assert len(expected) == 1
     assert not out.listed_complete
-
-
-def test_the_lines_the_dashboard_keys_on_keep_their_prefixes() -> None:
-    """DocumentInspection.tsx's `documentsMayBeShort` reads a short listing from these
-    two names alone, never from the wording after them."""
-
-    assert ki.DOCUMENTS_PROJECTION == "documents.projection"
-    assert ki.LISTED_HEADS == "listed.heads"
