@@ -113,7 +113,7 @@ def main() -> int:
         stdout.write(answer.upper() if retire else answer)
         stdout.flush()
         if retire:
-            return 0
+            break
     return 0
 
 

@@ -4,9 +4,10 @@ Some grammars take quadratic time on short repeated tokens, and some quadratic m
 (gigabytes from a few tens of kilobytes), so one file could hold a worker or a serving
 replica for hours or exhaust its memory. Every parse of repository text goes through
 `parse`, which first parses the source in a child process (`parse_child`) held to
-`code_parse_memory_mb` of address space past its own and `code_parse_timeout_s` of CPU
-time, and raises `ParseTimeout` when that parse runs past the deadline or ends the child; each
-caller takes its parse failure path (an indexed file is then chunks without symbols).
+`code_parse_memory_mb` of address space past its own and `code_parse_timeout_s` of
+CPU time, and raises `ParseTimeout` when that parse runs past the deadline or ends the
+child; each caller takes its parse failure path (an indexed file is then chunks
+without symbols).
 Only a source the child parsed in full within the deadline is parsed again here, where
 the same parse does the same work and so stays within the same limits (past twice the
 deadline it stops reading, in case it does not). A child serves one parse at a time and
@@ -15,9 +16,9 @@ server process, child included, so a server process holds about one memory limit
 worth of parse at once: `code_parse_memory_mb` plus up to about 170 MB, the child's own
 40 MB, up to 64 MB it kept from earlier parses, and as much again in the server, which
 takes fresh what the child's parse reused. The trees its callers keep are not counted.
-The child is the server's interpreter with `-I` and an empty environment; it bounds resources
-and is no sandbox. The pool stays in `domain/`, beside the parsers that call it: the
-child is a local process, no ClickHouse or network. The limits hold on Linux.
+The child is the server's interpreter with `-I` and an empty environment; it bounds
+resources and is no sandbox. The pool stays in `domain/`, beside the parsers that call
+it: the child is a local process, no ClickHouse or network. The limits hold on Linux.
 
 The parse here reads the source `_CHUNK` bytes at a time through a callback: the binding
 holds the GIL while it parses, and the callback is where another thread can take it, so
@@ -131,6 +132,11 @@ def _start() -> subprocess.Popen[bytes]:
         raise
 
 
+def _wall_bound(budget: float) -> float:
+    """Seconds to wait for a child's answer before counting it as ended."""
+    return 10 * budget + 5
+
+
 def _ask(
     child: subprocess.Popen[bytes], grammar: str, source: bytes, budget: float, memory: int
 ) -> bytes | None:
@@ -149,7 +155,7 @@ def _ask(
         answer = _SILENT
         with selectors.DefaultSelector() as waiting:  # not select(): no descriptor cap
             waiting.register(stdout, selectors.EVENT_READ)
-            if waiting.select(10 * budget + 5):
+            if waiting.select(_wall_bound(budget)):
                 answer = stdout.read(1)
     except BrokenPipeError:
         pass  # the child had ended
@@ -200,7 +206,7 @@ def parse(parser: Any, source: bytes) -> Any:
         if answer == -signal.SIGKILL:
             raise ParseTimeout("the parse process was killed twice: memory ran out around it")
         if answer == _SILENT:
-            raise ParseTimeout(f"the parse process did not answer within {10 * budget + 5:g} s")
+            raise ParseTimeout(f"the parse process did not answer within {_wall_bound(budget):g} s")
         if answer != parse_child.DONE:
             raise ParseTimeout(
                 f"parse ran past {memory >> 20} MB or {budget:g} CPU seconds"
