@@ -272,6 +272,7 @@ async def _stack_knowledge(input: MemoryStackInput, fill: _StackFill, seed: str)
     try:
         from server.embedding import get_embedder as _gemb
         from server.knowledge.app.knowledge_search import not_noise
+        from server.knowledge.app.pg_serving import served_search
         from server.knowledge.app.search import HybridSearchQuery as _KSQ
         from server.knowledge.app.search import hybrid_search
 
@@ -280,7 +281,7 @@ async def _stack_knowledge(input: MemoryStackInput, fill: _StackFill, seed: str)
         agent = request_rule_agent(input.agent)
         top_k = int(input.knowledge_top_k)
 
-        async def search(k: int) -> list[Any]:
+        async def ranked(k: int) -> list[Any]:
             return await hybrid_search(
                 _KSQ(
                     org=input.org,
@@ -290,6 +291,10 @@ async def _stack_knowledge(input: MemoryStackInput, fill: _StackFill, seed: str)
                     top_k=k,
                 )
             )
+
+        async def search(k: int) -> list[Any]:
+            # The ones their documents' current versions serve (`pg_serving`).
+            return (await served_search(input.org, ranked, k))[0]
 
         # Another bot's promoted rule is not a rule about this agent, and a noise section
         # (meeting notes, a status report) stays out of a bundle handed over unasked.

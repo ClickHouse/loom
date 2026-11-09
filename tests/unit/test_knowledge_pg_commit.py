@@ -37,6 +37,7 @@ class _Conn:
 
     async def fetchval(self, sql: str, *args: Any) -> Any:
         self.statements.append(sql)
+        self.calls.append((sql, args))
         if "erased_documents" in sql:
             self.erased_ids = args[2]
             return self.erased
@@ -146,3 +147,18 @@ def test_the_locks_name_the_commits_namespace_and_its_sources_in_key_order(conn:
     heads = next(args for sql, args in c.calls if "FOR UPDATE" in sql)
     assert lock == ("o", "n")
     assert heads == ("o", "n", ["a", "b"])  # sorted: every locker's order
+
+
+@pytest.mark.parametrize("first", [True, False])
+@pytest.mark.parametrize("chunked", [True, False])
+def test_a_commit_that_inserted_chunks_records_them_as_the_heads(
+    conn: Any, first: bool, chunked: bool
+) -> None:
+    """Its revision and version become the chunks the head serves; another commit (a
+    delete, a metadata edit, a restore) sends none, which keeps the ones the head serves,
+    and a first head of one records none."""
+    conn["conn"] = c = _Conn({} if first else {"a": 5})
+    _commit([_row("a", 9)], {"a": 0 if first else 5}, chunked={"a"} if chunked else frozenset())
+    marker = "INSERT INTO loom.knowledge_heads" if first else "UPDATE loom.knowledge_heads"
+    [args] = [a for s, a in c.calls if marker in s]
+    assert args[8:] == ((1, 9) if chunked else (None, None))

@@ -101,10 +101,12 @@ def test_the_repo_reads_select_the_hash_and_the_erasure_stamp() -> None:
 def _capture_inserts(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
 
-    async def _one(row, *, over=0, retire_older=False, built_from="", ch=None):
+    async def _one(row, *, over=0, retire_older=False, built_from="", chunked=False, ch=None):
         rows.append(row)
 
-    async def _many(batch, *, over=None, retire_older=frozenset(), built_from=(), ch=None):
+    async def _many(
+        batch, *, over=None, retire_older=frozenset(), built_from=(), chunked=False, ch=None
+    ):
         rows.extend(batch)
         return len(batch)
 

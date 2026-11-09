@@ -88,6 +88,7 @@ async def test_the_keys_leg_matches_the_chunks_keys_and_reads_their_structure() 
                 "namespace": "ns",
                 "source_uri": "repo://retention.sql",
                 "chunk_idx": 0,
+                "doc_version": 3,
                 "content": "CREATE TABLE events (...)",
                 "context": "",
                 "tags": [],

@@ -901,7 +901,7 @@ describe("Assistant: overview", () => {
       expect(screen.getByRole("button", { name })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "About Who appears here" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Inspect documents" })).toHaveAccessibleDescription(
-      "Every document here: formats, what search serves, and ingest health.",
+      "Every document here: formats, live chunks, and ingest health.",
     );
     expect(screen.queryByRole("heading", { name: /Review changes/ })).toBeNull();
     expect(inspectMemories).not.toHaveBeenCalled();
@@ -1632,7 +1632,7 @@ const pickDocuments = async () => {
 };
 
 describe("Assistant: documents", () => {
-  it("inspects the namespace's documents with no id: formats, what search serves, decisions and the newest", async () => {
+  it("inspects the namespace's documents with no id: formats, live chunks, decisions and the newest", async () => {
     const { container } = render(<Assistant />);
     const result = await pickDocuments();
     expect(inspectKnowledge).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, expect.anything());
@@ -1678,7 +1678,7 @@ describe("Assistant: documents", () => {
     const result = await pickDocuments();
     expect(within(result).getByRole("status")).toHaveTextContent("This namespace holds no live document");
     expect(within(result).queryByRole("heading", { name: /Newest documents/ })).toBeNull();
-    expect(within(result).queryByRole("heading", { name: "What search serves" })).toBeNull();
+    expect(within(result).queryByRole("heading", { name: "Live chunks" })).toBeNull();
     expect(within(result).getByText("No ingestion job in the last 30 days.")).toBeInTheDocument();
   });
 

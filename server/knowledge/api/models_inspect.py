@@ -1,5 +1,6 @@
 """Wire models for `knowledge.inspect`: what a namespace's documents are, which of their
-versions search serves, and what was extracted from them, read from what is stored."""
+versions ClickHouse reads as live, and what was extracted from them, read from what is
+stored."""
 
 from __future__ import annotations
 
@@ -43,8 +44,8 @@ FailureClass = Literal[
 class KnowledgeInspectInput(BaseModel):
     """Report a namespace's documents, read-only.
 
-    Counts by format, source and revision; the newest live documents with the chunks
-    search serves, the decisions recorded from them, what the extractor kept and their
+    Counts by format, source and revision; the newest live documents with their live
+    chunks, the decisions recorded from them, what the extractor kept and their
     knowledge.ingest jobs; the namespace's jobs, among them sources with a job and no live
     document (a first ingest, or one after a delete, queued or failed); findings on the
     chunks, the jobs and the extractions; and the namespace audit's findings on memories
@@ -117,7 +118,9 @@ class ChunkTotals(BaseModel):
     embedder_model: str = ""
     # Live chunks under any model; null when the read failed.
     live: int | None = None
-    # Live chunks under `embedder_model` that carry a vector: what search can return.
+    # Live chunks under `embedder_model` that carry a vector: what search reads (under the
+    # Postgres authority it serves the current version's alone, a document written before
+    # heads excepted).
     searchable: int | None = None
     # Live chunks with no vector, under any model.
     unembedded: int | None = None
@@ -137,7 +140,9 @@ class DocumentChunks(BaseModel):
     # Those under another embedding model, which search does not read.
     other_model: int
     # Distinct document versions among the live chunks under the server's model; more
-    # than one means search serves two versions of the document.
+    # than one means ClickHouse reads two versions of the document as live: search serves
+    # both under the ClickHouse authority, the current one alone under the Postgres one
+    # (a document written before heads excepted).
     versions: int
     # Characters per live chunk: smallest, median, largest.
     min_chars: int
@@ -416,7 +421,9 @@ class KnowledgeInspectOutput(BaseModel):
     computed_at: datetime
     # Live and deleted documents by format and source scheme, and retired versions.
     documents: DocumentTotals
-    # Live chunks by embedding model, and how many knowledge.search can return.
+    # Live chunks by embedding model, and how many knowledge.search reads (under the
+    # Postgres authority it serves the current version's alone, a document written before
+    # heads excepted).
     chunks: ChunkTotals
     # Decision rows citing a document of the namespace, by stage.
     decisions: DecisionTotals

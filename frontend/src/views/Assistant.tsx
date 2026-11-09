@@ -265,7 +265,7 @@ export function Assistant() {
             </BusyButton>
           </Unavailable>
           <p id="assistant-documents-what" className="text-sm text-text-muted">
-            Every document here: formats, what search serves, and ingest health.
+            Every document here: formats, live chunks, and ingest health.
           </p>
         </div>
       </Panel>

@@ -4038,6 +4038,7 @@ export interface KnowledgeSearchOutput {
   reranked_by?: string;
   embedding_model: string;
   namespaces_skipped?: string[];
+  stale_dropped?: number;
 }
 
 export interface KnowledgeSourceAddInput {

@@ -52,6 +52,15 @@ async def test_inspect_reports_formats_revisions_chunks_and_decisions(
         )
         await post("knowledge.add", {"source_uri": "docs/notes.md", "content": "First."})
         await post("knowledge.add", {"source_uri": "docs/notes.md", "content": "Second."})
+        if (await c.get("/v1/health")).json().get("storage_authority") == "postgres":
+            # There an add again retires the earlier version; two live versions are what an
+            # older build's add again leaves (rolling upgrades, rule 39).
+            ch_client.command(
+                "DELETE FROM loom.chunk_supersessions WHERE org = {org:String} AND "
+                "namespace = {ns:String} AND source_uri = 'docs/notes.md' "
+                "SETTINGS lightweight_deletes_sync = 2",
+                parameters={"org": ORG, "ns": ns},
+            )
         await post(
             "knowledge.add",
             {"source_uri": "https://wiki.example/pages/plan.html?v=2", "content": "Plan."},

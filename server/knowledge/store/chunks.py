@@ -22,6 +22,7 @@ from server.core import rmt_carry
 from server.core.ch import late_send, start_guard, write_limit_s
 from server.core.hashing import sha256_document_text
 from server.core.repo_base import _CHClient, _default_client
+from server.knowledge.domain.chunk_metadata import read_structure
 from server.knowledge.domain.chunking import Chunk, embedding_text
 from server.knowledge.domain.extract.structural import StructuralChunk
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL, SUPERSESSIONS_TABLE
@@ -49,6 +50,11 @@ class ChunkRow(BaseModel):
     embed_last_error: str = ""
     embed_failed_at: datetime | None = None
     doc_version: int = 0
+
+    @property
+    def revision(self) -> int:
+        """The document revision the chunk was written as (0: none recorded)."""
+        return read_structure(self.chunk_metadata).revision
 
 
 class ChunkInsertRow(TypedDict):

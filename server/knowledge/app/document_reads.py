@@ -1,5 +1,5 @@
 """knowledge.list / get / outline: reads of the documents of one namespace, and
-`document_chunks`, a document's live chunks in order (knowledge.synthesize and
+`document_chunks`, a document's served chunks in order (knowledge.synthesize and
 `loom decisions extract` read through it)."""
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from server.knowledge.api.models_knowledge import (
     _KnowledgeListEntry,
     _OutlineEntry,
 )
+from server.knowledge.app import pg_serving
 from server.knowledge.domain.chunk_metadata import read_structure
 from server.knowledge.domain.chunking import Chunk
 from server.operations.read_projection import resolve as _resolve_projection
@@ -102,7 +103,8 @@ async def handle_knowledge_list(
 async def handle_knowledge_outline(input: KnowledgeOutlineInput) -> KnowledgeOutlineOutput:
     """A document's table of contents from its chunks' section metadata, and
     optionally one section's text. Read-only; two cheap reads (document row,
-    the document's chunks in index order)."""
+    the document's chunks in index order) and, under the Postgres authority, one of the
+    heads (`pg_serving`)."""
     from server.core.ch import own_write_reads
     from server.knowledge.domain.chunking import Chunk, outline
     from server.knowledge.store import chunks as knowledge_repo
@@ -112,12 +114,15 @@ async def handle_knowledge_outline(input: KnowledgeOutlineInput) -> KnowledgeOut
         doc = await documents_repo.get_one(input.org, input.namespace, input.source_uri)
     if doc is None:
         return KnowledgeOutlineOutput(found=False, source_uri=input.source_uri)
-    rows = await knowledge_repo.list_for_doc(
+    listed = await knowledge_repo.list_for_doc(
         input.org,
         input.namespace,
         input.source_uri,
         embedding_model=get_embedder().model_name,
     )
+    # The ones its head serves: not an older version's still being retired, nor a write's
+    # not committed (`pg_serving`).
+    rows, _ = await pg_serving.keep_served(input.org, listed)
     chunks: list[Chunk] = []
     for r in rows:
         meta = read_structure(r.chunk_metadata)
@@ -201,15 +206,16 @@ async def handle_knowledge_get(input: KnowledgeGetInput) -> KnowledgeGetOutput:
 
 
 async def document_chunks(org: str, namespace: str, source_uri: str) -> list[CorpusChunk]:
-    """The document's live chunks for the current embedding model, in document order, each
+    """The document's served chunks for the current embedding model, in document order, each
     with its section path, the revision it was written as and its locator. Empty for a
     document chunked under another model, until `loom rechunk`."""
     from server.knowledge.store import chunks as knowledge_repo
     from server.memory.domain.corpus_synthesis import CorpusChunk
 
-    rows = await knowledge_repo.list_for_doc(
+    listed = await knowledge_repo.list_for_doc(
         org, namespace, source_uri, embedding_model=get_embedder().model_name
     )
+    rows, _ = await pg_serving.keep_served(org, listed)  # as the outline's
     out: list[CorpusChunk] = []
     for r in rows:
         meta = read_structure(r.chunk_metadata)

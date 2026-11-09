@@ -1,4 +1,4 @@
-"""knowledge.synthesize: map-reduce over every active chunk of the named
+"""knowledge.synthesize: map-reduce over every served chunk of the named
 documents, and a calculation over the named datasets."""
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ _PLAN_TRIES = 2  # not a setting: one plan, and one more told why the first was 
 async def handle_knowledge_synthesize(
     input: KnowledgeSynthesizeInput,
 ) -> KnowledgeSynthesizeOutput:
-    """Map-reduce over every active chunk of the named documents: windows by section and
+    """Map-reduce over every served chunk of the named documents: windows by section and
     size, one LLM note per window with chunk citations, notes folded into the answer
     (hierarchically when they do not fit one call). With datasets, a calculation over
     them (`_calculate`) is one more note the answer cites. Cost-cap gated like memory.ask;
@@ -324,7 +324,7 @@ def _located(
 
 
 async def _corpus_chunks(input: KnowledgeSynthesizeInput) -> tuple[list[CorpusChunk], int]:
-    """Every active chunk of the named documents, in document order, and how
+    """Every served chunk of the named documents, in document order, and how
     many of the documents had any."""
     chunks: list[CorpusChunk] = []
     docs = 0

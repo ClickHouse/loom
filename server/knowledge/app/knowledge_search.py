@@ -12,6 +12,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from server.auth.fanout import namespaces_to_search
+from server.core import pg
 from server.core.vectors.private_first import search_private_first
 from server.embedding import get_embedder
 from server.identity.app import namespace_visibility
@@ -56,7 +57,8 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
         query_vec = await embedder.embed(input.query)
     endpoint = _rerank_endpoint(input)
     pool = settings.knowledge_search_rerank_top if endpoint else 0
-    search = _namespaces_search(input, embedder, query_vec, pool)
+    dropped = _Dropped()
+    search = _namespaces_search(input, embedder, query_vec, pool, dropped)
     skipped: list[str] = []
     if input.namespaces:
         namespaces = await _named_namespaces(input)
@@ -73,10 +75,7 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
     all_hits.sort(key=lambda x: (x.score, x.similarity), reverse=True)
     reranked_by = ""
     if endpoint and len(all_hits) > 1:
-        contexts = {
-            (ns, h.source_uri, h.chunk_idx): h.context for ns, hits in results_per_ns for h in hits
-        }
-        all_hits, reranked = await _rerank(endpoint, input.query, all_hits, contexts, pool)
+        all_hits, reranked = await _rerank(endpoint, input.query, all_hits, pool)
         reranked_by = endpoint if reranked else ""
     if input.collapse_sections:
         all_hits = _collapse_by_section(all_hits)
@@ -88,6 +87,7 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
         embedding_model=embedder.model_name,
         namespaces_skipped=skipped,
         reranked_by=reranked_by,
+        stale_dropped=dropped.count,
     )
 
 
@@ -143,7 +143,6 @@ async def _rerank(
     endpoint: str,
     query: str,
     hits: list[_SearchHit],
-    contexts: dict[tuple[str, str, int], str],
     top: int,
 ) -> tuple[list[_SearchHit], bool]:
     """The first `top` fused hits in the reranker's order, the rest after it, and
@@ -159,7 +158,7 @@ async def _rerank(
     for i, h in enumerate(head):
         # At most half the excerpt is context: a long description must not crowd out
         # the chunk's own text, or every chunk of a document reads the same.
-        context = contexts.get((h.namespace, h.source_uri, h.chunk_idx), "")[: chars // 2]
+        context = h._context[: chars // 2]
         text = embedding_text(context, h.content)
         candidates.append(
             RerankCandidate(
@@ -191,14 +190,27 @@ async def _rerank(
     return [head[int(c.memory_key)] for c in ordered] + tail, True
 
 
+@dataclasses.dataclass
+class _Dropped:
+    """The candidates a search dropped as not served (`pg_serving`)."""
+
+    count: int = 0
+
+
 def _namespaces_search(
-    input: KnowledgeSearchInput, embedder: Embedder, query_vec: list[float], pool: int
+    input: KnowledgeSearchInput,
+    embedder: Embedder,
+    query_vec: list[float],
+    pool: int,
+    dropped: _Dropped,
 ) -> Callable[[list[str]], Awaitable[list[tuple[str, list[ChunkHit]]]]]:
     """A search over several namespaces in the requested mode, one statement per leg
     whatever their number: the vector leg alone (semantic), the lexical leg alone
     (lexical), or in hybrid mode the vector, lexical and exact-key legs fused. The hits
-    come back grouped per namespace."""
+    come back grouped per namespace, each one its source's head serves
+    (`pg_serving.served_search`), and what is left out is counted in `dropped`."""
     from server.knowledge.app import bm25 as knowledge_bm25
+    from server.knowledge.app import pg_serving
     from server.knowledge.app.search import (
         HybridSearchQuery,
         fuse_rrf,
@@ -215,9 +227,9 @@ def _namespaces_search(
     # Collapsing sections folds sibling chunks after the statement: ask for more,
     # so the page still fills. `pool` is a reranker's head when one applies (0 when
     # none does): the legs fetch at least that many, not that many times three.
-    top_k = max(input.top_k * 3 if input.collapse_sections else input.top_k, pool)
+    page_k = max(input.top_k * 3 if input.collapse_sections else input.top_k, pool)
 
-    async def _ranked(namespaces: list[str]) -> list[ChunkHit]:
+    async def _ranked(namespaces: list[str], top_k: int) -> list[ChunkHit]:
         base = HybridSearchQuery(
             org=input.org,
             namespaces=tuple(namespaces),
@@ -241,7 +253,7 @@ def _namespaces_search(
             sem, keyed = await asyncio.gather(hybrid_search(keyed_q), keys_search(keyed_q))
             # Fused even when no key matched: every pass of a private-first search
             # then scores on one scale, and the passes' hits are sorted together.
-            return fuse_rrf(sem, [], top_k=top_k, keyed=keyed)
+            return fuse_rrf(sem, [], top_k=top_k, keyed=keyed, by_version=pg.enabled())
         # Lexical leg needs corpus statistics; a cold corpus (no view rows, no avgdl)
         # or a failed read degrades to the vector leg (and, in hybrid mode, the
         # exact-key leg).
@@ -264,11 +276,17 @@ def _namespaces_search(
             hybrid_search(wide), lexical_search(wide), keys_search(wide)
         )
         # Fused even when the other legs found nothing, for the same one scale.
-        return fuse_rrf(sem, lex, top_k=top_k, w_lex=input.lexical_weight, keyed=keyed)
+        return fuse_rrf(
+            sem, lex, top_k=top_k, w_lex=input.lexical_weight, keyed=keyed, by_version=pg.enabled()
+        )
 
     async def _search(namespaces: list[str]) -> list[tuple[str, list[ChunkHit]]]:
+        hits, gone = await pg_serving.served_search(
+            input.org, functools.partial(_ranked, namespaces), page_k
+        )
+        dropped.count += gone
         by_ns: dict[str, list[ChunkHit]] = {}
-        for hit in await _ranked(namespaces):
+        for hit in hits:
             by_ns.setdefault(hit.namespace, []).append(hit)
         return list(by_ns.items())
 
@@ -329,33 +347,33 @@ def _as_search_hits(results_per_ns: list[tuple[str, list[ChunkHit]]]) -> list[_S
     all_hits: list[_SearchHit] = []
     for ns, hits in results_per_ns:
         for h in hits:
-            all_hits.append(
-                _SearchHit(
-                    source_uri=h.source_uri,
-                    chunk_idx=h.chunk_idx,
-                    content=h.content,
-                    tags=h.tags,
-                    distance=h.distance,
-                    similarity=1.0 - h.distance,
-                    namespace=ns,
-                    ingested_at=h.ingested_at,
-                    section_path=list(h.section_path),
-                    section=h.section,
-                    lexical_score=h.lexical_score,
-                    # semantic-only hits rank by similarity; fused / lexical
-                    # hits carry the score their leg or the fusion assigned
-                    score=h.score if h.score else (1.0 - h.distance),
-                    agent=h.agent,
-                    session_id=h.session_id,
-                    source_class=h.source_class,
-                    revision=h.revision,
-                    format=h.format,
-                    block_type=h.block_type,
-                    locator=h.locator,
-                    keys_matched=list(h.keys_matched),
-                    noise=h.noise,
-                )
+            hit = _SearchHit(
+                source_uri=h.source_uri,
+                chunk_idx=h.chunk_idx,
+                content=h.content,
+                tags=h.tags,
+                distance=h.distance,
+                similarity=1.0 - h.distance,
+                namespace=ns,
+                ingested_at=h.ingested_at,
+                section_path=list(h.section_path),
+                section=h.section,
+                lexical_score=h.lexical_score,
+                # semantic-only hits rank by similarity; fused / lexical
+                # hits carry the score their leg or the fusion assigned
+                score=h.score if h.score else (1.0 - h.distance),
+                agent=h.agent,
+                session_id=h.session_id,
+                source_class=h.source_class,
+                revision=h.revision,
+                format=h.format,
+                block_type=h.block_type,
+                locator=h.locator,
+                keys_matched=list(h.keys_matched),
+                noise=h.noise,
             )
+            hit._context = h.context  # per hit: two versions of one chunk carry their own
+            all_hits.append(hit)
     return all_hits
 
 

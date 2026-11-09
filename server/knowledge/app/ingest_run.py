@@ -564,7 +564,7 @@ async def _insert_document(row: DocumentInsertRow, prior: DocumentRow | None) ->
     of the source committed since `prior` was read."""
     try:
         await documents_repo.insert_one(
-            row, over=documents_repo.version_of(prior), retire_older=True
+            row, over=documents_repo.version_of(prior), retire_older=True, chunked=True
         )
     except HeadMoved as e:
         raise JobFailed("revision_conflict", "another write of the source committed first") from e

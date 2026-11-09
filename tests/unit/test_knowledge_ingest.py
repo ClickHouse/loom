@@ -72,6 +72,8 @@ class World:
     in_claim: Any = None  # runs as the source's claim is taken
     fail_dataset_rows: int = 0  # dataset row inserts that land before one fails
     log: list[str] = field(default_factory=list)
+    # Each document insert's `chunked`: whether its head serves the chunks it inserted.
+    chunked: list[bool] = field(default_factory=list)
     stored_vectors: dict[str, list[float]] = field(default_factory=dict)
     embedded: list[str] = field(default_factory=list)
     fail_embed: Exception | None = None
@@ -166,7 +168,10 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
         w.log.append("chunks")
         return len(rows)
 
-    async def insert_one(row: dict[str, Any], *, retire_older: bool = False, **_: Any) -> None:
+    async def insert_one(
+        row: dict[str, Any], *, retire_older: bool = False, chunked: bool = False, **_: Any
+    ) -> None:
+        w.chunked.append(chunked)
         await _insert_row(row)
         if retire_older:  # as the funnel does once the row is in
             try:
@@ -491,6 +496,7 @@ def test_a_job_publishes_chunks_then_the_document_then_retires_older_versions(wo
     assert doc["artifact_sha256"] in world.originals and doc["parser"].startswith("loom-sql/")
     assert json.loads(doc["coverage"])["complete"] is True
     assert {c["doc_version"] for c in world.chunks} == {doc["version"]}
+    assert world.chunked == [True]  # the head serves the chunks the job inserted
     assert world.superseded == [("repo://retention.sql", doc["version"])]
     create = next(c for c in world.chunks if "CREATE TABLE" in c["content"])
     assert "events" in create["keys"]

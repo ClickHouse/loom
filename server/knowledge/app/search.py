@@ -62,6 +62,8 @@ class ChunkHit:
     content: str
     tags: list[str]
     distance: float
+    # The version the chunk was written at: which write inserted it (`pg_serving`).
+    doc_version: int = 0
     # Heading breadcrumb from chunk_metadata; () when the document had no headings.
     section_path: tuple[str, ...] = ()
     # Lexical leg: raw BM25 over the query tokens, and the fused ranking score
@@ -104,15 +106,22 @@ def fuse_rrf(
     top_k: int,
     w_lex: float = 1.0,
     keyed: list[ChunkHit] | None = None,
+    by_version: bool = False,
 ) -> list[ChunkHit]:
     """Reciprocal-rank fusion of the legs: score = 1/(k + rank_sem) +
     w_lex/(k + rank_lex) + 1/(k + rank_key), k = 60, over the union of candidates.
     A hit present in one leg only takes that leg's term. Ties break on distance,
-    then on the chunk key, so the order is a function of the inputs."""
+    then on the chunk key, so the order is a function of the inputs. `by_version` keys
+    a chunk by its version too, so two versions read as live stay two candidates for a
+    check that keeps one (`pg_serving`), not one merged from both."""
     keyed = keyed or []
-    by_key: dict[tuple[str, str, int], ChunkHit] = {}
+
+    def chunk_key(h: ChunkHit) -> tuple[str, str, int, int]:
+        return (h.namespace, h.source_uri, h.chunk_idx, h.doc_version if by_version else 0)
+
+    by_key: dict[tuple[str, str, int, int], ChunkHit] = {}
     for h in [*semantic, *lexical, *keyed]:
-        key = (h.namespace, h.source_uri, h.chunk_idx)
+        key = chunk_key(h)
         prev = by_key.get(key)
         if prev is None:
             by_key[key] = h
@@ -126,9 +135,11 @@ def fuse_rrf(
                 ingested_at=prev.ingested_at or h.ingested_at,
                 keys_matched=prev.keys_matched or h.keys_matched,
             )
-    sem_rank = {(h.namespace, h.source_uri, h.chunk_idx): r + 1 for r, h in enumerate(semantic)}
-    lex_rank = {(h.namespace, h.source_uri, h.chunk_idx): r + 1 for r, h in enumerate(lexical)}
-    key_rank = {(h.namespace, h.source_uri, h.chunk_idx): r + 1 for r, h in enumerate(keyed)}
+
+    def rank(leg: list[ChunkHit]) -> dict[tuple[str, str, int, int], int]:
+        return {chunk_key(h): r + 1 for r, h in enumerate(leg)}
+
+    sem_rank, lex_rank, key_rank = rank(semantic), rank(lexical), rank(keyed)
     fused: list[ChunkHit] = []
     for key, h in by_key.items():
         score = 0.0
@@ -139,7 +150,7 @@ def fuse_rrf(
         if key in key_rank:
             score += 1.0 / (RRF_K + key_rank[key])
         fused.append(dataclasses.replace(h, score=score))
-    fused.sort(key=lambda h: (-h.score, h.distance, h.namespace, h.source_uri, h.chunk_idx))
+    fused.sort(key=lambda h: (-h.score, h.distance, *chunk_key(h)))
     return fused[:top_k]
 
 
@@ -172,6 +183,7 @@ async def hybrid_search(
             namespace,
             source_uri,
             chunk_idx,
+            doc_version,
             content,
             context,
             tags,
@@ -193,6 +205,7 @@ async def hybrid_search(
             namespace=r["namespace"],
             source_uri=r["source_uri"],
             chunk_idx=int(r["chunk_idx"]),
+            doc_version=int(r["doc_version"]),
             content=r["content"],
             context=r["context"],
             tags=list(r["tags"] or []),
@@ -312,6 +325,7 @@ async def lexical_search(
             namespace,
             source_uri,
             chunk_idx,
+            doc_version,
             content,
             context,
             tags,
@@ -334,6 +348,7 @@ async def lexical_search(
             namespace=r["namespace"],
             source_uri=r["source_uri"],
             chunk_idx=int(r["chunk_idx"]),
+            doc_version=int(r["doc_version"]),
             content=r["content"],
             context=r["context"],
             tags=list(r["tags"] or []),
@@ -368,6 +383,7 @@ async def keys_search(
             namespace,
             source_uri,
             chunk_idx,
+            doc_version,
             content,
             context,
             tags,
@@ -389,6 +405,7 @@ async def keys_search(
             namespace=r["namespace"],
             source_uri=r["source_uri"],
             chunk_idx=int(r["chunk_idx"]),
+            doc_version=int(r["doc_version"]),
             content=r["content"],
             context=r["context"],
             tags=list(r["tags"] or []),

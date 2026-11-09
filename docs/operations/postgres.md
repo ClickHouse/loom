@@ -145,10 +145,11 @@ pass takes them.
 
 `parked_knowledge_deliveries` counts knowledge documents committed in Postgres whose
 `loom.documents` row ClickHouse refused `LOOM_PG_DELIVERY_MAX_ATTEMPTS` times: the head
-serves `knowledge.get`, while search serves the new chunks beside the older version's,
-which stay until the delivery's retirement runs. A parked delete's retirement runs
-before its row: `knowledge.get` answers it deleted, search stops serving its chunks only
-if that retirement ran, and `knowledge.restore` answers 503 while a publication of the
+serves `knowledge.get` and search, which leaves out the older version's chunks that
+ClickHouse reads as live until the delivery's retirement runs
+([knowledge search](../architecture/storage-authority.md#knowledge-search)). A parked
+delete's retirement runs before its row: `knowledge.get` answers it deleted, search
+serves none of its chunks, and `knowledge.restore` answers 503 while a publication of the
 source may still land: until the delivery lands, and for the insert bound after. The
 originals sweep keeps the original a parked live document names, and so does the erasure
 of a user other than its writer. Its `last_error` in `loom.knowledge_deliveries` holds

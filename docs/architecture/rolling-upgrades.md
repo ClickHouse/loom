@@ -477,6 +477,21 @@ schema. These rules keep that safe. The operator procedure is in
     request's retirement lands, and the document serves no search hits until it is
     written again. No gate holds the rollout, and the mixed-version gate does not check
     this rule.
+39. **The chunks a knowledge head serves** (`chunks_revision`, `chunks_version` on
+    `loom.knowledge_heads`, Postgres migration `004_knowledge_chunk_heads.sql`): under
+    the Postgres authority N's search, outline, synthesis and `memory.stack` knowledge
+    reads serve only a head's chunks (a source with no head serves what ClickHouse
+    holds) ([knowledge search](storage-authority.md#knowledge-search)); N-1 serves every
+    chunk ClickHouse reads as live, as before, so while it serves, a search it answers
+    can show an older version still being retired or a write not committed. N-1's
+    commits leave both columns as they were, so after one that numbers a new revision
+    `chunks_revision` is no longer the head's and N judges that source's chunks by
+    revision alone, which also serves a refused writer's chunks of that revision until
+    the source's next N write that inserts chunks (a delete, a metadata edit or a
+    restore keeps the columns as they are). A head N-1 created holds none. N-1's
+    `knowledge.add` and `bulk_add` again keep the earlier version's chunks, which N does
+    not serve and retires at the source's next N write that inserts chunks. No gate
+    holds the rollout, and the mixed-version gate does not check this rule.
 
 ## What checks them
 
