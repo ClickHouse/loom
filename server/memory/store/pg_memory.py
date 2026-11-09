@@ -37,6 +37,7 @@ from server.memory.domain import lock as _lock
 from server.memory.domain.memory_types import is_embedded
 from server.memory.domain.redaction_lineage import REDACTED_VALUE, Version, later_copies
 from server.memory.store.rows import (
+    FIRST_VERSION_DEFAULTS,
     IdentityKey,
     MemoryRow,
     _hydrate,
@@ -104,9 +105,23 @@ def encode_row(row: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
+# The fields a stored row may leave out, each at its loom.memory DDL default: those a
+# first version may leave unset (`rows.FIRST_VERSION_DEFAULTS`). The identity, the value,
+# the type, the version and the stamps have no default and are always stored.
+SPARSE_DEFAULTS: Mapping[str, Any] = FIRST_VERSION_DEFAULTS
+
+
+def with_defaults(stored: Mapping[str, Any]) -> dict[str, Any]:
+    """A stored row's JSON with each field it leaves out at its default
+    (`SPARSE_DEFAULTS`), as ClickHouse fills it."""
+    out = {c: list(v) if isinstance(v, list) else v for c, v in SPARSE_DEFAULTS.items()}
+    out.update(stored)
+    return out
+
+
 def decode_row(stored: Mapping[str, Any]) -> dict[str, Any]:
-    """The insertable loom.memory row back from its JSON."""
-    out = dict(stored)
+    """The insertable loom.memory row back from its JSON (`with_defaults`)."""
+    out = with_defaults(stored)
     for col in DATETIME_COLS:
         val = out.get(col)
         if isinstance(val, str):
@@ -1248,8 +1263,9 @@ async def key_heads_across_sessions(
     args: list[Any] = [org, namespace, agent, user_id, keys]
     rows = await pg.fetch(
         "SELECT DISTINCT ON (memory_key) memory_key, "
-        "row->>'tombstoned_at' IS NOT NULL AS deleted, row->>'status' AS head_status, "
-        "content_sha256 AS head_sha256, row->>'sensitivity' AS head_sensitivity "
+        "row->>'tombstoned_at' IS NOT NULL AS deleted, "
+        "coalesce(row->>'status', 'active') AS head_status, content_sha256 AS head_sha256, "
+        "coalesce(row->>'sensitivity', '') AS head_sensitivity "
         "FROM loom.memory_current WHERE org = $1 AND namespace = $2 AND agent = $3 "
         f"AND user_id = $4 AND memory_key = ANY($5::text[]){_scope_sql(scope, args)} "
         "ORDER BY memory_key, version DESC",
@@ -1709,8 +1725,8 @@ async def fold_usage(
             FOR UPDATE OF c
         )
         UPDATE loom.memory_current c SET row = c.row || jsonb_build_object(
-            'evidence_count', greatest((c.row->>'evidence_count')::bigint, l.ev),
-            'recall_count', greatest((c.row->>'recall_count')::bigint, l.rc),
+            'evidence_count', greatest(coalesce((c.row->>'evidence_count')::bigint, 1), l.ev),
+            'recall_count', greatest(coalesce((c.row->>'recall_count')::bigint, 0), l.rc),
             'last_recalled_at', CASE
                 WHEN l.lra IS NULL THEN c.row->'last_recalled_at'
                 WHEN c.row->>'last_recalled_at' IS NULL THEN to_jsonb(l.lra)
@@ -1873,7 +1889,7 @@ _HEAD_FIELDS = {
     "session_id": "session_id",
     "memory_key": "memory_key",
     "memory_type": "row->>'memory_type'",
-    "source_trace": "row->>'source_trace'",
+    "source_trace": "coalesce(row->>'source_trace', '')",
     "redacted_at": "row->>'redacted_at'",
 }
 # The key arm's fields (the profile arm reads `_PROFILE_JOURNAL_FIELDS`).

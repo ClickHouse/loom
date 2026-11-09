@@ -137,12 +137,13 @@ async def export_memory_heads(
             "memory_type": head["memory_type"],
             "value": head["value"],
             "confidence": head["confidence"],
-            "source_trace": head["source_trace"],
+            # A field the row leaves out is at its default (`pg_memory.SPARSE_DEFAULTS`).
+            "source_trace": head.get("source_trace", ""),
             "version": r["version"],
             "tombstoned_at": times["tombstoned_at"],
             "created_at": times["created_at"],
             "expires_at": times["expires_at"],
-            "sensitivity": head["sensitivity"],
+            "sensitivity": head.get("sensitivity", ""),
         }
         out.append(cast("MemoryExportRow", row))
     return out
