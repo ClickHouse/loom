@@ -14,6 +14,7 @@ All CH I/O goes through CodeRepo; this module owns sequencing only.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from collections.abc import Awaitable, Callable
@@ -185,7 +186,9 @@ async def ingest_file(
     if refused:
         return stats
 
-    pf, stats.error = parsed if parsed is not None else parse_for_ingest(path, source)
+    pf, stats.error = (
+        parsed if parsed is not None else await asyncio.to_thread(parse_for_ingest, path, source)
+    )
     if pf is None:
         stats.skipped = True
         return stats
@@ -210,16 +213,13 @@ async def ingest_file(
     run_edge = (scope is None or "edge" in scope) and not is_reference
     run_guard = (scope is None or "guard" in scope) and not (is_reference or is_sql)
 
+    # chunking can parse again (a host file's shell, a TLA+ spec): off the event loop
     try:  # A declared-only file has no chunks (the reconcile retires any)
         chunks, structural_prefixes, facets = (
             ([], {}, [])
             if declared_only
-            else _chunks_for(
-                pf,
-                path,
-                source,
-                max_chunk_chars,
-                (org, ns),
+            else await asyncio.to_thread(
+                _chunks_for, pf, path, source, max_chunk_chars, (org, ns), stats.error
             )
         )
     except Exception as chunk_exc:  # noqa: BLE001 — one bad file must not sink the commit

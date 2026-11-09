@@ -6,6 +6,7 @@ says so."""
 from __future__ import annotations
 
 import asyncio
+import time
 import types
 from typing import Any
 
@@ -193,7 +194,12 @@ def test_an_open_brief_builds_from_the_post_image_and_is_never_stored(
 
     async def build_for_open(repo: Any, org: str, ns: str, **kw: Any) -> dict[str, Any]:
         built.append(kw)
-        return {"pr_number": kw["pr_number"], "overlay": True, "head_sha": kw["head_sha"]}
+        return {
+            "pr_number": kw["pr_number"],
+            "overlay": True,
+            "head_sha": kw["head_sha"],
+            "overlay_note": "1 changed file(s) whose parse timed out",
+        }
 
     monkeypatch.setattr(review_brief_build, "build_for_open", build_for_open)
     out = asyncio.run(
@@ -213,6 +219,7 @@ def test_an_open_brief_builds_from_the_post_image_and_is_never_stored(
     assert kw["changed_paths"] == [PATH, "src/Old.cpp"]
     assert kw["store"] is False and out.stored is False
     assert out.overlay is True and out.overlay_head_sha == "cd" * 20
+    assert out.overlay_note == "1 changed file(s) whose parse timed out"
 
 
 def test_an_open_brief_without_history_or_a_post_image_says_why(
@@ -355,13 +362,13 @@ def test_a_push_that_changes_one_file_parses_that_file_alone(
     from server.code.app.index import ingest_parse
 
     parsed: list[str] = []
-    real = ingest_parse.parse_file
+    real = ingest_parse.parse_for_ingest
 
     def counting(path: str, source: bytes) -> Any:
         parsed.append(path)
         return real(path, source)
 
-    monkeypatch.setattr(ingest_parse, "parse_file", counting)
+    monkeypatch.setattr(ingest_parse, "parse_for_ingest", counting)
     repo = _CountingRepo()
     first = po.PostImage(pr_number=7, files={PATH: POST, OTHER: OTHER_POST}, diff="")
     ov1 = asyncio.run(po.load_posted_overlay(repo, "acme", "code-ch", first))
@@ -377,3 +384,375 @@ def test_a_push_that_changes_one_file_parses_that_file_alone(
         (e.from_qualified_name, e.to_qualified_name) for e in ov1.edges
     }
     assert [s.name for s in ov2.added] == [s.name for s in ov1.added]
+
+
+def test_an_overlay_past_its_parse_time_leaves_the_rest_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "code_pr_overlay_parse_window_s", 1e-9)
+    ov = asyncio.run(po.load_posted_overlay(_Repo(), "acme", "code-ch", _img()))
+    assert ov.ok and ov.symbols == [] and ov.unreached == 1
+    assert po.NOT_REACHED in ov.disclosure()["overlay_note"]
+    monkeypatch.setattr(settings, "code_pr_overlay_parse_window_s", 60.0)
+    later = asyncio.run(po.load_posted_overlay(_Repo(), "acme", "code-ch", _img()))
+    assert later is not ov and later.symbols and later.note == ""  # not cached: finished
+
+
+def test_concurrent_requests_parse_a_file_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    real = po._parsed_facts
+
+    def counted(path: str, source: bytes) -> Any:
+        calls.append(path)
+        return real(path, source)
+
+    monkeypatch.setattr(po, "_parsed_facts", counted)
+
+    async def both() -> list[Any]:
+        deadline = time.monotonic() + 60
+        src = POST.encode()
+        scope = ("acme", "code-ch")
+        return await asyncio.gather(
+            *(po._file_facts(scope, PATH, src, "d", deadline) for _ in range(2))
+        )
+
+    first, second = asyncio.run(both())
+    assert calls == [PATH]
+    assert first is not None and second is not None and first[1] is second[1]
+    assert first[1].symbols
+
+
+def test_a_file_whose_parse_runs_past_the_deadline_is_counted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 0.2)
+    slow = b"package x\nvar s = " + b"`" * 60_000
+    sources = {PATH: POST.encode(), "src/slow.go": slow}
+    ov = po.PrOverlay(
+        pr_number=7, changed_paths=list(sources), hunks={p: [(1, 1)] for p in sources}
+    )
+
+    async def read(path: str) -> bytes:
+        return sources[path]
+
+    asyncio.run(po._parse_post_image(_Repo(), "acme", "code-ch", ov, read=read, path_prefixes=()))
+    assert "checkPartsLimit" in {s.name for s in ov.symbols}
+    assert any(e.to_qualified_name.endswith("checkPartsLimit") for e in ov.edges)
+    assert ov.note == "1 changed file(s) whose parse timed out" and ov.unreached == 0
+
+
+def test_an_open_brief_over_a_partial_overlay_is_served_unstored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.code.app.index import review_brief_build as rbb
+
+    note = f"1 changed file(s) {po.NOT_REACHED}: the request's parse time was spent"
+
+    async def build_brief(inp: Any, **kw: Any) -> dict[str, Any]:
+        return {"pr_number": inp.pr_number, "overlay_note": note}
+
+    class Repo:
+        def __init__(self) -> None:
+            self.inserted: list[Any] = []
+
+        async def get_state(self, *a: Any) -> str:
+            return ""
+
+        async def insert_rows(self, table: str, rows: list[Any]) -> None:
+            self.inserted.append(table)
+
+    monkeypatch.setattr(rbb, "build_brief", build_brief)
+    repo = Repo()
+    payload = asyncio.run(
+        rbb.build_for_open(
+            repo,
+            "acme",
+            "code-ch",
+            git_dir="",
+            pr_number=7,
+            title="",
+            head_sha="cd" * 20,
+            base_sha="ef" * 20,
+            call=None,
+            diff=DIFF,  # type: ignore[arg-type]
+        )
+    )
+    assert repo.inserted == [] and payload["overlay_note"] == note and payload["stored"] is False
+    note = "1 changed file(s) whose parse timed out"  # stable: stored with the note
+    payload = asyncio.run(
+        rbb.build_for_open(
+            repo,
+            "acme",
+            "code-ch",
+            git_dir="",
+            pr_number=7,
+            title="",
+            head_sha="cd" * 20,
+            base_sha="ef" * 20,
+            call=None,
+            diff=DIFF,  # type: ignore[arg-type]
+        )
+    )
+    assert repo.inserted == ["code_review_briefs"] and "stored" not in payload
+
+
+def test_the_event_loop_runs_while_an_overlay_parses(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 0.5)
+    slow = (b"package x\nvar s = " + b"`" * 60_000).decode()
+    img = po.PostImage(pr_number=7, files={"src/slow.go": slow}, diff="")
+    ticks = 0
+
+    async def run() -> None:
+        nonlocal ticks
+        parse = asyncio.ensure_future(po.load_posted_overlay(_Repo(), "acme", "code-ch", img))
+        while not parse.done():
+            await asyncio.sleep(0.01)
+            ticks += 1
+        await parse
+
+    asyncio.run(run())
+    assert ticks >= 3  # a parse on the event loop would let it tick once
+
+
+def test_one_overlay_parse_runs_at_a_time_in_a_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+
+    active, most = 0, 0
+    lock = threading.Lock()
+
+    def parse(path: str, source: bytes) -> Any:
+        nonlocal active, most
+        with lock:
+            active += 1
+            most = max(most, active)
+        time.sleep(0.02)
+        with lock:
+            active -= 1
+        return None, po._Facts((), frozenset(), False)
+
+    monkeypatch.setattr(po, "_parsed_facts", parse)
+
+    async def many() -> None:
+        deadline = time.monotonic() + 60
+        scope = ("acme", "code-ch")
+        await asyncio.gather(
+            *(po._file_facts(scope, f"f{i}.go", b"", f"d{i}", deadline) for i in range(5))
+        )
+
+    asyncio.run(many())
+    assert most == 1
+
+
+async def _settled() -> None:
+    """Until the overlay parses in progress end (at most 10 s)."""
+    running = {task for _key, task in po._RUNNING.values()}
+    if running:
+        await asyncio.wait(running, timeout=10)
+
+
+def _slow_facts(seconds: float) -> Any:
+    def parse(path: str, source: bytes) -> Any:
+        time.sleep(seconds)
+        return None, po._Facts((path,), frozenset(), False)
+
+    return parse
+
+
+def test_a_request_waiting_past_its_window_leaves_the_file_unreached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(po, "_parsed_facts", _slow_facts(1.0))
+
+    async def two() -> list[Any]:
+        scope = ("acme", "code-ch")
+        first = asyncio.ensure_future(
+            po._file_facts(scope, "a.go", b"", "a", time.monotonic() + 60)
+        )
+        await asyncio.sleep(0.05)
+        second = await po._file_facts(scope, "b.go", b"", "b", time.monotonic() + 0.05)
+        return [await first, second]
+
+    first, second = asyncio.run(two())
+    assert first is not None and second is None
+
+
+def test_a_parse_is_kept_when_its_request_went_away(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(po, "_parsed_facts", _slow_facts(0.1))
+
+    async def cancelled() -> None:
+        task = asyncio.ensure_future(
+            po._file_facts(("acme", "code-ch"), "a.go", b"", "a", time.monotonic() + 60)
+        )
+        await asyncio.sleep(0.02)
+        task.cancel()
+        await _settled()
+
+    asyncio.run(cancelled())
+    assert po._FILE_FACTS.get(("a.go", "a")) == po._Facts(("a.go",), frozenset(), False)
+
+
+def test_another_namespace_does_not_wait_for_its_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(po, "_parsed_facts", _slow_facts(0.3))
+
+    async def two() -> list[Any]:
+        first = asyncio.ensure_future(
+            po._file_facts(("acme", "one"), "a.go", b"", "a", time.monotonic() + 60)
+        )
+        await asyncio.sleep(0.05)
+        second = await po._file_facts(("acme", "two"), "b.go", b"", "b", time.monotonic() + 0.05)
+        return [await first, second]
+
+    first, second = asyncio.run(two())
+    assert first is not None and second is not None
+
+
+def test_a_started_parse_is_not_waited_for_past_one_deadline_after_the_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 0.1)
+    monkeypatch.setattr(po, "_parsed_facts", _slow_facts(0.5))
+
+    async def late() -> tuple[Any, float]:
+        scope = ("acme", "code-ch")
+        asyncio.ensure_future(po._file_facts(scope, "a.go", b"", "a", time.monotonic() + 60))
+        await asyncio.sleep(0.02)
+        start = time.monotonic()
+        # the window and one deadline after it have passed: no wait
+        got = await po._file_facts(scope, "a.go", b"", "a", time.monotonic() - 1)
+        waited = time.monotonic() - start
+        await _settled()
+        return got, waited
+
+    got, waited = asyncio.run(late())
+    assert got is None and waited < 0.3
+    assert po._FILE_FACTS.get(("a.go", "a")) is not None
+
+
+def test_edges_not_reached_past_the_window_are_counted(monkeypatch: pytest.MonkeyPatch) -> None:
+    source = POST.encode()
+    ov = po.PrOverlay(pr_number=7, changed_paths=[PATH], hunks={PATH: [(1, 1)]})
+
+    async def read(path: str) -> bytes:
+        return source
+
+    asyncio.run(po._parse_post_image(_Repo(), "acme", "code-ch", ov, read=read, path_prefixes=()))
+    po._FILE_EDGES.clear()  # the facts stay cached: the edges need a parse again
+    monkeypatch.setattr(settings, "code_pr_overlay_parse_window_s", 1e-9)
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 1e-9)
+    again = po.PrOverlay(pr_number=7, changed_paths=[PATH], hunks={PATH: [(1, 1)]})
+    asyncio.run(
+        po._parse_post_image(_Repo(), "acme", "code-ch", again, read=read, path_prefixes=())
+    )
+    assert again.symbols and again.edges == [] and again.unreached == 1
+
+
+def test_an_edge_parse_that_times_out_is_counted(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.code.app.index import ingest_parse
+
+    source = POST.encode()
+    ov = po.PrOverlay(pr_number=7, changed_paths=[PATH], hunks={PATH: [(1, 1)]})
+
+    async def read(path: str) -> bytes:
+        return source
+
+    asyncio.run(po._parse_post_image(_Repo(), "acme", "code-ch", ov, read=read, path_prefixes=()))
+    po._FILE_EDGES.clear()  # the facts stay cached: the edges need a parse again
+    from server.code.app.index.ingest_stats import error_text
+    from server.code.domain.extract.bounded_parse import ParseTimeout
+
+    err = error_text("parse", ParseTimeout("stopped"))
+    monkeypatch.setattr(ingest_parse, "parse_for_ingest", lambda path, src: (None, err))
+    again = po.PrOverlay(pr_number=7, changed_paths=[PATH], hunks={PATH: [(1, 1)]})
+    asyncio.run(
+        po._parse_post_image(_Repo(), "acme", "code-ch", again, read=read, path_prefixes=())
+    )
+    assert again.symbols and again.edges == [] and again.unreached == 0
+    assert again.note == "1 changed file(s) whose parse timed out"
+
+
+def test_a_started_parse_that_ends_within_one_deadline_is_returned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 2.0)
+    monkeypatch.setattr(po, "_parsed_facts", _slow_facts(0.2))
+
+    async def late() -> Any:
+        scope = ("acme", "code-ch")
+        asyncio.ensure_future(po._file_facts(scope, "a.go", b"", "a", time.monotonic() + 60))
+        await asyncio.sleep(0.02)
+        # the window has just passed: the running parse ends within one deadline
+        return await po._file_facts(scope, "a.go", b"", "a", time.monotonic() - 0.01)
+
+    assert asyncio.run(late()) is not None
+
+
+def test_a_mirrored_overlay_with_unreached_files_is_not_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def head(git_dir: str, pr: int) -> str:
+        return "cd" * 20
+
+    async def base(git_dir: str, head: str, ref: str) -> str:
+        return "ef" * 20
+
+    async def run(git_dir: str, *args: str) -> str:
+        return DIFF
+
+    async def names(git_dir: str, base: str, head: str) -> list[str]:
+        return [PATH]
+
+    async def show(git_dir: str, head: str, path: str, **kw: Any) -> bytes:
+        return POST.encode()
+
+    for name, fake in (
+        ("pull_head_sha", head),
+        ("merge_base", base),
+        ("run", run),
+        ("diff_name_only", names),
+        ("show_file", show),
+    ):
+        monkeypatch.setattr(gitrepo, name, fake)
+
+    def load() -> po.PrOverlay:
+        return asyncio.run(
+            po.load_pr_overlay(
+                _Repo(), "acme", "code-ch", git_dir="/m", pr_number=7, branch="master"
+            )
+        )
+
+    monkeypatch.setattr(settings, "code_pr_overlay_parse_window_s", 1e-9)
+    partial = load()
+    assert partial.unreached == 1
+    monkeypatch.setattr(settings, "code_pr_overlay_parse_window_s", 60.0)
+    later = load()
+    assert later is not partial and later.symbols and later.unreached == 0
+    assert load() is later  # a complete overlay is cached
+
+
+def test_a_queued_parse_started_too_late_is_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 0.05)
+    calls: list[str] = []
+
+    def parse(path: str, source: bytes) -> Any:
+        calls.append(path)
+        time.sleep(0.4)
+        return None, po._Facts((path,), frozenset(), False)
+
+    monkeypatch.setattr(po, "_parsed_facts", parse)
+
+    async def queued() -> Any:
+        # two other namespaces hold both pool threads
+        for ns in ("one", "two"):
+            asyncio.ensure_future(
+                po._file_facts(("acme", ns), f"{ns}.go", b"", ns, time.monotonic() + 60)
+            )
+        await asyncio.sleep(0.02)
+        got = await po._file_facts(("acme", "three"), "c.go", b"", "c", time.monotonic() + 0.05)
+        await _settled()
+        return got
+
+    assert asyncio.run(queued()) is None
+    assert sorted(calls) == ["one.go", "two.go"]  # the late job never ran
+    assert po._FILE_FACTS.get(("c.go", "c")) is None

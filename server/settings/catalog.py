@@ -1035,6 +1035,9 @@ class CodeSettings(BaseModel):
     # Changed files indexed per commit; past it the rest are skipped with a warning
     # and heal on the next backfill.
     code_ingest_max_files_per_commit: int = 500
+    # CPU seconds after which a tree-sitter parse stops reading its file (raising it re-reads
+    # nothing); a PR overlay also waits up to this long, wall-clock, past its window.
+    code_parse_timeout_s: Annotated[float, LIVE] = Field(default=3.0, gt=0)
     # The ingest pass's own deadline (seconds), kept at the supervisor's cap;
     # `code_ingest_pass_budget_fraction` keeps a pass under it.
     code_ingest_max_pass_seconds: int = 900
@@ -1684,11 +1687,15 @@ class CodeSettings(BaseModel):
     # Seconds the ingest keeps a sibling-text answer (a manifest, a listing, a config, a
     # barrel).
     code_ingest_sibling_text_ttl_s: Annotated[float, LIVE] = Field(default=600.0, gt=0)
-    # Seconds a PR overlay (the PR's changed files over its base) is cached.
+    # Seconds a PR overlay (the PR's changed files over its base) is cached; one that
+    # left changed files unreached is not.
     code_pr_overlay_cache_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
     # Seconds one PR file's parse is kept, so a push that changes one file re-parses
     # that file alone; a PR's next review follows its next push.
     code_pr_overlay_file_ttl_s: Annotated[float, LIVE] = Field(default=3600.0, gt=0)
+    # Seconds after a PR overlay begins past which it starts no parse; the files it did
+    # not reach are counted in `overlay_note` and read by a later request.
+    code_pr_overlay_parse_window_s: Annotated[float, LIVE] = Field(default=10.0, gt=0)
     # Seconds code.repos keeps the worker-ledger answer every repository's status
     # shares.
     code_status_ledger_passes_ttl_s: Annotated[float, LIVE] = Field(default=15.0, gt=0)

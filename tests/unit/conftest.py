@@ -215,9 +215,9 @@ def _settings_left_as_found() -> Iterator[None]:
 _KNOWN_PROCESS_STATE_LEAKS: frozenset[str] = frozenset()
 # pytest rewrites this for every phase; it is not a test's state.
 _PYTEST_ENV = frozenset({"PYTEST_CURRENT_TEST"})
-# The session loop's default executor threads, and the document bucket's own pool
-# (`server.core.object_store`), outlive every test by design.
-_SHARED_THREAD_PREFIXES = ("asyncio_", "loom-object-store", "loom-blacklist")
+# The session loop's default executor threads and the process-wide pools (the document
+# bucket's, the blacklist matchers', the PR overlay's parses) outlive every test by design.
+_SHARED_THREAD_PREFIXES = ("asyncio_", "loom-object-store", "loom-blacklist", "loom-overlay-parse")
 _THREAD_JOIN_SECONDS = 2.0
 
 

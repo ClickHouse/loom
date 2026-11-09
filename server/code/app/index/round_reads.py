@@ -235,7 +235,7 @@ class RoundReads:
             return
         names: set[str] = set()
         for path, source in sources.items():
-            parsed = parse_for_round(path, source, denylist)
+            parsed = await asyncio.to_thread(parse_for_round, path, source, denylist)
             if parsed is None:
                 continue
             self.parsed[path] = parsed

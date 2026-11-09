@@ -28,6 +28,7 @@ import re
 from functools import lru_cache
 from typing import Any
 
+from server.code.domain.extract import bounded_parse
 from server.code.domain.extract.py_members import (
     class_members,
     fold_declarations,
@@ -110,7 +111,7 @@ def _comment_above(node: Any, source: bytes) -> str:
 def parse_python(path: str, source: bytes) -> ParsedFile:
     """Parse one Python file: module-scoped symbols, imports, inherits."""
     parser = _py_parser()
-    tree = parser.parse(source)
+    tree = bounded_parse.parse(parser, source)
     pf = ParsedFile(path=path, lang="python", tree=tree, source=source)
     mod = module_scope(path)
 
@@ -707,8 +708,13 @@ def _reexport_facts(
     parsed once per (path, text). The chain is followed once per call site, so
     without the cache a package's `__init__` is re-parsed hundreds of times per
     file (pandas: 1,412 re-parses for 150 files; the ingest prefetches the same
-    texts per file)."""
-    pf = parse_python(path, text.encode("utf-8", "replace"))
+    texts per file). A module whose parse runs past the deadline reads as
+    defining and importing nothing, and is not parsed again while it stays
+    in the cache."""
+    try:
+        pf = parse_python(path, text.encode("utf-8", "replace"))
+    except bounded_parse.ParseTimeout:
+        return frozenset(), {}, ()
     own = frozenset(s.name for s in pf.symbols if s.qualified_name.count("::") == 1)
     return own, dict(py_import_bindings(pf)), tuple(py_star_imports(pf))
 

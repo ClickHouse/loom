@@ -4,6 +4,7 @@ beside the parser's own."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import posixpath
 import re
@@ -210,7 +211,9 @@ async def _derive_edges(
             name_table,
             lane_context,
         )
-        edges, misses = extract_edges_and_misses(
+        # it may parse a module the file imports
+        edges, misses = await asyncio.to_thread(
+            extract_edges_and_misses,
             pf,
             name_table,
             header,
@@ -360,7 +363,7 @@ async def _simple_lane_edges(repo: CodeRepo, org: str, ns: str, pf: ParsedFile) 
     if pf.lang == "tla":
         from server.code.domain.extract.lang_tla import tla_external_edges, tla_local_edges
 
-        local, external = tla_local_edges(pf)
+        local, external = await asyncio.to_thread(tla_local_edges, pf)
         if not external:
             return local
         table = await repo.name_candidates(org, ns, sorted({n for _f, n, _l in external})[:400])
@@ -602,7 +605,8 @@ async def _ts_callee_returns(
         return {}
     from server.code.domain.extract.edges_treesitter import callee_targets
 
-    targets = callee_targets(pf, name_table, lane_context)
+    # it may parse a module the file imports
+    targets = await asyncio.to_thread(callee_targets, pf, name_table, lane_context)
     if not targets:
         return {}
     types = await repo.return_types_for_qualified(org, ns, sorted(set(targets.values())))
@@ -611,11 +615,8 @@ async def _ts_callee_returns(
         # One more round for the callees a now-typed receiver resolves (`batch, _ :=
         # conn.PrepareBatch()` → `batch.Append`), one extra keyed read only when the
         # round finds new targets
-        more = {
-            c: qn
-            for c, qn in callee_targets(pf, name_table, lane_context, out).items()
-            if c not in out
-        }
+        found = await asyncio.to_thread(callee_targets, pf, name_table, lane_context, out)
+        more = {c: qn for c, qn in found.items() if c not in out}
         wanted = sorted({qn for qn in more.values() if qn not in types})
         if wanted:
             types.update(await repo.return_types_for_qualified(org, ns, wanted))

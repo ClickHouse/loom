@@ -138,14 +138,16 @@ class CodeReviewBriefOutput(BaseModel):
     # On the wire only for `open: true`. `overlay` true = the brief is of the PR's head
     # (`overlay_head_sha`) against its merge-base (`overlay_base_sha` in the payload's
     # `base_sha`); `overlay_note` names why it could not be (`head_not_in_mirror` |
-    # `no_merge_base` | `no_repo_entry`). `merge_sha` is '' on an open brief.
+    # `no_merge_base` | `no_repo_entry`) or what its overlay did not fully read.
+    # `merge_sha` is '' on an open brief.
     overlay: bool = False
     # The open PR's head the brief was read or built at; '' when the mirror lacks it.
     overlay_head_sha: str = ""
     # Functions the open PR adds (the symbols section's `via: added` rows).
     overlay_added: int = 0
     # Why no open brief exists (`head_not_in_mirror` | `no_merge_base` | `no_repo_entry`);
-    # '' when one was served.
+    # when one was served, '' or how many changed files its overlay did not fully read
+    # (a brief whose overlay left files unreached is not stored).
     overlay_note: str = ""
     # The tier served.
     tier: str = "standard"

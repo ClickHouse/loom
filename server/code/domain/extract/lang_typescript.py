@@ -58,6 +58,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.code.domain.extract import bounded_parse
 from server.code.domain.extract.lang_python import module_scope
 from server.code.domain.extract.lang_typescript_nodes import (
     _TS_GRAMMAR_BY_EXT,
@@ -794,7 +795,7 @@ def parse_typescript_text(path: str, source: bytes, lang: str, grammar: str) -> 
     """`parse_typescript` with the language tag and grammar chosen by the caller (a Vue
     single-file component parses its script block, laid line-preservingly into a blank
     text, with the grammar its `lang` attribute names, whatever the file's extension)."""
-    tree = _parser(grammar).parse(source)
+    tree = bounded_parse.parse(_parser(grammar), source)
     pf = ParsedFile(path=path, lang=lang, tree=tree, source=source)
     w = _Walker(pf=pf, source=source, mod=module_scope(path))
     w.exported = export_clause_names(source.decode("utf-8", "replace"))

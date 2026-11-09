@@ -101,7 +101,10 @@ async def _plans(
         if pf is None or path not in sources or pf.lang == REFERENCE_LANG:
             continue
         try:
-            chunks, prefixes, _facets = _chunks_for(pf, path, sources[path], max_chars, (org, ns))
+            # chunking can parse again (a host file's shell, a TLA+ spec): off the event loop
+            chunks, prefixes, _facets = await asyncio.to_thread(
+                _chunks_for, pf, path, sources[path], max_chars, (org, ns), got[1]
+            )
         except Exception:  # noqa: BLE001 — the file's own ingest records the error
             continue
         parsed.append((path, pf, chunks, prefixes))

@@ -15,6 +15,7 @@ from functools import lru_cache
 from typing import Any, NamedTuple
 
 from server.code.domain.anchor import NO_SHAPE, Shape, extension, fingerprint, language, unnumbered
+from server.code.domain.extract import bounded_parse
 from server.code.domain.extract.lang_typescript_nodes import (
     _is_function_like,
     _unwrap,
@@ -420,7 +421,7 @@ class Declarations:
         try:
             parser = _parser(grammar)
             if tree is None or getattr(tree, "language", None) != parser.language:
-                tree = parser.parse(source)
+                tree = bounded_parse.parse(parser, source)
             return cls(source, tree.root_node, grammar)
         except Exception:  # noqa: BLE001 — no grammar, no declaration: the index's span stands
             return None

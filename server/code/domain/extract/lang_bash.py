@@ -14,6 +14,7 @@ import re
 from functools import lru_cache
 from typing import Any
 
+from server.code.domain.extract import bounded_parse
 from server.code.domain.extract.lang_python import module_scope
 from server.code.domain.extract.treesitter import ParsedFile, Symbol, node_text
 
@@ -31,7 +32,7 @@ _SOURCE_RE = re.compile(r"^[^\S\n]*(?:source|\.)\s+([\w./$-]+)", re.MULTILINE)
 
 def parse_bash(path: str, source: bytes) -> ParsedFile:
     parser = _bash_parser()
-    tree = parser.parse(source)
+    tree = bounded_parse.parse(parser, source)
     pf = ParsedFile(path=path, lang="shell", tree=tree, source=source)
     mod = module_scope(path)
 

@@ -1348,6 +1348,12 @@
           "type": "boolean",
           "description": "True lets every authenticated principal of the org read every configured code namespace (right for public or org-internal repos); false leaves reads to the namespace's own visibility and grants. Writes stay grant-driven. Per-entry \"org_readable\" in LOOM_CODE_REPOS_JSON."
         },
+        "code_parse_timeout_s": {
+          "default": 3.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "CPU seconds after which a tree-sitter parse stops reading its file (raising it re-reads nothing); a PR overlay also waits up to this long, wall-clock, past its window."
+        },
         "code_path_prefixes": {
           "default": "",
           "type": "string",
@@ -1397,13 +1403,19 @@
           "default": 60.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds a PR overlay (the PR's changed files over its base) is cached."
+          "description": "Seconds a PR overlay (the PR's changed files over its base) is cached; one that left changed files unreached is not."
         },
         "code_pr_overlay_file_ttl_s": {
           "default": 3600.0,
           "exclusiveMinimum": 0,
           "type": "number",
           "description": "Seconds one PR file's parse is kept, so a push that changes one file re-parses that file alone; a PR's next review follows its next push."
+        },
+        "code_pr_overlay_parse_window_s": {
+          "default": 10.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds after a PR overlay begins past which it starts no parse; the files it did not reach are counted in `overlay_note` and read by a later request."
         },
         "code_pr_reviews_enabled": {
           "default": true,

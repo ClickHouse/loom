@@ -137,7 +137,9 @@ async def handle_code_review_brief(input: Any) -> Any:
             "overlay": bool(payload and payload.get("overlay")),
             "overlay_head_sha": str((payload or {}).get("head_sha") or head_sha or ""),
             "overlay_added": _overlay_added(payload),
-            "overlay_note": overlay_note if payload is None else "",
+            "overlay_note": overlay_note
+            if payload is None
+            else str(payload.get("overlay_note") or ""),
         }
     trace_run_id = new_trace_run_id()
     schedule_code_trace(
