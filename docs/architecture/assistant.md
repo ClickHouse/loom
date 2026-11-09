@@ -977,11 +977,11 @@ token never reads more than the caller's own.
 
 `insights.query`, `insights.catalog` and `assistant.ask` are ops, and
 `/v1/assistant/chat/completions` a route, that a build before them does not know: it
-answers `UNKNOWN_OP` or 404, so a client points at them once every replica serves them. The
-analyst user, its grants and policies, `loom.analysis_secrets`, `loom.analysis_canary`
-and `loom.assistant_service` live in ClickHouse and are shared by every replica; the
-agent definition is written as [the agent definition](#the-agent-definition) says, never
-by an older build.
+answers `UNKNOWN_OP` or 404, so a client points at them once every replica serves them.
+The analyst user, its grants and policies, `loom.analysis_secrets`,
+`loom.analysis_canary` and `loom.assistant_service` live in ClickHouse and are shared by
+every replica; the agent definition is written as
+[the agent definition](#the-agent-definition) says, never by an older build.
 
 ## Build order
 

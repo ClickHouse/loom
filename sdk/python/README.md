@@ -137,7 +137,8 @@ async for event in bot.assistant.stream("When are production deploys frozen?"):
 
 `ask` returns the `AssistantAnswer` whole; `history` carries earlier turns and
 `namespace` asks about another namespace you can read. An answer that began is
-never resent, nor one refused with a 429: asking again is a new answer with its own spend.
+never resent, nor one refused with a 429: asking again is a new answer with its
+own spend.
 
 ## Sessions and tools: what an agent framework holds
 
