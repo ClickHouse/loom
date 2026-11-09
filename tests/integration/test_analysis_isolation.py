@@ -231,7 +231,9 @@ def _key_spellings(ch_client) -> list[str]:
     """The policy's `decrypt` arguments, and the pads they evaluate to, as the
     log could spell them: no logged text or error may hold one."""
     secrets = re.findall(r"unhex\('([0-9a-f]+)'\)", _scope_filter(ch_client, "memory"))
-    padded = bytes.fromhex(next(h for h in secrets if len(h) == 64)).ljust(64, b"\0")
+    key = next((h for h in secrets if len(h) == 64), None)
+    assert key, "no 64-character key literal in the memory policy"
+    padded = bytes.fromhex(key).ljust(64, b"\0")
     pads = [bytes(b ^ pad for b in padded) for pad in (0x36, 0x5C)]
     # The pads end in the zero-padded key's 0x36 and 0x5C bytes, printable as they are.
     return [*secrets, *(p.hex() for p in pads), "6" * 32, "\\" * 32]
@@ -542,6 +544,14 @@ def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client) -> Non
         settings=boundary.LOG_TEXT_CUT,
     ).result_rows[0][0]
     assert logged == 0
+    # The server log records each refused read's error, whatever log_queries says.
+    errors = ch_client.query(
+        "SELECT count() FROM system.text_log WHERE event_time >= {start:DateTime} "
+        "AND level = 'Error' AND multiSearchAnyCaseInsensitive(message, {k:Array(String)})",
+        parameters={"start": start, "k": secrets},
+        settings=boundary.LOG_TEXT_CUT,
+    ).result_rows[0][0]
+    assert errors == 0
 
 
 # The cases below change the analyst's entities by hand, as an admin could,

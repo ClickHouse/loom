@@ -427,14 +427,14 @@ keeps:
   `loom ch-setup`, so during a rolling upgrade a build N-1 never narrows N's grants or
   loosens N's policies. N-1 keeps answering on N's entities: its statements that name a
   column N dropped are refused until the roll forward.
-- **The order of a write.** The version is the last of the entities, and the main
-  profile's pins come after every policy, the canary's included, so on an upgrade the
-  older profile's `log_queries = 0` stays in force until no policy holds the pads in
-  clear, and before every grant, so a new pin is in force before the grant it guards.
-  A first draw by a boot or `loom ch-setup`, made while no analyst user exists, stores
-  the secrets row before it creates the user. A rotation, by the CLI or the printed SQL (both with
-  [part 2](#build-order)), is a short maintenance step that keeps analysis unavailable
-  while it runs:
+- **The order of a write.** The version is the last of the entities. The main
+  profile's pins come after every policy, the canary's included: on an upgrade the older
+  profile's `log_queries = 0` stays in force until no policy holds the pads in clear.
+  They come before every grant, so a new pin is in force before the grant it guards. A
+  first draw by a boot or `loom ch-setup`, made while no analyst user exists, stores the
+  secrets row before it creates the user. A rotation, by the CLI or the printed SQL
+  (both with [part 2](#build-order)), is a short maintenance step that keeps analysis
+  unavailable while it runs:
 
   1. It deletes the secrets row, which only decides what a rotation cut short looks
      like: a lost row, which `loom doctor` maps to `--rotate-analysis-key`.

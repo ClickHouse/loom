@@ -122,10 +122,12 @@ def clickhouse(keep: bool) -> Iterator[int]:
             subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
 
-def sql(port: int, query: str) -> str:
+def sql(port: int, query: str, params: dict[str, str] | None = None) -> str:
+    """`query`'s answer; `params` bind its `{name:Type}` placeholders."""
+    bound = {f"param_{k}": v for k, v in (params or {}).items()}
     r = httpx.post(
         f"http://127.0.0.1:{port}/",
-        params={"user": "loom", "password": CH_PASSWORD},
+        params={"user": "loom", "password": CH_PASSWORD, **bound},
         content=query.encode(),
         timeout=60,
     )
@@ -382,9 +384,17 @@ class Scenario:
         if not (self.builds["N-1"].tree / "server/insights/domain/analysis.py").exists():
             print("  skip  insights.query: N-1 has no analysis plane")
             return
+        version = sql(
+            self.ch_port,
+            "SELECT value FROM system.settings_profile_elements WHERE profile_name = "
+            "'loom_analyst' AND setting_name = 'SQL_loom_analyst_version'",
+        )
+        self.check(version.strip("'\\") == "2", f"N wrote the analyst entities ({version})")
         body = {"org": self.org, "namespace": "mixed", "sql": "SELECT count() FROM loom.memory"}
-        for label, srv in self.builds.items():
-            # Each process answers once its own probe has passed on N's entities.
+        # N first: it answers only after its own write, so N-1's answer is on N's entities.
+        for label in ("N", "N-1"):
+            srv = self.builds[label]
+            # Each process answers once its own probe has passed.
             deadline = time.monotonic() + SETTLE_S
             while True:
                 r = httpx.post(
@@ -407,17 +417,17 @@ class Scenario:
         padded = bytes.fromhex(key).ljust(64, b"\0")
         pads = [bytes(b ^ p for b in padded).hex() for p in (0x36, 0x5C)]
         # The pads end in the zero-padded key's 0x36 and 0x5C bytes, printable as they are.
-        secrets = [*literals, *pads, "6" * 32, "\\\\" * 32]
+        secrets = [*literals, *pads, "6" * 32, "\\" * 32]
         self.check(bool(key), "the memory policy names the scope key")
         sql(self.ch_port, "SYSTEM FLUSH LOGS")
-        needles = ", ".join(f"'{h}'" for h in secrets)
         logged = sql(
             self.ch_port,
             "SELECT count() FROM system.query_log WHERE "
-            f"multiSearchAnyCaseInsensitive(query, [{needles}]) "
-            f"OR multiSearchAnyCaseInsensitive(formatted_query, [{needles}]) "
-            f"OR multiSearchAnyCaseInsensitive(exception, [{needles}]) "
+            "multiSearchAnyCaseInsensitive(query, {k:Array(String)}) "
+            "OR multiSearchAnyCaseInsensitive(formatted_query, {k:Array(String)}) "
+            "OR multiSearchAnyCaseInsensitive(exception, {k:Array(String)}) "
             "SETTINGS log_queries_cut_to_length = 1",
+            {"k": "[" + ", ".join("'" + h.replace("\\", "\\\\") + "'" for h in secrets) + "]"},
         )
         self.check(
             logged == "0", "no logged statement or error holds the scope key after the upgrade"

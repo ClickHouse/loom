@@ -278,9 +278,8 @@ def _setting(name: str) -> str:
 
 def _masked_sql(key: bytes, data: bytes) -> str:
     """`data` as a `decrypt` expression, whose arguments ClickHouse prints as
-    [HIDDEN]. The key sits beside the ciphertext, so this masks `data`, it does
-    not keep it secret; ECB is deterministic, so every write spells the same
-    policy. AES256 refuses a key that is not the 32 bytes aes-256-ecb takes."""
+    [HIDDEN]: a mask, not a seal, as the key sits beside it. ECB keeps the
+    policy text the same at every write."""
     padder = padding.PKCS7(128).padder()
     encryptor = Cipher(algorithms.AES256(key), modes.ECB()).encryptor()
     sealed = encryptor.update(padder.update(data) + padder.finalize()) + encryptor.finalize()
