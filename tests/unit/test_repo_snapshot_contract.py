@@ -58,6 +58,16 @@ def test_only_the_access_deciding_modules_read_config_entries() -> None:
     assert readers <= CONFIG_ENTRY_READERS, sorted(readers - CONFIG_ENTRY_READERS)
 
 
+def test_only_the_registry_and_the_add_read_the_raw_registry_snapshot() -> None:
+    # `registry_repos()` holds access rows and is not gated on the first read.
+    readers = {
+        path
+        for path, tree in _modules()
+        if path != "code/domain/index/repos.py" and "registry_repos" in _names(tree)
+    }
+    assert readers <= {"code/app/index/repo_registry.py", "code/app/repo_admin.py"}, readers
+
+
 def test_no_module_reads_the_snapshot_or_the_raw_configuration_around_the_accessors() -> None:
     bypass = {
         path: sorted(INTERNALS & _names(tree))
@@ -183,6 +193,9 @@ async def test_a_service_account_bound_to_repositories_is_not_minted_while_unrea
     monkeypatch.setattr(namespace_kinds, "kind_map", kinds)
     with pytest.raises(repos.RegistryUnread):
         await me_service_accounts._bound_trackers("o", "s", object(), ["code-x"])  # type: ignore[arg-type]
+    # A name whose kind is not known (a directory read that fell back) refuses too.
+    with pytest.raises(repos.RegistryUnread):
+        await me_service_accounts._bound_trackers("o", "s", object(), ["code-new"])  # type: ignore[arg-type]
     assert await me_service_accounts._bound_trackers("o", "s", object(), []) == []  # type: ignore[arg-type]
 
 

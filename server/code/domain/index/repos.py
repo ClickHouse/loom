@@ -291,7 +291,10 @@ _registry_repos: list[RepoConfig] = []
 
 
 def registry_repos() -> list[RepoConfig]:
-    """The registry snapshot (no I/O); empty while self-service is off."""
+    """The registry snapshot (no I/O); empty while self-service is off. Raw: it holds
+    operator entries' access rows and is not gated on the first read, so a list of
+    configured entries is `configured_repos()` (`test_repo_snapshot_contract.py`
+    pins this one's callers)."""
     return list(_registry_repos) if settings.code_self_service_enabled else []
 
 
@@ -317,13 +320,13 @@ def set_registry_repos(entries: list[RepoConfig], page: frozenset[tuple[str, str
     """Replace the registry snapshot with a fresh read: the active entries, and the
     (org, namespace) of every branch a member added from the page, removed ones too."""
     global _registry_repos, _registry_namespaces, _page_namespaces, _registry_loaded
-    _registry_loaded = True
     _registry_repos = list(entries)
     # An access row is not a branch (`_with_registry`).
     _registry_namespaces = frozenset(
         (c.org, c.namespace) for c in _registry_repos if c.row_kind != "access"
     )
     _page_namespaces = page
+    _registry_loaded = True  # last: a reader in another thread never sees it before the rest
 
 
 def page_namespaces() -> frozenset[tuple[str, str]]:
