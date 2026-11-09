@@ -86,7 +86,16 @@ async def standby_state() -> tuple[str, int | None]:
 async def check_durability() -> Durability:
     # A durable re-read (`pg.durable_transaction`) commits a logical message: a role that
     # may not write one refuses the boot, not every publish that re-reads a head.
-    await pg.check_durable_message()
+    import asyncpg
+
+    try:
+        await pg.check_durable_message()
+    except asyncpg.InsufficientPrivilegeError as e:
+        raise DurabilityRefused(
+            "this role may not run pg_logical_emit_message, which a publisher's durable "
+            "re-read commits: GRANT EXECUTE ON FUNCTION pg_logical_emit_message(boolean, "
+            "text, text) TO it"
+        ) from e
     names, sync = await standby_state()
     verdict = durability_verdict(settings.pg_durability, names, sync)
     if verdict.refusal:

@@ -214,16 +214,20 @@ def test_still_heads_reads_durably_only_for_another_commit(
 def test_still_heads_gives_back_claims_a_standby_wait_left_no_lease(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import time
+
     claim = _claim(5, "a" * 64)
 
     async def heads_by_keys(keys, *, include_tombstoned=False, durable=False):  # type: ignore[no-untyped-def]
+        if durable:
+            await asyncio.sleep(0.2)  # the standby wait outlasts the lease
         return {pg_memory.identity_key(claim.row): _head(9)}
 
     monkeypatch.setattr(pg_memory, "heads_by_keys", heads_by_keys)
     monkeypatch.setattr(pg_memory, "embedded", lambda row: True)
     # An outage, which the pass releases uncounted, not an attempt.
     with pytest.raises(pg.PostgresUnavailableError):
-        asyncio.run(pg_delivery._still_heads([claim], deadline=0.0))
+        asyncio.run(pg_delivery._still_heads([claim], deadline=time.monotonic() + 0.1))
 
 
 def test_flush_decides_again_from_the_durable_read(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -285,15 +289,20 @@ def test_a_decision_read_for_a_request_waits_for_no_standby(
 def test_a_retirement_gives_back_claims_a_standby_wait_left_no_lease(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import time
+
     from server.memory.store import pg_publish
 
     async def live_decision_writers(org, namespace, keys, *, durable=False):  # type: ignore[no-untyped-def]
         assert durable
+        await asyncio.sleep(0.2)  # the standby wait outlasts the lease
         return []
 
     monkeypatch.setattr(pg_memory, "live_decision_writers", live_decision_writers)
     owed = pg_publish.OwedRecord({"memory_key": "k"}, ("o", "n", 1), 1)
-    error = asyncio.run(pg_publish.retire_decision_records([owed], deadline=0.0, ch=None))  # type: ignore[arg-type]
+    error = asyncio.run(
+        pg_publish.retire_decision_records([owed], deadline=time.monotonic() + 0.1, ch=None)  # type: ignore[arg-type]
+    )
     # An outage: the pass releases its claims uncounted.
     assert isinstance(error, pg.PostgresUnavailableError)
 
@@ -364,11 +373,34 @@ def test_a_retirement_that_reads_its_own_writers_reads_them_durably(
 def test_boot_refuses_a_role_that_may_not_write_the_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import asyncpg
+
     from server.core import pg_profile
 
     async def refused() -> None:
-        raise PermissionError("permission denied for function pg_logical_emit_message")
+        raise asyncpg.InsufficientPrivilegeError("permission denied for function")
 
     monkeypatch.setattr(pg, "check_durable_message", refused)
-    with pytest.raises(PermissionError):
+    with pytest.raises(pg_profile.DurabilityRefused, match="GRANT EXECUTE"):
         asyncio.run(pg_profile.check_durability())
+
+
+def test_a_lease_clickhouse_spent_before_the_durable_read_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lease gone before the durable read is the send's own (PublicationPending,
+    counted), not a standby outage."""
+    from server.core import pg_lease
+
+    claim = _claim(5, "a" * 64)
+    reads: list[bool] = []
+
+    async def heads_by_keys(keys, *, include_tombstoned=False, durable=False):  # type: ignore[no-untyped-def]
+        reads.append(durable)
+        return {pg_memory.identity_key(claim.row): _head(9)}
+
+    monkeypatch.setattr(pg_memory, "heads_by_keys", heads_by_keys)
+    monkeypatch.setattr(pg_memory, "embedded", lambda row: True)
+    with pytest.raises(pg_lease.PublicationPending):
+        asyncio.run(pg_delivery._still_heads([claim], deadline=0.0))
+    assert reads == [False]  # no durable read was made

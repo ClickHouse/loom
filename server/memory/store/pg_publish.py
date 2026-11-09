@@ -226,7 +226,9 @@ async def retire_decision_records(
             # Drawn before the live read: a record written after it is above it, within
             # the hosts' clock skew, as every `next_version` is.
             version = next_version()
-            # Read durably: a writer's absence retires its record.
+            # Read durably: a writer's absence retires its record. A lease spent before the
+            # read counts as the send's; one the standby wait ended is an outage.
+            pg_lease.check_lease(deadline)
             live = await pg_memory.live_decision_writers(org, namespace, keys, durable=True)
             pg_lease.check_room(deadline)
             with pg_lease.leased(deadline):
