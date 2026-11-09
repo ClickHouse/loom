@@ -152,11 +152,20 @@ def test_a_row_that_leaves_out_its_default_fields_reads_as_the_full_row() -> Non
     assert pg_memory.decode_row(kept) == pg_memory.decode_row({**full, **changed})
 
 
-def test_the_fields_sql_reads_as_stored_are_never_left_out() -> None:
+def test_the_fields_read_as_stored_are_never_left_out() -> None:
     """The profile reach matches on `row->>'agent'` and `row->>'memory_type'`
-    (`memory_revisions_profile`, `_profile_built_from`), and other statements read the key,
-    the value and the creation time as stored: none has a default a row may leave out."""
-    read_as_stored = {"agent", "memory_type", "memory_key", "session_id", "value", "created_at"}
+    (`memory_revisions_profile`, `_profile_built_from`), other statements read the key, the
+    value and the creation time as stored, and the erasure export reads the type, value
+    and confidence from the stored JSON: none has a default a row may leave out."""
+    read_as_stored = {
+        "agent",
+        "memory_type",
+        "memory_key",
+        "session_id",
+        "value",
+        "created_at",
+        "confidence",
+    }
     assert not read_as_stored & pg_memory.SPARSE_DEFAULTS.keys()
 
 

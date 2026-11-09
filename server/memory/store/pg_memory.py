@@ -1,10 +1,9 @@
 """Every Postgres statement of the memory authority (the Postgres storage profile).
 
-`loom.memory_current` holds the head of each key as its loom.memory row, without the
-fields at their default (`sparse_row`), which is what `loom.memory FINAL` would serve:
-a row replaces the head only when its version is not older, as
-ReplacingMergeTree(version) decides. Each commit
-also appends the rows to `loom.memory_revisions`, numbered per namespace by the
+`loom.memory_current` holds the head of each key, the row `loom.memory FINAL` would
+serve, stored without the fields at their default (`sparse_row`): a row replaces the
+head only when its version is not older, as ReplacingMergeTree(version) decides. Each
+commit also appends the rows to `loom.memory_revisions`, numbered per namespace by the
 namespace's generation, and records what they owe ClickHouse in
 `loom.memory_deliveries`. The transaction is short and does no other I/O.
 

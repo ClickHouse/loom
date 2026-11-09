@@ -327,10 +327,7 @@ async def test_a_head_that_leaves_out_its_default_fields_is_served_as_the_full_o
             f"SELECT row FROM loom.{table} WHERE org = $1 AND namespace = $2", org, ns
         )
         assert pg_memory.sparse_row(stored) == stored  # the commit left its defaults out
-        defaults = {
-            c: list(v) if isinstance(v, list) else v for c, v in pg_memory.SPARSE_DEFAULTS.items()
-        }
-        full[table] = {**defaults, **stored}
+        full[table] = pg_memory.encode_row(pg_memory.decode_row(stored))
         assert len(full[table]) > len(stored)
         await store(table, full[table])
     before = (await call("memory.get", get)).json()
