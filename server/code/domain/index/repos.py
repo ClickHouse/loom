@@ -40,7 +40,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from server.core.errors import BackendUnavailableError
+from server.core.errors import BackendUnavailableError, ValidationError
 from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.repos")
@@ -366,6 +366,24 @@ def require_registry_read() -> None:
     """RegistryUnread while self-service is on and the registry has never been read."""
     if registry_unread():
         raise RegistryUnread("the self-service repository registry is not read yet; retry")
+
+
+def default_code_namespace(org: str) -> str:
+    """The deployment's code namespace (`code_namespace`), the default of a code call
+    in `org` that names none. ValidationError when a member added that namespace from
+    the page: its operator entry is skipped (`_with_registry`), so the default never
+    lands on the member's branch. RegistryUnread while that is not known yet."""
+    ns = str(settings.code_namespace)
+    if not ns:
+        return ""
+    require_registry_read()
+    if (org, ns) in page_namespaces():
+        raise ValidationError(
+            f"the default code namespace {org}/{ns} was added from the Repositories page "
+            "and is not this deployment's default; name the code namespace to read "
+            "(code.repos lists them)"
+        )
+    return ns
 
 
 def config_entries() -> list[RepoConfig]:

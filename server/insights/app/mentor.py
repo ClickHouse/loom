@@ -373,7 +373,7 @@ async def mentor_profile(
     except Exception as exc:  # noqa: BLE001 — advisory; the caller must not fail on it
         log.warning("mentor profile %s/%s/%s failed: %s", org, namespace, agent, exc)
         profile = None
-    # A profile missing its repository fact (the code registry not read yet) is short-lived.
+    # A profile whose repository fact failed (the code registry unread, say) is short-lived.
     whole = profile is not None and not any(s.startswith("repos:") for s in profile.skipped)
     _cache_put(key, now + (ttl if whole else min(ttl, FAILURE_TTL_SECONDS)), profile)
     return profile

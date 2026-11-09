@@ -95,7 +95,7 @@ def authz_target(op: Operation, *, org: Any, namespace: Any, auth: AuthInfo | No
     names a namespace with no resolvable org (auth off authorizes nothing)."""
     named_ns = present(namespace)
     resolved_org = resolve_org(op, org, auth)
-    resolved_ns = named_ns or present(plane_namespace_for(op.name))
+    resolved_ns = named_ns or present(plane_namespace_for(op.name, resolved_org))
     authz_ns = None if op.skip_namespace_authz else resolved_ns
     if auth is not None and authz_ns is not None and resolved_org is None:
         raise IdentityIncompleteError(

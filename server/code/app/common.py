@@ -92,11 +92,15 @@ def plane_org_for(op_name: str) -> str:
     return ""
 
 
-def plane_namespace_for(op_name: str) -> str:
-    """The namespace a code.* op is authorized against — and its handler
-    reads — when the body names none: the deployment's code namespace. ""
-    for every other op."""
-    return str(settings.code_namespace) if op_name.startswith("code.") else ""
+def plane_namespace_for(op_name: str, org: str | None = None) -> str:
+    """The namespace a code.* op in `org` (default: the code org) is authorized
+    against — and its handler reads — when the body names none: the deployment's
+    code namespace (`repos.default_code_namespace`). "" for every other op."""
+    if not op_name.startswith("code."):
+        return ""
+    from server.code.domain.index.repos import default_code_namespace
+
+    return default_code_namespace(org or str(settings.code_org))
 
 
 def resolve_code_identity(org: str, namespace: str) -> tuple[str, str]:
@@ -105,10 +109,11 @@ def resolve_code_identity(org: str, namespace: str) -> tuple[str, str]:
     its name. Explicit values pass through (authz already ran on them). A
     deployment that sets no default (LOOM_CODE_ORG / LOOM_CODE_NAMESPACE empty)
     refuses a request naming none: a read of namespace "" answers nothing."""
+    from server.code.domain.index.repos import default_code_namespace
     from server.core.errors import ValidationError
 
     org = org or settings.code_org
-    namespace = namespace or settings.code_namespace
+    namespace = namespace or default_code_namespace(org)
     if not org or not namespace:
         missing = " and ".join(n for n, v in (("org", org), ("namespace", namespace)) if not v)
         raise ValidationError(

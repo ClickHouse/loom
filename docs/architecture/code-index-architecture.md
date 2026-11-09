@@ -64,10 +64,11 @@ pass and after an add. Until the snapshot's first read it raises `RegistryUnread
 modules that decide access read `config_entries()`, which lists the entries before that
 read with none org-readable (`tests/unit/test_repo_snapshot_contract.py`). An op that
 needs the full list answers 503 in that window; memory reads, search and
-`memory.for_file` answer without code links. Retiring an entry (`code/app/index/retire.py`) deactivates its rows, runs an
-erasure saga over every `code_*` table for the namespace, and removes the mirror when no
-other entry uses it on the host that served the call; every other host's sweep removes
-its own copy.
+`memory.for_file` answer without code links. A code call naming no namespace defaults to
+`LOOM_CODE_NAMESPACE` only when no member added that namespace from the page. Retiring
+an entry (`code/app/index/retire.py`) deactivates its rows, runs an erasure saga over
+every `code_*` table for the namespace, and removes the mirror when no other entry uses
+it on the host that served the call; every other host's sweep removes its own copy.
 
 ## Git mirrors on every replica
 

@@ -47,8 +47,14 @@ async def _code_namespace_authorized(org: str, code_namespace: str) -> tuple[str
     """(org, namespace, refusal): the ledger namespace churn is read from —
     the caller's or the deployment's — as the current principal (the
     transport authorized the tracker namespace, not this one)."""
+    from server.code.domain.index.repos import RegistryUnread, default_code_namespace
+    from server.core.errors import ValidationError
+
     code_org = str(settings.code_org or org)
-    ns = code_namespace or str(settings.code_namespace)
+    try:
+        ns = code_namespace or default_code_namespace(code_org)
+    except (RegistryUnread, ValidationError) as e:
+        return code_org, "", str(e)
     if not ns:
         return code_org, "", "no code namespace configured"
     try:

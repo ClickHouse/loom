@@ -7,6 +7,7 @@ override is read before the config map and "" clears it."""
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -492,10 +493,12 @@ async def test_upsert_access_copies_an_existing_registry_row_and_builds_one_for_
     row = ch3.inserts[0][1][0]
     assert row["row_kind"] == "access" and row["repo"] == "ClickHouse/weave"
     for active in (False, True):  # a member's branch, removed or not, keeps its namespace
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError) as e:
             await reg.live_row(_cfg("code-x"), _CH2(existing | {"active": active}))
-    with pytest.raises(ValidationError):  # a removed branch added from the page
+        assert e.value.to_detail()["code"] == "NOT_A_REPO"
+    with pytest.raises(ValidationError) as e:  # a removed branch added from the page
         await reg.live_row(_cfg("code-x", source="registry"), _CH2(existing | {"active": False}))
+    assert e.value.to_detail()["code"] == "NOT_A_REPO"
 
 
 @pytest.mark.asyncio
@@ -810,3 +813,38 @@ async def test_only_an_own_admin_grant_widens_a_restricted_branch(
             await h.handle_code_repo_set_access(widen)
         assert ch.inserts == []
     assert seen == [["mallory", "mallory@corp.example"]]
+
+
+def test_the_default_code_namespace_never_lands_on_a_member_branch(monkeypatch) -> None:
+    import argparse
+
+    from server.cli import code_run
+    from server.code.app.common import plane_namespace_for, resolve_code_identity
+    from server.tracker.app import test_signal
+
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(settings, "code_org", ORG)
+    monkeypatch.setattr(settings, "code_namespace", "code-weave")
+    monkeypatch.setattr(repos, "_page_namespaces", frozenset())
+    assert resolve_code_identity("", "") == (ORG, "code-weave")
+    assert plane_namespace_for("code.search") == "code-weave"
+    # A member added that namespace from the page: no call naming none lands there.
+    monkeypatch.setattr(repos, "_page_namespaces", frozenset({(ORG, "code-weave")}))
+    with pytest.raises(ValidationError, match="added from the Repositories page"):
+        resolve_code_identity("", "")
+    with pytest.raises(ValidationError, match="added from the Repositories page"):
+        plane_namespace_for("code.search", ORG)
+    assert resolve_code_identity("", "code-weave") == (ORG, "code-weave")  # named: authz ran
+    assert asyncio.run(test_signal._code_namespace_authorized(ORG, ""))[1:] == (
+        "",
+        f"the default code namespace {ORG}/code-weave was added from the Repositories page "
+        "and is not this deployment's default; name the code namespace to read "
+        "(code.repos lists them)",
+    )
+    with pytest.raises(SystemExit, match="pass --namespace"):
+        code_run._identity(argparse.Namespace(org="", namespace=""))
+    # Unread, a member's namespace is not known yet.
+    monkeypatch.setattr(repos, "_page_namespaces", frozenset())
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    with pytest.raises(repos.RegistryUnread):
+        resolve_code_identity("", "")
