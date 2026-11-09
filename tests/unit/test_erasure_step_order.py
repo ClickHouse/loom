@@ -68,7 +68,7 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     (
         "graph_links.delete",
         (
-            # the graph rows the links alone hold, again
+            # first the graph rows and communities its links alone hold
             (D, "loom.entity_triples"),
             (D, "loom.entity_edges"),
             (D, "loom.entity_communities"),
@@ -401,7 +401,7 @@ USER_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     (
         "graph_links.delete",
         (
-            # the graph rows the links alone hold, again
+            # first the graph rows and communities its links alone hold
             (D, "loom.entity_triples"),
             (D, "loom.entity_edges"),
             (D, "loom.entity_communities"),
