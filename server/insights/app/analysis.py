@@ -161,16 +161,6 @@ def _drawn_password() -> str:
     return "Aa1-" + secrets.token_hex(24)
 
 
-def _complex_enough(password: str) -> bool:
-    return all(re.search(p, password) for p in ("[a-z]", "[A-Z]", "[0-9]", "[^A-Za-z0-9]"))
-
-
-async def _store_secrets(key: bytes, password: str, version: int) -> str | None:
-    plain = json.dumps({"key": key.hex(), "password": password})
-    await store.store_secrets(seal(_SECRETS_PURPOSE, plain), version=version)
-    return await store.sealed_secrets()
-
-
 async def _secrets_refusal(*, may_draw: bool) -> str:
     """`load_secrets`, answering Loom's own refusal as text ('' once loaded)."""
     global _loaded
@@ -181,7 +171,9 @@ async def _secrets_refusal(*, may_draw: bool) -> str:
                 "loom.analysis_secrets has no row while the analyst user may exist; "
                 "`loom ch-setup` draws the secrets"
             )
-        sealed = await _store_secrets(secrets.token_bytes(32), _drawn_password(), version=1)
+        drawn = json.dumps({"key": secrets.token_hex(32), "password": _drawn_password()})
+        await store.store_secrets(seal(_SECRETS_PURPOSE, drawn))
+        sealed = await store.sealed_secrets()
     opened = _opened(sealed)
     if opened is None:
         return (
@@ -189,14 +181,6 @@ async def _secrets_refusal(*, may_draw: bool) -> str:
             "LOOM_JWT_SECRET_PREVIOUS to the secret it was sealed under and run "
             "`loom secrets reseal`)"
         )
-    key, password = opened
-    if may_draw and not _complex_enough(password) and await store.analyst_user_absent():
-        # A row drawn before passwords had every character class, whose user
-        # ClickHouse Cloud refused to create: nobody signs in with it, so a
-        # new password replaces it, at a version above any reseal's.
-        opened = _opened(await _store_secrets(key, _drawn_password(), version=time.time_ns()))
-        if opened is None:
-            return "loom.analysis_secrets did not read back after a new analyst password"
     _loaded = opened
     return ""
 

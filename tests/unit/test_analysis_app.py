@@ -4,7 +4,7 @@ answered, what the probe calls repairable, and when nothing is written."""
 from __future__ import annotations
 
 import asyncio
-import json
+import re
 from typing import Any
 
 import pytest
@@ -18,7 +18,6 @@ from server.core.errors import (
     error_class,
 )
 from server.core.ratelimit import op_class_for
-from server.core.secrets_at_rest import seal
 from server.insights.api.models_analysis import InsightsQueryInput
 from server.insights.app import analysis as app
 from server.insights.domain import analysis as boundary
@@ -1033,60 +1032,20 @@ def test_a_write_clickhouse_refuses_is_a_kept_finding_and_not_done(
         assert ready_now is False and problem.startswith("writing or probing loom_analyst failed")
 
 
-class _SecretsRow:
-    """loom.analysis_secrets as one row: the newest version wins, as FINAL reads it."""
-
-    def __init__(self, sealed: str | None = None, version: int = 1) -> None:
-        self.sealed, self.version = sealed, version
-        self.writes: list[int] = []
-
-    async def read(self) -> str | None:
-        return self.sealed
-
-    async def write(self, sealed: str, *, version: int) -> None:
-        self.writes.append(version)
-        if version >= self.version:
-            self.sealed, self.version = sealed, version
-
-
-def _with_row(monkeypatch: pytest.MonkeyPatch, row: _SecretsRow, *, user_absent: bool) -> None:
-    monkeypatch.setattr(app.store, "sealed_secrets", row.read)
-    monkeypatch.setattr(app.store, "store_secrets", row.write)
-    monkeypatch.setattr(app.store, "analyst_user_absent", _returns(user_absent))
-
-
-def _sealed(key: bytes, password: str) -> str:
-    return seal(app._SECRETS_PURPOSE, json.dumps({"key": key.hex(), "password": password}))
-
-
 def test_a_drawn_password_has_every_character_class(monkeypatch: pytest.MonkeyPatch) -> None:
-    row = _SecretsRow()
-    _with_row(monkeypatch, row, user_absent=True)
+    # ClickHouse Cloud refuses a user whose password lacks one.
+    stored: list[str] = []
+
+    async def read() -> str | None:
+        return stored[-1] if stored else None
+
+    async def write(sealed: str) -> None:
+        stored.append(sealed)
+
+    monkeypatch.setattr(app.store, "sealed_secrets", read)
+    monkeypatch.setattr(app.store, "store_secrets", write)
     asyncio.run(app.load_secrets(may_draw=True))
     key, password = app._secrets()
-    assert len(key) == 32 and len(password) == 52
-    assert app._complex_enough(password)
-    assert row.writes == [1]
-
-
-def test_a_password_cloud_refused_is_drawn_again_under_the_same_key(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # A row drawn with a hex password, whose user ClickHouse Cloud never created.
-    key = bytes(range(32))
-    row = _SecretsRow(_sealed(key, "ab12" * 12))
-    _with_row(monkeypatch, row, user_absent=True)
-    asyncio.run(app.load_secrets(may_draw=True))
-    assert app._secrets()[0] == key
-    assert app._complex_enough(app._secrets()[1])
-    assert row.writes and row.writes[0] > 1
-
-
-def test_a_password_in_use_is_kept(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The analyst user exists and signs in with it: only a rotation may change it.
-    key = bytes(range(32))
-    row = _SecretsRow(_sealed(key, "ab12" * 12))
-    _with_row(monkeypatch, row, user_absent=False)
-    asyncio.run(app.load_secrets(may_draw=True))
-    assert app._secrets() == (key, "ab12" * 12)
-    assert row.writes == []
+    assert len(stored) == 1 and len(key) == 32
+    for character_class in ("[a-z]", "[A-Z]", "[0-9]", "[^A-Za-z0-9]"):
+        assert re.search(character_class, password), character_class
