@@ -599,8 +599,10 @@ class ClickHouseSettings(BaseModel):
     # Connect over HTTPS. Unset infers TLS from the port (8443 on, anything else off).
     ch_secure: bool | None = None
     # Append `sql:<shape12> <first 200 chars>` of each statement to its
-    # `log_comment` ("<op> <request_id>"), so query_log rows group by shape.
-    # Off by default: readers that split log_comment on spaces gain tokens.
+    # `log_comment` ("<op> <request_id>"), so query_log rows group by shape; a
+    # statement that carries a secret, or one run as the analyst, gets its
+    # shape alone. Off by default: readers that split log_comment on spaces
+    # gain tokens.
     ch_log_comment_statement_digest: bool = False
     # A file path: append one JSON line (`digest`, `sql`) per executed statement, to
     # collect the shapes an acceptance run executes for the analyzer corpus. '' = off;

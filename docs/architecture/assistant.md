@@ -350,6 +350,9 @@ changes it. It keeps the secrets out of what is logged instead:
   number of characters it removed, and writes no `formatted_query`, which the cut does
   not reach. The printed SQL sets both first, for the session it runs in.
 - ClickHouse itself leaves the password out of a logged `IDENTIFIED BY`.
+- With `LOOM_CH_LOG_COMMENT_STATEMENT_DIGEST` on, `log_comment` carries a statement's
+  shape and first 200 characters; a statement that carries a secret, or one run as the
+  analyst, carries the literal-masked shape alone.
 - An error raised inside a row policy quotes the policy, and ClickHouse logs that error
   in `system.query_log`'s `exception` column; the probe's unsigned read raises one on
   every table by design. So the key's two padded forms, the only places the key enters
