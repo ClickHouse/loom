@@ -1208,9 +1208,9 @@ settings:
   # code_parse_timeout_s: 3.0
 
   # Address space (MB) a tree-sitter parse may take in the process it runs in first, to
-  # within the 64 MB that process may keep from earlier parses; a parse past it indexes
-  # its file as chunks without symbols. Paid per server process (each web worker).
-  # [live]
+  # within the 64 MB that process may keep from earlier parses; a parse past it fails
+  # like a timed-out one (an indexed file becomes chunks without symbols). Paid per
+  # server process (each web worker). [live]
   # code_parse_memory_mb: 256
 
   # The ingest pass's own deadline (seconds), kept at the supervisor's cap;

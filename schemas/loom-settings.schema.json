@@ -1352,7 +1352,7 @@
           "default": 256,
           "minimum": 128,
           "type": "integer",
-          "description": "Address space (MB) a tree-sitter parse may take in the process it runs in first, to within the 64 MB that process may keep from earlier parses; a parse past it indexes its file as chunks without symbols. Paid per server process (each web worker)."
+          "description": "Address space (MB) a tree-sitter parse may take in the process it runs in first, to within the 64 MB that process may keep from earlier parses; a parse past it fails like a timed-out one (an indexed file becomes chunks without symbols). Paid per server process (each web worker)."
         },
         "code_parse_timeout_s": {
           "default": 3.0,
