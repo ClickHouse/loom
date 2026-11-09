@@ -40,23 +40,32 @@ def test_a_slow_parse_stops_at_the_deadline_and_the_file_is_chunked(
 def test_a_node_reads_its_text_after_the_deadline_has_passed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import threading
+
     import tree_sitter_python
     from tree_sitter import Language, Parser
 
-    from server.code.domain.extract.bounded_parse import parse
+    from server.code.domain.extract import bounded_parse
 
-    monkeypatch.setattr(settings, "code_parse_timeout_s", 0.2)
-    tree = parse(Parser(Language(tree_sitter_python.language())), b"x = 'a'.format(1)\n")
-    spent = time.thread_time()
-    while time.thread_time() - spent < 0.4:  # CPU time past the parse's deadline
-        pass
-    # A regression spins inside the binding: fail with a stack dump, not a hung job.
+    tree = bounded_parse.parse(
+        Parser(Language(tree_sitter_python.language())), b"x = 'a'.format(1)\n"
+    )
+    # Every thread's CPU clock is now past the deadline; the text is read from
+    # another thread, as the event loop reads a tree a worker thread parsed.
+    monkeypatch.setattr(bounded_parse.time, "thread_time", lambda: float("inf"))
+    texts: list[bytes | None] = []
+    reader = threading.Thread(
+        target=lambda: texts.append(tree.root_node.children[0].text), daemon=True
+    )
+    # The spinning read holds the GIL, so only faulthandler's C watchdog can end it.
     faulthandler.dump_traceback_later(20, exit=True)
     try:
-        text = tree.root_node.children[0].text
+        reader.start()
+        reader.join(10)
     finally:
         faulthandler.cancel_dump_traceback_later()
-    assert text == b"x = 'a'.format(1)"
+    assert not reader.is_alive(), "reading the tree's text spins past the deadline"
+    assert texts == [b"x = 'a'.format(1)"]
 
 
 def test_a_file_parsed_in_time_keeps_its_symbols() -> None:
