@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -96,6 +96,46 @@ async def restricted_roles(
     return out
 
 
+async def refuse_unread_code(org: str, names: list[str]) -> None:
+    """RegistryUnread while the code registry has never been read and any of `names`
+    is not known to be of another kind than code: the configuration lists no branch
+    added from the page then, and the directory's kinds may have fallen back to it."""
+    from server.code.domain.index.repos import config_entry, registry_unread, require_registry_read
+    from server.identity.app import namespace_kinds
+
+    if not names or not registry_unread():
+        return
+    kinds = await namespace_kinds.kind_map(org)
+    if any(config_entry(org, n) is None and kinds.get(n, "") in ("code", "") for n in names):
+        require_registry_read()
+
+
+async def code_namespace_test(
+    org: str, names: list[str], is_restricted: Any = None
+) -> Callable[[str, str], bool]:
+    """How `grant_restricted_to_token` tells a code namespace, read once: a caller that
+    writes a token first calls this before that write, so a refusal
+    (`refuse_unread_code`, for the restricted names) strands nothing."""
+    from server.code.domain.index.repos import config_entry
+    from server.identity.app import namespace_kinds
+    from server.tracker.domain.namespaces import tracker_namespace
+
+    if is_restricted is None:
+        from server.identity.app.namespace_classification import is_restricted as _isr
+
+        is_restricted = _isr
+    restricted = [n for n in names if await is_restricted(org, n)]
+    await refuse_unread_code(org, restricted)
+    kinds = await namespace_kinds.kind_map(org) if restricted else {}
+
+    def is_code_namespace(o: str, n: str) -> bool:
+        # read-only reference data: a repository index or a tracker record
+        code = config_entry(o, n) is not None or kinds.get(n) == "code"
+        return code or tracker_namespace(o, n) is not None
+
+    return is_code_namespace
+
+
 async def grant_restricted_to_token(
     org: str,
     sa_subject: str,
@@ -112,25 +152,7 @@ async def grant_restricted_to_token(
 
         is_restricted = _isr
     if is_code_namespace is None:
-        from server.code.domain.index.repos import (
-            config_entry,
-            registry_unread,
-            require_registry_read,
-        )
-        from server.identity.app import namespace_kinds
-        from server.tracker.domain.namespaces import tracker_namespace
-
-        # Unread, the configuration lists no page branch: the directory's kind decides.
-        unread = registry_unread()
-        kinds = await namespace_kinds.kind_map(org) if unread else {}
-
-        def is_code_namespace(o: str, n: str) -> bool:
-            # read-only reference data: a repository index or a tracker record
-            if unread and config_entry(o, n) is None and kinds.get(n, "") in ("code", ""):
-                require_registry_read()  # unread, and not known not to be code
-            code = config_entry(o, n) is not None or kinds.get(n) == "code"
-            return code or tracker_namespace(o, n) is not None
-
+        is_code_namespace = await code_namespace_test(org, list(ns_roles), is_restricted)
     granted: list[str] = []
     rows: list[dict[str, Any]] = []
     now = naive_utc_now_seconds()

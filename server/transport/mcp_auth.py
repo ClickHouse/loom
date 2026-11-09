@@ -183,8 +183,8 @@ async def _plane_namespace(
 
     if not ar.is_plane_tool(str(tool_name or "")):
         return None, False
-    if registry_unread():
-        return None, False  # which names exist is not known yet: refuse as before
+    if registry_unread() and str(tool_name or "").startswith("loom_code_"):
+        return None, False  # which code names exist is not known yet: refuse as before
     org = str(getattr(auth, "org", "") or "")
     known = nr.known_namespaces(org)
     if ns in known:
