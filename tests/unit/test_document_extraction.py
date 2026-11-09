@@ -1389,9 +1389,9 @@ def test_a_heading_line_with_a_long_run_of_blanks_is_read_whole() -> None:
 
 
 def _cpu(fn: Any) -> float:
-    """This process's CPU seconds `fn` takes, so a test running beside it does not count,
-    `untraced`: every caller runs extractor code, which the unit job's coverage does not
-    measure."""
+    """This process's CPU seconds `fn` takes, timed `untraced`, so neither a test running
+    beside it nor the tracer counts. Every caller runs extractor code, which the unit
+    job's coverage does not measure, so the pause loses no coverage."""
     with untraced():
         start = time.process_time()
         fn()

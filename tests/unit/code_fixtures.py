@@ -51,7 +51,7 @@ def assert_linear(
     """`cost(big)` is under `ratio` times `cost(small)` (8 suits 4 times the size: a
     quadratic one takes 16) or under `floor` seconds, and under `bound` seconds when
     given. On a loaded host the best of three runs of each counts. A bound is on the
-    code's own cost, so with one the runs are timed with coverage's tracer paused."""
+    code's own cost, so with one every run is timed `untraced` (tracer and collector off)."""
     with untraced() if bound is not None else nullcontext():
         a, b = cost(small), cost(big)
         if b > ratio * a:
