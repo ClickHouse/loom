@@ -135,8 +135,8 @@ def sql(
     settings: dict[str, Any] | None = None,
 ) -> str:
     """`query`'s answer; `params` bind its `{name:Type}` placeholders. A
-    setting that changes how the statement is logged is sent with the request:
-    in a SETTINGS clause it left the statement's own text uncut (26.10)."""
+    setting that changes how the statement is logged goes with the request,
+    since in a SETTINGS clause it does not cut the statement's own text."""
     bound = {f"param_{k}": v for k, v in (params or {}).items()}
     r = httpx.post(
         f"http://127.0.0.1:{port}/",

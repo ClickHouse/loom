@@ -533,7 +533,8 @@ def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client) -> Non
     # The probe's unsigned reads, which quote the policy in their errors, ran in this run.
     wait_until(refused_since_start, max_wait=_PROBE_WAIT_S, interval=2, description="a probe")
     logged = ch_client.query(
-        "SELECT count() FROM system.query_log WHERE multiSearchAnyCaseInsensitive(query, {k:Array(String)}) "
+        "SELECT count() FROM system.query_log "
+        "WHERE multiSearchAnyCaseInsensitive(query, {k:Array(String)}) "
         "OR multiSearchAnyCaseInsensitive(formatted_query, {k:Array(String)}) "
         "OR multiSearchAnyCaseInsensitive(exception, {k:Array(String)})",
         parameters={"k": secrets},

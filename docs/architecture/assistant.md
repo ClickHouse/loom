@@ -355,8 +355,8 @@ changes it. It keeps the secrets out of what is logged instead:
   every table by design. So the key's two padded forms, the only places the key enters
   the HMAC, are written in the policy as `decrypt(encrypt(pad, key), key)` (AES-256-ECB),
   which ClickHouse evaluates to the pad and prints as `decrypt('aes-256-ecb', '[HIDDEN]')`
-  in an error message and in `SHOW CREATE ROW POLICY`. The HMAC is the same, so a build N-1, which wrote the pads
-  in clear, signs statements these policies accept.
+  in an error message and in `SHOW CREATE ROW POLICY`. The HMAC is the same, so a
+  build N-1, which wrote the pads in clear, signs statements these policies accept.
 
 The key is in ClickHouse's own access storage (on disk, or in Keeper when access is
 replicated), in a backup of the access entities, in the distributed DDL queue of a
