@@ -162,8 +162,9 @@ async def test_a_revisions_metadata_is_kept_from_its_row_and_outlives_it(
     call: Any, pg_conn: Any, org: str
 ) -> None:
     """The journal's typed columns follow `row` whoever writes it: a commit, a revision
-    inserted without them (as an older build writes one), a scrub; and a cleared `row`
-    leaves them as they were."""
+    inserted without them (as an older build writes one), a scrub; a cleared `row`
+    leaves them as they were, and a revision without them (written before the columns)
+    takes them from the payload it loses."""
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     assert (await call("memory.set", _set(ns, "k", "a fact", user_id="u"))).status_code == 200
     await _published(pg_conn, org)

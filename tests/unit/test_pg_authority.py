@@ -2920,15 +2920,17 @@ async def test_a_commits_gap_with_a_cleared_payload_is_not_cleared_from_the_jour
     """A revision of the gap whose payload was cleared after its delivery cannot be judged
     from the journal: the commit does not clear the gap, and the write reaches its
     verdict again on peers read anew, rather than decoding a missing row."""
-    seen: list[Any] = []
+    seen: list[list[dict[str, Any]]] = []
 
     class _Conn:
         async def fetch(self, sql: str, *args: Any) -> list[dict[str, Any]]:
             return [{"row": {"memory_id": "m12"}}, {"row": None}]
 
-    admission = pg_memory.Admission(
-        generations={("o", "n"): 10}, gap_check=lambda rows: seen.append(rows) or True
-    )
+    def _check(rows: list[dict[str, Any]]) -> bool:
+        seen.append(rows)
+        return True
+
+    admission = pg_memory.Admission(generations={("o", "n"): 10}, gap_check=_check)
     assert await pg_memory._gap_cleared(_Conn(), admission, {("o", "n"): 13}) is False
     assert seen == []
 
