@@ -126,10 +126,10 @@ def _check_in_child(grammar: str, source: bytes, budget: float, memory: int) -> 
     """Return when the child parsed `source` in full within the limits; raise otherwise."""
     global _idle
     child, _idle = _idle, None
-    # Again on a fresh child, once each, when this one ended before reading the request,
+    # Again on a fresh child, once each, when this one had ended before the request was written,
     # or the kernel killed it (out of memory, this parse's own included; a limit hit ends
     # by another signal).
-    unread = killed = False
+    unwritten = killed = False
     while True:
         if child is None:
             child = _start()
@@ -145,18 +145,18 @@ def _check_in_child(grammar: str, source: bytes, budget: float, memory: int) -> 
         if outcome is _Outcome.SILENT:
             raise ParseTimeout(f"the parse process did not answer within {_wall_bound(budget):g} s")
         status = cast("int", child.returncode)
-        if outcome is _Outcome.UNWRITTEN and not unread:
-            unread = True
+        if outcome is _Outcome.UNWRITTEN and not unwritten:
+            unwritten = True
         elif outcome is _Outcome.UNWRITTEN and status <= 0:
             raise ParseTimeout(f"the parse process ended before reading (status {status})")
         elif status == -signal.SIGKILL and not killed:
             killed = True
         else:
-            _ended(status, budget, memory)
+            _raise_for_status(status, budget, memory)
         child = None
 
 
-def _ended(status: int, budget: float, memory: int) -> NoReturn:
+def _raise_for_status(status: int, budget: float, memory: int) -> NoReturn:
     """The error for a child that ended with `status` instead of answering."""
     if status > 0:
         logger.error("bounded_parse: the parse process failed with status %d", status)
