@@ -48,13 +48,13 @@ async def _code_namespace_authorized(org: str, code_namespace: str) -> tuple[str
     the caller's or the deployment's — as the current principal (the
     transport authorized the tracker namespace, not this one)."""
     from server.code.domain.index.repos import RegistryUnread, default_code_namespace
-    from server.core.errors import ValidationError
+    from server.core.errors import ValidationError, caller_text
 
     code_org = str(settings.code_org or org)
     try:
         ns = code_namespace or default_code_namespace(code_org)
     except (RegistryUnread, ValidationError) as e:
-        return code_org, "", str(e)
+        return code_org, "", caller_text(e)
     if not ns:
         return code_org, "", "no code namespace configured"
     try:

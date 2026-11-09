@@ -95,12 +95,18 @@ def plane_org_for(op_name: str) -> str:
 def plane_namespace_for(op_name: str, org: str | None = None) -> str:
     """The namespace a code.* op in `org` (default: the code org) is authorized
     against — and its handler reads — when the body names none: the deployment's
-    code namespace (`repos.default_code_namespace`). "" for every other op."""
+    code namespace (`repos.default_code_namespace`). "" for every other op, and
+    when that default is refused: an op that skips the namespace never needs it, and
+    one that reads it refuses in its handler (`resolve_code_identity`)."""
     if not op_name.startswith("code."):
         return ""
-    from server.code.domain.index.repos import default_code_namespace
+    from server.code.domain.index.repos import RegistryUnread, default_code_namespace
+    from server.core.errors import ValidationError
 
-    return default_code_namespace(org or str(settings.code_org))
+    try:
+        return default_code_namespace(org or str(settings.code_org))
+    except (RegistryUnread, ValidationError):
+        return ""
 
 
 def resolve_code_identity(org: str, namespace: str) -> tuple[str, str]:

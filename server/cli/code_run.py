@@ -20,16 +20,15 @@ log = logging.getLogger("loom.cli.code")
 def _identity(args: argparse.Namespace) -> tuple[str, str]:
     """(org, namespace) the command addresses: the flags, else the scalar settings.
     Neither = exit with the missing name; a code namespace is never guessed."""
-    from server.code.domain.index.repos import page_namespaces
+    from server.code.domain.index.repos import RegistryUnread, default_code_namespace
+    from server.core.errors import ValidationError
     from server.settings import settings
 
     org = args.org or settings.code_org
-    ns = args.namespace or settings.code_namespace
-    if not args.namespace and (org, ns) in page_namespaces():
-        raise SystemExit(
-            f"the default code namespace {org}/{ns} was added from the Repositories page: "
-            "pass --namespace"
-        )
+    try:
+        ns = args.namespace or default_code_namespace(org)
+    except (RegistryUnread, ValidationError) as e:
+        raise SystemExit(f"{e}; or pass --namespace") from None
     if not org or not ns:
         missing = " and ".join(
             f

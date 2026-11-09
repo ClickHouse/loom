@@ -819,32 +819,38 @@ def test_the_default_code_namespace_never_lands_on_a_member_branch(monkeypatch) 
     import argparse
 
     from server.cli import code_run
-    from server.code.app.common import plane_namespace_for, resolve_code_identity
+    from server.code.app.common import resolve_code_identity
+    from server.operations.registry import OPERATIONS_BY_NAME
     from server.tracker.app import test_signal
+    from server.transport import gates
+
+    def gate_ns(op: str) -> str | None:
+        return gates.authz_target(OPERATIONS_BY_NAME[op], org="", namespace="", auth=None).namespace
 
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
     monkeypatch.setattr(settings, "code_org", ORG)
     monkeypatch.setattr(settings, "code_namespace", "code-weave")
     monkeypatch.setattr(repos, "_page_namespaces", frozenset())
     assert resolve_code_identity("", "") == (ORG, "code-weave")
-    assert plane_namespace_for("code.search") == "code-weave"
-    # A member added that namespace from the page: no call naming none lands there.
+    assert gate_ns("code.search") == "code-weave"
+    # A member added that namespace from the page: no call naming none lands there, and
+    # an op that takes no namespace is not refused for it.
     monkeypatch.setattr(repos, "_page_namespaces", frozenset({(ORG, "code-weave")}))
     with pytest.raises(ValidationError, match="added from the Repositories page"):
         resolve_code_identity("", "")
-    with pytest.raises(ValidationError, match="added from the Repositories page"):
-        plane_namespace_for("code.search", ORG)
+    for op in ("code.search", "code.repos", "code.repo.add", "code.repo.remote_branches"):
+        assert gate_ns(op) is None, op
     assert resolve_code_identity("", "code-weave") == (ORG, "code-weave")  # named: authz ran
-    assert asyncio.run(test_signal._code_namespace_authorized(ORG, ""))[1:] == (
-        "",
-        f"the default code namespace {ORG}/code-weave was added from the Repositories page "
-        "and is not this deployment's default; name the code namespace to read "
-        "(code.repos lists them)",
-    )
-    with pytest.raises(SystemExit, match="pass --namespace"):
+    _, ns, why = asyncio.run(test_signal._code_namespace_authorized(ORG, ""))
+    assert ns == "" and "added from the Repositories page" in why
+    with pytest.raises(SystemExit, match="added from the Repositories page"):
         code_run._identity(argparse.Namespace(org="", namespace=""))
     # Unread, a member's namespace is not known yet.
     monkeypatch.setattr(repos, "_page_namespaces", frozenset())
     monkeypatch.setattr(repos, "_registry_loaded", False)
     with pytest.raises(repos.RegistryUnread):
         resolve_code_identity("", "")
+    assert gate_ns("code.repos") is None
+    with pytest.raises(SystemExit, match="registry is not read yet"):
+        code_run._identity(argparse.Namespace(org="", namespace=""))
+    assert code_run._identity(argparse.Namespace(org="", namespace="code-x")) == (ORG, "code-x")
