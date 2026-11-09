@@ -214,7 +214,7 @@ _CENSUS: tuple[Substrate, ...] = (
         "1",
         USER_COMMUNITY_ROWS,
         "entity_communities.delete",
-        "entity_communities.delete",
+        "graph_links.delete",
     ),
     Substrate(
         "loom.memory_ask_precedents",

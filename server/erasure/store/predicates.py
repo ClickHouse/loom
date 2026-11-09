@@ -82,8 +82,9 @@ USER_KEY_LIST = (
     "WHERE org = {org:String} AND user_id = {uid:String})"
 )
 # A summary built from the user's rows, under any identity: tagged `src:<key>` with a key
-# the user wrote in the summary's own namespace, on each version. `USER_SUMMARIES` is the
-# read form.
+# the user wrote in the summary's own namespace (a copy into another namespace keeps the
+# tags and is not the user's there), on each version. `hasAny(tags, src)` is there for
+# the skip index; the pairs decide. `USER_SUMMARIES` is the read form.
 CONSOLIDATED_IN = (
     "has(tags, 'consolidated') AND hasAny(tags, {src:Array(String)}) "
     "AND hasAny(arrayMap(t -> (namespace, t), tags), {pairs:Array(Tuple(String, String))})"
@@ -117,8 +118,11 @@ _USER_SUMMARY_IDENTITIES = (
     f"(SELECT toString(namespace), agent, user_id, memory_key {SUMMARY_ROWS_FROM})"
 )
 _IDENTITIES = "{rows:Array(Tuple(String, String, String, String))}"
+# a legacy '-' chunk at a summary's key is the summary's too, as for the user's own keys
 USER_SUMMARY_CHUNKS = (
-    f"(namespace, agent, user_id, parent_memory_key) IN {_USER_SUMMARY_IDENTITIES}"
+    "(namespace, agent, user_id, parent_memory_key) IN "
+    f"(SELECT toString(namespace), agent, arrayJoin([user_id, '-']), memory_key "
+    f"{SUMMARY_ROWS_FROM})"
 )
 SUMMARY_CHUNKS_IN = f"(namespace, agent, user_id, parent_memory_key) IN {_IDENTITIES}"
 USER_SUMMARY_VECTORS = f"(namespace, agent, user_id, memory_key) IN {_USER_SUMMARY_IDENTITIES}"

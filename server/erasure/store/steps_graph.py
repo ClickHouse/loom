@@ -335,8 +335,8 @@ async def delete_entity_graph_by_user(
     org: str, user_id: str, *, ch: _CHClient | None = None
 ) -> int:
     """Delete the triples and edges only this user's memories (or summaries of them)
-    carried, before their links go: `graph_links.delete` runs it first, as ownership is
-    read from the link tables.
+    carried, before their links go: `graph_links.delete` runs it first in the user scope,
+    as ownership is read from the link tables.
 
     The mutation names each key by its hash, computed by ClickHouse on both sides:
     nothing bounds a stored entity name, and one name can outgrow a form field."""
@@ -358,12 +358,10 @@ async def delete_graph_links_by_user(org: str, user_id: str, *, ch: _CHClient | 
     """The user's links, and those of the summaries of the user's memories: by key, and
     by the summary's id for a row link, which carries the summary writer's user. First
     the graph rows and communities those links alone hold, read from the links, so a
-    run the census reopens leaves none of them with no link that names it; this step's
-    total counts the links only."""
+    run the census reopens leaves none of them with no link that names it."""
     ch = ch or _default_client()
-    await delete_entity_graph_by_user(org, user_id, ch=ch)
-    await delete_entity_communities_by_user(org, user_id, ch=ch)
-    total = 0
+    total = await delete_entity_graph_by_user(org, user_id, ch=ch)
+    total += await delete_entity_communities_by_user(org, user_id, ch=ch)
     summaries = await user_summary_rows(org, user_id, ch=ch)
     keys = await user_key_pairs(org, user_id, ch=ch) + summaries.keys
     for t in ROW_LINK_TABLES:
@@ -691,8 +689,8 @@ async def delete_entity_communities_by_user(
     org: str, user_id: str, *, ch: _CHClient | None = None
 ) -> int:
     """Community rows for (or labelled by) the entities only this user's memories (or
-    summaries of them) carried. Must run BEFORE `graph_links.delete` (which runs it
-    again first): ownership is read from `entity_edge_memories`."""
+    summaries of them) carried, before their links go: `graph_links.delete` runs it first
+    in the user scope, as ownership is read from `entity_edge_memories`."""
     ch = ch or _default_client()
     rows = await ch.query_all(
         f"SELECT cityHash64(namespace, entity) AS h FROM {USER_COMMUNITY_ENTITIES}",

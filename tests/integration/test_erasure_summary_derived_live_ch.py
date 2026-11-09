@@ -49,7 +49,6 @@ _COVERED = {
     "shared_embeddings.tombstone",
     "shared.tombstone",
     "memory_chunks.tombstone",
-    "entity_communities.delete",
     "entity_vectors.delete",
     "graph_links.delete",
     "memory_versions.delete",

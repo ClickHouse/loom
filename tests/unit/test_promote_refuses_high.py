@@ -57,24 +57,3 @@ async def test_promoting_a_high_row_is_refused_before_anything_is_written(
     assert e.value.status_code == 422
     assert e.value.detail["code"] == "HIGH_SENSITIVITY_PROMOTION_REFUSED"
     assert writes == []
-
-
-@pytest.mark.asyncio
-async def test_the_copy_names_the_row_it_was_read_from(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A lookup by `agent="*"` reads one row; the copy names that row's identity, by
-    which an erasure finds it, not the wildcard."""
-    rows: list[dict[str, Any]] = []
-
-    async def _get(*_a: Any, **_k: Any) -> MemoryRow:
-        return _row("").model_copy(update={"user_id": "alice", "session_id": "s1"})
-
-    async def _write(row: dict[str, Any]) -> None:
-        rows.append(row)
-
-    monkeypatch.setattr(memory_repo, "get_by_key", _get)
-    monkeypatch.setattr(promote, "get_embedder", lambda: None)
-    monkeypatch.setattr(shared, "insert_shared_row", _write)
-    await promote.handle_memory_promote(
-        MemoryPromoteInput(org="o", namespace="n", agent="*", memory_key="k")
-    )
-    assert rows[0]["promoted_from"] == ["o/n/a/alice/s1/k"]

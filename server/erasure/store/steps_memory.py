@@ -607,7 +607,10 @@ async def tombstone_memory_chunks_by_user(
             params={"uid": user_id, "keys": part},
             ch=ch,
         )
-    for rows in chunks((await user_summary_rows(org, user_id, ch=ch)).identities):
+    identities = (await user_summary_rows(org, user_id, ch=ch)).identities
+    # a legacy '-' chunk of the summary too, as the write path retires it as its own
+    legacy = {(ns, agent, "-", key) for ns, agent, _, key in identities}
+    for rows in chunks(sorted(set(identities) | legacy)):
         total += await tombstone_scoped(
             "loom.memory_chunks",
             org=org,

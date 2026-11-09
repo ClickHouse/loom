@@ -167,10 +167,11 @@ async def test_user_saga_orders_the_new_steps_around_the_link_tables(monkeypatch
     monkeypatch.setattr(eb, "all_backends", list)
     monkeypatch.setattr("server.core.namespace_write_marks.bump", _noop)
     await h._saga_user_id("o", "alice", completed=set(), row={})
-    for step in ("entity_communities.delete", "llm_response_cache.delete", "ask_precedents.delete"):
+    for step in ("graph_links.delete", "llm_response_cache.delete", "ask_precedents.delete"):
         assert step in calls, step
-    # communities read ownership from the edge links: before the links go
-    assert calls.index("entity_communities.delete") < calls.index("graph_links.delete")
+    # the communities go inside graph_links.delete, which reads ownership from the edge
+    # links before they go
+    assert "entity_communities.delete" not in calls
     # the text stores follow the memory tombstone (their predicate reads the user's keys)
     assert calls.index("memory.tombstone") < calls.index("llm_response_cache.delete")
     assert calls.index("memory.tombstone") < calls.index("ask_precedents.delete")
@@ -181,7 +182,7 @@ def test_registry_gives_the_three_tables_a_user_predicate_and_an_owner() -> None
     owners = erasure_census.step_owners("user_id")
     assert owners["llm_response_cache.delete"] == ("loom.llm_response_cache",)
     assert owners["ask_precedents.delete"] == ("loom.memory_ask_precedents",)
-    assert owners["entity_communities.delete"] == ("loom.entity_communities",)
+    assert "loom.entity_communities" in owners["graph_links.delete"]
     assert erasure_census.steps_to_reopen({"loom.llm_response_cache": 3}, "user_id") == {
         "llm_response_cache.delete"
     }
@@ -189,7 +190,7 @@ def test_registry_gives_the_three_tables_a_user_predicate_and_an_owner() -> None
         {"memory_ask_precedents": 1, "entity_communities": 2}, "user_id"
     ) == {
         "ask_precedents.delete",
-        "entity_communities.delete",
+        "graph_links.delete",
     }
     by_table = {s.table: s for s in erasure_census._CENSUS}
     assert by_table["loom.llm_response_cache"].user_pred == f"hasAny(window_keys, {_QUOTED_KEYS})"

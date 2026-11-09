@@ -64,7 +64,6 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
         "source_links.tombstone",
         ((U, "loom.memory_belief_sources"), (U, "loom.memory_chunk_sources")),
     ),
-    ("entity_communities.delete", ((D, "loom.entity_communities"),)),
     ("entity_vectors.delete", ((L, "loom.entity_vectors"), (L, "loom.entity_vectors"))),
     (
         "graph_links.delete",
@@ -398,7 +397,6 @@ USER_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
             (D, "loom.memory_chunk_sources"),
         ),
     ),
-    ("entity_communities.delete", ((D, "loom.entity_communities"),)),
     ("entity_vectors.delete", ((L, "loom.entity_vectors"), (L, "loom.entity_vectors"))),
     (
         "graph_links.delete",
