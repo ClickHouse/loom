@@ -150,7 +150,9 @@ def test_the_cache_table_insert_is_projected_onto_the_live_columns() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_user_saga_orders_the_new_steps_around_the_link_tables(monkeypatch) -> None:
+async def test_user_saga_runs_the_cache_steps_after_the_tombstone_with_no_communities_step(
+    monkeypatch,
+) -> None:
     import server.erasure.app.backends as eb
 
     calls: list[str] = []

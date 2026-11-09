@@ -250,7 +250,7 @@ async def tombstone_shared_embeddings_by_user(
     ch: _CHClient | None = None,
 ) -> int:
     """Tombstone the scope='shared' embedding rows that back any shared
-    memory whose source includes this user_id.
+    memory whose source includes this user_id, or a summary of the user's memories.
 
     Shared embeddings don't directly carry user_id (sentinel
     agent='_shared'), so the (namespace, key) pairs of the loom.shared rows
