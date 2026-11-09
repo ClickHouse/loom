@@ -132,12 +132,9 @@ def test_a_row_that_leaves_out_its_default_fields_reads_as_the_full_row() -> Non
             now=datetime(2026, 1, 2, 3, 4, 5),
         )
     )
-    sparse = {
-        c: v
-        for c, v in full.items()
-        if c not in pg_memory.SPARSE_DEFAULTS or v != pg_memory.SPARSE_DEFAULTS[c]
-    }
-    assert len(sparse) < len(full)
+    sparse = pg_memory.sparse_row(full)
+    assert len(sparse) < len(full) and sparse["value"] == full["value"]
+    assert all(c not in sparse for c, v in pg_memory.SPARSE_DEFAULTS.items() if full[c] == v)
     assert pg_memory.decode_row(sparse) == pg_memory.decode_row(full)
     first, second = pg_memory.decode_row(sparse), pg_memory.decode_row(sparse)
     first["tags"].append("x")

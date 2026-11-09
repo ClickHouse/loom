@@ -111,6 +111,12 @@ def encode_row(row: Mapping[str, Any]) -> dict[str, Any]:
 SPARSE_DEFAULTS: Mapping[str, Any] = FIRST_VERSION_DEFAULTS
 
 
+def sparse_row(encoded: Mapping[str, Any]) -> dict[str, Any]:
+    """An encoded row as it is stored: without the fields at their default
+    (`SPARSE_DEFAULTS`), which every reader fills back (`decode_row`)."""
+    return {c: v for c, v in encoded.items() if c not in SPARSE_DEFAULTS or v != SPARSE_DEFAULTS[c]}
+
+
 def decode_row(stored: Mapping[str, Any]) -> dict[str, Any]:
     """The insertable loom.memory row back from its JSON, each field it leaves out at its
     default (`SPARSE_DEFAULTS`), as ClickHouse fills it."""
@@ -727,7 +733,7 @@ async def commit_versions(
             [int(r["version"]) for r in head_rows],
             [seqs[heads[k]][2] for k in keys],
             [str(r.get("content_sha256") or "") for r in head_rows],
-            head_rows,
+            [sparse_row(r) for r in head_rows],
         )
         await conn.execute(
             _INSERT_REVISIONS,
@@ -741,7 +747,7 @@ async def commit_versions(
             [str(r.get("actor") or "") for r in stored],
             [str(r.get("source_class") or "") for r in stored],
             [request_id] * len(stored),
-            stored,
+            [sparse_row(r) for r in stored],
             [encode_audit(a) for a in audits],
         )
         await conn.execute(

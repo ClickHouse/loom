@@ -324,7 +324,7 @@ async def test_a_head_that_leaves_out_its_default_fields_is_served_as_the_full_o
         stored = await pg_conn.fetchval(
             f"SELECT row FROM loom.{table} WHERE org = $1 AND namespace = $2", org, ns
         )
-        assert len(sparse(stored)) < len(stored)
+        assert sparse(stored) == stored  # a commit stores the row without its defaults
         full[table] = stored
         await pg_conn.execute(
             f"UPDATE loom.{table} SET row = $3 WHERE org = $1 AND namespace = $2",
@@ -3156,7 +3156,8 @@ async def test_a_same_key_write_in_another_session_retires_a_first_write_at_once
     statuses = {
         r["session_id"]: r["status"]
         for r in await pg_conn.fetch(
-            "SELECT session_id, row->>'status' AS status FROM loom.memory_current "
+            "SELECT session_id, coalesce(row->>'status', 'active') AS status "
+            "FROM loom.memory_current "
             "WHERE org = $1 AND namespace = $2",
             org,
             ns,
