@@ -370,7 +370,10 @@ def test_a_failure_after_a_new_password_says_to_rotate() -> None:
     from server.insights.app.sql_access import AccessRefused
 
     ch = _fake(exists=False, cls=_FailingInsertCH)
-    with pytest.raises(AccessRefused, match="new password but its scope or grants were not written; run grant again with --rotate"):
+    with pytest.raises(
+        AccessRefused,
+        match="new password but its scope or grants were not written; run grant again with --rotate",
+    ):
         _grant(ch, lambda user, password: "")
     assert ch.statements("CREATE USER `acme_bi`") and not ch.statements("GRANT ")
 
@@ -507,3 +510,25 @@ def test_the_daily_usage_columns_are_the_documented_ones() -> None:
         "latency_p50_ms",
         "latency_p95_ms",
     ]
+
+
+def test_the_cli_prints_why_a_login_check_could_not_run(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The app's refusal names no caught error; the operator who ran the command reads
+    the cause on the next line."""
+    import argparse
+
+    from server.cli import sql_access as cli
+    from server.insights.app.sql_access import AccessRefused, LoginUnchecked
+
+    def refused(work: Any) -> Any:
+        cause = LoginUnchecked("could not log in as it: Code: 516. Authentication failed")
+        raise AccessRefused("acme_bi was dropped: its login could not be checked") from cause
+
+    monkeypatch.setattr(cli, "_connected", refused)
+    args = argparse.Namespace(user="acme_bi", org="o", namespaces="a", all=False, rotate=False)
+    assert cli._cmd_grant(args) == cli.REFUSED
+    err = capsys.readouterr().err
+    assert "its login could not be checked" in err
+    assert "could not log in as it: Code: 516" in err
