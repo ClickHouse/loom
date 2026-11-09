@@ -204,8 +204,8 @@ The parser comes from `ingest_parse._PARSERS`. A failure of that parse, includin
 grammar or a tree-sitter parse past `code_parse_timeout_s` or `code_parse_memory_mb`
 (`bounded_parse`, one parse at a time), degrades to a chunk-only file with
 `code_files.index_error` set; `code.index_errors` reports it; a TLA+ spec instead falls
-back to its regex reader. A parse past its limits anywhere else takes its caller's fallback and
-records no error.
+back to its regex reader. A parse past its limits anywhere else takes its caller's
+fallback and records no error.
 Tree-sitter modules import lazily, so a server with the code workers off boots without the
 `code` extras.
 
