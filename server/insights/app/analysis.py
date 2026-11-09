@@ -66,7 +66,6 @@ log = logging.getLogger(__name__)
 _ACCESS_DENIED = 497
 _AUTHENTICATION_FAILED = 516
 _TOO_MANY_SIMULTANEOUS_QUERIES = 202
-_MEMORY_LIMIT_EXCEEDED = 241  # not a setting: ClickHouse's error code
 _STATEMENT_CODES = frozenset(
     {
         _ACCESS_DENIED,

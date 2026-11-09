@@ -78,8 +78,9 @@ _SERVER_STATE_CODES: tuple[int, ...] = (202, 225, 242, 252, 319, 999)
 # own refusal, which a smaller batch avoids.
 _ROWS_SPAN_PARTITIONS = "Too many partitions for single INSERT block"
 # 241 MEMORY_LIMIT_EXCEEDED against the server's whole memory or the user's, which other
-# queries share, not the query's own limit: "(total)" or "(for user)" in the message.
-_SHARED_MEMORY = ("(total)", "(for user)")
+# queries share, not the query's own limit: "(total)", or the user's as "(for user)" in
+# older servers' text and "User memory limit exceeded" in current ones (26.5 and later).
+_SHARED_MEMORY = ("(total)", "(for user)", "user memory limit exceeded")
 
 
 def is_shared_memory_limit(e: BaseException) -> bool:

@@ -20,6 +20,13 @@ _TOTAL = (
     "chunk of 2.00 MiB), current RSS: 4.01 GiB, maximum: 4.00 GiB. (MEMORY_LIMIT_EXCEEDED)"
 )
 _USER = "Code: 241. DB::Exception: Memory limit (for user) exceeded: would use 12 GiB"
+# captured from ClickHouse 26.5.1.882 with max_memory_usage_for_user=5000000
+_USER_NOW = (
+    "Code: 241. DB::Exception: User memory limit exceeded: would use 6.59 MiB (attempt to "
+    "allocate chunk of 6.00 MiB), maximum: 4.77 MiB. OvercommitTracker decision: Query was "
+    "selected to stop by OvercommitTracker: While executing AggregatingTransform. "
+    "(MEMORY_LIMIT_EXCEEDED) (version 26.5.1.882 (official build))"
+)
 _QUERY = "Code: 241. DB::Exception: Memory limit (for query) exceeded: would use 2 GiB"
 
 
@@ -44,7 +51,7 @@ def _raising(message: str):
     return fn, calls
 
 
-@pytest.mark.parametrize("message", [_TOTAL, _USER])
+@pytest.mark.parametrize("message", [_TOTAL, _USER, _USER_NOW])
 @pytest.mark.parametrize("op", ["query_all", "insert"])
 async def test_the_servers_or_users_memory_running_short_is_a_503(message: str, op: str) -> None:
     fn, calls = _raising(message)
