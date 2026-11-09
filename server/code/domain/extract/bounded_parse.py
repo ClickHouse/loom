@@ -5,9 +5,9 @@ Some grammars take quadratic time on short repeated tokens, and some quadratic m
 replica for hours or exhaust its memory. Every parse of repository text goes through
 `parse`, which first parses the source in a child process (`parse_child`) held to
 `code_parse_memory_mb` of address space past its own and `code_parse_timeout_s` of
-CPU time, and raises `ParseTimeout` when that parse runs past the deadline or ends the
-child; each caller takes its parse failure path (an indexed file is then chunks
-without symbols).
+CPU time, and raises `ParseTimeout` when that parse runs past the deadline or a signal
+ends the child (a child that fails is a `RuntimeError`); each caller takes its parse
+failure path (an indexed file is then chunks without symbols).
 
 Only a source the child parsed in full within the deadline is parsed again here, where
 the same parse does the same work and so stays within the same limits (past twice the
@@ -82,7 +82,7 @@ class LockWait:
 
 
 # Set by a caller that gives up sooner than a parse may take, so its threads (which copy
-# the context) do not parse after it went away. None: wait as long as it takes.
+# the context) do not wait for the lock past its deadline. None: wait as long as it takes.
 LOCK_WAIT: ContextVar[LockWait | None] = ContextVar("bounded_parse_lock_wait", default=None)
 
 _idle: subprocess.Popen[bytes] | None = None  # the child waiting for its next parse (`_LOCK`)
@@ -217,7 +217,8 @@ def _close(child: subprocess.Popen[bytes]) -> None:
 
 def parse(parser: Any, source: bytes) -> Any:
     """`parser.parse(source)`, raising `ParseTimeout` past the deadline or the memory
-    limit."""
+    limit; `RuntimeError` or `OSError` when the child fails or cannot start, `LookupError`
+    for a grammar not in `_LOADERS`."""
     from server.settings import settings
 
     budget = settings.code_parse_timeout_s
