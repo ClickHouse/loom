@@ -667,6 +667,8 @@ async def commit_versions(
     whatever refusal the head at commit calls for."""
     started = time.monotonic()
     stored = [encode_row(r) for r in rows]
+    # Built before the transaction: no lock waits on it.
+    sparse = [sparse_row(r) for r in stored]
     if any(r["namespace"] in POLICY_SCOPE_NAMES for r in stored):
         # A namespace's generation shares its key with the policy generations.
         raise ValidationError("'*' and '' are not namespace names")
@@ -726,7 +728,6 @@ async def commit_versions(
             next_seq[s] += 1
             seqs.append((s[0], s[1], next_seq[s]))
         head_rows = [stored[heads[k]] for k in keys]
-        sparse = [sparse_row(r) for r in stored]
         await conn.execute(
             _UPSERT_HEADS,
             *_cols(head_rows, "org", "namespace", "agent", "user_id", "session_id", "memory_key"),
