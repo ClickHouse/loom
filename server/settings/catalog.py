@@ -5190,6 +5190,9 @@ class StorageSettings(BaseModel):
     # Seconds the writing request holds its revisions' delivery; past it, the delivery
     # worker or a waiting admission in the namespace publishes them instead.
     pg_request_lease_seconds: int = Field(default=5, ge=1)
+    # Average ms between a process's publication flushes (one insert per table each),
+    # capped at half `LOOM_PG_PROJECTION_WAIT_MS`; bursts up to a second's worth; 0: none.
+    pg_publish_interval_ms: Annotated[int, LIVE] = Field(default=250, ge=0, le=2000)
     # Seconds the delivery workers hold a memory revision's or a knowledge document's
     # delivery before another may take it; also how long the conflict resolver sets aside
     # a row whose flagged peer is not yet in ClickHouse.

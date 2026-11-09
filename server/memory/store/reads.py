@@ -10,15 +10,21 @@ from datetime import datetime
 from typing import Any
 
 from server.core import pg
+from server.core.datetimes import naive_utc_now
 from server.core.hashing import served_content_sha256
 from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.core.tag_sql import TagFilter, tag_where
-from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
+from server.identity.domain.read_scope import (
+    WHOLE_NAMESPACE,
+    ReadFilters,
+    scope_and,
+    scope_where,
+)
 from server.memory.domain.delete_marks import DELETE_VERSION_TRACE
 from server.memory.domain.expire_reasons import SWEEP_REASON_PREFIX
 from server.memory.domain.identity_columns import IdentityColumn
 from server.memory.domain.memory_types import NON_SEARCHABLE_TYPES
-from server.memory.domain.temporal_sql import as_of_predicate, served_status_sql
+from server.memory.domain.temporal_sql import as_of_predicate, served_status_sql, served_statuses
 from server.memory.domain.transcript_rows import TRANSCRIPT_ROW_SQL
 from server.memory.store import pg_memory
 from server.memory.store.rows import (
@@ -438,10 +444,26 @@ async def served_key_rows(
 ) -> list[dict[str, Any]]:
     """The distinct values of `memory_key` in the namespace that search serves, under every
     user, agent and session other than `besides` (agent, user_id, session_id); a key's
-    memory.set chunks are shared by all of them. A row counts when it is live, not
-    expired, inside its validity, of a served status and embedded (a searchable type, not
+    memory.set chunks are shared by all of them. A row counts when it is live, not expired,
+    inside its validity, of a served status and embedded (a searchable type, not
     `sensitivity: high`). `memory_type` and `value` (the stored JSON), once per distinct
-    pair. Sequentially consistent, since a delete decides on the answer."""
+    pair. Sequentially consistent, since a delete decides on the answer. Under Postgres,
+    from the authority's heads, `besides` included: its head is the delete's tombstone
+    unless a write landed above it, which ClickHouse may not hold yet."""
+    if pg.enabled():
+        now = naive_utc_now()
+        served = set(served_statuses())
+        heads = await pg_memory.live_key_heads(org, namespace, [memory_key], scope=WHOLE_NAMESPACE)
+        pairs = {
+            (str(h["memory_type"]), str(h["value"]))
+            for h in heads
+            if (h.get("expires_at") is None or h["expires_at"] > now)
+            and (h.get("valid_to") is None or h["valid_to"] > now)
+            and h.get("status") in served
+            and h.get("sensitivity") != "high"
+            and h["memory_type"] not in NON_SEARCHABLE_TYPES
+        }
+        return [{"memory_type": t, "value": v} for t, v in sorted(pairs)]
     ch = ch or _default_client()
     agent, user_id, session_id = besides
     return await ch.query_all(
@@ -527,7 +549,11 @@ async def key_holds_established_fact(
 ) -> bool:
     """Whether any identity of the namespace holds `memory_key`
     as a live, accepted fact (active, conflicted or duplicate) — the guard a
-    proposal write takes. Read with sequential consistency: it gates a write."""
+    proposal write takes. Read with sequential consistency: it gates a write; under
+    Postgres, from the authority's heads."""
+    if pg.enabled():
+        heads = await pg_memory.live_key_heads(org, namespace, [memory_key], scope=WHOLE_NAMESPACE)
+        return any(h.get("status") in ("active", "conflicted", "duplicate") for h in heads)
     ch = ch or _default_client()
     row = await ch.query_one(
         f"""

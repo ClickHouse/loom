@@ -564,65 +564,41 @@ async def test_a_held_embedding_holds_the_identity_without_a_failure() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("lease_s", "insert_fails", "published", "expected"),
-    [
-        (60, False, True, ["commit", "insert", "complete", "publish"]),
-        (60, False, False, ["commit", "insert", "complete", "publish"]),
-        (60, True, True, ["commit", "insert", "publish"]),
-        (-1, False, True, ["commit", "publish"]),
-    ],
-    ids=["written", "publication-pending", "document-fails-owed", "lease-over-owed"],
-)
-async def test_a_documented_version_owes_its_document_and_writes_it_under_the_lease(
-    monkeypatch: pytest.MonkeyPatch,
-    lease_s: int,
-    insert_fails: bool,
-    published: bool,
-    expected: list[str],
+@pytest.mark.parametrize("published", [True, False], ids=["written", "publication-pending"])
+async def test_a_documented_version_owes_its_document_and_publishes_it_with_its_row(
+    monkeypatch: pytest.MonkeyPatch, published: bool
 ) -> None:
+    """The commit owes the document, which goes to the publication batch with the row;
+    whether the row reached ClickHouse is the publication's outcome."""
     import time
 
     from server.core import pg
     from server.memory.store import lifecycle, pg_memory, pg_publish
 
     row, document = _rows_for(_period(1, 5))
-    calls: list[str] = []
+    sent: list[Any] = []
     owed = pg_memory.MEMORY_ROW | pg_memory.SEARCH_DOC | pg_memory.AUDIT_ROW
 
     async def _commit(rows: Any, *, targets: int, **_: Any) -> Any:
         assert targets == owed
-        calls.append("commit")
         return pg_memory.Committed(
             rows=rows,
             audits=[],
             seqs=[("o", "ns", 1)],
             targets=[targets],
-            deadline=time.monotonic() + lease_s,
+            deadline=time.monotonic() + 60,
         )
 
-    async def _complete(seqs: Any, done: int, **_: Any) -> None:
-        assert done == pg_memory.SEARCH_DOC
-        calls.append("complete")
-
-    async def _publish(committed: Any, **_: Any) -> None:
-        calls.append("publish")
+    async def _publish(committed: Any, *, documents: Any, ch: Any) -> None:
+        sent.append(documents)
         if not published:
             raise pg_lease.PublicationPending()
-
-    class _CH:
-        async def insert(self, table: str, rows: Any, settings: Any = None) -> None:
-            assert table == "loom.memory_embeddings"
-            calls.append("insert")
-            if insert_fails:
-                raise ConnectionError("clickhouse unreachable")
 
     monkeypatch.setattr(pg, "enabled", lambda: True)
     monkeypatch.setattr(pg_publish, "commit", _commit)
     monkeypatch.setattr(pg_publish, "publish", _publish)
-    monkeypatch.setattr(pg_memory, "complete", _complete)
-    assert await lifecycle.insert_documented_versions([row], [document], ch=_CH()) is published
-    assert calls == expected
+    assert await lifecycle.insert_documented_versions([row], [document], ch=object()) is published
+    assert sent == [[document]]
 
 
 @pytest.mark.asyncio

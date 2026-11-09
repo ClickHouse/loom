@@ -1782,6 +1782,7 @@ Opt-in tiering, applied as idempotent ALTER TABLE MODIFY TTL by server/storage/r
 | `LOOM_PG_ADMISSION_HELP_ROWS` | `int` | `20` |  | Revisions a waiting admission publishes itself for a writer that stopped before publishing them; the delivery worker publishes the rest. |
 | `LOOM_PG_PROJECTION_WAIT_MS` | `int` | `2000` |  | Milliseconds an admission waits for earlier commits in its scope to reach search before answering 503 PROJECTION_BEHIND; a diagnostic report waits as long, then reads on and names `projection` in `skipped`. |
 | `LOOM_PG_REQUEST_LEASE_SECONDS` | `int` | `5` |  | Seconds the writing request holds its revisions' delivery; past it, the delivery worker or a waiting admission in the namespace publishes them instead. |
+| `LOOM_PG_PUBLISH_INTERVAL_MS` | `int` | `250` | live | Average ms between a process's publication flushes (one insert per table each), capped at half `LOOM_PG_PROJECTION_WAIT_MS`; bursts up to a second's worth; 0: none. |
 | `LOOM_PG_DELIVERY_LEASE_SECONDS` | `int` | `30` |  | Seconds the delivery workers hold a memory revision's or a knowledge document's delivery before another may take it; also how long the conflict resolver sets aside a row whose flagged peer is not yet in ClickHouse. |
 | `LOOM_PG_DELIVERY_ENABLED` | `bool` | `True` |  | Background delivery of committed memory revisions and knowledge documents a request did not publish (the pg_delivery and knowledge_pg_delivery workers). |
 | `LOOM_PG_DELIVERY_INTERVAL_SECONDS` | `int` | `2` |  | Seconds between delivery passes while there is work. |

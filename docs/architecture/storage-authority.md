@@ -169,6 +169,7 @@ condition of them.
 sequenceDiagram
     participant W as memory.set
     participant P as Postgres
+    participant B as publication batch
     participant C as ClickHouse
     W->>P: read the head (memory_current)
     W->>P: capture generations (published watermark)
@@ -176,8 +177,9 @@ sequenceDiagram
     W->>C: peer rows and verdict
     W->>P: commit: generation lock, gap check, head recheck, head + revision + delivery + idempotency
     P-->>W: committed (seq, lease token 1)
-    W->>C: loom.memory row, audit row, search document
-    W->>P: clear the delivered targets
+    W->>B: rows, audit rows, search document (the write answers)
+    B->>C: one insert per table for every commit queued
+    B->>P: clear the delivered targets
 ```
 
 1. **Read.** The handler reads the key's head from Postgres
@@ -212,13 +214,18 @@ sequenceDiagram
    - the heads are upserted, the revisions and their deliveries inserted, and the
      idempotency key, if any, marked `committed` with the revisions, under its lease
      token.
-5. **Publish.** The writer inserts the committed rows into `loom.memory` (whose
-   materialized view keeps `loom.memory_versions`), the audit rows into
-   `loom.audit_log` and the search document into `loom.memory_embeddings`, then clears
-   those targets under its lease token. Before each send it checks that its lease
-   (`LOOM_PG_REQUEST_LEASE_SECONDS`, less `LOOM_PG_LEASE_MARGIN_SECONDS`) has not run
-   out; past it, it sends nothing and answers 503 `PUBLICATION_PENDING` with
-   `committed: true`.
+5. **Publish.** The writer hands the committed rows, their audit rows and the search
+   document it built to its process's publication batch ([publication](#publication)),
+   which inserts them into `loom.memory` (whose materialized view keeps
+   `loom.memory_versions`), `loom.audit_log` and `loom.memory_embeddings` together with
+   every other commit queued, and clears those targets under each commit's lease token.
+   A `memory.set` of a key with no live head (a new key, or one deleted since) that
+   states no relations and is not `high` answers once the commit returns
+   ([publication](#publication)); every other writer, `memory.bulk_set` included, waits
+   for its flush, so what follows it reads its rows in ClickHouse, and answers 503
+   `PUBLICATION_PENDING` with `committed: true` when the flush fails or its lease
+   (`LOOM_PG_REQUEST_LEASE_SECONDS`, less `LOOM_PG_LEASE_MARGIN_SECONDS`) runs out
+   first.
 
 The transaction does no inference and no ClickHouse query. A write that failed before
 its commit wrote nothing; one cut off after it is durable and its delivery is finished
@@ -228,6 +235,81 @@ by someone else ([delivery](#delivery)).
 lookup, commits every row in one transaction with each key's head rechecked, and gives
 only the rows with a vector the search-document target.
 
+### Publication
+
+A ClickHouse insert of a version row is a fenced `INSERT … SELECT FROM input()`, which
+ClickHouse cannot buffer ([batched inserts](clickhouse.md#batched-inserts)), so one
+insert per write is one part per write. Each process therefore batches its commits'
+publication itself (`server/memory/store/pg_batch.py`). A flush sends every commit
+queued since the last one, whatever its namespace and org: one insert into each of
+`loom.memory` and `loom.memory_embeddings`, split into blocks of at most 100 months of
+`created_at` (the tables' partition key; ClickHouse Cloud pins
+`max_partitions_per_insert_block` at 100), and one batched insert of the audit rows into
+`loom.audit_log`, then one Postgres transaction clearing what landed. Flushes start at
+most 1000 / `LOOM_PG_PUBLISH_INTERVAL_MS` (250, so 4; capped at half
+`LOOM_PG_PROJECTION_WAIT_MS`) a second on average, up to a second's worth (at least one)
+at once: a process that writes now and then sends each write at once, and a busy one
+sends at most that many inserts a second into each table. An insert makes a part for
+each partition its rows span, so the memory tables get from writes 4 parts a second for
+each serving process (every web worker of every replica, and the workers' process) and
+month of `created_at` written, at the default, whatever the write rate; a flush's
+retirement of old vectors (`OLD_VECTORS`) and a refused flush sent again commit by
+commit add their own.
+
+The search document is built, and its vector computed, by the writer before its commit,
+as on the ClickHouse authority; until its flush it is held in the writer's process, and
+Postgres stores no vector. A process that stops before its flush loses the document, not
+the write: the delivery worker takes the delivery once its lease runs out and embeds the
+revision's text again ([delivery](#delivery)). The shutdown drain sends what is queued
+first. A flush sends a document only while its key's head still serves it: the revision
+it was built from, or a newer copy of it with the same content (a pin, a touch, a
+conflict mark) whose own delivery owes no document, onto which the flush carries the
+writer's vectors with the copy's columns and version, so the text is not embedded again.
+One deleted, rewritten or redacted since has its own retirement or document, which this
+one would land live above. The flush ends its writer's lease on such a delivery at once
+(`pg_memory.hand_over`), and on every delivery of a commit ClickHouse refused, so the
+delivery worker, or a search waiting at its barrier, builds the document from the head
+or settles it without waiting out the lease. A flush that got no answer ends no lease:
+an insert of it may still be running.
+
+Only a write of a key with no live head answers before its flush, since its follow-ups
+need nothing of ClickHouse: no head of its own to revise, no relations to fence, and its
+entity projection runs beside the answer. A later write of the key in another session
+finds it all the same: the same-key reads (`newest_wins` supersession, the resolver's
+owed mark for a key held elsewhere, the guard that refuses a proposal over an accepted
+fact, and `memory.delete_version`'s check of the chunks the key's values serve, the
+deleter's own newer head included) take the authority's heads
+(`pg_memory.live_key_heads`). A revision fences its edges on its new row, a write with
+relations its facts, and a `high` row's fence (`fence_high`) rechecks the head in
+ClickHouse: each of those waits for its own flush.
+
+Every commit in a flush is sent under its own lease and token, as its writer would send
+it alone, so the guarantees below hold unchanged: the flush runs under the earliest
+lease among its commits and sends nothing for a commit whose lease ran out in the queue;
+an erasure waits out those leases; a redaction's fence ends them; a target is cleared
+only under the commit's token. A flush ClickHouse refuses is sent again commit by
+commit, so a row it keeps refusing holds back only its own commit; one ClickHouse does
+not answer is left whole to the delivery worker. During a rolling upgrade a build N-1
+that publishes each write alone serves beside N: both send the same rows under the same
+leases. N-1's reads of ClickHouse that wait at the barrier in N (below) do not wait, so
+until the rollout ends a key's first `memory.set` answered by N can be missing from them
+on an N-1 replica for up to one flush.
+
+Read-your-writes: `memory.get` and the other point reads answer from Postgres, current
+at the commit. A search waits at the barrier ([search](#search)) for the flush, at most
+a flush's wait and an insert after the write, and so do `memory.list`, `memory.history`,
+a `memory.get` or `memory.get_by_id` `as_of` replay and `namespace.rollback`'s plan. The
+graph's fences project a write's edges and facts only while `loom.memory` shows it holds
+its value (`graph_holders`): a first write's entity projection, which runs beside the
+answer, first waits for that write's flush, up to its lease
+(`pg_batch.own_write_published`); when the flush does not land, it finds no row to hold
+the value, as on a write whose publication is pending, and the entity extractor projects
+the row once it is in. A fence reads any other write's row as ClickHouse holds it. A
+write whose verdict writes copies of other heads (a conflict's marks, a supersession, a
+refinement) waits for each copy's flush, which waits for the write's to end and, on a
+busy process, for the pace. A read of ClickHouse alone (`memory.keys` and the others
+[erasure](#erasure) names) shows the write once its flush lands.
+
 Every other writer of `loom.memory` commits through `insert_memory_versions`: a new head
 when its version is not older, a revision, a delivery, the audit row. A copy of a head it
 read commits through `lifecycle.insert_versions_over_heads`, only over the version it
@@ -236,8 +318,9 @@ copy that writes a live row's search document (a rollback, a restore, an Undo) w
 under its commit's lease and owes it until then, so the delivery worker builds one the
 lease or a failure cut off. A period digest's row, which rechecks no head, writes its
 document the same way (`lifecycle.insert_documented_versions`), and links its lineage only
-when the row reached ClickHouse at its commit, where a user erasure reaches the lineage
-through it; a row left pending goes without its lineage until a rewrite.
+when the row and its document reached ClickHouse at its commit, where a user erasure
+reaches the lineage through it; a row left pending, or whose document was refused, goes
+without its lineage until a rewrite.
 `memory.reject` and `memory.clear` write their changes as revisions, and their vectors
 are re-emitted at the revision's version (a search document a writer still owes, at an
 older version, lands under them). The table TTL a retention setting puts on
@@ -313,13 +396,14 @@ ClickHouse retrieves and ranks; Postgres says what is current
 (`server/memory/app/search/pg_validation.py`).
 
 - **Barrier.** A search captures, for each namespace it reads, the namespace's current
-  generation, and retrieves once every revision through it is published. Usually none
-  is pending, since a writer publishes before it answers, and the barrier is one
-  query. Otherwise the search publishes what a stopped writer left, within
-  `LOOM_PG_PROJECTION_WAIT_MS` for all its namespaces together, then answers 503
-  `PROJECTION_BEHIND`; a search that waited reads ClickHouse with sequential
-  consistency. Writes committed after the capture do not move the barrier: it promises
-  coverage through it, not a snapshot across the two stores.
+  generation, and retrieves once every revision through it is published. Usually none is
+  pending, since a flush follows each write at once, or at the publication's pace on a
+  busy process ([publication](#publication)), and the barrier is one query. Otherwise
+  the search publishes what a stopped writer left, within `LOOM_PG_PROJECTION_WAIT_MS`
+  for all its namespaces together, then answers 503 `PROJECTION_BEHIND`; a search that
+  waited reads ClickHouse with sequential consistency. Writes committed after the
+  capture do not move the barrier: it promises coverage through it, not a snapshot
+  across the two stores.
 - **Validation.** A memory hit is served only when the head of its own key (org,
   namespace, agent, user_id, session_id, memory_key) is live, of the hit's type, neither
   rejected, `high` nor redacted, and the revision its document was built from, the
@@ -520,21 +604,25 @@ audit and validate also in `coverage`, which then is not `complete`. As a search
 the wait may publish another writer's lapsed deliveries. A finding cites a sampled row
 only while it is its key's live head at the version ClickHouse read, in the same
 redaction state, with the hash of the value `memory.get` serves there; a row rewritten,
-deleted or redacted since is not cited. A copy of a head its writer read
-(`lifecycle.insert_versions_over_heads`: a tombstone, a status, a pin, a touch, the
-supersessions and cascades of any write), `memory.reject`, `memory.clear` and a period
-digest's row are done once committed, even when their publication is pending: the
-delivery worker publishes them, a search serves a hit only while the authority's head
-shows its content, and a point read answers from the authority. The write goes on as on
-the ClickHouse authority, where a row once inserted stands: what it derived retires, its
-webhook is sent, and a ClickHouse follow-up that fails answers its own error. A by-id
-write is confirmed by its commit, which keeps the newer version: a row older than the
-head it was read from is overtaken. Every other write answers 503 `PUBLICATION_PENDING`.
-`memory.bulk_get` (and the OKF export, which reads values through it) answers from the
-authority's heads, as `memory.get` does, and so does `erasure.export`'s memory section.
-`memory.list`, in either order, serves a ClickHouse row only while it is the authority's
-live head at that version, redacted or not alike (`lifecycle.served_rows`), so a delete,
-a rewrite or a redaction ClickHouse has not published is not read back.
+deleted or redacted since is not cited. A `memory.set` of a key with no live head, a
+copy of a head its writer read (`lifecycle.insert_versions_over_heads`: a tombstone, a
+status, a pin, a touch, the supersessions and cascades of any write), `memory.reject`,
+`memory.clear` and a period digest's row are done once committed, even when their
+publication is pending: the delivery worker publishes them, a search serves a hit only
+while the authority's head shows its content, and a point read answers from the
+authority. The write goes on as on the ClickHouse authority, where a row once inserted
+stands: what it derived retires, its webhook is sent, and a ClickHouse follow-up that
+fails answers its own error. A by-id write is confirmed by its commit, which keeps the
+newer version: a row older than the head it was read from is overtaken. Every other
+write answers 503 `PUBLICATION_PENDING`. `memory.bulk_get` (and the OKF export, which
+reads values through it) answers from the authority's heads, as `memory.get` does, and
+so does `erasure.export`'s memory section. `memory.list`, in either order, starts once
+ClickHouse holds every memory row the namespace committed, at a search's barrier (503
+`PROJECTION_BEHIND` past its wait; an `as_of` replay too, since the history it reads
+holds a write only once flushed), so a write is listed once it answered. It serves a
+ClickHouse row only while it is the authority's live head at that version, redacted or
+not alike (`lifecycle.served_rows`), so a delete, a rewrite or a redaction ClickHouse
+has not published is not read back.
 
 The background reads whose rows go to a model, or onto a plain derived row, keep to the
 same rule; two of them also keep ClickHouse's row while the authority's head is only a
@@ -574,7 +662,7 @@ trace or status filter; never under `as_of`) as that deleted head, with ClickHou
 preview of the text (`lifecycle.recovered_rows`); a row restored, or changed otherwise,
 since ClickHouse's copy joins either listing once ClickHouse holds it. Open against the
 isolation gate: reads of ClickHouse alone, among them `memory.keys`, `memory.statuses`,
-`memory.list`'s counts, `memory.related`, the graph walk's recent seeds and
+`memory.related`, the graph walk's recent seeds and
 `memory.aggregate`, show a write the authority holds once it is published. A decision
 record's writer counts as live only if the authority holds its
 decision head; whether a live decision is still proposed is read from ClickHouse alone.
@@ -676,11 +764,14 @@ head. `namespace.rollback` commits a batch at a time over the heads read just be
 so a head that moved answers 503 with the earlier batches written, which its audit row
 counts. A retry plans again from the heads as they are: a key an earlier batch already
 returned to its old content is written again, as a new version of the same content.
-Under Postgres it reads each version it reinstates from the authority's revisions, which
-a redaction scrubs before ClickHouse's copies, and its commit refuses (503) one a
-redaction scrubbed since it read it. A version held redacted comes back redacted, with
-no search document. A reinstated version is a new version of the key: a later redaction
-of the old one does not reach it, so delete the key, then redact that version.
+Under Postgres it plans from ClickHouse's history once ClickHouse holds every memory row
+the namespace committed (503 `PROJECTION_BEHIND` past the wait), so a key written just
+before is planned too, and it reads each version it reinstates from the authority's
+revisions, which a redaction scrubs before ClickHouse's copies, and its commit refuses
+(503) one a redaction scrubbed since it read it. A version held redacted comes back
+redacted, with no search document. A reinstated version is a new version of the key: a
+later redaction of the old one does not reach it, so delete the key, then redact that
+version.
 
 A `memory.restore` that undoes a retirement starts from the status of the key's newest
 earlier version that is not `superseded` (`memory_repo.status_before`), matched by the
@@ -925,17 +1016,17 @@ is under the ClickHouse authority. The delivery pass sweeps expired evidence.
 
 ## Failure
 
-| Failure                                              | Effect                                                                                                                                                                                    |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Postgres unreachable                                 | writes, point reads and idempotent replays answer 503 `POSTGRES_UNAVAILABLE`; nothing falls back to ClickHouse's copy                                                                     |
-| A commit's answer lost                               | 503 `POSTGRES_UNAVAILABLE` with `outcome_unknown: true`; a retry with the same idempotency key replays what committed                                                                     |
-| ClickHouse unreachable after a commit                | the write is durable; its delivery is published once ClickHouse answers; semantic admissions and searches of the namespace answer 503 `PROJECTION_BEHIND` until then                      |
-| A writer dies after its commit                       | its lease runs out within `LOOM_PG_REQUEST_LEASE_SECONDS`; the next admission in the namespace, or the worker, publishes the revision                                                     |
-| Two publishers of one delivery                       | both copies collapse; only the current token clears the target                                                                                                                            |
-| A row ClickHouse keeps refusing                      | parked after `LOOM_PG_DELIVERY_MAX_ATTEMPTS` failed publishes; the namespace's other revisions publish                                                                                    |
-| A write built from an erased memory                  | 404 `RESOURCE_NOT_FOUND`, nothing committed: the erasure's deletion evidence refuses it at the commit                                                                                     |
-| A string holding a NUL character or a lone surrogate | 422 `VALIDATION_FAILED` before the commit: Postgres text and jsonb cannot store it (a knowledge document keeps such text in base64, and refuses it only in a source URI or a writer's id) |
-| An erasure's idempotency fence                       | a request with an `Idempotency-Key` in that org answers 503 `IDEMPOTENT_IN_PROGRESS` while the fence's two statements run, and retries                                                    |
+| Failure                                              | Effect                                                                                                                                                                                                                                                      |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Postgres unreachable                                 | writes, point reads, idempotent replays and the reads of ClickHouse that wait at the barrier (`memory.list`, `memory.history`, the `as_of` replays, `namespace.rollback`'s plan) answer 503 `POSTGRES_UNAVAILABLE`; nothing falls back to ClickHouse's copy |
+| A commit's answer lost                               | 503 `POSTGRES_UNAVAILABLE` with `outcome_unknown: true`; a retry with the same idempotency key replays what committed                                                                                                                                       |
+| ClickHouse unreachable after a commit                | the write is durable; its delivery is published once ClickHouse answers; semantic admissions, searches and the reads that wait at the barrier in the namespace answer 503 `PROJECTION_BEHIND` until then                                                    |
+| A writer dies after its commit                       | its lease runs out within `LOOM_PG_REQUEST_LEASE_SECONDS`; the next admission in the namespace, or the worker, publishes the revision                                                                                                                       |
+| Two publishers of one delivery                       | both copies collapse; only the current token clears the target                                                                                                                                                                                              |
+| A row ClickHouse keeps refusing                      | parked after `LOOM_PG_DELIVERY_MAX_ATTEMPTS` failed publishes; the namespace's other revisions publish                                                                                                                                                      |
+| A write built from an erased memory                  | 404 `RESOURCE_NOT_FOUND`, nothing committed: the erasure's deletion evidence refuses it at the commit                                                                                                                                                       |
+| A string holding a NUL character or a lone surrogate | 422 `VALIDATION_FAILED` before the commit: Postgres text and jsonb cannot store it (a knowledge document keeps such text in base64, and refuses it only in a source URI or a writer's id)                                                                   |
+| An erasure's idempotency fence                       | a request with an `Idempotency-Key` in that org answers 503 `IDEMPOTENT_IN_PROGRESS` while the fence's two statements run, and retries                                                                                                                      |
 
 ## Recorded authority
 
@@ -1015,12 +1106,13 @@ local qualification is one host, ClickHouse latest in Docker, `postgres:16` with
 synchronous standby, the fake embedder, concurrency 5, 30 s per op
 (`scripts/ops/benchmark.py`). Control: the ClickHouse authority on the same build.
 
-| Gate                      | Threshold                                                                                                                        |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Isolation and correctness | no disclosure, lost acknowledged write, skipped protection, duplicate logical effect or resurrected erased content in the suites |
-| Semantic admission        | concurrent writes of one fact under different keys: exactly one new fact                                                         |
-| `memory.get` latency      | p99 at most the control's, p50 at most 15 ms                                                                                     |
-| `memory.set` latency      | p99 at most 1.10 × the control's                                                                                                 |
-| `memory.bulk_set` latency | p99 at most 1.10 × the control's                                                                                                 |
-| `memory.search` latency   | p99 at most 1.15 × the control's                                                                                                 |
-| Errors                    | no 5xx but explicit overload answers                                                                                             |
+| Gate                      | Threshold                                                                                                                                                                                          |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Isolation and correctness | no disclosure, lost acknowledged write, skipped protection, duplicate logical effect or resurrected erased content in the suites                                                                   |
+| Semantic admission        | concurrent writes of one fact under different keys: exactly one new fact                                                                                                                           |
+| `memory.get` latency      | p99 at most the control's, p50 at most 15 ms                                                                                                                                                       |
+| `memory.set` latency      | p99 below the control's                                                                                                                                                                            |
+| `memory.bulk_set` latency | p99 at most 1.10 × the control's                                                                                                                                                                   |
+| Parts                     | new parts of `loom.memory` and `loom.memory_embeddings` while `memory.set` runs: at most 1000 / `LOOM_PG_PUBLISH_INTERVAL_MS` a second each, per serving process and month of `created_at` written |
+| `memory.search` latency   | p99 at most 1.15 × the control's                                                                                                                                                                   |
+| Errors                    | no 5xx but explicit overload answers                                                                                                                                                               |

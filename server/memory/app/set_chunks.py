@@ -409,8 +409,9 @@ async def write_set_chunks(
     chunk rows written (0 when the value is short, the type is not
     searchable, or the setting is off).
 
-    Called AFTER the fact row and its embedding are in: the chunks are a
-    second way to find the row, never a condition of writing it. The text
+    Called AFTER the fact row and its embedding are committed (on ClickHouse, inserted;
+    under Postgres a write answering at its commit may still be in its flush): the chunks
+    are a second way to find the row, never a condition of writing it. The text
     chunked is the human text of the value (`human_text`), not the JSON the
     row stores, so a chunk reads like the passage it came from.
     """

@@ -976,6 +976,7 @@
  "pg_pool_max_size": 20,
  "pg_pool_min_size": 2,
  "pg_projection_wait_ms": 2000,
+ "pg_publish_interval_ms": 250,
  "pg_request_lease_seconds": 5,
  "pg_restore_batch_rows": 500,
  "pg_statement_timeout_ms": 5000,

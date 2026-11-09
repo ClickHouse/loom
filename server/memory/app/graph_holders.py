@@ -1,5 +1,8 @@
 """Which rows hold a value, an edge or a fact now: the reads every graph write and
-repair fences on."""
+repair fences on. They read `loom.memory`. Under the Postgres authority a first
+`memory.set` answers at its commit, so a fence of that write (its entity projection)
+first waits for its publication, up to its lease (`pg_batch.own_write_published`); every
+other row is read as ClickHouse holds it, as on a write whose publication is pending."""
 
 from __future__ import annotations
 
@@ -16,6 +19,7 @@ from server.memory.domain.temporal_sql import (
     GRAPH_HOLDER_SQL,
     LIVE_STATUSES,
 )
+from server.memory.store.pg_batch import own_write_published
 
 log = logging.getLogger(__name__)
 
@@ -130,6 +134,7 @@ async def versions_held(
     the read to it through the table's sort key, as `memory.get_by_id` does."""
     if not versions:
         return set()
+    await own_write_published()
     holder_sql, holder_params = holder
     params: dict[str, Any] = {
         "org": org,
@@ -166,6 +171,7 @@ async def edge_holders(
     a high row still names its entities."""
     if not versions:
         return {}
+    await own_write_published()
     found = await ch.query_all(
         f"""
         SELECT DISTINCT toString(memory_id) AS id, toString(content_sha256) AS sha,
@@ -218,6 +224,7 @@ async def live_holders(
     """`stated_by_live_rows`, with the rows holding each triple."""
     if not triples:
         return {}
+    await own_write_published()
     only_rows = "AND memory_id IN {rows:Array(UUID)}" if rows is not None else ""
     # A parameter's worth of triples at a time: long names make a long list.
     found = await query_all_sliced(
@@ -302,6 +309,7 @@ async def held_by_unlinked_rows(
     triple. A value this build wrote that stated nothing has neither, and holds none.
     With `rows` (ids) and no `triples`: what those rows hold of every triple their keys
     are linked to."""
+    await own_write_published()
     return frozenset(await _unlinked_holders(org, namespace, triples, ch=ch, rows=rows))
 
 

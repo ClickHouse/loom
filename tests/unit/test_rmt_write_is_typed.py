@@ -214,21 +214,18 @@ _EMBEDDING_ALLOW: dict[tuple[str, str], str] = {
     ("server/memory/store/inserts.py", "insert_embedding_rows"): "the funnel",
     ("server/memory/store/lifecycle.py", "insert_documented_versions"): (
         "inserts the documents its caller built (period_digest.build_period_memory_rows, "
-        "with build_embedding_row) within the commit's lease"
+        "with build_embedding_row)"
     ),
     ("server/memory/app/set_commit.py", "_insert_embedding"): (
         "_insert_row_and_vector inserts the row its caller built with search_document_row"
     ),
-    ("server/memory/app/bulk_set.py", "_insert_embedding_rows"): (
+    ("server/memory/app/bulk_set.py", "_insert_batch"): (
         "bulk_set's embed phase builds each row with build_embedding_row into "
-        "_BulkWriteState.embedding_rows; _bulk_insert's nested insert only inserts them"
+        "_BulkWriteState.embedding_rows; _insert_batch only inserts them"
     ),
     ("server/memory/app/update.py", "_insert_revision"): (
         "_write_revision builds emb_rows with _update_embedding_row (build_embedding_row) "
         "and hands them over"
-    ),
-    ("server/memory/app/update.py", "_document"): (
-        "_commit_revision's nested insert of the emb_rows _write_revision built"
     ),
     ("server/memory/app/namespace_rollback.py", "_follow_ups"): (
         "apply_rollback builds each stub with build_embedding_row (_stub); _write's nested "

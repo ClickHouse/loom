@@ -1174,3 +1174,113 @@ async def test_a_fallback_asks_each_value_its_own_newest_holders(monkeypatch) ->
     await triple_projections._keep_one_current(inp, stored, ch=None)
     (ids,) = asked
     assert "a0" in ids and len([i for i in ids if i.startswith("p")]) == 8
+
+
+def _head(session: str, **over: object) -> dict[str, object]:
+    return {
+        "memory_id": uuid.uuid5(uuid.NAMESPACE_OID, session),
+        "namespace": "n",
+        "agent": "a",
+        "user_id": "u",
+        "session_id": session,
+        "memory_key": "user/pref/editor",
+        "value": "vim",
+        "pinned": False,
+        "status": "active",
+        "sensitivity": "normal",
+        **over,
+    }
+
+
+async def test_under_postgres_a_same_key_read_sees_another_sessions_unpublished_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Another session's first write of the key answers at its commit, before ClickHouse
+    holds it: under Postgres both same-key reads take the authority's heads, so the mark
+    and the supersession see it."""
+    from server.memory.app import key_supersession
+    from server.memory.store import pg_memory
+    from server.settings import settings
+
+    heads = [
+        _head("s1"),
+        _head("s2"),  # the writer's own
+        _head("s3", status="superseded"),
+        _head("s4", sensitivity="high"),
+    ]
+
+    async def _live(org: str, namespace: str, keys: list[str], *, scope: object) -> list:
+        assert (org, namespace, keys) == ("o", "n", ["user/pref/editor"])
+        return heads
+
+    async def _no_clickhouse(*_a: object, **_k: object) -> list:
+        raise AssertionError("read ClickHouse under Postgres")
+
+    monkeypatch.setattr(settings, "storage_authority", "postgres")
+    monkeypatch.setattr(pg_memory, "live_key_heads", _live)
+    ch = type("CH", (), {"query_all": _no_clickhouse})()
+    writer = {"agent": "a", "user_id": "u", "session_id": "s2", "memory_key": "user/pref/editor"}
+    held = await key_supersession.keys_held_elsewhere(
+        org="o", namespace="n", memory_rows=[writer], ch=ch
+    )
+    assert held == {"user/pref/editor"}
+    # Held only by the writer's own session, a superseded row, a 'high' row and another
+    # user's: no one else holds it.
+    heads[0]["user_id"] = "someone-else"
+    held = await key_supersession.keys_held_elsewhere(
+        org="o", namespace="n", memory_rows=[writer], ch=ch
+    )
+    assert held == set()
+    heads[0]["user_id"] = "u"
+    live = await key_supersession._live_same_key_rows("o", "n", ["user/pref/editor"], ch=ch)
+    assert [r["session_id"] for r in live] == ["s1", "s2", "s4"]
+    assert live[0]["memory_id"] == str(uuid.uuid5(uuid.NAMESPACE_OID, "s1"))
+    assert live[0]["value"] == "vim"
+
+
+async def test_under_postgres_the_proposal_guard_and_the_chunk_check_read_the_heads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A proposal over a fact another session wrote a moment ago is refused, and a
+    delete_version keeps the chunks that fact's value is served from, though ClickHouse
+    may not hold it yet: both read the authority's heads."""
+    from datetime import timedelta
+
+    import server.memory.store as memory_repo
+    from server.core.datetimes import naive_utc_now
+    from server.memory.store import pg_memory
+    from server.settings import settings
+
+    past = naive_utc_now() - timedelta(hours=1)
+    heads = [
+        _head("s1", memory_type="semantic", expires_at=None, valid_to=None),
+        _head("s2", memory_type="semantic", value="mine", expires_at=None, valid_to=None),
+        _head("s3", memory_type="semantic", value="old", expires_at=past, valid_to=None),
+        _head("s4", memory_type="semantic", value="hidden", sensitivity="high"),
+        _head("s5", memory_type="semantic", value="proposed", status="proposed"),
+    ]
+
+    async def _live(org: str, namespace: str, keys: list[str], **_: object) -> list:
+        return [h for h in heads if h["memory_key"] in keys]
+
+    async def _no_clickhouse(*_a: object, **_k: object) -> object:
+        raise AssertionError("read ClickHouse under Postgres")
+
+    monkeypatch.setattr(settings, "storage_authority", "postgres")
+    monkeypatch.setattr(pg_memory, "live_key_heads", _live)
+    ch = type("CH", (), {"query_all": _no_clickhouse, "query_one": _no_clickhouse})()
+    key = "user/pref/editor"
+    assert await memory_repo.key_holds_established_fact("o", "n", key, ch=ch)
+    accepted = [h for h in heads if h["status"] == "active"]
+    for h in accepted:
+        h["status"] = "superseded"
+    assert not await memory_repo.key_holds_established_fact("o", "n", key, ch=ch)
+    for h in accepted:
+        h["status"] = "active"
+    # The deleter's own head (s2) counts too: it is a write that landed above the
+    # delete's tombstone, which ClickHouse may not hold yet.
+    served = await memory_repo.served_key_rows("o", "n", key, besides=("a", "u", "s2"), ch=ch)
+    assert served == [
+        {"memory_type": "semantic", "value": "mine"},
+        {"memory_type": "semantic", "value": "vim"},
+    ]

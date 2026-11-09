@@ -312,8 +312,15 @@ async def _point_lookup(identity: Any, input: MemoryGetInput) -> Any:
     MCP default agent wrote it. The exact identity is tried first so a caller's own row wins
     over a namesake; the `*` form is the fallback, filtered to the caller's user."""
     import server.memory.store as memory_repo
+    from server.memory.app.search import pg_validation
+    from server.memory.store import pg_memory
     from server.observability.otel import traced
 
+    if input.as_of is not None:
+        # A replay reads ClickHouse's history, not the authority's heads: under Postgres
+        # it waits until ClickHouse holds the namespace's committed rows, the caller's
+        # own write that answered at its commit among them.
+        await pg_validation.admit(identity.org, [identity.namespace], owed=pg_memory.MEMORY_ROW)
     strong = bool(getattr(input, "_strong_read", False))  # procedure RMW: latest version
     with traced("ch.query.memory", op="point_lookup", memory_key=input.memory_key):
         row = await memory_repo.get_by_key(
@@ -663,8 +670,9 @@ async def handle_memory_delete_version(
     """Tombstone one version of a key under this exact identity, or nothing when the row
     under it has moved on. Conditional writes of the key wait for the key lock. A plain
     write takes none: one that committed after the version check is put back above the
-    tombstone here, and one still in flight lifts itself above it when it lands
-    (`write_fence`). Either way the write after the named version stays."""
+    tombstone here, and one still in flight lands above it: on ClickHouse it lifts itself
+    (`write_fence`), under Postgres its commit is refused and starts over above it. Either
+    way the write after the named version stays."""
     import server.memory.store as memory_repo
 
     if input.agent == "*":
@@ -871,8 +879,8 @@ async def _key_moved_on(
     a conflict resolution) means it removed the key, not this one (`found=False`). Either
     one below this delete's newest tombstone is written again above it, a tombstone stamped
     as this delete's own so the key's head is the row it removed; a head that already
-    carries that row is left. A write still in flight lifts itself when it lands
-    (`write_fence.lift_after_insert`)."""
+    carries that row is left. A write still in flight lands above it (`write_fence`, whose
+    module docstring says how under each authority)."""
     same_delete, others = await _after_checked(existing, checked=checked, tombstone=tombstone)
     if not others:
         return None
@@ -920,10 +928,12 @@ async def _restore_newer_chunks(existing: Any, *, tombstone: int) -> None:
     namespace, since a key's memory.set chunk rows are shared by every user, agent and
     session holding it. A chunk row is named by its index and text, so a value keeping a
     passage at the same index shares the row, and its write may land after the delete's
-    check but before the retire. A write inserts its row before its chunks, and this read
-    follows the retire, so it sees any write whose chunks it caught. The values are read
-    again after the restore: a delete, or a write the chunks no longer serve, that found
-    them retired and left them has them retired again."""
+    check but before the retire. On ClickHouse a write inserts its row before its chunks,
+    and this read follows the retire, so it sees any write whose chunks it caught; under
+    Postgres a first write's row may follow its chunks, so the values are read from the
+    authority's heads (`served_key_rows`), the deleter's own newer head included. The
+    values are read again after the restore: a delete, or a write the chunks no longer
+    serve, that found them retired and left them has them retired again."""
     from server.memory.app import set_chunks as _set_chunks
 
     removed = _set_chunks.passage_identities(existing.value, existing.memory_type)
@@ -1369,6 +1379,12 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
     namespace = await namespace_for_id(input.org, input.memory_id, strong=False)
     if namespace is None:
         return MemoryGetByIdOutput(found=False)
+    if input.as_of is not None:
+        from server.memory.app.search import pg_validation
+        from server.memory.store import pg_memory
+
+        # A replay reads ClickHouse's history, as `_point_lookup`'s does.
+        await pg_validation.admit(input.org, [namespace], owed=pg_memory.MEMORY_ROW)
     row = await memory_repo.get_by_id(
         input.memory_id,
         org=input.org,

@@ -913,6 +913,25 @@ async def test_the_delivery_worker_claims_its_batch_and_idles_without_postgres(
     assert settings.pg_delivery_enabled and settings.pg_delivery_idle_interval_seconds > 0
 
 
+@pytest.mark.parametrize(
+    "deleted",
+    [
+        {"tombstoned_at": "2026-01-01T00:00:00"},  # memory.delete
+        {"tombstoned_at": "2026-01-01T00:00:00", "source_trace": "delete_version:7"},
+    ],
+)
+def test_a_delete_committed_during_a_write_refuses_its_commit(deleted: dict[str, Any]) -> None:
+    """What lets a write under Postgres go without ClickHouse's write fence: a delete of
+    the key committed after the write read its head refuses the write's commit
+    (HeadMoved), and the write starts over with a version drawn after it."""
+    read = {"version": 7, "tombstoned_at": None, "pinned": False, "status": "active"}
+    head = {**read, "version": 9, **deleted}
+    key = ("o", "n", "a", "-", "-", "k")
+    with pytest.raises(pg_memory.HeadMoved):
+        pg_memory.heads_unchanged({key: read})(key, head)
+    pg_memory.heads_unchanged({key: read})(key, {**read, "version": 9})  # a newer value
+
+
 @pytest.mark.asyncio
 async def test_a_head_that_keeps_moving_is_contended_after_the_rounds(
     monkeypatch: pytest.MonkeyPatch,
@@ -2330,35 +2349,28 @@ async def test_an_update_over_a_moved_head_or_policy_answers_contended(
         await update._commit_revision(SimpleNamespace(), _row("k"), [], None, exact=False)
 
 
-@pytest.mark.parametrize("cancelled_first", [True, False])
-async def test_a_revisions_cancelled_child_is_raised_beside_a_pending_one(
-    monkeypatch: pytest.MonkeyPatch, cancelled_first: bool
+async def test_a_revision_is_published_with_its_document_and_a_pending_one_returned(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Whichever child the gather lists first, a cancellation is raised as itself and a
-    pending publication alone is returned."""
+    """The revision's search document goes to the publication batch with its rows; a
+    publication left to the delivery worker is returned, not raised."""
     from server.memory.app import update
     from server.memory.store import pg_publish
 
-    async def _commit(*_: Any, **__: Any) -> Any:
-        return SimpleNamespace(seqs=[1], deadline=None)
+    sent: list[Any] = []
+
+    async def _publish(committed: Any, *, documents: Any, ch: Any) -> None:
+        sent.append(documents)
+
+    emb = [{"version": 1, "embedding": [0.1]}]
+    committed = SimpleNamespace(seqs=[1], deadline=None)
+    monkeypatch.setattr(pg_publish, "publish", _publish)
+    assert await update._publish_revision(committed, emb, None) is None
+    assert sent == [emb]
 
     async def _pending(*_: Any, **__: Any) -> None:
         raise pg_lease.PublicationPending()
 
-    async def _cancelled(*_: Any, **__: Any) -> None:
-        raise asyncio.CancelledError()
-
-    import server.memory.store as memory_repo
-
-    publish, document = (_cancelled, _pending) if cancelled_first else (_pending, _cancelled)
-    monkeypatch.setattr(pg_publish, "commit", _commit)
-    monkeypatch.setattr(pg_publish, "publish", publish)
-    monkeypatch.setattr(memory_repo, "insert_embedding_rows", document)
-    emb = [{"version": 1, "embedding": [0.1]}]
-    committed = await update._commit_revision(SimpleNamespace(), _row("k"), emb, None, exact=False)
-    with pytest.raises(asyncio.CancelledError):
-        await update._publish_revision(committed, emb, None)
-    monkeypatch.setattr(memory_repo, "insert_embedding_rows", _pending)
     monkeypatch.setattr(pg_publish, "publish", _pending)
     assert isinstance(
         await update._publish_revision(committed, emb, None), pg_lease.PublicationPending
@@ -5508,8 +5520,9 @@ async def test_a_publish_retires_the_old_vectors_and_records_it_owes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Once the rows are in, the old vectors are retired bare and their target cleared
-    under the commit's token, then the deleted decisions' records are retired; a failed
-    vector retirement answers PublicationPending and leaves the rest owed."""
+    under the commit's token, and the deleted decisions' records are retired; a failed
+    vector retirement answers PublicationPending and stays owed, the records retired all
+    the same."""
     from server.memory.store import pg_publish
 
     calls: list[str] = []
@@ -5531,7 +5544,12 @@ async def test_a_publish_retires_the_old_vectors_and_records_it_owes(
     async def _complete(seqs: Any, done: int, *, tokens: Any = 1) -> None:
         completed.append((seqs, done, tokens))
 
-    monkeypatch.setattr(pg_publish, "publish_rows", _rows)
+    async def _landed(*_: object) -> None:
+        return None
+
+    monkeypatch.setattr("server.memory.store.inserts.insert_memory_versions", _rows)
+    monkeypatch.setattr(pg_publish, "insert_audit_rows", _rows)
+    monkeypatch.setattr(pg_memory, "complete_each", _landed)
     monkeypatch.setattr(pg_publish, "retire_decision_records", _records)
     monkeypatch.setattr("server.memory.store.embeddings.retire_vectors_for_keys", _retire)
     monkeypatch.setattr(pg_memory, "complete", _complete)
@@ -5554,7 +5572,7 @@ async def test_a_publish_retires_the_old_vectors_and_records_it_owes(
     fail = True
     with pytest.raises(pg_lease.PublicationPending):
         await pg_publish.publish(committed, ch=object())
-    assert calls == ["vectors bare=True"] and completed == []
+    assert calls == ["vectors bare=True", "record d"] and completed == []
 
 
 async def test_an_admission_in_a_namespace_postgres_cannot_store_is_refused() -> None:
@@ -6168,34 +6186,6 @@ async def test_a_high_set_on_clickhouse_is_fenced_after_a_failed_lift(
     assert fenced == [(("o", "n", "a", "u", "-", "k"), 7)]
 
 
-async def test_a_committed_bulk_batch_cancelled_while_publishing_is_announced(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from server.memory.app import bulk_set
-    from server.memory.store import pg_publish
-
-    done: list[str] = []
-    publishing = asyncio.Event()
-
-    async def _slow(*_a: Any, **_k: Any) -> None:
-        publishing.set()
-        await asyncio.Event().wait()  # until the request is cancelled
-
-    async def _announce(state: Any) -> None:
-        done.append("announced")
-
-    monkeypatch.setattr(pg_publish, "publish", _slow)
-    monkeypatch.setattr(bulk_set, "_bulk_announce", _announce)
-    state = SimpleNamespace(embedding_rows=[], memory_rows=[{}])
-    committed = SimpleNamespace(deadline=None, seqs=[], rows=[])
-    task = asyncio.create_task(bulk_set._publish_batch(state, committed, None))
-    await publishing.wait()
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert done == ["announced"]  # its 'high' rows are fenced by `fenced_once_committed`
-
-
 def _commit_in_flight_cancel() -> asyncio.CancelledError:
     e = asyncio.CancelledError()
     e.commit_in_flight = True  # as `pg.transaction` marks a cancel at its COMMIT
@@ -6629,8 +6619,8 @@ async def test_a_clickhouse_bulk_batch_is_fenced_after_a_failed_lift(
 
     fenced: list[Any] = []
 
-    async def _published(*_a: Any) -> tuple[None, None]:
-        return None, None
+    async def _inserted(*_a: Any) -> None:
+        return None
 
     async def _lift_fails(*_a: Any, **_k: Any) -> dict[Any, int]:
         raise RuntimeError("lift failed")
@@ -6643,12 +6633,12 @@ async def test_a_clickhouse_bulk_batch_is_fenced_after_a_failed_lift(
 
     winners = [(("o", "n", "a", "u", "-", "k"), 7)]
     monkeypatch.setattr(pg, "enabled", lambda: False)
-    monkeypatch.setattr(bulk_set, "_publish_batch", _published)
+    monkeypatch.setattr(bulk_set, "_insert_batch", _inserted)
     monkeypatch.setattr(bulk_set, "lift_after_insert", _lift_fails)
     monkeypatch.setattr(bulk_set, "_high_winners", lambda state: winners)
     monkeypatch.setattr(bulk_set, "fence_high", _fence)
     monkeypatch.setattr(bulk_set, "_bulk_announce", _announce)
-    state = SimpleNamespace(memory_rows=[{"org": "o", "namespace": "n"}], unpublished=None)
+    state = SimpleNamespace(memory_rows=[{"org": "o", "namespace": "n"}])
     state.embedding_rows = []
     with pytest.raises(RuntimeError, match="lift failed"):
         await bulk_set._land_batch(None, state, None, {})

@@ -15,6 +15,12 @@ memory.delete_version names a version, so a write after it stays whichever lands
 A plain write takes no key lock, so a delete_version can tombstone the key after the
 fence read and before the insert. Right after the insert, a row that sits under such a
 tombstone (one aimed at an older version) is written again above it.
+
+On the ClickHouse authority only: under Postgres the callers skip both lifts. The commit
+locks the key's head and refuses a write whose head moved since it was read (a delete, a
+delete_version), so the write starts over with a version drawn after it, and ClickHouse
+holds only what has been published (storage-authority.md, "Publication"), so a read of it
+could not fence a write anyway.
 """
 
 from __future__ import annotations

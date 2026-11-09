@@ -206,7 +206,11 @@ These tables stay committed:
 
 - **Version rows** of `memory`, `memory_embeddings`, `shared`, `session_summaries` and
   `entity_summaries`: their fenced `INSERT … SELECT FROM input()` ([rolling
-  upgrades](rolling-upgrades.md)) cannot be buffered.
+  upgrades](rolling-upgrades.md)) cannot be buffered. Under the Postgres authority the
+  `memory` and `memory_embeddings` rows of committed writes are batched by Loom instead:
+  each process sends every commit queued since its last flush in one committed insert per
+  table, at most 1000 / `pg_publish_interval_ms` a second, a part for each partition its
+  rows span ([publication](storage-authority.md#publication)).
 - **`entity_canonical_map`**: it is partitioned by `org`, so a shared flush that spans
   more than `max_partitions_per_insert_block` orgs would fail every insert waiting on it.
 - **Rows with a `Quantized`-coded vector** (`entity_vectors`, `memory_chunks`): the codec

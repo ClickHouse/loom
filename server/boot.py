@@ -709,6 +709,10 @@ async def drain_writes() -> None:
     from server.memory.app import after_write as _after_write
 
     await _after_write.drain(timeout_s=10.0)
+    # Send the queued publications; what misses its lease is the delivery worker's.
+    from server.memory.store import pg_batch
+
+    await pg_batch.drain(timeout_s=5.0)
     # The point-write intents those follows finished, resolved in one flush.
     from server.memory.app import intent_marks as _intent_marks
 

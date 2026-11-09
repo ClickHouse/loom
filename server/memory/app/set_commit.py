@@ -45,7 +45,7 @@ from server.memory.app.triple_projections import project_stated_relations
 from server.memory.app.write_fence import lift_above_deletes, lift_after_insert
 from server.memory.domain.embed_text import embedding_texts
 from server.memory.domain.webhook_events import EventType
-from server.memory.store import pg_memory, pg_publish
+from server.memory.store import pg_publish
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.pg_memory import (
     AUDIT_ROW,
@@ -416,9 +416,24 @@ async def _announce_set(w: _SetWrite) -> None:
     await webhooks.announce([(event, w.memory_row)])
 
 
+def _answers_at_commit(w: _SetWrite) -> bool:
+    """Under Postgres, whether the write answers once it commits, before its flush: a write
+    of a key with no live head (new, or deleted since) that states no relations and is not
+    'high', whose only graph work is the background entity projection, which waits for that
+    flush (`pg_batch.own_write_published`). A revision, a write with relations and a 'high'
+    row wait for their flush, so what follows them reads their row in ClickHouse; past their
+    lease they answer PUBLICATION_PENDING."""
+    return (
+        not w.had_existing_row
+        and not w.input.relations
+        and w.memory_row.get("sensitivity") != "high"
+    )
+
+
 async def _land_plain_row(w: _SetWrite, ch: Any, *, high: bool) -> int:
-    """Write the plain row (under Postgres: commit, then publish), lift and announce it,
-    and fence a 'high' one whenever it may be in. Returns the version it landed at."""
+    """Write the plain row and announce it, and fence a 'high' one whenever it may be in:
+    under Postgres committed and handed to the publication batch, on ClickHouse inserted
+    and lifted above a delete that landed meanwhile. Returns the version it landed at."""
     import server.memory.store as memory_repo
     from server.observability.otel import traced
 
@@ -436,14 +451,14 @@ async def _land_plain_row(w: _SetWrite, ch: Any, *, high: bool) -> int:
                 committed = await commit_set_rows(w, [memory_row], MEMORY_ROW | AUDIT_ROW)
             answer.mark_committed()
             try:
-                try:
-                    with traced("ch.insert.memory", table="loom.memory"):
-                        await pg_publish.publish(committed, ch=ch)
-                except pg_lease.PublicationPending as e:
-                    w.pending = e  # committed: what follows still runs
-                return await _lift_after_insert(w, ch)
+                wait = not _answers_at_commit(w)
+                with traced("pg.publish", wait=wait):
+                    await pg_publish.publish(committed, ch=ch, wait=wait)
+            except pg_lease.PublicationPending as e:
+                w.pending = e  # committed: what follows still runs
             finally:
-                await _announce_set(w)  # the row is in, whatever failed after it
+                await _announce_set(w)  # committed, whatever failed after it
+            return w.version
     landed = False
     try:
         with traced("ch.insert.memory", table="loom.memory"):
@@ -487,7 +502,8 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
             noop=True,
             dry_run=True,
         )
-    await _lift_above_deletes(w, ch)
+    if not pg.enabled():  # under Postgres the commit orders the write after a delete
+        await _lift_above_deletes(w, ch)
     high = memory_row.get("sensitivity") == "high"
     version = await _land_plain_row(w, ch, high=high)
     # A high row's value is never mined into the graph; the entities its writer declared
@@ -864,25 +880,28 @@ def _set_dry_run_answer(
 
 async def _insert_row_and_vector(w: _SetWrite, ch: Any, embedding_row: dict[str, Any]) -> None:
     """The version row and its embedding row, inserted concurrently; under the Postgres
-    authority, committed there first and published from the commit."""
+    authority, committed there and handed to the publication batch with the embedding
+    row, the write answering at its commit or after its flush (`_answers_at_commit`)."""
     from server.observability.otel import traced
 
     memory_row = w.memory_row
-    committed: Any = None
     if pg.enabled():
         with traced("pg.commit.memory"):
             committed = await commit_set_rows(
                 w, [memory_row], MEMORY_ROW | SEARCH_DOC | AUDIT_ROW, semantic=True
             )
-
         pg_admission.remember(identity_key(memory_row), int(memory_row["version"]), w.embedding)
+        try:
+            wait = not _answers_at_commit(w)
+            with traced("pg.publish", wait=wait):
+                await pg_publish.publish(committed, documents=[embedding_row], ch=ch, wait=wait)
+        finally:
+            await _announce_set(w)  # committed, whatever failed after it
+        return
 
     async def _insert_memory() -> None:
         with traced("ch.insert.memory", table="loom.memory"):
-            if committed is not None:
-                await pg_publish.publish(committed, ch=ch)
-            else:
-                await insert_memory_versions([memory_row], ch=ch)
+            await insert_memory_versions([memory_row], ch=ch)
 
     async def _insert_embedding() -> None:
         with traced(
@@ -892,30 +911,17 @@ async def _insert_row_and_vector(w: _SetWrite, ch: Any, embedding_row: dict[str,
         ):
             import server.memory.store as memory_repo
 
-            with pg_lease.leased(committed.deadline if committed is not None else None):
-                await memory_repo.insert_embedding_rows([embedding_row], ch=ch)
+            await memory_repo.insert_embedding_rows([embedding_row], ch=ch)
 
     with traced("ch.insert.dual_write", concurrent=2):
         memory_done, embedding_done = await asyncio.gather(
             _insert_memory(), _insert_embedding(), return_exceptions=True
         )
     if isinstance(memory_done, BaseException):
-        if committed is None:
-            raise memory_done
-        await _announce_set(w)  # durable in Postgres: the worker publishes the row
-        if isinstance(memory_done, pg_lease.PublicationPending):
-            raise memory_done
-        raise pg_lease.PublicationPending.after(memory_done) from memory_done
+        raise memory_done
     try:
         if isinstance(embedding_done, BaseException):
-            if committed is None or isinstance(embedding_done, pg_lease.PublicationPending):
-                raise embedding_done
-            raise pg_lease.PublicationPending.after(embedding_done) from embedding_done
-        if committed is not None:
-            try:
-                await pg_memory.complete(committed.seqs, pg_memory.SEARCH_DOC)
-            except Exception as e:
-                raise pg_lease.PublicationPending.after(e) from e
+            raise embedding_done
         await _lift_after_insert(w, ch, [embedding_row])
     finally:
         await _announce_set(w)  # the row is in, whatever failed after it
@@ -947,7 +953,8 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
 
     import server.memory.store as memory_repo
 
-    await _lift_above_deletes(w, ch)
+    if not pg.enabled():  # under Postgres the commit orders the write after a delete
+        await _lift_above_deletes(w, ch)
     # build_embedding_row fills every persisted column so a later RMT version
     # can't resurrect a default over a real value. Denormalized columns let
     # memory.search read them without a join back to loom.memory.

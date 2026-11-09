@@ -40,9 +40,9 @@ _LOCAL_MARGIN = 0.02
 
 
 class ProjectionBehindError(LoomServerError):
-    """503 — earlier commits in this namespace have not reached search, so a conflict
-    check, a search, a search trace, a blacklist sweep or a namespace.inventory now would
-    miss them. Retry after `retry_after_s`."""
+    """503 — earlier commits in this namespace are not yet in ClickHouse, so a read of
+    ClickHouse that must see every write the namespace committed would miss them. Retry
+    after `retry_after_s`."""
 
     code = "PROJECTION_BEHIND"
     status_code = 503

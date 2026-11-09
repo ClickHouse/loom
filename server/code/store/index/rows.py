@@ -13,6 +13,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from server.code.domain.pr_lexemes import linked_issues, pr_lexemes
+from server.core.ch_writes import MAX_PARTITIONS_PER_INSERT, partition_blocks
 from server.core.datetimes import naive_utc_now as _now
 
 # ---------------------------------------------------------------------------
@@ -454,25 +455,14 @@ def _mirror_row(table: str, live_row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-# loom.code_chunks is PARTITION BY (org, namespace), and ClickHouse
-# Cloud pins `max_partitions_per_insert_block` at 100 (READONLY): an insert
-# block spanning more namespaces than that is refused with TOO_MANY_PARTS.
-MAX_NAMESPACES_PER_INSERT = 100
-
-
 def namespace_blocks(
-    rows: list[dict[str, Any]], cap: int = MAX_NAMESPACES_PER_INSERT
+    rows: list[dict[str, Any]], cap: int = MAX_PARTITIONS_PER_INSERT
 ) -> list[list[dict[str, Any]]]:
     """`rows` as one block, or — when they span more than `cap` namespaces —
     blocks of at most `cap` namespaces each (every writer currently inserts one
-    namespace, or one per configured repository, so this is a guard)."""
-    by_ns: dict[str, list[dict[str, Any]]] = {}
-    for r in rows:
-        by_ns.setdefault(str(r.get("namespace") or ""), []).append(r)
-    if len(by_ns) <= cap:
-        return [rows]
-    groups = list(by_ns.values())
-    return [[r for g in groups[i : i + cap] for r in g] for i in range(0, len(groups), cap)]
+    namespace, or one per configured repository, so this is a guard). loom.code_chunks is
+    PARTITION BY (org, namespace)."""
+    return partition_blocks(rows, lambda r: str(r.get("namespace") or ""), cap)
 
 
 def pr_history_row(

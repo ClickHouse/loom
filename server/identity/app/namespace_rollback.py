@@ -50,6 +50,8 @@ async def handle_namespace_rollback(
         raise ValidationError("as_of is in the future; a rollback targets a past instant")
     version_at = svc.version_at(as_of)
 
+    # A key written just before is planned too.
+    await memory_rollback.wait_published(input.org, input.namespace)
     ch = get_client()
     earliest = await memory_rollback.earliest_version(input.org, input.namespace, ch=ch)
     if earliest == 0:

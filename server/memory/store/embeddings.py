@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.core import pg
-from server.core.ch_writes import committed_insert_settings
+from server.core.ch_writes import committed_insert_settings, partition_blocks
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.memory.domain.temporal_sql import SERVED_STATUSES
@@ -21,6 +21,7 @@ from server.memory.store.rows import (
     IdentityKey,
     KeyInNamespace,
     build_embedding_row,
+    created_month,
     identity_key,
     key_in_namespace,
     next_version,
@@ -711,9 +712,10 @@ async def _bare_tombstones(items: list[tuple[IdentityKey, int]], *, ch: _CHClien
             for r in rows
             if int(r["version"]) < pins[identity_key(r)]
         ]
-        if out:
-            await insert_embedding_rows(out, ch=ch)
-            n += len(out)
+        # A retirement across many keys can span more partitions than an insert takes.
+        for block in partition_blocks(out, created_month):
+            await insert_embedding_rows(block, ch=ch)
+        n += len(out)
     return n
 
 
@@ -743,9 +745,10 @@ async def reject_embedding_rows(
                 out.append(_bare_tombstone(r, version, now))
             else:
                 out.append(_reemitted(r, {"status": "rejected", "version": version}))
-        if out:
-            await insert_embedding_rows(out, ch=ch)
-            n += len(out)
+        # A retirement across many keys can span more partitions than an insert takes.
+        for block in partition_blocks(out, created_month):
+            await insert_embedding_rows(block, ch=ch)
+        n += len(out)
     return n
 
 

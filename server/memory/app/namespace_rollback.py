@@ -4,6 +4,7 @@ removed keys tombstoned, one stub embedding row per touched key for the embeddin
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from collections.abc import Callable
@@ -23,9 +24,26 @@ log = logging.getLogger(__name__)
 _INSERT_BATCH = 500
 
 
+async def wait_published(org: str, namespace: str) -> None:
+    """Under Postgres, until ClickHouse holds every memory row the namespace committed
+    (503 PROJECTION_BEHIND past the wait): a write answers at its commit, and the plan
+    reads ClickHouse's history."""
+    from server.memory.app.search import pg_validation
+
+    await pg_validation.admit(org, [namespace], owed=pg_memory.MEMORY_ROW)
+
+
 async def earliest_version(org: str, namespace: str, *, ch: Any) -> int:
     """Oldest version stamp the history holds for the namespace; 0 when none."""
-    return await store.earliest_version_in_namespace(org, namespace, ch=ch)
+    with _history_reads():
+        return await store.earliest_version_in_namespace(org, namespace, ch=ch)
+
+
+def _history_reads() -> contextlib.AbstractContextManager[None]:
+    """Under Postgres, from a replica that has what was just published."""
+    from server.core.ch import sequential_reads
+
+    return sequential_reads() if pg.enabled() else contextlib.nullcontext()
 
 
 async def change_rows(
@@ -38,9 +56,10 @@ async def change_rows(
     ch: Any,
 ) -> list[dict[str, Any]]:
     """Keys whose head differs from their head as of `version_at` (up to `limit + 1`)."""
-    return await store.rollback_change_rows(
-        org, namespace, version_at, memory_keys=memory_keys, limit=limit, ch=ch
-    )
+    with _history_reads():
+        return await store.rollback_change_rows(
+            org, namespace, version_at, memory_keys=memory_keys, limit=limit, ch=ch
+        )
 
 
 async def apply_rollback(
