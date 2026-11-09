@@ -1301,16 +1301,32 @@ async def test_under_postgres_a_listed_document_the_authority_moved_past_is_not_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["down", "error"])
 async def test_under_postgres_a_failed_listing_check_lists_clickhouses_rows(
-    stubs: Stubs, authority: _Authority
+    stubs: Stubs, authority: _Authority, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
     """The count answered but the listing's check did not: the rows are listed as
-    ClickHouse holds them, the failed read is named, and the listing is not complete."""
+    ClickHouse holds them, the failure is named once, and the listing is not complete.
+    Postgres down there is said as an outage, and the memory sections do not wait on it
+    again."""
     from server.core import pg
+    from server.memory.app.search import pg_validation
+
+    async def no_wait(*_: object) -> bool:
+        raise AssertionError("the memory sections' wait is not tried against a dead pool")
 
     _whole(stubs)
-    authority.served = pg.PostgresUnavailableError()
+    if failure == "down":
+        authority.served = pg.PostgresUnavailableError()
+        monkeypatch.setattr(pg_validation, "admit", no_wait)
+    else:
+        authority.served = ValueError("bad row")
     out = await ki.handle_knowledge_inspect(_inp())
     assert [d.source_uri for d in out.listed] == ["docs/b.md", "docs/b.md#v2"]
-    assert "listed.heads: PostgresUnavailableError" in out.skipped
+    expected = (
+        [s for s in out.skipped if s.startswith("projection: POSTGRES_UNAVAILABLE: ")]
+        if failure == "down"
+        else [s for s in out.skipped if s == "listed.heads: ValueError"]
+    )
+    assert len(expected) == 1
     assert not out.listed_complete

@@ -880,9 +880,9 @@ a restore) is refused (422), so only an erasure removes it.
 `knowledge.inspect`'s document sections (the totals by format and scheme, the chunks,
 the listed documents) read ClickHouse, so they can miss a commit it does not have yet.
 The report reads the namespace's unsettled deliveries once (a delivery whose row landed
-but whose older chunk versions are not retired yet counts): any owed or parked makes
-`skipped` say how many (`projection: …`), as does a Postgres that does not answer, and
-`listed_complete` false. A listed row is kept only while `get_many_by_uris` serves it at
+but whose older chunk versions are not retired yet counts). Any owed or parked delivery
+is counted in `skipped` (`projection: …`); a Postgres that does not answer is named
+there instead, and not asked again in the call. Either makes `listed_complete` false. A listed row is kept only while `get_many_by_uris` serves it at
 the version ClickHouse listed, live; a document rewritten or deleted in Postgres since
 leaves the listing, counted in `skipped` (`listed.heads: …`).
 

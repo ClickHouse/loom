@@ -1773,14 +1773,15 @@ describe("Assistant: documents", () => {
     },
   );
 
-  it("does not read a memory section's projection line as a short document listing", async () => {
+  it.each([
+    "projection: PROJECTION_BEHIND: ClickHouse has not yet published every write the namespace committed; the report reads what it holds",
+    "listed.heads: ValueError",
+  ])("does not read %s as a short document listing", async (line) => {
     inspectKnowledge.mockResolvedValueOnce({
       ...KNOWLEDGE,
       listed: KNOWLEDGE.listed.slice(0, 1),
       listed_complete: false,
-      skipped: [
-        "projection: PROJECTION_BEHIND: ClickHouse has not yet published every write the namespace committed; the report reads what it holds",
-      ],
+      skipped: [line],
     });
     render(<Assistant />);
     const result = await pickDocuments();

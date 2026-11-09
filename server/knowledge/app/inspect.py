@@ -498,13 +498,7 @@ class _Inspect:
         try:
             owed, parked = await pg_documents.unpublished(i.org, i.namespace)
         except pg.PostgresUnavailableError:
-            self.documents_published = False
-            self.authority_down = True
-            self.skipped.append(
-                f"{pg_validation.PROJECTION}: POSTGRES_UNAVAILABLE: the Postgres authority "
-                "did not answer; the document sections read what ClickHouse holds, which "
-                "may miss committed documents"
-            )
+            self.down()
             return
         if owed or parked:
             self.documents_published = False
@@ -514,6 +508,19 @@ class _Inspect:
                 "LOOM_PG_DELIVERY_MAX_ATTEMPTS refusals; the document sections may miss "
                 "them or still count older versions"
             )
+
+    def down(self) -> None:
+        """The Postgres authority did not answer: said once, and not asked again in this
+        call (the memory sections' wait included)."""
+        self.documents_published = False
+        if self.authority_down:
+            return
+        self.authority_down = True
+        self.skipped.append(
+            f"{pg_validation.PROJECTION}: POSTGRES_UNAVAILABLE: the Postgres authority did "
+            "not answer; the document sections and the memory sections read what ClickHouse "
+            "holds, which may miss committed writes"
+        )
 
     async def documents(self) -> DocumentTotals:
         i = self.inp
@@ -776,14 +783,21 @@ class _Inspect:
             return rows
         i = self.inp
         uris = [str(r["source_uri"]) for r in rows]
-        got = await self.guarded(
-            "listed.heads",
-            lambda: documents_repo.get_many_by_uris(
+        # knowledge.get's own read, whole documents included (at most `sample_limit`): its
+        # newer-of rule, with the head an older build purged, is what a reader is served,
+        # and a version-only copy of that rule could drift from it.
+        try:
+            got = await documents_repo.get_many_by_uris(
                 i.org, i.namespace, uris, include_superseded=True
-            ),
-            None,
-        )
-        if got is None:
+            )
+        except pg.PostgresUnavailableError:
+            self.down()
+            return rows
+        except BACKEND_NOT_NOW:
+            raise
+        except Exception as exc:  # noqa: BLE001 — a read-only report; the listing stands as read
+            log.warning("knowledge.inspect listed.heads skipped: %s", exc)
+            self.skipped.append(f"listed.heads: {type(exc).__name__}")
             self.documents_published = False
             return rows
         heads = {d.source_uri: d for d in got}
