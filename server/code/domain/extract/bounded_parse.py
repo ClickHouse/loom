@@ -185,7 +185,7 @@ def _start() -> subprocess.Popen[bytes]:
 
 
 def _wall_bound(budget: float) -> float:
-    """Seconds to wait for a child's answer before counting it as ended."""
+    """Seconds to wait for a child's answer before it counts as silent and is ended."""
     return 10 * budget + 5
 
 
