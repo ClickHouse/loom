@@ -66,24 +66,30 @@ _UNPUBLISHED = {
 
 @asynccontextmanager
 async def published_reads(
-    org: str, namespaces: Sequence[str], skip: Callable[[str], None] | None = None
+    org: str,
+    namespaces: Sequence[str],
+    skip: Callable[[str], None] | None = None,
+    *,
+    down: bool = False,
 ) -> AsyncIterator[None]:
     """A report's reads of ClickHouse under Postgres: they start once ClickHouse holds
     every revision committed in `namespaces` so far (`admit`; a parked delivery is not
     waited for) and read sequentially when anything was behind. Past the wait, or with
     Postgres down, the call fails with that 503, or, given `skip`, reads what ClickHouse
     holds and reports why through `skip`. A report run inside another's reads (tune's
-    audit) waits no second time. On ClickHouse, the reads as they are."""
+    audit) waits no second time, and neither does one whose caller already found
+    Postgres down (`down`, said by that caller). On ClickHouse, the reads as they are."""
     if _published.get():
         yield
         return
-    try:
-        behind = await admit(org, namespaces)
-    except (ProjectionBehindError, pg.PostgresUnavailableError) as e:
-        if skip is None:
-            raise
-        skip(f"{e.code}: {_UNPUBLISHED[e.code]}")
-        behind = True
+    behind = True
+    if not down:
+        try:
+            behind = await admit(org, namespaces)
+        except (ProjectionBehindError, pg.PostgresUnavailableError) as e:
+            if skip is None:
+                raise
+            skip(f"{e.code}: {_UNPUBLISHED[e.code]}")
     token = _published.set(True)
     try:
         with sequential_reads() if behind else nullcontext():

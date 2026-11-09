@@ -472,8 +472,19 @@ function readFailed(
   return result.skipped.some((s) => s.startsWith(`${section}: `));
 }
 
+/** Under the Postgres authority the server names, in `skipped`, the document commits not yet
+ *  published to ClickHouse ("projection: … the document sections …") and the listed documents
+ *  it dropped because Postgres holds a newer version ("listed.heads: …"): the listing and its
+ *  count may be short, not cut at the sample limit. */
+function documentsMayBeShort(result: KnowledgeInspection): boolean {
+  return result.skipped.some(
+    (s) => s.startsWith("listed.heads: ") || (s.startsWith("projection: ") && s.includes("document sections")),
+  );
+}
+
 function ListedSection({ result }: { result: KnowledgeInspection }) {
   const live = result.documents.live;
+  const short = !result.listed_complete && documentsMayBeShort(result);
   return (
     <section aria-labelledby="docs-listed" className="space-y-2 text-sm">
       <SectionHeading id="docs-listed" level={3} label="Newest documents" count={result.listed.length || undefined} />
@@ -481,17 +492,22 @@ function ListedSection({ result }: { result: KnowledgeInspection }) {
         <p className="text-text-muted">The documents could not be listed.</p>
       ) : (
         <>
-          {!result.listed_complete && result.listed.length > 0 && (
+          {short ? (
             <p className="text-xs text-text-muted">
-              {live === null
-                ? `Newest ${fmtInt(result.listed.length)} listed; the total was not counted.`
-                : result.listed.length < live
-                  ? `Newest ${fmtInt(result.listed.length)} of ${fmtInt(live)} listed.`
-                  : "Some documents may be missing: their latest writes are not in the counts yet."}
+              Some documents may be missing: their latest writes are not in the counts yet.
             </p>
+          ) : (
+            !result.listed_complete &&
+            result.listed.length > 0 && (
+              <p className="text-xs text-text-muted">
+                {live === null
+                  ? `Newest ${fmtInt(result.listed.length)} listed; the total was not counted.`
+                  : `Newest ${fmtInt(result.listed.length)} of ${fmtInt(live)} listed.`}
+              </p>
+            )
           )}
           {result.listed.length === 0 ? (
-            <p className="text-text-muted">No live document to list.</p>
+            !short && <p className="text-text-muted">No live document to list.</p>
           ) : (
             <ul className="space-y-2" aria-label="Newest documents">
               {result.listed.map((d) => (

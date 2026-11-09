@@ -733,9 +733,8 @@ bounds the listed documents and every finding's samples.
   says whether the list holds every live document. Under the Postgres authority the
   document sections read ClickHouse, which can trail what Postgres committed: `skipped`
   counts the commits whose publication has not finished, and a listed document is kept
-  only while
-  `knowledge.get` serves it at that version
-  ([storage authority](../architecture/storage-authority.md#knowledge-documents)).
+  only while `knowledge.get` serves it at that version ([storage
+  authority](../architecture/storage-authority.md#knowledge-documents)).
 - **`decisions`**: the live decision rows whose `source_resource_id` cites a section of
   a document (`knowledge:<namespace>/<source_uri>#<section>`, as
   `loom decisions extract` writes it), per listed document and for the namespace. A

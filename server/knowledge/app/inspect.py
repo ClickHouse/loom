@@ -920,11 +920,12 @@ async def handle_knowledge_inspect(input: KnowledgeInspectInput) -> KnowledgeIns
     listed = await run.listed(model)
     # The decision rows and the audit's findings are memory rows: under Postgres they are
     # read once ClickHouse holds what the namespace committed, in one wait the audit
-    # does not repeat.
+    # does not repeat, and none at all once Postgres was found down (already said).
     published = pg_validation.published_reads(
         input.org,
         [input.namespace],
         lambda reason: run.skipped.append(f"{pg_validation.PROJECTION}: {reason}"),
+        down=run.authority_down,
     )
     async with published:
         decisions = await run.decisions(listed)

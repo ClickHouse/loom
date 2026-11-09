@@ -1253,18 +1253,25 @@ async def test_under_postgres_unpublished_document_commits_are_counted_and_said(
 
 @pytest.mark.asyncio
 async def test_under_postgres_an_unanswering_authority_reads_on_and_says_so(
-    stubs: Stubs, authority: _Authority
+    stubs: Stubs, authority: _Authority, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Postgres down: the unpublished count and the listing's check go unread, the report
     still answers from ClickHouse, and says why it may be short."""
     from server.core import pg
+    from server.memory.app.search import pg_validation
+
+    async def down(*_: object) -> bool:
+        raise AssertionError("the memory sections' wait is not tried against a dead pool")
 
     _whole(stubs)
     authority.unpublished = pg.PostgresUnavailableError()
     authority.served = pg.PostgresUnavailableError()
+    monkeypatch.setattr(pg_validation, "admit", down)
     out = await ki.handle_knowledge_inspect(_inp())
     assert [d.source_uri for d in out.listed] == ["docs/b.md", "docs/b.md#v2"]
-    assert any(s.startswith("projection: POSTGRES_UNAVAILABLE: ") for s in out.skipped)
+    outages = [s for s in out.skipped if s.startswith("projection: POSTGRES_UNAVAILABLE: ")]
+    assert len(outages) == 1  # said once, waited out once
+    assert stubs.calls["decisions"] and out.memory_findings  # the memory sections still read
     # The listing's check is not tried again against a Postgres already found down.
     assert not [s for s in out.skipped if s.startswith("listed.heads")]
     assert not out.listed_complete
