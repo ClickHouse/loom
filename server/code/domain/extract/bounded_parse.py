@@ -70,9 +70,20 @@ _LOADERS = (
 # keeps a parser to one thread (the read callback runs Python, where another thread can
 # take the GIL; a tree-sitter parser is not safe to enter twice, and most are shared).
 _LOCK = threading.Lock()
-# How long a parse may wait for that lock (seconds; None: as long as it takes). A caller
-# that gives up sooner sets it, so its thread does not parse after it went away.
-LOCK_WAIT: ContextVar[float | None] = ContextVar("bounded_parse_lock_wait", default=None)
+
+
+class LockWait:
+    """A caller's limit on waiting for that lock: until `deadline` (monotonic), and whether
+    a parse gave up at it (its parser may have read the refusal as a fact of the file)."""
+
+    def __init__(self, seconds: float) -> None:
+        self.deadline = time.monotonic() + seconds
+        self.gave_up = False
+
+
+# Set by a caller that gives up sooner than a parse may take, so its threads (which copy
+# the context) do not parse after it went away. None: wait as long as it takes.
+LOCK_WAIT: ContextVar[LockWait | None] = ContextVar("bounded_parse_lock_wait", default=None)
 
 _idle: subprocess.Popen[bytes] | None = None  # the child waiting for its next parse (`_LOCK`)
 _SILENT = b"?"  # no answer within the wall bound
@@ -227,9 +238,12 @@ def parse(parser: Any, source: bytes) -> Any:
             return b""
         return source[offset : offset + _CHUNK]
 
-    wait = LOCK_WAIT.get()
-    if not _LOCK.acquire(timeout=-1 if wait is None else wait):
-        raise ParseTimeout(f"another parse in this process ran past {wait:g} s of waiting")
+    limit = LOCK_WAIT.get()
+    if limit is None:
+        _LOCK.acquire()
+    elif not _LOCK.acquire(timeout=max(0.0, limit.deadline - time.monotonic())):
+        limit.gave_up = True
+        raise ParseTimeout("gave up waiting for another parse in this process")
     try:
         _check_in_child(_grammar(parser.language), source, budget, memory)
         deadline = time.thread_time() + 2 * budget

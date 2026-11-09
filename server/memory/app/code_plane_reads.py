@@ -209,7 +209,8 @@ async def _definitions_at(
         return None
     named = bare_name(qualified_name)
     # a parse waiting behind another one gives up with this read (its threads copy this)
-    waits = bounded_parse.LOCK_WAIT.set(settings.memory_code_plane_parse_timeout_s)
+    limit = bounded_parse.LockWait(settings.memory_code_plane_parse_timeout_s)
+    waits = bounded_parse.LOCK_WAIT.set(limit)
     try:
         parse = asyncio.gather(
             *(code.parsed(org, code_namespace, head, p, named=named) for p in dict.fromkeys(paths))
@@ -219,6 +220,8 @@ async def _definitions_at(
     try:
         files = await asyncio.wait_for(parse, settings.memory_code_plane_parse_timeout_s)
     except (gitrepo.GitError, code.ParseFailed, TimeoutError):
+        return None
+    if limit.gave_up:  # a parser may have taken the refusal for the file's own answer
         return None
     here: dict[tuple[str, str], Definition] = {}
     for f in files:

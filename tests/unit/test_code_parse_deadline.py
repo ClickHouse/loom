@@ -666,12 +666,13 @@ def test_a_parse_whose_caller_gives_up_does_not_wait_past_it() -> None:
     from server.code.domain.extract import bounded_parse
 
     parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_go.language()))
-    waits = bounded_parse.LOCK_WAIT.set(0.05)
+    limit = bounded_parse.LockWait(0.05)
+    waits = bounded_parse.LOCK_WAIT.set(limit)
     try:
         with bounded_parse._LOCK:  # another parse holds the process's turn
             start = time.monotonic()
             with pytest.raises(bounded_parse.ParseTimeout, match="waiting"):
                 bounded_parse.parse(parser, b"package x\n")
-            assert time.monotonic() - start < 2
+            assert time.monotonic() - start < 2 and limit.gave_up
     finally:
         bounded_parse.LOCK_WAIT.reset(waits)

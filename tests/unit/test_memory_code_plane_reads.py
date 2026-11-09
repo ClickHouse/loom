@@ -461,3 +461,42 @@ def test_a_branch_reads_the_anchored_text_only_at_the_anchored_definition() -> N
         _lesson_state(plain, between, at_current=False, at_anchor=False, on_trunk=False)
         == "changed"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_lesson_read_whose_parse_gave_up_waiting_is_read_as_unreadable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A parser that takes a refusal for the file's own answer (a fallback, no error) does
+    not turn a busy parse lock into a branch without the symbol."""
+    import tree_sitter
+    import tree_sitter_go
+
+    from server.code.app import memory_links
+    from server.code.domain.extract import bounded_parse
+
+    parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_go.language()))
+
+    def swallowing(path: str, data: bytes, named: str) -> Any:
+        try:
+            bounded_parse.parse(parser, data)
+        except bounded_parse.ParseTimeout:
+            pass  # read as a file that defines nothing
+        return memory_links.FileAt([], [])
+
+    async def mirror_here(org: str, cns: str, commit: str) -> bool:
+        return True
+
+    async def file_bytes(org: str, cns: str, commit: str, path: str) -> bytes:
+        return b"package x\nfunc f() {}\n"
+
+    monkeypatch.setattr(memory_links, "mirror_here", mirror_here)
+    monkeypatch.setattr(memory_links, "_file_at", file_bytes)
+    monkeypatch.setattr(memory_links, "file_at", swallowing)
+    monkeypatch.setattr(settings, "memory_code_plane_parse_timeout_s", 5.0)
+    real = bounded_parse.LockWait
+    # the parse gives up waiting well before the read does
+    monkeypatch.setattr(bounded_parse, "LockWait", lambda seconds: real(0.05))
+    with bounded_parse._LOCK:  # another parse holds the process's turn
+        here = await code_plane_reads._definitions_at("o", "code-a", "h", ["a.go"], "f")
+    assert here is None
