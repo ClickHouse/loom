@@ -23,7 +23,6 @@ import hmac
 from dataclasses import dataclass
 from typing import NamedTuple
 
-# pyjwt[crypto] guarantees it
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
@@ -284,6 +283,15 @@ def _masked_sql(key: bytes, data: bytes) -> str:
     encryptor = Cipher(algorithms.AES256(key), modes.ECB()).encryptor()
     sealed = encryptor.update(padder.update(data) + padder.finalize()) + encryptor.finalize()
     return f"decrypt('aes-256-ecb', unhex('{sealed.hex()}'), unhex('{key.hex()}'))"
+
+
+def key_spellings(key: bytes) -> list[str]:
+    """Every way a log could spell `key` or the HMAC pads it makes, which the
+    tests and the mixed-version gate search ClickHouse's logs for."""
+    padded = key.ljust(_BLOCK, b"\0")
+    pads = [bytes(b ^ pad for b in padded) for pad in (0x36, 0x5C)]
+    # The pads end in the zero-padded key's 0x36 and 0x5C bytes, printable as they are.
+    return [key.hex(), *(p.hex() for p in pads), "6" * 32, "\\" * 32]
 
 
 def _hmac_sql(key: bytes, payload: str) -> str:

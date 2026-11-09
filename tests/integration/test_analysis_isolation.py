@@ -224,6 +224,8 @@ _QUOTING_ERRORS = [
     "short_circuit_function_evaluation = 'disable'",
     "SELECT 1 FROM loom.memory WHERE toUInt64(memory_key) = 1 "
     "SETTINGS query_plan_merge_filters = 1, short_circuit_function_evaluation = 'disable'",
+    "SELECT toUInt64(memory_key) FROM loom.memory "
+    "SETTINGS format_display_secrets_in_show_and_select = 1",
 ]
 
 
@@ -233,10 +235,7 @@ def _key_spellings(ch_client) -> list[str]:
     secrets = re.findall(r"unhex\('([0-9a-f]+)'\)", _scope_filter(ch_client, "memory"))
     key = next((h for h in secrets if len(h) == 64), None)
     assert key, "no 64-character key literal in the memory policy"
-    padded = bytes.fromhex(key).ljust(64, b"\0")
-    pads = [bytes(b ^ pad for b in padded) for pad in (0x36, 0x5C)]
-    # The pads end in the zero-padded key's 0x36 and 0x5C bytes, printable as they are.
-    return [*secrets, *(p.hex() for p in pads), "6" * 32, "\\" * 32]
+    return [*secrets, *boundary.key_spellings(bytes.fromhex(key))]
 
 
 @pytest.mark.parametrize("sql", _QUOTING_ERRORS)

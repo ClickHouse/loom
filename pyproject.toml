@@ -30,6 +30,7 @@ dependencies = [
   "dnspython>=2.6",          # a cancellable lookup for names a tenant chooses: server.core.hosts
   "tenacity>=9.0",
   "pyjwt[crypto]>=2.10",
+  "cryptography>=50,<51",    # the analyst's row policies mask the key with AES: server.insights.domain.analysis
   # OpenTelemetry: ship spans + logs to HyperDX / ClickStack's OTLP
   # collector. ClickStack is the OTel consumer in the Loom stack
   # (docs/features/integrations/clickstack.md); this wires the producer side.

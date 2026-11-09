@@ -303,12 +303,9 @@ def test_an_error_that_quotes_the_policy_quotes_no_key() -> None:
     error = str(raised.value)
     assert "UNKNOWN_SETTING" in error
     assert "[HIDDEN]" in error
-    padded = KEY.ljust(64, b"\0")
-    for secret in (KEY, bytes(b ^ 0x36 for b in padded), bytes(b ^ 0x5C for b in padded)):
-        assert secret.hex() not in error.lower()
     assert "unhex(" not in error
-    # The pads end in the zero-padded key's 0x36 and 0x5C bytes, printable as they are.
-    assert "6" * 32 not in error and "\\" * 32 not in error
+    for spelling in boundary.key_spellings(KEY):
+        assert spelling.lower() not in error.lower(), spelling
 
 
 def test_policy_reads_every_setting_as_a_string() -> None:

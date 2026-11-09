@@ -122,12 +122,19 @@ def clickhouse(keep: bool) -> Iterator[int]:
             subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
 
-def sql(port: int, query: str, params: dict[str, str] | None = None) -> str:
-    """`query`'s answer; `params` bind its `{name:Type}` placeholders."""
+def sql(
+    port: int,
+    query: str,
+    params: dict[str, str] | None = None,
+    settings: dict[str, Any] | None = None,
+) -> str:
+    """`query`'s answer; `params` bind its `{name:Type}` placeholders. A
+    setting that changes how the statement is logged applies only when sent
+    with the request, not in a SETTINGS clause."""
     bound = {f"param_{k}": v for k, v in (params or {}).items()}
     r = httpx.post(
         f"http://127.0.0.1:{port}/",
-        params={"user": "loom", "password": CH_PASSWORD, **bound},
+        params={"user": "loom", "password": CH_PASSWORD, **bound, **(settings or {})},
         content=query.encode(),
         timeout=60,
     )
@@ -384,12 +391,18 @@ class Scenario:
         if not (self.builds["N-1"].tree / "server/insights/domain/analysis.py").exists():
             print("  skip  insights.query: N-1 has no analysis plane")
             return
+        from server.insights.domain import analysis as boundary
+
         version = sql(
             self.ch_port,
-            "SELECT value FROM system.settings_profile_elements WHERE profile_name = "
-            "'loom_analyst' AND setting_name = 'SQL_loom_analyst_version'",
+            "SELECT value FROM system.settings_profile_elements "
+            "WHERE profile_name = {user:String} AND setting_name = {name:String}",
+            {"user": boundary.ANALYST_USER, "name": boundary.VERSION_SETTING},
         )
-        self.check(version.strip("'\\") == "2", f"N wrote the analyst entities ({version})")
+        self.check(
+            version.strip("'\\") == str(boundary.ENTITY_VERSION),
+            f"N wrote the analyst entities ({version})",
+        )
         body = {"org": self.org, "namespace": "mixed", "sql": "SELECT count() FROM loom.memory"}
         # N first: it answers only after its own write, so N-1's answer is on N's entities.
         for label in ("N", "N-1"):
@@ -409,25 +422,23 @@ class Scenario:
             self.check(r.status_code == 200, f"{label} answers insights.query on N's entities")
         policy = sql(
             self.ch_port,
-            "SELECT select_filter FROM system.row_policies WHERE short_name = "
-            "'loom_analyst_scope' AND database = 'loom' AND table = 'memory'",
+            "SELECT select_filter FROM system.row_policies WHERE short_name = {name:String} "
+            "AND database = 'loom' AND table = 'memory'",
+            {"name": boundary.POLICY_NAME},
         )
         literals = re.findall(r"unhex\(\\?'([0-9a-f]+)\\?'\)", policy)
         key = next((h for h in literals if len(h) == 64), "")
-        padded = bytes.fromhex(key).ljust(64, b"\0")
-        pads = [bytes(b ^ p for b in padded).hex() for p in (0x36, 0x5C)]
-        # The pads end in the zero-padded key's 0x36 and 0x5C bytes, printable as they are.
-        secrets = [*literals, *pads, "6" * 32, "\\" * 32]
         self.check(bool(key), "the memory policy names the scope key")
+        secrets = [*literals, *boundary.key_spellings(bytes.fromhex(key))]
         sql(self.ch_port, "SYSTEM FLUSH LOGS")
         logged = sql(
             self.ch_port,
             "SELECT count() FROM system.query_log WHERE "
             "multiSearchAnyCaseInsensitive(query, {k:Array(String)}) "
             "OR multiSearchAnyCaseInsensitive(formatted_query, {k:Array(String)}) "
-            "OR multiSearchAnyCaseInsensitive(exception, {k:Array(String)}) "
-            "SETTINGS log_queries_cut_to_length = 1",
+            "OR multiSearchAnyCaseInsensitive(exception, {k:Array(String)})",
             {"k": "[" + ", ".join("'" + h.replace("\\", "\\\\") + "'" for h in secrets) + "]"},
+            boundary.LOG_TEXT_CUT,
         )
         self.check(
             logged == "0", "no logged statement or error holds the scope key after the upgrade"
