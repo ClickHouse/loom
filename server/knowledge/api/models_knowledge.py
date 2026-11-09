@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
 from server.knowledge.api.models_query import (
     MAX_DATASETS,
@@ -165,6 +165,8 @@ class _SearchHit(BaseModel):
     keys_matched: list[str] = Field(default_factory=list)
     # True when the section is unanswered questions alone, or dated notes with no decision.
     noise: bool = False
+    # The chunk's context (title, description, breadcrumb), shown to a reranker; not served.
+    _context: str = PrivateAttr(default="")
 
 
 class KnowledgeSearchInput(BaseModel):
@@ -276,6 +278,10 @@ class KnowledgeSearchOutput(BaseModel):
     # Namespaces of the caller an all_mine search did not read because it stops
     # at `memory_search_fanout_max_namespaces`; address one by name to search it.
     namespaces_skipped: list[str] = Field(default_factory=list)
+    # Under the Postgres authority: the candidates left out because their document's
+    # current version does not serve them (an older version still being retired, a
+    # deleted document, a write not committed); 0 otherwise.
+    stale_dropped: int = 0
 
 
 class _KnowledgeBulkEntry(BaseModel):
@@ -290,7 +296,8 @@ class _KnowledgeBulkEntry(BaseModel):
 class KnowledgeBulkAddInput(BaseModel):
     """Batched ingestion: many documents in one CH round-trip.
 
-    Same per-doc behavior as `knowledge.add` (no upsert / supersede).
+    Same per-doc behavior as `knowledge.add`: under the ClickHouse authority no
+    supersede; under the Postgres authority a source's earlier chunk versions are retired.
     Chunking still applies per-doc per the configured policy.
     """
 

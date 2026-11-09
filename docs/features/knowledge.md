@@ -704,12 +704,12 @@ knowledge search concentrates on a few documents. See
 ## Inspecting a namespace's documents
 
 `knowledge.inspect` (viewer) reports what a namespace's documents are, which of their
-versions search serves, what was extracted from them, and where their `knowledge.ingest`
-jobs stand. It reads what is stored, never parses a document, never calls an extractor
-and writes nothing. It is in the [assistant
+versions ClickHouse reads as live, what was extracted from them, and where their
+`knowledge.ingest` jobs stand. It reads what is stored, never parses a document, never
+calls an extractor and writes nothing. It is in the [assistant
 toolset](../reference/mcp.md#the-assistant-toolset), and the dashboard's Assistant page
-shows it under Inspect documents. `sample_limit` (0–100, default 20)
-bounds the listed documents and every finding's samples.
+shows it under Inspect documents. `sample_limit` (0–100, default 20) bounds the listed
+documents and every finding's samples.
 
 - **`documents`**: live and deleted (`knowledge.delete`) documents by format (the row's
   `format`, which `knowledge.ingest` sets, else the `ingested_format` a source sync
@@ -752,18 +752,20 @@ bounds the listed documents and every finding's samples.
   `info` with count 0. `documents_without_chunks`, `unembedded_chunks` and
   `chunks_under_other_model` are `system_state`: the server's own state.
   `mixed_live_versions` is a `usage_heuristic`: live chunks of two versions of one
-  document, which `knowledge.add` on an existing `source_uri` leaves and
-  `knowledge.upsert` does not; a `knowledge.ingest` publish passes through it too,
-  briefly, or until the job's next run when it could not confirm its insert. Each
-  finding names the documents `knowledge.ingest` published apart (`ingested`,
-  `ingested_samples`). A text document is repaired with `knowledge.upsert` or
-  `loom rechunk --source-uri <uri>`; an ingested one with `knowledge.ingest` of its
-  original (`GET /v1/knowledge.download` serves it), since a text write re-cuts its
-  rendered text and clears its format, parser, coverage and ingestion. For
-  `mixed_live_versions` on an ingested document, a job of the source still processing at
-  its publish stage settles the state on its next run, so it is re-ingested only when no
-  ingest of the source is open. Each finding's text says this in plain words, and its
-  `refs` lists the exact names it means.
+  document, which `knowledge.add` on an existing `source_uri` leaves under the
+  ClickHouse authority and `knowledge.upsert` does not; a `knowledge.ingest` publish
+  passes through it too, briefly, or until the job's next run when it could not confirm
+  its insert. Under the Postgres authority search serves the current version alone (a
+  document written before its namespace had heads excepted), and the finding counts an
+  older one whose retirement is still owed. Each finding names the documents
+  `knowledge.ingest` published apart (`ingested`, `ingested_samples`). A text document
+  is repaired with `knowledge.upsert` or `loom rechunk --source-uri <uri>`; an ingested
+  one with `knowledge.ingest` of its original (`GET /v1/knowledge.download` serves it),
+  since a text write re-cuts its rendered text and clears its format, parser, coverage
+  and ingestion. For `mixed_live_versions` on an ingested document, a job of the source
+  still processing at its publish stage settles the state on its next run, so it is
+  re-ingested only when no ingest of the source is open. Each finding's text says this
+  in plain words, and its `refs` lists the exact names it means.
 - **`ingestions`**: the namespace's `knowledge.ingest` jobs (their rows are kept 30
   days) by state, `stalled` for a processing job no worker has updated within its lease,
   when the oldest open job was queued, and the sources with a job and no live document (a
@@ -851,8 +853,9 @@ that scope, and `memory_findings` is skipped, since the audit reads every user's
 | Bring a deleted document back          | `knowledge.restore`                                     | The deleted version and its chunks are live again ([below](#restoring-a-deleted-document)).           |
 | Erase a person's or a namespace's data | [`erasure.request`](./memory/retention-and-erasure.md)  | The erasure saga deletes documents, chunks and stored originals, and cascades to external systems.    |
 
-`knowledge.add` does not retire an earlier version at the same `source_uri`; use
-`knowledge.upsert` to replace one. `knowledge.upsert` also reports duplicates without
+Under the ClickHouse authority `knowledge.add` does not retire an earlier version at
+the same `source_uri`; use `knowledge.upsert` to replace one (under the Postgres authority
+both retire it, see the limits below). `knowledge.upsert` also reports duplicates without
 blocking: `duplicate_of_uri` names a live document under another URI with the same
 title and content hash, and `duplicate_chunk_count` counts new chunks whose hash
 already lives under another URI. The caller decides whether to keep both.
@@ -1336,9 +1339,18 @@ curl -s localhost:7777/v1/knowledge.search -H "Authorization: Bearer $LOOM_API_K
   (`loom rechunk --apply` re-chunks and re-embeds them).
 - **A cold namespace has no lexical leg** until its statistics exist; results are
   vector-only in the meantime.
-- **`bulk_add` does not supersede.** It behaves like `add` per document; use `upsert`
-  per document to replace. A batch names each `source_uri` at most once; one that
-  repeats a source is refused (422) with nothing written.
+- **`bulk_add` does not supersede under the ClickHouse authority.** It behaves like
+  `add` per document, and an `add` again at a source keeps its earlier text searchable
+  beside the new one; use `upsert` per document to replace. A batch names each
+  `source_uri` at most once; one that repeats a source is refused (422) with nothing
+  written.
+- **Under the Postgres authority search serves each document's current version alone.**
+  An `add` or a `bulk_add` again at a source retires its earlier text, as an `upsert`
+  does. A version still being retired, a deleted document whose delete is not published
+  yet and a write not committed are left out, and `knowledge.search` counts them in
+  `stale_dropped`. A document written before its namespace had heads serves every
+  version ClickHouse holds, one hit per chunk
+  ([knowledge search](../architecture/storage-authority.md#knowledge-search)).
 - **Knowledge is not belief-revised.** Two documents can contradict each other; Loom
   flags identical content, not conflicting content. Claims that must be judged against
   each other belong in memory.

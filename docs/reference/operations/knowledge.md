@@ -323,7 +323,7 @@ Report a namespace's documents, read-only.
 | `namespace` | `str` | The namespace the op reads or writes. |
 | `computed_at` | `datetime` | When the report started (UTC). |
 | `documents` | `DocumentTotals` | Live and deleted documents by format and source scheme, and retired versions. |
-| `chunks` | `ChunkTotals` | Live chunks by embedding model, and how many knowledge.search can return. |
+| `chunks` | `ChunkTotals` | Live chunks by embedding model, and how many knowledge.search reads (under the Postgres authority it serves the current version's alone, a document written before heads excepted). |
 | `decisions` | `DecisionTotals` | Decision rows citing a document of the namespace, by stage. |
 | `listed` | `list[InspectDocument]` | The newest live documents, at most `sample_limit`, newest first. |
 | `listed_complete` | `bool` | True when `listed` holds every live document and the count was read, and, under the Postgres authority, every document commit of the namespace was published and the listed rows were checked against it. |
@@ -485,6 +485,7 @@ Search the user's uploaded document library — bills, contracts, receipts, resu
 | `reranked_by` | `str` | The reranker that ordered `results`; empty when no reranker ran, it failed, it ran past its time limit, or it kept the fused order. |
 | `embedding_model` | `str` | Embedding model the query was embedded with; only chunks of this model are searched. |
 | `namespaces_skipped` | `list[str]` | Namespaces of the caller an all_mine search did not read because it stops at `memory_search_fanout_max_namespaces`; address one by name to search it. |
+| `stale_dropped` | `int` | Under the Postgres authority: the candidates left out because their document's current version does not serve them (an older version still being retired, a deleted document, a write not committed); 0 otherwise. |
 
 ## `knowledge.source.add`
 

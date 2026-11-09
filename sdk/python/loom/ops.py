@@ -11099,6 +11099,7 @@ class KnowledgeSearchOutput(TypedDict, total=False):
     reranked_by: NotRequired[str]
     embedding_model: Required[str]
     namespaces_skipped: NotRequired[list[str]]
+    stale_dropped: NotRequired[int]
 
 
 class SearchHit(TypedDict, total=False):

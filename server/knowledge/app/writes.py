@@ -17,6 +17,7 @@ from collections import Counter
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from server.core import pg
 from server.core.error_summary import error_summary
 from server.core.errors import BackendUnavailableError, PreconditionFailedError, ValidationError
 from server.core.hashing import sha256_document_text as _content_sha256
@@ -105,7 +106,6 @@ def _published_anyway(e: BaseException) -> bool:
     """Whether a document write that raised `e` may still serve its row: committed under
     the Postgres authority (the worker publishes it), its row in with only the
     retirement failed, or a commit whose answer was lost. Its chunks then stay."""
-    from server.core import pg
     from server.knowledge.store.documents import OlderNotRetired
 
     return isinstance(e, PublicationPending | OlderNotRetired) or pg.may_have_committed(e)
@@ -452,6 +452,7 @@ async def handle_knowledge_upsert(
             # committed since; retiring none costs one statement.
             retire_older=True,
             built_from=_live_id(prior),
+            chunked=True,
         )
     except BaseException as e:  # re-raised: the chunks of a write that did not land go first
         if not _published_anyway(e):
@@ -581,7 +582,14 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
             await knowledge_repo.insert_chunks(rows)
         with traced("ch.insert.documents", table="loom.documents"):
             await documents_repo.insert_one(
-                doc_row, over=documents_repo.version_of(prior), built_from=_live_id(prior)
+                doc_row,
+                over=documents_repo.version_of(prior),
+                built_from=_live_id(prior),
+                # Under the Postgres authority search serves the head's chunks alone, so an
+                # add retires the older ones (a failed write's left behind included), as an
+                # upsert does, rather than keep chunks nothing serves.
+                retire_older=pg.enabled(),
+                chunked=True,
             )
     except BaseException as e:  # re-raised: the chunks of a write that did not land go first
         if not _published_anyway(e):
@@ -1000,6 +1008,8 @@ async def handle_knowledge_bulk_add(
             doc_rows,
             over={uri: d.version for uri, d in priors.items()},
             built_from=[i for i in map(_live_id, priors.values()) if i],
+            retire_older=set(uris) if pg.enabled() else frozenset(),  # as an add's
+            chunked=True,
         )
     except BaseException as e:  # re-raised: the chunks of a write that did not land go first
         if not _published_anyway(e):

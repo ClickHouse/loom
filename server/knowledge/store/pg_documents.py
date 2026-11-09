@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import base64
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Set
 from datetime import datetime
 from typing import Any, NamedTuple
 
@@ -21,6 +21,7 @@ from server.core import pg, pg_lease
 from server.core.datetimes import to_naive_utc_second
 from server.core.errors import NotFoundError, PreconditionFailedError, ValidationError
 from server.knowledge.domain.owed_originals import NEEDS_ORIGINAL, OWED_SHAS
+from server.knowledge.domain.serving import Serving
 from server.settings import settings
 
 # Delivery targets (bits of `targets`).
@@ -135,13 +136,17 @@ _ERASED = (
 # lock taken on a row that does not exist yet holds nothing.
 _INSERT_HEAD = (
     "INSERT INTO loom.knowledge_heads "
-    "(org, namespace, source_uri, version, revision, deleted, user_id, row) "
-    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb) "
+    "(org, namespace, source_uri, version, revision, deleted, user_id, row, "
+    "chunks_revision, chunks_version) "
+    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10) "
     "ON CONFLICT (org, namespace, source_uri) DO NOTHING RETURNING 1"
 )
+# A commit that inserted no chunks ($9 and $10 NULL) keeps the ones the head serves.
 _UPDATE_HEAD = (
     "UPDATE loom.knowledge_heads SET version = $4, revision = $5, deleted = $6, "
-    "user_id = $7, row = $8::jsonb, committed_at = now() "
+    "user_id = $7, row = $8::jsonb, committed_at = now(), "
+    "chunks_revision = COALESCE($9::integer, chunks_revision), "
+    "chunks_version = COALESCE($10::bigint, chunks_version) "
     "WHERE org = $1 AND namespace = $2 AND source_uri = $3"
 )
 _INSERT_DELIVERY = (
@@ -157,11 +162,14 @@ async def commit(
     over: Mapping[str, int],
     targets: Mapping[str, int],
     built_from: Sequence[str] = (),
+    chunked: Set[str] = frozenset(),
 ) -> float:
     """Commit `rows` (loom.documents rows of one namespace) as their sources' heads, each
     only over the version `over[source_uri]` its writer read (0: none), and record what
     each owes ClickHouse (`targets[source_uri]`, bits of DOCUMENT_ROW and RETIRE_OLDER) under
-    COMMIT_TOKEN for LOOM_PG_REQUEST_LEASE_SECONDS. HeadMoved when a head moved.
+    COMMIT_TOKEN for LOOM_PG_REQUEST_LEASE_SECONDS. HeadMoved when a head moved. For the
+    sources in `chunked`, whose write inserted chunks at the row's version, the head
+    serves those chunks from now on (`serves`); another commit keeps the ones it serves.
 
     A source with no head yet (a document written before its namespace had heads, or by
     a build that writes none) takes its first head from this commit, whatever its writer
@@ -212,15 +220,17 @@ async def commit(
                 raise HeadMoved(uri)
         for row, stored in encoded:
             uri = str(row["source_uri"])
+            revision, version = int(row.get("revision") or 0), int(row["version"])
             head = (
                 org,
                 namespace,
                 uri,
-                int(row["version"]),
-                int(row.get("revision") or 0),
+                version,
+                revision,
                 row.get("superseded_at") is not None,
                 str(row.get("user_id") or "-"),
                 stored,
+                *((revision, version) if uri in chunked else (None, None)),
             )
             if uri in held:
                 await conn.execute(_UPDATE_HEAD, *head)
@@ -299,6 +309,32 @@ async def heads(org: str, namespace: str, uris: Sequence[str]) -> dict[str, Head
         sorted(set(uris)),
     )
     return {str(r["source_uri"]): Head(decode_row(r["row"]), bool(r["owed"])) for r in got}
+
+
+async def serving(org: str, sources: Sequence[tuple[str, str]]) -> dict[tuple[str, str], Serving]:
+    """What the heads of these (namespace, source_uri) pairs serve, in one read; a pair
+    with no head (or a key Postgres cannot store, which holds none) is absent."""
+    pairs = sorted({s for s in sources if not pg.unstorable(s)})
+    if not pairs or pg.unstorable(org):
+        return {}
+    got = await pg.fetch(
+        "SELECT h.namespace, h.source_uri, h.deleted, h.revision, h.chunks_revision, "
+        "h.chunks_version FROM loom.knowledge_heads h "
+        "JOIN unnest($2::text[], $3::text[]) AS s(namespace, source_uri) "
+        "ON (h.namespace, h.source_uri) = (s.namespace, s.source_uri) WHERE h.org = $1",
+        org,
+        [ns for ns, _ in pairs],
+        [uri for _, uri in pairs],
+    )
+    return {
+        (str(r["namespace"]), str(r["source_uri"])): Serving(
+            bool(r["deleted"]),
+            int(r["revision"]),
+            None if r["chunks_revision"] is None else int(r["chunks_revision"]),
+            None if r["chunks_version"] is None else int(r["chunks_version"]),
+        )
+        for r in got
+    }
 
 
 async def drop_unbacked(org: str, namespace: str, source_uri: str, version: int) -> None:

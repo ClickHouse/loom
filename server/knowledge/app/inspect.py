@@ -1,5 +1,7 @@
-"""knowledge.inspect — what a namespace's documents are, which of their versions search
-serves, and what was extracted from them, read-only.
+"""knowledge.inspect — what a namespace's documents are, which of their versions
+ClickHouse reads as live (what search serves under the ClickHouse authority; the Postgres
+authority serves the current one alone, a document written before heads excepted,
+`pg_serving`), and what was extracted from them, read-only.
 
 Every number comes from what is stored: the document rows (one per document, its
 current version, with the coverage its extraction reported), the live chunks and the
@@ -157,19 +159,27 @@ _CHECKS: dict[str, tuple[RuleContract, str, str, str, list[str]]] = {
         RuleContract(
             "usage_heuristic",
             1,
-            uncertainty="Two versions kept on purpose read the same. An ingestion passes "
-            "through this state when it publishes: it inserts the new version's chunks "
+            uncertainty="Two versions kept on purpose read the same: an add again under the "
+            "ClickHouse authority, or under an older build. Under the Postgres authority an "
+            "older version whose retirement is still owed passes through it. An ingestion "
+            "passes through this state when it publishes: it inserts the new version's chunks "
             "before it writes the document and retires the old ones, and an insert whose "
             "outcome it could not confirm leaves both live until the job's next run.",
         ),
         "mixed_versions",
         "Live documents with live chunks of more than one version under the server's "
-        "model: search serves both texts. Adding a document again at the same source keeps "
-        "the earlier version beside it; replacing the document at that source retires it.",
-        "Replace a changed text document, not add it again. For an ingested one, an "
-        "ingestion of the source still at its publish stage settles this state on its next "
-        "run (its status, by the id the ingestion returned, shows the stage); only when no "
-        "ingestion of the source is open, upload its original again and ingest it.",
+        "model: search serves both texts (under the Postgres authority it serves the "
+        "current one alone, a document written before heads excepted, and the older one's "
+        "chunks stay live until their retirement lands). Adding a document again at the "
+        "same source keeps the earlier version beside it under the ClickHouse authority; "
+        "replacing the document at that source retires it.",
+        "Under the ClickHouse authority, replace a changed text document, not add it again "
+        "(under the Postgres authority the next write that inserts the source's chunks "
+        "retires the older version, and the delivery worker retires one still owed). For "
+        "an ingested one, an ingestion of the source still at its publish stage settles "
+        "this state on its next run (its status, by the id the ingestion returned, shows "
+        "the stage); only when no ingestion of the source is open, upload its original "
+        "again and ingest it.",
         [
             "knowledge.search",
             "knowledge.add",
@@ -738,7 +748,7 @@ class _Inspect:
         if not rows:
             return []
         uris = [str(r["source_uri"]) for r in rows]
-        # Without the server's model, nothing says which chunks search serves.
+        # Without the server's model, nothing says which chunks search reads.
         chunks = (
             await self.guarded(
                 "listed.chunks",
@@ -927,7 +937,7 @@ async def handle_knowledge_inspect(input: KnowledgeInspectInput) -> KnowledgeIns
         chunks = await run.chunks(model)
         findings = await run.findings(model)
     else:
-        # Without the server's model, nothing says which chunks search serves.
+        # Without the server's model, nothing says which chunks search reads.
         chunks, findings = ChunkTotals(), []
         for code in _CHECKS:
             run.rules.skip(code, "the embedder could not be built")

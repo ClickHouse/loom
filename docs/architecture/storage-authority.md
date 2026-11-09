@@ -80,7 +80,7 @@ and every tenant index leads with `org`.
 | `loom.erased_memories`      | `(org, namespace, memory_id)`                              | deletion evidence: the namespace and id of each memory an erasure removed, when, and when its publishers are quiet; no content, kept `LOOM_PG_ERASURE_EVIDENCE_HOURS`                                                 |
 | `loom.idempotency_fences`   | `org`                                                      | when an erasure last removed the org's replay answers: the bound of its residue census                                                                                                                                |
 | `loom.audit_outbox`         | `(org, namespace, row_hash)`                               | the audit rows an erasure removed before ClickHouse had them, and those a claim deferred because the holder it replaced may still insert them, until the delivery pass publishes them; keys and ids, no values        |
-| `loom.knowledge_heads`      | `(org, namespace, source_uri)`                             | the head of each knowledge source: the complete `loom.documents` row ([knowledge documents](#knowledge-documents))                                                                                                    |
+| `loom.knowledge_heads`      | `(org, namespace, source_uri)`                             | the head of each knowledge source: the complete `loom.documents` row ([knowledge documents](#knowledge-documents)), and the revision and version of the chunks it serves ([knowledge search](#knowledge-search))      |
 | `loom.knowledge_deliveries` | `(org, namespace, source_uri, version)`                    | what a document commit still owes ClickHouse (bits: 1 the document row, always set, 2 the older chunks' retirement; published whole), its row, lease and token                                                        |
 | `loom.erased_documents`     | `(org, namespace, doc_id)`                                 | deletion evidence: the `doc_id` of every version of each document an erasure removed, ClickHouse's included, refused at a commit; no content, kept `LOOM_PG_ERASURE_EVIDENCE_HOURS`                                   |
 
@@ -936,12 +936,13 @@ it expires.
 ## Knowledge documents
 
 `loom.knowledge_heads` holds the head of every knowledge source, keyed by
-`(org, namespace, source_uri)`: the complete `loom.documents` row a read serves, with its
-version, revision and whether it is deleted. `loom.knowledge_deliveries`, keyed by
-`(org, namespace, source_uri, version)`, holds what a commit still owes ClickHouse (bits:
-1 the `loom.documents` row, 2 the retirement of the source's older chunk versions), its
-own copy of the row, a lease and its token
-(`schemas/pg_migrations/002_knowledge_documents.sql`).
+`(org, namespace, source_uri)`: the complete `loom.documents` row a read serves, with
+its version, revision and whether it is deleted, and the revision and version of the
+chunks it serves ([knowledge search](#knowledge-search)). `loom.knowledge_deliveries`,
+keyed by `(org, namespace, source_uri, version)`, holds what a commit still owes
+ClickHouse (bits: 1 the `loom.documents` row, 2 the retirement of the source's older
+chunk versions), its own copy of the row, a lease and its token
+(`schemas/pg_migrations/002_knowledge_documents.sql`, `004_knowledge_chunk_heads.sql`).
 
 Every document write reaches Postgres through one funnel,
 `documents.insert_one` / `insert_many` (`server/knowledge/store/documents.py`), which
@@ -949,11 +950,10 @@ takes the version its writer read (`over`, 0 for none):
 
 1. The writer refuses a row whose source URI or writer's id holds text Postgres cannot
    store (422 `VALIDATION_FAILED`; other text is kept exactly, in base64 inside the
-   stored row), then inserts the new version's chunks into ClickHouse. Search reads
-   chunks without consulting documents, so they are found beside the version they
-   replace from the moment they land, as an ingest's always were. A write whose document
-   does not land retires them (deletes them when an erasure removed what it was built
-   from).
+   stored row), then inserts the new version's chunks into ClickHouse. ClickHouse reads
+   them as live from the moment they land; search serves them once the commit makes
+   them the head's ([knowledge search](#knowledge-search)). A write whose document does
+   not land retires them (deletes them when an erasure removed what it was built from).
 2. The commit locks the sources' heads in key order and replaces each only when it is
    not newer than the version the writer read (one behind it is adopted) and the new row
    is above both. Every writer stamps its version past the one it read, so a host whose
@@ -962,13 +962,14 @@ takes the version its writer read (`over`, 0 for none):
    version and the caller starts over from a fresh read. Two writes of one source
    therefore never both publish, and each revision number is taken once; a bulk add
    that names a source twice is refused (422) before anything is written.
-3. Under its lease the writer inserts the `loom.documents` row and, for an upsert, an
-   ingest or a delete, retires the older chunk versions (an add and a bulk add keep
-   them, as under the ClickHouse authority), then deletes the delivery under
-   its token. A writer stopped after the commit answers 503 `PUBLICATION_PENDING`; the
-   `knowledge_pg_delivery` worker takes the delivery once its lease ran out and
-   publishes it from the stored row, parking it after `LOOM_PG_DELIVERY_MAX_ATTEMPTS`
-   refusals (`postgres.parked_knowledge_deliveries` in `GET /v1/health?include=postgres`);
+3. Under its lease the writer inserts the `loom.documents` row and retires the source's
+   older chunk versions (every writer that inserts chunks, and a delete; search serves
+   the head's alone, and under the ClickHouse authority an add and a bulk add keep them,
+   both served), then deletes the delivery under its token. A writer stopped after the
+   commit answers 503 `PUBLICATION_PENDING`; the `knowledge_pg_delivery` worker takes
+   the delivery once its lease ran out and publishes it from the stored row, parking it
+   after `LOOM_PG_DELIVERY_MAX_ATTEMPTS` refusals
+   (`postgres.parked_knowledge_deliveries` in `GET /v1/health?include=postgres`);
    ClickHouse unavailable counts no attempt.
    A second copy collapses into the first (`ReplacingMergeTree(version)`), and a
    repeated retirement retires nothing more.
@@ -1050,19 +1051,52 @@ The ClickHouse steps then remove the documents and chunks. A source written befo
 namespace had heads has no head to lock: a write of it racing the erasure is the race it
 is under the ClickHouse authority. The delivery pass sweeps expired evidence.
 
+### Knowledge search
+
+ClickHouse reads a chunk as live until something retires it, so it also reads as live
+the older version's chunks while their retirement is owed, a deleted document's while its
+tombstone is, and the chunks a write inserted before its commit: one still to commit, one
+refused, or one whose cleanup failed. The head says which of them are served. A commit
+whose write inserted chunks (an add, an upsert, a bulk add, an ingest's publish) records
+their revision and version on the head (`chunks_revision`, `chunks_version`,
+`schemas/pg_migrations/004_knowledge_chunk_heads.sql`); a delete, a metadata edit or a
+restore inserts none and keeps them. A chunk is served when its source has no head (a
+document written before its namespace had heads), or when the head is not deleted, the
+chunk is of the head's revision, and, while `chunks_revision` is that revision, of
+`chunks_version` (`server/knowledge/domain/serving.py`). The version tells apart two
+writes that numbered one revision, the second refused; a chunk that recorded no revision
+is judged by the version alone while `chunks_revision` is the head's revision, and
+served otherwise.
+
+`knowledge.search` checks each page of candidates in one Postgres read
+(`server/knowledge/app/pg_serving.py`) before it reranks, collapses or cuts it. A full
+page that left a candidate out (a stale one, or a second served version of one chunk) is
+fetched once more, twice as deep, with a second read, and `stale_dropped` counts the
+stale ones. Stale chunks are a passing state under this authority: every write that
+inserts a source's chunks over an earlier version retires that version's. Fusion keys a
+chunk by its version too, so a stale chunk and the served one at the same index are two
+candidates, and the page keeps one hit per chunk. `knowledge.outline`, the chunks
+`knowledge.synthesize` reads and `memory.stack`'s knowledge section take the same check,
+and `context.pack` and `memory.ask` read through `knowledge.search`; `knowledge.get`
+serves the head itself. A search, outline or synthesis read that cannot reach the heads
+fails closed, 503 `POSTGRES_UNAVAILABLE`, rather than serve what it cannot check;
+`memory.stack` then leaves its knowledge section out. What counts chunks without serving
+them reads every chunk ClickHouse reads as live: `knowledge.inspect`, `knowledge.list`'s
+`chunk_count`, `knowledge.dedup_list` and an upsert's `duplicate_chunk_count`.
+
 ## Failure
 
-| Failure                                              | Effect                                                                                                                                                                                                                                                      |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Postgres unreachable                                 | writes, point reads, idempotent replays and the reads of ClickHouse that wait at the barrier (`memory.list`, `memory.history`, the `as_of` replays, `namespace.rollback`'s plan) answer 503 `POSTGRES_UNAVAILABLE`; nothing falls back to ClickHouse's copy |
-| A commit's answer lost                               | 503 `POSTGRES_UNAVAILABLE` with `outcome_unknown: true`; a retry with the same idempotency key replays what committed                                                                                                                                       |
-| ClickHouse unreachable after a commit                | the write is durable; its delivery is published once ClickHouse answers; semantic admissions, searches and the reads that wait at the barrier in the namespace answer 503 `PROJECTION_BEHIND` until then                                                    |
-| A writer dies after its commit                       | its lease runs out within `LOOM_PG_REQUEST_LEASE_SECONDS`; the next admission in the namespace, or the worker, publishes the revision                                                                                                                       |
-| Two publishers of one delivery                       | both copies collapse; only the current token clears the target                                                                                                                                                                                              |
-| A row ClickHouse keeps refusing                      | parked after `LOOM_PG_DELIVERY_MAX_ATTEMPTS` failed publishes; the namespace's other revisions publish                                                                                                                                                      |
-| A write built from an erased memory                  | 404 `RESOURCE_NOT_FOUND`, nothing committed: the erasure's deletion evidence refuses it at the commit                                                                                                                                                       |
-| A string holding a NUL character or a lone surrogate | 422 `VALIDATION_FAILED` before the commit: Postgres text and jsonb cannot store it (a knowledge document keeps such text in base64, and refuses it only in a source URI or a writer's id)                                                                   |
-| An erasure's idempotency fence                       | a request with an `Idempotency-Key` in that org answers 503 `IDEMPOTENT_IN_PROGRESS` while the fence's two statements run, and retries                                                                                                                      |
+| Failure                                              | Effect                                                                                                                                                                                                                                                                                                                                                              |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Postgres unreachable                                 | writes, point reads, idempotent replays, the reads of ClickHouse that wait at the barrier (`memory.list`, `memory.history`, the `as_of` replays, `namespace.rollback`'s plan) and the knowledge reads that check heads (`knowledge.search`, `knowledge.outline`, `knowledge.synthesize`) answer 503 `POSTGRES_UNAVAILABLE`; nothing falls back to ClickHouse's copy |
+| A commit's answer lost                               | 503 `POSTGRES_UNAVAILABLE` with `outcome_unknown: true`; a retry with the same idempotency key replays what committed                                                                                                                                                                                                                                               |
+| ClickHouse unreachable after a commit                | the write is durable; its delivery is published once ClickHouse answers; semantic admissions, searches and the reads that wait at the barrier in the namespace answer 503 `PROJECTION_BEHIND` until then                                                                                                                                                            |
+| A writer dies after its commit                       | its lease runs out within `LOOM_PG_REQUEST_LEASE_SECONDS`; the next admission in the namespace, or the worker, publishes the revision                                                                                                                                                                                                                               |
+| Two publishers of one delivery                       | both copies collapse; only the current token clears the target                                                                                                                                                                                                                                                                                                      |
+| A row ClickHouse keeps refusing                      | parked after `LOOM_PG_DELIVERY_MAX_ATTEMPTS` failed publishes; the namespace's other revisions publish                                                                                                                                                                                                                                                              |
+| A write built from an erased memory                  | 404 `RESOURCE_NOT_FOUND`, nothing committed: the erasure's deletion evidence refuses it at the commit                                                                                                                                                                                                                                                               |
+| A string holding a NUL character or a lone surrogate | 422 `VALIDATION_FAILED` before the commit: Postgres text and jsonb cannot store it (a knowledge document keeps such text in base64, and refuses it only in a source URI or a writer's id)                                                                                                                                                                           |
+| An erasure's idempotency fence                       | a request with an `Idempotency-Key` in that org answers 503 `IDEMPOTENT_IN_PROGRESS` while the fence's two statements run, and retries                                                                                                                                                                                                                              |
 
 ## Recorded authority
 

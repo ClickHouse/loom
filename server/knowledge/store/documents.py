@@ -551,11 +551,14 @@ async def insert_one(
     over: int,
     retire_older: bool = False,
     built_from: str = "",
+    chunked: bool = False,
     ch: _CHClient | None = None,
 ) -> None:
     """Insert one document row, written over the source's version `over` (0: none),
     the one its writer read. `built_from`: the `doc_id` of the live document the row
     carries columns from (its original, its author), refused once an erasure removed it.
+    `chunked`: the write inserted the source's chunks at the row's version, which its
+    head serves from now on under the Postgres authority (`pg_serving`).
 
     async_insert=0 so the row is visible to the next FINAL read — callers
     depend on the search-visibility contract. Under the Postgres authority the row
@@ -569,6 +572,7 @@ async def insert_one(
         over={row["source_uri"]: over},
         retire_older={row["source_uri"]} if retire_older else frozenset(),
         built_from=[built_from] if built_from else [],
+        chunked=chunked,
         ch=ch,
     )
 
@@ -579,6 +583,7 @@ async def insert_many(
     over: Mapping[str, int],
     retire_older: Set[str] = frozenset(),
     built_from: Sequence[str] = (),
+    chunked: bool = False,
     ch: _CHClient | None = None,
 ) -> int:
     """Bulk insert of one namespace's rows, each written over the version
@@ -587,8 +592,8 @@ async def insert_many(
     row's are retired: after a new version's row, so the old text stops serving only
     when the new one is published, and before a tombstone's (`publish`). Under the
     Postgres authority the rows are committed as heads first, and a publication cut off
-    here (the row or the retirement) is finished by the delivery worker. `built_from`:
-    as `insert_one`'s, for every row."""
+    here (the row or the retirement) is finished by the delivery worker. `built_from` and
+    `chunked`: as `insert_one`'s, for every row."""
     from server.core import pg
 
     if not rows:
@@ -607,7 +612,13 @@ async def insert_many(
         | (pg_documents.RETIRE_OLDER if r["source_uri"] in retire_older else 0)
         for r in rows
     }
-    deadline = await pg_documents.commit(rows, over=over, targets=targets, built_from=built_from)
+    deadline = await pg_documents.commit(
+        rows,
+        over=over,
+        targets=targets,
+        built_from=built_from,
+        chunked={str(r["source_uri"]) for r in rows} if chunked else frozenset(),
+    )
     try:
         return await _publish_committed(rows, deadline, retire_older, ch)
     except asyncio.CancelledError as e:  # committed: the worker publishes it

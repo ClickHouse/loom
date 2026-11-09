@@ -38,7 +38,7 @@ const FINDING_LABEL: Record<string, string> = {
   documents_without_chunks: "Documents with no chunk",
   unembedded_chunks: "Chunks with no vector",
   chunks_under_other_model: "Chunks under another embedding model",
-  mixed_live_versions: "Two versions served",
+  mixed_live_versions: "Two live versions",
   ingest_backlog: "Backlog",
   extractor_unavailable: "Extractor unavailable",
   ingest_missing_access: "Missing access",
@@ -66,8 +66,8 @@ function plural(count: number, one: string, many = `${one}s`): string {
   return `${fmtInt(count)} ${count === 1 ? one : many}`;
 }
 
-/** Documents as an Inspect subject: knowledge.inspect's report on the namespace's
- *  documents, what search serves of them, their ingestion and extraction, and the decisions
+/** Documents as an Inspect subject: knowledge.inspect's report on the namespace's documents,
+ *  which of their chunks search reads, their ingestion and extraction, and the decisions
  *  recorded from them.
  *
  *  Whether a section was read comes from the fields the server leaves null on a failed read,
@@ -233,10 +233,10 @@ function ChunkSection({ result }: { result: KnowledgeInspection }) {
   const c = result.chunks;
   return (
     <section aria-labelledby="docs-chunks" className="space-y-2 text-sm">
-      <SectionHeading id="docs-chunks" level={3} label="What search serves" />
+      <SectionHeading id="docs-chunks" level={3} label="Live chunks" />
       {c.embedder_model === "" ? (
         <p className="text-text-muted">
-          The server's embedder could not be built, so nothing says which chunks search serves.
+          The server's embedder could not be built, so nothing says which chunks search reads.
         </p>
       ) : c.live === null ? (
         <p className="text-text-muted">The chunks could not be counted.</p>
@@ -537,7 +537,7 @@ function DocumentRow({ doc: d, jobsUnread }: { doc: InspectDocument; jobsUnread:
           ? "Chunks: not read"
           : `Chunks: ${fmtInt(c.searchable)} of ${fmtInt(c.live)} searchable · ${fmtInt(c.unembedded)} without a vector${
               c.other_model ? ` · ${fmtInt(c.other_model)} under another model` : ""
-            }${c.versions > 1 ? ` · ${fmtInt(c.versions)} versions served` : ""}${
+            }${c.versions > 1 ? ` · ${fmtInt(c.versions)} live versions` : ""}${
               c.live
                 ? ` · ${fmtInt(c.min_chars)}/${fmtInt(c.median_chars)}/${fmtInt(c.max_chars)} characters (min/median/max)`
                 : ""
