@@ -276,12 +276,6 @@ def test_wrapper_drops_one_semicolon_ends_a_comment_and_asks_one_row_more() -> N
     )
 
 
-def _local_error(sql: str) -> str:
-    with pytest.raises(AssertionError) as raised:
-        clickhouse_local.run([], sql)
-    return str(raised.value)
-
-
 @pytest.mark.skipif(clickhouse_local.CLICKHOUSE is None, reason="needs the clickhouse binary")
 def test_the_policy_computes_the_signature_loom_signs() -> None:
     payload = boundary.scope_payload("acme", "a,b", 123, "qid-1")
@@ -294,7 +288,9 @@ def test_an_error_that_quotes_the_policy_quotes_no_key() -> None:
     # The probe's unsigned read is refused with an error quoting the policy,
     # and ClickHouse logs that error in system.query_log.
     rows = "SELECT 'acme' AS org, 'a' AS namespace"
-    error = _local_error(f"SELECT 1 FROM ({rows}) WHERE {boundary.policy_filter(KEY)}")
+    with pytest.raises(AssertionError) as raised:
+        clickhouse_local.run([], f"SELECT 1 FROM ({rows}) WHERE {boundary.policy_filter(KEY)}")
+    error = str(raised.value)
     assert "UNKNOWN_SETTING" in error
     assert "[HIDDEN]" in error
     padded = KEY.ljust(64, b"\0")

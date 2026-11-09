@@ -276,7 +276,7 @@ def _setting(name: str) -> str:
     return f"toString(getSetting('{name}'))"
 
 
-def _masked_bytes(key: bytes, data: bytes) -> str:
+def _masked_sql(key: bytes, data: bytes) -> str:
     """`data` as a `decrypt` expression, whose arguments ClickHouse prints as
     [HIDDEN]. AES256 refuses a key that is not the 32 bytes aes-256-ecb takes."""
     padder = padding.PKCS7(128).padder()
@@ -292,8 +292,8 @@ def hmac_sql(key: bytes, payload: str) -> str:
     """HMAC-SHA256 of `payload` under `key` as ClickHouse computes it, with the
     key's inner and outer pads masked as `decrypt` expressions."""
     padded = key.ljust(_BLOCK, b"\0")
-    ipad = _masked_bytes(key, bytes(b ^ 0x36 for b in padded))
-    opad = _masked_bytes(key, bytes(b ^ 0x5C for b in padded))
+    ipad = _masked_sql(key, bytes(b ^ 0x36 for b in padded))
+    opad = _masked_sql(key, bytes(b ^ 0x5C for b in padded))
     inner = f"SHA256(concat({ipad}, {payload}))"
     return f"hex(SHA256(concat({opad}, {inner})))"
 
