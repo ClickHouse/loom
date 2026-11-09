@@ -754,3 +754,17 @@ def test_a_parse_whose_children_the_kernel_killed_twice_is_unavailable(
     source = b"package x\nvar s = " + b"`" * 16_000  # parses in over a second
     pf, err = parse_for_ingest("a.go", source)
     assert "ParseUnavailable" in err and len(started) == 2
+
+
+def test_the_shell_detector_does_not_answer_for_a_parse_that_could_not_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.code.domain.extract import bounded_parse
+    from server.code.domain.extract.lang_detect import detect_shell
+
+    def unavailable(parser: Any, source: bytes) -> Any:
+        raise bounded_parse.ParseUnavailable("killed twice")
+
+    monkeypatch.setattr(bounded_parse, "parse", unavailable)
+    with pytest.raises(bounded_parse.ParseUnavailable):
+        detect_shell("tests/queries/tool", b"a=(1 2)\necho hi\n")

@@ -181,6 +181,8 @@ def _parses_as_shell(source: bytes) -> bool:
         return False
     try:
         tree = bounded_parse.parse(_bash_parser(), source)
+    except bounded_parse.ParseUnavailable:
+        raise  # the host, not the file: no answer to keep
     except Exception:  # noqa: BLE001 — grammar missing, a parser fault or a timeout: not shell
         return False
     root = tree.root_node

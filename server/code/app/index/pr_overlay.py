@@ -744,7 +744,8 @@ def _note_left_out(ov: PrOverlay, timed_out: int) -> None:
         parts.append(f"{timed_out} changed file(s) whose parse ran past its limits")
     if ov.unreached:
         parts.append(
-            f"{ov.unreached} changed file(s) {NOT_REACHED}: the request's parse time was spent"
+            f"{ov.unreached} changed file(s) {NOT_REACHED}: the request's parse time was spent,"
+            " or the parse could not run here"
         )
     ov.note = "; ".join(parts)
 
