@@ -84,6 +84,9 @@ async def standby_state() -> tuple[str, int | None]:
 
 
 async def check_durability() -> Durability:
+    # The publishers' claims commit a logical message (`pg.durable_transaction`): a role
+    # that may not write one refuses the boot, not every claim.
+    await pg.check_durable_message()
     names, sync = await standby_state()
     verdict = durability_verdict(settings.pg_durability, names, sync)
     if verdict.refusal:

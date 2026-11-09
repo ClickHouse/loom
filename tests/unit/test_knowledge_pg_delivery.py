@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
@@ -215,11 +216,16 @@ def test_a_claim_is_leased_for_the_delivery_workers_lease(monkeypatch: pytest.Mo
 
     leases: list[float] = []
 
-    async def fetch(sql: str, *args: Any) -> list[Any]:
-        leases.append(args[1])
-        return []
+    class _Conn:
+        async def fetch(self, sql: str, *args: Any) -> list[Any]:
+            leases.append(args[1])
+            return []
 
-    monkeypatch.setattr(pg, "fetch", fetch)
+    @asynccontextmanager
+    async def durable_transaction():  # type: ignore[no-untyped-def]
+        yield _Conn()
+
+    monkeypatch.setattr(pg, "durable_transaction", durable_transaction)
     monkeypatch.setattr(settings, "pg_delivery_lease_seconds", 30)
     monkeypatch.setattr(settings, "pg_request_lease_seconds", 5)
     claims, deadline = asyncio.run(pg_documents.claim_due(10))

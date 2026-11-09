@@ -926,42 +926,45 @@ async def claim_due(limit: int, *, scope: tuple[str, str] | None = None) -> list
         where += " AND org = $4 AND namespace = $5"
         order = "seq"
         args += list(scope)
-    rows = await pg.fetch(
-        f"""
-        WITH due AS (
-            SELECT org, namespace, seq, held, {order} AS claim_order,
-                   {pg.LEASE_LEFT_S} AS replaced_lease_s,
-                   attempts + held::int >= $3
-                   AND (targets & {SEARCHED} <> {SEARCH_DOC} OR (held AND attempts >= $3)) AS parks
-            FROM loom.memory_deliveries d
-            WHERE {where}
-            ORDER BY {order}
-            LIMIT $1
-            FOR UPDATE SKIP LOCKED
+    # The claim commits once the standbys hold what it read (`pg.durable_transaction`).
+    async with pg.durable_transaction() as conn:
+        rows = await conn.fetch(
+            f"""
+            WITH due AS (
+                SELECT org, namespace, seq, held, {order} AS claim_order,
+                       {pg.LEASE_LEFT_S} AS replaced_lease_s,
+                       attempts + held::int >= $3
+                       AND (targets & {SEARCHED} <> {SEARCH_DOC}
+                            OR (held AND attempts >= $3)) AS parks
+                FROM loom.memory_deliveries d
+                WHERE {where}
+                ORDER BY {order}
+                LIMIT $1
+                FOR UPDATE SKIP LOCKED
+            )
+            , claimed AS (
+            UPDATE loom.memory_deliveries d
+            SET lease_token = d.lease_token + 1,
+                attempts = d.attempts + d.held::int,
+                held = false,
+                -- Parked: the last holder's send may still land within its lease.
+                fenced_until = CASE WHEN due.parks THEN GREATEST(d.fenced_until, d.lease_until)
+                                    ELSE d.fenced_until END,
+                lease_until = CASE WHEN due.parks THEN 'infinity'::timestamptz
+                                   ELSE now() + make_interval(secs => $2) END,
+                last_error = CASE WHEN d.held THEN 'stopped mid-publish' ELSE d.last_error END
+            FROM due, loom.memory_revisions r
+            WHERE (d.org, d.namespace, d.seq) = (due.org, due.namespace, due.seq)
+              AND (r.org, r.namespace, r.seq) = (d.org, d.namespace, d.seq)
+            RETURNING d.org, d.namespace, d.seq, d.targets, d.lease_token, d.attempts,
+                      due.parks AS parked, due.held AS taken_over, r.row, r.audit,
+                      due.claim_order, due.replaced_lease_s
+            )
+            -- An UPDATE returns its rows in no order: the claims come back in the order taken.
+            SELECT * FROM claimed ORDER BY claim_order, org, namespace, seq
+            """,
+            *args,
         )
-        , claimed AS (
-        UPDATE loom.memory_deliveries d
-        SET lease_token = d.lease_token + 1,
-            attempts = d.attempts + d.held::int,
-            held = false,
-            -- Parked: the last holder's send may still land within its lease.
-            fenced_until = CASE WHEN due.parks THEN GREATEST(d.fenced_until, d.lease_until)
-                                ELSE d.fenced_until END,
-            lease_until = CASE WHEN due.parks THEN 'infinity'::timestamptz
-                               ELSE now() + make_interval(secs => $2) END,
-            last_error = CASE WHEN d.held THEN 'stopped mid-publish' ELSE d.last_error END
-        FROM due, loom.memory_revisions r
-        WHERE (d.org, d.namespace, d.seq) = (due.org, due.namespace, due.seq)
-          AND (r.org, r.namespace, r.seq) = (d.org, d.namespace, d.seq)
-        RETURNING d.org, d.namespace, d.seq, d.targets, d.lease_token, d.attempts,
-                  due.parks AS parked, due.held AS taken_over, r.row, r.audit,
-                  due.claim_order, due.replaced_lease_s
-        )
-        -- An UPDATE returns its rows in no order: the claims come back in the order taken.
-        SELECT * FROM claimed ORDER BY claim_order, org, namespace, seq
-        """,
-        *args,
-    )
     for r in rows:
         if r["parked"]:
             log.error(
@@ -1122,18 +1125,19 @@ async def claim_outbox(limit: int) -> tuple[list[dict[str, Any]], float]:
     started = time.monotonic()
     # 0 is no bound on a read: the claim allows it the insert bound.
     read_s = float(settings.ch_timeout_read_s) or pg.insert_bound_s()
-    rows = await pg.fetch(
-        "WITH first AS (SELECT org, namespace FROM loom.audit_outbox "
-        "  WHERE due_at <= now() ORDER BY due_at LIMIT 1 FOR UPDATE SKIP LOCKED), "
-        "due AS (SELECT o.org, o.namespace, o.row_hash FROM loom.audit_outbox o "
-        "  JOIN first USING (org, namespace) WHERE o.due_at <= now() "
-        "  ORDER BY o.due_at LIMIT $1 FOR UPDATE OF o SKIP LOCKED) "
-        "UPDATE loom.audit_outbox o SET due_at = now() + make_interval(secs => $2) FROM due "
-        "WHERE (o.org, o.namespace, o.row_hash) = (due.org, due.namespace, due.row_hash) "
-        "RETURNING o.audit",
-        limit,
-        read_s + pg.insert_bound_s(),
-    )
+    async with pg.durable_transaction() as conn:
+        rows = await conn.fetch(
+            "WITH first AS (SELECT org, namespace FROM loom.audit_outbox "
+            "  WHERE due_at <= now() ORDER BY due_at LIMIT 1 FOR UPDATE SKIP LOCKED), "
+            "due AS (SELECT o.org, o.namespace, o.row_hash FROM loom.audit_outbox o "
+            "  JOIN first USING (org, namespace) WHERE o.due_at <= now() "
+            "  ORDER BY o.due_at LIMIT $1 FOR UPDATE OF o SKIP LOCKED) "
+            "UPDATE loom.audit_outbox o SET due_at = now() + make_interval(secs => $2) FROM due "
+            "WHERE (o.org, o.namespace, o.row_hash) = (due.org, due.namespace, due.row_hash) "
+            "RETURNING o.audit",
+            limit,
+            read_s + pg.insert_bound_s(),
+        )
     return [decode_audit(r["audit"]) for r in rows], started + read_s
 
 
@@ -1211,6 +1215,16 @@ async def record_failure(
         park,
     )
     return int(done.split()[-1])
+
+
+async def _read(sql: str, *args: Any, durable: bool) -> list[Any]:
+    """`pg.fetch`, or with `durable` inside `pg.durable_transaction`, for rows that go
+    to ClickHouse when another session may have committed them: returned once the
+    synchronous standbys hold every row read."""
+    if not durable:
+        return await pg.fetch(sql, *args)
+    async with pg.durable_transaction() as conn:
+        return list(await conn.fetch(sql, *args))
 
 
 # ---- reads -------------------------------------------------------------------
@@ -1357,27 +1371,31 @@ async def settled_head_versions(keys: Sequence[IdentityKey]) -> dict[IdentityKey
 
 
 async def heads_by_keys(
-    keys: Sequence[IdentityKey], *, include_tombstoned: bool = False
+    keys: Sequence[IdentityKey], *, include_tombstoned: bool = False, durable: bool = False
 ) -> dict[IdentityKey, dict[str, Any]]:
     """The heads, expired ones included, of exact keys (a deleted one too with
-    `include_tombstoned`); a key with none is absent."""
+    `include_tombstoned`); a key with none is absent. `durable`: read for ClickHouse
+    (`_read`)."""
     keys = [k for k in keys if not pg.unstorable(k)]
     if not keys:
         return {}
     sql = _HEADS_BY_KEYS
     if not include_tombstoned:
         sql += " WHERE c.row->>'tombstoned_at' IS NULL"
-    rows = await pg.fetch(sql, *_key_arrays(keys))
+    rows = await _read(sql, *_key_arrays(keys), durable=durable)
     return {identity_key(r["row"]): decode_row(r["row"]) for r in rows}
 
 
-async def heads_owing(keys: Sequence[IdentityKey]) -> dict[IdentityKey, tuple[dict[str, Any], int]]:
+async def heads_owing(
+    keys: Sequence[IdentityKey], *, durable: bool = False
+) -> dict[IdentityKey, tuple[dict[str, Any], int]]:
     """The heads of exact keys, deleted ones included, each with the targets its own
-    delivery still owes (0 once settled); a key with none is absent."""
+    delivery still owes (0 once settled); a key with none is absent. `durable`: read for
+    ClickHouse (`_read`)."""
     keys = [k for k in keys if not pg.unstorable(k)]
     if not keys:
         return {}
-    rows = await pg.fetch(_HEADS_OWING, *_key_arrays(keys))
+    rows = await _read(_HEADS_OWING, *_key_arrays(keys), durable=durable)
     return {identity_key(r["row"]): (decode_row(r["row"]), int(r["owed"])) for r in rows}
 
 
@@ -1424,19 +1442,21 @@ async def erased_ids(org: str, namespace: str, memory_ids: Sequence[str]) -> set
 
 
 async def live_decision_writers(
-    org: str, namespace: str, keys: Sequence[str]
+    org: str, namespace: str, keys: Sequence[str], *, durable: bool = False
 ) -> list[tuple[str, str, str, str]]:
-    """(memory_key, agent, user_id, session_id) of each live decision head of these keys."""
+    """(memory_key, agent, user_id, session_id) of each live decision head of these keys.
+    `durable` for a record retirement, which acts on a writer's absence (`_read`)."""
     keys = [k for k in keys if not pg.unstorable(k)]  # Postgres holds no such key
     if not keys or pg.unstorable(org) or pg.unstorable(namespace):
         return []
-    rows = await pg.fetch(
+    rows = await _read(
         "SELECT memory_key, agent, user_id, session_id FROM loom.memory_current "
         "WHERE org = $1 AND namespace = $2 AND memory_key = ANY($3::text[]) "
         "AND row->>'memory_type' = 'decision' AND row->>'tombstoned_at' IS NULL",
         org,
         namespace,
         keys,
+        durable=durable,
     )
     return [(r["memory_key"], r["agent"], r["user_id"], r["session_id"]) for r in rows]
 

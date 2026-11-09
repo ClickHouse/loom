@@ -328,7 +328,8 @@ async def _served_documents(
     """By entry, the documents still to send, each by the revision it was built from:
     its own while that is the key's head, else rebuilt onto a newer copy of it (a pin, a
     touch, a conflict mark) that owes no document of its own, as `pg_delivery._still_heads`
-    serves one, so the writer's vector is not embedded again. One whose head was deleted,
+    serves one, so the writer's vector is not embedded again; the heads are then read
+    again durably, since such a copy may be on the primary alone. One whose head was deleted,
     rewritten or redacted since is not sent: it would land live above that head's own
     retirement. Its delivery goes to the entry's `stale`, for the delivery worker to
     build from the head or settle (`_hand_over`)."""
@@ -336,21 +337,32 @@ async def _served_documents(
     keys = [identity_key(d) for e in waiting for d in e.documents]
     heads = await pg_memory.heads_owing(keys) if keys else {}
 
-    def served(doc: dict[str, Any]) -> dict[str, Any] | None:
+    def copy(doc: dict[str, Any]) -> bool:
+        """Whether the key's head is a newer copy of the document's row."""
         head, owed = heads.get(identity_key(doc), (None, 0))
-        if head is None or head.get("redacted_at") is not None:
-            return None
-        if int(head["version"]) == int(doc["version"]):
-            return doc
-        copy = (
-            int(head["version"]) > int(doc["version"])
+        return (
+            head is not None
+            and head.get("redacted_at") is None
+            and int(head["version"]) > int(doc["version"])
             and not owed & SEARCH_DOC
             and head.get("tombstoned_at") is None
             and pg_memory.embedded(head)
             and is_content_hash(str(head.get("content_sha256") or ""))
             and head.get("content_sha256") == doc.get("content_sha256")
         )
-        return _onto(doc, head) if copy else None
+
+    def served(doc: dict[str, Any]) -> dict[str, Any] | None:
+        head, _ = heads.get(identity_key(doc), (None, 0))
+        if head is None or head.get("redacted_at") is not None:
+            return None
+        if int(head["version"]) == int(doc["version"]):
+            return doc
+        return _onto(doc, head) if copy(doc) else None
+
+    # A copy is another commit than the writer's, perhaps one on the primary alone: the
+    # heads are read again durably, and every document is decided again from that read.
+    if any(copy(d) for e in waiting for d in e.documents):
+        heads = await pg_memory.heads_owing(keys, durable=True)
 
     sent: dict[int, dict[tuple[Any, ...], dict[str, Any]]] = {}
     for e in waiting:

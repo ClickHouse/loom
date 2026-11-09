@@ -847,7 +847,11 @@ async def test_boot_refuses_by_the_configured_durability(monkeypatch: pytest.Mon
     async def _fetchrow(sql: str, *args: object) -> dict[str, object]:
         return {"names": "", "sync": 0, "hidden": 0}
 
+    async def _message_allowed() -> None:
+        return None
+
     monkeypatch.setattr(pg_profile.pg, "fetchrow", _fetchrow)
+    monkeypatch.setattr(pg_profile.pg, "check_durable_message", _message_allowed)
     monkeypatch.setattr(settings, "pg_durability", "synchronous")
     with pytest.raises(pg_profile.DurabilityRefused):
         await pg_profile.check_durability()
@@ -1983,7 +1987,7 @@ async def test_a_refused_audit_row_fails_the_attempt_after_the_search_document_i
     monkeypatch.setattr("server.memory.store.insert_embedding_rows", _insert)
     monkeypatch.setattr("server.memory.store.index_late_rows", _no_late_rows)
 
-    async def _all_heads(claims: Any) -> Any:
+    async def _all_heads(claims: Any, deadline: float) -> Any:
         return claims
 
     monkeypatch.setattr(pg_delivery, "_still_heads", _all_heads)
@@ -4182,7 +4186,10 @@ async def test_a_decision_record_is_judged_by_the_writers_the_authority_holds(
         async def execute(self, sql: str, params: Any = None, settings: Any = None) -> None:
             self.sent.append((sql, params, settings))
 
-    async def _writers(org: str, ns: str, keys: list[str]) -> list[tuple[str, str, str, str]]:
+    async def _writers(
+        org: str, ns: str, keys: list[str], *, durable: bool = False
+    ) -> list[tuple[str, str, str, str]]:
+        assert durable  # a retirement acts on a writer's absence
         return [("k", "a", "-", "-")]
 
     from server.core import rmt_carry
@@ -4954,7 +4961,8 @@ async def test_a_deleted_decisions_record_retires_where_it_is_published(
         events.append("drawn")
         return 42
 
-    async def _live(org: str, ns: str, keys: list[str]) -> list[Any]:
+    async def _live(org: str, ns: str, keys: list[str], *, durable: bool = False) -> list[Any]:
+        assert durable
         events.append("live")
         return [(keys[0], "a", "-", "-")]
 
@@ -4975,6 +4983,7 @@ async def test_a_deleted_decisions_record_retires_where_it_is_published(
     monkeypatch.setattr(pg_memory, "live_decision_writers", _live)
     monkeypatch.setattr(pg_memory, "complete", _complete)
     monkeypatch.setattr(pg_lease, "check_lease", lambda deadline: None)
+    monkeypatch.setattr(pg_lease, "check_room", lambda deadline: None)
     monkeypatch.setattr(pg_publish, "tombstone_decision_records", _records)
     owing = [owe("a", "k1", 1), owe("a", "k2", 2), owe("b", "k3", 3)]
     assert await pg_publish.retire_decision_records(owing, deadline=0.0, ch=object()) is None
@@ -5471,8 +5480,13 @@ async def test_a_search_document_is_built_only_while_the_head_serves_it(
         "unhashed": {**newer, "memory_key": "unhashed", "content_sha256": ""},
     }
 
-    async def _heads(keys: list[Any], *, include_tombstoned: bool) -> dict[Any, Any]:
+    reads: list[bool] = []
+
+    async def _heads(
+        keys: list[Any], *, include_tombstoned: bool, durable: bool = False
+    ) -> dict[Any, Any]:
         assert include_tombstoned
+        reads.append(durable)
         return {identity_key(h): h for h in heads.values()}
 
     monkeypatch.setattr(pg_memory, "heads_by_keys", _heads)
@@ -5481,8 +5495,9 @@ async def test_a_search_document_is_built_only_while_the_head_serves_it(
         for i, k in enumerate([*heads, "gone"])
     ]
     claims[-2] = replace(claims[-2], row={**claims[-2].row, "content_sha256": ""})
-    served = await pg_delivery._still_heads(claims)
+    served = await pg_delivery._still_heads(claims, time.monotonic() + 60)
     assert [(c.row["memory_key"], c.row["version"]) for c in served] == [("same", 1), ("copy", 2)]
+    assert reads == [False, True]  # the copy is another commit: read again durably
     assert served[1].row["status"] == "superseded"  # the head's own row, not the revision's
 
 

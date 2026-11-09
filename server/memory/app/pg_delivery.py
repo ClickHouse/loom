@@ -161,7 +161,9 @@ async def _publish(claims: list[Claimed], *, stub: bool = False) -> None:
     held = await pg_publish.held_documents(
         claims[0].org, claims[0].namespace, [pg_publish.document_id(c.row) for c in owed], ch=ch
     )
-    build = await _still_heads([c for c in owed if pg_publish.document_id(c.row) not in held])
+    build = await _still_heads(
+        [c for c in owed if pg_publish.document_id(c.row) not in held], deadline
+    )
     docs = await _search_documents(build, stub=stub)
     if docs:
         with pg_lease.leased(deadline):
@@ -189,34 +191,45 @@ async def _publish(claims: list[Claimed], *, stub: bool = False) -> None:
         raise failed  # an attempt that failed, once the rest is in
 
 
-async def _still_heads(claims: list[Claimed]) -> list[Claimed]:
+async def _still_heads(claims: list[Claimed], deadline: float) -> list[Claimed]:
     """The claims whose document the key's head still serves, each with the row to build
     it from: its own revision while that is the head, else a newer copy of it (a pin, a
     touch, a status) that owes no document of its own, whose row the document carries.
     A redacted head serves none. A newer head that is deleted, not embedded or of other
     content has its own document, or its retirement of the vectors below it, which one
-    built for the older revision now would land live above."""
+    built for the older revision now would land live above.
+
+    A copy is another commit than the claim's, perhaps one on the primary alone: the
+    heads are read again durably (`pg_memory.heads_by_keys`) and the documents built
+    from that read (`pg_lease.check_room`)."""
     if not claims:
         return claims
-    heads = await pg_memory.heads_by_keys(
-        [identity_key(c.row) for c in claims], include_tombstoned=True
+    keys = [identity_key(c.row) for c in claims]
+    heads = await pg_memory.heads_by_keys(keys, include_tombstoned=True)
+    if any(_is_copy(c, _served(c, heads)) for c in claims):
+        heads = await pg_memory.heads_by_keys(keys, include_tombstoned=True, durable=True)
+        pg_lease.check_room(deadline)
+    return [replace(c, row=row) for c in claims if (row := _served(c, heads)) is not None]
+
+
+def _is_copy(c: Claimed, row: dict[str, Any] | None) -> bool:
+    return row is not None and row is not c.row
+
+
+def _served(c: Claimed, heads: dict[Any, dict[str, Any]]) -> dict[str, Any] | None:
+    """The row `c`'s document is built from (`_still_heads`), None for none."""
+    head = heads.get(identity_key(c.row))
+    if head is None or head.get("redacted_at") is not None:
+        return None
+    if int(head["version"]) <= int(c.row["version"]):
+        return c.row
+    copy = (
+        head.get("tombstoned_at") is None
+        and pg_memory.embedded(head)
+        and is_content_hash(str(head.get("content_sha256") or ""))
+        and head.get("content_sha256") == c.row.get("content_sha256")
     )
-
-    def served(c: Claimed) -> dict[str, Any] | None:
-        head = heads.get(identity_key(c.row))
-        if head is None or head.get("redacted_at") is not None:
-            return None
-        if int(head["version"]) <= int(c.row["version"]):
-            return c.row
-        copy = (
-            head.get("tombstoned_at") is None
-            and pg_memory.embedded(head)
-            and is_content_hash(str(head.get("content_sha256") or ""))
-            and head.get("content_sha256") == c.row.get("content_sha256")
-        )
-        return head if copy else None
-
-    return [replace(c, row=row) for c in claims if (row := served(c)) is not None]
+    return head if copy else None
 
 
 async def _retire_old_vectors(

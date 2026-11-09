@@ -522,6 +522,44 @@ collapses into the first and a late one never outranks a newer write. Only the c
 token's holder clears a target, so an overtaken publisher cannot mark a newer claim's
 work done.
 
+### Only durable revisions are published
+
+A commit whose synchronous-standby wait was cancelled (a client timeout, a cancel) is
+committed on the primary alone and visible to every session there; a failover loses it
+and the new primary numbers another revision with its `seq`. So a row reaches
+ClickHouse only once the synchronous standbys hold it. A row becomes visible only after
+its own commit's standby wait ended, so a commit that writes WAL and returns from its
+own wait covers every row the transaction read: the claims of the delivery worker, the
+audit outbox and the knowledge delivery worker run in `pg.durable_transaction()`, whose
+COMMIT carries a transactional logical message (prefix `loom.durable`) and waits for the
+standbys, on the connection that read the rows. A wait that is cancelled raises, and
+nothing claimed is sent. A writer's flush sends its own commits, which returned from
+their wait.
+
+The rule for any path: a ClickHouse send fed by a Postgres read sends only what the
+caller committed or claimed, or reads durably first. A newer copy of a head (a pin, a
+touch) that a document is built onto, and the live decision writers a record retirement
+keeps, are another session's commits: they are read again in a durable transaction and
+decided from that read. A decision that only changes Postgres state is covered by the
+commit that records it. `tests/unit/test_pg_durable_reads.py` pins every caller of a
+journal read with the reason it holds.
+
+The guarantee holds when a failover promotes a standby of the synchronous set holding
+the highest flush position, which a strict HA manager does
+([Postgres operations](../operations/postgres.md#self-hosted-postgres)). Under
+`LOOM_PG_DURABILITY=synchronous`, a durable transaction refuses while
+`synchronous_standby_names` is empty; one emptied during its wait is not seen, which a
+strict manager never does. Under `LOOM_PG_DURABILITY=local` with no standby named,
+commits are the primary's alone: a failover may lose acknowledged writes, ClickHouse may
+keep their rows, and the reconcile after a restore removes them.
+
+With the standby detached, a claim waits up to `LOOM_PG_STATEMENT_TIMEOUT_MS` plus one
+second and the pass ends as a Postgres outage does; a claim whose wait was cut keeps its
+rows leased until `LOOM_PG_DELIVERY_LEASE_SECONDS` ends after the standby is back, and
+searches in those namespaces wait for it at the barrier. A redaction or an erasure locking
+a claimed delivery waits behind that commit up to `LOOM_PG_COMMIT_LOCK_TIMEOUT_MS`, then
+answers its retryable 503, as its own commit would while the standby is down.
+
 ## Idempotency
 
 Under this authority an `Idempotency-Key` is a row of `loom.idempotency`, keyed by

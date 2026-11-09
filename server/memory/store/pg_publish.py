@@ -226,7 +226,9 @@ async def retire_decision_records(
             # Drawn before the live read: a record written after it is above it, within
             # the hosts' clock skew, as every `next_version` is.
             version = next_version()
-            live = await pg_memory.live_decision_writers(org, namespace, keys)
+            # Read durably: a writer's absence retires its record.
+            live = await pg_memory.live_decision_writers(org, namespace, keys, durable=True)
+            pg_lease.check_room(deadline)
             with pg_lease.leased(deadline):
                 await tombstone_decision_records(
                     org, namespace, keys, version=version, ch=ch, live=live

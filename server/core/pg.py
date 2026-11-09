@@ -302,13 +302,24 @@ async def connection() -> AsyncIterator[Any]:
     except BaseException as e:
         if _read_only(e):
             # Left on a demoted primary: none of the pool's connections is handed out again.
-            conn.terminate()
+            _terminate(conn)
             await pool.expire_connections()
         elif _connection_lost(e):
-            conn.terminate()
+            _terminate(conn)
         raise
     finally:
         await _release(pool, conn)
+
+
+def _terminate(conn: Any) -> None:
+    """Close a pooled connection now. One whose connection was lost is already detached
+    from the pool, and a call on it would replace the block's error."""
+    import asyncpg
+
+    try:
+        conn.terminate()
+    except asyncpg.InterfaceError:
+        pass
 
 
 async def _release(pool: Any, conn: Any) -> None:
@@ -445,6 +456,44 @@ async def transaction() -> AsyncIterator[Any]:
         raise
 
 
+# The last statement before a durable transaction's COMMIT: the commit waits for the
+# synchronous standbys (a transactional logical message makes it write WAL, whatever
+# else the transaction wrote), and the setting naming them is read as it starts.
+_DURABLE_MESSAGE = (
+    "SELECT set_config('synchronous_commit', 'on', true), "
+    "current_setting('synchronous_standby_names') AS names, "
+    "pg_logical_emit_message(true, 'loom.durable', '')"
+)
+
+
+@asynccontextmanager
+async def durable_transaction() -> AsyncIterator[Any]:
+    """`transaction`, for a read whose rows go to ClickHouse: once it returns, every row
+    the block read is on the synchronous standbys. A row is visible only after its own
+    commit's standby wait ended (a cancelled wait leaves it on the primary alone), so it
+    was committed before this transaction's commit, which waits for the standbys. The
+    read and the commit share one connection: a failover in between fails the commit,
+    never another primary's. A cancelled wait raises (`outcome_unknown`): nothing read
+    may be sent. Under LOOM_PG_DURABILITY=synchronous an empty `synchronous_standby_names`
+    (commits on the primary alone) refuses before the commit; one emptied during the
+    wait is not seen, which is why the HA manager must be strict
+    (docs/operations/postgres.md)."""
+    async with transaction() as conn:
+        yield conn
+        names = (await conn.fetchrow(_DURABLE_MESSAGE))["names"]
+        if settings.pg_durability == "synchronous" and not str(names).strip():
+            raise PostgresUnavailableError(
+                "synchronous_standby_names is empty: commits are on the primary alone"
+            )
+
+
+async def check_durable_message() -> None:
+    """Refuse a role that may not write the logical message `durable_transaction`
+    commits, checked in a transaction rolled back, so no standby wait."""
+    async with rolled_back() as conn:
+        await conn.execute(_DURABLE_MESSAGE)
+
+
 @asynccontextmanager
 async def rolled_back() -> AsyncIterator[Any]:
     """A transaction always rolled back, for a read that wants only its locks' waits: a
@@ -476,8 +525,13 @@ async def _rollback(conn: Any, tx: Any) -> None:
     """Roll back within `_RELEASE_TIMEOUT_S`, never hiding the error that ended the
     block: a statement still in flight is cancelled first, and one that does not finish
     in time leaves the connection to `_release`, which has a bound of its own."""
-    if conn.is_closed():
-        return
+    import asyncpg
+
+    try:
+        if conn.is_closed():
+            return
+    except asyncpg.InterfaceError:
+        return  # lost: the driver detached it from the pool (`_terminate`)
     try:
         await asyncio.wait_for(tx.rollback(), _RELEASE_TIMEOUT_S)
     except Exception as e:  # noqa: BLE001 — the error that ended the block is raised
