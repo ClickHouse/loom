@@ -366,8 +366,10 @@ async def link_value_updates(
     from server.settings import settings as _s
 
     batch = int(_s.memory_write_candidate_batch)
+    per_fact = _s.memory_bulk_peer_read == "per_fact"
+    read_one = _peers_codes_first if per_fact else _peers_joined
     prefetched: dict[int, list[dict[str, Any]]] = {}
-    if batch > 0 and _s.memory_bulk_peer_read != "per_fact":
+    if batch > 0 and not per_fact:
         by_dim: dict[int, list[int]] = {}
         for i, row in enumerate(rows):
             emb = _eligible(row)
@@ -408,12 +410,7 @@ async def link_value_updates(
         if peers is None:
             async with sem:
                 try:
-                    read = (
-                        _peers_codes_first
-                        if _s.memory_bulk_peer_read == "per_fact"
-                        else _peers_joined
-                    )
-                    peers = await read(
+                    peers = await read_one(
                         ch,
                         org=org,
                         namespace=namespace,

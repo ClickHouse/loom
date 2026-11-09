@@ -282,9 +282,9 @@ async def nearest_peer_rows(
     *,
     limit: int = PEER_LIMIT,
 ) -> list[dict[str, Any]]:
-    """The gate's peers: this fact's cosine neighbours under the same type,
-    excluding its own key (a re-write is LWW by version, not a conflict), at
-    most `limit` (default `PEER_LIMIT`), nearest first.
+    """A fact's nearest live peers of its type, excluding its own key (a re-write is LWW
+    by version, not a conflict), at most `limit` (default `PEER_LIMIT`), nearest first:
+    the conflict gate's peers, and under `per_fact` the value-update links'.
 
     Two statements instead of the `memory FINAL JOIN memory_embeddings FINAL` scan.
     Stage A ranks the namespace's vectors alone, in the shape the `Quantized` codec

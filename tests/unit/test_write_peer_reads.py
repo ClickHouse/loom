@@ -275,7 +275,8 @@ async def test_a_batched_bulk_call_reads_its_configuration_once_and_peers_per_ba
 
 
 @pytest.mark.asyncio
-async def test_a_policy_the_batch_cannot_read_is_read_by_each_fact(monkeypatch) -> None:
+@pytest.mark.parametrize("read", ["batched", "per_fact"])
+async def test_a_policy_the_batch_cannot_read_is_read_by_each_fact(monkeypatch, read: str) -> None:
     """When the bulk call's one policy read fails, every fact's check reads the policy
     itself, so an append_only namespace still keeps every entry."""
     from server.memory.app import bulk_set
@@ -292,8 +293,11 @@ async def test_a_policy_the_batch_cannot_read_is_read_by_each_fact(monkeypatch) 
         return "append_only"
 
     monkeypatch.setattr(conflicts, "namespace_conflict_policy", read_policy)
+    monkeypatch.setattr(settings, "memory_bulk_peer_read", read)
     put, metas, pending, vectors = _bulk(2)
     out = await bulk_set._bulk_conflict_verdicts(put, [{}] * 2, metas, pending, vectors, floors={})
     assert [out[i].verdict for i in (0, 1)] == ["clear", "clear"]
     assert len(reads) == 3  # the batch's failed read, then one per fact
-    assert not [sql for sql, _ in ch.query_all_calls if "cosineDistance" in sql]
+    # The batched read still runs with the policy unknown; no fact reads its own peers.
+    peer_reads = [sql for sql, _ in ch.query_all_calls if "cosineDistance" in sql]
+    assert len(peer_reads) == (1 if read == "batched" else 0)

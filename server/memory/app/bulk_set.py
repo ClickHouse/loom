@@ -1537,8 +1537,7 @@ async def _bulk_conflict_verdicts(
         else await _batched_peers(input, entry_metas, pairs, floors)
     )
     jobs = [_one(idx, vec, prefetched.get(j)) for j, ((idx, _t, _x, _k), vec) in enumerate(pairs)]
-    if jobs:
-        await asyncio.gather(*jobs)
+    await asyncio.gather(*jobs)
     return out
 
 

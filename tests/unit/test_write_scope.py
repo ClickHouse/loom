@@ -299,6 +299,26 @@ def test_value_update_peers_are_the_writers_rows() -> None:
     assert all("m.user_id = {scope_uid:String}" in s for s, _ in ch.sql)
 
 
+def test_the_per_fact_value_update_read_stays_in_the_writers_scope() -> None:
+    from server.memory.app.value_updates import _peers_codes_first
+
+    ch = _SqlCH()
+    _run_as(
+        _pinned("U"),
+        lambda: _peers_codes_first(
+            ch,
+            org="o",
+            namespace="n",
+            memory_type="semantic",
+            memory_key="k",
+            embedding=[0.1],
+            min_cosine=0.5,
+        ),
+    )
+    assert len(ch.sql) == 1 and "JOIN" not in ch.sql[0][0]  # stage A, no candidate
+    assert _scoped_to_u(ch)
+
+
 def test_recall_echo_keys_are_the_callers_keys(monkeypatch) -> None:
     import server.core.ch as ch_mod
     from server.memory.app.pipeline import _existing_keys_named
