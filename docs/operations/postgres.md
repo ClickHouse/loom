@@ -111,8 +111,10 @@ wait for Postgres: a replica that cannot reach it still serves the planes that d
 use it, and answers memory ops and every knowledge op that reads a document's current
 row from its head or commits one with 503 `POSTGRES_UNAVAILABLE`; the knowledge ops that
 read or write ClickHouse alone, such as `knowledge.list`, search, `knowledge.query` and
-`knowledge.dedup_resolve`, keep serving. `knowledge.ingest` accepts its job, which waits
-and runs once Postgres answers; an outage that begins during a run counts that attempt.
+`knowledge.dedup_resolve`, keep serving. `knowledge.ingest`, `knowledge.ingest_status`
+and `knowledge.ingest_cancel` answer 503 too, as each reads or commits its job there
+(`loom.knowledge_jobs`); a run stopped by an outage counts that attempt and runs again
+once Postgres answers.
 `parked_deliveries` counts revisions committed in Postgres that ClickHouse refused
 `LOOM_PG_DELIVERY_MAX_ATTEMPTS` times. One whose `targets` holds none of 1, 2 and 4 has
 its memory row in ClickHouse (its search document too when it gets one), its audit row

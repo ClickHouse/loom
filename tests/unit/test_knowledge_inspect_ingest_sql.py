@@ -445,3 +445,29 @@ def test_a_failure_a_later_write_replaced_is_no_finding() -> None:
     # Nor one followed by a metadata edit, which keeps the row's ingested_at.
     meta = by["files/meta.md"]
     assert (int(meta["replaced"]), int(meta["has_document"])) == (0, 1)
+
+
+def test_the_job_reads_leave_out_a_row_past_the_tables_ttl() -> None:
+    """A job no run has saved for 30 days, which a merge has not dropped yet, is in no
+    count, as the queue offers it to no worker. clickhouse-local applies the TTL itself,
+    so the statements are checked for the window instead."""
+    from server.knowledge.store.ingestions import UNEXPIRED
+
+    sent: list[str] = []
+
+    class _Recording(_Local):
+        async def query_all(self, sql: str, params: Any = None, **kw: Any) -> Any:
+            sent.append(sql)
+            return await super().query_all(sql, params, **kw)
+
+        async def query_one(self, sql: str, params: Any = None, **kw: Any) -> Any:
+            sent.append(sql)
+            return await super().query_one(sql, params, **kw)
+
+    ch = _Recording()
+    _go(store.ingestion_health("o", "ns", lease_s=LEASE_S, ch=ch))
+    _go(store.source_jobs("o", "ns", ["repo://queued.sql"], lease_s=LEASE_S, ch=ch))
+    _go(store.sources_without_document("o", "ns", limit=20, lease_s=LEASE_S, ch=ch))
+    _go(store.format_unavailable_sources("o", "ns", lease_s=LEASE_S, ch=ch))
+    reads = [sql for sql in sent if "knowledge_ingestions FINAL" in sql]
+    assert len(reads) == 4 and all(UNEXPIRED in sql for sql in reads)

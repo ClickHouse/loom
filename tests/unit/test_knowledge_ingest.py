@@ -12,6 +12,7 @@ import asyncio
 import hashlib
 import json
 import time
+import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -35,7 +36,7 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeIngestStatusInput,
 )
 from server.knowledge.app import ingest, ingest_run
-from server.knowledge.store import ingestions
+from server.knowledge.store import ingestions, pg_jobs
 from server.knowledge.store.documents import DocumentRow
 
 SQL = b"-- raw events\nCREATE TABLE events (id UInt64) ENGINE = MergeTree ORDER BY id;\nSELECT 1;\n"
@@ -59,6 +60,9 @@ class World:
     retired: list[int] = field(default_factory=list)  # one chunk version each
     dead: set[int] = field(default_factory=set)  # every chunk version retired, however
     cancels: list[str] = field(default_factory=list)  # ingestion ids with a cancel
+    # loom.knowledge_jobs: each job's row, its run token and whether a cancel was asked.
+    held: dict[str, dict[str, Any]] = field(default_factory=dict)
+    lose_projection: bool = False  # a committed version's ClickHouse insert does not land
     fail_document: Exception | None = None
     late_documents: list[dict[str, Any]] = field(default_factory=list)  # timed out, land later
     claim_busy: bool = False  # another write holds the source's claim
@@ -263,6 +267,84 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
     async def cancel_requested(org: str, ns: str, ingestion_id: str, **_: Any) -> bool:
         return ingestion_id in w.cancels
 
+    async def pg_project(row: dict[str, Any]) -> None:
+        if not w.lose_projection:
+            w.jobs.append(row)
+
+    async def pg_insert(row: dict[str, Any]) -> None:
+        w.held[row["ingestion_id"]] = {"row": row, "token": 0, "cancel": False}
+        await pg_project(row)
+
+    async def pg_adopt(row: dict[str, Any]) -> None:
+        job = w.held.get(row["ingestion_id"])
+        if job is not None and job["row"]["version"] < row["version"]:
+            job["row"] = row
+
+    def earlier(job: dict[str, Any], rows: list[dict[str, Any]]) -> list[str]:
+        return [
+            r["ingestion_id"]
+            for r in rows
+            if r["source_uri"] == job["source_uri"]
+            and r["state"] in ("pending", "processing")
+            and (r["created_at"], r["ingestion_id"]) < (job["created_at"], job["ingestion_id"])
+        ]
+
+    async def older_open(job: dict[str, Any], *, limit: int, **_: Any) -> list[str]:
+        latest = [w.job(i) for i in {r["ingestion_id"] for r in w.jobs}]
+        return sorted(earlier(job, [r for r in latest if r is not None]))[:limit]
+
+    async def pg_earlier_open(job: dict[str, Any]) -> bool:
+        return bool(earlier(job, [j["row"] for j in w.held.values()]))
+
+    async def pg_held_ids(org: str, ns: str, ids: list[str]) -> set[str]:
+        return {i for i in ids if i in w.held}
+
+    async def pg_get(org: str, ns: str, ingestion_id: str) -> dict[str, Any] | None:
+        job = w.held.get(ingestion_id)
+        return None if job is None else job["row"]
+
+    async def pg_read(org: str, ns: str, ingestion_id: str, token: int) -> Any:
+        job = w.held.get(ingestion_id)
+        if job is None:
+            return "gone"
+        return job["row"] if job["token"] == token else "taken"
+
+    async def pg_take(org: str, ns: str, ingestion_id: str) -> Any:
+        job = w.held.get(ingestion_id)
+        if job is None:
+            return None
+        job["token"] += 1
+        return job["token"], job["row"]
+
+    async def pg_save(row: dict[str, Any], token: int) -> str:
+        job = w.held.get(row["ingestion_id"])
+        if job is None:
+            return "gone"
+        if job["token"] != token:
+            return "taken"
+        job["row"] = row
+        await pg_project(row)
+        return "saved"
+
+    async def pg_request_cancel(org: str, ns: str, ingestion_id: str) -> None:
+        if ingestion_id in w.held:
+            w.held[ingestion_id]["cancel"] = True
+
+    async def pg_cancel_requested(org: str, ns: str, ingestion_id: str) -> bool:
+        return bool(w.held.get(ingestion_id, {}).get("cancel"))
+
+    monkeypatch.setattr(pg_jobs, "project", pg_project)
+    monkeypatch.setattr(pg_jobs, "earlier_open", pg_earlier_open)
+    monkeypatch.setattr(pg_jobs, "held_ids", pg_held_ids)
+    monkeypatch.setattr(pg_jobs, "insert", pg_insert)
+    monkeypatch.setattr(pg_jobs, "adopt", pg_adopt)
+    monkeypatch.setattr(pg_jobs, "get", pg_get)
+    monkeypatch.setattr(pg_jobs, "read", pg_read)
+    monkeypatch.setattr(pg_jobs, "take", pg_take)
+    monkeypatch.setattr(pg_jobs, "save", pg_save)
+    monkeypatch.setattr(pg_jobs, "request_cancel", pg_request_cancel)
+    monkeypatch.setattr(pg_jobs, "cancel_requested", pg_cancel_requested)
+    monkeypatch.setattr(ingestions, "older_open", older_open)
     monkeypatch.setattr(ingestions, "insert_cancel", insert_cancel)
     monkeypatch.setattr(ingestions, "cancel_requested", cancel_requested)
     monkeypatch.setattr(ingestions, "insert_ingestion", insert_ingestion)
@@ -2100,3 +2182,345 @@ def test_a_text_postgres_cannot_store_fails_the_job_before_its_chunks(
     job = world.job(job_id)
     assert job is not None and job["error_code"] == "unstorable_text"
     assert world.chunks == [] and world.documents == []
+
+
+# ---- under the Postgres authority (loom.knowledge_jobs) ------------------------
+
+
+@pytest.fixture
+def on_pg(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.core import pg
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+
+
+def _status(job_id: str) -> Any:
+    return asyncio.run(
+        ingest.handle_knowledge_ingest_status(
+            KnowledgeIngestStatusInput(org="o", namespace="ns", ingestion_id=job_id)
+        )
+    )
+
+
+def test_under_postgres_a_job_is_committed_run_and_projected(world: World, on_pg: None) -> None:
+    job_id = _ingest(world, _upload(world))
+    assert world.held[job_id]["row"]["state"] == "pending"
+    assert _run(world, job_id) == "ready"
+    held = world.held[job_id]["row"]
+    assert held["state"] == "ready" and held["revision"] == 1
+    # Every saved version reached ClickHouse too, the last one included.
+    assert world.job(job_id) == held
+    assert _status(job_id).state == "ready"
+
+
+def test_under_postgres_a_run_another_took_the_job_from_saves_nothing_more(
+    world: World, on_pg: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job_id = _ingest(world, _upload(world))
+
+    async def taken_meanwhile(job: dict[str, Any]) -> Any:
+        world.held[job_id]["token"] += 1  # its lease lapsed and another run took the job
+        raise RuntimeError("the parse fails after that")
+
+    monkeypatch.setattr(ingest_run, "_parse", taken_meanwhile)
+    assert _run(world, job_id) is None
+    # Its first save landed; the failure's save, under the stale token, did not.
+    assert [r["state"] for r in world.jobs] == ["pending", "processing"]
+    assert world.held[job_id]["row"]["state"] == "processing"
+
+
+def test_under_postgres_a_run_that_lost_its_job_retires_nothing_of_the_run_that_has_it(
+    world: World, on_pg: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run whose lease lapsed fails transiently after the run that took the job has
+    recorded its chunk version: its retry reads the job under its stale token and stops,
+    so that version stays."""
+    job_id = _ingest(world, _upload(world))
+
+    async def taken_meanwhile(job: dict[str, Any], inputs: list[str]) -> Any:
+        taker = world.held[job_id]
+        taker["token"] += 1
+        taker["row"] = {**taker["row"], "doc_version": 777}  # the taker's chunk version
+        raise PostgresUnavailableError("connection refused")
+
+    monkeypatch.setattr(ingest_run, "_vectors", taken_meanwhile)
+    assert _run(world, job_id) is None
+    assert 777 not in world.retired
+    assert world.held[job_id]["row"]["doc_version"] == 777
+
+
+def test_under_postgres_a_lost_last_projection_is_repaired_and_blocks_nothing(
+    world: World, on_pg: None
+) -> None:
+    """The last save of a job has no next one to repair a projection that did not land:
+    the next offer of the job projects it again, and the source's later job runs."""
+    first = _ingest(world, _upload(world))
+    world.held[first]["row"]["created_at"] -= timedelta(seconds=1)
+    world.lose_projection = True
+    assert _run(world, first) == "ready"
+    world.lose_projection = False
+    stale = world.job(first)
+    assert stale is not None and stale["state"] == "pending"  # ClickHouse is behind
+    later = _ingest(world, _upload(world, data=b"SELECT 2;\n"))
+    assert _run(world, later) == "ready"  # Postgres decides: the earlier job ended
+    assert _run(world, first) is None  # offered again from ClickHouse: projected, not run
+    repaired = world.job(first)
+    assert repaired is not None and repaired["state"] == "ready"
+
+
+def test_under_postgres_an_open_job_clickhouse_is_behind_on_is_projected_and_run(
+    world: World, on_pg: None
+) -> None:
+    job_id = _ingest(world, _upload(world))
+    # A version committed whose projection did not land: ClickHouse is behind.
+    ahead = ingestions.ingestion_row(world.held[job_id]["row"], error_code="retrying")
+    world.held[job_id]["row"] = ahead
+    assert _run(world, job_id) == "ready"
+    assert ahead in world.jobs  # projected again before the run's own saves
+    assert world.held[job_id]["row"]["state"] == "ready"
+
+
+def test_under_postgres_a_job_waits_for_an_earlier_one_whose_projection_did_not_land(
+    world: World, on_pg: None
+) -> None:
+    first = _ingest(world, _upload(world))
+    world.held[first]["row"]["created_at"] -= timedelta(seconds=1)
+    world.jobs = [r for r in world.jobs if r["ingestion_id"] != first]  # never projected
+    later = _ingest(world, _upload(world, data=b"SELECT 2;\n"))
+    assert _run(world, later) is None
+    assert world.held[later]["row"]["state"] == "pending"
+
+
+def test_under_postgres_a_job_only_clickhouse_holds_waits_for_an_earlier_one_postgres_holds(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An earlier job N committed whose projection did not land, then a later one only
+    ClickHouse holds (an older build queued it): the later one waits."""
+    from server.core import pg
+
+    later = _ingest(world, _upload(world, data=b"SELECT 2;\n"))  # queued by the older build
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    world.lose_projection = True
+    first = _ingest(world, _upload(world))
+    world.held[first]["row"]["created_at"] -= timedelta(seconds=1)
+    world.lose_projection = False
+    assert later not in world.held
+    assert _run(world, later) is None
+    # Offered from Postgres's queue: ClickHouse does not hold it.
+    assert asyncio.run(ingest_run.take_and_run(world.held[first]["row"])) == "ready"
+    assert _run(world, later) == "ready"
+
+
+def test_under_postgres_an_open_version_the_older_build_saved_is_adopted_and_run(
+    world: World, on_pg: None
+) -> None:
+    job_id = _ingest(world, _upload(world))
+    # The older build ran it once and put it back to pending, in ClickHouse alone.
+    back = ingestions.ingestion_row(world.job(job_id), attempts=1, error_code="retrying")
+    world.jobs.append(back)
+    assert _run(world, job_id) == "ready"
+    held = world.held[job_id]
+    assert held["token"] == 1 and held["row"]["attempts"] == 2  # its attempt counted
+
+
+def test_under_postgres_a_job_only_clickhouse_holds_runs_there(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A job an older build queued, or one an erasure or the expiry deleted from
+    Postgres, runs in ClickHouse alone: Postgres never holds it again."""
+    from server.core import pg
+
+    job_id = _ingest(world, _upload(world))  # queued by a build without the table
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    assert _status(job_id).state == "pending"  # read from ClickHouse
+    assert _run(world, job_id) == "ready"
+    assert job_id not in world.held
+    assert _status(job_id).state == "ready"
+
+
+def test_under_postgres_a_job_waits_for_an_earlier_one_only_clickhouse_holds(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core import pg
+
+    earlier = _ingest(world, _upload(world))  # queued by a build without the table
+    queued = world.job(earlier)
+    assert queued is not None
+    queued["created_at"] -= timedelta(seconds=1)
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    later = _ingest(world, _upload(world, data=b"SELECT 2;\n"))
+    assert _run(world, later) is None  # the source's earlier ingest runs first
+    assert world.held[later]["row"]["state"] == "pending"
+    assert _run(world, earlier) == "ready"
+    assert _run(world, later) == "ready"
+
+
+def test_under_postgres_an_older_build_s_newer_version_is_read_and_not_run_again(
+    world: World, on_pg: None
+) -> None:
+    job_id = _ingest(world, _upload(world))
+    # The older build ran the job to its end in ClickHouse alone.
+    ended = ingestions.ingestion_row(world.job(job_id), state="failed", error_code="no_text")
+    world.jobs.append(ended)
+    assert _status(job_id).state == "failed"
+    assert _run(world, job_id) is None
+    assert world.held[job_id]["row"]["state"] == "failed" and world.documents == []
+
+
+def test_under_postgres_a_cancel_marks_the_job_and_the_older_build_s_table(
+    world: World, on_pg: None
+) -> None:
+    job_id = _ingest(world, _upload(world))
+    out = asyncio.run(
+        ingest.handle_knowledge_ingest_cancel(
+            KnowledgeIngestCancelInput(org="o", namespace="ns", ingestion_id=job_id)
+        )
+    )
+    assert out.cancelled and world.held[job_id]["cancel"] and job_id in world.cancels
+    assert _run(world, job_id) == "cancelled"
+
+
+def test_under_postgres_a_cancel_the_older_build_wrote_stops_the_run(
+    world: World, on_pg: None
+) -> None:
+    job_id = _ingest(world, _upload(world))
+    world.cancels.append(job_id)  # in loom.knowledge_ingest_cancels alone
+    assert _run(world, job_id) == "cancelled"
+
+
+def test_under_postgres_the_two_queues_interleave_and_lead_in_turn(
+    monkeypatch: pytest.MonkeyPatch, on_pg: None
+) -> None:
+    import itertools
+
+    from server.knowledge.app import ingest_jobs
+
+    def job(i: str) -> dict[str, Any]:
+        return {"org": "o", "namespace": "ns", "ingestion_id": i}
+
+    async def held(limit: int, **_: Any) -> list[dict[str, Any]]:
+        return [job("a"), job("b")]
+
+    async def projected(limit: int, **_: Any) -> list[dict[str, Any]]:
+        return [job("b"), job("c")]
+
+    monkeypatch.setattr(pg_jobs, "due", held)
+    monkeypatch.setattr(ingestions, "due", projected)
+    monkeypatch.setattr(ingest_jobs, "_passes", itertools.count())
+
+    def ids() -> list[str]:
+        return [j["ingestion_id"] for j in asyncio.run(ingest_jobs.due(8, stale_after_s=1))]
+
+    # ClickHouse's "b" is Postgres's too: offered once.
+    assert ids() == ["a", "c", "b"]
+    assert ids() == ["c", "a", "b"]  # the next pass leads with ClickHouse's
+
+
+def test_a_job_row_round_trips_through_postgres_json() -> None:
+    from server.knowledge.store.pg_jobs import _decode, _encode
+
+    row = ingestions.ingestion_row(
+        org="o",
+        namespace="ns",
+        ingestion_id="i",
+        source_uri="repo://a.sql",
+        upload_id="u",
+        sha256="s",
+        title="a\x00title",  # text Postgres cannot store goes in base64
+        tags=["t\x00"],
+        state="pending",
+    )
+    back = _decode(json.loads(json.dumps(_encode(row))))
+    assert back == row
+    # To the millisecond, as ClickHouse's DateTime64(3) keeps them, so the two compare equal.
+    assert all(row[c].microsecond % 1000 == 0 for c in ingestions.TIME_COLUMNS)
+    assert isinstance(back["created_at"], datetime) and back["created_at"].tzinfo is None
+
+
+def test_postgres_holds_no_earlier_job_of_a_source_it_cannot_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A job an older build queued with a NUL in its source URI: Postgres holds no job
+    of that source, and the statement Postgres would refuse is not sent."""
+    from server.core import pg
+
+    async def refused(*a: Any) -> Any:
+        raise AssertionError("not sent")
+
+    monkeypatch.setattr(pg, "fetchval", refused)
+    job = {"org": "o", "namespace": "ns", "source_uri": "repo://a\x00.sql"}
+    assert asyncio.run(pg_jobs.earlier_open(job)) is False
+
+
+def test_a_projection_that_fails_leaves_the_committed_job_and_warns(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The commit stands: `insert` returns and `save` answers `saved`; the next save
+    or take repairs the projection."""
+
+    async def committed(sql: str, *args: Any) -> Any:
+        return {"saved": 1}
+
+    async def refused(row: dict[str, Any], **_: Any) -> None:
+        raise BackendUnavailableError("ClickHouse is down", operation="insert")
+
+    monkeypatch.setattr(pg_jobs, "_write", committed)
+    monkeypatch.setattr(ingestions, "insert_ingestion", refused)
+    row = ingestions.ingestion_row(
+        org="o",
+        namespace="ns",
+        ingestion_id="i",
+        source_uri="repo://a.sql",
+        upload_id="u",
+        sha256="s",
+        state="pending",
+    )
+    with caplog.at_level("WARNING", logger="server.knowledge.store.pg_jobs"):
+        asyncio.run(pg_jobs.insert(row))
+        assert asyncio.run(pg_jobs.save(row, 1)) == "saved"
+    assert sum("not projected" in r.getMessage() for r in caplog.records) == 2
+
+
+def test_under_postgres_a_full_page_of_earlier_clickhouse_jobs_is_waited_for(
+    world: World, on_pg: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ClickHouse's earlier open jobs of a source are read a page at a time: a full
+    page, every one of them held in Postgres, is taken as one to wait for."""
+    from server.knowledge.app import ingest_jobs
+
+    monkeypatch.setattr(ingest_jobs, "_EARLIER_PAGE", 2)
+    old = _now() - timedelta(minutes=5)
+    for _ in range(2):  # projections behind jobs Postgres has ended
+        stale = ingestions.ingestion_row(
+            org="o",
+            namespace="ns",
+            ingestion_id=str(uuid.uuid4()),
+            source_uri="repo://retention.sql",
+            upload_id="u",
+            sha256="s",
+            state="pending",
+            created_at=old,
+        )
+        world.jobs.append(stale)
+        world.held[stale["ingestion_id"]] = {
+            "row": {**stale, "state": "ready"},
+            "token": 0,
+            "cancel": False,
+        }
+    later = _ingest(world, _upload(world))
+    assert _run(world, later) is None
+    monkeypatch.setattr(ingest_jobs, "_EARLIER_PAGE", 3)  # a page that is not full
+    assert _run(world, later) == "ready"
+
+
+def test_under_postgres_an_expired_job_is_not_projected_back_or_run(
+    world: World, on_pg: None
+) -> None:
+    """A job no run has saved for 30 days is expired, though the expiry pass has not yet
+    deleted it and ClickHouse's TTL already dropped its rows: a take leaves it alone."""
+    job_id = _ingest(world, _upload(world))
+    held = world.held[job_id]["row"]
+    held["updated_at"] = _now() - timedelta(days=31)
+    world.jobs = [r for r in world.jobs if r["ingestion_id"] != job_id]  # the TTL dropped it
+    assert asyncio.run(ingest_run.take_and_run(held)) is None
+    assert world.jobs == [] and world.held[job_id]["row"]["state"] == "pending"

@@ -148,6 +148,15 @@ checkout.
     left is published again by the delivery worker
     ([rolling upgrades](../architecture/rolling-upgrades.md), rule 38). Do it before
     retrying a parked delivery.
+12. A deployment of the Postgres authority that moves to a build keeping knowledge
+    ingestion jobs in Postgres (`005_knowledge_jobs.sql`), a roll forward after a
+    rollback included: once the newer build serves alone, run again every erasure that
+    completed while a replica of an older build served since the newer build first
+    served. An older build's erasure removes no job from `loom.knowledge_jobs`, and the
+    newer build's worker projects such a job back into `loom.knowledge_ingestions` and
+    runs it until the erasure runs again
+    ([rolling upgrades](../architecture/rolling-upgrades.md), rule 40). Step 11's runs
+    cover both; one run per erasure is enough.
 
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in

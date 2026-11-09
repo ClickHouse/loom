@@ -20,7 +20,7 @@ from typing import Any, NamedTuple
 from server.core import pg, pg_lease
 from server.core.datetimes import to_naive_utc_second
 from server.core.errors import NotFoundError, PreconditionFailedError, ValidationError
-from server.knowledge.domain.owed_originals import NEEDS_ORIGINAL, OWED_SHAS
+from server.knowledge.domain.owed_originals import NEEDS_ORIGINAL, OPEN_JOB, OWED_SHAS
 from server.knowledge.domain.serving import Serving
 from server.settings import settings
 
@@ -91,32 +91,36 @@ def encode_row(row: Mapping[str, Any]) -> dict[str, Any]:
     for col, val in row.items():
         # Whole seconds, as ClickHouse's DateTime keeps them: the head serves what a read
         # of the published row would.
-        out[col] = to_naive_utc_second(val).isoformat() if isinstance(val, datetime) else _keep(val)
+        out[col] = (
+            to_naive_utc_second(val).isoformat() if isinstance(val, datetime) else keep_text(val)
+        )
     return out
 
 
 def decode_row(stored: Mapping[str, Any]) -> dict[str, Any]:
     """The insertable loom.documents row back from its JSON."""
-    out = {col: _restore(val) for col, val in stored.items()}
+    out = {col: restore_text(val) for col, val in stored.items()}
     for col in _DATETIME_COLS:
         if isinstance(out.get(col), str):
             out[col] = datetime.fromisoformat(out[col])
     return out
 
 
-def _keep(val: Any) -> Any:
+def keep_text(val: Any) -> Any:
+    """`val` as JSON Postgres can store: text it cannot goes in base64 (`_ENCODED`)."""
     if isinstance(val, str) and pg.unstorable(val):
         return {_ENCODED: base64.b64encode(val.encode("utf-8", "surrogatepass")).decode()}
     if isinstance(val, list):
-        return [_keep(v) for v in val]
+        return [keep_text(v) for v in val]
     return val
 
 
-def _restore(val: Any) -> Any:
+def restore_text(val: Any) -> Any:
+    """`keep_text`'s value back."""
     if isinstance(val, dict) and set(val) == {_ENCODED}:
         return base64.b64decode(val[_ENCODED]).decode("utf-8", "surrogatepass")
     if isinstance(val, list):
-        return [_restore(v) for v in val]
+        return [restore_text(v) for v in val]
     return val
 
 
@@ -455,13 +459,16 @@ async def release(deliveries: Sequence[Delivery]) -> None:
 async def owed_originals(org: str, namespace: str) -> set[str]:
     """The originals and extraction artifacts the live documents of the namespace's
     unpublished commits name (owed or parked deliveries; a tombstone or an erased
-    original needs none): their loom.documents rows have not landed, so the originals
-    sweep, which reads ClickHouse, does not see them named."""
+    original needs none), and the originals its open ingestion jobs read: their
+    ClickHouse rows may not have landed, so the originals sweep, which reads ClickHouse,
+    may not see them named."""
     if pg.unstorable([org, namespace]):
-        return set()  # no delivery holds what Postgres cannot store
+        return set()  # no delivery or job holds what Postgres cannot store
     rows = await pg.fetch(
-        f"SELECT DISTINCT sha FROM loom.knowledge_deliveries, {OWED_SHAS} AS sha "
-        f"WHERE org = $1 AND namespace = $2 AND {NEEDS_ORIGINAL}",
+        f"SELECT sha FROM loom.knowledge_deliveries, {OWED_SHAS} AS sha "
+        f"WHERE org = $1 AND namespace = $2 AND {NEEDS_ORIGINAL} "
+        "UNION SELECT row->>'sha256' FROM loom.knowledge_jobs "
+        f"WHERE org = $1 AND namespace = $2 AND {OPEN_JOB}",
         org,
         namespace,
     )

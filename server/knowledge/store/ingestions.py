@@ -94,6 +94,10 @@ _DEFAULTS: dict[str, Any] = {
 }
 
 
+# The job times, kept to the millisecond.
+TIME_COLUMNS = ("next_attempt_at", "created_at", "updated_at")
+
+
 def _now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
@@ -116,6 +120,11 @@ def ingestion_row(existing: dict[str, Any] | None = None, /, **fields: Any) -> d
     missing = [c for c in INGESTION_COLUMNS if c not in row]
     if missing:
         raise ValueError(f"ingestion_row: missing {missing}")
+    # To the millisecond, as the DateTime64(3) columns keep them: a job read from
+    # Postgres (`pg_jobs`) compares equal to its ClickHouse projection.
+    for column in TIME_COLUMNS:
+        at = row[column]
+        row[column] = at.replace(microsecond=at.microsecond // 1000 * 1000)
     return {c: row[c] for c in INGESTION_COLUMNS}
 
 
@@ -223,6 +232,12 @@ _SELECT = (
 )
 
 
+# Rows the table's TTL has expired, which it drops only at a later merge: the queue never
+# offers or waits on them, and `knowledge.inspect` leaves them out (`pg_jobs.TTL` is the
+# same window).
+UNEXPIRED = "updated_at >= now64(3) - INTERVAL 30 DAY"
+
+
 def _job(row: dict[str, Any]) -> dict[str, Any]:
     return {**row, "ingestion_id": str(row["ingestion_id"]), "state": str(row["state"])}
 
@@ -259,8 +274,8 @@ async def due(
     ch = ch or _default_client()
     rows = await ch.query_all(
         "SELECT c.* FROM (SELECT h.* FROM ("
-        f"{_SELECT} WHERE state IN ('pending', 'processing')"
-        " ORDER BY created_at, ingestion_id LIMIT 1 BY org, namespace, source_uri) AS h"
+        f"{_SELECT} WHERE state IN ('pending', 'processing') AND {UNEXPIRED}"
+        " ORDER BY created_at, toString(ingestion_id) LIMIT 1 BY org, namespace, source_uri) AS h"
         " WHERE (h.state = 'pending' AND h.next_attempt_at <= now64(3))"
         " OR (h.state = 'processing'"
         " AND h.updated_at <= now64(3) - toIntervalMillisecond({stale:UInt64}))"
@@ -276,6 +291,29 @@ async def due(
         params={"stale": int(stale_after_s * 1000), "lim": int(limit)},
     )
     return [_job(r) for r in rows]
+
+
+async def older_open(job: dict[str, Any], *, limit: int, ch: _CHClient | None = None) -> list[str]:
+    """The ids of the `limit` oldest open jobs of `job`'s source created before it: the
+    queue runs a source's jobs one at a time, oldest first. Ties of one millisecond go
+    by the id's text, as `due` and `pg_jobs`' queue order them."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        f"SELECT toString(ingestion_id) AS id FROM {INGESTIONS} FINAL WHERE org = {{org:String}}"
+        " AND namespace = {ns:String} AND source_uri = {uri:String}"
+        f" AND state IN ('pending', 'processing') AND {UNEXPIRED}"
+        " AND (created_at, toString(ingestion_id)) < ({at:DateTime64(3)}, {id:String})"
+        " ORDER BY created_at, toString(ingestion_id) LIMIT {lim:UInt32}",
+        params={
+            "org": job["org"],
+            "ns": job["namespace"],
+            "uri": job["source_uri"],
+            "at": job["created_at"],
+            "id": job["ingestion_id"],
+            "lim": int(limit),
+        },
+    )
+    return [str(r["id"]) for r in rows]
 
 
 # The originals the namespace's unexpired uploads and open ingestions need.

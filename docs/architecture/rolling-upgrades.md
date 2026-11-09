@@ -492,6 +492,33 @@ schema. These rules keep that safe. The operator procedure is in
     `knowledge.add` and `bulk_add` again keep the earlier version's chunks, which N does
     not serve and retires at the source's next N write that inserts chunks. No gate
     holds the rollout, and the mixed-version gate does not check this rule.
+40. **Knowledge ingestion jobs** (`loom.knowledge_jobs`, Postgres migration
+    `005_knowledge_jobs.sql`): under the Postgres authority N keeps each job in Postgres
+    and projects each committed version into `loom.knowledge_ingestions`, best effort,
+    so N-1 may read a job a version behind until N's next save, or until N's worker next
+    takes it, and may run again a job N ended whose last projection did not land (a
+    published one N-1 finds published); N-1's originals sweep and user erasure read open
+    jobs from ClickHouse alone, so while N-1 runs them they may delete the original of
+    an N job whose projection has not landed and whose upload has expired, and that job
+    then fails `original_gone`; N-1 keeps its jobs in ClickHouse alone. N's status and
+    cancel read the newer version of the two stores, and its worker's queue interleaves
+    its own due jobs with ClickHouse's, the two leading in turn from one pass to the
+    next. A job N-1 queued runs in ClickHouse alone, as N-1 runs it; a run of one
+    Postgres holds first takes the version N-1 saved when it is the newer, and waits
+    while an earlier open job of its source is held in Postgres or only in ClickHouse,
+    so a source's jobs still run one at a time, oldest first. N thus runs, reports and
+    cancels the jobs N-1 queued or ran. A cancel N accepts is also written to
+    `loom.knowledge_ingest_cancels`, which N-1 reads, and N reads the cancels N-1 writes
+    there. The deployment-wide job lease alone keeps a run of each build from
+    overlapping the other's: N-1 does not raise a job's `lease_token`, so the token does
+    not fence an N run whose lease lapsed against an N-1 taker. N-1's erasure has no
+    step for `loom.knowledge_jobs` and leaves the scope's jobs there, and N's worker
+    projects an open one back into `loom.knowledge_ingestions` and runs it; once N-1
+    stops serving, run such an erasure again with N, as for rule 38 ([upgrade
+    procedure](../operations/upgrades.md#upgrade-procedure), step 12). N breaks a tie
+    between two jobs of a source created in one millisecond by the id's text, N-1 by its
+    UUID, so the two builds may each run one of such a pair at once. No gate holds the
+    rollout, and the mixed-version gate does not check this rule.
 
 ## What checks them
 

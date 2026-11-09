@@ -25,6 +25,7 @@ locks; ClickHouse keeps doing what it is good at, scanning vectors and text.
 | Idempotency keys and replay answers                              | Postgres `loom.idempotency`                                                           |
 | Scope generations (admission)                                    | Postgres `loom.scope_generations`                                                     |
 | Knowledge document heads, their delivery jobs, deletion evidence | Postgres `loom.knowledge_heads`, `loom.knowledge_deliveries`, `loom.erased_documents` |
+| Knowledge ingestion jobs                                         | Postgres `loom.knowledge_jobs`                                                        |
 | Vectors, lexical and vector search, the searchable memory rows   | ClickHouse `loom.memory_embeddings`, `loom.memory`                                    |
 | Revision history, the audit trail, usage                         | ClickHouse `loom.memory_versions`, `loom.audit_log`, usage tables                     |
 
@@ -83,6 +84,7 @@ and every tenant index leads with `org`.
 | `loom.knowledge_heads`      | `(org, namespace, source_uri)`                             | the head of each knowledge source: the complete `loom.documents` row ([knowledge documents](#knowledge-documents)), and the revision and version of the chunks it serves ([knowledge search](#knowledge-search))      |
 | `loom.knowledge_deliveries` | `(org, namespace, source_uri, version)`                    | what a document commit still owes ClickHouse (bits: 1 the document row, always set, 2 the older chunks' retirement; published whole), its row, lease and token                                                        |
 | `loom.erased_documents`     | `(org, namespace, doc_id)`                                 | deletion evidence: the `doc_id` of every version of each document an erasure removed, ClickHouse's included, refused at a commit; no content, kept `LOOM_PG_ERASURE_EVIDENCE_HOURS`                                   |
+| `loom.knowledge_jobs`       | `(org, namespace, ingestion_id)`                           | each ingestion job: its complete `loom.knowledge_ingestions` row, the queue's columns, the token that fences its run's reads and saves, and when a cancel was asked for ([ingestion jobs](#ingestion-jobs))           |
 
 A head is the row `loom.memory FINAL` would serve: a commit replaces it only when its
 version is not older, as `ReplacingMergeTree(version)` decides. Holding the whole row
@@ -140,12 +142,13 @@ folded from the memory matches on `row`, which the partial index
 
 Every commit sets a revision's payload; nothing clears it.
 
-Eight maintenance indexes do not lead with `org`: `memory_deliveries (lease_until)` and
+Nine maintenance indexes do not lead with `org`: `memory_deliveries (lease_until)` and
 `knowledge_deliveries (lease_until)` `WHERE NOT settled` (the delivery workers' queues
 across tenants), the same two `WHERE settled`, `audit_outbox (due_at)`,
-`idempotency (expires_at)`, `erased_memories (erased_at)` and
-`erased_documents (erased_at)` (the sweeps). All eight are local to a Postgres database;
-a tenant's rows are still found by their primary keys.
+`idempotency (expires_at)`, `erased_memories (erased_at)`,
+`erased_documents (erased_at)` and `knowledge_jobs (updated_at)` (the sweeps). All nine
+are local to a Postgres database, and a tenant's rows are still found by their primary
+keys.
 
 ### Rejected layouts
 
@@ -1029,17 +1032,18 @@ of its own in one transaction:
    write in the locked namespaces, any user's, waits `LOOM_PG_COMMIT_LOCK_TIMEOUT_MS`
    and answers 503, so a scope with a long ClickHouse history holds them for its whole
    evidence read.
-2. It locks the scope's heads in a commit's key order, deletes the deliveries and the
-   heads, and keeps the `doc_id` of every version of the scope's documents, those
-   ClickHouse holds included, in `loom.erased_documents` for
-   `LOOM_PG_ERASURE_EVIDENCE_HOURS`. A row built from a read of a document keeps its
-   `doc_id` (a delete's tombstone, a metadata edit), and a write that carries a live
-   document's original or author names it (`built_from`), so a commit built from a
-   removed one is refused (`DocumentErased`, 404), read after the heads' locks the
-   erasure holds. A write built from a version a later write replaced before the
-   erasure keeps that version's id and is refused too; one that reads after the
-   erasure carries none (a new version takes a fresh id, and a deleted document lends
-   none) and commits. A version a merge folded away before the erasure leaves no id.
+2. It locks the scope's heads in a commit's key order, deletes the deliveries, the heads
+   and the ingestion jobs ([ingestion jobs](#ingestion-jobs)), and keeps the `doc_id` of
+   every version of the scope's documents, those ClickHouse holds included, in
+   `loom.erased_documents` for `LOOM_PG_ERASURE_EVIDENCE_HOURS`. A row built from a read
+   of a document keeps its `doc_id` (a delete's tombstone, a metadata edit), and a write
+   that carries a live document's original or author names it (`built_from`), so a
+   commit built from a removed one is refused (`DocumentErased`, 404), read after the
+   heads' locks the erasure holds. A write built from a version a later write replaced
+   before the erasure keeps that version's id and is refused too; one that reads after
+   the erasure carries none (a new version takes a fresh id, and a deleted document
+   lends none) and commits. A version a merge folded away before the erasure leaves no
+   id.
 3. It waits out the leases of the deliveries it removed, and of an earlier run's
    (`quiet_at`). A parked delivery has no lease of its own: the wait covers the send
    that parked it, from its `fenced_until`. A delivery the worker took over
@@ -1083,6 +1087,51 @@ fails closed, 503 `POSTGRES_UNAVAILABLE`, rather than serve what it cannot check
 `memory.stack` then leaves its knowledge section out. What counts chunks without serving
 them reads every chunk ClickHouse reads as live: `knowledge.inspect`, `knowledge.list`'s
 `chunk_count`, `knowledge.dedup_list` and an upsert's `duplicate_chunk_count`.
+
+## Ingestion jobs
+
+`loom.knowledge_jobs` holds each `knowledge.ingest` job under this authority, keyed by
+`(org, namespace, ingestion_id)`: its complete `loom.knowledge_ingestions` row, revised
+in place, and beside it the columns the queue reads
+(`schemas/pg_migrations/005_knowledge_jobs.sql`, `server/knowledge/store/pg_jobs.py`).
+`knowledge.ingest` commits the job, `knowledge.ingest_status` and
+`knowledge.ingest_cancel` read it, and the ingest worker's queue reads the table with
+the rules `ingestions.due` describes.
+
+- **Projection.** Once a version commits it is also inserted into
+  `loom.knowledge_ingestions`, which reports and `knowledge.inspect` read. The insert is
+  best effort: every version carries the whole row, so the next save repairs a version
+  that did not land, and a run that finds ClickHouse behind a job's last version (an
+  ended job has no next save) projects it again. The originals sweep and a user
+  erasure's shared-originals check also read the open jobs' originals from Postgres
+  (`owed_originals`), so a job whose projection has not landed keeps its original.
+- **Fencing.** A run takes its job under the deployment-wide lease on its id, as under
+  ClickHouse, and the take raises the job's `lease_token`. Each read of the job the run
+  acts on, and each save, names that token: one that finds another token stops the run
+  (`LeaseLost`), and one that finds no row stops it as erased (`JobGone`). A run whose
+  lease lapsed while it ran therefore saves nothing more and retires no chunk version of
+  a later taker of this build; between those reads, its chunk and document inserts are
+  guarded by the lease (`lease.held`), as under ClickHouse. A build that predates the
+  table takes the job under the lease alone.
+- **Cancel.** A cancel sets `cancel_requested_at` on the job, and is also written to
+  `loom.knowledge_ingest_cancels` with who asked; a run reads both.
+- **Erasure.** `pg_knowledge.delete` deletes the scope's jobs with its heads and
+  deliveries; a run's next read or save finds no row and stops. Until
+  `documents.tombstone` deletes the ingestion rows, a run finds the job in ClickHouse
+  alone and runs it there, as under the ClickHouse authority; Postgres never holds a job
+  again once it is deleted. A projection that lands after `documents.tombstone` (an
+  insert that timed out and landed late) is found by the residue census, and the saga
+  runs again.
+- **Expiry.** The knowledge delivery pass deletes a job no run has saved for 30 days,
+  as `loom.knowledge_ingestions`' TTL drops it, whether or not the ingest worker runs.
+  Until the pass reaches it, no read of either store offers or waits on such a job
+  (ClickHouse's TTL drops its rows only at a later merge), and a take leaves it alone
+  rather than projecting it back.
+
+A build that predates the table keeps its jobs in ClickHouse alone, so a read takes the
+newer version of the two stores, a run of a job Postgres holds first takes ClickHouse's
+version when it is the newer, and a job only ClickHouse holds runs there
+([rolling upgrades](rolling-upgrades.md#the-rules), rule 40).
 
 ## Failure
 
