@@ -11,6 +11,7 @@ from typing import Any, NamedTuple
 
 from server.code.domain.anchor import Definition, bare_name, local_name
 from server.code.domain.declaration import fingerprint_version
+from server.code.domain.extract import bounded_parse
 from server.identity.domain.read_scope import ReadFilters
 from server.memory.domain.code_change import worst
 from server.memory.domain.decision_schema import CONSTRAINT_TAG
@@ -207,9 +208,14 @@ async def _definitions_at(
     if not await code.mirror_here(org, code_namespace, head):
         return None
     named = bare_name(qualified_name)
-    parse = asyncio.gather(
-        *(code.parsed(org, code_namespace, head, p, named=named) for p in dict.fromkeys(paths))
-    )
+    # a parse waiting behind another one gives up with this read (its threads copy this)
+    waits = bounded_parse.LOCK_WAIT.set(settings.memory_code_plane_parse_timeout_s)
+    try:
+        parse = asyncio.gather(
+            *(code.parsed(org, code_namespace, head, p, named=named) for p in dict.fromkeys(paths))
+        )
+    finally:
+        bounded_parse.LOCK_WAIT.reset(waits)
     try:
         files = await asyncio.wait_for(parse, settings.memory_code_plane_parse_timeout_s)
     except (gitrepo.GitError, code.ParseFailed, TimeoutError):

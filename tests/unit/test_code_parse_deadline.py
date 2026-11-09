@@ -657,3 +657,21 @@ def test_a_long_stretch_between_two_reads_is_refused() -> None:
 
     assert parse_child._parse(Burns(0.2), b"x" * 10, 1.0) == parse_child.STOPPED
     assert parse_child._parse(Burns(0.01), b"x" * 10, 1.0) == parse_child.DONE
+
+
+def test_a_parse_whose_caller_gives_up_does_not_wait_past_it() -> None:
+    import tree_sitter
+    import tree_sitter_go
+
+    from server.code.domain.extract import bounded_parse
+
+    parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_go.language()))
+    waits = bounded_parse.LOCK_WAIT.set(0.05)
+    try:
+        with bounded_parse._LOCK:  # another parse holds the process's turn
+            start = time.monotonic()
+            with pytest.raises(bounded_parse.ParseTimeout, match="waiting"):
+                bounded_parse.parse(parser, b"package x\n")
+            assert time.monotonic() - start < 2
+    finally:
+        bounded_parse.LOCK_WAIT.reset(waits)

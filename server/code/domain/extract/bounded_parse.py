@@ -41,6 +41,7 @@ import subprocess
 import sys
 import threading
 import time
+from contextvars import ContextVar
 from pathlib import Path
 from typing import IO, Any, NamedTuple, NoReturn, cast
 
@@ -69,6 +70,9 @@ _LOADERS = (
 # keeps a parser to one thread (the read callback runs Python, where another thread can
 # take the GIL; a tree-sitter parser is not safe to enter twice, and most are shared).
 _LOCK = threading.Lock()
+# How long a parse may wait for that lock (seconds; None: as long as it takes). A caller
+# that gives up sooner sets it, so its thread does not parse after it went away.
+LOCK_WAIT: ContextVar[float | None] = ContextVar("bounded_parse_lock_wait", default=None)
 
 _idle: subprocess.Popen[bytes] | None = None  # the child waiting for its next parse (`_LOCK`)
 _SILENT = b"?"  # no answer within the wall bound
@@ -223,13 +227,18 @@ def parse(parser: Any, source: bytes) -> Any:
             return b""
         return source[offset : offset + _CHUNK]
 
-    with _LOCK:
+    wait = LOCK_WAIT.get()
+    if not _LOCK.acquire(timeout=-1 if wait is None else wait):
+        raise ParseTimeout(f"another parse in this process ran past {wait:g} s of waiting")
+    try:
         _check_in_child(_grammar(parser.language), source, budget, memory)
         deadline = time.thread_time() + 2 * budget
         try:
             tree = parser.parse(read)
         finally:
             deadline = 0.0
+    finally:
+        _LOCK.release()
     if expired:
         raise ParseTimeout(f"parse stopped after {2 * budget:g} CPU seconds in the server")
     return tree
