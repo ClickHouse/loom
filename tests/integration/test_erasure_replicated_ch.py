@@ -36,8 +36,7 @@ _TABLES = (
     "shared",
 )
 # loom.entity_vectors is left out: this fixture's copy of its quantized codec column is
-# refused (code 36). Its summary statement binds the chunk one's tuple predicate, as a
-# lightweight DELETE.
+# refused (code 36). Its summary statement binds a tuple array and holds no subquery.
 _VECTOR = "arrayWithConstant(3072, 0.)"
 _SUMMARY = "00000000-0000-4000-8000-0000000000c1"
 
