@@ -39,7 +39,7 @@ def _peer_candidates_sql(in_scope: str = "") -> str:
 # Stage B: the candidates' rows, by sort key, with the row filters.
 _PEER_ROWS_SQL = """
         SELECT memory_id, memory_key, value, pinned,
-               agent, user_id, session_id, run_id, valid_at, created_at
+               agent, user_id, session_id, run_id, valid_at
         FROM loom.memory FINAL
         PREWHERE org = {org:String}
           AND namespace = {ns:String}

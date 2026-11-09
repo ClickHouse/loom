@@ -683,15 +683,16 @@ async def _commit_batch(
 
 async def _reach_of(state: _BulkWriteState) -> list[tuple[str, str, list[float], float]]:
     """Each embedded entry's (type, key, vector, how far its conflict check reaches),
-    the reach the verdict phase resolved for its type when it did."""
+    the reach resolved once per type."""
     from server.memory.app.conflicts import resolve_conflict_floor
 
+    reach: dict[str, float] = {}
     out = []
     for r in state.embedding_rows:
         mt = str(r["memory_type"])
-        if mt not in state.floors:
-            state.floors[mt] = await resolve_conflict_floor(str(r["org"]), str(r["namespace"]), mt)
-        out.append((mt, str(r["memory_key"]), list(r["embedding"]), state.floors[mt][1]))
+        if mt not in reach:
+            reach[mt] = (await resolve_conflict_floor(str(r["org"]), str(r["namespace"]), mt))[1]
+        out.append((mt, str(r["memory_key"]), list(r["embedding"]), reach[mt]))
     return out
 
 
@@ -1461,7 +1462,7 @@ async def _bulk_conflict_verdicts(
             except Exception as e:  # noqa: BLE001 — the fact writes unchecked
                 log.warning("bulk_set: conflict check failed for %r: %s", entry.memory_key, e)
 
-    # Each fact reads its own peers (`conflicts._peer_rows`, codes-first): one statement
+    # Each fact reads its own peers (`conflicts.nearest_peer_rows`, codes-first): one statement
     # over the namespace's full vectors for many facts reads every vector at full width.
     pairs = list(zip(pending, value_vectors, strict=False))[:cap]
     jobs = [_one(idx, vec) for (idx, _t, _x, _k), vec in pairs]

@@ -180,20 +180,16 @@ async def resolve_conflict_floor(org: str, namespace: str, memory_type: str) -> 
     return threshold, _peer_query_distance(threshold)
 
 
-async def _policy_before_gate(
-    resolved_policy: str | None, candidate_rows: Any, org: str, namespace: str
-) -> str | None:
+async def _policy_before_gate(resolved_policy: str | None, org: str, namespace: str) -> str | None:
     """The namespace policy the gate consults before its peer
     statement. Under `append_only` the namespace's writes are events, not
     claims — a run's report is not a restatement of last run's because it
     shares the template — so every write is its own row: no merge, duplicate
     or conflict verdict against a peer (a same-key rewrite stays
     last-writer-wins by version) and the peer statement is never issued.
-    The prefetched policy when the caller had it; else one point read on the
-    per-fact path (a bulk caller that prefetched its candidate rows passes
-    the policy with them and pays no read here); an unreadable policy keeps
-    the cosine path (None)."""
-    if resolved_policy is not None or candidate_rows is not None:
+    The prefetched policy when the caller had it, else one point read; an
+    unreadable policy keeps the cosine path (None)."""
+    if resolved_policy is not None:
         return resolved_policy
     try:
         return await namespace_conflict_policy(org, namespace, ch=get_client())
@@ -208,7 +204,7 @@ _PEER_FIRST_K = 32
 _PEER_MAX_K = 2048
 
 
-async def _peer_rows(
+async def nearest_peer_rows(
     ch: Any,
     params: dict[str, Any],
     scope: ReadFilters = WHOLE_NAMESPACE,
@@ -217,7 +213,7 @@ async def _peer_rows(
 ) -> list[dict[str, Any]]:
     """The gate's peers: this fact's cosine neighbours under the same type,
     excluding its own key (a re-write is LWW by version, not a conflict), at
-    most `PEER_LIMIT`, nearest first.
+    most `limit` (default `PEER_LIMIT`), nearest first.
 
     Two statements instead of the `memory FINAL JOIN memory_embeddings FINAL` scan.
     Stage A ranks the namespace's vectors alone, in the shape the `Quantized` codec
@@ -228,7 +224,7 @@ async def _peer_rows(
     the row-side filters (type, status, tombstone), which is where the two tables can
     disagree (vectors of non-live rows, live rows whose vector says otherwise). Stage A
     filters nothing the join did not filter on the vector side. When fewer than
-    `PEER_LIMIT` survive while stage A's last candidate is still inside `max_dist`,
+    `limit` survive while stage A's last candidate is still inside `max_dist`,
     stage A widens (x4) — the answer is the join's, not an approximation of it. Ties
     sort by memory_key (the join's order among equal distances is arbitrary).
     Both stages stay inside `scope`, so other users' rows never take the places."""
@@ -276,7 +272,7 @@ async def _peer_rows_joined(
         """
         SELECT
             m.memory_id, m.memory_key, m.value, m.pinned,
-            m.agent, m.user_id, m.session_id, m.run_id, m.valid_at, m.created_at,
+            m.agent, m.user_id, m.session_id, m.run_id, m.valid_at,
             """
         + "cosineDistance(e.embedding, {emb:Array(Float32)})"
         + """ AS dist
@@ -449,7 +445,7 @@ async def check_on_commit(
     if not new_embedding:
         return ConflictResult(verdict="clear", peers=[])
 
-    resolved_policy = await _policy_before_gate(resolved_policy, candidate_rows, org, namespace)
+    resolved_policy = await _policy_before_gate(resolved_policy, org, namespace)
     if resolved_policy == APPEND_ONLY_POLICY:  # no verdict against a peer
         return ConflictResult(verdict="clear", peers=[])
 
@@ -480,9 +476,9 @@ async def check_on_commit(
     elif scope is None:
         rows = []
     else:
-        rows = await _peer_rows(ch, params, scope)
+        rows = await nearest_peer_rows(ch, params, scope)
     keyed = memory_type in KEY_IDENTIFIED_TYPES
-    # A bulk caller's rows carry its pinned arm already; a decision needs none.
+    # Rows passed in (`peer_rows`) carry their pinned arm already; a decision needs none.
     if candidate_rows is None and not keyed:
         rows += await _foreign_pinned_rows(ch, params, scope, rows)
     rows = await _without_erased(org, namespace, rows)
@@ -1015,7 +1011,7 @@ async def peer_rows(
         "dim": len(embedding),
     }
     scope = _scope_or_none()
-    rows = [] if scope is None else await _peer_rows(ch, params, scope)
+    rows = [] if scope is None else await nearest_peer_rows(ch, params, scope)
     return rows + await _foreign_pinned_rows(ch, params, scope, rows)
 
 

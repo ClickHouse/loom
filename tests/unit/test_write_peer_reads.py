@@ -92,6 +92,7 @@ async def test_check_on_commit_with_prefetched_rows_issues_no_peer_statement(mon
         new_embedding=[0.1, 0.2],
         candidate_rows=rows,
         resolved_threshold=0.85,
+        resolved_policy="auto_reinforce",
     )
     # Only the allowlist read hit ClickHouse; no threshold lookups, no peer statement.
     assert len(ch.query_one_calls) == 0
@@ -168,3 +169,77 @@ async def test_value_update_peers_are_read_codes_first_then_by_key(monkeypatch) 
     assert all(_codes_first(sql) for sql in stage_a)
     assert all(p["max_dist"] == pytest.approx(0.25) for _, p in ch.query_all_calls[:2])
     assert rep.checked == 2 and len(rep.links) == 1 and writes == [["p1"]]
+
+
+def _bulk(entries: int) -> tuple[Any, list[Any], list[Any], list[list[float]]]:
+    """`_bulk_conflict_verdicts`' arguments for `entries` semantic facts."""
+    put = SimpleNamespace(org="o", namespace="n", agent="bot", run_id="-", valid_at=None)
+    metas = [
+        (
+            SimpleNamespace(memory_type="semantic", memory_key=f"k{i}", valid_at=None),
+            "U lives in Lisbon",
+            None,
+            None,
+            None,
+        )
+        for i in range(entries)
+    ]
+    return put, metas, [(i, None, None, None) for i in range(entries)], [[0.1, 0.2]] * entries
+
+
+def _no_reads(monkeypatch: pytest.MonkeyPatch, policy: str) -> list[str]:
+    """The namespace's write configuration without ClickHouse: `policy`, a 0.85 conflict
+    threshold, no allow-list. Returns the policy reads it served."""
+    reads: list[str] = []
+
+    async def read_policy(org: str, namespace: str, **_: Any) -> str:
+        reads.append(namespace)
+        return policy
+
+    async def threshold(*_a: Any, **_k: Any) -> float:
+        return 0.85
+
+    async def no_allowlist(*_a: Any) -> set[str]:
+        return set()
+
+    monkeypatch.setattr(conflicts, "namespace_conflict_policy", read_policy)
+    monkeypatch.setattr(conflicts, "_resolve_threshold", threshold)
+    monkeypatch.setattr(conflicts, "_resolve_duplicate_threshold", threshold)
+    monkeypatch.setattr(conflicts, "_allowlisted_keys", no_allowlist)
+    return reads
+
+
+@pytest.mark.asyncio
+async def test_an_append_only_bulk_write_clears_every_entry_without_a_peer_read(
+    monkeypatch,
+) -> None:
+    """Under `append_only` every entry of a bulk write is its own row: the gate reads the
+    policy and issues no peer statement, as for a single write."""
+    from server.memory.app import bulk_set
+
+    ch = StubCH()
+    monkeypatch.setattr(conflicts, "get_client", lambda: ch)
+    reads = _no_reads(monkeypatch, "append_only")
+    put, metas, pending, vectors = _bulk(3)
+    out = await bulk_set._bulk_conflict_verdicts(put, [{}] * 3, metas, pending, vectors)
+    assert [out[i].verdict for i in range(3)] == ["clear"] * 3
+    assert reads == ["n"] * 3
+    assert not [sql for sql, _ in ch.query_all_calls if "cosineDistance" in sql]
+
+
+def test_a_narrowed_bulk_writer_is_refused_by_another_users_pinned_peer(monkeypatch) -> None:
+    """A writer bound to user U writes in bulk next to V's pinned row: the entry is
+    rejected and V's row named as the blocker, never as a peer."""
+    from server.memory.app import bulk_set
+    from tests.unit.test_write_scope import _pinned, _PinnedV, _run_as
+
+    ch = _PinnedV()
+    monkeypatch.setattr(conflicts, "get_client", lambda: ch)
+    _no_reads(monkeypatch, "auto_reinforce")
+    put, metas, pending, vectors = _bulk(1)
+    out = _run_as(
+        _pinned("U"),
+        lambda: bulk_set._bulk_conflict_verdicts(put, [{}], metas, pending, vectors),
+    )
+    assert out[0].verdict == "rejected" and out[0].pinned_blocker_id == "v1"
+    assert all(p.memory_id != "v1" for p in out[0].peers)

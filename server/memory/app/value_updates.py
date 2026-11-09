@@ -124,8 +124,8 @@ def decide_links(
 ) -> list[UpdateLink]:
     """Pure half: which peers form a value-update pair with the new row, and
     which side is older. `peers` rows carry memory_id, memory_key, value,
-    valid_at, created_at, cos. Ordering: valid_at first, created_at as the
-    tie-break; an undated side is treated as older than a dated one."""
+    valid_at, cos. Only a pair dated on different days is an update; the later
+    `valid_at` is the newer side."""
     out: list[UpdateLink] = []
     n_at, n_cr = _as_dt(new_at), _as_dt(new_created)
     for p in peers:
@@ -183,9 +183,9 @@ async def _peers(
 ) -> list[dict[str, Any]]:
     """The row's nearest live peers of its type at cosine `min_cosine` or more, inside
     the writer's read scope, nearest first: the conflict check's two-stage read
-    (`conflicts._peer_rows`, codes-first), so a write never reads the namespace's
+    (`conflicts.nearest_peer_rows`, codes-first), so a write never reads the namespace's
     vectors at full width."""
-    from server.memory.app.conflicts import _peer_rows
+    from server.memory.app.conflicts import nearest_peer_rows
 
     params: dict[str, Any] = {
         "org": org,
@@ -196,14 +196,13 @@ async def _peers(
         "dim": len(embedding),
         "max_dist": 1.0 - float(min_cosine),
     }
-    rows = await _peer_rows(ch, params, request_scope(), limit=_PEERS_PER_ROW)
+    rows = await nearest_peer_rows(ch, params, request_scope(), limit=_PEERS_PER_ROW)
     return [
         {
             "memory_id": str(r["memory_id"]),
             "memory_key": r["memory_key"],
             "value": r["value"],
             "valid_at": r["valid_at"],
-            "created_at": r["created_at"],
             "cos": 1.0 - float(r["dist"]),
         }
         for r in rows

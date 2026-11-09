@@ -103,9 +103,8 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
 
     org = unique_org("conflict-cost")
     await _seed(ch, org, types)
-    # Row 47 is u7's and pinned, so it is the write's nearest row. Rounded so four
-    # facts' vectors fit in ClickHouse's HTTP form-field limit.
-    emb = [round(float(x), 3) for x in (await ch.query_one(f"SELECT {_vec('47')} AS v"))["v"]]
+    # Row 47 is u7's and pinned, so it is the write's nearest row.
+    emb = [float(x) for x in (await ch.query_one(f"SELECT {_vec('47')} AS v"))["v"]]
     params = {
         "org": org,
         "ns": _NS,
@@ -124,7 +123,7 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
         finally:
             set_query_tag("")
 
-    wide = await measured("wide", lambda: conflicts._peer_rows(ch, params))
+    wide = await measured("wide", lambda: conflicts.nearest_peer_rows(ch, params))
     set_current_auth(
         AuthInfo(
             subject="sa:bot",
@@ -137,7 +136,7 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
     )
     try:
         scope = conflicts._scope_or_none()
-        own = await measured("scoped", lambda: conflicts._peer_rows(ch, params, scope))
+        own = await measured("scoped", lambda: conflicts.nearest_peer_rows(ch, params, scope))
         pinned = await measured(
             "pinned", lambda: conflicts._foreign_pinned_rows(ch, params, scope, own)
         )
@@ -197,7 +196,7 @@ async def _seed_close_rows(ch: Any, org: str, own_rows: int, vector_type: str) -
 
 
 @pytest.mark.parametrize(("own_rows", "vector_type"), [(0, "episodic"), (40, "semantic")])
-async def test_a_foreign_pinned_row_blocks_a_narrowed_write_single_and_bulk(
+async def test_a_foreign_pinned_row_blocks_a_narrowed_write(
     ch: Any, monkeypatch: pytest.MonkeyPatch, own_rows: int, vector_type: str
 ) -> None:
     from server.auth.context import set_current_auth

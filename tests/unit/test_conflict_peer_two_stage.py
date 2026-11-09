@@ -64,7 +64,7 @@ class _TwoStageCH:
 
 
 def _run(ch: _TwoStageCH) -> list[dict[str, Any]]:
-    return asyncio.run(cf._peer_rows(ch, dict(_BASE)))
+    return asyncio.run(cf.nearest_peer_rows(ch, dict(_BASE)))
 
 
 def test_the_nearest_live_rows_come_back_nearest_first_ties_by_key() -> None:
