@@ -69,8 +69,7 @@ def _parse(parser: Any, source: bytes, budget: float) -> bytes:
 
 
 def _within(soft: int, inherited: tuple[int, int]) -> int:
-    """`soft`, lowered to the inherited soft limit and kept under a finite hard one (past
-    a hard CPU limit the kernel kills, which reads as memory running out elsewhere)."""
+    """`soft`, lowered to the inherited soft limit and kept under a finite hard one."""
     if inherited[0] != resource.RLIM_INFINITY:
         soft = min(soft, inherited[0])
     if inherited[1] != resource.RLIM_INFINITY:
@@ -114,6 +113,7 @@ def main() -> int:
         source = stdin.read(source_len)
         if grammar not in parsers:
             parsers[grammar] = tree_sitter.Parser(language(grammar))
+        # under a hard CPU limit: past it the kernel kills, which reads as memory running out
         cpu = _within(math.ceil(_cpu() + budget) + 1, inherited_cpu)
         space = _within(_address_space() + memory, inherited_as)
         resource.setrlimit(resource.RLIMIT_CPU, (cpu, inherited_cpu[1]))

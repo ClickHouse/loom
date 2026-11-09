@@ -482,9 +482,7 @@ def test_every_grammar_the_server_imports_is_one_the_child_loads() -> None:
 
 
 @pytest.mark.usefixtures("fresh_child")
-def test_a_child_that_ended_while_idle_is_replaced_without_failing_the_parse(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_child_that_ended_while_idle_is_replaced_without_failing_the_parse() -> None:
     from server.code.domain.extract import bounded_parse
 
     source = b"package x\nfunc f() {}\n"
@@ -498,9 +496,7 @@ def test_a_child_that_ended_while_idle_is_replaced_without_failing_the_parse(
 
 
 @pytest.mark.usefixtures("fresh_child")
-def test_a_child_reads_its_next_request_under_no_earlier_limit(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_child_reads_its_next_request_under_no_earlier_limit() -> None:
     from server.code.domain.extract import bounded_parse
 
     grammar = "tree_sitter_go:language"
