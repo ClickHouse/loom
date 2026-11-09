@@ -4,12 +4,11 @@
 every statement goes through this module's pool, opened at boot (`open_pool`),
 or on first use in a process that has no boot (a CLI command), and closed at
 shutdown. Each connection pins `synchronous_commit = on` and a statement timeout, so no
-request holds a connection past its budget. A transaction's commit (`transaction`)
-drops the timeout and is acknowledged only as durably as the server's standby
-configuration allows (`server.core.pg_profile` checks that at boot); a single
-statement outside one commits under the timeout, which a stalled standby can outlast
-with a local commit, so it writes only what a failover may lose: a lease, a claim, a
-counter.
+request holds a connection past its budget. A commit is acknowledged only as durably as
+the server's standby configuration allows (`server.core.pg_profile` checks that at
+boot): the statement timeout does not cover its standby wait, which ends at the
+standbys' flush or at the client's command timeout, a cancel that leaves the commit on
+the primary alone and raises (`outcome_unknown` from `transaction`).
 
 A failure to reach Postgres answers 503 POSTGRES_UNAVAILABLE: with the authority
 down, writes and authoritative reads fail closed, never fall back to ClickHouse.
@@ -435,10 +434,9 @@ async def transaction() -> AsyncIterator[Any]:
                     _raise_if_unavailable(e)
                 raise
             try:
-                # The commit waits for the synchronous standby. A server timeout would
-                # cancel that wait and commit locally with only a warning, reported as
-                # success; the client's command timeout cancels it the same way, reported
-                # as outcome_unknown.
+                # The commit waits for the synchronous standby, outside the statement
+                # timeout; the client's command timeout cancels the wait, which leaves the
+                # commit on the primary alone, and raises outcome_unknown.
                 await conn.execute("SET LOCAL statement_timeout = 0")
             except Exception as e:
                 await _rollback(conn, tx)
@@ -478,8 +476,8 @@ async def durable_transaction() -> AsyncIterator[Any]:
 
 
 async def check_durable_message() -> None:
-    """Refuse a role that may not write the logical message `durable_transaction`
-    commits, checked in a transaction rolled back, so no standby wait."""
+    """Write the logical message `durable_transaction` commits, in a transaction rolled
+    back so nothing waits for a standby: raises for a role that may not."""
     async with rolled_back() as conn:
         await conn.execute(_DURABLE_MESSAGE)
 

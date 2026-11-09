@@ -230,7 +230,7 @@ async def retire_decision_records(
             # read counts as the send's; one the standby wait ended is an outage.
             pg_lease.check_lease(deadline)
             live = await pg_memory.live_decision_writers(org, namespace, keys, durable=True)
-            pg_lease.check_room(deadline)
+            pg_lease.check_lease_after_durable_read(deadline)
             with pg_lease.leased(deadline):
                 await tombstone_decision_records(
                     org, namespace, keys, version=version, ch=ch, live=live

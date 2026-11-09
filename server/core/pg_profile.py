@@ -271,8 +271,7 @@ async def _require_authority(ch: Any) -> None:
         if held is None:
             # Postgres first: a boot cut off between the two completes the record next time.
             held = {"authority": "postgres", "epoch": 1, "deployment_id": str(uuid.uuid4())}
-            # In a transaction: its commit waits for the standby, which a single statement's
-            # timeout would cut short.
+            # In a transaction, whose commit raises when its standby wait is cut off.
             async with pg.transaction() as conn:
                 await conn.execute(
                     "INSERT INTO loom.authority (authority, epoch, deployment_id) "

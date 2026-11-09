@@ -59,12 +59,12 @@ def check_lease(deadline: float) -> None:
         raise PublicationPending()
 
 
-def check_room(deadline: float) -> None:
-    """`check_lease` after a durable read (`pg.durable_transaction`): a standby wait that
-    ended the lease is a Postgres outage, which a pass releases uncounted, not a late
-    send counted as the delivery's attempt."""
+def check_lease_after_durable_read(deadline: float) -> None:
+    """`check_lease` after a durable read (`pg.durable_transaction`), for a lease that was
+    live before it: one the read ended (its standby wait) is a Postgres outage, which a
+    pass releases uncounted, not a late send counted as the delivery's attempt."""
     if time.monotonic() >= deadline:
-        raise pg.PostgresUnavailableError("the standby wait outlasted the lease")
+        raise pg.PostgresUnavailableError("the durable read outlasted the lease")
 
 
 @contextlib.contextmanager

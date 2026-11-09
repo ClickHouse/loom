@@ -200,7 +200,8 @@ async def _still_heads(claims: list[Claimed], deadline: float) -> list[Claimed]:
 
     A copy is another commit than the claim's, perhaps one on the primary alone: the
     heads are read again durably (`pg_memory.heads_by_keys`) and the documents built
-    from that read; a standby wait that ended the lease is an outage (`pg_lease.check_room`)."""
+    from that read; a standby wait that ended the lease is an outage
+    (`pg_lease.check_lease_after_durable_read`)."""
     if not claims:
         return claims
     keys = [identity_key(c.row) for c in claims]
@@ -208,7 +209,7 @@ async def _still_heads(claims: list[Claimed], deadline: float) -> list[Claimed]:
     if any(_newer_copy(c, heads) for c in claims):
         pg_lease.check_lease(deadline)  # a lease ClickHouse spent counts, as before
         heads = await pg_memory.heads_by_keys(keys, include_tombstoned=True, durable=True)
-        pg_lease.check_room(deadline)
+        pg_lease.check_lease_after_durable_read(deadline)
     return [replace(c, row=row) for c in claims if (row := _served(c, heads)) is not None]
 
 

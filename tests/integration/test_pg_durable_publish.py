@@ -227,19 +227,18 @@ async def test_a_commit_on_the_primary_alone_reaches_clickhouse_once_the_standby
     assert in_clickhouse() == 1
 
 
-async def test_a_head_copy_on_the_primary_alone_builds_no_document(
+async def test_a_head_copy_on_the_primary_alone_is_read_again_durably(
     control_plane_url: str,
     mint_test_token: Any,
     admin_conn: Any,
     short_waits: None,
-    ch_client: Any,
 ) -> None:
     """A revision that still owes its search document, under a newer copy of its row (a
-    pin) whose commit wait was cut off after the claim: the publish reads the copy again
-    durably, the read waits for the standby and fails, and no document built onto the
-    copy reaches ClickHouse; the delivery still owes it, no attempt counted."""
+    pin) whose commit wait was cut off after the claim: the head read reads the copy
+    again durably, and the read waits for the standby and fails, where a plain read would
+    serve the copy. The head read is called alone: a pass's renewal and its rows'
+    completion are commits that wait too, so the pass would stop before it."""
     from server.core import pg
-    from server.core.ch import get_client
     from server.memory.app import pg_delivery
     from server.memory.store import pg_memory
 
@@ -266,56 +265,23 @@ async def test_a_head_copy_on_the_primary_alone_builds_no_document(
         )
 
     await eventually(published, description="the first write published")
-    # The first revision's document owed again, and gone from ClickHouse.
+    # The first revision's document owed again.
     seq = await admin_conn.fetchval(
         "SELECT seq FROM loom.memory_revisions WHERE org = $1 AND namespace = $2", org, ns
     )
     await admin_conn.execute(
         "INSERT INTO loom.memory_deliveries (org, namespace, seq, targets, lease_until) "
-        f"VALUES ($1, $2, $3, {pg_memory.SEARCH_DOC}, now() - interval '1 second') "
-        "ON CONFLICT (org, namespace, seq) DO UPDATE SET targets = EXCLUDED.targets, "
-        "lease_until = EXCLUDED.lease_until",
+        f"VALUES ($1, $2, $3, {pg_memory.SEARCH_DOC}, now() - interval '1 second')",
         org,
         ns,
         seq,
     )
-    ch_client.command(
-        "DELETE FROM loom.memory_embeddings WHERE org = {o:String} AND namespace = {ns:String}",
-        parameters={"o": org, "ns": ns},
-    )
-
-    def documents() -> int:
-        return int(
-            ch_client.query(
-                "SELECT count() FROM loom.memory_embeddings WHERE org = {o:String} "
-                "AND namespace = {ns:String}",
-                settings=_SEQUENTIAL,
-                parameters={"o": org, "ns": ns},
-            ).result_rows[0][0]
-        )
-
-    ch = get_client()
-    await ch.connect()
-    try:
-        # Claimed while the standby is there (a claim's own commit waits for it).
-        claims = await pg_memory.claim_due(10, scope=(org, ns))
-        assert [c.seq for c in claims] == [seq]
-        async with _standbys(admin_conn, _ABSENT):
-            async with httpx.AsyncClient(base_url=control_plane_url, timeout=120) as c:
-                pinned = await c.post("/v1/memory.pin", json=key, headers=headers)
-            assert pinned.status_code == 503, pinned.text  # the pin is on the primary alone
-            # The head read after the claim's own commits (its renewal, its rows' completion,
-            # each waiting for the standbys): the copy, visible now, is read again durably.
-            with pytest.raises(pg.PostgresUnavailableError):
-                await pg_delivery._still_heads(claims, time.monotonic() + 60)
-            assert documents() == 0
-        owed = await admin_conn.fetchrow(
-            "SELECT targets, attempts FROM loom.memory_deliveries "
-            "WHERE org = $1 AND namespace = $2 AND seq = $3",
-            org,
-            ns,
-            seq,
-        )
-        assert owed["targets"] & pg_memory.SEARCH_DOC and owed["attempts"] == 0
-    finally:
-        await ch.disconnect()
+    # Claimed while the standby is there (a claim's own commit waits for it).
+    claims = await pg_memory.claim_due(10, scope=(org, ns))
+    assert [c.seq for c in claims] == [seq]
+    async with _standbys(admin_conn, _ABSENT):
+        async with httpx.AsyncClient(base_url=control_plane_url, timeout=120) as c:
+            pinned = await c.post("/v1/memory.pin", json=key, headers=headers)
+        assert pinned.status_code == 503, pinned.text  # the pin is on the primary alone
+        with pytest.raises(pg.PostgresUnavailableError):
+            await pg_delivery._still_heads(claims, time.monotonic() + 60)

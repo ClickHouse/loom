@@ -211,23 +211,39 @@ def test_still_heads_reads_durably_only_for_another_commit(
     assert calls.count(True) == durable_reads
 
 
+class _Clock:
+    """`pg_lease`'s clock: 0 until the durable read, then past any lease."""
+
+    now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+
+def _lease_clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
+    from server.core import pg_lease
+
+    clock = _Clock()
+    monkeypatch.setattr(pg_lease, "time", clock)
+    return clock
+
+
 def test_still_heads_gives_back_claims_a_standby_wait_left_no_lease(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import time
-
     claim = _claim(5, "a" * 64)
+    clock = _lease_clock(monkeypatch)
 
     async def heads_by_keys(keys, *, include_tombstoned=False, durable=False):  # type: ignore[no-untyped-def]
         if durable:
-            await asyncio.sleep(0.2)  # the standby wait outlasts the lease
+            clock.now = 100.0  # the standby wait outlasts the lease
         return {pg_memory.identity_key(claim.row): _head(9)}
 
     monkeypatch.setattr(pg_memory, "heads_by_keys", heads_by_keys)
     monkeypatch.setattr(pg_memory, "embedded", lambda row: True)
     # An outage, which the pass releases uncounted, not an attempt.
     with pytest.raises(pg.PostgresUnavailableError):
-        asyncio.run(pg_delivery._still_heads([claim], deadline=time.monotonic() + 0.1))
+        asyncio.run(pg_delivery._still_heads([claim], deadline=10.0))
 
 
 def test_flush_decides_again_from_the_durable_read(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -289,20 +305,18 @@ def test_a_decision_read_for_a_request_waits_for_no_standby(
 def test_a_retirement_gives_back_claims_a_standby_wait_left_no_lease(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import time
-
     from server.memory.store import pg_publish
+
+    clock = _lease_clock(monkeypatch)
 
     async def live_decision_writers(org, namespace, keys, *, durable=False):  # type: ignore[no-untyped-def]
         assert durable
-        await asyncio.sleep(0.2)  # the standby wait outlasts the lease
+        clock.now = 100.0  # the standby wait outlasts the lease
         return []
 
     monkeypatch.setattr(pg_memory, "live_decision_writers", live_decision_writers)
     owed = pg_publish.OwedRecord({"memory_key": "k"}, ("o", "n", 1), 1)
-    error = asyncio.run(
-        pg_publish.retire_decision_records([owed], deadline=time.monotonic() + 0.1, ch=None)  # type: ignore[arg-type]
-    )
+    error = asyncio.run(pg_publish.retire_decision_records([owed], deadline=10.0, ch=None))  # type: ignore[arg-type]
     # An outage: the pass releases its claims uncounted.
     assert isinstance(error, pg.PostgresUnavailableError)
 

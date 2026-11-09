@@ -4983,7 +4983,7 @@ async def test_a_deleted_decisions_record_retires_where_it_is_published(
     monkeypatch.setattr(pg_memory, "live_decision_writers", _live)
     monkeypatch.setattr(pg_memory, "complete", _complete)
     monkeypatch.setattr(pg_lease, "check_lease", lambda deadline: None)
-    monkeypatch.setattr(pg_lease, "check_room", lambda deadline: None)
+    monkeypatch.setattr(pg_lease, "check_lease_after_durable_read", lambda deadline: None)
     monkeypatch.setattr(pg_publish, "tombstone_decision_records", _records)
     owing = [owe("a", "k1", 1), owe("a", "k2", 2), owe("b", "k3", 3)]
     assert await pg_publish.retire_decision_records(owing, deadline=0.0, ch=object()) is None
