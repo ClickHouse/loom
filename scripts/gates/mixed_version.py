@@ -52,6 +52,8 @@ from typing import Any
 
 import httpx
 
+from server.insights.domain import analysis as boundary
+
 ROOT = Path(__file__).resolve().parents[2]
 CH_IMAGE = "clickhouse/clickhouse-server:26.5.1.882"
 CH_PASSWORD = "loomdev"
@@ -391,18 +393,6 @@ class Scenario:
         if not (self.builds["N-1"].tree / "server/insights/domain/analysis.py").exists():
             print("  skip  insights.query: N-1 has no analysis plane")
             return
-        from server.insights.domain import analysis as boundary
-
-        version = sql(
-            self.ch_port,
-            "SELECT value FROM system.settings_profile_elements "
-            "WHERE profile_name = {user:String} AND setting_name = {name:String}",
-            {"user": boundary.ANALYST_USER, "name": boundary.VERSION_SETTING},
-        )
-        self.check(
-            version.strip("'\\") == str(boundary.ENTITY_VERSION),
-            f"N wrote the analyst entities ({version})",
-        )
         body = {"org": self.org, "namespace": "mixed", "sql": "SELECT count() FROM loom.memory"}
         # N first: it answers only after its own write, so N-1's answer is on N's entities.
         for label in ("N", "N-1"):
@@ -420,6 +410,16 @@ class Scenario:
                     break
                 time.sleep(2)
             self.check(r.status_code == 200, f"{label} answers insights.query on N's entities")
+        version = sql(
+            self.ch_port,
+            "SELECT value FROM system.settings_profile_elements "
+            "WHERE profile_name = {user:String} AND setting_name = {name:String}",
+            {"user": boundary.ANALYST_USER, "name": boundary.VERSION_SETTING},
+        )
+        self.check(
+            version.strip("'\\") == str(boundary.ENTITY_VERSION),
+            f"N wrote the analyst entities ({version})",
+        )
         policy = sql(
             self.ch_port,
             "SELECT select_filter FROM system.row_policies WHERE short_name = {name:String} "
@@ -429,6 +429,8 @@ class Scenario:
         literals = re.findall(r"unhex\(\\?'([0-9a-f]+)\\?'\)", policy)
         key = next((h for h in literals if len(h) == 64), "")
         self.check(bool(key), "the memory policy names the scope key")
+        if not key:
+            return
         secrets = [*literals, *boundary.key_spellings(bytes.fromhex(key))]
         sql(self.ch_port, "SYSTEM FLUSH LOGS")
         logged = sql(

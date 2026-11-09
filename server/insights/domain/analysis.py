@@ -285,21 +285,25 @@ def _masked_sql(key: bytes, data: bytes) -> str:
     return f"decrypt('aes-256-ecb', unhex('{sealed.hex()}'), unhex('{key.hex()}'))"
 
 
-def key_spellings(key: bytes) -> list[str]:
-    """Every way a log could spell `key` or the HMAC pads it makes, which the
-    tests and the mixed-version gate search ClickHouse's logs for."""
+def _pads(key: bytes) -> tuple[bytes, bytes]:
+    """HMAC's inner and outer pads of `key`."""
     padded = key.ljust(_BLOCK, b"\0")
-    pads = [bytes(b ^ pad for b in padded) for pad in (0x36, 0x5C)]
-    # The pads end in the zero-padded key's 0x36 and 0x5C bytes, printable as they are.
-    return [key.hex(), *(p.hex() for p in pads), "6" * 32, "\\" * 32]
+    return bytes(b ^ 0x36 for b in padded), bytes(b ^ 0x5C for b in padded)
+
+
+def key_spellings(key: bytes) -> list[str]:
+    """Every way a log could spell `key` or its pads, which the tests and the
+    mixed-version gate search ClickHouse's logs for."""
+    # The key's zero padding XORs to runs of 0x36 ('6') and 0x5C ('\'), printable as they are.
+    return [key.hex(), *(p.hex() for p in _pads(key)), "6" * 32, "\\" * 32]
 
 
 def _hmac_sql(key: bytes, payload: str) -> str:
     """HMAC-SHA256 of `payload` under `key` as ClickHouse computes it, with the
     key's inner and outer pads masked as `decrypt` expressions."""
-    padded = key.ljust(_BLOCK, b"\0")
-    ipad = _masked_sql(key, bytes(b ^ 0x36 for b in padded))
-    opad = _masked_sql(key, bytes(b ^ 0x5C for b in padded))
+    inner_pad, outer_pad = _pads(key)
+    ipad = _masked_sql(key, inner_pad)
+    opad = _masked_sql(key, outer_pad)
     inner = f"SHA256(concat({ipad}, {payload}))"
     return f"hex(SHA256(concat({opad}, {inner})))"
 
