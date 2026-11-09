@@ -39,9 +39,9 @@ import functools
 import logging
 import selectors
 import signal
+import site
 import subprocess
 import sys
-import sysconfig
 import threading
 import time
 from contextvars import ContextVar
@@ -104,7 +104,7 @@ def _grammar(language: Any) -> str:
     another build than the one parsed here."""
     import tree_sitter
 
-    own = {Path(sysconfig.get_path(k)).resolve() for k in ("purelib", "platlib")}
+    own = {Path(p).resolve() for p in site.getsitepackages()}  # what the child sees under -I
     if not any(Path(tree_sitter.__file__).resolve().is_relative_to(p) for p in own):
         raise LookupError("tree_sitter is loaded from outside the interpreter's site-packages")
     for grammar in _LOADERS:

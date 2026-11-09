@@ -732,10 +732,16 @@ def test_a_grammar_loaded_from_outside_the_interpreters_site_packages_is_refused
     from server.code.domain.extract import bounded_parse
 
     language = tree_sitter.Language(tree_sitter_go.language())
-    monkeypatch.setattr(bounded_parse.sysconfig, "get_path", lambda name: "/nonexistent")
     bounded_parse._grammar.cache_clear()
     try:
-        with pytest.raises(LookupError, match="outside"):
-            bounded_parse._grammar(language)  # the child would check another build
+        with monkeypatch.context() as m:  # tree_sitter itself from elsewhere
+            m.setattr(bounded_parse.site, "getsitepackages", lambda: ["/nonexistent"])
+            with pytest.raises(LookupError, match="tree_sitter is loaded from outside"):
+                bounded_parse._grammar(language)
+        bounded_parse._grammar.cache_clear()
+        with monkeypatch.context() as m:  # only the grammar from elsewhere
+            m.setattr(tree_sitter_go, "__file__", "/elsewhere/tree_sitter_go/__init__.py")
+            with pytest.raises(LookupError, match="tree_sitter_go:language is loaded from outside"):
+                bounded_parse._grammar(language)  # the child would check another build
     finally:
         bounded_parse._grammar.cache_clear()
