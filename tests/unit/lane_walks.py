@@ -117,16 +117,6 @@ def _where(n: int) -> str:
     return "[tool.setuptools.packages.find]\nwhere = [" + _numbered('"a{}",')(n) + "]\n"
 
 
-def _many_methods(n: int, opener: str, between: str) -> str:
-    """A path of n/2 characters, then a methods list of n/2 characters."""
-    return opener + "a" * (n // 2) + between + _run("", "'a',")(n // 2) + "])"
-
-
-def _declared_prefix(n: int, opener: str, route: str, close: str) -> str:
-    """One prefix of n/2 characters, then n/2 characters of routes under it."""
-    return opener + "a" * (n // 2) + close + _run("", route)(n // 2)
-
-
 def _ts_routes(text: str) -> object:
     from server.code.domain.extract.treesitter import ParsedFile
     from server.code.domain.extract.ts_routes import route_facets
@@ -181,7 +171,12 @@ WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     (
         "ts-controller-prefix",
         _ts_routes,
-        lambda n: _declared_prefix(n, "@Controller('", "@Get('a') a(){}\n", "')\nclass C {\n"),
+        lambda n: (
+            "@Controller('"
+            + "a" * (n // 2)
+            + "')\nclass C {\n"
+            + _run("", "@Get('a') a(){}\n")(n // 2)
+        ),
     ),
     ("python-unclosed-add-url-rule", _py_routes, _run("", "a.add_url_rule('a'")),
     ("python-unclosed-route", _py_routes, _run("import starlette.routing\n", "Route('a'")),
@@ -189,7 +184,9 @@ WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     (
         "python-route-methods",
         _py_routes,
-        lambda n: _many_methods(n, "x.add_url_rule('/", "', methods=["),
+        lambda n: (
+            "x.add_url_rule('/" + "a" * (n // 2) + "', methods=[" + _run("", "'a',")(n // 2) + "])"
+        ),
     ),
 ]
 _WALK_N = 100_000

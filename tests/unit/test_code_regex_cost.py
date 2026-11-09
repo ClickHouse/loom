@@ -246,7 +246,7 @@ def test_a_run_after_a_prefix_costs_linear_time(name: str, pattern: re.Pattern) 
 # heading or site is quadratic, and a backtracking match holds the GIL so a thread
 # timer cannot stop it. Each walk runs in a child process that dumps its stack and exits
 # when it overruns, so a regression fails here instead of hanging the suite.
-_WALK_BOUND_S = 5.0  # a linear walk over 4N takes about a second here at most
+_WALK_BOUND_S = 5.0  # well above a linear walk at 4N, far below a quadratic one
 _WALK_DEADLINE_S = 60
 
 

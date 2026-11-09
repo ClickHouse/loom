@@ -49,6 +49,9 @@ FACET_MODIFIER = "modifier"
 
 _MAX_FACETS_PER_FILE = 400
 _MAX_NAME = 200
+# not a setting: a route path or router prefix is cut to this before it is joined into a
+# name, so a cut path still fills a cut name and costs a constant per route or method
+_MAX_PATH = 2 * _MAX_NAME
 _HTTP = "get|post|put|patch|delete|head|options"
 _STR = r"""r?['"]([^'"]*)['"]"""
 
@@ -130,7 +133,7 @@ def _prefixes(text: str) -> dict[str, str]:
 def _cut_prefix(prefix: str) -> str:
     """A router's prefix is joined into every route on it, and joined again per
     `include_router` call: cut, since a route name keeps only `_MAX_NAME` characters."""
-    return prefix.lstrip("/")[: 2 * _MAX_NAME]
+    return prefix.lstrip("/")[:_MAX_PATH]
 
 
 class _Collector:
@@ -194,7 +197,7 @@ def _one_decorator(
         if verb in ("websocket", "ws"):
             col.add(FACET_ROUTE, f"WS {full}", line)
         elif verb in ("route", "api_route"):
-            full = full[: 2 * _MAX_NAME]  # cut once, not copied whole per method
+            full = full[:_MAX_PATH]
             for meth in _methods(rest, "GET"):
                 col.add(FACET_ROUTE, f"{meth} {full}", line)
         else:
@@ -213,7 +216,7 @@ def _registrations(text: str, path: str, col: _Collector) -> None:
     """Routes and commands named in calls rather than decorators."""
     newlines = newline_offsets(text)
     for m in _ADD_URL_RULE_RE.finditer(text):
-        route = _url_join("", m.group(1))[: 2 * _MAX_NAME]  # cut once, not copied per method
+        route = _url_join("", m.group(1))[:_MAX_PATH]
         for meth in _methods(m.group(2), "ANY"):
             col.add(FACET_ROUTE, f"{meth} {route}", line_at(newlines, m.start()))
     for rx in _AIOHTTP_RES:
@@ -232,7 +235,7 @@ def _registrations(text: str, path: str, col: _Collector) -> None:
             if m.group(1) == "WebSocketRoute":
                 col.add(FACET_ROUTE, f"WS {m.group(2)}", line)
             else:
-                route = m.group(2)[: 2 * _MAX_NAME]  # cut once, not copied per method
+                route = m.group(2)[:_MAX_PATH]
                 for meth in _methods(m.group(3), "GET"):
                     col.add(FACET_ROUTE, f"{meth} {route}", line)
     if "tornado" in text:

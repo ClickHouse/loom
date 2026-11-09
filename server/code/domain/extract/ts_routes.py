@@ -33,6 +33,8 @@ from server.code.domain.extract.treesitter import ParsedFile
 FACET_KIND = "http_route"
 # not a setting: changing it renames the stored route facets it cuts (py_routes cuts at 200 too)
 _MAX_NAME = 200
+# not a setting: a controller prefix is cut to this before it joins every route of its class
+_MAX_PATH = 2 * _MAX_NAME
 # Each body stops at the next `@Controller(` / `.route(`: an unclosed one is not read to
 # the end of the file again from every opener before it.
 _CONTROLLER_RE = re.compile(
@@ -117,7 +119,7 @@ def route_facets(pf: ParsedFile) -> list[Facet]:
     closes = _brace_closes(text) if controllers else {}
     for k, c in enumerate(controllers):
         # cut: the prefix is joined into every route of the class
-        prefix = (c.group(1) or c.group(2) or "").lstrip("/")[: 2 * _MAX_NAME]
+        prefix = (c.group(1) or c.group(2) or "").lstrip("/")[:_MAX_PATH]
         # a class body ends at its `}`, and no later than the next controller: an unclosed
         # one is not read again for every controller before it
         stop = controllers[k + 1].start() if k + 1 < len(controllers) else len(text)
