@@ -325,16 +325,6 @@ async def _peers_codes_first(
     ]
 
 
-async def _peers_per_row(ch: Any, **kw: Any) -> list[dict[str, Any]]:
-    """One row's peers, as `LOOM_MEMORY_BULK_PEER_READ` reads them: the joined read
-    (`batched`) or the codes-first one (`per_fact`)."""
-    from server.settings import settings as _s
-
-    if _s.memory_bulk_peer_read == "per_fact":
-        return await _peers_codes_first(ch, **kw)
-    return await _peers_joined(ch, **kw)
-
-
 async def link_value_updates(
     *,
     org: str,
@@ -377,7 +367,7 @@ async def link_value_updates(
 
     batch = int(_s.memory_write_candidate_batch)
     prefetched: dict[int, list[dict[str, Any]]] = {}
-    if batch > 0 and _s.memory_bulk_peer_read == "batched":
+    if batch > 0 and _s.memory_bulk_peer_read != "per_fact":
         by_dim: dict[int, list[int]] = {}
         for i, row in enumerate(rows):
             emb = _eligible(row)
@@ -418,7 +408,12 @@ async def link_value_updates(
         if peers is None:
             async with sem:
                 try:
-                    peers = await _peers_per_row(
+                    read = (
+                        _peers_codes_first
+                        if _s.memory_bulk_peer_read == "per_fact"
+                        else _peers_joined
+                    )
+                    peers = await read(
                         ch,
                         org=org,
                         namespace=namespace,

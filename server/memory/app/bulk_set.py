@@ -1448,17 +1448,14 @@ async def _batched_peers(
     from server.settings import settings
 
     batch = int(settings.memory_write_candidate_batch)
-    if settings.memory_bulk_peer_read != "batched" or batch <= 0 or len(pairs) < 2:
+    if settings.memory_bulk_peer_read == "per_fact" or batch <= 0 or len(pairs) < 2:
         return {}
-    items = [
-        (
-            str(entry_metas[idx][0].memory_type),
-            str(entry_metas[idx][0].memory_key),
-            vec if str(entry_metas[idx][0].memory_type) in floors else [],
-            floors.get(str(entry_metas[idx][0].memory_type), (0.0, 0.0))[1],
-        )
-        for (idx, _t, _x, _k), vec in pairs
-    ]
+    items: list[tuple[str, str, list[float], float]] = []
+    for (idx, _t, _x, _k), vec in pairs:
+        entry = entry_metas[idx][0]
+        mt = str(entry.memory_type)
+        reach = floors[mt][1] if mt in floors else 0.0
+        items.append((mt, str(entry.memory_key), vec if mt in floors else [], reach))
     try:
         return await conflicts.candidate_rows_many(
             org=input.org, namespace=input.namespace, items=items, batch=batch
@@ -1496,11 +1493,11 @@ async def _bulk_conflict_verdicts(
     cap = max(cap, 0)
     sem = asyncio.Semaphore(int(_settings.bulk_conflict_check_concurrency))
     out: dict[int, Any] = {}
+    if not pending[:cap]:
+        return out
     # The namespace's policy and each type's threshold, read once for the batch; one that
     # cannot be read is left to each fact's check, which reads it again.
     policy = await _namespace_policy(input.org, input.namespace)
-    if not pending[:cap]:
-        return out
     # floors: (threshold, reach) by type, kept on the call's state for the commit
     for mt in dict.fromkeys(str(entry_metas[idx][0].memory_type) for idx, *_ in pending[:cap]):
         if mt not in floors and (floor := await _type_floor(input.org, input.namespace, mt)):

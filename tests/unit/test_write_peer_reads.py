@@ -139,7 +139,8 @@ async def test_value_update_peers_are_read_codes_first_then_by_key(monkeypatch) 
     stage_a = [sql for sql, _ in ch.query_all_calls if "LIMIT {k:UInt32}" in sql]
     assert len(stage_a) == 2  # one per row
     assert all(_codes_first(sql) for sql in stage_a)
-    assert all(p["max_dist"] == pytest.approx(0.25) for _, p in ch.query_all_calls[:2])
+    stage_a_params = [p for sql, p in ch.query_all_calls if "LIMIT {k:UInt32}" in sql]
+    assert all(p["max_dist"] == pytest.approx(0.25) for p in stage_a_params)
     assert rep.checked == 2 and len(rep.links) == 1 and writes == [["p1"]]
 
 
@@ -236,13 +237,14 @@ def test_a_narrowed_bulk_writer_is_refused_by_another_users_pinned_peer(monkeypa
     ch = _PinnedV()
     monkeypatch.setattr(conflicts, "get_client", lambda: ch)
     _no_reads(monkeypatch, "auto_reinforce")
-    put, metas, pending, vectors = _bulk(1)
+    put, metas, pending, vectors = _bulk(2)
     out = _run_as(
         _pinned("U"),
-        lambda: bulk_set._bulk_conflict_verdicts(put, [{}], metas, pending, vectors, floors={}),
+        lambda: bulk_set._bulk_conflict_verdicts(put, [{}] * 2, metas, pending, vectors, floors={}),
     )
-    assert out[0].verdict == "rejected" and out[0].pinned_blocker_id == "v1"
-    assert all(p.memory_id != "v1" for p in out[0].peers)
+    for i in (0, 1):
+        assert out[i].verdict == "rejected" and out[i].pinned_blocker_id == "v1"
+        assert all(p.memory_id != "v1" for p in out[i].peers)
 
 
 @pytest.mark.asyncio
@@ -270,3 +272,28 @@ async def test_a_batched_bulk_call_reads_its_configuration_once_and_peers_per_ba
     assert reads == ["n"] and thresholds == ["semantic"]
     peer_reads = [sql for sql, _ in ch.query_all_calls if "cosineDistance" in sql]
     assert len(peer_reads) == 1 and "qidx" in peer_reads[0]  # one batched join for three
+
+
+@pytest.mark.asyncio
+async def test_a_policy_the_batch_cannot_read_is_read_by_each_fact(monkeypatch) -> None:
+    """When the bulk call's one policy read fails, every fact's check reads the policy
+    itself, so an append_only namespace still keeps every entry."""
+    from server.memory.app import bulk_set
+
+    ch = StubCH()
+    monkeypatch.setattr(conflicts, "get_client", lambda: ch)
+    _no_reads(monkeypatch, "auto_reinforce")
+    reads: list[str] = []
+
+    async def read_policy(org: str, namespace: str, **_: Any) -> str:
+        reads.append(namespace)
+        if len(reads) == 1:
+            raise RuntimeError("the batch's read fails")
+        return "append_only"
+
+    monkeypatch.setattr(conflicts, "namespace_conflict_policy", read_policy)
+    put, metas, pending, vectors = _bulk(2)
+    out = await bulk_set._bulk_conflict_verdicts(put, [{}] * 2, metas, pending, vectors, floors={})
+    assert [out[i].verdict for i in (0, 1)] == ["clear", "clear"]
+    assert len(reads) == 3  # the batch's failed read, then one per fact
+    assert not [sql for sql, _ in ch.query_all_calls if "cosineDistance" in sql]
