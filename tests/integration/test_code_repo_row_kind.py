@@ -117,3 +117,29 @@ async def test_an_access_change_on_a_page_branch_keeps_every_column(org: str) ->
         "restricted",
         "admin",
     )
+
+
+async def test_the_registry_answers_only_once_read(
+    org: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _add(org, "code-page")
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    with pytest.raises(repos.RegistryUnread):
+        repos.configured_repos()
+    assert await reg.read_registry()
+    assert (org, "code-page") in {(c.org, c.namespace) for c in repos.configured_repos()}
+
+
+async def test_an_operator_entry_over_a_dropped_access_row_writes_a_fresh_one(org: str) -> None:
+    entry = _entry(org, "code-entry")
+    await reg.upsert_access(
+        entry, classification="restricted", join_policy="approval", created_by="o", current=None
+    )
+    assert await CodeRepo().deactivate_code_repo(org, "code-entry")
+    assert await reg.live_row(entry) is None
+    await reg.upsert_access(
+        entry, classification="standard", join_policy="open", created_by="o", current=None
+    )
+    row = await CodeRepo().code_repo_row(org, "code-entry")
+    assert row is not None
+    assert (row["active"], row["row_kind"], row["classification"]) == (True, "access", "standard")

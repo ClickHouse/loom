@@ -99,10 +99,9 @@ async def restricted_roles(
 def refuse_unread_code(
     org: str, names: list[str], kinds: Mapping[str, str], *, configured_too: bool = False
 ) -> None:
-    """RegistryUnread while the code registry has never been read and one of `names`
-    has no kind in `kinds` (the directory's, which fall back to the configuration, and
-    that lists no page branch then). `configured_too` also refuses a code namespace
-    of a known kind or an operator entry: its bound trackers are not known yet."""
+    """RegistryUnread while the code registry has never been read and a name in `names`
+    is neither a listed entry nor of a kind in `kinds`. With `configured_too`, also for
+    any code namespace, whose bound trackers are not known yet."""
     from server.code.domain.index.repos import RegistryUnread, config_entry, registry_unread
 
     if not registry_unread():

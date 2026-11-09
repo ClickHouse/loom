@@ -254,7 +254,7 @@ def _record_loom_requests() -> Iterator[None]:
 def _code_registry_read() -> Iterator[None]:
     """In-process code ops answer only once the self-service registry has been read
     (`repos.configured_repos`); the server under test reads it at boot, these tests
-    stand in for that read."""
+    stand in for that read (`test_code_repo_row_kind` covers the unread state)."""
     from server.code.domain.index import repos
 
     before = repos._registry_loaded
