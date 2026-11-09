@@ -1499,11 +1499,16 @@ async def _bulk_conflict_verdicts(
     # (`floors` stays on the call's state for the Postgres gap check); one that cannot be
     # read is left to each fact's check, which reads it again.
     policy = await _namespace_policy(input.org, input.namespace)
-    # Under append_only no fact reads peers; the Postgres gap check reads its own reach.
-    checked_types = [] if policy == APPEND_ONLY_POLICY else pending[:cap]
-    for mt in dict.fromkeys(str(entry_metas[idx][0].memory_type) for idx, *_ in checked_types):
-        if mt not in floors and (floor := await _type_floor(input.org, input.namespace, mt)):
-            floors[mt] = floor
+    pairs = list(zip(pending, value_vectors, strict=False))[:cap]
+    prefetched: dict[int, list[dict[str, Any]]] = {}
+    # Under append_only no fact reads peers (`check_on_commit` answers clear first), and
+    # the Postgres gap check reads its own reach.
+    if policy != APPEND_ONLY_POLICY:
+        types = dict.fromkeys(str(entry_metas[idx][0].memory_type) for idx, *_ in pending[:cap])
+        for mt in types:
+            if mt not in floors and (floor := await _type_floor(input.org, input.namespace, mt)):
+                floors[mt] = floor
+        prefetched = await _batched_peers(input, entry_metas, pairs, floors)
 
     async def _one(idx: int, vec: list[float], candidate_rows: list[dict[str, Any]] | None) -> None:
         entry, serialized, _t, _e, _x = entry_metas[idx]
@@ -1531,13 +1536,6 @@ async def _bulk_conflict_verdicts(
             except Exception as e:  # noqa: BLE001 — the fact writes unchecked
                 log.warning("bulk_set: conflict check failed for %r: %s", entry.memory_key, e)
 
-    pairs = list(zip(pending, value_vectors, strict=False))[:cap]
-    # Under append_only no fact reads peers (`check_on_commit` answers clear first).
-    prefetched = (
-        {}
-        if policy == APPEND_ONLY_POLICY
-        else await _batched_peers(input, entry_metas, pairs, floors)
-    )
     jobs = [_one(idx, vec, prefetched.get(j)) for j, ((idx, _t, _x, _k), vec) in enumerate(pairs)]
     await asyncio.gather(*jobs)
     return out

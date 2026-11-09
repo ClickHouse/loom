@@ -233,7 +233,7 @@ async def test_an_append_only_bulk_write_clears_every_entry_without_a_peer_read(
         "dist": 0.01,
     }
     # Every peer statement would find it, the batched one for each of its facts.
-    ch.query_all_returns = [[{**same_text, "qidx": q} for q in (1, 2, 3)]] * 20
+    ch.query_all_returns = [[{**same_text, "qidx": q} for q in range(3)]] * 20
     monkeypatch.setattr(conflicts, "get_client", lambda: ch)
     reads = _no_reads(monkeypatch, "append_only")
     put, metas, pending, vectors = _bulk(3)

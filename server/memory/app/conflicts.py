@@ -296,7 +296,8 @@ async def nearest_peer_rows(
     disagree (vectors of non-live rows, live rows whose vector says otherwise). Stage A
     filters nothing the join did not filter on the vector side. When fewer than
     `limit` survive while stage A's last candidate is still inside `max_dist`,
-    stage A widens (x4) — the answer is the join's, not an approximation of it. Ties
+    stage A widens (x4). Stage A ranks by the quantized codes, so where two candidates'
+    distances tie within the codes' error the last peer can differ from the join's. Ties
     sort by memory_key (the join's order among equal distances is arbitrary).
     Both stages stay inside `scope`, so other users' rows never take the places."""
     params = dict(params)

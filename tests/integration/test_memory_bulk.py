@@ -233,3 +233,43 @@ async def test_bulk_get_answers_each_row_as_memory_get_does(control_plane_url: s
     for k, got in gets.items():
         served = {f: v for f, v in bulk["results"][k].items() if f not in skip}
         assert served == {f: v for f, v in got.items() if f not in skip}, k
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entries", [2, 3])
+async def test_an_append_only_bulk_write_keeps_every_entry(
+    control_plane_url: str, mint_test_token, entries: int
+) -> None:
+    """In an `append_only` namespace the conflict check gives each entry of a bulk write
+    its own row, even when its text nearly restates a live row and the other entries:
+    every key is written and read back with its own value, none merged away or marked
+    duplicate or conflicted. (Identical texts are the bulk write's identity dedup, a
+    check of its own.)"""
+    from loom import Agent
+
+    ns = f"mb-ao-{uuid.uuid4().hex[:6]}"
+    token = mint_test_token(org=ORG, namespaces=[ns], roles=["writer", "admin"])
+
+    def text(i: int) -> str:
+        return f"the nightly ingest run {i} finished with no errors"
+
+    async with Agent(
+        org=ORG, namespace=ns, agent="w", base_url=control_plane_url, api_key=token
+    ) as a:
+        await a.namespaces.register(
+            owner_email="t@example.com", default_conflict_policy="append_only"
+        )
+        await a.memory.set(memory_key="run/0", value=text(0), memory_type="semantic")
+        out = await a.memory.bulk_set(
+            [
+                {"memory_key": f"run/{i}", "value": text(i), "memory_type": "semantic"}
+                for i in range(1, entries + 1)
+            ]
+        )
+        assert not out["merged"] and not out["duplicates"] and not out["conflicted"]
+        assert all(int(w["version"]) > 0 for w in out["written"])
+        got = await a.memory.bulk_get([f"run/{i}" for i in range(entries + 1)])
+    assert sorted(got["results"]) == [f"run/{i}" for i in range(entries + 1)]
+    for key, row in got["results"].items():
+        assert row["found"] is True and row["value"] == text(int(key.split("/")[1]))
+        assert row.get("status", "active") == "active"
