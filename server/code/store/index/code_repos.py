@@ -21,8 +21,12 @@ class CodeReposMixin(CodeRepoBase):
         (`repos._with_registry`)."""
         rows: list[dict[str, Any]] = await self._ch.query_all(
             """
-            -- A removed row is read for its (org, namespace) only: no token leaves the store.
-            SELECT org, namespace, repo, git_remote, git_branch, path_prefixes, exclude,
+            -- A removed row is read for its (org, namespace) only: its other columns stay.
+            SELECT org, namespace, if(active, repo, '') AS repo,
+                   if(active, git_remote, '') AS git_remote,
+                   if(active, git_branch, '') AS git_branch,
+                   if(active, path_prefixes, []) AS path_prefixes,
+                   if(active, exclude, []) AS exclude,
                    toString(classification) AS classification,
                    toString(join_policy) AS join_policy,
                    if(active, github_token_enc, '') AS github_token_enc,

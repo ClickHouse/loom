@@ -22,7 +22,6 @@ import re
 import time
 from typing import Any
 
-from server.code.domain.index import repos as repos_domain
 from server.code.domain.index.remote import parse_remote
 from server.code.domain.index.repos import (
     RepoConfig,
@@ -30,6 +29,7 @@ from server.code.domain.index.repos import (
     registry_unread,
     set_registry_repos,
 )
+from server.code.domain.index.repos import reset_for_tests as reset_snapshot_for_tests
 from server.core import readiness
 from server.core.secrets_at_rest import seal, unseal
 from server.settings import settings
@@ -208,7 +208,7 @@ async def start_refresher(ch: Any | None = None) -> asyncio.Task[None]:
 def reset_for_tests() -> None:
     global _LOADED_AT
     set_registry_repos([], frozenset())
-    repos_domain.reset_for_tests()
+    reset_snapshot_for_tests()
     _LOADED_AT = -1e12
 
 

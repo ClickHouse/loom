@@ -125,7 +125,8 @@ async def code_namespace_predicate(
     from server.tracker.domain.namespaces import tracker_namespace
 
     restricted = [n for n in names if await is_restricted(org, n)]
-    kinds = await namespace_kinds.kind_map(org) if restricted else {}
+    # Read for every name: one restricted after the check above is still told apart.
+    kinds = await namespace_kinds.kind_map(org) if names else {}
     refuse_unread_code(org, restricted, kinds)
 
     def is_code_namespace(o: str, n: str) -> bool:
