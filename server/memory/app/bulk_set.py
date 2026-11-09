@@ -188,6 +188,21 @@ async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, 
                 "org = {org:String} AND namespace = {ns:String}"
                 " AND agent = {agent:String} AND user_id = {uid:String}" + in_scope
             )
+            # Under Postgres a keeper written a moment ago answered at its commit, before
+            # ClickHouse held it: the authority's undelivered revisions add it. Read first:
+            # one whose delivery cleared since was in ClickHouse before the read below.
+            unpublished = (
+                await pg_memory.unpublished_keepers(
+                    input.org,
+                    input.namespace,
+                    input.agent,
+                    input.user_id,
+                    _shas,
+                    scope=request_scope(),
+                )
+                if pg.enabled()
+                else []
+            )
             _rows = await ch.query_all(
                 f"""
                 SELECT argMax(content_sha256, version) AS head_sha, session_id, memory_key,
@@ -208,11 +223,14 @@ async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, 
                 params=params,
             )
             if pg.enabled():
-                # A keeper written a moment ago answered at its commit, before ClickHouse
-                # held it: the authority's undelivered revisions add it, and every keeper
-                # found is checked against its head there.
+                # Every keeper found is checked against its head on the authority; the
+                # same keeper wins whichever read found it (ClickHouse's order).
                 _rows = await _keepers_on_the_authority(
-                    input, _with_unpublished(_rows, await _unpublished_keepers(input, _shas))
+                    input,
+                    sorted(
+                        _rows + unpublished,
+                        key=lambda r: (hash_text(r["head_sha"]), r["memory_key"], r["session_id"]),
+                    ),
                 )
             for _r in _rows:
                 identity_dupes.setdefault(
@@ -223,29 +241,12 @@ async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, 
     return identity_dupes
 
 
-async def _unpublished_keepers(input: MemoryBulkSetInput, shas: list[str]) -> list[dict[str, Any]]:
-    """The keepers of the batch's hashes that ClickHouse is still owed."""
-    return await pg_memory.unpublished_keepers(
-        input.org, input.namespace, input.agent, input.user_id, shas, scope=request_scope()
-    )
-
-
-def _with_unpublished(
-    found: list[dict[str, Any]], unpublished: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    """ClickHouse's keepers and the undelivered ones, each key once, in the order the
-    ClickHouse statement gives (hash, key, session), so the same keeper wins either way."""
-    seen = {(r["session_id"], r["memory_key"]) for r in found}
-    rows = found + [r for r in unpublished if (r["session_id"], r["memory_key"]) not in seen]
-    return sorted(rows, key=lambda r: (hash_text(r["head_sha"]), r["memory_key"], r["session_id"]))
-
-
 async def _keepers_on_the_authority(
     input: MemoryBulkSetInput, rows: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """The keepers ClickHouse found whose head on the authority is still live and holds
-    those bytes: an entry is never dropped as a copy of a value rewritten or deleted
-    since, which ClickHouse may not hold yet."""
+    """The keepers found (by ClickHouse, or among the undelivered revisions) whose head
+    on the authority is still live and holds those bytes: an entry is never dropped as a
+    copy of a value rewritten or deleted since, which ClickHouse may not hold yet."""
     keys = [
         (
             input.org,

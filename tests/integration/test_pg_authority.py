@@ -158,28 +158,62 @@ async def test_a_read_of_clickhouses_history_right_after_a_write_sees_it(
 
 
 @pytest.mark.usefixtures("pg_authority")
-@pytest.mark.parametrize("keeper", ["just_written", "deleted", "rewritten"])
+@pytest.mark.parametrize("keeper", ["undelivered", "deleted", "rewritten"])
 async def test_a_bulk_write_of_bytes_another_key_holds_is_judged_on_the_authority(
-    call: Any, org: str, keeper: str
+    call: Any, pg_conn: Any, org: str, keeper: str
 ) -> None:
     """Identity dedup holds an entry whose bytes a live key of the identity holds, even
-    one written a moment ago, which answered at its commit; a key deleted or rewritten
-    since holds them no more, whatever ClickHouse holds yet, and the entry is written."""
+    one whose delivery ClickHouse is still owed (a write that answered at its commit);
+    a key deleted or rewritten since holds them no more, whatever ClickHouse holds yet,
+    and the entry is written."""
+    from server.core.hashing import sha256_value
+    from server.memory.store import pg_memory
+
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     value = f"the {keeper} keeper's fact {uuid.uuid4().hex[:6]}"
-    assert (await call("memory.set", _set(ns, "a", value))).status_code == 200
-    if keeper == "deleted":
-        gone = await call("memory.delete", {"namespace": ns, "agent": "a", "memory_key": "a"})
-        assert gone.status_code == 200, gone.text
-    elif keeper == "rewritten":
-        assert (await call("memory.set", _set(ns, "a", "another fact"))).status_code == 200
-    out = await call(
-        "memory.bulk_set",
-        {"namespace": ns, "agent": "a", "entries": [{"memory_key": "b", "value": value}]},
-    )
-    assert out.status_code == 200, out.text
-    written = [r["memory_key"] for r in out.json()["written"] if r.get("version")]
-    assert written == ([] if keeper == "just_written" else ["b"]), out.text
+    first = "another fact" if keeper == "undelivered" else value
+    assert (await call("memory.set", _set(ns, "a", first))).status_code == 200
+    await _published(pg_conn, org)
+    try:
+        if keeper == "undelivered":
+            # A's head now holds `value`, its delivery owed for an hour: ClickHouse still
+            # shows the other fact.
+            sha = sha256_value(value)
+            seq = await _unpublished(
+                pg_conn,
+                org,
+                ns,
+                "a",
+                {"value": json.dumps(value), "content_sha256": sha},
+                pg_memory.MEMORY_ROW,
+                timedelta(hours=1),
+            )
+            for table in ("memory_revisions", "memory_current"):
+                await pg_conn.execute(
+                    f"UPDATE loom.{table} SET content_sha256 = $3 "
+                    "WHERE org = $1 AND namespace = $2 AND seq = $4",
+                    org,
+                    ns,
+                    sha,
+                    seq,
+                )
+        elif keeper == "deleted":
+            gone = await call("memory.delete", {"namespace": ns, "agent": "a", "memory_key": "a"})
+            assert gone.status_code == 200, gone.text
+        else:
+            assert (await call("memory.set", _set(ns, "a", "another fact"))).status_code == 200
+        out = await call(
+            "memory.bulk_set",
+            {"namespace": ns, "agent": "a", "entries": [{"memory_key": "b", "value": value}]},
+        )
+        assert out.status_code == 200, out.text
+        written = [r["memory_key"] for r in out.json()["written"] if r.get("version")]
+        assert written == ([] if keeper == "undelivered" else ["b"]), out.text
+    finally:
+        # The hour-leased delivery must not outlive the test.
+        await pg_conn.execute(
+            "DELETE FROM loom.memory_deliveries WHERE org = $1 AND namespace = $2", org, ns
+        )
 
 
 @pytest.mark.usefixtures("pg_authority")

@@ -375,6 +375,42 @@ async def test_under_postgres_a_keeper_clickhouse_does_not_hold_yet_is_found(
     assert asked == [("test", "personal", "cursor", "u", [sha], scope)]
 
 
+@pytest.mark.asyncio
+async def test_under_postgres_a_key_rewritten_a_moment_ago_keeps_its_new_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ClickHouse still shows the key's old bytes while its rewrite is undelivered: a batch
+    carrying both finds the key holding the new ones, not a copy of the old."""
+    from server.memory.app import bulk_set
+    from server.memory.store import pg_memory
+
+    old, new = "the old fact", "the new fact"
+    old_sha, new_sha = sha256_value(old), sha256_value(new)
+
+    async def _unpublished(*_a: Any, scope: Any) -> list[dict[str, Any]]:
+        return [{"head_sha": new_sha, "session_id": "s1", "memory_key": "k", "memory_id": "m"}]
+
+    async def _heads(keys: Any) -> dict[Any, Any]:
+        return {
+            k: {"status": "active", "memory_id": "auth-k", "content_sha256": new_sha} for k in keys
+        }
+
+    class _ClickHouseShowsTheOld:
+        async def query_all(self, *_a: Any, **_k: Any) -> list[dict[str, Any]]:
+            return [{"head_sha": old_sha, "session_id": "s1", "memory_key": "k", "memory_id": "m"}]
+
+    monkeypatch.setattr("server.core.pg.enabled", lambda: True)
+    monkeypatch.setattr(pg_memory, "unpublished_keepers", _unpublished)
+    monkeypatch.setattr(pg_memory, "heads_by_keys", _heads)
+    batch = _input()
+    batch.entries = [
+        _BulkSetEntry(memory_key="x", memory_type="semantic", value=old),
+        _BulkSetEntry(memory_key="y", memory_type="semantic", value=new),
+    ]
+    got = await bulk_set._bulk_identity_dupes(_ClickHouseShowsTheOld(), batch)
+    assert got == {new_sha: ("k", "auth-k")}
+
+
 class _StubCHWithAheadHead(_StubCHWithLiveKey):
     """The live row holds other bytes, at a version from a replica whose clock is ahead."""
 

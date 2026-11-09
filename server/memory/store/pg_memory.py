@@ -1722,7 +1722,7 @@ async def unpublished_keepers(
         "SELECT DISTINCT r.content_sha256 AS head_sha, r.row->>'session_id' AS session_id, "
         "r.row->>'memory_key' AS memory_key, r.memory_id::text AS memory_id "
         "FROM loom.memory_deliveries d JOIN loom.memory_revisions r USING (org, namespace, seq) "
-        "WHERE d.org = $1 AND d.namespace = $2 AND NOT d.settled AND d.targets & $6 <> 0 "
+        "WHERE d.org = $1 AND d.namespace = $2 AND d.targets & $6 <> 0 "
         "AND r.user_id = $4 AND r.row->>'agent' = $3 AND r.content_sha256 = ANY($5::text[])"
         f"{scoped}",
         *args,
