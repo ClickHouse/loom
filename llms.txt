@@ -111,7 +111,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 
 ## Architecture
 
-- [Assistant design](docs/architecture/assistant.md): This page is the design of Loom's assistant, which will answer questions about what a namespace holds and how it is used, with a citation for every claim.
+- [Assistant design](docs/architecture/assistant.md): This page is the design of Loom's assistant, which answers questions about what a namespace holds and how it is used, with a citation for every claim.
 - [ClickHouse](docs/architecture/clickhouse.md): All durable Loom state lives in one ClickHouse database, `loom`.
 - [Code index architecture](docs/architecture/code-index-architecture.md): This page is the inside view of the code index: how files become chunks, symbols and edges, and how the two tiers stay current.
 - [Document extraction](docs/architecture/document-extraction.md): An uploaded original is parsed into one shape, the extraction artifact, by an extractor service: a separate process with its own dependencies, never the Loom server.
