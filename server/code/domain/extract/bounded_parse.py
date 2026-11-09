@@ -114,7 +114,7 @@ def _check_in_child(grammar: str, source: bytes, budget: float, memory: int) -> 
     global _idle
     child, _idle = _idle, None
     # Again on a fresh child, once each, when this one ended before reading the request,
-    # or the kernel killed it (memory ran out elsewhere: a parse past its own limit ends
+    # or the kernel killed it (out of memory, this parse's own included; a limit hit ends
     # by another signal).
     unread = killed = False
     while True:
@@ -149,7 +149,7 @@ def _ended(status: int, budget: float, memory: int) -> NoReturn:
         logger.error("bounded_parse: the parse process failed with status %d", status)
         raise RuntimeError(f"the parse process failed with status {status}")
     if status == -signal.SIGKILL:
-        raise ParseTimeout("the parse process was killed twice: memory ran out around it")
+        raise ParseTimeout("the parse process was killed twice: the container ran out of memory")
     raise ParseTimeout(
         f"parse ran past {memory >> 20} MB or {budget:g} CPU seconds"
         f", or crashed (its process ended by signal {-status})"
