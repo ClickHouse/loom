@@ -14,6 +14,7 @@ import pytest
 import server.erasure.app.saga as h
 import server.memory.store as memory_repo
 from server.erasure.store import census as erasure_census
+from server.erasure.store import predicates as erasure_predicates
 from server.erasure.store import steps_graph as graph_steps
 from server.erasure.store import steps_memory as memory_steps
 from server.llm import cache as lc
@@ -55,23 +56,18 @@ class _RecCH:
         return [{"mutation_id": "m", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}]
 
 
-# The statement the census and the steps share, as ClickHouse gets it: the user's keys
-# and those of the summaries built from them (`USER_SUMMARIES`).
-# What it matches: tests/integration/test_erasure_consolidated_quotes_live_ch.py.
-_SUMMARY_COLUMNS = "namespace, agent, user_id, session_id, memory_key, memory_id, tags"
-_SUMMARY_KEYS = (
-    f"FROM (SELECT {_SUMMARY_COLUMNS} FROM loom.memory FINAL WHERE org = {{org:String}} "
-    f"UNION ALL SELECT {_SUMMARY_COLUMNS} FROM loom.memory_versions "
-    "WHERE org = {org:String}) WHERE has(tags, 'consolidated') AND "
-    "hasAny(arrayMap(t -> (toString(namespace), t), tags), "
-    "(SELECT groupUniqArray((toString(namespace), concat('src:', memory_key))) "
-    "FROM loom.memory WHERE org = {org:String} AND user_id = {uid:String}))"
-)
-_QUOTED_KEYS = (
-    "arrayConcat((SELECT groupUniqArray(memory_key) FROM loom.memory "
-    "WHERE org = {org:String} AND user_id = {uid:String}), "
-    f"(SELECT groupUniqArray(memory_key) {_SUMMARY_KEYS}))"
-)
+# The statement the census and the steps share: the user's keys and those of the
+# summaries built from them, from the current rows and the history, paired with the
+# user's (namespace, src:key). What it matches:
+# tests/integration/test_erasure_consolidated_quotes_live_ch.py.
+_QUOTED_KEYS = erasure_predicates.USER_QUOTED_KEY_LIST
+
+
+def test_the_quoted_keys_read_the_summaries_rows_and_history_by_the_users_pairs() -> None:
+    assert "FROM loom.memory FINAL" in _QUOTED_KEYS
+    assert "UNION ALL SELECT" in _QUOTED_KEYS and "FROM loom.memory_versions" in _QUOTED_KEYS
+    assert "concat('src:', memory_key)" in _QUOTED_KEYS
+    assert "user_id = {uid:String}" in _QUOTED_KEYS
 
 
 # ---------------------------------------------------------------------------

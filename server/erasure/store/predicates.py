@@ -146,11 +146,11 @@ USER_MEMORY_KEYS = f"hasAny(memory_keys, {USER_QUOTED_KEY_LIST})"
 MEMORY_KEYS_IN = "hasAny(memory_keys, {keys:Array(String)})"
 # A community row names an entity (and a label — the highest-degree member of
 # its community, another entity name). The entity belongs to the user when
-# every memory linking it in the co-occurrence graph is the user's (or a summary
-# of theirs) and at least one is — the exclusive-ownership rule, read from the edge link
-# table before the links go. A row
-# whose LABEL is such an entity goes too: the label text is the residue, and
-# the communities worker relabels on its next pass from the edges that remain.
+# every memory linking it in the co-occurrence graph is the user's (or a summary of
+# theirs) and at least one is — the exclusive-ownership rule, read from the edge link
+# table before the links go. A row whose LABEL is such an entity goes too: the label
+# text is the residue, and the communities worker relabels on its next pass from the
+# edges that remain.
 USER_COMMUNITY_ENTITIES = (
     "(SELECT namespace, entity FROM ("
     "SELECT namespace, entity_a AS entity, memory_key FROM loom.entity_edge_memories FINAL "

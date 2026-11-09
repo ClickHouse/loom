@@ -93,7 +93,7 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
     # The row read, not the request: an `agent="*"` lookup names no identity, and erasure
     # finds a copy by its source's.
     promoted_from_repr = (
-        f"{input.org}/{src.namespace}/{src.agent}/{src.user_id}/{src.session_id}/{src.memory_key}"
+        f"{src.org}/{src.namespace}/{src.agent}/{src.user_id}/{src.session_id}/{src.memory_key}"
     )
     promoted_by = input.approver or "explicit"
     src_value_json = json.dumps(src.value, default=str)

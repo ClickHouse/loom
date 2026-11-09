@@ -1289,9 +1289,8 @@ a subquery: the user's memory keys, record ids or shared keys, or the graph keys
 entities only the user's memories link, and the same of the summaries built from them
 (`server/erasure/store/predicates.py`). The census counts with that predicate as
 written. A replicated table refuses a mutation with a subquery or with `now()`, so the
-step reads the subquery first and mutates by what it
-returned, bound as an array a slice at a time (`server/erasure/store/scope_reads.py`), and
-binds the time it stamps. A key that holds stored free text (a triple, an edge, a
+step reads the subquery first and mutates by what it returned, bound as an array a slice
+at a time (`server/erasure/store/scope_reads.py`), and binds the time it stamps. A key that holds stored free text (a triple, an edge, a
 community's entity or label, a document's `source_uri`) is bound as its `cityHash64`,
 computed by ClickHouse on both sides: nothing bounds a stored name, and one name can be
 longer than the form field a bound value travels in. A slice's mutation tag hashes the
