@@ -1700,6 +1700,34 @@ async def live_heads_in(
     return [decode_row(r["row"]) for r in rows]
 
 
+async def identity_keepers(
+    org: str,
+    namespace: str,
+    agent: str,
+    user_id: str,
+    shas: Sequence[str],
+    *,
+    statuses: Sequence[str],
+    scope: Any,
+) -> list[dict[str, Any]]:
+    """The keys of one identity (any session) whose live head, of one of `statuses`, holds
+    one of the content hashes `shas`, in `scope`: `head_sha`, `session_id`, `memory_key`
+    and `memory_id`, by hash, then key, then session. Current at the commit, where
+    ClickHouse may not hold a write that answered at it yet."""
+    if not shas or pg.unstorable((org, namespace, agent, user_id)):
+        return []
+    args: list[Any] = [org, namespace, agent, user_id, list(shas), list(statuses)]
+    rows = await pg.fetch(
+        "SELECT content_sha256 AS head_sha, session_id, memory_key, memory_id::text AS memory_id "
+        "FROM loom.memory_current WHERE org = $1 AND namespace = $2 AND agent = $3 "
+        "AND user_id = $4 AND content_sha256 = ANY($5::text[]) "
+        "AND row->>'tombstoned_at' IS NULL AND coalesce(row->>'status', 'active') = ANY($6::text[])"
+        f"{_scope_sql(scope, args)} ORDER BY content_sha256, memory_key, session_id",
+        *args,
+    )
+    return [dict(r) for r in rows]
+
+
 async def live_keys(org: str, namespace: str, keys: Sequence[str]) -> set[str]:
     """Which of `keys` have a live head in `namespace`, in any identity."""
     wanted = [k for k in keys if not pg.unstorable(k)]  # no head holds one Postgres cannot store

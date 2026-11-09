@@ -304,33 +304,33 @@ async def test_the_same_key_in_two_sessions_picks_one_keeper_every_time() -> Non
 
 
 @pytest.mark.asyncio
-async def test_under_postgres_a_keeper_is_one_the_authority_still_holds(
+async def test_under_postgres_the_keepers_are_the_authoritys_live_heads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """ClickHouse may not hold a rewrite or a delete yet: a keeper whose head on the
-    authority holds other bytes, or none, is not one, and its entry is written."""
+    """Under Postgres the keepers are read from the authority's heads, not ClickHouse: a
+    key written a moment ago answered at its commit, before ClickHouse held it, and one
+    rewritten or deleted since holds other bytes there, or none."""
     from server.memory.app import bulk_set
     from server.memory.store import pg_memory
 
     sha = sha256_value(VALUE)
-    found = [
-        {"head_sha": sha, "session_id": "s1", "memory_key": "kept", "memory_id": "m1"},
-        {"head_sha": sha, "session_id": "s1", "memory_key": "rewritten", "memory_id": "m2"},
-        {"head_sha": sha, "session_id": "s1", "memory_key": "deleted", "memory_id": "m3"},
+    asked: list[tuple[Any, ...]] = []
+
+    async def _keepers(*args: Any, statuses: Any, scope: Any) -> list[dict[str, Any]]:
+        asked.append((*args, tuple(statuses)))
+        return [{"head_sha": sha, "session_id": "s1", "memory_key": "kept", "memory_id": "m1"}]
+
+    class _NoClickHouse:
+        async def query_all(self, *_a: Any, **_k: Any) -> list[dict[str, Any]]:
+            raise AssertionError("read ClickHouse under Postgres")
+
+    monkeypatch.setattr("server.core.pg.enabled", lambda: True)
+    monkeypatch.setattr(pg_memory, "identity_keepers", _keepers)
+    got = await bulk_set._bulk_identity_dupes(_NoClickHouse(), _input())
+    assert got == {sha: ("kept", "m1")}
+    assert asked == [
+        ("test", "personal", "cursor", "u", [sha], ("active", "duplicate", "conflicted"))
     ]
-
-    async def _heads(keys: Any) -> dict[Any, Any]:
-        held = {"kept": {"content_sha256": sha}, "rewritten": {"content_sha256": "b" * 64}}
-        # the authority's id: a key re-set since keeps its bytes under a new one
-        return {
-            k: {"status": "active", "memory_id": f"auth-{k[5]}", **held[k[5]]}
-            for k in keys
-            if k[5] in held
-        }
-
-    monkeypatch.setattr(pg_memory, "heads_by_keys", _heads)
-    kept = await bulk_set._keepers_on_the_authority(_input(), found)
-    assert [(r["memory_key"], r["memory_id"]) for r in kept] == [("kept", "auth-kept")]
 
 
 class _StubCHWithAheadHead(_StubCHWithLiveKey):
