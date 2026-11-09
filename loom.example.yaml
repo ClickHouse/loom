@@ -1202,8 +1202,13 @@ settings:
 
   # CPU seconds after which a tree-sitter parse stops reading its file (raising it
   # re-reads nothing); a PR overlay also waits up to this long, wall-clock, past its
-  # window. [live]
+  # window, which a parse near it can outlast (it runs in `code_parse_memory_mb`'s
+  # child, then in the server). [live]
   # code_parse_timeout_s: 3.0
+
+  # Address space (MB) a tree-sitter parse may take in the process it runs in first; a
+  # parse past it indexes its file as chunks without symbols. [live]
+  # code_parse_memory_mb: 256
 
   # The ingest pass's own deadline (seconds), kept at the supervisor's cap;
   # `code_ingest_pass_budget_fraction` keeps a pass under it. [restart]

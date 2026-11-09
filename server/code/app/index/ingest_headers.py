@@ -176,9 +176,9 @@ async def header_context(
     hd = HeaderDecls()
     read = 0
     # No header of one source starts after its headers have spent one parse deadline,
-    # so they spend up to about two
+    # so they spend up to about three (the last one's parse runs twice)
     spent = 0.0
-    while read < _HEADER_CAP and spent <= settings.code_parse_timeout_s:
+    while read < _HEADER_CAP and spent < settings.code_parse_timeout_s:
         if not queue:
             if includes_done:
                 break
@@ -214,13 +214,14 @@ async def header_context(
 
 def _add_header(hd: HeaderDecls, path: str, text: str) -> tuple[float, bool]:
     """`hd.add_source` of one header: (the CPU seconds it took, whether its parse ran
-    past the deadline)."""
+    past the deadline; such a parse counts as a whole deadline). Its parse runs twice,
+    in `bounded_parse`'s child and then here, and this thread's clock sees one of them."""
     start = time.thread_time()
     try:
         hd.add_source(path, text.encode("utf-8", "replace"))
     except ParseTimeout:
-        return time.thread_time() - start, True
-    return time.thread_time() - start, False
+        return settings.code_parse_timeout_s, True
+    return 2 * (time.thread_time() - start), False
 
 
 # the sibling header's own `#include` list, kept beside its text: the field

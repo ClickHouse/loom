@@ -44,6 +44,7 @@
  "code_mirror_clone_wait_s",
  "code_mirror_gc_timeout_s",
  "code_mirror_warmup_retry_s",
+ "code_parse_memory_mb",
  "code_parse_timeout_s",
  "code_pr_overlay_cache_ttl_s",
  "code_pr_overlay_file_ttl_s",

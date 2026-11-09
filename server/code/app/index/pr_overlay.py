@@ -544,7 +544,7 @@ async def _in_turn[T](
     """`fn(*args)` on the parse pool, `store`d when it finishes; None when `deadline`
     passes before it can start, or a parse deadline after that before it ends. Parsing
     is CPU work: one overlay parse runs at a time per namespace in this process
-    (`scope`; parses of one grammar also wait for each other across the process,
+    (`scope`; every parse also waits for the others across the process,
     `bounded_parse`), the event loop runs at each of the parser's reads, and a request
     asking for the key already running awaits that one."""
     while (current := _RUNNING.get(scope)) is not None and current[0] != key:
@@ -727,7 +727,7 @@ async def _parse_post_image(
 def _note_left_out(ov: PrOverlay, timed_out: int) -> None:
     parts = []
     if timed_out:
-        parts.append(f"{timed_out} changed file(s) whose parse timed out")
+        parts.append(f"{timed_out} changed file(s) whose parse ran past its limits")
     if ov.unreached:
         parts.append(
             f"{ov.unreached} changed file(s) {NOT_REACHED}: the request's parse time was spent"

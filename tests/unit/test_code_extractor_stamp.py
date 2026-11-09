@@ -120,7 +120,8 @@ NON_EXTRACTOR_MODULES: dict[str, str] = {
     "lang_cmake.py": "CMake targets, builds / tests facets, link graph — a lane module",
     "lang_markdown.py": "Markdown design docs by heading — a lane module",
     "extractor_stamp.py": "the stamp itself",
-    "bounded_parse.py": "the parse deadline — the same tree in time, no tree past it",
+    "bounded_parse.py": "the parse limits — the same tree within them, no tree past them",
+    "parse_child.py": "the parse limits' child process — no tree of its own",
     "lang_reference.py": (
         "reference fixtures: one unembedded chunk per file, written only "
         "for paths no stage's parser touches; a stamp heal walks LIVE rows and cannot add "

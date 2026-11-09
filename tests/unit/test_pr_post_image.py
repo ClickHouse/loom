@@ -198,7 +198,7 @@ def test_an_open_brief_builds_from_the_post_image_and_is_never_stored(
             "pr_number": kw["pr_number"],
             "overlay": True,
             "head_sha": kw["head_sha"],
-            "overlay_note": "1 changed file(s) whose parse timed out",
+            "overlay_note": "1 changed file(s) whose parse ran past its limits",
         }
 
     monkeypatch.setattr(review_brief_build, "build_for_open", build_for_open)
@@ -219,7 +219,7 @@ def test_an_open_brief_builds_from_the_post_image_and_is_never_stored(
     assert kw["changed_paths"] == [PATH, "src/Old.cpp"]
     assert kw["store"] is False and out.stored is False
     assert out.overlay is True and out.overlay_head_sha == "cd" * 20
-    assert out.overlay_note == "1 changed file(s) whose parse timed out"
+    assert out.overlay_note == "1 changed file(s) whose parse ran past its limits"
 
 
 def test_an_open_brief_without_history_or_a_post_image_says_why(
@@ -438,7 +438,7 @@ def test_a_file_whose_parse_runs_past_the_deadline_is_counted(
     asyncio.run(po._parse_post_image(_Repo(), "acme", "code-ch", ov, read=read, path_prefixes=()))
     assert "checkPartsLimit" in {s.name for s in ov.symbols}
     assert any(e.to_qualified_name.endswith("checkPartsLimit") for e in ov.edges)
-    assert ov.note == "1 changed file(s) whose parse timed out" and ov.unreached == 0
+    assert ov.note == "1 changed file(s) whose parse ran past its limits" and ov.unreached == 0
 
 
 def test_an_open_brief_over_a_partial_overlay_is_served_unstored(
@@ -478,7 +478,7 @@ def test_an_open_brief_over_a_partial_overlay_is_served_unstored(
         )
     )
     assert repo.inserted == [] and payload["overlay_note"] == note and payload["stored"] is False
-    note = "1 changed file(s) whose parse timed out"  # stable: stored with the note
+    note = "1 changed file(s) whose parse ran past its limits"  # stable: stored with the note
     payload = asyncio.run(
         rbb.build_for_open(
             repo,
@@ -669,7 +669,7 @@ def test_an_edge_parse_that_times_out_is_counted(monkeypatch: pytest.MonkeyPatch
         po._parse_post_image(_Repo(), "acme", "code-ch", again, read=read, path_prefixes=())
     )
     assert again.symbols and again.edges == [] and again.unreached == 0
-    assert again.note == "1 changed file(s) whose parse timed out"
+    assert again.note == "1 changed file(s) whose parse ran past its limits"
 
 
 def test_a_started_parse_that_ends_within_one_deadline_is_returned(

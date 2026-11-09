@@ -124,7 +124,7 @@ def parse_for_ingest(path: str, source: bytes) -> tuple[ParsedFile | None, str]:
 
 
 def parse_timed_out(error: str) -> bool:
-    """Whether `parse_for_ingest`'s reason says the parse ran past its deadline."""
+    """Whether `parse_for_ingest`'s reason says the parse ran past its limits."""
     return error.startswith(f"parse: {ParseTimeout.__name__}")
 
 

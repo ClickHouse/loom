@@ -1,10 +1,12 @@
-"""Every tree-sitter parse of repository text stops at `code_parse_timeout_s`."""
+"""Every tree-sitter parse of repository text stops at `code_parse_timeout_s` and
+`code_parse_memory_mb`."""
 
 from __future__ import annotations
 
 import ast
 import asyncio
 import pathlib
+import re
 import subprocess
 import sys
 import time
@@ -30,12 +32,20 @@ _SLOW = [
 def test_a_slow_parse_stops_at_the_deadline_and_the_file_is_chunked(
     monkeypatch: pytest.MonkeyPatch, path: str, source: bytes
 ) -> None:
+    from server.code.domain.extract import bounded_parse
+
     monkeypatch.setattr(settings, "code_parse_timeout_s", 0.2)
+    monkeypatch.setattr(bounded_parse, "_IDLE", [])
     start = time.monotonic()
     pf, err = parse_for_ingest(path, source)
     assert time.monotonic() - start < 5
     assert pf is not None and pf.symbols == [] and pf.source == source
     assert "ParseTimeout" in err
+    (child,) = bounded_parse._IDLE  # kept: it answered
+    pf, err = parse_for_ingest("ok.go", b"package x\nfunc f() {}\n")
+    assert err == "" and pf is not None and len(pf.symbols) == 1
+    assert bounded_parse._IDLE == [child]
+    _end(bounded_parse._IDLE)
 
 
 # Parses, then sets every thread's CPU clock past the deadline and reads a node's text
@@ -122,13 +132,13 @@ def _receiver(node: ast.expr) -> str:
 
 
 def test_every_tree_sitter_parse_goes_through_the_deadline() -> None:
-    """Outside `bounded_parse`, no `.parse(` is called on a parser; and in the code plane's
-    domain, or in any module that names tree-sitter, no `.parse(` at all except on a
-    receiver in `_NOT_A_PARSER`. A parser is known by its name (`parser`, `_parser(...)`),
-    so one held under another name outside those modules is not caught."""
+    """Outside `bounded_parse` and its child, no `.parse(` is called on a parser; and in
+    the code plane's domain, or in any module that names tree-sitter, no `.parse(` at all
+    except on a receiver in `_NOT_A_PARSER`. A parser is known by its name (`parser`,
+    `_parser(...)`), so one held under another name outside those modules is not caught."""
     unbounded = []
     for f in _SERVER.rglob("*.py"):
-        if f.name == "bounded_parse.py":
+        if f.name in {"bounded_parse.py", "parse_child.py"}:
             continue
         text = f.read_text()
         scoped = "tree_sitter" in text or f.is_relative_to(_SERVER / "code" / "domain")
@@ -216,6 +226,35 @@ def test_two_threads_never_parse_one_grammar_at_once() -> None:
     assert most == 1
 
 
+def test_headers_whose_parses_stop_spend_the_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.code.app.index import ingest_headers as ih
+    from server.code.app.index.ingest_stats import FileIngestStats
+    from server.code.domain.extract.treesitter import parse_cpp
+
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 0.2)
+    monkeypatch.setattr(ih, "_needs_header", lambda pf, hd: True)
+    monkeypatch.setattr(ih, "_header_cache", {})
+    read: list[str] = []
+
+    async def header_text(repo: Any, org: str, ns: str, path: str) -> tuple[str, bool]:
+        read.append(path)
+        return "'\\''" * 30_000, True
+
+    async def none(*a: Any) -> list[str]:
+        return []
+
+    class Repo:
+        async def live_paths_present(self, org: str, ns: str, paths: list[str]) -> set[str]:
+            return set(paths)
+
+    monkeypatch.setattr(ih, "_header_text", header_text)
+    monkeypatch.setattr(ih, "_present_includes", none)
+    pf = parse_cpp("src/a.cpp", b"void f() { g(); }\n")
+    stats = FileIngestStats(path="src/a.cpp")
+    asyncio.run(ih.header_context(Repo(), "acme", "code", pf, "src/a.cpp", stats))
+    assert len(read) == 1  # it spent the deadline: no second
+
+
 def test_the_headers_of_one_source_stop_at_one_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -288,15 +327,18 @@ def test_the_event_loop_runs_while_an_ingest_round_parses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.code.app.index.round_reads import RoundReads
+    from server.code.domain.extract import bounded_parse, parse_child
     from tests.unit.test_code_ingest_pass_budget import _ReadRepo
 
-    monkeypatch.setattr(settings, "code_parse_timeout_s", 0.5)
+    # the child passes it, so the server makes the whole slow parse itself
+    monkeypatch.setattr(bounded_parse, "_in_child", lambda *a: parse_child.DONE)
+    source = b"package x\nvar s = " + b"`" * 12_000
     reads = RoundReads(_ReadRepo(), "o", "code-ns")
     ticks = 0
 
     async def run() -> None:
         nonlocal ticks
-        prefetch = asyncio.ensure_future(reads.prefetch({"slow.go": _SLOW[0][1]}))
+        prefetch = asyncio.ensure_future(reads.prefetch({"slow.go": source}))
         while not prefetch.done():
             await asyncio.sleep(0.01)
             ticks += 1
@@ -304,6 +346,7 @@ def test_the_event_loop_runs_while_an_ingest_round_parses(
 
     asyncio.run(run())
     assert ticks >= 3  # a parse on the event loop would let it tick once
+    assert reads.parsed["slow.go"][1] == ""
 
 
 def test_the_round_does_not_parse_a_timed_out_host_shell_again(
@@ -347,3 +390,108 @@ def test_callee_targets_run_off_the_event_loop(monkeypatch: pytest.MonkeyPatch) 
     pf = ParsedFile(path="a.py", lang="python", source=b"")
     asyncio.run(ingest_edges._ts_callee_returns(Repo(), "o", "ns", pf, {}, None))
     assert threads == [False, False]  # both rounds, and neither on the loop's thread
+
+
+# Inputs some grammars parse in quadratic memory: each needs gigabytes unbounded
+_COSTLY = [
+    ("costly.java", b"a=>" * 4_000),
+    ("costly.cpp", b"a<-" * 12_000),
+    ("costly.ts", b"a<b," * 12_000),
+]
+
+
+@pytest.mark.parametrize(("path", "source"), _COSTLY, ids=[p for p, _ in _COSTLY])
+def test_a_parse_past_the_memory_limit_is_refused_and_the_server_stays_small(
+    path: str, source: bytes
+) -> None:
+    """Run in a process held to 1 GB of address space, so an unbounded parse fails the
+    test (a crash) instead of taking the host's memory."""
+    script = f"""
+import resource
+resource.setrlimit(resource.RLIMIT_AS, (1 << 30, 1 << 30))
+from server.code.app.index.ingest_parse import parse_for_ingest
+from server.settings import settings
+settings.code_parse_memory_mb = 256
+settings.code_parse_timeout_s = 30.0  # only the memory limit stops it
+pf, err = parse_for_ingest({path!r}, {source!r})
+assert pf is not None and pf.symbols == [] and "ParseTimeout" in err, err
+pf, err = parse_for_ingest("Ok.java", b"class Ok {{ void f() {{}} }}")  # a new child
+assert err == "" and pf is not None and pf.symbols, err
+print("refused")
+"""
+    done = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=_SERVER.parent,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert done.returncode == 0 and "refused" in done.stdout, done.stderr[-2000:]
+    assert "ended with status -" in done.stderr  # logged: the limit ended its process
+
+
+def test_every_grammar_the_server_imports_is_one_the_child_loads() -> None:
+    from server.code.domain.declaration import _GRAMMARS
+    from server.code.domain.extract import bounded_parse
+
+    listed = {g.partition(":")[0] for g in bounded_parse._GRAMMARS}
+    imported = {f"tree_sitter_{g}" for g in _GRAMMARS.values()}
+    for f in _SERVER.rglob("*.py"):
+        imported |= set(re.findall(r"(?:from|import) (tree_sitter_\w+)", f.read_text()))
+    assert imported and imported <= listed
+
+
+def test_a_child_that_ended_while_idle_is_replaced_without_failing_the_parse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.code.domain.extract import bounded_parse
+
+    monkeypatch.setattr(bounded_parse, "_IDLE", [])
+    source = b"package x\nfunc f() {}\n"
+    assert parse_for_ingest("a.go", source)[1] == ""
+    for child in bounded_parse._IDLE:
+        child.kill()  # ends while idle; the pool still holds it
+        child.wait()
+    pf, err = parse_for_ingest("b.go", source)
+    assert err == "" and pf is not None and len(pf.symbols) == 1
+    _end(bounded_parse._IDLE)
+
+
+def _end(children: list[Any]) -> None:
+    from server.code.domain.extract import bounded_parse
+
+    for child in children:
+        child.kill()
+        bounded_parse._close(child)
+
+
+def test_a_child_reads_its_next_request_under_no_earlier_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.code.domain.extract import bounded_parse, parse_child
+
+    monkeypatch.setattr(bounded_parse, "_IDLE", [])
+    grammar = "tree_sitter_go:language"
+    assert bounded_parse._in_child(grammar, b"package x\n", 3.0, 256 << 20) == parse_child.DONE
+    (child,) = bounded_parse._IDLE
+    # a limit the next request's 8 MB source would not fit under
+    assert bounded_parse._in_child(grammar, b"package x\n", 3.0, 4 << 20) == parse_child.DONE
+    big = b"package x\n// " + b"x" * (8 << 20)
+    assert bounded_parse._in_child(grammar, big, 3.0, 256 << 20) == parse_child.DONE
+    assert bounded_parse._IDLE == [child]
+    _end(bounded_parse._IDLE)
+
+
+def test_a_parse_in_the_server_past_twice_the_deadline_stops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tree_sitter
+    import tree_sitter_go
+
+    from server.code.domain.extract import bounded_parse, parse_child
+
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 0.05)
+    monkeypatch.setattr(bounded_parse, "_in_child", lambda *a: parse_child.DONE)
+    parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_go.language()))
+    with pytest.raises(bounded_parse.ParseTimeout, match="in the server"):
+        bounded_parse.parse(parser, _SLOW[0][1])

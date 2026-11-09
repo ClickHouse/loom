@@ -1038,8 +1038,12 @@ class CodeSettings(BaseModel):
     # and heal on the next backfill.
     code_ingest_max_files_per_commit: int = 500
     # CPU seconds after which a tree-sitter parse stops reading its file (raising it re-reads
-    # nothing); a PR overlay also waits up to this long, wall-clock, past its window.
+    # nothing); a PR overlay also waits up to this long, wall-clock, past its window, which a
+    # parse near it can outlast (it runs in `code_parse_memory_mb`'s child, then in the server).
     code_parse_timeout_s: Annotated[float, LIVE] = Field(default=3.0, gt=0)
+    # Address space (MB) a tree-sitter parse may take in the process it runs in first; a
+    # parse past it indexes its file as chunks without symbols.
+    code_parse_memory_mb: Annotated[int, LIVE] = Field(default=256, ge=128)
     # The ingest pass's own deadline (seconds), kept at the supervisor's cap;
     # `code_ingest_pass_budget_fraction` keeps a pass under it.
     code_ingest_max_pass_seconds: int = 900
