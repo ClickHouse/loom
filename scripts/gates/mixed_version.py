@@ -401,11 +401,12 @@ class Scenario:
         # N first: it answers only once its own entities are written and probed.
         for label in ("N", "N-1"):
             self.check(self.answers_insights(label), f"{label} answers insights.query")
+        names = self.setting_names()
         version = sql(
             self.ch_port,
             "SELECT trim(BOTH '\\'' FROM value) FROM system.settings_profile_elements "
             "WHERE profile_name = {user:String} AND setting_name = {name:String}",
-            {"user": boundary.ANALYST_USER, "name": boundary.VERSION_SETTING},
+            {"user": boundary.ANALYST_USER, "name": names.version},
         )
         self.check(
             version == str(boundary.ENTITY_VERSION),
@@ -425,7 +426,8 @@ class Scenario:
         # An older build's probe errors can hold the pads in clear in the
         # server log: its search starts now.
         since = sql(self.ch_port, "SELECT now()")
-        self.logs_hold_no_key(since, {"k": "[" + ", ".join(map(sql_string, secrets)) + "]"})
+        needles = {"k": "[" + ", ".join(map(sql_string, secrets)) + "]"}
+        self.logs_hold_no_key(since, needles, f"{names.prefix}loom_")
 
     def answers_insights(self, label: str) -> bool:
         """Whether `label` answers insights.query within SETTLE_S: a process
@@ -443,7 +445,17 @@ class Scenario:
                 return r.status_code == 200
             time.sleep(2)
 
-    def logs_hold_no_key(self, since: str, needles: dict[str, str]) -> None:
+    def setting_names(self) -> boundary.SettingNames:
+        """The analysis settings under the first prefix this ClickHouse takes."""
+        for prefix in boundary.SETTING_PREFIXES:
+            try:
+                sql(self.ch_port, "SELECT 1", settings={f"{prefix}loom_probe": "1"})
+            except RuntimeError:
+                continue  # not a prefix this server takes
+            return boundary.SettingNames(prefix)
+        raise RuntimeError(f"ClickHouse takes none of {boundary.SETTING_PREFIXES}")
+
+    def logs_hold_no_key(self, since: str, needles: dict[str, str], scope: str) -> None:
         """No statement text or error in query_log, and no server log error
         since `since`, holds a spelling of the key; each search first shows a
         refused read of the probe reached that log."""
@@ -473,9 +485,9 @@ class Scenario:
             quoted = sql(
                 self.ch_port,
                 "SELECT count() FROM system.text_log WHERE event_time >= {since:DateTime} "
-                "AND level = 'Error' AND position(message, 'SQL_loom_') > 0 "
+                "AND level = 'Error' AND position(message, {scope:String}) > 0 "
                 "AND message LIKE '%UNKNOWN_SETTING%'",
-                {"since": since},
+                {"since": since, "scope": scope},
             )
             if quoted != "0" or time.monotonic() > deadline:
                 break

@@ -1,0 +1,7 @@
+<!--
+  CI only: custom settings take the `custom_` prefix, as on ClickHouse Cloud,
+  where ClickHouse's default config names `SQL_`.
+-->
+<clickhouse>
+    <custom_settings_prefixes>custom_</custom_settings_prefixes>
+</clickhouse>

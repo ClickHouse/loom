@@ -47,16 +47,48 @@ RETIRED_TABLES: tuple[str, ...] = ()
 CANARY_TABLE = "analysis_canary"
 CANARY_ORG = ""
 CANARY_NAMESPACE = ""
-# Custom settings carry the scope; ClickHouse accepts any setting with the
-# `SQL_` prefix (custom_settings_prefixes defaults to it).
-ORG_SETTING = "SQL_loom_org"
-NS_SETTING = "SQL_loom_ns"
-EXP_SETTING = "SQL_loom_exp"
-SIG_SETTING = "SQL_loom_sig"
-VERSION_SETTING = "SQL_loom_analyst_version"
-DIGEST_SETTING = "SQL_loom_analyst_digest"
-# The caps profile's own stamp: the digest of the caps it holds.
-CAPS_DIGEST_SETTING = "SQL_loom_analyst_caps_digest"
+# Custom settings carry the scope and the profiles' stamps. A server takes
+# one only under a prefix it names in custom_settings_prefixes: ClickHouse's
+# default config names `SQL_`, ClickHouse Cloud `custom_`. Loom uses the first
+# of these the server takes.
+SETTING_PREFIXES = ("SQL_", "custom_")
+
+
+@dataclass(frozen=True)
+class SettingNames:
+    """The custom settings the analysis uses, under one server's prefix."""
+
+    prefix: str
+
+    @property
+    def org(self) -> str:
+        return f"{self.prefix}loom_org"
+
+    @property
+    def ns(self) -> str:
+        return f"{self.prefix}loom_ns"
+
+    @property
+    def exp(self) -> str:
+        return f"{self.prefix}loom_exp"
+
+    @property
+    def sig(self) -> str:
+        return f"{self.prefix}loom_sig"
+
+    @property
+    def version(self) -> str:
+        return f"{self.prefix}loom_analyst_version"
+
+    @property
+    def digest(self) -> str:
+        return f"{self.prefix}loom_analyst_digest"
+
+    @property
+    def caps_digest(self) -> str:
+        """The caps profile's own stamp: the digest of the caps it holds."""
+        return f"{self.prefix}loom_analyst_caps_digest"
+
 
 # Logged statement text is cut to "(removed N characters)"; the formatted copy,
 # which the cut misses, is not written. Cloud pins log_queries but not these.
@@ -255,16 +287,16 @@ def sign_scope(key: bytes, org: str, namespaces: str, exp: int, query_id: str) -
 
 
 def scope_settings(
-    key: bytes, org: str, namespaces: list[str], exp: int, query_id: str
+    names: SettingNames, key: bytes, org: str, namespaces: list[str], exp: int, query_id: str
 ) -> dict[str, str]:
     """The settings one statement carries: the four scope settings and the
     query id the signature covers."""
     ns = ",".join(sorted(set(namespaces)))
     return {
-        ORG_SETTING: org,
-        NS_SETTING: ns,
-        EXP_SETTING: str(exp),
-        SIG_SETTING: sign_scope(key, org, ns, exp, query_id),
+        names.org: org,
+        names.ns: ns,
+        names.exp: str(exp),
+        names.sig: sign_scope(key, org, ns, exp, query_id),
         "query_id": query_id,
     }
 
@@ -322,9 +354,9 @@ def _hmac_sql(key: bytes, payload: str) -> str:
     return f"hex(SHA256(concat({opad}, {inner})))"
 
 
-def signature_filter(key: bytes) -> str:
+def signature_filter(names: SettingNames, key: bytes) -> str:
     """The expiry is ahead and the scope is signed under `key`."""
-    org, ns, exp, sig = map(_setting, (ORG_SETTING, NS_SETTING, EXP_SETTING, SIG_SETTING))
+    org, ns, exp, sig = map(_setting, (names.org, names.ns, names.exp, names.sig))
     # initialQueryID(): the id of the statement Loom sent, also on any server
     # a query fans out to.
     payload = (
@@ -334,10 +366,11 @@ def signature_filter(key: bytes) -> str:
     return f"toUInt64OrZero({exp}) > toUnixTimestamp(now()) AND {sig} = {_hmac_sql(key, payload)}"
 
 
-def policy_filter(key: bytes) -> str:
+def policy_filter(names: SettingNames, key: bytes) -> str:
     """The row policy's condition: the row's org and namespace match the signed scope."""
-    org, ns = _setting(ORG_SETTING), _setting(NS_SETTING)
-    return f"org = {org} AND has(splitByChar(',', {ns}), namespace) AND {signature_filter(key)}"
+    org, ns = _setting(names.org), _setting(names.ns)
+    signed = signature_filter(names, key)
+    return f"org = {org} AND has(splitByChar(',', {ns}), namespace) AND {signed}"
 
 
 @dataclass(frozen=True)
@@ -394,12 +427,12 @@ def caps_settings(caps: Caps) -> list[str]:
     ]
 
 
-def caps_sql(caps: Caps) -> list[str]:
+def caps_sql(names: SettingNames, caps: Caps) -> list[str]:
     """The statements that write the caps profile, which inherits the main
     one and is the profile the analyst user carries. A boot writes them, so a
     cap setting never touches the version."""
     caps_profile = f"`{CAPS_PROFILE}`"
-    stamp = f"{CAPS_DIGEST_SETTING} = {sql_string(caps_digest(caps))} CONST"
+    stamp = f"{names.caps_digest} = {sql_string(caps_digest(caps))} CONST"
     settings_ = ", ".join([f"INHERIT '{ANALYST_USER}'", *caps_settings(caps), stamp])
     return [
         f"CREATE SETTINGS PROFILE IF NOT EXISTS {caps_profile} SETTINGS {settings_}",
@@ -457,6 +490,7 @@ def policy_sql(db: str, name: str, table: str, using: str, to: str) -> str:
 
 def entity_sql(
     db: str,
+    names: SettingNames,
     password: str,
     key: bytes,
     caps: Caps,
@@ -478,12 +512,12 @@ def entity_sql(
     `db` is already quoted."""
     user = f"`{ANALYST_USER}`"
     identified = f"IDENTIFIED WITH sha256_password BY {sql_string(password)}"
-    condition = policy_filter(key)
+    condition = policy_filter(names, key)
     profile = profile_settings()
 
     out = [
         f"CREATE SETTINGS PROFILE IF NOT EXISTS {user} SETTINGS " + ", ".join(profile),
-        *caps_sql(caps),
+        *caps_sql(names, caps),
         f"CREATE USER IF NOT EXISTS {user} {identified} SETTINGS PROFILE '{CAPS_PROFILE}'",
         f"ALTER USER {user} {identified} SETTINGS PROFILE '{CAPS_PROFILE}'",
     ]
@@ -506,8 +540,8 @@ def entity_sql(
     stamp = [
         *profile,
         # A string, as ClickHouse stores a number setting as `UInt64_1`.
-        f"{VERSION_SETTING} = '{ENTITY_VERSION}' CONST",
-        f"{DIGEST_SETTING} = {sql_string(_digest(db, profile))} CONST",
+        f"{names.version} = '{ENTITY_VERSION}' CONST",
+        f"{names.digest} = {sql_string(_digest(db, profile))} CONST",
     ]
     out.append(f"ALTER SETTINGS PROFILE {user} SETTINGS " + ", ".join(stamp))
     return out
@@ -534,21 +568,23 @@ def needs_rewrite(stored: Stored | None, digest: str) -> bool:
     return stored.version == ENTITY_VERSION and stored.digest != digest
 
 
-def entity_digest(sql: list[str]) -> str:
+def entity_digest(names: SettingNames, sql: list[str]) -> str:
     """The digest `entity_sql` stored in the profile, read back from its statements."""
     for stmt in sql:
-        marker = f"{DIGEST_SETTING} = '"
+        marker = f"{names.digest} = '"
         if marker in stmt:
             return stmt.split(marker, 1)[1].split("'", 1)[0]
     return ""
 
 
 def structure_digest() -> str:
-    """The grants and policies a version names, caps aside. A unit test pins it
-    to ENTITY_VERSION, so a change to either cannot ship without a new version."""
+    """The grants and policies a version names, caps aside, spelled with the
+    `SQL_` prefix: a server's prefix is not part of a version. A unit test
+    pins it to ENTITY_VERSION, so a change to either cannot ship without a
+    new version."""
     parts = [f"retired:{name}" for name in RETIRED_TABLES]
     parts += [f"{t.name}:{t.live}:{','.join(c.name for c in t.columns)}" for t in TABLES]
-    parts += [policy_filter(b"\0" * 32), CANARY_TABLE]
+    parts += [policy_filter(SettingNames(SETTING_PREFIXES[0]), b"\0" * 32), CANARY_TABLE]
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:32]
 
 

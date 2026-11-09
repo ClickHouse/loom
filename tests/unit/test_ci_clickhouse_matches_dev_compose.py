@@ -1,10 +1,12 @@
 """dev/ci_start_clickhouse.sh (the CI ClickHouse) runs the same image, the
 same credentials and the same config mounts as the bundled `clickhouse`
-service of compose.yaml, so CI validates what `make dev` and the installer run. Two
+service of compose.yaml, so CI validates what `make dev` and the installer run. The
 intended differences: CI omits named_collections.xml (gitignored, built from
-an operator secret, only used by SQL ai* functions), and adds
-dev/clickhouse-ci/log_queries_readonly.xml, which pins query logging for
-every user on the default profile, Loom's included, as ClickHouse Cloud does."""
+an operator secret, only used by SQL ai* functions), and adds two files from
+dev/clickhouse-ci/ that run its ClickHouse as ClickHouse Cloud runs:
+log_queries_readonly.xml, which pins query logging for every user on the
+default profile, and custom_settings_prefixes.xml, which takes custom
+settings under `custom_`."""
 
 from __future__ import annotations
 
@@ -41,7 +43,7 @@ def test_same_credentials_and_database() -> None:
     assert env == {k: str(v) for k, v in CH["environment"].items()}
 
 
-def test_same_config_mounts_except_the_two_intended_differences() -> None:
+def test_same_config_mounts_except_the_intended_differences() -> None:
     ci = {}
     for mount in re.findall(r'-v "([^"]+)"', SCRIPT):
         src, dst, *_ = mount.split(":")
@@ -54,7 +56,8 @@ def test_same_config_mounts_except_the_two_intended_differences() -> None:
     named = "/etc/clickhouse-server/config.d/named_collections.xml"
     assert named in dev and named not in ci
     dev.pop(named)
-    pinned = "/etc/clickhouse-server/users.d/log_queries_readonly.xml"
-    assert ci.pop(pinned) == "dev/clickhouse-ci/log_queries_readonly.xml"
-    assert pinned not in dev
+    for cloud_like in ("users.d/log_queries_readonly.xml", "config.d/custom_settings_prefixes.xml"):
+        target = f"/etc/clickhouse-server/{cloud_like}"
+        assert ci.pop(target) == f"dev/clickhouse-ci/{cloud_like.split('/')[1]}"
+        assert target not in dev
     assert ci == dev

@@ -180,10 +180,13 @@ def test_an_extra_analyst_grant_names_no_database(
     monkeypatch.setattr(analysis, "_ready", None)
     monkeypatch.setattr(analysis, "_problem", "")
     monkeypatch.setattr(analysis, "_loaded", (bytes(32), "pw"))
+    monkeypatch.setattr(analysis, "_setting_names", boundary.SettingNames("SQL_"))
     monkeypatch.setattr(analysis.store, "target_database", lambda: "`loom`")
     monkeypatch.setattr(analysis.store, "sealed_secrets", lambda: returns(None))
     monkeypatch.setattr(analysis.store, "run_statement", run)
-    monkeypatch.setattr(analysis.store, "own_version", lambda **_: returns(boundary.ENTITY_VERSION))
+    monkeypatch.setattr(
+        analysis.store, "own_version", lambda *_, **__: returns(boundary.ENTITY_VERSION)
+    )
     monkeypatch.setattr(analysis, "_signed_only", lambda *_: returns(True))
     monkeypatch.setattr(
         analysis.store,
