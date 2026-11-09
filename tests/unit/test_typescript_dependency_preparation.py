@@ -5,11 +5,17 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
+from server.code.app.index import tier_health as recorder
 from server.code.app.index import typescript_dependencies as deps
+from server.code.domain.index import tier_health
+from server.observability.event_args import bounded_error
+
+NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -102,8 +108,158 @@ def test_lockfile_selects_the_shipped_manager_and_disables_scripts(
 async def test_missing_package_manager_has_native_installation_instruction(
     checkout: Path, tmp_path: Path
 ) -> None:
-    with pytest.raises(RuntimeError, match="install-code-toolchains.sh"):
+    with pytest.raises(RuntimeError) as missing:
         await deps.prepare_dependencies(checkout, (), {"PATH": str(tmp_path)})
+    assert "install-code-toolchains.sh" in recorder.error_text(missing.value)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_install_is_recorded_with_the_installer_and_its_last_output(
+    checkout: Path, tmp_path: Path
+) -> None:
+    env = _installer(tmp_path)
+    noise = "x" * 1000
+    (tmp_path / "npm").write_text(f"#!/bin/sh\necho {noise}\necho 'Failed to parse'\nexit 1\n")
+    with pytest.raises(RuntimeError) as failed:
+        await deps.prepare_dependencies(checkout, (), env)
+    record = tier_health.failed(None, "typescript", recorder.error_text(failed.value), NOW)
+    first = "ToolOutputError: TypeScript dependency installation failed (npm, exit 1) in the checkout root"
+    assert record.error.startswith(first + "\n") and record.error.endswith("Failed to parse")
+    assert "(npm, exit 1)" in bounded_error(failed.value)[1], "the ledger keeps the first line"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_project_install_names_the_project_not_the_host_path(
+    checkout: Path, tmp_path: Path
+) -> None:
+    env = _installer(tmp_path, fail=True)
+    web = checkout / "apps" / "web"
+    web.mkdir(parents=True)
+    (web / "package.json").write_text('{"name":"web","version":"1.0.0"}')
+    (web / "package-lock.json").write_text("{}")
+    with pytest.raises(RuntimeError) as failed:
+        await deps.prepare_dependencies(checkout, ("apps/web",), env)
+    assert "(npm, exit 1) in project apps/web" in str(failed.value)
+    assert str(tmp_path) not in str(failed.value)
+
+
+@pytest.mark.asyncio
+async def test_a_long_last_line_keeps_its_end(checkout: Path, tmp_path: Path) -> None:
+    env = _installer(tmp_path)
+    last = "ERR_PNPM_X " + "y" * 800 + " the cause"
+    (tmp_path / "npm").write_text(f"#!/bin/sh\necho first\necho '{last}'\nexit 1\n")
+    with pytest.raises(RuntimeError) as failed:
+        await deps.prepare_dependencies(checkout, (), env)
+    record = tier_health.failed(None, "typescript", recorder.error_text(failed.value), NOW)
+    assert record.error.startswith("ToolOutputError: TypeScript dependency installation failed")
+    assert record.error.endswith("y the cause")
+
+
+@pytest.mark.asyncio
+async def test_a_redacted_tail_still_fits_the_record_whole(checkout: Path, tmp_path: Path) -> None:
+    head = recorder.ToolOutputError(
+        "TypeScript dependency installation failed (npm, exit 1) in the checkout root"
+    )
+    room = tier_health.ERROR_CHARS - len(recorder.error_text(head)) - 1
+    # A last line that fills the budget raw, with a one-character token that grows
+    # when redacted: the record must still start with the whole first line.
+    start = "GET /pkg?token=1 "
+    last = start + "y" * (room - 1 - len(start))
+    env = _installer(tmp_path)
+    (tmp_path / "npm").write_text(f"#!/bin/sh\necho first\necho '{last}'\nexit 1\n")
+    with pytest.raises(RuntimeError) as failed:
+        await deps.prepare_dependencies(checkout, (), env)
+    first = str(failed.value).partition("\n")[0]
+    # The raw text fills the budget but one character, so the redacted growth must fit too.
+    assert len(recorder.error_text(recorder.ToolOutputError(first))) + 1 + len(last) == (
+        tier_health.ERROR_CHARS - 1
+    )
+    record = tier_health.failed(None, "typescript", recorder.error_text(failed.value), NOW)
+    assert record.error.startswith("ToolOutputError: TypeScript dependency installation failed")
+    assert "token=1 " not in record.error
+
+
+@pytest.mark.asyncio
+async def test_long_unbroken_output_is_redacted_only_in_a_window(
+    checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[int] = []
+    redact = deps.redact
+
+    def measured(text: str) -> str:
+        seen.append(len(text))
+        return redact(text)
+
+    monkeypatch.setattr(deps, "redact", measured)
+    env = _installer(tmp_path)
+    # 200 KB of long unbroken tokens: redaction must see only a bounded window of it.
+    (tmp_path / "npm").write_text(
+        "#!/bin/sh\nfor i in $(seq 100); do printf 'a.%.0s' $(seq 1000); echo; done\nexit 1\n"
+    )
+    with pytest.raises(RuntimeError) as failed:
+        await deps.prepare_dependencies(checkout, (), env)
+    assert seen and max(seen) <= deps._WINDOW_CHARS
+    assert str(failed.value).endswith("a.a.a.")
+
+
+@pytest.mark.asyncio
+async def test_a_last_line_longer_than_the_window_is_left_out_by_name(
+    checkout: Path, tmp_path: Path
+) -> None:
+    env = _installer(tmp_path)
+    # The long line ends the output, then blank lines.
+    (tmp_path / "npm").write_text(
+        "#!/bin/sh\necho first\nprintf 'x%.0s' $(seq 3000)\necho\necho\nexit 1\n"
+    )
+    with pytest.raises(RuntimeError) as failed:
+        await deps.prepare_dependencies(checkout, (), env)
+    assert str(failed.value).endswith(deps._LINE_TOO_LONG)
+
+
+@pytest.mark.asyncio
+async def test_a_credential_cut_at_the_window_start_is_not_kept(
+    checkout: Path, tmp_path: Path
+) -> None:
+    env = _installer(tmp_path)
+    # The redaction window (the output's last _WINDOW_CHARS characters) starts
+    # inside "user:hunter2", after the scheme its pattern needs.
+    start = "fetch https://us"
+    rest = "er:hunter2@h.example/x?token="
+    line = start + rest + "t" * (deps._WINDOW_CHARS - 1 - len(rest))
+    (tmp_path / "npm").write_text(f"#!/bin/sh\necho first\necho '{line}'\nexit 1\n")
+    with pytest.raises(RuntimeError) as failed:
+        await deps.prepare_dependencies(checkout, (), env)
+    record = tier_health.failed(None, "typescript", recorder.error_text(failed.value), NOW)
+    assert "hunter2" not in record.error
+
+
+@pytest.mark.asyncio
+async def test_a_last_line_the_window_holds_whole_is_kept(checkout: Path, tmp_path: Path) -> None:
+    env = _installer(tmp_path)
+    # With its newline the last line fills the window exactly.
+    width = deps._WINDOW_CHARS - 1
+    (tmp_path / "npm").write_text(
+        f"#!/bin/sh\necho first\nprintf 'x%.0s' $(seq {width})\necho\nexit 1\n"
+    )
+    with pytest.raises(RuntimeError) as failed:
+        await deps.prepare_dependencies(checkout, (), env)
+    assert str(failed.value).endswith("xxx")
+
+
+@pytest.mark.asyncio
+async def test_an_install_timeout_is_recorded_as_a_timeout(
+    checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def times_out(*a: object, **k: object) -> None:
+        raise TimeoutError
+
+    monkeypatch.setattr(deps, "run_job", times_out)
+    with pytest.raises(RuntimeError) as failed:
+        await deps.prepare_dependencies(checkout, (), _installer(tmp_path))
+    assert tier_health.classify(recorder.error_text(failed.value)) == "timeout"
+    text = str(failed.value)
+    assert "(npm) timed out after" in text and "in the checkout root" in text
+    assert str(tmp_path) not in text
 
 
 def test_named_project_cannot_escape_checkout(checkout: Path) -> None:

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -18,8 +19,12 @@ from pathlib import Path
 
 from server.code.app.index.gitrepo import auth_env
 from server.code.app.index.sandbox import run_job
+from server.code.app.index.tier_health import ToolOutputError, error_text
 from server.code.app.index.untrusted_files import read_checkout_file, read_package_json
+from server.code.domain.index.tier_health import ERROR_CHARS, redact
 from server.settings import settings
+
+logger = logging.getLogger("loom.code_index.typescript_dependencies")
 
 LOCKFILES = (
     "package-lock.json",
@@ -123,6 +128,29 @@ def _install_command(checkout: Path, root: Path) -> tuple[list[str], dict[str, s
     ], {}
 
 
+# How much of a failed install's output is redacted for the record.
+_WINDOW_CHARS = 4 * ERROR_CHARS
+_LINE_TOO_LONG = "(the last output line is too long to keep; the server log has its end)"
+
+
+def _recorded_tail(head: str, output: str) -> str:
+    """The end of a failed install's output that fits beside `head` in the tier-health
+    record. Redacted before the cut, so the budget is what the record keeps, and only
+    whole lines of a bounded window: redaction is quadratic on a long token, and a line
+    cut at the window's start can lose the scheme a credential pattern needs."""
+    room = max(0, ERROR_CHARS - len(error_text(ToolOutputError(head))) - 1)
+    # One character more, so a window that starts on a line keeps that line.
+    window = output[-_WINDOW_CHARS - 1 :]
+    if len(output) > len(window):
+        window = window.partition("\n")[2].strip() or _LINE_TOO_LONG
+    return redact(window)[-room:] if room else ""
+
+
+def _project(checkout: Path, root: Path) -> str:
+    """The install root as an error names it: no host path."""
+    return "the checkout root" if root == checkout else f"project {os.path.relpath(root, checkout)}"
+
+
 async def prepare_dependencies(
     checkout: Path, projects: tuple[str, ...], env: dict[str, str], *, force: bool = False
 ) -> None:
@@ -138,6 +166,7 @@ async def prepare_dependencies(
     # An interrupted install may have created node_modules already. Keep a
     # pending marker until every root succeeded so the next pass retries it.
     await asyncio.to_thread(marker.write_text, "installing")
+    timeout_s = settings.code_scip_ts_delta_timeout_seconds
     for root in roots:
         command, extra_env = await asyncio.to_thread(_install_command, checkout, root)
         # Do not pass the server environment (JWT, provider and ClickHouse keys).
@@ -149,7 +178,7 @@ async def prepare_dependencies(
             **extra_env,
         }
         if not await asyncio.to_thread(shutil.which, command[0], path=install_env.get("PATH")):
-            raise RuntimeError(
+            raise ToolOutputError(
                 f"TypeScript dependency tool {command[0]} is missing; "
                 "run sh scripts/install-code-toolchains.sh on native installations"
             )
@@ -159,7 +188,7 @@ async def prepare_dependencies(
             done = await run_job(
                 command,
                 env=install_env,
-                timeout_s=settings.code_scip_ts_delta_timeout_seconds,
+                timeout_s=timeout_s,
                 writable=[checkout],
                 readonly=[checkout / ".git"],
                 cwd=root,
@@ -167,11 +196,18 @@ async def prepare_dependencies(
                 merge_stderr=True,
             )
         except TimeoutError:
-            raise RuntimeError(f"TypeScript dependency installation timed out in {root}") from None
+            raise ToolOutputError(
+                f"TypeScript dependency installation ({command[0]}) timed out after "
+                f"{timeout_s}s in {_project(checkout, root)}"
+            ) from None
         if done.returncode != 0:
-            tail = done.stdout.decode("utf-8", "replace")[-2000:]
-            raise RuntimeError(
-                f"TypeScript dependency installation failed in {root} "
-                f"({command[0]}, exit {done.returncode}): {tail}"
+            output = done.stdout.decode("utf-8", "replace")
+            logger.warning(
+                "TypeScript dependency installation in %s failed: %s", root, output[-2000:]
             )
+            head = (
+                f"TypeScript dependency installation failed ({command[0]}, exit "
+                f"{done.returncode}) in {_project(checkout, root)}"
+            )
+            raise ToolOutputError(f"{head}\n{_recorded_tail(head, output)}")
     await asyncio.to_thread(marker.write_text, fingerprint)
