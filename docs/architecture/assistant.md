@@ -341,16 +341,17 @@ or on `loom.analysis_secrets`, and it cannot run `EXPLAIN`.
 changes it. It keeps the secrets out of what is logged instead:
 
 - Every statement that carries the key or the password runs with
-  `log_queries_cut_to_length = 1` (`LOG_TEXT_CUT` in
+  `log_queries_cut_to_length = 1` and `log_formatted_queries = 0` (`LOG_TEXT_CUT` in
   `server/insights/domain/analysis.py`), which ClickHouse Cloud leaves unconstrained.
-  ClickHouse then logs the statement, in `system.query_log` and in its server log, as
-  only the number of characters it removed. The printed SQL sets it first, for the
-  session it runs in.
+  ClickHouse then logs the statement, in `system.query_log`, in its server log and in
+  `system.opentelemetry_span_log` (Cloud traces a share of statements), as only the
+  number of characters it removed, and writes no `formatted_query`, which the cut does
+  not reach. The printed SQL sets both first, for the session it runs in.
 - ClickHouse itself leaves the password out of a logged `IDENTIFIED BY`.
 - An error raised inside a row policy quotes the policy, and ClickHouse logs that error
   in `system.query_log`'s `exception` column; the probe's unsigned read raises one on
   every table by design. So the key's two padded forms, the only places the key enters
-  the HMAC, are masked in the policy by a `decrypt('aes-256-ecb', …)` of themselves
+  the HMAC, are masked in the policy by a `decrypt('aes-256-ecb', …)` of the pad sealed
   under the key, which ClickHouse prints as `[HIDDEN]` in an error message and in
   `SHOW CREATE ROW POLICY`. The HMAC is the same, so a build N-1, which wrote the pads
   in clear, signs statements these policies accept.
@@ -406,7 +407,7 @@ stored key. Elsewhere an admin uses one of two commands:
 
 A printed rotation run only in part leaves analysis unavailable, by the order of a write
 below. Its statements must run in that one session, after its first statement,
-`SET log_queries_cut_to_length = 1`: ClickHouse takes no per-statement settings on an
+`SET log_queries_cut_to_length = 1, log_formatted_queries = 0`: ClickHouse takes no per-statement settings on an
 access statement, and a console that sends them one by one would log the key in
 `system.query_log`.
 
@@ -619,7 +620,7 @@ in `server/observability/event_args.py`) and the statement's digest and length. 
 `sql` argument joins the ledger's text keys, which record a digest, never the text; a
 restricted namespace drops text keys from the ledger, so the op also records the digest
 as `sql_digest`, an identifier key, which the citation check reads. The profile holds
-`log_queries_cut_to_length = 1` `CONST`, so `system.query_log` and the server log record
+both `CONST`, so `system.query_log`, the span log and the server log record
 each statement the analyst runs without its text: its user, timing, rows read and
 settings, the scope and its signature among them. A signature reads rows only with the
 analyst's password, for its own query id, until its expiry. A statement ClickHouse
@@ -653,7 +654,7 @@ viewer token. Each case must be refused or return no canary:
   version a later one replaced, with `SETTINGS final = 0` and
   `apply_row_policy_after_final = 0`;
 - `SETTINGS send_logs_level`, `use_query_condition_cache` or `max_threads` past the
-  profile, and a statement that sets `log_queries_cut_to_length` and
+  profile, and statements that set `log_queries_cut_to_length` or
   `log_formatted_queries`, whose text stays out of `system.query_log`;
 - `toUInt64(memory_key)` in the select list, `WHERE` and `PREWHERE`, also with
   short-circuit evaluation off and filters moved or merged: each is refused, and its

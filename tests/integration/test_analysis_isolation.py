@@ -476,22 +476,26 @@ def test_the_statement_text_stays_out_of_the_query_log(
     sql = f"SELECT '{marker}' AS m"
     r = _query(control_plane_url, seed, sql, request_id=f"text-{seed.nonce}")
     assert r.status_code == 200, r.text
-    # A statement cannot lift the profile's cut: refused or run, its text is cut.
-    lifted = f"{sql} SETTINGS log_queries_cut_to_length = 100000, log_formatted_queries = 1"
-    r = _query(control_plane_url, seed, lifted, request_id=f"lift-{seed.nonce}")
-    assert r.status_code in {200, *_REFUSED}, r.text
+    # Settings in the caller's statement belong to the wrapper's subquery, and
+    # the profile pins both at the top: refused or run, the text is cut.
+    for n, setting in enumerate(
+        ("log_queries_cut_to_length = 100000", "log_formatted_queries = 1")
+    ):
+        lifted = f"{sql} SETTINGS {setting}"
+        r = _query(control_plane_url, seed, lifted, request_id=f"lift{n}-{seed.nonce}")
+        assert r.status_code in {200, *_REFUSED}, r.text
     ch_client.command("SYSTEM FLUSH LOGS")
     # Both are logged, as on a server that pins log_queries, but not their text;
     # this read cuts its own, which holds the marker.
     ran, lifted_rows, quoted = ch_client.query(
         "SELECT countIf(user = {analyst:String} AND startsWith(query_id, {ran:String})), "
-        "countIf(user = {analyst:String} AND startsWith(query_id, {lift:String})), "
+        "countIf(user = {analyst:String} AND match(query_id, {lift:String})), "
         "countIf(query LIKE {m:String} OR formatted_query LIKE {m:String}) "
         "FROM system.query_log",
         parameters={
             "analyst": boundary.ANALYST_USER,
             "ran": f"text-{seed.nonce}:",
-            "lift": f"lift-{seed.nonce}:",
+            "lift": f"^lift[01]-{seed.nonce}:",
             "m": f"%{marker}%",
         },
         settings=boundary.LOG_TEXT_CUT,

@@ -200,7 +200,8 @@ def test_entity_statements_are_sent_with_their_text_cut_from_the_log() -> None:
 
     asyncio.run(store.write_entities(SQL, ch=_Client()))  # type: ignore[arg-type]
     assert [sql for sql, _ in sent] == SQL
-    assert all(settings == {"log_queries_cut_to_length": 1} for _, settings in sent)
+    cut = {"log_queries_cut_to_length": 1, "log_formatted_queries": 0}
+    assert all(settings == cut for _, settings in sent)
 
 
 def test_profile_pins_what_a_statement_could_widen() -> None:
@@ -212,6 +213,7 @@ def test_profile_pins_what_a_statement_could_widen() -> None:
         "final = 1 CONST",
         "apply_row_policy_after_final = 1 CONST",
         "log_queries_cut_to_length = 1 CONST",
+        "log_formatted_queries = 0 CONST",
         "use_query_cache = 0 CONST",
         "read_overflow_mode = 'throw' CONST",
         "result_overflow_mode = 'throw' CONST",

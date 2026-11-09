@@ -321,7 +321,7 @@ def test_the_printed_sql_revokes_what_show_grants_lists_before_granting(
     first_grant = next(i for i, s in enumerate(printed) if s.startswith("GRANT "))
     assert printed[first_grant - len(revokes) : first_grant] == revokes
     # The file is run in one session, whose first statement cuts the rest from the log.
-    assert printed[0] == "SET log_queries_cut_to_length = 1"
+    assert printed[0] == "SET log_queries_cut_to_length = 1, log_formatted_queries = 0"
 
 
 def test_a_column_grant_in_another_database_is_outside_the_allowlist(

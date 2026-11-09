@@ -61,11 +61,12 @@ DIGEST_SETTING = "SQL_loom_analyst_digest"
 CAPS_DIGEST_SETTING = "SQL_loom_analyst_caps_digest"
 
 # The statement text in system.query_log and the server log is cut to one
-# byte, which ClickHouse logs as only the number of characters it removed.
+# byte, which ClickHouse logs as only the number of characters it removed,
+# and the formatted copy, which the cut does not reach, is not written.
 # Loom cannot turn query logging off everywhere (ClickHouse Cloud pins
-# `log_queries` for its users), but Cloud leaves this setting unconstrained.
-LOG_TEXT_CUT = {"log_queries_cut_to_length": 1}
-LOG_TEXT_CUT_SQL = "log_queries_cut_to_length = 1"
+# `log_queries` for its users), but Cloud leaves both of these unconstrained.
+LOG_TEXT_CUT = {"log_queries_cut_to_length": 1, "log_formatted_queries": 0}
+LOG_TEXT_CUT_SQL = ", ".join(f"{name} = {value}" for name, value in LOG_TEXT_CUT.items())
 
 _BLOCK = 64  # SHA-256 block size, for HMAC's inner and outer pads
 
@@ -280,12 +281,12 @@ def _setting(name: str) -> str:
 
 def _masked_bytes(key: bytes, data: bytes) -> str:
     """`data` as a `decrypt` expression, whose arguments ClickHouse prints as
-    [HIDDEN]. The scope key is 32 bytes, as aes-256-ecb takes."""
+    [HIDDEN]. AES256 refuses a key that is not the 32 bytes aes-256-ecb takes."""
     padder = padding.PKCS7(128).padder()
     # The key sits beside the ciphertext: this masks the pads in ClickHouse's
     # printing, it does not keep them secret. ECB is deterministic, so every
     # write spells the same policy.
-    encryptor = Cipher(algorithms.AES(key), modes.ECB()).encryptor()
+    encryptor = Cipher(algorithms.AES256(key), modes.ECB()).encryptor()
     sealed = encryptor.update(padder.update(data) + padder.finalize()) + encryptor.finalize()
     return f"decrypt('aes-256-ecb', unhex('{sealed.hex()}'), unhex('{key.hex()}'))"
 
@@ -340,7 +341,7 @@ def profile_settings() -> list[str]:
         "final = 1 CONST",
         "apply_row_policy_after_final = 1 CONST",
         # A statement that runs is logged without its text; the ledger keeps its digest.
-        f"{LOG_TEXT_CUT_SQL} CONST",
+        *(f"{name} = {value} CONST" for name, value in LOG_TEXT_CUT.items()),
         "read_overflow_mode = 'throw' CONST",
         "result_overflow_mode = 'throw' CONST",
         "timeout_overflow_mode = 'throw' CONST",
