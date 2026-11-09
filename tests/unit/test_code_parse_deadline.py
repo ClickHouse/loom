@@ -628,6 +628,8 @@ from server.settings import settings
 settings.code_parse_timeout_s = 0.5
 settings.code_parse_memory_mb = 512
 assert "ParseTimeout" in parse_for_ingest("A.java", b"a<" * 4_000)[1]
+more = b"a<" * 4_000 + b";\\n" + b"class B { void f() {} }\\n" * 50  # content after the run
+assert "ParseTimeout" in parse_for_ingest("C.java", more)[1]
 assert parse_for_ingest("B.java", b"class B { void f() {} }")[1] == ""
 """
     done = subprocess.run(

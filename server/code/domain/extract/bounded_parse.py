@@ -8,6 +8,7 @@ replica for hours or exhaust its memory. Every parse of repository text goes thr
 CPU time, and raises `ParseTimeout` when that parse runs past the deadline or ends the
 child; each caller takes its parse failure path (an indexed file is then chunks
 without symbols).
+
 Only a source the child parsed in full within the deadline is parsed again here, where
 the same parse does the same work and so stays within the same limits (past twice the
 deadline it stops reading, in case it does not). A child serves one parse at a time and
@@ -17,14 +18,14 @@ worth of parse at once: `code_parse_memory_mb` plus up to about 170 MB, the chil
 40 MB, up to 64 MB it kept from earlier parses, and as much again in the server, which
 takes fresh what the child's parse reused. The trees its callers keep are not counted.
 The child is the server's interpreter with `-I` and an empty environment; it bounds
-resources and is no sandbox. The pool stays in `domain/`, beside the parsers that call
-it: the child is a local process, no ClickHouse or network. The limits hold on Linux.
+resources and is no sandbox, a local process started from `domain/` beside the parsers
+that call it (no ClickHouse or network). The limits hold on Linux.
 
 The parse here reads the source `_CHUNK` bytes at a time through a callback: the binding
 holds the GIL while it parses, and the callback is where another thread can take it, so
 a parse run in a thread lets the event loop run every few tens of milliseconds. Work
-after its last read holds the GIL, for at most a tenth of the deadline (the child
-refuses a parse past that).
+between reads and after the last one holds the GIL, for at most a tenth of the deadline
+at a stretch (the child refuses a parse past that).
 """
 
 from __future__ import annotations
