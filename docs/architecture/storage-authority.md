@@ -107,11 +107,11 @@ version, which only one row holds, and acts on that row's key.
 Mutable delivery progress lives in `loom.memory_deliveries`, apart from the revision
 payloads, so clearing a target never rewrites a revision's content.
 
-Seven maintenance indexes do not lead with `org`: `memory_deliveries (lease_until)` and
-`knowledge_deliveries (lease_until)` (the delivery workers' queues across tenants),
-`memory_deliveries (lease_until) WHERE settled`, `audit_outbox (due_at)`,
+Eight maintenance indexes do not lead with `org`: `memory_deliveries (lease_until)` and
+`knowledge_deliveries (lease_until)` `WHERE NOT settled` (the delivery workers' queues
+across tenants), the same two `WHERE settled`, `audit_outbox (due_at)`,
 `idempotency (expires_at)`, `erased_memories (erased_at)` and
-`erased_documents (erased_at)` (the sweeps). All seven are local to a Postgres database;
+`erased_documents (erased_at)` (the sweeps). All eight are local to a Postgres database;
 a tenant's rows are still found by their primary keys.
 
 ### Rejected layouts
