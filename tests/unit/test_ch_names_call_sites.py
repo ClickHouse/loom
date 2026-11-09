@@ -186,8 +186,8 @@ def test_the_schema_dump_reads_the_configured_databases_and_writes_the_aliases()
             )
 
     client = Client()
-    tables, views = dump_schema.list_objects(client)
-    assert (tables, views) == (["loom.memory", "loom_telemetry.sli_minute"], [])
+    tables, plain_views, views = dump_schema.list_objects(client)
+    assert (tables, plain_views, views) == (["loom.memory", "loom_telemetry.sli_minute"], [], [])
     assert client.bound == ["acme-loom", "acme_telemetry"]
     assert dump_schema.show_create(client, "loom.memory") == (
         "loom.memory",

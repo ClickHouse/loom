@@ -85,6 +85,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [Operations reference](docs/reference/operations.md): An operation (op) is one named unit of work on the Loom wire, such as `memory.set` or `code.search`.
 - [Python SDK reference](docs/reference/python-sdk.md): The Python SDK (`clickhouse-loom`, source in `sdk/python/loom/`) is an async client over the HTTP API.
 - [Schema reference](docs/reference/schema.md): Loom keeps all of its state in one ClickHouse database, `loom`.
+- [SQL surface](docs/reference/sql-surface.md): The SQL surface is a set of read-only ClickHouse views over a tenant's memories, memory history, conversations and request ledger.
 - [Status of Loom's surfaces](docs/reference/status.md): This page counts each op group's stable ops, names its experimental ones, and lists every boolean setting that loads false, so a caller can tell, before relying on an op or a switch, whether it is stable and whether it is on by default.
 - [TypeScript SDK reference](docs/reference/typescript-sdk.md): The TypeScript SDK (`@clickhouse/loom`, source in `sdk/typescript/src/`) is a typed client over the HTTP API.
 - [Workers reference](docs/reference/workers.md): A worker is a supervised background loop: one pass function run on an interval by the worker supervisor.

@@ -15,7 +15,7 @@ table it carries. A region's name picks its renderer:
   `tests/unit/snapshots/cli_tree.json` (a unit test keeps it equal to the parser)
 - `errors`: the typed errors in `server/core/errors.py` and every other `"code"`
   literal the server answers with
-- `schema`: the tables and materialized views in `schemas/schema.sql`
+- `schema`: the tables, views and materialized views in `schemas/schema.sql`
 - `status_ops`, `status_switches`: each op group's stable and experimental ops (op
   `maturity`), and every boolean setting in `server/settings/catalog.py` that loads false
 
@@ -655,7 +655,7 @@ def _common_error_codes() -> set[str]:
 
 SCHEMA = ROOT / "schemas" / "schema.sql"
 _STMT = re.compile(
-    r"^CREATE (?P<kind>TABLE|MATERIALIZED VIEW) IF NOT EXISTS "
+    r"^CREATE (?P<kind>TABLE|MATERIALIZED VIEW|VIEW) IF NOT EXISTS "
     r"(?P<name>loom(?:_telemetry)?\.\w+)(?P<body>.*?);\n",
     re.DOTALL | re.MULTILINE,
 )
@@ -668,7 +668,7 @@ def _clause(body: str, keyword: str) -> str:
 
 def render_schema() -> str:
     text = SCHEMA.read_text(encoding="utf-8")
-    tables, views = [], []
+    tables, plain_views, views = [], [], []
     for m in _STMT.finditer(text):
         name, body = m.group("name").removeprefix("loom."), m.group("body")
         if m.group("kind") == "TABLE":
@@ -686,6 +686,11 @@ def render_schema() -> str:
                 f"{_code(_clause(body, 'ORDER BY'))} | {_code(_clause(body, 'PARTITION BY'))} | "
                 f"{_code(ttl)} | {'; '.join(extras)} |"
             )
+        elif m.group("kind") == "VIEW":
+            read = sorted(set(re.findall(r"\bFROM (loom\.\w+)", body)))
+            plain_views.append(
+                f"| `{name}` | {', '.join(_code(s.removeprefix('loom.')) for s in read)} |"
+            )
         else:
             head = " ".join(body.split("(", 1)[0].split())
             target = re.search(r"\bTO (loom(?:_telemetry)?\.\w+)", head)
@@ -700,12 +705,17 @@ def render_schema() -> str:
                 f"{runs} |"
             )
     out = [
-        f"{len(tables)} tables and {len(views)} materialized views in the `loom` and "
-        "`loom_telemetry` databases; a `loom_telemetry` object keeps its database prefix.\n",
+        f"{len(tables)} tables, {len(plain_views)} views and {len(views)} materialized views "
+        "in the `loom` and `loom_telemetry` databases; a `loom_telemetry` object keeps its "
+        "database prefix.\n",
         "#### Tables\n",
         "| Table | Engine | ORDER BY | PARTITION BY | TTL | Indexes |",
         "| --- | --- | --- | --- | --- | --- |",
         *tables,
+        "\n#### Views\n",
+        "| View | Reads from |",
+        "| --- | --- |",
+        *plain_views,
         "\n#### Materialized views\n",
         "| View | Writes to | Reads from | Runs |",
         "| --- | --- | --- | --- |",

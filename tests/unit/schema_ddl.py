@@ -27,7 +27,7 @@ def ddl(name: str) -> str:
     return text[start : text.index(";\n", start) + 1]
 
 
-_OBJECT = re.compile(r"^CREATE (TABLE|MATERIALIZED VIEW) IF NOT EXISTS loom\.(\w+)", re.M)
+_OBJECT = re.compile(r"^CREATE (TABLE|MATERIALIZED VIEW|VIEW) IF NOT EXISTS loom\.(\w+)", re.M)
 _COLUMN = re.compile(r"^    `(\w+)` (.+?),?$")
 
 
@@ -37,7 +37,7 @@ def _kinds() -> dict[str, str]:
 
 
 def objects() -> set[str]:
-    """Every `loom.*` table and materialized view the dump declares."""
+    """Every `loom.*` table and view the dump declares."""
     return set(_kinds())
 
 
@@ -46,7 +46,8 @@ def tables() -> set[str]:
 
 
 def views() -> set[str]:
-    return {n for n, kind in _kinds().items() if kind != "TABLE"}
+    """The materialized views."""
+    return {n for n, kind in _kinds().items() if kind == "MATERIALIZED VIEW"}
 
 
 def columns(name: str, *, materialized: bool = True) -> dict[str, str]:

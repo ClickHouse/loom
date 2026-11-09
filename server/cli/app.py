@@ -160,7 +160,7 @@ _SPLIT_PARSERS: tuple[Any, ...] = (
 def _add_module_parsers(sub: Any) -> None:
     """Subcommands registered by their own modules: code, decisions, knowledge,
     okf, up, ch-setup, participant, deployment, settings, secrets, signing-key,
-    provider-lock and export-analytics."""
+    provider-lock, export-analytics and sql-access."""
     from server.cli.code import register_code_cli
 
     register_code_cli(sub)
@@ -212,6 +212,10 @@ def _add_module_parsers(sub: Any) -> None:
     from server.cli.analytics_export import register_analytics_export_cli
 
     register_analytics_export_cli(sub)
+
+    from server.cli.sql_access import register_sql_access_cli
+
+    register_sql_access_cli(sub)
 
 
 def _add_claim_release_parser(sub: Any) -> None:

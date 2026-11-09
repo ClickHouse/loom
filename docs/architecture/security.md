@@ -1401,6 +1401,48 @@ bound parameter, on Loom's server and on any warehouse server that joins with it
 bucket's write role is bound to the export's own Kubernetes ServiceAccount, not to the web
 pods, and the upload never replaces an object.
 
+## The SQL surface
+
+The [SQL surface](../reference/sql-surface.md) lets an org's own SQL user read a
+tenant's memories, history, conversations and request ledger through five versioned views.
+It is the one place a principal outside Loom's request path reads Loom's tables, so its
+isolation lives in ClickHouse:
+
+- The user holds `SELECT` on the views and nothing else, under a `readonly = 1` profile:
+  a statement changes no setting but four that leave a view's rows as they are, since an
+  overflow mode or a table filter could cut a view's own filter short. The profile holds
+  the deleted mask, the query and condition caches off, the `FINAL` modes, every overflow
+  mode `throw` and predicate push-down off, and the
+  `insights.query` ceilings except its result caps. Each view is `SQL SECURITY DEFINER`,
+  so the user never needs, and never has, a grant on a base table.
+- A caller's filter runs on what a view returns, never on the rows it leaves out: a
+  filter that raises an error on a value (`toUInt64(memory_key)`) would otherwise quote
+  another tenant's. ClickHouse plans a `SQL SECURITY DEFINER` view sealed, and the profile
+  holds `query_plan_filter_push_down` and `enable_optimize_predicate_expression` off.
+- Each view admits a row only when `loom.sql_access` grants its `(org, namespace)` to
+  `currentUser()`, which ClickHouse sets from the login and a statement cannot change. A
+  user without a granted row, Loom's own users included, reads nothing: the views fail
+  closed.
+- A namespace classified restricted in `loom.namespaces` or `loom.code_repos` is in no
+  view, whatever the grant: every admitted read of one writes an audit row, which a view
+  cannot. The code repo configuration is outside ClickHouse, so `loom sql-access` checks
+  it instead: it refuses a grant naming one or a wildcard reaching one, and `list` names a
+  grant that a later configuration makes reach one.
+- The views apply the listing rules of [Sensitivity](#sensitivity) in SQL: a `high`
+  row's value and hash, a redacted value and every value of a key that was ever `high` are
+  NULL, rejected and deleted rows are absent. A conversation turn has no label and is
+  served as written, as `conversation.get` serves it. The memory and conversation views
+  read the tables erasure deletes from, which the
+  [residue census](memory-architecture.md#erasure-saga) counts; the ledger views keep
+  their rows with the erased user's identity scrubbed.
+
+Why a scope table and not one row policy per user: ClickHouse ORs a table's permissive
+policies, so a policy per user on every view needs one more policy `TO ALL EXCEPT` every
+surface user, rewritten at each grant, and a missed rewrite widens a view for every
+other user. The scope table is one row per grant behind one fixed filter in each view,
+and a grant or a revocation is an insert. `insights.query` keeps its signed policies:
+there the scope comes from the caller's token on each statement, not from the login.
+
 ## Outbound webhooks
 
 Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.py`).
@@ -1490,6 +1532,8 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
   it as written.
 - Every memory write leaves a hash-only audit row; no audit row carries a value.
 - An erasure saga succeeds only when its residue census finds nothing.
+- A SQL user of the SQL surface reads only the views, and only the scope rows granted to
+  its own login.
 
 ## Source entry points
 
@@ -1508,6 +1552,7 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
 | Audit                       | `server/observability/audit.py`, `server/insights/domain/audit_checkpoints.py`, `server/insights/workers/audit_verifier.py` |
 | Erasure                     | `server/erasure/app/saga.py`, `server/erasure/store/`, `server/erasure/workers/recovery.py`                                 |
 | Outbound webhooks           | `server/core/webhooks.py`, `server/memory/app/webhooks.py`, `server/memory/workers/webhook_deliver.py`                      |
+| SQL surface                 | `schemas/migrations/090_sql_surface.sql`, `server/insights/domain/sql_surface.py`, `server/insights/app/sql_access.py`      |
 | Leakage gate                | `tests/integration/test_cross_principal_leakage.py`                                                                         |
 
 ## Related

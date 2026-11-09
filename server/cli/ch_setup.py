@@ -25,10 +25,9 @@ import sys
 from typing import Any, Literal, NamedTuple
 
 from server.core.ch_errors import error_code, error_line
-from server.core.ch_names import database, quote, telemetry_database
+from server.core.ch_names import DEFAULT_READER, database, quote, telemetry_database
 from server.core.schema import preflight
 
-DEFAULT_READER = "loom_reader"
 _PASSWORD_PLACEHOLDER = "'<LOOM_CH_PASSWORD>'"
 PROFILE_DIFFERS = "its profile does not match the current caps and constraints"
 # The setting each caller-shaped cap comes from, for messages.

@@ -37,6 +37,7 @@ around them is hand-written. The op tables inside the SDK packages (`sdk/python/
 | [Python SDK](./python-sdk.md)                 | Install, construction, calling ops, typed shapes, sessions and tools, framework adapters, errors, retries.                                                         |
 | [TypeScript SDK](./typescript-sdk.md)         | Install, clients and options, typed ops, sessions and tools, pagination, the Strands adapter, errors, retries.                                                     |
 | [Environment variables](./environment.md)     | Variables read outside the settings model: provider keys, the image, compose files, the CLI, the SDKs and the operator scripts.                                    |
+| [SQL surface](./sql-surface.md)               | The read-only `sql_v1_*` views over a tenant's data: columns, compatibility rule, what they withhold, freshness, `loom sql-access`.                                |
 | [Extractor contract](./extractor-contract.md) | Version 1 of the HTTP contract an extractor service serves: capabilities, extraction, error codes, the artifact's fields and rules.                                |
 
 The hand-written pages name only things that exist in the tree and link to the source they

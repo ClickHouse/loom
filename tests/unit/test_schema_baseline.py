@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from tests.unit.schema_ddl import ddl, objects, schema_text, tables, ttl
+from tests.unit.schema_ddl import ddl, objects, schema_text, tables, ttl, views
 
 MIGRATIONS = Path(__file__).resolve().parents[2] / "schemas" / "migrations"
 BASELINE = MIGRATIONS / "016_baseline.sql"
@@ -143,6 +143,7 @@ def test_the_journal_files() -> None:
         "087_analysis_secrets.sql",
         "088_assistant_service.sql",
         "089_code_repo_row_kind.sql",
+        "090_sql_surface.sql",
     ]
 
 
@@ -181,8 +182,10 @@ def test_the_dump_declares_exactly_what_the_journal_leaves() -> None:
     assert dumped | {name for _, name in telemetry} == {n for n in live if not n.startswith("_")}
     kinds = [kind for kind, _ in telemetry]
     n_tables = len(tables()) + kinds.count("TABLE")
-    n_views = len(dumped) - len(tables()) + kinds.count("MATERIALIZED VIEW")
-    assert f"-- Counts: {n_tables} tables + {n_views} materialized views." in schema_text()
+    n_views = len(views()) + kinds.count("MATERIALIZED VIEW")
+    n_plain = len(dumped) - len(tables()) - len(views())
+    counts = f"-- Counts: {n_tables} tables + {n_plain} views + {n_views} materialized views."
+    assert counts in schema_text()
 
 
 def test_removed_objects_stay_removed() -> None:

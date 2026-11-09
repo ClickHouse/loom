@@ -16,13 +16,13 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 184 tables + 19 materialized views.
+-- Counts: 185 tables + 5 views + 19 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (184)
+-- Tables (185)
 -- ======================================================================
 
 -- loom.acl_versions
@@ -3932,6 +3932,19 @@ ENGINE = ReplacingMergeTree(version)
 ORDER BY kid
 SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
+-- loom.sql_access
+CREATE TABLE IF NOT EXISTS loom.sql_access
+(
+    `user_name` String,
+    `org` String,
+    `namespace` String,
+    `granted` Bool,
+    `updated_at` DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (user_name, org, namespace)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
 -- loom.sso_links
 CREATE TABLE IF NOT EXISTS loom.sso_links
 (
@@ -4235,6 +4248,503 @@ PARTITION BY toYYYYMM(ingested_hwm)
 ORDER BY (slo_class, minute, operation, transport, traffic_class, org)
 TTL minute + toIntervalDay(400)
 SETTINGS allow_dimensions_outside_sorting_key = 1, ttl_only_drop_parts = 1, non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
+-- ======================================================================
+-- Views (5)
+-- ======================================================================
+
+-- loom.sql_v1_agent_events
+CREATE VIEW IF NOT EXISTS loom.sql_v1_agent_events
+(
+    `ts` DateTime64(3),
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `agent` LowCardinality(String),
+    `user_id` String,
+    `session_id` String,
+    `run_id` String,
+    `operation` LowCardinality(String),
+    `kind` LowCardinality(String),
+    `request_id` String,
+    `trace_id` String,
+    `latency_ms` UInt32,
+    `success` Bool,
+    `error_code` LowCardinality(String),
+    `status_class` LowCardinality(String),
+    `memory_key` String,
+    `input_tokens` UInt32,
+    `output_tokens` UInt32,
+    `embedding_tokens` UInt32,
+    `llm_calls` UInt16,
+    `upstream_cost_usd` Decimal(18, 6),
+    `bytes_written` UInt64,
+    `model` LowCardinality(String),
+    `consumer` LowCardinality(String),
+    `subject` LowCardinality(String),
+    `transport` LowCardinality(String)
+)
+DEFINER = loom SQL SECURITY DEFINER
+AS WITH
+    scope AS
+    (
+        SELECT
+            org,
+            namespace
+        FROM loom.sql_access
+        FINAL
+        WHERE (user_name = currentUser()) AND granted
+    ),
+    restricted AS
+    (
+        SELECT
+            org,
+            namespace
+        FROM loom.namespaces
+        FINAL
+        WHERE classification = 'restricted'
+        UNION ALL
+        SELECT
+            org,
+            namespace
+        FROM loom.code_repos
+        FINAL
+        WHERE classification = 'restricted'
+    )
+SELECT
+    ts,
+    org,
+    namespace,
+    agent,
+    user_id,
+    session_id,
+    run_id,
+    operation,
+    kind,
+    request_id,
+    trace_id,
+    latency_ms,
+    success,
+    error_code,
+    status_class,
+    memory_key,
+    input_tokens,
+    output_tokens,
+    embedding_tokens,
+    llm_calls,
+    upstream_cost_usd,
+    bytes_written,
+    model,
+    consumer,
+    subject,
+    transport
+FROM loom.agent_events
+WHERE (((org, namespace) IN (
+    SELECT
+        org,
+        namespace
+    FROM scope
+)) OR (org IN (
+    SELECT org
+    FROM scope
+    WHERE namespace = '*'
+)) OR ((
+    SELECT count()
+    FROM scope
+    WHERE org = '*'
+) > 0)) AND ((org, namespace) NOT IN (
+    SELECT
+        org,
+        namespace
+    FROM restricted
+)) AND (ts >= (toStartOfDay(now(), 'UTC') - toIntervalDay(31)));
+
+-- loom.sql_v1_conversations
+CREATE VIEW IF NOT EXISTS loom.sql_v1_conversations
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `agent` LowCardinality(String),
+    `user_id` String,
+    `thread_id` String,
+    `msg_id` String,
+    `role` Enum8('user' = 1, 'assistant' = 2, 'system' = 3, 'tool' = 4),
+    `content` String,
+    `tokens` UInt32,
+    `run_id` String,
+    `ts` DateTime64(3, 'UTC')
+)
+DEFINER = loom SQL SECURITY DEFINER
+AS WITH
+    scope AS
+    (
+        SELECT
+            org,
+            namespace
+        FROM loom.sql_access
+        FINAL
+        WHERE (user_name = currentUser()) AND granted
+    ),
+    restricted AS
+    (
+        SELECT
+            org,
+            namespace
+        FROM loom.namespaces
+        FINAL
+        WHERE classification = 'restricted'
+        UNION ALL
+        SELECT
+            org,
+            namespace
+        FROM loom.code_repos
+        FINAL
+        WHERE classification = 'restricted'
+    )
+SELECT
+    org,
+    namespace,
+    agent,
+    user_id,
+    thread_id,
+    msg_id,
+    argMax(role, c.ts) AS role,
+    argMax(content, c.ts) AS content,
+    max(tokens) AS tokens,
+    argMax(run_id, c.ts) AS run_id,
+    max(c.ts) AS ts
+FROM loom.conversations AS c
+WHERE (((org, namespace) IN (
+    SELECT
+        org,
+        namespace
+    FROM scope
+)) OR (org IN (
+    SELECT org
+    FROM scope
+    WHERE namespace = '*'
+)) OR ((
+    SELECT count()
+    FROM scope
+    WHERE org = '*'
+) > 0)) AND ((org, namespace) NOT IN (
+    SELECT
+        org,
+        namespace
+    FROM restricted
+))
+GROUP BY
+    org,
+    namespace,
+    agent,
+    user_id,
+    thread_id,
+    msg_id
+HAVING countIf(c.tombstoned_at IS NOT NULL) = 0;
+
+-- loom.sql_v1_memories
+CREATE VIEW IF NOT EXISTS loom.sql_v1_memories
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `agent` LowCardinality(String),
+    `user_id` String,
+    `session_id` String,
+    `run_id` String,
+    `memory_key` String,
+    `memory_id` UUID,
+    `memory_type` LowCardinality(String),
+    `value` Nullable(String),
+    `value_withheld` String,
+    `version` UInt64,
+    `status` Enum8('active' = 1, 'conflicted' = 2, 'tombstoned' = 3, 'duplicate' = 4, 'superseded' = 5, 'rejected' = 6, 'proposed' = 7),
+    `confidence` Float32,
+    `pinned` UInt8,
+    `tags` Array(String),
+    `sensitivity` LowCardinality(String),
+    `source_class` LowCardinality(String),
+    `actor` String,
+    `content_sha256` Nullable(FixedString(64)),
+    `created_at` DateTime,
+    `updated_at` DateTime,
+    `expires_at` Nullable(DateTime),
+    `valid_at` Nullable(DateTime),
+    `invalid_at` Nullable(DateTime)
+)
+DEFINER = loom SQL SECURITY DEFINER
+AS WITH
+    scope AS
+    (
+        SELECT
+            org,
+            namespace
+        FROM loom.sql_access
+        FINAL
+        WHERE (user_name = currentUser()) AND granted
+    ),
+    restricted AS
+    (
+        SELECT
+            org,
+            namespace
+        FROM loom.namespaces
+        FINAL
+        WHERE classification = 'restricted'
+        UNION ALL
+        SELECT
+            org,
+            namespace
+        FROM loom.code_repos
+        FINAL
+        WHERE classification = 'restricted'
+    )
+SELECT
+    org,
+    namespace,
+    agent,
+    user_id,
+    session_id,
+    run_id,
+    memory_key,
+    memory_id,
+    memory_type,
+    if((redacted_at IS NULL) AND (sensitivity != 'high'), if(length(toString(value_json)) > 2, toString(value_json), value), NULL) AS value,
+    multiIf(redacted_at IS NOT NULL, 'redacted', sensitivity = 'high', 'sensitive', '') AS value_withheld,
+    version,
+    status,
+    confidence,
+    pinned,
+    tags,
+    sensitivity,
+    source_class,
+    actor,
+    if((redacted_at IS NULL) AND (sensitivity != 'high'), content_sha256, NULL) AS content_sha256,
+    created_at,
+    updated_at,
+    expires_at,
+    valid_at,
+    invalid_at
+FROM loom.memory
+FINAL
+WHERE (tombstoned_at IS NULL) AND (status NOT IN ('rejected', 'tombstoned')) AND (((org, namespace) IN (
+    SELECT
+        org,
+        namespace
+    FROM scope
+)) OR (org IN (
+    SELECT org
+    FROM scope
+    WHERE namespace = '*'
+)) OR ((
+    SELECT count()
+    FROM scope
+    WHERE org = '*'
+) > 0)) AND ((org, namespace) NOT IN (
+    SELECT
+        org,
+        namespace
+    FROM restricted
+));
+
+-- loom.sql_v1_memory_history
+CREATE VIEW IF NOT EXISTS loom.sql_v1_memory_history
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `agent` LowCardinality(String),
+    `user_id` String,
+    `session_id` String,
+    `run_id` String,
+    `memory_key` String,
+    `memory_id` UUID,
+    `memory_type` LowCardinality(String),
+    `value` Nullable(String),
+    `value_withheld` String,
+    `version` UInt64,
+    `status` Enum8('active' = 1, 'conflicted' = 2, 'tombstoned' = 3, 'duplicate' = 4, 'superseded' = 5, 'rejected' = 6, 'proposed' = 7),
+    `confidence` Float32,
+    `pinned` UInt8,
+    `tags` Array(String),
+    `sensitivity` LowCardinality(String),
+    `source_class` LowCardinality(String),
+    `actor` String,
+    `content_sha256` Nullable(FixedString(64)),
+    `created_at` DateTime,
+    `updated_at` DateTime,
+    `tombstoned_at` Nullable(DateTime)
+)
+DEFINER = loom SQL SECURITY DEFINER
+AS WITH
+    scope AS
+    (
+        SELECT
+            org,
+            namespace
+        FROM loom.sql_access
+        FINAL
+        WHERE (user_name = currentUser()) AND granted
+    ),
+    restricted AS
+    (
+        SELECT
+            org,
+            namespace
+        FROM loom.namespaces
+        FINAL
+        WHERE classification = 'restricted'
+        UNION ALL
+        SELECT
+            org,
+            namespace
+        FROM loom.code_repos
+        FINAL
+        WHERE classification = 'restricted'
+    )
+SELECT
+    org,
+    namespace,
+    agent,
+    user_id,
+    session_id,
+    run_id,
+    memory_key,
+    memory_id,
+    memory_type,
+    if((redacted_at IS NULL) AND (NOT ever_high), if(length(toString(value_json)) > 2, toString(value_json), value), NULL) AS value,
+    multiIf(redacted_at IS NOT NULL, 'redacted', ever_high, 'sensitive', '') AS value_withheld,
+    version,
+    status,
+    confidence,
+    pinned,
+    tags,
+    sensitivity,
+    source_class,
+    actor,
+    if((redacted_at IS NULL) AND (NOT ever_high), content_sha256, NULL) AS content_sha256,
+    created_at,
+    updated_at,
+    tombstoned_at
+FROM
+(
+    SELECT
+        *,
+        max(sensitivity = 'high') OVER (PARTITION BY org, namespace, agent, user_id, session_id, memory_key) AS ever_high
+    FROM loom.memory_versions
+    FINAL
+    WHERE (((org, namespace) IN (
+        SELECT
+            org,
+            namespace
+        FROM scope
+    )) OR (org IN (
+        SELECT org
+        FROM scope
+        WHERE namespace = '*'
+    )) OR ((
+        SELECT count()
+        FROM scope
+        WHERE org = '*'
+    ) > 0)) AND ((org, namespace) NOT IN (
+        SELECT
+            org,
+            namespace
+        FROM restricted
+    ))
+)
+WHERE status != 'rejected';
+
+-- loom.sql_v1_usage_daily
+CREATE VIEW IF NOT EXISTS loom.sql_v1_usage_daily
+(
+    `day` Date,
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `agent` LowCardinality(String),
+    `operation` LowCardinality(String),
+    `kind` LowCardinality(String),
+    `ops` UInt64,
+    `errors` UInt64,
+    `input_tokens` UInt64,
+    `output_tokens` UInt64,
+    `embedding_tokens` UInt64,
+    `llm_calls` UInt64,
+    `upstream_cost_usd` Decimal(38, 6),
+    `bytes_written` UInt64,
+    `latency_sum_ms` UInt64,
+    `latency_p50_ms` Float64,
+    `latency_p95_ms` Float64
+)
+DEFINER = loom SQL SECURITY DEFINER
+AS WITH
+    scope AS
+    (
+        SELECT
+            org,
+            namespace
+        FROM loom.sql_access
+        FINAL
+        WHERE (user_name = currentUser()) AND granted
+    ),
+    restricted AS
+    (
+        SELECT
+            org,
+            namespace
+        FROM loom.namespaces
+        FINAL
+        WHERE classification = 'restricted'
+        UNION ALL
+        SELECT
+            org,
+            namespace
+        FROM loom.code_repos
+        FINAL
+        WHERE classification = 'restricted'
+    )
+SELECT
+    toDate(ts, 'UTC') AS day,
+    org,
+    namespace,
+    agent,
+    operation,
+    kind,
+    count() AS ops,
+    countIf(NOT success) AS errors,
+    sum(input_tokens) AS input_tokens,
+    sum(output_tokens) AS output_tokens,
+    sum(embedding_tokens) AS embedding_tokens,
+    sum(llm_calls) AS llm_calls,
+    sum(upstream_cost_usd) AS upstream_cost_usd,
+    sum(bytes_written) AS bytes_written,
+    sum(latency_ms) AS latency_sum_ms,
+    (quantiles(0.5, 0.95)(latency_ms) AS q)[1] AS latency_p50_ms,
+    q[2] AS latency_p95_ms
+FROM loom.agent_events
+WHERE (((org, namespace) IN (
+    SELECT
+        org,
+        namespace
+    FROM scope
+)) OR (org IN (
+    SELECT org
+    FROM scope
+    WHERE namespace = '*'
+)) OR ((
+    SELECT count()
+    FROM scope
+    WHERE org = '*'
+) > 0)) AND ((org, namespace) NOT IN (
+    SELECT
+        org,
+        namespace
+    FROM restricted
+)) AND (ts >= (toStartOfDay(now(), 'UTC') - toIntervalDay(31)))
+GROUP BY
+    day,
+    org,
+    namespace,
+    agent,
+    operation,
+    kind;
 
 -- ======================================================================
 -- Materialized views (19)

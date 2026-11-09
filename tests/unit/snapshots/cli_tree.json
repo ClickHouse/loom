@@ -6445,6 +6445,327 @@
       }
      ]
     },
+    "sql-access": {
+     "prog": "loom sql-access",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": [
+        "sql_access_cmd"
+       ]
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [],
+       "dest": "sql_access_cmd",
+       "action": "_SubParsersAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": "A...",
+       "type": null,
+       "required": true,
+       "help": null,
+       "metavar": null,
+       "subcommands": {
+        "grant": {
+         "prog": "loom sql-access grant",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.sql_access:_cmd_grant"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "user",
+            "org",
+            "namespaces",
+            "all",
+            "rotate"
+           ]
+          }
+         ],
+         "mutually_exclusive": [
+          {
+           "required": true,
+           "dests": [
+            "org",
+            "all"
+           ]
+          }
+         ],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--user"
+           ],
+           "dest": "user",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The ClickHouse user name",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": "",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The org the user reads",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--namespaces"
+           ],
+           "dest": "namespaces",
+           "action": "_StoreAction",
+           "default": "",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Comma-separated namespaces of the org, or * for every one of them",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--all"
+           ],
+           "dest": "all",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Every org and namespace: for a deployment whose data belongs to one org",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--rotate"
+           ],
+           "dest": "rotate",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Give an existing user a new password, printed once",
+           "metavar": null
+          }
+         ]
+        },
+        "revoke": {
+         "prog": "loom sql-access revoke",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.sql_access:_cmd_revoke"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "user"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--user"
+           ],
+           "dest": "user",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The ClickHouse user name",
+           "metavar": null
+          }
+         ]
+        },
+        "list": {
+         "prog": "loom sql-access list",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.sql_access:_cmd_list"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          }
+         ]
+        }
+       },
+       "aliases_of": {
+        "grant": "loom sql-access grant",
+        "revoke": "loom sql-access revoke",
+        "list": "loom sql-access list"
+       },
+       "choices_help": [
+        {
+         "dest": "grant",
+         "help": "Make the user read exactly this scope, creating it (and printing its password once) when there is none.",
+         "metavar": "grant"
+        },
+        {
+         "dest": "revoke",
+         "help": "Take the user's scope away, then drop the user.",
+         "metavar": "revoke"
+        },
+        {
+         "dest": "list",
+         "help": "Every granted scope row, by SQL user.",
+         "metavar": "list"
+        }
+       ]
+      }
+     ]
+    },
     "reembed": {
      "prog": "loom reembed",
      "usage": null,
@@ -13426,6 +13747,7 @@
     "signing-key": "loom signing-key",
     "provider-lock": "loom provider-lock",
     "export-analytics": "loom export-analytics",
+    "sql-access": "loom sql-access",
     "reembed": "loom reembed",
     "reextract": "loom reextract",
     "deploy-delta": "loom deploy-delta",
@@ -13554,6 +13876,11 @@
      "dest": "export-analytics",
      "help": "Write one UTC day of usage and a namespace snapshot to S3 as Parquet, names hashed under LOOM_ANALYTICS_EXPORT_NAME_KEY. Never replaces an object, so a repeated run is safe.",
      "metavar": "export-analytics"
+    },
+    {
+     "dest": "sql-access",
+     "help": "Make, rescope or drop a ClickHouse user that reads a tenant's memory, conversations and request ledger through the sql_v1_* views.",
+     "metavar": "sql-access"
     },
     {
      "dest": "reembed",

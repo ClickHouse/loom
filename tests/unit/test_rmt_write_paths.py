@@ -69,6 +69,7 @@ WRITE_PATHS: dict[str, tuple[str, str]] = {
         "one row (id 0) the boot writes under the assistant.service lease, each step "
         "re-inserting it whole at the next version",
     ),
+    "sql_access": ("builder", "test_sql_surface.py"),
     "categories": ("gap", "platform"),
     "chunk_supersessions": ("gap", "platform"),
     "code_answers": ("gap", "code"),
