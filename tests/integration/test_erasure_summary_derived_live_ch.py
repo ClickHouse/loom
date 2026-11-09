@@ -18,10 +18,9 @@ from typing import Any
 import pytest
 
 from server.core.ch import get_client
+from server.erasure.app.saga_steps import USER_STEPS
 from server.erasure.store import census as erasure_census
 from server.erasure.store import mutations as erasure_mutations
-from server.erasure.store import steps_graph as graph_steps
-from server.erasure.store import steps_memory as memory_steps
 from server.memory.store.rows import build_embedding_row
 from tests.integration._resources import unique_org
 
@@ -43,19 +42,20 @@ _COUNTED = {
     "loom.entity_communities": 1,
     "loom.entity_vectors": 1,
 }
-# The user saga's steps this covers, in saga order.
-_STEPS = (
-    ("memory.tombstone", memory_steps.tombstone_memory_by_user),
-    ("consolidated.tombstone", graph_steps.tombstone_consolidated_dependents_by_user),
-    ("shared_embeddings.tombstone", memory_steps.tombstone_shared_embeddings_by_user),
-    ("shared.tombstone", memory_steps.tombstone_shared_by_user),
-    ("memory_chunks.tombstone", memory_steps.tombstone_memory_chunks_by_user),
-    ("entity_communities.delete", graph_steps.delete_entity_communities_by_user),
-    ("entity_vectors.delete", graph_steps.delete_entity_vectors_by_user),
-    ("graph_links.delete", graph_steps.delete_graph_links_by_user),
-    ("memory_versions.delete", memory_steps.delete_memory_versions_by_user),
-    ("memory.retire", graph_steps.retire_memory_by_user),
-)
+# The user saga's steps this covers, in the saga's own order.
+_COVERED = {
+    "memory.tombstone",
+    "consolidated.tombstone",
+    "shared_embeddings.tombstone",
+    "shared.tombstone",
+    "memory_chunks.tombstone",
+    "entity_communities.delete",
+    "entity_vectors.delete",
+    "graph_links.delete",
+    "memory_versions.delete",
+    "memory.retire",
+}
+_STEPS = tuple(s for s in USER_STEPS if s[0] in _COVERED)
 _WHERE = " WHERE org = {org:String}"
 
 
