@@ -58,8 +58,8 @@ async def test_similar_and_item_wire_fields() -> None:
 def test_agent_carries_the_tracker_client() -> None:
     from loom.agent import Agent
 
-    assert isinstance(Agent.__init__.__code__.co_names, tuple)
-    assert "TrackerClient" in Agent.__init__.__code__.co_names
+    agent = Agent(org="acme", namespace="handbook", agent="bot", api_key="k", base_url="http://x")
+    assert isinstance(agent.tracker, TrackerClient)
 
 
 @pytest.mark.asyncio
