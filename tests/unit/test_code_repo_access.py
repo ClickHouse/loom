@@ -851,7 +851,7 @@ def test_the_default_code_namespace_never_lands_on_a_member_branch(monkeypatch) 
     assert gate_ns("code.repos") is None
     with pytest.raises(repos.RegistryUnread):
         resolve_code_identity("", "")
-    with pytest.raises(SystemExit, match="registry is not read yet"):
+    with pytest.raises(SystemExit, match="registry could not be read; retry"):
         code_run._identity(argparse.Namespace(org="", namespace=""))
     assert code_run._identity(argparse.Namespace(org="", namespace="code-x")) == (ORG, "code-x")
 
@@ -885,7 +885,7 @@ def test_a_handler_never_defaults_to_a_namespace_the_gate_did_not_check(monkeypa
     contextvars.copy_context().run(request)
     with pytest.raises(SystemExit, match="needs --namespace"):
         code._print_scip_lock_path(argparse.Namespace(org="", namespace=""))
+    monkeypatch.setattr(repos, "_page_namespaces", frozenset({(ORG, "code-weave")}))
     with pytest.raises(ValidationError) as e:
-        monkeypatch.setattr(repos, "_page_namespaces", frozenset({(ORG, "code-weave")}))
         repos.default_code_namespace(ORG)
     assert e.value.to_detail()["code"] == "DEFAULT_NAMESPACE_REFUSED"

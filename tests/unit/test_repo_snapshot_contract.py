@@ -67,6 +67,16 @@ def test_only_the_registry_and_the_add_read_the_raw_registry_snapshot() -> None:
     assert readers <= {"code/app/index/repo_registry.py", "code/app/repo_admin.py"}, readers
 
 
+def test_only_the_request_gate_resolves_the_plane_default_namespace() -> None:
+    # It records the gate's refusal for the handler; another caller would reset it.
+    callers = {
+        path
+        for path, tree in _modules()
+        if path != "code/app/common.py" and "plane_namespace_for" in _names(tree)
+    }
+    assert callers == {"transport/gates.py"}, callers
+
+
 def test_no_module_reads_the_snapshot_or_the_raw_configuration_around_the_accessors() -> None:
     bypass = {
         path: sorted(INTERNALS & _names(tree))

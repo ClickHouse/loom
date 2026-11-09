@@ -105,7 +105,8 @@ def plane_namespace_for(op_name: str, org: str | None = None) -> str:
     against — and its handler reads — when the body names none: the deployment's
     code namespace (`repos.default_code_namespace`). "" for every other op, and
     when that default is refused: an op that skips the namespace never needs it, and
-    one that reads it refuses in its handler (`resolve_code_identity`)."""
+    one that reads it refuses in its handler (`resolve_code_identity`). It records
+    that refusal for the request, so only the gate calls it."""
     _GATE_DEFAULT_REFUSED.set(None)
     if not op_name.startswith("code."):
         return ""
