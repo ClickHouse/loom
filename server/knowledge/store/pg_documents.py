@@ -446,7 +446,7 @@ async def unpublished(org: str, namespace: str) -> tuple[int, int]:
         org,
         namespace,
     )
-    return (int(row["owed"]), int(row["parked"])) if row else (0, 0)
+    return int(row["owed"]), int(row["parked"])
 
 
 async def parked_count() -> int:

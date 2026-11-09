@@ -1265,7 +1265,7 @@ async def test_under_postgres_an_unanswering_authority_reads_on_and_says_so(
 
     _whole(stubs)
     authority.unpublished = pg.PostgresUnavailableError()
-    authority.served = pg.PostgresUnavailableError()
+    authority.served = AssertionError("the listing's check is not tried against a dead pool")
     monkeypatch.setattr(pg_validation, "admit", down)
     out = await ki.handle_knowledge_inspect(_inp())
     assert [d.source_uri for d in out.listed] == ["docs/b.md", "docs/b.md#v2"]
