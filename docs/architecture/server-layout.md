@@ -53,8 +53,8 @@ responsibility is; a small domain has fewer.
 | `workers/` | Background loops, one module per registry row                                                                                    | as `app`, with `workers` in place of `api`; other domains' `app`, `domain` and wire models                                                                              |
 
 One `domain/` module starts a process: `server/code/domain/extract/bounded_parse.py`, which
-every tree-sitter parser in `domain/` calls, parses in a local child process under resource
-limits first.
+every tree-sitter parser in `domain/` calls, parses each source first in a local child
+process under resource limits.
 
 Two edges are deliberately absent. `store/` never calls `app/`: a repository takes values
 and returns rows, so an app can be tested against a fake store. And no domain reads
