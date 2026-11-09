@@ -117,7 +117,7 @@ def route_facets(pf: ParsedFile) -> list[Facet]:
     closes = _brace_closes(text) if controllers else {}
     for k, c in enumerate(controllers):
         # cut: the prefix is joined into every route of the class
-        prefix = (c.group(1) or c.group(2) or "")[: 2 * _MAX_NAME]
+        prefix = (c.group(1) or c.group(2) or "").lstrip("/")[: 2 * _MAX_NAME]
         # a class body ends at its `}`, and no later than the next controller: an unclosed
         # one is not read again for every controller before it
         stop = controllers[k + 1].start() if k + 1 < len(controllers) else len(text)

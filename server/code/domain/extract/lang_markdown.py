@@ -52,8 +52,8 @@ KIND_SECTION = "section"
 EDGE_READS = "reads"
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
 _FENCE_RE = re.compile(r"^(```|~~~)")
-# A section repeats its ancestors' titles in its qualified name and heading path: the
-# titles and both are cut, so a section costs at most this much whatever its depth.
+# Each title is cut, and the name and heading path built from them: a section costs at
+# most six titles whatever its depth.
 # not a setting: changing it renames the stored sections it cuts
 _MAX_PATH = 1000
 _LINK_RE = re.compile(r"\]\(((?:(?!\]\()[^)\s])++)(?:\s+\"[^\"]*\")?\)")
