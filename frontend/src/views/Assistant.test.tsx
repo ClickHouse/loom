@@ -1740,6 +1740,27 @@ describe("Assistant: documents", () => {
     },
   );
 
+  it("lists every document of a namespace whose latest writes are not counted yet, and says so", async () => {
+    // Under the Postgres authority: every live document is listed, but a commit's
+    // publication has not finished, so the listing is not called complete.
+    inspectKnowledge.mockResolvedValueOnce({
+      ...KNOWLEDGE,
+      listed_complete: false,
+      skipped: [
+        "projection: 1 document commit(s) whose publication to ClickHouse has not finished, 0 of them parked",
+        "listed.heads: 1 document(s) rewritten or deleted in the Postgres authority since ClickHouse's copy; not listed",
+      ],
+    });
+    render(<Assistant />);
+    const result = await pickDocuments();
+    expect(within(result).queryByText("The documents could not be listed.")).toBeNull();
+    expect(
+      within(result).getByText("Some documents may be missing: their latest writes are not in the counts yet."),
+    ).toBeInTheDocument();
+    expect(within(result).queryByText(/^Newest \d+ of \d+ listed\.$/)).toBeNull();
+    expect(within(result).getByRole("list", { name: "Newest documents" })).toBeInTheDocument();
+  });
+
   it("does not call a namespace empty when its job count could not be read", async () => {
     inspectKnowledge.mockResolvedValueOnce(jobsUnread(emptyNamespace()));
     render(<Assistant />);

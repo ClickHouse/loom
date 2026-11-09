@@ -732,7 +732,8 @@ bounds the listed documents and every finding's samples.
   model, distinct versions, characters per chunk) and its decisions. `listed_complete`
   says whether the list holds every live document. Under the Postgres authority the
   document sections read ClickHouse, which can trail what Postgres committed: `skipped`
-  counts the commits it does not have yet, and a listed document is kept only while
+  counts the commits whose publication has not finished, and a listed document is kept
+  only while
   `knowledge.get` serves it at that version
   ([storage authority](../architecture/storage-authority.md#knowledge-documents)).
 - **`decisions`**: the live decision rows whose `source_resource_id` cites a section of

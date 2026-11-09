@@ -14,7 +14,8 @@ them, and so are the job rows, which knowledge.ingest_status serves to any of th
 namespace's viewers by id; the decision rows are memory rows and are read inside the
 request's scope, and the audit, which reads every user's rows, is not run under a scope
 narrowed to one user or session. A section that cannot be read is named in `skipped`
-and its fields stay null or empty; a store that is down fails the call, as any read does.
+and its fields stay null or empty; a store that is down fails the call, as any read does,
+but a Postgres authority that does not answer, which is named in `skipped` (below).
 
 Under the Postgres authority the document rows ClickHouse holds can trail the heads
 Postgres commits: `skipped` counts the namespace's commits ClickHouse does not have yet
@@ -468,13 +469,16 @@ class _Inspect:
         self.inp = inp
         self.skipped: list[str] = []
         self.rules = RuleLog()
-        # Under Postgres, whether ClickHouse holds every document the namespace committed
-        # (`published`): read before the document sections.
+        # Under Postgres, whether every document commit of the namespace was published to
+        # ClickHouse and Postgres answered; set before the document sections are read.
         self.documents_published = True
+        self.authority_down = False
 
     async def guarded[T](self, section: str, read: Callable[[], Awaitable[T]], default: T) -> T:
         """One section's read; a failure lands in `skipped` and the default stands. A
-        store that is down or overloaded fails the call."""
+        store that is down or overloaded fails the call; a Postgres authority that does
+        not answer is a section's failure (`pg.PostgresUnavailableError` is not in
+        BACKEND_NOT_NOW)."""
         try:
             return await read()
         except BACKEND_NOT_NOW:
@@ -495,6 +499,7 @@ class _Inspect:
             owed, parked = await pg_documents.unpublished(i.org, i.namespace)
         except pg.PostgresUnavailableError:
             self.documents_published = False
+            self.authority_down = True
             self.skipped.append(
                 f"{pg_validation.PROJECTION}: POSTGRES_UNAVAILABLE: the Postgres authority "
                 "did not answer; the document sections read what ClickHouse holds, which "
@@ -504,9 +509,10 @@ class _Inspect:
         if owed or parked:
             self.documents_published = False
             self.skipped.append(
-                f"{pg_validation.PROJECTION}: {owed} document commits not yet in ClickHouse "
-                f"and {parked} parked after LOOM_PG_DELIVERY_MAX_ATTEMPTS refusals; the "
-                "document sections may miss them"
+                f"{pg_validation.PROJECTION}: {owed + parked} document commit(s) whose "
+                f"publication to ClickHouse has not finished, {parked} of them parked after "
+                "LOOM_PG_DELIVERY_MAX_ATTEMPTS refusals; the document sections may miss "
+                "them or still count older versions"
             )
 
     async def documents(self) -> DocumentTotals:
@@ -765,7 +771,8 @@ class _Inspect:
         """Under Postgres, the listed ClickHouse rows `knowledge.get` still serves at the
         version read, live: a document rewritten or deleted since in the authority is not
         listed, and `skipped` counts it. A failed read lists ClickHouse's rows as read."""
-        if not pg.enabled():
+        if not pg.enabled() or self.authority_down:
+            # Down already: one more read would wait out the pool again.
             return rows
         i = self.inp
         uris = [str(r["source_uri"]) for r in rows]
@@ -790,8 +797,8 @@ class _Inspect:
         if len(kept) < len(rows):
             self.documents_published = False
             self.skipped.append(
-                f"listed: {len(rows) - len(kept)} documents rewritten or deleted in the "
-                "Postgres authority since ClickHouse's copy; not listed"
+                f"listed.heads: {len(rows) - len(kept)} document(s) rewritten or deleted in "
+                "the Postgres authority since ClickHouse's copy; not listed"
             )
         return kept
 

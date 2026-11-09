@@ -1204,13 +1204,13 @@ class _Authority:
                 if u in uris
             ]
 
-        async def published(*_: object) -> bool:
+        async def nothing_behind(*_: object) -> bool:
             return False  # the memory rows are all in ClickHouse
 
         monkeypatch.setattr(pg, "enabled", lambda: True)
         monkeypatch.setattr(pg_documents, "unpublished", unpublished)
         monkeypatch.setattr(documents, "get_many_by_uris", get_many)
-        monkeypatch.setattr(pg_validation, "admit", published)
+        monkeypatch.setattr(pg_validation, "admit", nothing_behind)
 
 
 @pytest.fixture
@@ -1244,8 +1244,9 @@ async def test_under_postgres_unpublished_document_commits_are_counted_and_said(
     out = await ki.handle_knowledge_inspect(_inp())
     lines = [s for s in out.skipped if s.startswith("projection: ")]
     assert lines == [
-        "projection: 2 document commits not yet in ClickHouse and 1 parked after "
-        "LOOM_PG_DELIVERY_MAX_ATTEMPTS refusals; the document sections may miss them"
+        "projection: 3 document commit(s) whose publication to ClickHouse has not "
+        "finished, 1 of them parked after LOOM_PG_DELIVERY_MAX_ATTEMPTS refusals; the "
+        "document sections may miss them or still count older versions"
     ]
     assert len(out.listed) == 2 and not out.listed_complete
 
@@ -1264,7 +1265,8 @@ async def test_under_postgres_an_unanswering_authority_reads_on_and_says_so(
     out = await ki.handle_knowledge_inspect(_inp())
     assert [d.source_uri for d in out.listed] == ["docs/b.md", "docs/b.md#v2"]
     assert any(s.startswith("projection: POSTGRES_UNAVAILABLE: ") for s in out.skipped)
-    assert "listed.heads: PostgresUnavailableError" in out.skipped
+    # The listing's check is not tried again against a Postgres already found down.
+    assert not [s for s in out.skipped if s.startswith("listed.heads")]
     assert not out.listed_complete
 
 
@@ -1285,7 +1287,23 @@ async def test_under_postgres_a_listed_document_the_authority_moved_past_is_not_
     ((_, _, uris, _, _),) = stubs.calls["document_chunks"]
     assert uris == ["docs/b.md#v2"]
     assert (
-        "listed: 1 documents rewritten or deleted in the Postgres authority since "
+        "listed.heads: 1 document(s) rewritten or deleted in the Postgres authority since "
         "ClickHouse's copy; not listed"
     ) in out.skipped
+    assert not out.listed_complete
+
+
+@pytest.mark.asyncio
+async def test_under_postgres_a_failed_listing_check_lists_clickhouses_rows(
+    stubs: Stubs, authority: _Authority
+) -> None:
+    """The count answered but the listing's check did not: the rows are listed as
+    ClickHouse holds them, the failed read is named, and the listing is not complete."""
+    from server.core import pg
+
+    _whole(stubs)
+    authority.served = pg.PostgresUnavailableError()
+    out = await ki.handle_knowledge_inspect(_inp())
+    assert [d.source_uri for d in out.listed] == ["docs/b.md", "docs/b.md#v2"]
+    assert "listed.heads: PostgresUnavailableError" in out.skipped
     assert not out.listed_complete

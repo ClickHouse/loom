@@ -485,7 +485,9 @@ function ListedSection({ result }: { result: KnowledgeInspection }) {
             <p className="text-xs text-text-muted">
               {live === null
                 ? `Newest ${fmtInt(result.listed.length)} listed; the total was not counted.`
-                : `Newest ${fmtInt(result.listed.length)} of ${fmtInt(live)} listed.`}
+                : result.listed.length < live
+                  ? `Newest ${fmtInt(result.listed.length)} of ${fmtInt(live)} listed.`
+                  : "Some documents may be missing: their latest writes are not in the counts yet."}
             </p>
           )}
           {result.listed.length === 0 ? (
