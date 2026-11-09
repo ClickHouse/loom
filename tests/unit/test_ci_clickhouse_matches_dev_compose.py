@@ -56,8 +56,15 @@ def test_same_config_mounts_except_the_intended_differences() -> None:
     named = "/etc/clickhouse-server/config.d/named_collections.xml"
     assert named in dev and named not in ci
     dev.pop(named)
-    for cloud_like in ("users.d/log_queries_readonly.xml", "config.d/custom_settings_prefixes.xml"):
-        target = f"/etc/clickhouse-server/{cloud_like}"
-        assert ci.pop(target) == f"dev/clickhouse-ci/{cloud_like.split('/')[1]}"
+    cloud_like = {
+        "/etc/clickhouse-server/users.d/log_queries_readonly.xml": (
+            "dev/clickhouse-ci/log_queries_readonly.xml"
+        ),
+        "/etc/clickhouse-server/config.d/custom_settings_prefixes.xml": (
+            "dev/clickhouse-ci/custom_settings_prefixes.xml"
+        ),
+    }
+    for target, source in cloud_like.items():
+        assert ci.pop(target) == source
         assert target not in dev
     assert ci == dev

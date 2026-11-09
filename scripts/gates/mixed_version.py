@@ -427,7 +427,7 @@ class Scenario:
         # server log: its search starts now.
         since = sql(self.ch_port, "SELECT now()")
         needles = {"k": "[" + ", ".join(map(sql_string, secrets)) + "]"}
-        self.logs_hold_no_key(since, needles, f"{names.prefix}loom_")
+        self.logs_hold_no_key(since, needles)
 
     def answers_insights(self, label: str) -> bool:
         """Whether `label` answers insights.query within SETTLE_S: a process
@@ -445,7 +445,7 @@ class Scenario:
                 return r.status_code == 200
             time.sleep(2)
 
-    def logs_hold_no_key(self, since: str, needles: dict[str, str], setting_prefix: str) -> None:
+    def logs_hold_no_key(self, since: str, needles: dict[str, str]) -> None:
         """No statement text or error in query_log, and no server log error
         since `since`, holds a spelling of the key; each search first shows a
         refused read of the probe reached that log."""
@@ -475,9 +475,9 @@ class Scenario:
             quoted = sql(
                 self.ch_port,
                 "SELECT count() FROM system.text_log WHERE event_time >= {since:DateTime} "
-                "AND level = 'Error' AND position(message, {setting_prefix:String}) > 0 "
+                "AND level = 'Error' AND position(message, 'SQL_loom_') > 0 "
                 "AND message LIKE '%UNKNOWN_SETTING%'",
-                {"since": since, "setting_prefix": setting_prefix},
+                {"since": since},
             )
             if quoted != "0" or time.monotonic() > deadline:
                 break

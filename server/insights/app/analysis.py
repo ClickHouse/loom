@@ -114,7 +114,8 @@ _WRITE_LEASE = "analysis.entities"
 _LEASE_TTL_S = 60  # not a setting: the statements under it are bounded by its share
 _SECRETS_PURPOSE = "analysis.secrets"
 _loaded: tuple[bytes, str] | None = None
-# The custom settings under the server's prefix, found when the secrets load.
+# The custom settings under the server's prefix: part of its config, so probed
+# once per process.
 _setting_names: boundary.SettingNames | None = None
 
 # Whether this process's last probe passed: None = no answer yet, or its last
@@ -142,7 +143,7 @@ def _key() -> bytes:
 
 def _names() -> boundary.SettingNames:
     if _setting_names is None:
-        raise AnalysisUnavailableError("the analyst secrets are not loaded on this replica yet")
+        raise AnalysisUnavailableError("the server's settings prefix is not known yet")
     return _setting_names
 
 
@@ -171,12 +172,14 @@ def _drawn_password() -> str:
 async def _secrets_refusal(*, may_draw: bool) -> str:
     """`load_secrets`, answering Loom's own refusal as text ('' once loaded)."""
     global _loaded, _setting_names
-    prefix = await store.setting_prefix()
-    if prefix is None:
-        return (
-            "ClickHouse takes custom settings under none of "
-            f"{', '.join(boundary.SETTING_PREFIXES)}: add one to its custom_settings_prefixes"
-        )
+    if _setting_names is None:
+        prefix = await store.setting_prefix()
+        if prefix is None:
+            return (
+                "ClickHouse takes custom settings under none of "
+                f"{', '.join(boundary.SETTING_PREFIXES)}: add one to its custom_settings_prefixes"
+            )
+        _setting_names = boundary.SettingNames(prefix)
     sealed = await store.sealed_secrets()
     if sealed is None:
         if not may_draw:
@@ -194,7 +197,7 @@ async def _secrets_refusal(*, may_draw: bool) -> str:
             "LOOM_JWT_SECRET_PREVIOUS to the secret it was sealed under and run "
             "`loom secrets reseal`)"
         )
-    _loaded, _setting_names = opened, boundary.SettingNames(prefix)
+    _loaded = opened
     return ""
 
 
@@ -690,11 +693,11 @@ def _refusal(e: BaseException) -> ValidationError | None:
     code = error_code(e)
     if code not in _STATEMENT_CODES:
         return None
-    if code == _MEMORY_LIMIT_EXCEEDED and ("(total)" in str(e) or "(for user)" in str(e)):
-        return None  # the server's memory, not the statement's cap
     text = str(e)
-    names_scope = any(f"{p}loom_" in text for p in boundary.SETTING_PREFIXES)
-    if names_scope or boundary.KEY_LITERAL.search(text):
+    if code == _MEMORY_LIMIT_EXCEEDED and ("(total)" in text or "(for user)" in text):
+        return None  # the server's memory, not the statement's cap
+    quotes_scope = any(f"{p}loom_" in text for p in boundary.SETTING_PREFIXES)
+    if quotes_scope or boundary.KEY_LITERAL.search(text):
         return ValidationError(
             f"ClickHouse refused the statement (code {code}) while checking the analysis "
             "scope; a statement must not set the scope settings"

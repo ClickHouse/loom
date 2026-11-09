@@ -30,6 +30,7 @@ NAMES = boundary.SettingNames("SQL_")
 def _sql_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
     # ClickHouse's default config takes custom settings under SQL_.
     monkeypatch.setattr(app.store, "setting_prefix", _returns("SQL_"))
+    monkeypatch.setattr(app, "_setting_names", None)
 
 
 @pytest.fixture
@@ -1056,6 +1057,22 @@ def test_a_drawn_password_has_every_character_class() -> None:
     password = app._drawn_password()
     for character_class in ("[a-z]", "[A-Z]", "[0-9]", "[^A-Za-z0-9]"):
         assert re.search(character_class, password), character_class
+
+
+def test_the_prefix_is_probed_once_per_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A refusal after the probe, here an unopenable row, must not probe again.
+    probes = []
+
+    async def probe() -> str:
+        probes.append(1)
+        return "custom_"
+
+    monkeypatch.setattr(app.store, "setting_prefix", probe)
+    monkeypatch.setattr(app.store, "sealed_secrets", _returns("not-a-sealed-value"))
+    for _ in range(2):
+        with pytest.raises(app.SetupRefused):
+            asyncio.run(app.load_secrets(may_draw=False))
+    assert probes == [1] and app._names() == boundary.SettingNames("custom_")
 
 
 def test_a_server_that_takes_neither_prefix_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
