@@ -260,7 +260,8 @@ disallow_subclassing_any = false
 # coverage; treat this as a unit-coverage floor, not a total.
 source = ["server", "sdk/python/loom"]
 # The C tracer, which `sys.settrace(None)` pauses: the extraction tests' time bounds
-# (tests/unit/test_document_extraction.py `_within`) time the parser with it off.
+# (tests/unit/test_document_extraction.py `_within`) and `assert_linear`'s bound
+# (tests/unit/code_fixtures.py) time the code with it off.
 core = "ctrace"
 omit = ["*/tests/*", "*/__pycache__/*"]
 

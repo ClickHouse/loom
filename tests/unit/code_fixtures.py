@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+import sys
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from typing import Any
-
-import coverage
 
 from server.code.domain.index.repos import RepoConfig
 
@@ -61,16 +60,14 @@ def assert_linear(
 
 @contextmanager
 def _untraced() -> Iterator[None]:
-    """Coverage's tracer paused: under it the code costs about three times as much."""
-    cov = coverage.Coverage.current()
-    if cov is None:
-        yield
-        return
-    cov.stop()
+    """This thread's tracer off: under coverage's the code costs about three times as
+    much. Only this thread's, so other threads stay measured."""
+    previous = sys.gettrace()
+    sys.settrace(None)
     try:
         yield
     finally:
-        cov.start()
+        sys.settrace(previous)
 
 
 def grows_linearly(run: Callable[[int], object], small: int, big: int) -> None:
