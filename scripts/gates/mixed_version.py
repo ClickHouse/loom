@@ -460,6 +460,7 @@ class Scenario:
             "SELECT count() FROM system.query_log WHERE "
             "multiSearchAnyCaseInsensitive(query, {k:Array(String)}) "
             "OR multiSearchAnyCaseInsensitive(formatted_query, {k:Array(String)}) "
+            "OR multiSearchAnyCaseInsensitive(log_comment, {k:Array(String)}) "
             "OR multiSearchAnyCaseInsensitive(exception, {k:Array(String)})",
             needles,
             boundary.LOG_TEXT_CUT,

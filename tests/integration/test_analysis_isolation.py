@@ -503,7 +503,8 @@ def test_the_statement_text_stays_out_of_the_query_log(
     # This read cuts its own text, which holds the marker.
     quoted = ch_client.query(
         "SELECT count() FROM system.query_log "
-        "WHERE query LIKE {m:String} OR formatted_query LIKE {m:String}",
+        "WHERE query LIKE {m:String} OR formatted_query LIKE {m:String} "
+        "OR log_comment LIKE {m:String}",
         parameters={"m": f"%{marker}%"},
         settings=boundary.LOG_TEXT_CUT,
     ).result_rows[0][0]
@@ -536,6 +537,7 @@ def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client) -> Non
         "SELECT count() FROM system.query_log "
         "WHERE multiSearchAnyCaseInsensitive(query, {k:Array(String)}) "
         "OR multiSearchAnyCaseInsensitive(formatted_query, {k:Array(String)}) "
+        "OR multiSearchAnyCaseInsensitive(log_comment, {k:Array(String)}) "
         "OR multiSearchAnyCaseInsensitive(exception, {k:Array(String)})",
         parameters={"k": secrets},
         settings=boundary.LOG_TEXT_CUT,

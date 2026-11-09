@@ -19,6 +19,13 @@ _DIGEST_WS = re.compile(r"\s+")
 _DIGEST_LITERALS = re.compile(r"'(?:[^'\\]|\\.)*'|-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b")
 
 
+def statement_shape(sql: str) -> str:
+    """`sql:<shape12>`: a 12-hex sha1 of the statement with string and
+    numeric literals masked, which holds none of its literals."""
+    flat = _DIGEST_WS.sub(" ", str(sql or "")).strip()
+    return f"sql:{hashlib.sha1(_DIGEST_LITERALS.sub('?', flat).encode('utf-8')).hexdigest()[:12]}"
+
+
 def statement_digest(sql: str) -> str:
     """`sql:<shape12> <head>` for one statement: a 12-hex
     sha1 of the statement with string and numeric literals masked, then its
@@ -27,8 +34,7 @@ def statement_digest(sql: str) -> str:
     their SELECT list or joins do not."""
 
     flat = _DIGEST_WS.sub(" ", str(sql or "")).strip()
-    shape = hashlib.sha1(_DIGEST_LITERALS.sub("?", flat).encode("utf-8")).hexdigest()[:12]
-    return f"sql:{shape} {flat[:_DIGEST_HEAD_CHARS]}"
+    return f"{statement_shape(sql)} {flat[:_DIGEST_HEAD_CHARS]}"
 
 
 def capture_statement(sql: str, path: str) -> None:
@@ -43,4 +49,4 @@ def capture_statement(sql: str, path: str) -> None:
         log.debug("statement capture skipped: %s", exc)
 
 
-__all__ = ["capture_statement", "statement_digest"]
+__all__ = ["capture_statement", "statement_digest", "statement_shape"]

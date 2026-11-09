@@ -42,7 +42,7 @@ from server.core.ch_errors import (
 from server.core.ch_names import NamedClient, qualify, split_table
 from server.core.ch_request_cost import note_result_summary, request_query_id
 from server.core.ch_schema_guard import guard_pending_schema
-from server.core.ch_statement_text import capture_statement, statement_digest
+from server.core.ch_statement_text import capture_statement, statement_digest, statement_shape
 from server.core.ch_target import connection_kwargs
 from server.core.ch_writes import dedup_settings, insert_dedup_token
 from server.core.sql_literal import sql_string
@@ -181,8 +181,9 @@ _uncaptured_var: ContextVar[bool] = ContextVar("ch_uncaptured", default=False)
 
 @contextmanager
 def uncaptured() -> Iterator[None]:
-    """Statements in this block are never written to the capture file: they
-    carry a password or a key in their text."""
+    """Statements in this block carry a password or a key in their text: they
+    are never written to the capture file, and `log_comment` gets only their
+    shape."""
     token = _uncaptured_var.set(True)
     try:
         yield
@@ -473,10 +474,14 @@ def statement_settings(
     _apply_class_timeout(out, cls)
     if settings.ch_capture_statements and not _uncaptured_var.get():
         capture_statement(sql, settings.ch_capture_statements)
+    analyst = _analyst_var.get()
     if settings.ch_log_comment_statement_digest:
         tag = str(out.get("log_comment") or "")
-        out["log_comment"] = f"{tag} {statement_digest(sql)}".strip()
-    analyst = _analyst_var.get()
+        # A statement that carries a secret, or a caller's SQL run as the
+        # analyst, logs its shape alone: the head would quote its text.
+        secret = _uncaptured_var.get() or analyst is not None
+        digest = statement_shape(sql) if secret else statement_digest(sql)
+        out["log_comment"] = f"{tag} {digest}".strip()
     if analyst is not None:
         # The analyst's profile pins its own caps, its time cap included: a
         # class deadline, a traffic class's or the caller's settings could only
