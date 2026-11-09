@@ -28,6 +28,16 @@ _SLOW = [
 ]
 
 
+@pytest.fixture
+def fresh_child(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """No idle child before the test; the one it leaves is ended after it."""
+    from server.code.domain.extract import bounded_parse
+
+    monkeypatch.setattr(bounded_parse, "_idle", None)
+    yield
+    _end(bounded_parse._idle)
+
+
 def _end(child: Any) -> None:
     from server.code.domain.extract import bounded_parse
 
@@ -37,13 +47,13 @@ def _end(child: Any) -> None:
 
 
 @pytest.mark.parametrize(("path", "source"), _SLOW, ids=[p for p, _ in _SLOW])
+@pytest.mark.usefixtures("fresh_child")
 def test_a_slow_parse_stops_at_the_deadline_and_the_file_is_chunked(
     monkeypatch: pytest.MonkeyPatch, path: str, source: bytes
 ) -> None:
     from server.code.domain.extract import bounded_parse
 
     monkeypatch.setattr(settings, "code_parse_timeout_s", 0.2)
-    monkeypatch.setattr(bounded_parse, "_idle", None)
     start = time.monotonic()
     pf, err = parse_for_ingest(path, source)
     assert time.monotonic() - start < 5
@@ -54,7 +64,6 @@ def test_a_slow_parse_stops_at_the_deadline_and_the_file_is_chunked(
     pf, err = parse_for_ingest("ok.go", b"package x\nfunc f() {}\n")
     assert err == "" and pf is not None and len(pf.symbols) == 1
     assert bounded_parse._idle is child
-    _end(bounded_parse._idle)
 
 
 # Parses, then sets every thread's CPU clock past the deadline and reads a node's text
@@ -194,6 +203,7 @@ def test_a_header_whose_parse_stops_is_read_as_not_indexed(
     assert ih._header_cache[("acme", "code", "src/a.h")] is None
 
 
+@pytest.mark.usefixtures("fresh_child")
 def test_two_threads_never_parse_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
     import threading
 
@@ -203,7 +213,6 @@ def test_two_threads_never_parse_at_once(monkeypatch: pytest.MonkeyPatch) -> Non
 
     from server.code.domain.extract import bounded_parse
 
-    monkeypatch.setattr(bounded_parse, "_idle", None)
     active, most = 0, 0
     count = threading.Lock()
 
@@ -249,7 +258,6 @@ def test_two_threads_never_parse_at_once(monkeypatch: pytest.MonkeyPatch) -> Non
     for t in threads:
         t.join()
     assert most == 1
-    _end(bounded_parse._idle)
 
 
 def test_headers_whose_parses_stop_spend_the_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -472,12 +480,12 @@ def test_every_grammar_the_server_imports_is_one_the_child_loads() -> None:
         bounded_parse._grammar(parser.language)  # each Language the server builds matches
 
 
+@pytest.mark.usefixtures("fresh_child")
 def test_a_child_that_ended_while_idle_is_replaced_without_failing_the_parse(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.code.domain.extract import bounded_parse
 
-    monkeypatch.setattr(bounded_parse, "_idle", None)
     source = b"package x\nfunc f() {}\n"
     assert parse_for_ingest("a.go", source)[1] == ""
     child = bounded_parse._idle
@@ -486,15 +494,14 @@ def test_a_child_that_ended_while_idle_is_replaced_without_failing_the_parse(
     child.wait()
     pf, err = parse_for_ingest("b.go", source)
     assert err == "" and pf is not None and len(pf.symbols) == 1
-    _end(bounded_parse._idle)
 
 
+@pytest.mark.usefixtures("fresh_child")
 def test_a_child_reads_its_next_request_under_no_earlier_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.code.domain.extract import bounded_parse, parse_child
 
-    monkeypatch.setattr(bounded_parse, "_idle", None)
     grammar = "tree_sitter_go:language"
     assert bounded_parse._in_child(grammar, b"package x\n", 3.0, 256 << 20) == parse_child.DONE
     child = bounded_parse._idle
@@ -504,7 +511,6 @@ def test_a_child_reads_its_next_request_under_no_earlier_limit(
     big = b"package x\n// " + b"x" * (8 << 20)
     assert bounded_parse._in_child(grammar, big, 3.0, 256 << 20) == parse_child.DONE
     assert bounded_parse._idle is child
-    _end(bounded_parse._idle)
 
 
 def test_a_parse_in_the_server_past_twice_the_deadline_stops(
@@ -542,12 +548,12 @@ assert err == "" and pf is not None and len(pf.symbols) == 1, err
     assert done.returncode == 0, done.stderr[-2000:]
 
 
+@pytest.mark.usefixtures("fresh_child")
 def test_a_child_that_does_not_answer_is_ended(monkeypatch: pytest.MonkeyPatch) -> None:
     import signal
 
     from server.code.domain.extract import bounded_parse
 
-    monkeypatch.setattr(bounded_parse, "_idle", None)
     source = b"package x\nfunc f() {}\n"
     assert parse_for_ingest("a.go", source)[1] == ""
     child = bounded_parse._idle
@@ -559,7 +565,6 @@ def test_a_child_that_does_not_answer_is_ended(monkeypatch: pytest.MonkeyPatch) 
     assert "ParseTimeout" in err and time.monotonic() - start < 15
     pf, err = parse_for_ingest("c.go", source)  # a fresh child
     assert err == "" and pf is not None and len(pf.symbols) == 1
-    _end(bounded_parse._idle)
 
 
 def test_the_memory_setting_decides_the_refusal() -> None:
@@ -587,6 +592,7 @@ assert parse_for_ingest("b.cpp", b"int f();\\n")[1] == ""
     assert done.returncode == 0, done.stderr[-2000:]
 
 
+@pytest.mark.usefixtures("fresh_child")
 def test_a_parse_whose_child_the_kernel_killed_runs_again(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -595,7 +601,6 @@ def test_a_parse_whose_child_the_kernel_killed_runs_again(
 
     from server.code.domain.extract import bounded_parse
 
-    monkeypatch.setattr(bounded_parse, "_idle", None)
     real = bounded_parse._start
     started: list[Any] = []
 
@@ -613,7 +618,6 @@ def test_a_parse_whose_child_the_kernel_killed_runs_again(
     pf, err = parse_for_ingest("a.go", source)
     assert err == "" and pf is not None and len(started) == 2
     assert started[0].returncode == -signal.SIGKILL
-    _end(bounded_parse._idle)
 
 
 def test_a_parse_whose_work_after_its_last_read_is_long_is_refused() -> None:

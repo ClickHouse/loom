@@ -5,9 +5,10 @@ grammar's name length, the source length, CPU seconds, address-space bytes), the
 the process's own when it starts. The process parses it, reading the source in chunks
 until the CPU seconds are spent, and answers one byte: `DONE` (read in full and finished
 within the CPU seconds, a tenth of them at most between reads or after the last) or
-`STOPPED` (past them), uppercase when the process then exits because it grew. A parse
-past the address-space limit, or well past the CPU seconds after its last read (the
-kernel's RLIMIT_CPU, whole seconds), ends the process: no answer. Imports nothing of the server.
+`STOPPED` (past them), uppercase when the process then exits (it grew, or nears an
+inherited CPU limit). A parse past the address-space limit, or well past the CPU
+seconds after its last read (the kernel's RLIMIT_CPU, whole seconds), ends the
+process: no answer. Imports nothing of the server.
 """
 
 from __future__ import annotations

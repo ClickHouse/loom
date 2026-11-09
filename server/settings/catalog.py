@@ -1044,7 +1044,7 @@ class CodeSettings(BaseModel):
     code_parse_timeout_s: Annotated[float, LIVE] = Field(default=3.0, gt=0)
     # Address space (MB) a tree-sitter parse may take in the process it runs in first, to
     # within the 64 MB that process may keep from earlier parses; a parse past it indexes
-    # its file as chunks without symbols.
+    # its file as chunks without symbols. Paid per server process (each web worker).
     code_parse_memory_mb: Annotated[int, LIVE] = Field(default=256, ge=128)
     # The ingest pass's own deadline (seconds), kept at the supervisor's cap;
     # `code_ingest_pass_budget_fraction` keeps a pass under it.
