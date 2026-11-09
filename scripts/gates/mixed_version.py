@@ -16,6 +16,9 @@ Then it writes from each build and reads from the other, and checks:
 - every asset a build's dashboard page names loads from a replica of the other
   build (needs npm);
 - after the cross-boot each build answers ready;
+- each build answers `insights.query` on N's analyst entities, which N wrote
+  over N-1's, and no logged statement text or error holds the scope key or
+  its pads (both skipped where N-1 has no analysis plane);
 - with every process on `LOOM_BACKGROUND_WORKERS=auto`, exactly one process
   runs the workers, and it is N+1: its tree carries one no-op migration more,
   so N hands the lease over to it.
@@ -350,6 +353,7 @@ class Scenario:
             self.verdict_survives(a, b)
         self.unknown_column_survives(ids)
         self.newer_ledger_warns()
+        self.analysis_across()
         self.sign_in_across()
         self.dashboard_loads_across()
         self.one_leader()
@@ -373,6 +377,48 @@ class Scenario:
             got = self.get(label, f"facts/{other}")
             self.check(got.get("value") == f"by {other}", f"{label} reads what {other} wrote")
         return ids
+
+    def analysis_across(self) -> None:
+        if not (self.builds["N-1"].tree / "server/insights/domain/analysis.py").exists():
+            print("  skip  insights.query: N-1 has no analysis plane")
+            return
+        body = {"org": self.org, "namespace": "mixed", "sql": "SELECT count() FROM loom.memory"}
+        for label, srv in self.builds.items():
+            # Each process answers once its own probe has passed on N's entities.
+            deadline = time.monotonic() + SETTLE_S
+            while True:
+                r = httpx.post(
+                    f"{srv.url}/v1/insights.query",
+                    json=body,
+                    headers={"Authorization": f"Bearer {self.token}"},
+                    timeout=60,
+                )
+                if r.status_code == 200 or time.monotonic() > deadline:
+                    break
+                time.sleep(2)
+            self.check(r.status_code == 200, f"{label} answers insights.query on N's entities")
+        policy = sql(
+            self.ch_port,
+            "SELECT select_filter FROM system.row_policies WHERE short_name = "
+            "'loom_analyst_scope' AND database = 'loom' AND table = 'memory'",
+        )
+        literals = re.findall(r"unhex\(\\?'([0-9a-f]+)\\?'\)", policy)
+        key = next((h for h in literals if len(h) == 64), "")
+        padded = bytes.fromhex(key).ljust(64, b"\0")
+        secrets = [*literals, *(bytes(b ^ p for b in padded).hex() for p in (0x36, 0x5C))]
+        sql(self.ch_port, "SYSTEM FLUSH LOGS")
+        needles = ", ".join(f"'{h}'" for h in secrets)
+        logged = sql(
+            self.ch_port,
+            "SELECT count() FROM system.query_log WHERE "
+            f"multiSearchAnyCaseInsensitive(query, [{needles}]) "
+            f"OR multiSearchAnyCaseInsensitive(exception, [{needles}]) "
+            "SETTINGS log_queries_cut_to_length = 1",
+        )
+        self.check(
+            bool(key) and logged == "0",
+            "no logged statement or error holds the scope key across the upgrade",
+        )
 
     def run_completes_across(self, a: str, b: str) -> None:
         run_id = self.call(a, "run.begin", {**self.ident, "goal": f"begun on {a}"})["run_id"]

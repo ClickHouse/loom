@@ -330,7 +330,7 @@ def test_a_failed_query_log_read_leaves_the_ledger_half_standing() -> None:
     assert not any(f.startswith(("NEW SHAPE", "SHAPE")) for f in dd.flags(d))
 
 
-def test_the_analysts_statements_are_not_shapes() -> None:
+def test_the_shape_reads_carry_and_bind_the_analyst_filter() -> None:
     ch = _CH()
     _collect(ch)
     reads = [(sql, params) for sql, params in ch.calls if "system.query_log" in sql]

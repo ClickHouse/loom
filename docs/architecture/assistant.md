@@ -428,9 +428,9 @@ keeps:
   loosens N's policies. N-1 keeps answering on N's entities: its statements that name a
   column N dropped are refused until the roll forward.
 - **The order of a write.** The version is the last of the entities, and the main
-  profile's pins come after every policy, the canary's included, and before every grant:
-  on an upgrade, version 1's `log_queries = 0` stays in force until no policy holds the
-  pads in clear. A first draw by a
+  profile's pins come after every policy, the canary's included, so on an upgrade the
+  older profile's `log_queries = 0` stays in force until no policy holds the pads in
+  clear, and before every grant, so a new pin is in force before the grant it guards. A first draw by a
   boot or `loom ch-setup`, made while no analyst user exists, stores the secrets row
   before it creates the user. A rotation, by the CLI or the printed SQL (both with
   [part 2](#build-order)), is a short maintenance step that keeps analysis unavailable

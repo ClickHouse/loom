@@ -445,8 +445,9 @@ def entity_sql(
     one, then every grant and role the user holds outside the allowlist
     (`granted` and `roles` are what it holds now) is revoked, and then the
     allowlist is granted, since a table's revoke also takes the column grants
-    under it. The profile's pins come after every policy and before every
-    grant, so an upgrade never logs a version 1 policy's pads. A retired
+    under it. The profile's pins come after every policy, so an upgrade
+    never logs an older policy that holds the pads in clear, and before
+    every grant, so a new pin is in force before the grant it guards. A retired
     table keeps a policy that reads nothing. The stamp comes last, so a write
     cut short is written again by the next boot. `db` is already quoted."""
     user = f"`{ANALYST_USER}`"
