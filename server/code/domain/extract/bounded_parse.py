@@ -23,7 +23,8 @@ it: the child is a local process, no ClickHouse or network. The limits hold on L
 The parse here reads the source `_CHUNK` bytes at a time through a callback: the binding
 holds the GIL while it parses, and the callback is where another thread can take it, so
 a parse run in a thread lets the event loop run every few tens of milliseconds. Work
-after its last read holds the GIL, within the deadline.
+after its last read holds the GIL, for at most a tenth of the deadline (the child
+refuses a parse past that).
 """
 
 from __future__ import annotations
@@ -106,7 +107,7 @@ def _in_child(grammar: str, source: bytes, budget: float, memory: int) -> bytes 
             return answer
         if answer == _SILENT:
             return answer
-        if answer:
+        if answer in (parse_child.DONE.upper(), parse_child.STOPPED.upper()):
             return answer.lower()  # it answered, then retired
         status = cast("int", child.returncode)
         if answer is None and not unread:

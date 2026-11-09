@@ -4,10 +4,10 @@ grammar's name length, the source length, CPU seconds, address-space bytes), the
 (`module:function`) and the source; the address space is what the parse may take past
 the process's own when it starts. The process parses it, reading the source in chunks
 until the CPU seconds are spent, and answers one byte: `DONE` (read in full and finished
-within the CPU seconds) or `STOPPED` (past them), uppercase when the process then exits
-because it grew. A parse past the address-space limit, or well past the CPU seconds
-after its last read (the kernel's RLIMIT_CPU, whole seconds), ends the process: no
-answer. Imports nothing of the server.
+within the CPU seconds, a tenth of them after its last read) or `STOPPED` (past them),
+uppercase when the process then exits because it grew. A parse past the address-space
+limit, or well past the CPU seconds after its last read (the kernel's RLIMIT_CPU, whole
+seconds), ends the process: no answer. Imports nothing of the server.
 """
 
 from __future__ import annotations
@@ -42,19 +42,24 @@ def language(grammar: str) -> Any:
 def _parse(parser: Any, source: bytes, budget: float) -> bytes:
     deadline = time.thread_time() + budget
     stopped = False
+    last_read = 0.0
 
     def read(offset: int, _point: Any) -> bytes:
-        nonlocal stopped
+        nonlocal stopped, last_read
+        last_read = time.thread_time()
         if offset >= len(source):
             return b""
-        if stopped or time.thread_time() > deadline:
+        if stopped or last_read > deadline:
             stopped = True
             return b""
         return source[offset : offset + CHUNK]
 
     parser.parse(read)
-    # work after the last read counts too, so the server's own parse stays in the deadline
-    return STOPPED if stopped or time.thread_time() > deadline else DONE
+    # Work after the last read counts too, and holds the server's GIL when the server
+    # repeats the parse: past a tenth of the deadline it is refused (real files take a
+    # few milliseconds there).
+    end = time.thread_time()
+    return STOPPED if stopped or end > deadline or end - last_read > budget / 10 else DONE
 
 
 def _within(soft: int, inherited: tuple[int, int]) -> int:

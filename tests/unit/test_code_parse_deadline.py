@@ -614,3 +614,23 @@ def test_a_parse_whose_child_the_kernel_killed_runs_again(
     assert err == "" and pf is not None and len(started) == 2
     assert started[0].returncode == -signal.SIGKILL
     _end(bounded_parse._idle)
+
+
+def test_a_parse_whose_work_after_its_last_read_is_long_is_refused() -> None:
+    """The server would repeat that work holding the GIL: in the child it is refused past
+    a tenth of the deadline, here a run read in full in about 0.15 s, nearly all of it
+    after the last read. In a process held to 1 GB."""
+    script = """
+import resource
+resource.setrlimit(resource.RLIMIT_AS, (1 << 30, 1 << 30))
+from server.code.app.index.ingest_parse import parse_for_ingest
+from server.settings import settings
+settings.code_parse_timeout_s = 0.5
+settings.code_parse_memory_mb = 512
+assert "ParseTimeout" in parse_for_ingest("A.java", b"a<" * 4_000)[1]
+assert parse_for_ingest("B.java", b"class B { void f() {} }")[1] == ""
+"""
+    done = subprocess.run(
+        [sys.executable, "-c", script], cwd=_SERVER.parent, capture_output=True, timeout=60
+    )
+    assert done.returncode == 0, done.stderr[-2000:]
