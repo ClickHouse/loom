@@ -631,17 +631,16 @@ as `sql_digest`, an identifier key, which the citation check reads. The analyst 
 holds `log_queries_cut_to_length = 1` and `log_formatted_queries = 0` as `CONST`, so
 `system.query_log`, the span log and the server log record each statement the analyst
 runs without its text: its user, timing, rows read and settings, the scope and its
-signature among them. A signature reads rows only with the
-analyst's password, for its own query id, until its expiry. A statement ClickHouse
-refuses is logged with its error message, which can quote the whole statement (an
-unknown column's error quotes the query it was looked up in, the caller's statement
-inside the wrapper), also for a restricted namespace whose ledger drops the text;
-ClickHouse Cloud pins `log_queries_min_type`, so the error rows cannot be left out.
-Each probe adds error rows to `system.query_log`: one for each allowlisted table and the
-canary (the unsigned reads) and one for each read it expects refused. The deploy delta
-leaves the analyst's statements out of its shapes. The rows a statement returns are
-stored nowhere; an error can quote a value it failed on, which ClickHouse's logs keep
-([stored data](#stored-data-and-erasure)).
+signature among them. A signature reads rows only with the analyst's password, for its
+own query id, until its expiry. A statement ClickHouse refuses is logged with its error
+message, which can quote the whole statement (an unknown column's error quotes the query
+it was looked up in, the caller's statement inside the wrapper), also for a restricted
+namespace whose ledger drops the text; ClickHouse Cloud pins `log_queries_min_type`, so
+the error rows cannot be left out. Each probe adds error rows to `system.query_log`: one
+for each allowlisted table and the canary (the unsigned reads) and one for each read it
+expects refused. The deploy delta leaves the analyst's statements out of its shapes. The
+rows a statement returns are stored nowhere; an error can quote a value it failed on,
+which ClickHouse's logs keep ([stored data](#stored-data-and-erasure)).
 
 ## Isolation proof
 
