@@ -61,13 +61,9 @@ DIGEST_SETTING = "SQL_loom_analyst_digest"
 # The caps profile's own stamp: the digest of the caps it holds.
 CAPS_DIGEST_SETTING = "SQL_loom_analyst_caps_digest"
 
-# The statement text in system.query_log and the server log is cut to one
-# byte, which ClickHouse logs as only the number of characters it removed,
-# and the formatted copy, which the cut does not reach, is not written.
-# Loom cannot turn query logging off everywhere (ClickHouse Cloud pins
-# `log_queries` for its users), but Cloud leaves both of these unconstrained.
+# Logged statement text is cut to "(removed N characters)"; the formatted copy,
+# which the cut misses, is not written. Cloud pins log_queries but not these.
 LOG_TEXT_CUT = {"log_queries_cut_to_length": 1, "log_formatted_queries": 0}
-LOG_TEXT_CUT_SQL = ", ".join(f"{name} = {value}" for name, value in LOG_TEXT_CUT.items())
 
 _BLOCK = 64  # SHA-256 block size, for HMAC's inner and outer pads
 

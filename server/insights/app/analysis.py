@@ -227,7 +227,8 @@ def printed_statements(revokes: list[str]) -> list[str]:
     `SET` that cuts the text of the rest from the log."""
     statements = entity_statements()
     first = next(i for i, s in enumerate(statements) if s.startswith("GRANT "))
-    return [f"SET {boundary.LOG_TEXT_CUT_SQL}", *statements[:first], *revokes, *statements[first:]]
+    cut = ", ".join(f"{name} = {value}" for name, value in boundary.LOG_TEXT_CUT.items())
+    return [f"SET {cut}", *statements[:first], *revokes, *statements[first:]]
 
 
 def _scope_extra(org: str, namespaces: list[str], key: bytes | None = None) -> dict[str, Any]:
@@ -554,8 +555,8 @@ _KEY_LITERAL = re.compile(r"unhex\('[0-9A-Fa-f]+'\)")
 
 
 def _scrubbed(text: str) -> str:
-    """The text with the key's literals cut out, for a policy a build N-1
-    wrote with the pads in clear."""
+    """The text with the key's literals cut out, for a policy written before
+    version 2, which holds the pads in clear."""
     return _KEY_LITERAL.sub("unhex(…)", text)
 
 
