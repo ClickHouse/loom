@@ -1360,7 +1360,7 @@
           "exclusiveMinimum": 0,
           "maximum": 3600,
           "type": "number",
-          "description": "CPU seconds a tree-sitter parse may take, a tenth of them at a stretch between reads or after the last (raising it re-reads nothing); a PR overlay waits up to this long past its window."
+          "description": "CPU seconds a tree-sitter parse may take, a tenth of them at a stretch between reads or after the last; a PR overlay waits up to this long past its window."
         },
         "code_path_prefixes": {
           "default": "",

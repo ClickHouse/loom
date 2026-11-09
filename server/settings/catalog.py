@@ -1038,8 +1038,7 @@ class CodeSettings(BaseModel):
     # and heal on the next backfill.
     code_ingest_max_files_per_commit: int = 500
     # CPU seconds a tree-sitter parse may take, a tenth of them at a stretch between reads or
-    # after the last (raising it re-reads nothing); a PR overlay waits up to this long past
-    # its window.
+    # after the last; a PR overlay waits up to this long past its window.
     code_parse_timeout_s: Annotated[float, LIVE] = Field(
         default=3.0, gt=0, le=3600, allow_inf_nan=False
     )

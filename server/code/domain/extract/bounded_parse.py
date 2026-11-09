@@ -6,8 +6,8 @@ replica for hours or exhaust its memory. Every parse of repository text goes thr
 `parse`, which first parses the source in a child process (`parse_child`) held to
 `code_parse_memory_mb` of address space past its own and `code_parse_timeout_s` of
 CPU time, and raises `ParseTimeout` when that parse runs past a limit, ends the child,
-or could not run in its process; each caller takes
-its parse failure path (an indexed file is then chunks without symbols).
+or could not run in its process; each caller takes its parse failure path (an indexed
+file is then chunks without symbols).
 
 Only a source the child parsed in full within the deadline is parsed again here, where
 the same parse does the same work and so stays within the same limits (past twice the
@@ -83,6 +83,7 @@ class LockWait:
 
 # Set by a caller that gives up sooner than a parse may take, so its threads (which copy
 # the context) do not wait for the lock past its deadline. None: wait as long as it takes.
+GAVE_UP = "gave up waiting for another parse in this process"  # that refusal's message
 LOCK_WAIT: ContextVar[LockWait | None] = ContextVar("bounded_parse_lock_wait", default=None)
 
 _idle: subprocess.Popen[bytes] | None = None  # the child waiting for its next parse (`_LOCK`)
@@ -248,7 +249,7 @@ def parse(parser: Any, source: bytes) -> Any:
         _LOCK.acquire()
     elif (left := limit.deadline - time.monotonic()) <= 0 or not _LOCK.acquire(timeout=left):
         limit.gave_up = True  # past the deadline, a free lock is no reason to parse
-        raise ParseTimeout("gave up waiting for another parse in this process")
+        raise ParseTimeout(GAVE_UP)
     try:
         _check_in_child(_grammar(parser.language), source, budget, memory)
         deadline = time.thread_time() + 2 * budget

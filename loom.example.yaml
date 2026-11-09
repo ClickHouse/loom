@@ -1201,8 +1201,7 @@ settings:
   # code_ingest_max_files_per_commit: 500
 
   # CPU seconds a tree-sitter parse may take, a tenth of them at a stretch between reads
-  # or after the last (raising it re-reads nothing); a PR overlay waits up to this long
-  # past its window. [live]
+  # or after the last; a PR overlay waits up to this long past its window. [live]
   # code_parse_timeout_s: 3.0
 
   # Address space (MB) one tree-sitter parse may take; one runs at a time per server

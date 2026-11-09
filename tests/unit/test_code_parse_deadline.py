@@ -20,6 +20,7 @@ from server.code.app.index.ingest_parse import parse_for_ingest
 from server.settings import settings
 
 _SERVER = pathlib.Path(__file__).resolve().parents[2] / "server"
+_EXTRACT = _SERVER / "code" / "domain" / "extract"
 
 # Inputs some grammars parse in quadratic time: each takes tens of seconds unbounded
 _SLOW = [
@@ -157,7 +158,7 @@ def test_every_tree_sitter_parse_goes_through_the_deadline() -> None:
     `_parser(...)`), so one held under another name outside those modules is not caught."""
     unbounded = []
     for f in _SERVER.rglob("*.py"):
-        if f.name in {"bounded_parse.py", "parse_child.py"}:
+        if f in {_EXTRACT / "bounded_parse.py", _EXTRACT / "parse_child.py"}:
             continue
         text = f.read_text()
         scoped = "tree_sitter" in text or f.is_relative_to(_SERVER / "code" / "domain")
