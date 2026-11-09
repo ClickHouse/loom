@@ -194,6 +194,7 @@ def _one_decorator(
         if verb in ("websocket", "ws"):
             col.add(FACET_ROUTE, f"WS {full}", line)
         elif verb in ("route", "api_route"):
+            full = full[: 2 * _MAX_NAME]  # cut once, not copied whole per method
             for meth in _methods(rest, "GET"):
                 col.add(FACET_ROUTE, f"{meth} {full}", line)
         else:
@@ -212,10 +213,9 @@ def _registrations(text: str, path: str, col: _Collector) -> None:
     """Routes and commands named in calls rather than decorators."""
     newlines = newline_offsets(text)
     for m in _ADD_URL_RULE_RE.finditer(text):
+        route = _url_join("", m.group(1))[: 2 * _MAX_NAME]  # cut once, not copied per method
         for meth in _methods(m.group(2), "ANY"):
-            col.add(
-                FACET_ROUTE, f"{meth} {_url_join('', m.group(1))}", line_at(newlines, m.start())
-            )
+            col.add(FACET_ROUTE, f"{meth} {route}", line_at(newlines, m.start()))
     for rx in _AIOHTTP_RES:
         for m in rx.finditer(text):
             verb = "ANY" if m.group(1) == "view" else m.group(1).upper()
@@ -232,8 +232,9 @@ def _registrations(text: str, path: str, col: _Collector) -> None:
             if m.group(1) == "WebSocketRoute":
                 col.add(FACET_ROUTE, f"WS {m.group(2)}", line)
             else:
+                route = m.group(2)[: 2 * _MAX_NAME]  # cut once, not copied per method
                 for meth in _methods(m.group(3), "GET"):
-                    col.add(FACET_ROUTE, f"{meth} {m.group(2)}", line)
+                    col.add(FACET_ROUTE, f"{meth} {route}", line)
     if "tornado" in text:
         for m in _TORNADO_RE.finditer(text):
             col.add(FACET_ROUTE, f"ANY {m.group(1)}", line_at(newlines, m.start()), 0.9)
