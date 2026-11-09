@@ -130,7 +130,7 @@ def main() -> int:
         # retires.
         retire = _address_space() > start + _RETIRE_GROWTH
         # and one near an inherited CPU limit, so the next parse gets its whole deadline
-        need = math.ceil(_cpu() + 2 * budget) + 1
+        need = math.ceil(_cpu() + budget) + 1
         retire = retire or _within(need, inherited_cpu) < need
         stdout.write(answer.upper() if retire else answer)
         stdout.flush()

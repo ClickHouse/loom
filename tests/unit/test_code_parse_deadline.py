@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -29,7 +30,7 @@ _SLOW = [
 
 
 @pytest.fixture
-def fresh_child(monkeypatch: pytest.MonkeyPatch) -> Any:
+def fresh_child(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """No idle child before the test; the one it leaves is ended after it."""
     from server.code.domain.extract import bounded_parse
 

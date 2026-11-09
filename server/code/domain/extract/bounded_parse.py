@@ -131,7 +131,7 @@ def _ended(status: int, budget: float, memory: int) -> NoReturn:
         raise ParseTimeout("the parse process was killed twice: memory ran out around it")
     raise ParseTimeout(
         f"parse ran past {memory >> 20} MB or {budget:g} CPU seconds"
-        f" (its process ended by signal {-status})"
+        f", or crashed (its process ended by signal {-status})"
     )
 
 
