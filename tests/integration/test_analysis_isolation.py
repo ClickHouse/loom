@@ -487,21 +487,22 @@ def test_the_statement_text_stays_out_of_the_query_log(
     ch_client.command("SYSTEM FLUSH LOGS")
     # Both are logged, as on a server that pins log_queries, but not their text;
     # this read cuts its own, which holds the marker.
-    ran, lifted_rows, quoted = ch_client.query(
+    ran, lift0, lift1, quoted = ch_client.query(
         "SELECT countIf(user = {analyst:String} AND startsWith(query_id, {ran:String})), "
-        "countIf(user = {analyst:String} AND match(query_id, {lift:String})), "
+        "countIf(user = {analyst:String} AND startsWith(query_id, {lift0:String})), "
+        "countIf(user = {analyst:String} AND startsWith(query_id, {lift1:String})), "
         "countIf(query LIKE {m:String} OR formatted_query LIKE {m:String}) "
         "FROM system.query_log",
         parameters={
             "analyst": boundary.ANALYST_USER,
             "ran": f"text-{seed.nonce}:",
-            "lift": f"^lift[01]-{seed.nonce}:",
+            "lift0": f"lift0-{seed.nonce}:",
+            "lift1": f"lift1-{seed.nonce}:",
             "m": f"%{marker}%",
         },
         settings=boundary.LOG_TEXT_CUT,
     ).result_rows[0]
-    assert ran > 0
-    assert lifted_rows > 0
+    assert ran > 0 and lift0 > 0 and lift1 > 0
     assert quoted == 0
 
 
