@@ -111,6 +111,7 @@ def _invalid(message: str) -> HTTPException:
 async def _bound_trackers(org: str, subject: str, parent: AuthInfo, repos: list[str]) -> list[str]:
     """The restricted tracker records bound to `repos` that the caller holds a grant on and
     the parent token reaches; the history code ops read issues and PRs there."""
+    from server.code.domain.index.repos import RegistryUnread, registry_unread
     from server.tracker.app.binding import (
         operator_repositories,
         refresh_overrides,
@@ -120,6 +121,10 @@ async def _bound_trackers(org: str, subject: str, parent: AuthInfo, repos: list[
     out: list[str] = []
     if not repos:
         return out
+    if registry_unread():
+        # The operator repositories, and so the trackers bound to them, are not known
+        # yet: refuse before the mint rather than mint a token missing their grants.
+        raise RegistryUnread("the self-service repository registry is not read yet; retry")
     await refresh_overrides()  # the links as of the refresh interval, branches included
     operator = operator_repositories()  # once for every name
     for ns in repos:

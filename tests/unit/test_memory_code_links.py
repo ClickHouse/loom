@@ -3621,6 +3621,46 @@ async def test_a_stalled_queue_is_backfilled_once_while_it_catches_up(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_an_unread_registry_links_nothing_but_still_sweeps_erased_memories(
+    monkeypatch,
+) -> None:
+    from server.code.domain.index import repos
+    from server.memory.workers import code_links as worker
+
+    cursors = {"queue": json.dumps([100, 0, "", "", "", "", "", ""]), "repos": '[["o", "c"]]'}
+    calls: list[str] = []
+
+    async def link_cursor(name):
+        return cursors.get(name, "")
+
+    async def set_link_cursor(name, value):
+        cursors[name] = value
+
+    async def queue_horizon():
+        return 0
+
+    async def link_queued(position, batch, result):
+        calls.append("link")
+        return position
+
+    async def sweep_erased(cursor, limit, result):
+        calls.append("sweep")
+        return cursor
+
+    def unread() -> list[list[str]]:
+        raise repos.RegistryUnread("not read")
+
+    monkeypatch.setattr(code_links.code, "link_cursor", link_cursor)
+    monkeypatch.setattr(code_links.code, "set_link_cursor", set_link_cursor)
+    monkeypatch.setattr(code_links.code, "configured_code_namespaces", unread)
+    monkeypatch.setattr(code_links.store, "queue_horizon", queue_horizon)
+    monkeypatch.setattr(code_links, "link_queued", link_queued)
+    monkeypatch.setattr(code_links, "sweep_erased", sweep_erased)
+    await worker._link_writes(10, code_link_pass.PassResult())
+    assert calls == ["sweep"] and cursors["repos"] == '[["o", "c"]]'
+
+
+@pytest.mark.asyncio
 async def test_a_linking_failure_still_rechecks_every_repository(monkeypatch) -> None:
     import contextlib
 

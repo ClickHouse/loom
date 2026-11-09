@@ -573,9 +573,10 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
     if not registry_read():
         from server.core.ch import get_client
 
-        code = await _is_code_namespace(ch or get_client(), org, namespace)
-        if code and (org, namespace) not in _UNSYNCED:
-            _UNSYNCED.add((org, namespace))
+        if (org, namespace) in _UNSYNCED:
+            return 0
+        _UNSYNCED.add((org, namespace))  # read once each, code or not
+        if await _is_code_namespace(ch or get_client(), org, namespace):
             log.warning(
                 "repo maintainers: %s/%s not synced — the self-service registry is not read yet",
                 org,

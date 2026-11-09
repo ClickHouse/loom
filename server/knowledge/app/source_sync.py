@@ -284,6 +284,9 @@ async def run_sync(
         found = [s for s in found if (s.org, s.namespace) == (org, namespace)]
     if only:
         found = [s for s in found if s.name == only]
+    # A maintainer's delete request goes first, before the backlog of changed files and
+    # before anything that reads the code registry.
+    await _retire_removed_sources(run, result, org=org, namespace=namespace, only=only)
     usable = await _usable(found)
     if full:
         for src in usable:
@@ -296,8 +299,6 @@ async def run_sync(
     rest = [s for s in usable if not _requested(states, s)]
     order = asked + rotate_to(rest, pass_context.resume_cursor(), key=_cursor_of)
     result.sources = len(order)
-    # A maintainer's delete request goes before the backlog of changed files.
-    await _retire_removed_sources(run, result, org=org, namespace=namespace, only=only)
     for i, src in enumerate(order):
         if run.spent():
             pass_context.set_cursor(_cursor_of(src))

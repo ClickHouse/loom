@@ -163,3 +163,17 @@ async def test_a_scoped_search_and_tracker_bindings_answer_while_the_registry_is
     monkeypatch.setattr(repos, "_registry_loaded", False)
     assert await repo_scope.readable_repo_namespace("o", "code-x") == ""
     assert binding.operator_repositories() == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_a_service_account_bound_to_repositories_is_not_minted_while_unread(
+    monkeypatch,
+) -> None:
+    # Its bound tracker grants come from the operator repositories, not known yet.
+    from server.identity.app import me_service_accounts
+
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    with pytest.raises(repos.RegistryUnread):
+        await me_service_accounts._bound_trackers("o", "s", object(), ["code-x"])  # type: ignore[arg-type]
+    assert await me_service_accounts._bound_trackers("o", "s", object(), []) == []  # type: ignore[arg-type]
