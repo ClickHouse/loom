@@ -292,6 +292,8 @@ async def test_a_refused_plane_call_is_not_told_the_namespace_is_unknown_while_u
     monkeypatch.setattr(access_refusal, "is_plane_tool", lambda name: True)
     auth = SimpleNamespace(org="o", can_access=lambda org, ns: False)
     assert await mcp_auth._plane_namespace("loom_code_search", auth, "code-x") == (None, False)
+    # A tracker tool naming a code namespace too (a tracker typo still resolves).
+    assert await mcp_auth._plane_namespace("loom_tracker_search", auth, "code-x") == (None, False)
 
 
 @pytest.mark.asyncio

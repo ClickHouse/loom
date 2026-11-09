@@ -196,6 +196,8 @@ async def _plane_namespace(
             return _not_accessible_result(tool_name, auth, to, unverified=unverified), unverified
         nr.RESOLVED.set({"from": ns, "to": to})
         return to, False
+    if registry_unread():
+        return None, False  # a code name not listed yet is no unknown name: refuse as before
     return nr.unknown_result(ns, nr.suggest(ns, nr.suggestable(org, auth.can_access))), False
 
 
