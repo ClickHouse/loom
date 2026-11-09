@@ -419,10 +419,10 @@ async def _announce_set(w: _SetWrite) -> None:
 def _answers_at_commit(w: _SetWrite) -> bool:
     """Under Postgres, whether the write answers once it commits, before its flush: a write
     of a key with no live head (new, or deleted since) that states no relations and is not
-    'high', whose only graph work is the background
-    entity projection, which waits for that flush (`pg_batch.own_write_published`). A
-    revision, a write with relations and a 'high' row wait for their flush, so what follows
-    them reads their row in ClickHouse; past their lease they answer PUBLICATION_PENDING."""
+    'high', whose only graph work is the background entity projection, which waits for that
+    flush (`pg_batch.own_write_published`). A revision, a write with relations and a 'high'
+    row wait for their flush, so what follows them reads their row in ClickHouse; past their
+    lease they answer PUBLICATION_PENDING."""
     return (
         not w.had_existing_row
         and not w.input.relations
