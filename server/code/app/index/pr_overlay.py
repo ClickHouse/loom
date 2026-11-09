@@ -486,7 +486,7 @@ async def load_posted_overlay(
 class _Facts(NamedTuple):
     symbols: tuple[Any, ...]
     names: frozenset[str]  # the names it defines or calls
-    timed_out: bool  # its parse ran past the deadline
+    timed_out: bool  # its parse ran past its limits
 
 
 # Per file, so a push that changes one file of a PR re-parses that file alone, for
@@ -500,7 +500,7 @@ _FILE_FACTS: TtlCache[tuple[str, str], _Facts] = TtlCache(
 
 class _Edges(NamedTuple):
     edges: tuple[OverlayEdge, ...]
-    timed_out: bool  # parsing the file again ran past the deadline
+    timed_out: bool  # parsing the file again ran past its limits
 
 
 # (path, content digest, digest of the name-table rows its names bind to) -> edges.

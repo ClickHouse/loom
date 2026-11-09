@@ -143,7 +143,8 @@ def _ask(
     answer: bytes | None = None
     try:
         stdin.write(parse_child.HEADER.pack(len(name), len(source), budget, memory))
-        stdin.write(name + source)
+        stdin.write(name)
+        stdin.write(source)
         stdin.flush()
         answer = _SILENT
         with selectors.DefaultSelector() as waiting:  # not select(): no descriptor cap
@@ -202,7 +203,7 @@ def parse(parser: Any, source: bytes) -> Any:
             raise ParseTimeout(f"the parse process did not answer within {10 * budget + 5:g} s")
         if answer != parse_child.DONE:
             raise ParseTimeout(
-                f"parse ran past {settings.code_parse_memory_mb} MB or {budget:g} CPU seconds"
+                f"parse ran past {memory >> 20} MB or {budget:g} CPU seconds"
                 f" (its process ended with status {answer!r})"
             )
         deadline = time.thread_time() + 2 * budget
