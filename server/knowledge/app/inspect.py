@@ -518,11 +518,9 @@ class _Inspect:
             )
 
     def down(self) -> None:
-        """The Postgres authority did not answer: said once, and not asked again in this
-        call (the memory sections' wait included)."""
+        """The Postgres authority did not answer: said, and not asked again in this call
+        (`served` and the memory sections' wait read `authority_down`)."""
         self.documents_whole = False
-        if self.authority_down:
-            return
         self.authority_down = True
         self.skipped.append(
             f"{DOCUMENTS_PROJECTION}: POSTGRES_UNAVAILABLE: the Postgres authority did "
