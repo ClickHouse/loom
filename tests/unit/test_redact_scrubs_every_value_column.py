@@ -294,3 +294,29 @@ def test_the_authoritys_scrub_clears_the_columns_clickhouse_clears() -> None:
     assert pg_memory._SCRUB_VALUES == cleared
     # Last, so no cleared value overwrites them.
     assert pg_memory._SCRUBBED.endswith("'redacted_at', $10::text, 'redaction_reason', $11::text)")
+
+
+def test_a_version_served_from_clickhouse_for_a_cleared_payload_is_scrubbed_alike() -> None:
+    """A redacted revision whose payload is cleared serves ClickHouse's copy scrubbed
+    (`pg_memory._scrubbed`): every column the authority's scrub clears is cleared there
+    too, so a column added to one scrub and not the other fails here."""
+    from server.memory.store import pg_memory
+    from tests.unit.memory_rows import memory_head
+
+    # Every column the scrub clears holds the secret, whatever its type.
+    text = {
+        col: ["hunter2"]
+        if v.endswith("::jsonb")
+        else '{"text": "hunter2"}'
+        if col == "value"
+        else "hunter2"
+        for col, v in pg_memory._SCRUB_VALUES.items()
+    }
+    copy = memory_head(org="o", namespace="n", **text)
+    out = pg_memory._scrubbed(
+        copy, {"redacted_at": "2026-02-01T00:00:00", "redaction_reason": "leak"}
+    ).model_dump()
+    for col in pg_memory._SCRUB_VALUES:
+        assert "hunter2" not in str(out[col]), col
+    assert out["value_text"] == redaction.REDACTED_VALUE
+    assert out["redaction_reason"] == "leak"
