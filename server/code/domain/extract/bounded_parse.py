@@ -34,6 +34,7 @@ is not used: it builds its arguments with a format code Python 3.12 rejects, and
 from __future__ import annotations
 
 import contextlib
+import enum
 import functools
 import logging
 import selectors
@@ -45,7 +46,7 @@ import threading
 import time
 from contextvars import ContextVar
 from pathlib import Path
-from typing import IO, Any, NamedTuple, NoReturn, cast
+from typing import IO, Any, NoReturn, cast
 
 from server.code.domain.extract import parse_child
 
@@ -89,7 +90,6 @@ GAVE_UP = "gave up waiting for another parse in this process"  # that refusal's 
 LOCK_WAIT: ContextVar[LockWait | None] = ContextVar("bounded_parse_lock_wait", default=None)
 
 _idle: subprocess.Popen[bytes] | None = None  # the child waiting for its next parse (`_LOCK`)
-_SILENT = b"?"  # no answer within the wall bound
 
 
 class ParseTimeout(Exception):
@@ -133,21 +133,21 @@ def _check_in_child(grammar: str, source: bytes, budget: float, memory: int) -> 
     while True:
         if child is None:
             child = _start()
-        answer, keep = _ask(child, grammar, source, budget, memory)
+        outcome, keep = _ask(child, grammar, source, budget, memory)
         if keep:
             _idle = child
-        if answer == parse_child.DONE:
+        if outcome is _Outcome.DONE:
             return
-        if answer == parse_child.STOPPED:
+        if outcome is _Outcome.STOPPED:
             raise ParseTimeout(
                 f"parse ran past {budget:g} CPU seconds, or {budget / 10:g} s at a stretch"
             )
-        if answer == _SILENT:
+        if outcome is _Outcome.SILENT:
             raise ParseTimeout(f"the parse process did not answer within {_wall_bound(budget):g} s")
         status = cast("int", child.returncode)
-        if answer is None and not unread:
+        if outcome is _Outcome.UNWRITTEN and not unread:
             unread = True
-        elif answer is None and status <= 0:
+        elif outcome is _Outcome.UNWRITTEN and status <= 0:
             raise ParseTimeout(f"the parse process ended before reading (status {status})")
         elif status == -signal.SIGKILL and not killed:
             killed = True
@@ -189,31 +189,43 @@ def _wall_bound(budget: float) -> float:
     return 10 * budget + 5
 
 
-class _Reply(NamedTuple):
-    # `DONE` or `STOPPED`; b"" when the parse ended the child, `_SILENT` when its answer
-    # did not come within the wall bound (suspended, or never scheduled), None when the
-    # request could not be written to it
-    answer: bytes | None
-    keep: bool  # it answered and stays for the next parse (an uppercase answer: it retires)
+class _Outcome(enum.Enum):
+    """What came of one request to a child."""
+
+    DONE = "done"  # read in full within the limits
+    STOPPED = "stopped"  # past the CPU deadline or a stretch
+    ENDED = "ended"  # it ended (a limit, a crash or a kill) after taking the request
+    SILENT = "silent"  # no answer within the wall bound (suspended, or never scheduled)
+    UNWRITTEN = "unwritten"  # it had ended before the request could be written
+
+
+_ANSWERS = {
+    parse_child.DONE: _Outcome.DONE,
+    parse_child.STOPPED: _Outcome.STOPPED,
+    parse_child.DONE.upper(): _Outcome.DONE,  # uppercase: it answered, then retires
+    parse_child.STOPPED.upper(): _Outcome.STOPPED,
+}
 
 
 def _ask(
     child: subprocess.Popen[bytes], grammar: str, source: bytes, budget: float, memory: int
-) -> _Reply:
-    """One child's reply; a child not kept is reaped."""
+) -> tuple[_Outcome, bool]:
+    """One request's outcome, and whether the child stays for the next parse (one not
+    kept is reaped)."""
     stdin, stdout = cast("IO[bytes]", child.stdin), cast("IO[bytes]", child.stdout)
     name = grammar.encode()
-    answer: bytes | None = None
+    outcome, answer = _Outcome.UNWRITTEN, b""
     try:
         stdin.write(parse_child.HEADER.pack(len(name), len(source), budget, memory))
         stdin.write(name)
         stdin.write(source)
         stdin.flush()
-        answer = _SILENT
+        outcome = _Outcome.SILENT
         with selectors.DefaultSelector() as waiting:  # not select(): no descriptor cap
             waiting.register(stdout, selectors.EVENT_READ)
             if waiting.select(_wall_bound(budget)):
                 answer = stdout.read(1)
+                outcome = _ANSWERS.get(answer, _Outcome.ENDED)
     except BrokenPipeError:
         pass  # the child had ended
     finally:
@@ -221,9 +233,7 @@ def _ask(
         if not keep:
             child.kill()
             _close(child)
-    if answer in (parse_child.DONE.upper(), parse_child.STOPPED.upper()):
-        answer = answer.lower()
-    return _Reply(answer, keep)
+    return outcome, keep
 
 
 def _close(child: subprocess.Popen[bytes]) -> None:
