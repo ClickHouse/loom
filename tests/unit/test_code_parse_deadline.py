@@ -28,6 +28,14 @@ _SLOW = [
 ]
 
 
+def _end(child: Any) -> None:
+    from server.code.domain.extract import bounded_parse
+
+    if child is not None:
+        child.kill()
+        bounded_parse._close(child)
+
+
 @pytest.mark.parametrize(("path", "source"), _SLOW, ids=[p for p, _ in _SLOW])
 def test_a_slow_parse_stops_at_the_deadline_and_the_file_is_chunked(
     monkeypatch: pytest.MonkeyPatch, path: str, source: bytes
@@ -218,6 +226,20 @@ def test_two_threads_never_parse_at_once(monkeypatch: pytest.MonkeyPatch) -> Non
                 with count:
                     active -= 1
 
+    real = bounded_parse._ask
+
+    def ask(*args: Any) -> Any:  # the child's part of a parse counts too
+        nonlocal active, most
+        with count:
+            active += 1
+            most = max(most, active)
+        try:
+            return real(*args)
+        finally:
+            with count:
+                active -= 1
+
+    monkeypatch.setattr(bounded_parse, "_ask", ask)
     threads = [
         threading.Thread(target=bounded_parse.parse, args=(Watched(grammar), b"x\n"))
         for grammar in (tree_sitter_go, tree_sitter_python) * 2
@@ -460,14 +482,6 @@ def test_a_child_that_ended_while_idle_is_replaced_without_failing_the_parse(
     pf, err = parse_for_ingest("b.go", source)
     assert err == "" and pf is not None and len(pf.symbols) == 1
     _end(bounded_parse._idle)
-
-
-def _end(child: Any) -> None:
-    from server.code.domain.extract import bounded_parse
-
-    if child is not None:
-        child.kill()
-        bounded_parse._close(child)
 
 
 def test_a_child_reads_its_next_request_under_no_earlier_limit(

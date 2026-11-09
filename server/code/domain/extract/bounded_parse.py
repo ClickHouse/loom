@@ -12,10 +12,10 @@ the same parse does the same work and so stays within the same limits (past twic
 deadline it stops reading, in case it does not). A child serves one parse at a time and
 is kept for the next; one that ended is replaced. One parse runs at a time in each
 server process, child included, so a server process holds about one memory limit's
-worth of parse at once: `code_parse_memory_mb` plus up to about 170 MB (the child's own
-40 MB, up to 64 MB it kept from earlier parses, which a parse can reuse in the child
-and take fresh in the server). The trees its callers keep are not counted. The child
-is the server's interpreter with `-I` and an empty environment; it bounds resources
+worth of parse at once: `code_parse_memory_mb` plus up to about 170 MB, the child's own
+40 MB, up to 64 MB it kept from earlier parses, and as much again in the server, which
+takes fresh what the child's parse reused. The trees its callers keep are not counted.
+The child is the server's interpreter with `-I` and an empty environment; it bounds resources
 and is no sandbox. The pool stays in `domain/`, beside the parsers that call it: the
 child is a local process, no ClickHouse or network. The limits hold on Linux.
 
@@ -96,16 +96,17 @@ def _in_child(grammar: str, source: bytes, budget: float, memory: int) -> bytes 
     # or the kernel killed it (memory ran out elsewhere: a parse past its own limit ends
     # by another signal).
     unread = killed = False
-    status = 0
-    for _ in range(3):
+    while True:
         if child is None:
             child = _start()
         answer = _ask(child, grammar, source, budget, memory)
         if answer in (parse_child.DONE, parse_child.STOPPED):
             _idle = child
             return answer
-        if answer:  # an uppercase answer (it retires), or `_SILENT`
-            return answer.lower()
+        if answer == _SILENT:
+            return answer
+        if answer:
+            return answer.lower()  # it answered, then retired
         status = cast("int", child.returncode)
         if answer is None and not unread:
             unread = True
@@ -114,7 +115,6 @@ def _in_child(grammar: str, source: bytes, budget: float, memory: int) -> bytes 
         else:
             return status
         child = None
-    return status
 
 
 def _start() -> subprocess.Popen[bytes]:
