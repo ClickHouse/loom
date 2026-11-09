@@ -14,7 +14,6 @@ enforces auth (an auth-off server ignores tokens); skips otherwise.
 from __future__ import annotations
 
 import os
-import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -230,12 +229,8 @@ _QUOTING_ERRORS = [
 
 
 def _key_spellings(ch_client) -> list[str]:
-    """The policy's `decrypt` arguments, and the pads they evaluate to, as the
-    log could spell them: no logged text or error may hold one."""
-    secrets = re.findall(r"unhex\('([0-9a-f]+)'\)", _scope_filter(ch_client, "memory"))
-    key = next((h for h in secrets if len(h) == 64), None)
-    assert key, "no 64-character key literal in the memory policy"
-    return [*secrets, *boundary.key_spellings(bytes.fromhex(key))]
+    """Every spelling of the scope key the log could hold."""
+    return boundary.policy_spellings(_scope_filter(ch_client, "memory"))
 
 
 @pytest.mark.parametrize("sql", _QUOTING_ERRORS)
@@ -487,14 +482,15 @@ def test_the_statement_text_stays_out_of_the_query_log(
     sql = f"SELECT '{marker}' AS m"
     # Settings in the caller's statement belong to the wrapper's subquery, and
     # the profile pins both at the top: refused or run, the text is cut.
+    either = {200, *_REFUSED}
     statements = {
-        f"text-{seed.nonce}": sql,
-        f"lift0-{seed.nonce}": f"{sql} SETTINGS log_queries_cut_to_length = 100000",
-        f"lift1-{seed.nonce}": f"{sql} SETTINGS log_formatted_queries = 1",
+        f"text-{seed.nonce}": (sql, {200}),
+        f"lift0-{seed.nonce}": (f"{sql} SETTINGS log_queries_cut_to_length = 100000", either),
+        f"lift1-{seed.nonce}": (f"{sql} SETTINGS log_formatted_queries = 1", either),
     }
-    for request_id, statement in statements.items():
+    for request_id, (statement, accepted) in statements.items():
         r = _query(control_plane_url, seed, statement, request_id=request_id)
-        assert r.status_code in ({200} if statement == sql else {200, *_REFUSED}), r.text
+        assert r.status_code in accepted, r.text
     ch_client.command("SYSTEM FLUSH LOGS")
     # Each is logged, as on a server that pins log_queries, but not its text.
     for request_id in statements:

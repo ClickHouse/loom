@@ -663,8 +663,10 @@ viewer token. Each case must be refused or return no canary:
   profile, and statements that set `log_queries_cut_to_length` or
   `log_formatted_queries`, whose text stays out of `system.query_log`;
 - `toUInt64(memory_key)` in the select list, `WHERE` and `PREWHERE`, also with
-  short-circuit evaluation off and filters moved or merged: each is refused, and its
-  error, in the answer and in `system.query_log`, quotes only the caller's own row;
+  short-circuit evaluation off, filters moved or merged, and
+  `format_display_secrets_in_show_and_select = 1`: each is refused, and its error, in
+  the answer and in `system.query_log`, quotes only the caller's own row and no
+  spelling of the key;
 - `SETTINGS` that change the scope, the caps, `readonly` or `use_query_cache`, the same
   statement text run first by one org with the query cache and then by the other, a
   scope sent with an expired or forged signature, and a scope one statement read with

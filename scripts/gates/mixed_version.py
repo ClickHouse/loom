@@ -52,9 +52,12 @@ from typing import Any
 
 import httpx
 
-from server.insights.domain import analysis as boundary
-
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:  # run as a file: this checkout's server, not an installed one
+    sys.path.insert(0, str(ROOT))
+
+from server.insights.domain import analysis as boundary  # noqa: E402
+
 CH_IMAGE = "clickhouse/clickhouse-server:26.5.1.882"
 CH_PASSWORD = "loomdev"
 JWT_SECRET = "mixed-version-gate-secret-" + "0" * 32
@@ -412,12 +415,12 @@ class Scenario:
             self.check(r.status_code == 200, f"{label} answers insights.query on N's entities")
         version = sql(
             self.ch_port,
-            "SELECT value FROM system.settings_profile_elements "
+            "SELECT trim(BOTH '\\'' FROM value) FROM system.settings_profile_elements "
             "WHERE profile_name = {user:String} AND setting_name = {name:String}",
             {"user": boundary.ANALYST_USER, "name": boundary.VERSION_SETTING},
         )
         self.check(
-            version.strip("'\\") == str(boundary.ENTITY_VERSION),
+            version == str(boundary.ENTITY_VERSION),
             f"N wrote the analyst entities ({version})",
         )
         policy = sql(
@@ -426,13 +429,20 @@ class Scenario:
             "AND database = 'loom' AND table = 'memory'",
             {"name": boundary.POLICY_NAME},
         )
-        literals = re.findall(r"unhex\(\\?'([0-9a-f]+)\\?'\)", policy)
-        key = next((h for h in literals if len(h) == 64), "")
-        self.check(bool(key), "the memory policy names the scope key")
-        if not key:
+        try:
+            secrets = boundary.policy_spellings(policy)
+        except ValueError as e:
+            self.check(False, f"the memory policy names the scope key ({e})")
             return
-        secrets = [*literals, *boundary.key_spellings(bytes.fromhex(key))]
         sql(self.ch_port, "SYSTEM FLUSH LOGS")
+        # The probe's refused reads quote the policy in their errors: the search covers them.
+        refused = sql(
+            self.ch_port,
+            "SELECT count() FROM system.query_log WHERE user = {user:String} "
+            "AND exception LIKE '%UNKNOWN_SETTING%'",
+            {"user": boundary.ANALYST_USER},
+        )
+        self.check(refused != "0", f"the probe's refused reads are logged ({refused})")
         logged = sql(
             self.ch_port,
             "SELECT count() FROM system.query_log WHERE "

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -296,6 +297,16 @@ def key_spellings(key: bytes) -> list[str]:
     mixed-version gate search ClickHouse's logs for."""
     # The key's zero padding XORs to runs of 0x36 ('6') and 0x5C ('\'), printable as they are.
     return [key.hex(), *(p.hex() for p in _pads(key)), "6" * 32, "\\" * 32]
+
+
+def policy_spellings(select_filter: str) -> list[str]:
+    """`key_spellings` of the key a policy's filter text holds, as
+    system.row_policies shows it (TSV escapes its quotes), with its literals."""
+    literals = re.findall(r"unhex\(\\?'([0-9a-f]+)\\?'\)", select_filter)
+    key = next((h for h in literals if len(h) == 64), None)
+    if key is None:
+        raise ValueError("the policy holds no 32-byte key literal")
+    return [*literals, *key_spellings(bytes.fromhex(key))]
 
 
 def _hmac_sql(key: bytes, payload: str) -> str:
