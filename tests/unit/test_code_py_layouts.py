@@ -405,6 +405,30 @@ def test_the_layout_is_read_off_the_event_loop(monkeypatch):
     assert threads and threads[0] is not threading.main_thread()
 
 
+def test_files_that_miss_the_layout_cache_at_once_share_one_read(monkeypatch):
+    calls = []
+
+    async def text(_repo, _org, _ns, _path):
+        return "setup()"
+
+    def layout(texts, present):
+        calls.append(1)
+        time.sleep(0.05)  # in the thread: the other callers arrive while it runs
+        return pl.Layout()
+
+    monkeypatch.setitem(ingest_resolve._LIVE_PATHS_CACHE, ("o", "n"), (time.monotonic(), set()))
+    monkeypatch.setattr(ingest_resolve, "_PY_LAYOUT_CACHE", {})
+    monkeypatch.setattr(ingest_resolve, "_package_json_text", text)
+    monkeypatch.setattr(pl, "layout_from_texts", layout)
+
+    async def three():
+        calls_ = [ingest_resolve._py_layout(None, "o", "n", {"setup.py"}) for _ in range(3)]  # type: ignore[arg-type]
+        return await asyncio.gather(*calls_)
+
+    assert len(asyncio.run(three())) == 3
+    assert calls == [1]
+
+
 def test_a_list_inside_an_unclosed_entry_point_list_is_read_once():
     text = 'setup(entry_points={"console_scripts": ["a=m:f",\n"gui_scripts": ["g=m:h"]})\n'
     eps = pl.entry_points_from_manifest("setup.py", text)

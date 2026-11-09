@@ -50,7 +50,9 @@ KIND_SECTION = "section"
 EDGE_READS = "reads"
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
 _FENCE_RE = re.compile(r"^(```|~~~)")
-_MAX_TITLE = 1000
+# A section repeats its ancestors' titles in its qualified name and heading path: the
+# titles and both are cut, so a file of deep sections under long titles stays linear.
+_MAX_PATH = 2000
 _LINK_RE = re.compile(r"\]\(((?:(?!\]\()[^)\s])++)(?:\s+\"[^\"]*\")?\)")
 _CODE_REF_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)(?:\(\))?`")
 _NOISE_REFS: frozenset[str] = frozenset(
@@ -139,8 +141,7 @@ def sections_of(text: str) -> tuple[list[Section], int]:
             # title backtracks cubically on a run of spaces.
             rest = h.group(2)
             title = rest.rstrip().rstrip("#").rstrip() or rest[:1]
-            # cut: every descendant's qualified name repeats it
-            heads.append((i, len(h.group(1)), title.strip()[:_MAX_TITLE]))
+            heads.append((i, len(h.group(1)), title.strip()[:_MAX_PATH].rstrip()))
     out: list[Section] = []
     stack: list[str] = []
     for n, (line, level, title) in enumerate(heads):
@@ -167,7 +168,7 @@ def sections_of(text: str) -> tuple[list[Section], int]:
 
 
 def _qname(mod: str, sec: Section) -> str:
-    return "::".join([mod, *sec.path_titles])
+    return "::".join([mod, *sec.path_titles])[:_MAX_PATH]
 
 
 def markdown_units(
@@ -253,7 +254,7 @@ def markdown_chunks(pf: ParsedFile, max_chars: int = 6000) -> list[Chunk]:
             own_end = secs[n + 1].start_line - 1
         body = lines[s.start_line - 1 : own_end]
         sym = by_q.get(_qname(mod, s))
-        heading_path = " › ".join(s.path_titles)
+        heading_path = " › ".join(s.path_titles)[:_MAX_PATH]
         pieces = _split_paragraphs(body, max_chars, s.start_line)
         for k, (p_start, p_end, p_text) in enumerate(pieces):
             content = p_text if k == 0 else f"<!-- {heading_path} (cont.) -->\n" + p_text

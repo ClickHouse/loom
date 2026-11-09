@@ -6,6 +6,7 @@ from server.code.domain.extract.lang_markdown import (
     doc_reference_edges,
     doc_reference_sites,
     markdown_chunks,
+    markdown_units,
     parse_markdown,
     sections_of,
 )
@@ -113,7 +114,10 @@ def test_reference_edges_read_backticked_names_once_each() -> None:
     ], "an ambiguous bare name binds nothing; a qualified mention picks its suffix"
 
 
-def test_a_heading_title_is_cut_to_a_thousand_characters() -> None:
-    # Every descendant's qualified name repeats its ancestors' titles.
-    secs, _ = sections_of("# " + "a" * 1500 + "\n## b\n")
-    assert [len(s.title) for s in secs] == [1000, 1]
+def test_a_qualified_name_is_cut_to_two_thousand_characters() -> None:
+    # Every section's qualified name repeats its ancestors' titles.
+    syms, _inc, _refs, _pre = markdown_units(
+        "a.md", "# " + "x" * 1500 + "\n## " + "y" * 1500 + "\n"
+    )
+    assert [len(s.qualified_name) for s in syms] == [1503, 2000]
+    assert syms[1].qualified_name.startswith("a::" + "x" * 1500 + "::y")

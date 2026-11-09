@@ -357,6 +357,14 @@ _WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("markdown-headings", _markdown, _run("", "# a\n")),
     ("markdown-links", _markdown, _links),
     (
+        "markdown-deep-long-titles",
+        _markdown,
+        lambda n: (
+            "".join("#" * k + " " + "a" * 1000 + "\n" for k in range(1, 6))
+            + "###### a\n" * (n // 9)
+        ),
+    ),
+    (
         "markdown-long-parent-title",
         _markdown,
         lambda n: "# " + "a" * (n // 2) + "\n" + "## a\n" * (n // 10),
