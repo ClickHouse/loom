@@ -243,12 +243,16 @@ async def test_an_append_only_bulk_write_clears_every_entry_without_a_peer_read(
     assert not [sql for sql, _ in ch.query_all_calls if "cosineDistance" in sql]
 
 
-def test_a_narrowed_bulk_writer_is_refused_by_another_users_pinned_peer(monkeypatch) -> None:
+@pytest.mark.parametrize("read", ["batched", "per_fact"])
+def test_a_narrowed_bulk_writer_is_refused_by_another_users_pinned_peer(
+    monkeypatch, read: str
+) -> None:
     """A writer bound to user U writes in bulk next to V's pinned row: the entry is
     rejected and V's row named as the blocker, never as a peer."""
     from server.memory.app import bulk_set
     from tests.unit.test_write_scope import _pinned, _PinnedV, _run_as
 
+    monkeypatch.setattr(settings, "memory_bulk_peer_read", read)
     ch = _PinnedV()
     monkeypatch.setattr(conflicts, "get_client", lambda: ch)
     _no_reads(monkeypatch, "auto_reinforce")

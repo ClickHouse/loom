@@ -1499,7 +1499,9 @@ async def _bulk_conflict_verdicts(
     # (`floors` stays on the call's state for the Postgres gap check); one that cannot be
     # read is left to each fact's check, which reads it again.
     policy = await _namespace_policy(input.org, input.namespace)
-    for mt in dict.fromkeys(str(entry_metas[idx][0].memory_type) for idx, *_ in pending[:cap]):
+    # Under append_only no fact reads peers; the Postgres gap check reads its own reach.
+    checked_types = [] if policy == APPEND_ONLY_POLICY else pending[:cap]
+    for mt in dict.fromkeys(str(entry_metas[idx][0].memory_type) for idx, *_ in checked_types):
         if mt not in floors and (floor := await _type_floor(input.org, input.namespace, mt)):
             floors[mt] = floor
 

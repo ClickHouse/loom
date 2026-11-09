@@ -626,7 +626,9 @@ class _NamespaceCH(_SqlCH):
         if "m.pinned = 1" in sql:  # every pinned memory row of the type, by distance
             pinned = [r for r in rows if r["pinned"] and _type(r) == "semantic"]
             pinned = [r for r in pinned if r["dist"] <= 0.3][:10]
-            return [{**r, "qidx": 0} for r in pinned] if "BY qidx" in sql else pinned
+            if "BY qidx" in sql:  # every fact of the batch, as its own `qidx`
+                return [{**r, "qidx": q} for q in range(len(p["keys"])) for r in pinned]
+            return pinned
         if "IN {ids:" in sql:  # stage B filters the type
             ids = {tuple(i) for i in p["ids"]}
             return [
