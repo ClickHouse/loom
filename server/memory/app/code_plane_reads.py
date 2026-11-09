@@ -209,7 +209,8 @@ async def _definitions_at(
         return None
     named = bare_name(qualified_name)
     # a parse waiting behind another one gives up with this read (its threads copy this)
-    lock_wait = bounded_parse.LockWait(settings.memory_code_plane_parse_timeout_s)
+    seconds = settings.memory_code_plane_parse_timeout_s  # one deadline for the wait and the read
+    lock_wait = bounded_parse.LockWait(seconds)
     token = bounded_parse.LOCK_WAIT.set(lock_wait)
     try:
         parse = asyncio.gather(
@@ -218,7 +219,7 @@ async def _definitions_at(
     finally:
         bounded_parse.LOCK_WAIT.reset(token)
     try:
-        files = await asyncio.wait_for(parse, settings.memory_code_plane_parse_timeout_s)
+        files = await asyncio.wait_for(parse, seconds)
     except (gitrepo.GitError, code.ParseFailed, TimeoutError):
         return None
     if lock_wait.gave_up:  # a parser may have taken the refusal for the file's own answer

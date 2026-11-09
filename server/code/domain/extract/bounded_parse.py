@@ -40,6 +40,7 @@ import selectors
 import signal
 import subprocess
 import sys
+import sysconfig
 import threading
 import time
 from contextvars import ContextVar
@@ -98,13 +99,25 @@ class ParseTimeout(Exception):
 
 @functools.cache
 def _grammar(language: Any) -> str:
-    """The `_LOADERS` entry that loads `language`."""
+    """The `_LOADERS` entry that loads `language`. The server must load tree-sitter from
+    the interpreter's own site-packages, as the child does, or the child would check
+    another build than the one parsed here."""
+    import tree_sitter
+
+    own = {Path(sysconfig.get_path(k)).resolve() for k in ("purelib", "platlib")}
+    if not any(Path(tree_sitter.__file__).resolve().is_relative_to(p) for p in own):
+        raise LookupError("tree_sitter is loaded from outside the interpreter's site-packages")
     for grammar in _LOADERS:
         try:
             loaded = parse_child.language(grammar)
         except Exception:  # noqa: BLE001 — a grammar that does not load matches none
             continue
         if loaded == language:
+            module = sys.modules[grammar.partition(":")[0]]
+            if not any(Path(str(module.__file__)).resolve().is_relative_to(p) for p in own):
+                raise LookupError(
+                    f"{grammar} is loaded from outside the interpreter's site-packages"
+                )
             return grammar
     raise LookupError(f"no grammar in bounded_parse._LOADERS loads {language!r}")
 

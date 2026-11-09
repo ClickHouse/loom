@@ -721,3 +721,21 @@ def test_a_parse_whose_children_the_kernel_killed_twice_is_refused(
     source = b"package x\nvar s = " + b"`" * 16_000  # parses in over a second
     pf, err = parse_for_ingest("a.go", source)
     assert "ParseTimeout" in err and len(started) == 2
+
+
+def test_a_grammar_loaded_from_outside_the_interpreters_site_packages_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tree_sitter
+    import tree_sitter_go
+
+    from server.code.domain.extract import bounded_parse
+
+    language = tree_sitter.Language(tree_sitter_go.language())
+    monkeypatch.setattr(bounded_parse.sysconfig, "get_path", lambda name: "/nonexistent")
+    bounded_parse._grammar.cache_clear()
+    try:
+        with pytest.raises(LookupError, match="outside"):
+            bounded_parse._grammar(language)  # the child would check another build
+    finally:
+        bounded_parse._grammar.cache_clear()
