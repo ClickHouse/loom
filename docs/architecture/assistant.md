@@ -325,8 +325,9 @@ database writes nothing and reports it, naming that database in the server log.
 The key and the analyst's password are random and kept together, as one sealed value, in
 one row of `loom.analysis_secrets`. The password holds a lower and an upper case letter, a
 digit and a symbol, which ClickHouse Cloud requires of a user's password. The row is
-sealed with `server/core/secrets_at_rest.py` in the shape `loom secrets reseal` rewrites (`SEALED` in `server/cli/secrets.py`). Part 1 moves
-the reseal's reads under `own_write_reads` and has it skip a row that is gone. With
+sealed with `server/core/secrets_at_rest.py` in the shape `loom secrets reseal` rewrites
+(`SEALED` in `server/cli/secrets.py`). Part 1 moves the reseal's reads under
+`own_write_reads` and has it skip a row that is gone. With
 [part 2](#build-order), the CLI rotation and the reseal both hold the analysis lease, so
 they never interleave, and the printed rotation, which takes no lease, stores its row at
 a version from ClickHouse's clock at insert time in nanoseconds, far above any reseal's

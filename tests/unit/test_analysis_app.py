@@ -1034,6 +1034,7 @@ def test_a_write_clickhouse_refuses_is_a_kept_finding_and_not_done(
 
 def test_a_drawn_password_has_every_character_class(monkeypatch: pytest.MonkeyPatch) -> None:
     # ClickHouse Cloud refuses a user whose password lacks one.
+    monkeypatch.setattr(app, "_loaded", None)
     stored: list[str] = []
 
     async def read() -> str | None:
