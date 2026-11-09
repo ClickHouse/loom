@@ -260,8 +260,10 @@ def prefix(ch_client) -> str:
     for p in boundary.SETTING_PREFIXES:
         try:
             ch_client.command("SELECT 1", settings={f"{p}loom_probe": "1"})
-        except Exception:  # noqa: BLE001 — not a prefix this server takes
-            continue
+        except Exception as e:
+            if "UNKNOWN_SETTING" not in str(e):
+                raise  # no answer: the run must not guess
+            continue  # not a prefix this server takes
         return p
     pytest.fail(f"ClickHouse takes custom settings under none of {boundary.SETTING_PREFIXES}")
 
@@ -560,9 +562,9 @@ def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client, prefix
     # The server log records each refused read's error, whatever log_queries says.
     quoting = ch_client.query(
         "SELECT count() FROM system.text_log WHERE event_time >= {start:DateTime} "
-        "AND level = 'Error' AND position(message, {scope:String}) > 0 "
+        "AND level = 'Error' AND position(message, {setting_prefix:String}) > 0 "
         "AND message LIKE '%UNKNOWN_SETTING%'",
-        parameters={"start": start, "scope": f"{prefix}loom_"},
+        parameters={"start": start, "setting_prefix": f"{prefix}loom_"},
     ).result_rows[0][0]
     assert quoting > 0, "no refused read reached the server log, so it was not checked"
     errors = ch_client.query(

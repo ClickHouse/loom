@@ -450,12 +450,14 @@ class Scenario:
         for prefix in boundary.SETTING_PREFIXES:
             try:
                 sql(self.ch_port, "SELECT 1", settings={f"{prefix}loom_probe": "1"})
-            except RuntimeError:
+            except RuntimeError as e:
+                if "UNKNOWN_SETTING" not in str(e):
+                    raise  # no answer: the gate must not guess
                 continue  # not a prefix this server takes
             return boundary.SettingNames(prefix)
         raise RuntimeError(f"ClickHouse takes none of {boundary.SETTING_PREFIXES}")
 
-    def logs_hold_no_key(self, since: str, needles: dict[str, str], scope: str) -> None:
+    def logs_hold_no_key(self, since: str, needles: dict[str, str], setting_prefix: str) -> None:
         """No statement text or error in query_log, and no server log error
         since `since`, holds a spelling of the key; each search first shows a
         refused read of the probe reached that log."""
@@ -485,9 +487,9 @@ class Scenario:
             quoted = sql(
                 self.ch_port,
                 "SELECT count() FROM system.text_log WHERE event_time >= {since:DateTime} "
-                "AND level = 'Error' AND position(message, {scope:String}) > 0 "
+                "AND level = 'Error' AND position(message, {setting_prefix:String}) > 0 "
                 "AND message LIKE '%UNKNOWN_SETTING%'",
-                {"since": since, "scope": scope},
+                {"since": since, "setting_prefix": setting_prefix},
             )
             if quoted != "0" or time.monotonic() > deadline:
                 break

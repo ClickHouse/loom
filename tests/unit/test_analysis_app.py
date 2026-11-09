@@ -106,6 +106,17 @@ def test_a_refusal_never_quotes_a_key_pad(monkeypatch: pytest.MonkeyPatch, ready
     assert "36" * 64 not in str(caught.value)
 
 
+@pytest.mark.parametrize("prefix", ["SQL_", "custom_"])
+def test_a_refusal_naming_a_scope_setting_quotes_no_clickhouse_text(
+    monkeypatch: pytest.MonkeyPatch, ready: None, prefix: str
+) -> None:
+    named = f"Code: 62. DB::Exception: Syntax error near {prefix}loom_sig quoting the filter"
+    monkeypatch.setattr(app.store, "run_statement", _failing(named))
+    with pytest.raises(ValidationError) as caught:
+        asyncio.run(app.handle_insights_query(_query()))
+    assert f"{prefix}loom_sig" not in str(caught.value) and "quoting" not in str(caught.value)
+
+
 def test_a_namespace_with_a_comma_is_refused(ready: None) -> None:
     # The policy splits the signed namespaces on commas.
     with pytest.raises(ValidationError):

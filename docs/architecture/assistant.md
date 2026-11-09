@@ -340,9 +340,10 @@ Loom never passes on a ClickHouse message that names the scope settings.
 `custom_` on ClickHouse Cloud. When it loads the secrets, Loom sends `SELECT 1` with
 `<prefix>loom_probe` for `SQL_` and then `custom_`, and names the scope settings and the
 profiles' stamps under the first one the server takes; a server that takes neither
-refuses analysis with a message that names `custom_settings_prefixes`. The prefix is
-the server's, not the version's: a self-managed server keeps `SQL_` and the same
-entities, and the structure digest a version pins is spelled with `SQL_`.
+refuses analysis with a message that names `custom_settings_prefixes`. The prefix is the
+server's, not the version's: a self-managed server keeps `SQL_` and the same entities,
+and the structure digest a version pins is spelled with `SQL_`. On a `custom_` server
+each load leaves one refused `SQL_loom_probe` in the server's logs.
 
 Each policy also carries its table's live predicate, the one the erasure census counts
 (`tombstoned_at IS NULL` on `loom.memory`), and the profile holds `final = 1` and

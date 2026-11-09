@@ -352,8 +352,6 @@ def test_a_cloud_prefix_names_every_setting_the_entities_and_the_scope_use() -> 
 
 
 def test_the_setting_prefix_is_the_first_one_the_server_takes() -> None:
-    from server.insights.store import analysis as store
-
     class _Server:
         def __init__(self, takes: set[str]) -> None:
             self.takes = takes
@@ -363,14 +361,18 @@ def test_the_setting_prefix_is_the_first_one_the_server_takes() -> None:
             if not any(name.startswith(p) for p in self.takes):
                 raise RuntimeError(f"Code: 115. DB::Exception: Setting {name} is unknown")
 
-    for takes, found in (({"SQL_"}, "SQL_"), ({"custom_"}, "custom_"), (set(), None)):
+    for takes, found in (
+        ({"SQL_"}, "SQL_"),
+        ({"custom_"}, "custom_"),
+        # A server that takes both keeps SQL_, as it always has.
+        ({"SQL_", "custom_"}, "SQL_"),
+        (set(), None),
+    ):
         assert asyncio.run(store.setting_prefix(ch=_Server(takes))) == found  # type: ignore[arg-type]
 
 
 def test_a_prefix_probe_with_no_answer_raises() -> None:
     # No answer is not "none of the prefixes": the caller must not guess.
-    from server.insights.store import analysis as store
-
     class _Down:
         async def execute(self, *_: object, **__: object) -> None:
             raise TimeoutError("read timed out")

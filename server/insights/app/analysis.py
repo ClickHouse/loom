@@ -692,12 +692,12 @@ def _refusal(e: BaseException) -> ValidationError | None:
         return None
     if code == _MEMORY_LIMIT_EXCEEDED and ("(total)" in str(e) or "(for user)" in str(e)):
         return None  # the server's memory, not the statement's cap
-    if any(f"{p}loom_" in str(e) for p in boundary.SETTING_PREFIXES) or (
-        boundary.KEY_LITERAL.search(str(e))
-    ):
+    text = str(e)
+    names_scope = any(f"{p}loom_" in text for p in boundary.SETTING_PREFIXES)
+    if names_scope or boundary.KEY_LITERAL.search(text):
         return ValidationError(
             f"ClickHouse refused the statement (code {code}) while checking the analysis "
-            "scope; a statement must not set the loom_* scope settings"
+            "scope; a statement must not set the scope settings"
         )
     if code in {158, 159, 241, 307, 396}:
         return ValidationError(

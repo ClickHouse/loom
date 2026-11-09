@@ -8,7 +8,7 @@ every allowlisted table a row policy that admits a row only when its `org` and
 `namespace` match the request's signed custom settings. Loom signs the scope
 with HMAC-SHA256 under a random key the first boot made and every replica
 reads (`loom.analysis_secrets`); the policy recomputes the HMAC inside
-ClickHouse, so a statement that sets other `SQL_loom_*` values reads no rows.
+ClickHouse, so a statement that sets other scope settings reads no rows.
 The profile forces `FINAL`, which ClickHouse applies before the row policy, so
 a statement sees one live row per key.
 docs/architecture/assistant.md has the reasoning and the isolation proof.
@@ -584,7 +584,7 @@ def structure_digest() -> str:
     new version."""
     parts = [f"retired:{name}" for name in RETIRED_TABLES]
     parts += [f"{t.name}:{t.live}:{','.join(c.name for c in t.columns)}" for t in TABLES]
-    parts += [policy_filter(SettingNames(SETTING_PREFIXES[0]), b"\0" * 32), CANARY_TABLE]
+    parts += [policy_filter(SettingNames("SQL_"), b"\0" * 32), CANARY_TABLE]
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:32]
 
 
