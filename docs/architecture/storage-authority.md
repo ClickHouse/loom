@@ -279,9 +279,12 @@ finds it all the same: the same-key reads (`newest_wins` supersession, the resol
 owed mark for a key held elsewhere, the guard that refuses a proposal over an accepted
 fact, and `memory.delete_version`'s check of the chunks the key's values serve, the
 deleter's own newer head included) take the authority's heads
-(`pg_memory.live_key_heads`). A revision fences its edges on its new row, a write with
-relations its facts, and a `high` row's fence (`fence_high`) rechecks the head in
-ClickHouse: each of those waits for its own flush.
+(`pg_memory.live_key_heads`). A bulk write's identity dedup finds a keeper of the same
+bytes under another key among those ClickHouse holds and those it is still owed
+(`pg_memory.unpublished_keepers`), each checked against its head on the authority. A
+revision fences its edges on its new row, a write with relations its facts, and a `high`
+row's fence (`fence_high`) rechecks the head in ClickHouse: each of those waits for its
+own flush.
 
 Every commit in a flush is sent under its own lease and token, as its writer would send
 it alone, so the guarantees below hold unchanged: the flush runs under the earliest

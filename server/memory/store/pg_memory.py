@@ -1700,6 +1700,39 @@ async def live_heads_in(
     return [decode_row(r["row"]) for r in rows]
 
 
+async def unpublished_keepers(
+    org: str, namespace: str, agent: str, user_id: str, shas: Sequence[str], *, scope: Any
+) -> list[dict[str, Any]]:
+    """The keys of one identity (any session) committed with one of the content hashes
+    `shas` whose memory row ClickHouse is still owed, in `scope`: the keepers an identity
+    dedup that reads ClickHouse cannot see yet (a write answered at its commit).
+    `head_sha`, `session_id`, `memory_key` and `memory_id`; the caller still checks each
+    against its head. Read through the namespace's deliveries still owing the row; a
+    parked one (ClickHouse kept refusing it) is left out, and the connection's statement
+    timeout bounds the read."""
+    if not shas or pg.unstorable((org, namespace, agent, user_id)):
+        return []
+    args: list[Any] = [org, namespace, agent, user_id, list(shas), MEMORY_ROW]
+    scoped = ""
+    if scope.narrowed:
+        args.append(scope.user_id)
+        scoped += f" AND r.user_id = ${len(args)}"
+        if scope.scope == "own_session":
+            args.append(scope.session_id)
+            scoped += f" AND r.row->>'session_id' = ${len(args)}"
+    rows = await pg.fetch(
+        "SELECT DISTINCT r.content_sha256 AS head_sha, r.row->>'session_id' AS session_id, "
+        "r.row->>'memory_key' AS memory_key, r.memory_id::text AS memory_id "
+        "FROM loom.memory_deliveries d JOIN loom.memory_revisions r USING (org, namespace, seq) "
+        "WHERE d.org = $1 AND d.namespace = $2 AND d.targets & $6 <> 0 "
+        "AND d.lease_until <> 'infinity' "
+        "AND r.user_id = $4 AND r.row->>'agent' = $3 AND r.content_sha256 = ANY($5::text[])"
+        f"{scoped}",
+        *args,
+    )
+    return [dict(r) for r in rows]
+
+
 async def live_keys(org: str, namespace: str, keys: Sequence[str]) -> set[str]:
     """Which of `keys` have a live head in `namespace`, in any identity."""
     wanted = [k for k in keys if not pg.unstorable(k)]  # no head holds one Postgres cannot store

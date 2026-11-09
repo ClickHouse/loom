@@ -6733,3 +6733,42 @@ async def test_the_postgres_profile_refuses_a_ttl_on_a_table_it_holds(monkeypatc
     monkeypatch.setattr(pg_profile.settings, field, 30)
     with pytest.raises(RuntimeError, match="Unset them"):
         await pg_profile.start()
+
+
+@pytest.mark.parametrize("both_embedded", [False, True])
+async def test_a_bulk_batch_writing_a_key_twice_owes_a_document_only_for_its_embedded_rows(
+    monkeypatch: pytest.MonkeyPatch, both_embedded: bool
+) -> None:
+    """A row owes ClickHouse a search document only when the batch built one at its
+    version, since the publication clears the target for that version alone: an earlier
+    revision of a key written twice and not embedded owing one would hold the namespace's
+    searches at their barrier until its lease ran out. Both embedded, both owe one."""
+    from server.memory.app import bulk_set
+    from server.memory.store import pg_publish
+
+    seen: list[list[int]] = []
+
+    async def _commit(rows: Any, *, targets: list[int], **_k: Any) -> Any:
+        seen.append(targets)
+        return SimpleNamespace()
+
+    async def _no_reach(_state: Any) -> list[Any]:
+        return []
+
+    monkeypatch.setattr(pg_publish, "commit", _commit)
+    monkeypatch.setattr(bulk_set, "_reach_of", _no_reach)
+    key = {"org": "o", "namespace": "n", "agent": "a", "user_id": "-", "session_id": "-"}
+    first, last = key | {"memory_key": "k", "version": 1}, key | {"memory_key": "k", "version": 2}
+    state = SimpleNamespace(
+        memory_rows=[first, last],
+        embedding_rows=[
+            r | {"embedding": [0.1]} for r in ([first, last] if both_embedded else [last])
+        ],
+        existing_rows={},
+        generations={},
+        retry=SimpleNamespace(start=lambda: None),
+    )
+    await bulk_set._commit_batch(state, {})
+    row = pg_memory.MEMORY_ROW | pg_memory.AUDIT_ROW
+    doc = row | pg_memory.SEARCH_DOC
+    assert seen == [[doc if both_embedded else row, doc]]

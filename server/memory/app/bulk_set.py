@@ -188,6 +188,21 @@ async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, 
                 "org = {org:String} AND namespace = {ns:String}"
                 " AND agent = {agent:String} AND user_id = {uid:String}" + in_scope
             )
+            # Under Postgres a keeper written a moment ago answered at its commit, before
+            # ClickHouse held it: the authority's undelivered revisions add it. Read first:
+            # one whose delivery cleared since was in ClickHouse before the read below.
+            unpublished = (
+                await pg_memory.unpublished_keepers(
+                    input.org,
+                    input.namespace,
+                    input.agent,
+                    input.user_id,
+                    _shas,
+                    scope=request_scope(),
+                )
+                if pg.enabled()
+                else []
+            )
             _rows = await ch.query_all(
                 f"""
                 SELECT argMax(content_sha256, version) AS head_sha, session_id, memory_key,
@@ -208,7 +223,15 @@ async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, 
                 params=params,
             )
             if pg.enabled():
-                _rows = await _keepers_on_the_authority(input, _rows)
+                # Every keeper found is checked against its head on the authority; the
+                # same keeper wins whichever read found it (ClickHouse's order).
+                _rows = await _keepers_on_the_authority(
+                    input,
+                    sorted(
+                        _rows + unpublished,
+                        key=lambda r: (hash_text(r["head_sha"]), r["memory_key"], r["session_id"]),
+                    ),
+                )
             for _r in _rows:
                 identity_dupes.setdefault(
                     hash_text(_r["head_sha"]), (str(_r["memory_key"]), str(_r["memory_id"]))
@@ -221,9 +244,9 @@ async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, 
 async def _keepers_on_the_authority(
     input: MemoryBulkSetInput, rows: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """The keepers ClickHouse found whose head on the authority is still live and holds
-    those bytes: an entry is never dropped as a copy of a value rewritten or deleted
-    since, which ClickHouse may not hold yet."""
+    """The keepers found (by ClickHouse, or among the undelivered revisions) whose head
+    on the authority is still live and holds those bytes: an entry is never dropped as a
+    copy of a value rewritten or deleted since, which ClickHouse may not hold yet."""
     keys = [
         (
             input.org,
@@ -600,17 +623,22 @@ async def _commit_batch(
 ) -> pg_memory.Committed:
     """The batch's commit to the Postgres authority: its verdicts' generations and every
     key's protection as the batch read it are checked again inside (AdmissionMoved,
-    HeadMoved); a row with a vector owes ClickHouse its search document too. `retire`:
-    keys whose replaced vectors the locked head cannot show (a winner left without its
-    type's vector, a key the batch embedded earlier, a failed lookup); they owe
-    OLD_VECTORS. The commit adds any row over an embedded head itself."""
+    HeadMoved); a row owes ClickHouse its search document only when the batch built one at
+    its own version (an earlier row of a key written twice owes none unless it was
+    embedded too).
 
-    embedded = {str(r.get("memory_key")) for r in state.embedding_rows}
+    `retire`: keys whose replaced vectors the locked head cannot show (a winner left
+    without its type's vector, a key the batch embedded earlier, a failed lookup); they
+    owe OLD_VECTORS. The commit adds any row over an embedded head itself."""
+
+    # The publication clears a revision's search document only for the version it was
+    # built from, so only that version owes one.
+    embedded = {(identity_key(r), int(r["version"])) for r in state.embedding_rows}
     read = {identity_key(r): state.existing_rows.get(r["memory_key"]) for r in state.memory_rows}
     targets = [
         pg_memory.MEMORY_ROW
         | pg_memory.AUDIT_ROW
-        | (pg_memory.SEARCH_DOC if str(r["memory_key"]) in embedded else 0)
+        | (pg_memory.SEARCH_DOC if (identity_key(r), int(r["version"])) in embedded else 0)
         | (pg_memory.OLD_VECTORS if _owes_retirement(r, retire) else 0)
         for r in state.memory_rows
     ]
