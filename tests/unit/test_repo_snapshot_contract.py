@@ -193,6 +193,12 @@ async def test_a_service_account_bound_to_repositories_is_not_minted_while_unrea
     monkeypatch.setattr(namespace_kinds, "kind_map", kinds)
     with pytest.raises(repos.RegistryUnread):
         await me_service_accounts._bound_trackers("o", "s", object(), ["code-x"])  # type: ignore[arg-type]
+    # An operator entry: its bound trackers are not known until the read either.
+    monkeypatch.setattr(
+        repos, "config_entry", lambda org, ns: object() if ns == "code-op" else None
+    )
+    with pytest.raises(repos.RegistryUnread):
+        await me_service_accounts._bound_trackers("o", "s", object(), ["code-op"])  # type: ignore[arg-type]
     # A name whose kind is not known (a directory read that fell back) refuses too.
     with pytest.raises(repos.RegistryUnread):
         await me_service_accounts._bound_trackers("o", "s", object(), ["code-new"])  # type: ignore[arg-type]

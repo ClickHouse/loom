@@ -897,7 +897,9 @@ async def admin_token_mint(
             flat_role = (delegated.roles or ["viewer"])[0]
             roles_on = delegated.ns_roles or dict.fromkeys(delegated.namespaces, flat_role)
         # Before the token is saved: a refusal (an unread code registry) strands nothing.
-        is_code = await token_grants.code_namespace_test(input.org, list(roles_on))
+        from server.identity.app.namespace_classification import is_restricted
+
+        is_code = await token_grants.code_namespace_test(input.org, list(roles_on), is_restricted)
         sa_subject = tokens.new_token_subject(input.org, name, creator)
         minted = delegated.mint(sa_subject, jti=jti, consumer=input.consumer or None)
         await tokens.save_token(

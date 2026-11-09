@@ -120,7 +120,8 @@ async def _bound_trackers(org: str, subject: str, parent: AuthInfo, repos: list[
     out: list[str] = []
     if not repos:
         return out
-    await token_grants.refuse_unread_code(org, repos)  # their bound trackers: unknown yet
+    # Their bound trackers come from the operator repositories, unknown until that read.
+    await token_grants.refuse_unread_code(org, repos, configured_too=True)
     await refresh_overrides()  # the links as of the refresh interval, branches included
     operator = operator_repositories()  # once for every name
     for ns in repos:
@@ -360,7 +361,9 @@ async def me_service_accounts_create(
         restricted_roles = await token_grants.restricted_roles(
             org, subject, delegated, requested_role
         )
-        is_code = await token_grants.code_namespace_test(org, list(restricted_roles))
+        is_code = await token_grants.code_namespace_test(
+            org, list(restricted_roles), namespace_classification.is_restricted
+        )
         sa_subject = new_token_subject(org, name, subject)
         minted = delegated.mint(sa_subject)
         now = naive_utc_now_seconds()  # after the mint: the row is never older than the token's iat

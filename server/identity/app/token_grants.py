@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -96,37 +96,39 @@ async def restricted_roles(
     return out
 
 
-async def refuse_unread_code(org: str, names: list[str]) -> None:
-    """RegistryUnread while the code registry has never been read and any of `names`
-    is not known to be of another kind than code: the configuration lists no branch
-    added from the page then, and the directory's kinds may have fallen back to it."""
+async def refuse_unread_code(
+    org: str, names: list[str], *, configured_too: bool = False
+) -> dict[str, str]:
+    """The directory's kinds for `org` ({} with nothing to check), after a RegistryUnread
+    refusal while the code registry has never been read and one of `names` is not known
+    to be of another kind than code: the configuration lists no page branch then, and
+    the kinds may have fallen back to it. `configured_too` refuses for an operator
+    entry as well, whose bound trackers are not known either until that read."""
     from server.code.domain.index.repos import config_entry, registry_unread, require_registry_read
     from server.identity.app import namespace_kinds
 
-    if not names or not registry_unread():
-        return
+    if not names:
+        return {}
     kinds = await namespace_kinds.kind_map(org)
-    if any(config_entry(org, n) is None and kinds.get(n, "") in ("code", "") for n in names):
-        require_registry_read()
+    if registry_unread():
+        for n in names:
+            listed = config_entry(org, n) is not None
+            if (configured_too and listed) or (not listed and kinds.get(n, "") in ("code", "")):
+                require_registry_read()
+    return kinds
 
 
 async def code_namespace_test(
-    org: str, names: list[str], is_restricted: Any = None
+    org: str, names: list[str], is_restricted: Callable[[str, str], Awaitable[bool]]
 ) -> Callable[[str, str], bool]:
     """How `grant_restricted_to_token` tells a code namespace, read once: a caller that
     writes a token first calls this before that write, so a refusal
     (`refuse_unread_code`, for the restricted names) strands nothing."""
     from server.code.domain.index.repos import config_entry
-    from server.identity.app import namespace_kinds
     from server.tracker.domain.namespaces import tracker_namespace
 
-    if is_restricted is None:
-        from server.identity.app.namespace_classification import is_restricted as _isr
-
-        is_restricted = _isr
     restricted = [n for n in names if await is_restricted(org, n)]
-    await refuse_unread_code(org, restricted)
-    kinds = await namespace_kinds.kind_map(org) if restricted else {}
+    kinds = await refuse_unread_code(org, restricted)
 
     def is_code_namespace(o: str, n: str) -> bool:
         # read-only reference data: a repository index or a tracker record
