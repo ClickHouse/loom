@@ -38,7 +38,7 @@ _TABLES = (
 # loom.entity_vectors is left out: this fixture's copy of its quantized codec column is
 # refused (code 36). Its summary statement binds a tuple array and holds no subquery.
 _VECTOR = "arrayWithConstant(3072, 0.)"
-_SUMMARY = "00000000-0000-4000-8000-0000000000c1"
+_SUMMARY_ID = "00000000-0000-4000-8000-0000000000c1"
 
 
 @pytest.fixture
@@ -149,7 +149,7 @@ def _seed(raw: Any, db: str, org: str) -> None:
         raw.command(
             f"INSERT INTO {db}.{table} (org, namespace, agent, user_id, session_id, memory_key,"
             f" version, memory_id, tags) VALUES ('{org}', '{NS}', 'a', '-', '-', 'topic', 1,"
-            f" '{_SUMMARY}', {tags})"
+            f" '{_SUMMARY_ID}', {tags})"
         )
     raw.command(
         f"INSERT INTO {db}.memory_chunks (org, namespace, agent, user_id, session_id,"
@@ -158,7 +158,7 @@ def _seed(raw: Any, db: str, org: str) -> None:
     )
     raw.command(
         f"INSERT INTO {db}.entity_triple_rows (org, namespace, memory_id, user_id, subject,"
-        f" relation, object) VALUES ('{org}', '{NS}', '{_SUMMARY}', '-', 's', 'r', 'o')"
+        f" relation, object) VALUES ('{org}', '{NS}', '{_SUMMARY_ID}', '-', 's', 'r', 'o')"
     )
     raw.command(
         f"INSERT INTO {db}.shared (org, namespace, memory_key, value, memory_type, confidence,"
@@ -209,9 +209,17 @@ async def test_the_user_steps_and_a_clear_mutate_replicated_tables(
         table: raw.query(
             f"SELECT count() FROM {db}.{table} WHERE org = %(o)s", {"o": org}
         ).result_rows[0][0]
-        for table in ("entity_triples", "entity_edges", "entity_communities")
+        for table in ("entity_triples", "entity_edges", "entity_communities", "memory_versions")
     }
-    assert left == {"entity_triples": 0, "entity_edges": 0, "entity_communities": 0}
+    assert left == dict.fromkeys(
+        ("entity_triples", "entity_edges", "entity_communities", "memory_versions"), 0
+    )
+    for table in ("memory_chunks", "shared"):
+        kept = raw.query(
+            f"SELECT count() FROM {db}.{table} FINAL WHERE org = %(o)s AND tombstoned_at IS NULL",
+            {"o": org},
+        ).result_rows[0][0]
+        assert kept == 0, table
     live = raw.query(
         f"SELECT memory_key FROM {db}.memory_embeddings FINAL"
         " WHERE org = %(o)s AND tombstoned_at IS NULL",
