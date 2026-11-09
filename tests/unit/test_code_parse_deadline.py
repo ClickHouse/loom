@@ -41,7 +41,8 @@ def test_a_slow_parse_stops_at_the_deadline_and_the_file_is_chunked(
 # Parses, then sets every thread's CPU clock past the deadline and reads a node's text
 # from another thread, as the event loop reads a tree a worker thread parsed.
 _READ_AFTER_DEADLINE = """
-import threading, time
+import faulthandler, threading, time
+faulthandler.dump_traceback_later(30, exit=True)  # a read that spins: dump where, and fail
 import tree_sitter_python
 from tree_sitter import Language, Parser
 from server.code.domain.extract.bounded_parse import parse
