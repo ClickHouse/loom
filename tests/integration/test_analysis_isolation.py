@@ -513,10 +513,9 @@ def test_the_statement_text_stays_out_of_the_query_log(
 def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client) -> None:
     """The policies hold the key and its pads as `decrypt` arguments: no
     logged statement text or error carries one. The whole query_log is read,
-    the boot's writes included: a build before version 2 pinned log_queries = 0
-    for the analyst, so it left no rows there. text_log is read from the start
-    of this test, since a version 1 probe's errors reached it with the pads in
-    clear."""
+    the boot's writes included: an older build that kept the pads in clear also
+    kept the analyst out of query_log. text_log is read from the start of this
+    test, since an older build's probe errors can hold the pads there."""
     start = ch_client.query("SELECT now()").result_rows[0][0]
     secrets = _key_spellings(ch_client)
 

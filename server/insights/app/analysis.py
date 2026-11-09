@@ -14,7 +14,6 @@ import asyncio
 import contextlib
 import json
 import logging
-import re
 import secrets
 import time
 import uuid
@@ -557,13 +556,10 @@ def _set_problem(problem: str, detail: str = "") -> None:
         )
 
 
-_KEY_LITERAL = re.compile(r"unhex\('[0-9A-Fa-f]+'\)")
-
-
 def _scrubbed(text: str) -> str:
     """The text with any `unhex('…')` literal cut out: a policy's raw text
     holds the key, and an older policy its pads."""
-    return _KEY_LITERAL.sub("unhex(…)", text)
+    return boundary.KEY_LITERAL.sub("unhex(…)", text)
 
 
 async def _probe() -> tuple[str, bool, str]:
@@ -681,7 +677,7 @@ def _refusal(e: BaseException) -> ValidationError | None:
         return None
     if code == _MEMORY_LIMIT_EXCEEDED and ("(total)" in str(e) or "(for user)" in str(e)):
         return None  # the server's memory, not the statement's cap
-    if "SQL_loom_" in str(e) or _KEY_LITERAL.search(str(e)):
+    if "SQL_loom_" in str(e) or boundary.KEY_LITERAL.search(str(e)):
         return ValidationError(
             f"ClickHouse refused the statement (code {code}) while checking the analysis "
             "scope; a statement must not set the SQL_loom_* settings"

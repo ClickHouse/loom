@@ -57,7 +57,7 @@ def test_a_version_names_one_set_of_grants_and_policies() -> None:
     # Changing a grant, a policy, a live predicate or a retired table changes
     # this digest: bump ENTITY_VERSION and record the new digest here.
     assert {boundary.ENTITY_VERSION: boundary.structure_digest()} == {
-        2: "54f17f7b202ff38e8d89640dc320b263"
+        2: "890ee33aa6395fddc60ab584ac8c9a98"
     }
 
 

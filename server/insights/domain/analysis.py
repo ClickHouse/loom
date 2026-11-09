@@ -24,9 +24,6 @@ import re
 from dataclasses import dataclass
 from typing import NamedTuple
 
-from cryptography.hazmat.primitives import padding
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-
 from server.core.sql_literal import sql_string
 
 # Bumped whenever the allowlist, the profile or the policy shape changes. The
@@ -277,13 +274,11 @@ def _setting(name: str) -> str:
 
 
 def _masked_sql(key: bytes, data: bytes) -> str:
-    """`data` as a `decrypt` expression, whose arguments ClickHouse prints as
-    [HIDDEN]: a mask, not a seal, as the key sits beside it. ECB keeps the
-    policy text the same at every write."""
-    padder = padding.PKCS7(128).padder()
-    encryptor = Cipher(algorithms.AES256(key), modes.ECB()).encryptor()
-    sealed = encryptor.update(padder.update(data) + padder.finalize()) + encryptor.finalize()
-    return f"decrypt('aes-256-ecb', unhex('{sealed.hex()}'), unhex('{key.hex()}'))"
+    """`data` as `decrypt(encrypt(data))`: ClickHouse prints every argument of
+    `decrypt` as [HIDDEN], so an error that quotes the policy shows neither
+    `data` nor `key`. A mask, not a seal: the policy text holds both."""
+    k = f"unhex('{key.hex()}')"
+    return f"decrypt('aes-256-ecb', encrypt('aes-256-ecb', unhex('{data.hex()}'), {k}), {k})"
 
 
 def _pads(key: bytes) -> tuple[bytes, bytes]:
@@ -298,10 +293,15 @@ def key_spellings(key: bytes) -> list[str]:
     return [key.hex(), *(p.hex() for p in _pads(key)), "6" * 32, "\\" * 32]
 
 
+# A hex literal in a policy's text, as written or TSV-escaped: the key and
+# its pads are spelled so.
+KEY_LITERAL = re.compile(r"unhex\(\\?'([0-9A-Fa-f]+)\\?'\)")
+
+
 def policy_spellings(select_filter: str) -> list[str]:
     """Every literal of a policy filter and the spellings of its key; the
     filter may be TSV-escaped."""
-    literals = re.findall(r"unhex\(\\?'([0-9a-f]+)\\?'\)", select_filter)
+    literals = KEY_LITERAL.findall(select_filter)
     key = next((h for h in literals if len(h) == 64), None)
     if key is None:
         raise ValueError("the policy holds no 32-byte key literal")

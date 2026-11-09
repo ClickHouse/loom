@@ -16,9 +16,9 @@ Then it writes from each build and reads from the other, and checks:
 - every asset a build's dashboard page names loads from a replica of the other
   build (needs npm);
 - after the cross-boot each build answers ready;
-- each build answers `insights.query` on N's analyst entities, which N wrote
-  over N-1's, and no logged statement text or error holds the scope key or
-  its pads (both skipped where N-1 has no analysis plane);
+- each build answers `insights.query` on the analyst entities at N's version,
+  and no logged statement text or error holds the scope key or its pads
+  (both skipped where N-1 has no analysis plane);
 - with every process on `LOOM_BACKGROUND_WORKERS=auto`, exactly one process
   runs the workers, and it is N+1: its tree carries one no-op migration more,
   so N hands the lease over to it.
@@ -135,8 +135,8 @@ def sql(
     settings: dict[str, Any] | None = None,
 ) -> str:
     """`query`'s answer; `params` bind its `{name:Type}` placeholders. A
-    setting that changes how the statement is logged applies only when sent
-    with the request, not in a SETTINGS clause."""
+    setting that changes how the statement is logged is sent with the request:
+    in a SETTINGS clause it left the statement's own text uncut (26.10)."""
     bound = {f"param_{k}": v for k, v in (params or {}).items()}
     r = httpx.post(
         f"http://127.0.0.1:{port}/",
@@ -398,23 +398,9 @@ class Scenario:
         if not (self.builds["N-1"].tree / "server/insights/domain/analysis.py").exists():
             print("  skip  insights.query: N-1 has no analysis plane")
             return
-        body = {"org": self.org, "namespace": "mixed", "sql": "SELECT count() FROM loom.memory"}
-        # N first: it answers only after its own write, so N-1's answer is on N's entities.
+        # N first: it answers only once its own entities are written and probed.
         for label in ("N", "N-1"):
-            srv = self.builds[label]
-            # Each process answers once its own probe has passed.
-            deadline = time.monotonic() + SETTLE_S
-            while True:
-                r = httpx.post(
-                    f"{srv.url}/v1/insights.query",
-                    json=body,
-                    headers={"Authorization": f"Bearer {self.token}"},
-                    timeout=60,
-                )
-                if r.status_code == 200 or time.monotonic() > deadline:
-                    break
-                time.sleep(2)
-            self.check(r.status_code == 200, f"{label} answers insights.query on N's entities")
+            self.check(self.answers_insights(label), f"{label} answers insights.query")
         version = sql(
             self.ch_port,
             "SELECT trim(BOTH '\\'' FROM value) FROM system.settings_profile_elements "
@@ -423,7 +409,7 @@ class Scenario:
         )
         self.check(
             version == str(boundary.ENTITY_VERSION),
-            f"N wrote the analyst entities ({version})",
+            f"the analyst entities are at N's version ({version})",
         )
         policy = sql(
             self.ch_port,
@@ -436,12 +422,32 @@ class Scenario:
         except ValueError as e:
             self.check(False, f"the memory policy names the scope key ({e})")
             return
-        needles = {"k": "[" + ", ".join(map(sql_string, secrets)) + "]"}
-        # N-1's version 1 probe errors reached the server log with the pads in
-        # clear before the upgrade, as on any version 1 install: search from now.
+        # An older build's probe errors can hold the pads in clear in the
+        # server log: its search starts now.
         since = sql(self.ch_port, "SELECT now()")
+        self.logs_hold_no_key(since, {"k": "[" + ", ".join(map(sql_string, secrets)) + "]"})
+
+    def answers_insights(self, label: str) -> bool:
+        """Whether `label` answers insights.query within SETTLE_S: a process
+        answers once its own probe has passed."""
+        body = {"org": self.org, "namespace": "mixed", "sql": "SELECT count() FROM loom.memory"}
+        deadline = time.monotonic() + SETTLE_S
+        while True:
+            r = httpx.post(
+                f"{self.builds[label].url}/v1/insights.query",
+                json=body,
+                headers={"Authorization": f"Bearer {self.token}"},
+                timeout=60,
+            )
+            if r.status_code == 200 or time.monotonic() > deadline:
+                return r.status_code == 200
+            time.sleep(2)
+
+    def logs_hold_no_key(self, since: str, needles: dict[str, str]) -> None:
+        """No statement text or error in query_log, and no server log error
+        since `since`, holds a spelling of the key; each search first shows a
+        refused read of the probe reached that log."""
         sql(self.ch_port, "SYSTEM FLUSH LOGS")
-        # The probe's refused reads quote the policy in their errors: the search covers them.
         refused = sql(
             self.ch_port,
             "SELECT count() FROM system.query_log WHERE user = {user:String} "
@@ -458,9 +464,7 @@ class Scenario:
             needles,
             boundary.LOG_TEXT_CUT,
         )
-        self.check(
-            logged == "0", "no logged statement or error holds the scope key after the upgrade"
-        )
+        self.check(logged == "0", "no logged statement or error holds the scope key")
         # The server log records each refused read's error, whatever log_queries says.
         deadline = time.monotonic() + SETTLE_S
         while True:
@@ -483,7 +487,7 @@ class Scenario:
             {"since": since, **needles},
             boundary.LOG_TEXT_CUT,
         )
-        self.check(errors == "0", "no server log error holds the scope key after the upgrade")
+        self.check(errors == "0", "no server log error holds the scope key")
 
     def run_completes_across(self, a: str, b: str) -> None:
         run_id = self.call(a, "run.begin", {**self.ident, "goal": f"begun on {a}"})["run_id"]
