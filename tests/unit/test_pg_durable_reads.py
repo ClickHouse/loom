@@ -19,6 +19,7 @@ from server.core import pg
 from server.memory.app import pg_delivery
 from server.memory.store import pg_batch, pg_memory
 from server.settings import settings
+from tests.unit.clock_fake import ManualClock
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -251,19 +252,11 @@ def test_still_heads_decides_from_the_durable_read(
     assert [int(c.row["version"]) for c in out] == built
 
 
-class _Clock:
-    """`pg_lease`'s clock: 0 until the durable read, then past any lease."""
-
-    now = 0.0
-
-    def monotonic(self) -> float:
-        return self.now
-
-
-def _lease_clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
+def _lease_clock(monkeypatch: pytest.MonkeyPatch) -> ManualClock:
+    """`pg_lease`'s clock, at 0 until a fake advances it."""
     from server.core import pg_lease
 
-    clock = _Clock()
+    clock = ManualClock()
     monkeypatch.setattr(pg_lease, "time", clock)
     return clock
 
@@ -276,7 +269,7 @@ def test_still_heads_gives_back_claims_a_standby_wait_left_no_lease(
 
     async def heads_by_keys(keys, *, include_tombstoned=False, durable=False):  # type: ignore[no-untyped-def]
         if durable:
-            clock.now = 100.0  # the standby wait outlasts the lease
+            clock.advance(100)  # the standby wait outlasts the lease
         return {pg_memory.identity_key(claim.row): _head(9)}
 
     monkeypatch.setattr(pg_memory, "heads_by_keys", heads_by_keys)
@@ -296,17 +289,7 @@ def test_flush_decides_again_from_the_durable_read(monkeypatch: pytest.MonkeyPat
         reads.append(durable)
         return {} if durable else {pg_memory.identity_key(doc): (_head(9), 0)}
 
-    class _Committed:
-        seqs = [("o", "n", 1)]
-        rows = [doc]
-
-    class _Entry:
-        documents_sent = False
-        documents = [doc]
-        committed = _Committed()
-        stale: list[Any] = []
-
-    entry = _Entry()
+    entry = _flush_entry(doc)
     monkeypatch.setattr(pg_memory, "heads_owing", heads_owing)
     monkeypatch.setattr(pg_memory, "embedded", lambda row: True)
     sent = asyncio.run(pg_batch._served_documents([entry]))  # type: ignore[list-item]
@@ -351,7 +334,7 @@ def test_a_retirement_gives_back_claims_a_standby_wait_left_no_lease(
 
     async def live_decision_writers(org, namespace, keys, *, durable=False):  # type: ignore[no-untyped-def]
         assert durable
-        clock.now = 100.0  # the standby wait outlasts the lease
+        clock.advance(100)  # the standby wait outlasts the lease
         return []
 
     monkeypatch.setattr(pg_memory, "live_decision_writers", live_decision_writers)
@@ -477,17 +460,7 @@ def test_the_flush_builds_no_document_onto_a_redacted_or_deleted_head(
     async def heads_owing(keys, *, durable=False):  # type: ignore[no-untyped-def]
         return {pg_memory.identity_key(doc): ({**_head(9), **head}, 0)}
 
-    class _Committed:
-        seqs = [("o", "n", 1)]
-        rows = [doc]
-
-    class _Entry:
-        documents_sent = False
-        documents = [doc]
-        committed = _Committed()
-        stale: list[Any] = []
-
-    entry = _Entry()
+    entry = _flush_entry(doc)
     monkeypatch.setattr(pg_memory, "heads_owing", heads_owing)
     monkeypatch.setattr(pg_memory, "embedded", lambda row: True)
     sent = asyncio.run(pg_batch._served_documents([entry]))  # type: ignore[list-item]
@@ -530,15 +503,12 @@ def test_a_flush_whose_durable_read_fails_is_unanswered(monkeypatch: pytest.Monk
     """The standby away: the whole group is left to the delivery worker, with no resends
     one by one."""
 
-    async def unavailable(*a: Any, **k: Any) -> Any:
-        raise pg.PostgresUnavailableError("the commit's answer was lost", outcome_unknown=True)
-
     assert pg_batch._unanswered(pg.PostgresUnavailableError("x", outcome_unknown=True))
     doc = {**_claim(5, "a" * 64).row}
 
     async def heads_owing(keys, *, durable=False):  # type: ignore[no-untyped-def]
         if durable:
-            return await unavailable()
+            raise pg.PostgresUnavailableError("the commit's answer was lost", outcome_unknown=True)
         return {pg_memory.identity_key(doc): (_head(9), 0)}
 
     monkeypatch.setattr(pg_memory, "heads_owing", heads_owing)

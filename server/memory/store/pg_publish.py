@@ -214,7 +214,8 @@ async def retire_decision_records(
     time, and clear each namespace's target as it lands. Here the delete is committed,
     whatever its writer's answer was; the retirement keeps a record whose writer the
     authority holds live, or written since. A namespace that fails stays owed and the
-    rest go on; the first error is returned for the delivery worker to count."""
+    rest go on; the first error is returned: the delivery worker counts a refusal, and
+    releases its claims on a Postgres outage."""
     by_ns: dict[tuple[str, str], list[OwedRecord]] = {}
     for owed in owing:
         org, namespace, _ = owed.delivery
