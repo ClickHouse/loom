@@ -241,8 +241,8 @@ def parse(parser: Any, source: bytes) -> Any:
     limit = LOCK_WAIT.get()
     if limit is None:
         _LOCK.acquire()
-    elif not _LOCK.acquire(timeout=max(0.0, limit.deadline - time.monotonic())):
-        limit.gave_up = True
+    elif (left := limit.deadline - time.monotonic()) <= 0 or not _LOCK.acquire(timeout=left):
+        limit.gave_up = True  # past the deadline, a free lock is no reason to parse
         raise ParseTimeout("gave up waiting for another parse in this process")
     try:
         _check_in_child(_grammar(parser.language), source, budget, memory)

@@ -676,3 +676,20 @@ def test_a_parse_whose_caller_gives_up_does_not_wait_past_it() -> None:
             assert time.monotonic() - start < 2 and limit.gave_up
     finally:
         bounded_parse.LOCK_WAIT.reset(waits)
+
+
+def test_a_parse_whose_caller_already_gave_up_does_not_run() -> None:
+    import tree_sitter
+    import tree_sitter_go
+
+    from server.code.domain.extract import bounded_parse
+
+    parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_go.language()))
+    limit = bounded_parse.LockWait(0.0)  # the lock is free, the deadline passed
+    waits = bounded_parse.LOCK_WAIT.set(limit)
+    try:
+        with pytest.raises(bounded_parse.ParseTimeout, match="waiting"):
+            bounded_parse.parse(parser, b"package x\n")
+    finally:
+        bounded_parse.LOCK_WAIT.reset(waits)
+    assert limit.gave_up
