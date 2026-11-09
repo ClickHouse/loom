@@ -214,7 +214,7 @@ async def header_context(
 
 def _add_header(hd: HeaderDecls, path: str, text: str) -> tuple[float, bool]:
     """`hd.add_source` of one header: (an estimate of the CPU seconds it took, whether
-    its parse ran past the deadline; such a parse counts as a whole deadline). Its parse
+    its parse ran past its limits; such a parse counts as a whole deadline). Its parse
     runs twice, in `bounded_parse`'s child and then here, and this thread's clock sees
     one of them, so the estimate counts that clock twice."""
     start = time.thread_time()

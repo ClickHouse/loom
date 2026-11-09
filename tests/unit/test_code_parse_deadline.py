@@ -468,7 +468,7 @@ def test_every_grammar_the_server_imports_is_one_the_child_loads() -> None:
     from server.code.domain.declaration import _parser
     from server.code.domain.extract.lang_detect import _bash_parser
 
-    for parser in [_parser(g) for g in (*_GRAMMARS, "tsx")] + [_bash_parser()]:
+    for parser in [_parser(g) for g in (*set(_GRAMMARS.values()), "tsx")] + [_bash_parser()]:
         bounded_parse._grammar(parser.language)  # each Language the server builds matches
 
 
@@ -607,7 +607,10 @@ def test_a_parse_whose_child_the_kernel_killed_runs_again(
         return child
 
     monkeypatch.setattr(bounded_parse, "_start", start)
-    source = b"package x\nvar s = " + b"`" * 16_000  # parses in over a second
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 10.0)
+    # parses in over a second; the request fits the pipe, so the kill comes after it is sent
+    source = b"package x\nvar s = " + b"`" * 16_000
     pf, err = parse_for_ingest("a.go", source)
     assert err == "" and pf is not None and len(started) == 2
+    assert started[0].returncode == -signal.SIGKILL
     _end(bounded_parse._idle)

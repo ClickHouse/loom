@@ -594,6 +594,7 @@ def test_a_parse_is_kept_when_its_request_went_away(monkeypatch: pytest.MonkeyPa
 
 
 def test_another_namespace_does_not_wait_for_its_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    # the turn is per namespace; the pool's one thread still runs jobs in order
     monkeypatch.setattr(po, "_parsed_facts", _slow_facts(0.3))
 
     async def two() -> list[Any]:
@@ -743,7 +744,7 @@ def test_a_queued_parse_started_too_late_is_dropped(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(po, "_parsed_facts", parse)
 
     async def queued() -> Any:
-        # two other namespaces hold both pool threads
+        # one namespace's job runs on the pool's thread and another's is queued ahead
         for ns in ("one", "two"):
             asyncio.ensure_future(
                 po._file_facts(("acme", ns), f"{ns}.go", b"", ns, time.monotonic() + 60)

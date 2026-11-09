@@ -88,8 +88,8 @@ def _grammar(language: Any) -> str:
 
 def _in_child(grammar: str, source: bytes, budget: float, memory: int) -> bytes | int:
     """The child's answer for one parse: `parse_child.DONE`, `STOPPED`, or `_SILENT`
-    (it was ended for not answering); or, when the parse ended the child, its exit
-    status (negative: the signal that ended it)."""
+    (it was ended for not answering); or, when the child ended (mid-parse, or twice
+    before reading the request), its exit status (negative: the signal that ended it)."""
     global _idle
     child, _idle = _idle, None
     # Again on a fresh child, once each, when this one ended before reading the request,
