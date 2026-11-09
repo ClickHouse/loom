@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import sys
 import time
 from collections.abc import Callable, Iterator
@@ -51,7 +52,7 @@ def assert_linear(
     quadratic one takes 16) or under `floor` seconds, and under `bound` seconds when
     given. On a loaded host the best of three runs of each counts. A bound is on the
     code's own cost, so with one the runs are timed with coverage's tracer paused."""
-    with _untraced() if bound is not None else nullcontext():
+    with untraced() if bound is not None else nullcontext():
         a, b = cost(small), cost(big)
         if b > ratio * a:
             a, b = min(a, cost(small), cost(small)), min(b, cost(big), cost(big))
@@ -59,14 +60,18 @@ def assert_linear(
 
 
 @contextmanager
-def _untraced() -> Iterator[None]:
-    """This thread's tracer off: under coverage's the code costs about three times as
-    much. Only this thread's, so other threads stay measured."""
+def untraced() -> Iterator[None]:
+    """This thread's tracer and the garbage collector off, so a coverage run times the
+    code, not the tracer (about three times its cost), nor a full collection walking
+    every earlier test's heap. Only this thread's tracer: other threads stay measured."""
     previous = sys.gettrace()
     sys.settrace(None)
+    gc.collect()
+    gc.disable()
     try:
         yield
     finally:
+        gc.enable()
         sys.settrace(previous)
 
 

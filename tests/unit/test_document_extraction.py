@@ -10,7 +10,6 @@ failure, not a new golden value.
 
 from __future__ import annotations
 
-import gc
 import io
 import json
 import sys
@@ -26,6 +25,7 @@ import pytest
 from loom_extractor import ExtractionError, Options, decode, detect_format, extract
 from loom_extractor.artifact import Artifact, Block, Coverage, Locator
 from server.knowledge.domain.extract import InvalidArtifact, parse_artifact, structural
+from tests.unit.code_fixtures import untraced
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "knowledge"
 
@@ -1389,21 +1389,13 @@ def test_a_heading_line_with_a_long_run_of_blanks_is_read_whole() -> None:
 
 
 def _cpu(fn: Any) -> float:
-    """This process's CPU seconds `fn` takes, so a test running beside it does not count.
-    The tracer is off while `fn` runs, so a coverage run times the parser, not itself:
-    every caller runs extractor code, which the unit job's coverage does not measure. The
-    garbage collector is off too, since a full pass walks every earlier test's heap."""
-    previous = sys.gettrace()
-    sys.settrace(None)
-    gc.collect()
-    gc.disable()
-    try:
+    """This process's CPU seconds `fn` takes, so a test running beside it does not count,
+    `untraced`: every caller runs extractor code, which the unit job's coverage does not
+    measure."""
+    with untraced():
         start = time.process_time()
         fn()
         return time.process_time() - start
-    finally:
-        gc.enable()
-        sys.settrace(previous)
 
 
 def _within(seconds: float, fn: Any) -> None:
