@@ -118,6 +118,15 @@ def test_no_operator_entry_is_org_readable_before_the_registry_is_read(monkeypat
     monkeypatch.setattr(repos, "_registry_loaded", False)
     (entry,) = repos._with_registry([_cfg("code-weave", classification="standard")])
     assert entry.org_readable is False
+
+    # The first read finishing between the flag and the rows still answers unread.
+    def _read_lands() -> list[repos.RepoConfig]:
+        monkeypatch.setattr(repos, "_registry_loaded", True)
+        return []
+
+    monkeypatch.setattr(repos, "registry_repos", _read_lands)
+    (entry,) = repos._with_registry([_cfg("code-weave", classification="standard")])
+    assert entry.org_readable is False
     monkeypatch.setattr(repos, "_registry_loaded", True)
     (entry,) = repos._with_registry([_cfg("code-weave", classification="standard")])
     assert entry.org_readable is True

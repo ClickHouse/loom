@@ -393,12 +393,13 @@ def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:
     survives every boot. An access row whose entry is gone is dropped."""
     import dataclasses
 
+    # Unread, a member's namespace is not known yet: no operator entry is org-readable.
+    # Read before the rows: the first read sets its flag only after them.
+    unread = registry_unread()
     entries = registry_repos()
     rows = {(c.org, c.namespace): c for c in entries}
     # A page row counts on its own: a later read publishes rows and page set apart.
     taken = page_namespaces() | {k for k, c in rows.items() if c.row_kind == "page"}
-    # Unread, a member's namespace is not known yet: no operator entry is org-readable.
-    unread = registry_unread()
     out: list[RepoConfig] = []
     for c in env_repos:
         if (c.org, c.namespace) in taken:
