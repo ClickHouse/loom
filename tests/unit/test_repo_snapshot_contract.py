@@ -23,6 +23,8 @@ CONFIG_ENTRY_READERS = {
     "identity/app/token_grants.py",
     # Whether a revoke on a never-read process must read the registry and fan out.
     "code/app/index/maintainers.py",
+    # The restricted namespaces a SQL surface grant may not reach.
+    "insights/app/sql_access.py",
 }
 # The snapshot's internals and the raw configuration: only repos.py reads them.
 INTERNALS = {"_configured_from_env", "_with_registry", "_registry_repos", "_page_namespaces"}

@@ -15,7 +15,7 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from server.code.domain.index.repos import configured_repos
+from server.code.domain.index.repos import config_entries
 from server.core.ch_names import DEFAULT_READER
 from server.core.datetimes import utc_now
 from server.core.repo_base import _CHClient, _default_client
@@ -51,9 +51,11 @@ LoginCheck = Callable[[str, str], str]
 def config_restricted() -> set[tuple[str, str]]:
     """The namespaces this process's code repo configuration classifies
     restricted. The views cannot read it, so a grant checks it here: run the
-    command with the server's configuration."""
+    command with the server's configuration. A maintainer's access row is in
+    loom.code_repos, which the views read themselves, so the configuration
+    alone (before the registry's first read) is what this check needs."""
     return {
-        (cfg.org, cfg.namespace) for cfg in configured_repos() if cfg.classification == "restricted"
+        (cfg.org, cfg.namespace) for cfg in config_entries() if cfg.classification == "restricted"
     }
 
 

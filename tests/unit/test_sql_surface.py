@@ -256,7 +256,23 @@ def _executed(ch: RecordingCH) -> list[str]:
 
 @pytest.fixture(autouse=True)
 def _no_code_repos(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("server.insights.app.sql_access.configured_repos", list)
+    monkeypatch.setattr("server.insights.app.sql_access.config_entries", list)
+
+
+def test_the_restricted_config_is_read_before_the_registry_is(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A CLI process never reads the code registry: the check must not need it."""
+    from server.code.domain.index import repos
+    from server.insights.app import sql_access
+
+    # The real accessor, not the autouse stand-in; the registry never read.
+    monkeypatch.setattr(sql_access, "config_entries", repos.config_entries)
+    monkeypatch.setattr(repos.settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    with pytest.raises(repos.RegistryUnread):
+        repos.configured_repos()
+    assert isinstance(sql_access.config_restricted(), set)
 
 
 def test_a_new_user_exists_before_its_scope_and_is_granted_last() -> None:

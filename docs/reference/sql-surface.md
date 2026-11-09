@@ -216,6 +216,6 @@ LIMIT 20;
 
 SELECT day, sum(upstream_cost_usd) AS spend
 FROM loom.sql_v1_usage_daily
-WHERE day >= today() - 30
+WHERE day >= toDate(now(), 'UTC') - 30
 GROUP BY day ORDER BY day;
 ```
