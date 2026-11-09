@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import faulthandler
 import pathlib
 import time
 from typing import Any
@@ -49,7 +50,13 @@ def test_a_node_reads_its_text_after_the_deadline_has_passed(
     spent = time.thread_time()
     while time.thread_time() - spent < 0.4:  # CPU time past the parse's deadline
         pass
-    assert tree.root_node.children[0].text == b"x = 'a'.format(1)"
+    # A regression spins inside the binding: fail with a stack dump, not a hung job.
+    faulthandler.dump_traceback_later(20, exit=True)
+    try:
+        text = tree.root_node.children[0].text
+    finally:
+        faulthandler.cancel_dump_traceback_later()
+    assert text == b"x = 'a'.format(1)"
 
 
 def test_a_file_parsed_in_time_keeps_its_symbols() -> None:
