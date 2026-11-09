@@ -536,15 +536,17 @@ its own wait covers every row its transaction read.
   timeout does not cover a commit's standby wait); the client's command timeout cancels
   a wait that outlasts it and raises, and nothing claimed is sent.
 - A writer's flush sends its own commits, which returned from their wait.
-- A head newer than the revision a delivery claimed (a copy, a pin or a touch, that a
-  document is built onto; a delete, other content or a redaction, that settles the
-  document unsent), and the live decision writers a record retirement keeps, are other
-  sessions' commits. They are
-  read again in `pg.durable_transaction()`, whose COMMIT carries a transactional logical
-  message (prefix `loom.durable`) so that it waits for the standbys on the connection
-  that read the rows, and decided from that read. `decision.record` checks its writers
-  this way after its record lands, and a delete of a decision retires its record this
-  way in its flush, so each waits for one more standby round trip.
+- A head newer than the revision a delivery claimed, and the live decision writers a
+  record retirement keeps, are other sessions' commits. They are read again in
+  `pg.durable_transaction()`, whose COMMIT carries a transactional logical message
+  (prefix `loom.durable`) so that it waits for the standbys on the connection that read
+  the rows, and decided from that read: a copy (a pin, a touch) has a document built
+  onto it; a delete, other content or a redaction settles the claimed document unsent.
+  The settling commit cannot cover that read, being on another connection: after a
+  failover it would mark the document done on a primary where the claimed revision is
+  the head again. `decision.record` checks its writers this way after its record lands,
+  and a delete of a decision retires its record this way in its flush, so each waits
+  for one more standby round trip.
 
 The rule for any path: a ClickHouse send fed by a Postgres read sends only what the
 caller committed or claimed, or reads durably first. A decision that only changes

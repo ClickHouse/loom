@@ -63,7 +63,7 @@ _CALLERS = {
     "server/memory/app/namespace_rollback.py": "plans a rollback, which commits",
     "server/memory/app/period_digest.py": "decides a write, which commits",
     "server/memory/app/pg_admission.py": "the barrier and the admission; a write commits",
-    "server/memory/app/pg_delivery.py": "a newer head copy is read again durably",
+    "server/memory/app/pg_delivery.py": "a head newer than the claim is read again durably",
     "server/memory/app/restore.py": "the outcome of the caller's own commit",
     "server/memory/app/search/pg_validation.py": "filters what a search serves; sends nothing",
     "server/memory/app/sensitivity_sweep.py": "closes facts only of a version ClickHouse holds",
