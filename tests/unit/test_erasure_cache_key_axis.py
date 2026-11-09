@@ -66,7 +66,10 @@ _QUOTED_KEYS = erasure_predicates.USER_QUOTED_KEY_LIST
 def test_the_quoted_keys_read_the_summaries_rows_and_history_by_the_users_pairs() -> None:
     assert "FROM loom.memory FINAL" in _QUOTED_KEYS
     assert "UNION ALL SELECT" in _QUOTED_KEYS and "FROM loom.memory_versions" in _QUOTED_KEYS
-    assert "concat('src:', memory_key)" in _QUOTED_KEYS
+    # a summary is the user's by its (namespace, src:key) pair, not by key alone
+    assert "has(tags, 'consolidated')" in _QUOTED_KEYS
+    assert "arrayMap(t -> (toString(namespace), t), tags)" in _QUOTED_KEYS
+    assert "groupUniqArray((toString(namespace), concat('src:', memory_key)))" in _QUOTED_KEYS
     assert "user_id = {uid:String}" in _QUOTED_KEYS
 
 

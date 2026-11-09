@@ -1287,16 +1287,17 @@ none of the three lists.
 A user-scope step reaches a table with no `user_id` column through a predicate that holds
 a subquery: the user's memory keys, record ids or shared keys, or the graph keys and
 entities only the user's memories link, and the same of the summaries built from them
-(`server/erasure/store/predicates.py`). The census counts with that predicate as
-written. A replicated table refuses a mutation with a subquery or with `now()`, so the
-step reads the subquery first and mutates by what it returned, bound as an array a slice
-at a time (`server/erasure/store/scope_reads.py`), and binds the time it stamps. A key that holds stored free text (a triple, an edge, a
-community's entity or label, a document's `source_uri`) is bound as its `cityHash64`,
-computed by ClickHouse on both sides: nothing bounds a stored name, and one name can be
-longer than the form field a bound value travels in. A slice's mutation tag hashes the
-step that submits it and its bound values but not the stamp, so each slice waits for its
-own mutation, two steps that submit one statement wait for their own, and a step re-run
-after a crash re-reads its slices and waits for any of its own still pending.
+(`server/erasure/store/predicates.py`). The census counts with that predicate as written.
+A replicated table refuses a mutation with a subquery or with `now()`, so the step reads
+the subquery first and mutates by what it returned, bound as an array a slice at a time
+(`server/erasure/store/scope_reads.py`), and binds the time it stamps. A key that holds
+stored free text (a triple, an edge, a community's entity or label, a document's
+`source_uri`) is bound as its `cityHash64`, computed by ClickHouse on both sides: nothing
+bounds a stored name, and one name can be longer than the form field a bound value travels
+in. A slice's mutation tag hashes the step that submits it and its bound values but not
+the stamp, so each slice waits for its own mutation, two steps that submit one statement
+wait for their own, and a step re-run after a crash re-reads its slices and waits for any
+of its own still pending.
 
 The user-scope steps read the user's memory keys from `loom.memory`, so a user purge
 tombstones those rows in `memory.tombstone` and deletes them in `memory.retire`, after the
