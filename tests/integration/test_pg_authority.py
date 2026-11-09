@@ -300,8 +300,8 @@ async def test_a_head_that_leaves_out_its_default_fields_is_served_as_the_full_o
 ) -> None:
     """A stored row may leave out a field at its loom.memory default: point reads,
     listing and search serve such a head as they serve the full one, and the SQL readers
-    of its fields (the cross-session heads, the usage fold, the erasure export) take a
-    missing one as its default."""
+    of its fields (the journal's revisions, the cross-session heads, the usage fold, the
+    erasure export) take a missing one as its default."""
     from server.core import pg
     from server.erasure.store.exports import export_memory_heads
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
@@ -319,11 +319,13 @@ async def test_a_head_that_leaves_out_its_default_fields_is_served_as_the_full_o
         defaults = pg_memory.SPARSE_DEFAULTS
         return {c: v for c, v in stored.items() if c not in defaults or v != defaults[c]}
 
+    full: dict[str, dict[str, Any]] = {}
     for table in ("memory_current", "memory_revisions"):
         stored = await pg_conn.fetchval(
             f"SELECT row FROM loom.{table} WHERE org = $1 AND namespace = $2", org, ns
         )
         assert len(sparse(stored)) < len(stored)
+        full[table] = stored
         await pg_conn.execute(
             f"UPDATE loom.{table} SET row = $3 WHERE org = $1 AND namespace = $2",
             org,
@@ -340,6 +342,11 @@ async def test_a_head_that_leaves_out_its_default_fields_is_served_as_the_full_o
     ).json()
     assert got["results"]["k"]["value"] == "the deploy window is tuesday", got
     try:
+        # The journal's reader serves the sparse revision as the full one.
+        (revision,) = await pg_memory.revisions_since(org, ns, 0, 2**62)
+        assert {c: v for c, v in revision.items() if c != "seq"} == pg_memory.decode_row(
+            full["memory_revisions"]
+        )
         (across,) = await pg_memory.key_heads_across_sessions(
             org, ns, "a", "-", ["k"], scope=WHOLE_NAMESPACE
         )
