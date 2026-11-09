@@ -173,8 +173,11 @@ def harness(monkeypatch: pytest.MonkeyPatch):
     what it leaves: embedding rows, usage events and audit rows. `verdicts` scripts the
     conflict check per value (clear otherwise); `blacklist` names a refused substring."""
     import server.core.ch as ch_mod
+    from server.settings import settings
 
     no_delete_in_flight(monkeypatch)
+    # One conflict statement per fact: the scripted check stands in for it.
+    monkeypatch.setattr(settings, "memory_write_candidate_batch", 0)
     real_client = ch_mod.get_client
     stubs: list[Any] = []
 

@@ -1895,6 +1895,7 @@
   "tests/unit/test_working_memory_ops.py": 0.05,
   "tests/unit/test_working_memory_rows.py": 0.03,
   "tests/unit/test_write_audit_and_checkpoint_lag.py": 0.03,
+  "tests/unit/test_write_candidates_batched.py": 0.12,
   "tests/unit/test_write_outcome_counting.py": 0.12,
   "tests/unit/test_write_path_latency.py": 0.28,
   "tests/unit/test_write_scope.py": 0.22

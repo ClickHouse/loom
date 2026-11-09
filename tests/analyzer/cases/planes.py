@@ -18,10 +18,12 @@ import types
 import typing
 from typing import Any
 
+from server.auth.context import current_auth
 from server.core.tag_sql import TagFilter
 from server.identity.domain.read_scope import (
     WHOLE_NAMESPACE,
     ReadFilters,
+    read_filters_bound,
     scope_and,
 )
 from tests.analyzer.cases._common import AGENT, NS, ORG, SMALL_VEC, rows_by_substring
@@ -761,6 +763,9 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     await PL.failure_notes(org=ORG, namespace=NS, memory_key="k1")
     await PL.stats_by_revision(org=ORG, namespace=NS, memory_key="k1")
     await PL.unfolded(org=ORG, namespace=NS, memory_key="k1", since="2026-01-01")
+    await CF.candidate_rows_many(
+        org=ORG, namespace=NS, items=[("k1", "preference", SMALL_VEC, 0.5)], ch=ch
+    )
     # The per-write peer read — stage A, stage B, the join fallback.
     _peer = {
         "org": ORG,
@@ -782,6 +787,10 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     scoped = dict(_peer)
     await CF._peer_rows_joined(ch, scoped, scope_and(one_user, scoped, "m"))
     await CF._foreign_pinned_rows(ch, dict(_peer), one_user, [])
+    with read_filters_bound(current_auth(), one_user):  # the narrowed batch and its pinned arm
+        await CF.candidate_rows_many(
+            org=ORG, namespace=NS, items=[("k1", "preference", SMALL_VEC, 0.5)], ch=ch
+        )
     await CF.check_against_shared(
         org=ORG, namespace=NS, target_key="k1", memory_type="preference", embedding=SMALL_VEC
     )

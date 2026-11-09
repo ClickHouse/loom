@@ -67,7 +67,7 @@ from server.memory.app.set_commit import set_next
 from server.memory.app.set_entities import declared_entities
 from server.memory.app.triple_projections import reconcile_row_facts, write_derived_facts
 from server.memory.app.write_fence import lift_above_deletes, lift_after_insert
-from server.memory.domain.conflicts import kept_versions
+from server.memory.domain.conflicts import APPEND_ONLY_POLICY, kept_versions
 from server.memory.domain.memory_types import is_embedded
 from server.memory.domain.temporal_sql import LIVE_STATUSES
 from server.memory.domain.webhook_events import EventType
@@ -1434,6 +1434,40 @@ async def _type_floor(org: str, namespace: str, memory_type: str) -> tuple[float
         return None
 
 
+async def _batched_peers(
+    input: Any,
+    entry_metas: list[tuple[Any, ...]],
+    pairs: list[tuple[tuple[Any, ...], list[float]]],
+    floors: dict[str, tuple[float, float]],
+) -> dict[int, list[dict[str, Any]]]:
+    """Under `LOOM_MEMORY_BULK_PEER_READ=batched`, the facts' peers read a batch at a time
+    (`conflicts.candidate_rows_many`), keyed by the fact's place in `pairs`; a fact with no
+    entry reads its own. Under `per_fact`, nothing: each fact reads its peers codes-first
+    (`conflicts.nearest_peer_rows`), as memory.set does."""
+    from server.memory.app import conflicts
+    from server.settings import settings
+
+    batch = int(settings.memory_write_candidate_batch)
+    if settings.memory_bulk_peer_read != "batched" or batch <= 0 or len(pairs) < 2:
+        return {}
+    items = [
+        (
+            str(entry_metas[idx][0].memory_type),
+            str(entry_metas[idx][0].memory_key),
+            vec if str(entry_metas[idx][0].memory_type) in floors else [],
+            floors.get(str(entry_metas[idx][0].memory_type), (0.0, 0.0))[1],
+        )
+        for (idx, _t, _x, _k), vec in pairs
+    ]
+    try:
+        return await conflicts.candidate_rows_many(
+            org=input.org, namespace=input.namespace, items=items, batch=batch
+        )
+    except Exception as e:  # noqa: BLE001 — each fact reads its own peers
+        log.warning("bulk_set: batched candidate lookup failed: %s", e)
+        return {}
+
+
 async def _bulk_conflict_verdicts(
     input: Any,
     memory_rows: list[dict[str, Any]],
@@ -1466,17 +1500,17 @@ async def _bulk_conflict_verdicts(
     # cannot be read is left to each fact's check, which reads it again.
     policy = await _namespace_policy(input.org, input.namespace)
     floors = {} if floors is None else floors  # (threshold, reach) by type, kept for the commit
-    for idx, _t, _x, _k in pending[:cap]:
-        mt = str(entry_metas[idx][0].memory_type)
+    for mt in dict.fromkeys(str(entry_metas[idx][0].memory_type) for idx, *_ in pending[:cap]):
         if mt not in floors and (floor := await _type_floor(input.org, input.namespace, mt)):
             floors[mt] = floor
 
-    async def _one(idx: int, vec: list[float]) -> None:
+    async def _one(idx: int, vec: list[float], candidate_rows: list[dict[str, Any]] | None) -> None:
         entry, serialized, _t, _e, _x = entry_metas[idx]
         floor = floors.get(str(entry.memory_type))
         async with sem:
             try:
                 out[idx] = await check_on_commit(
+                    candidate_rows=candidate_rows,
                     resolved_policy=policy,
                     resolved_threshold=floor[0] if floor else None,
                     org=input.org,
@@ -1496,10 +1530,14 @@ async def _bulk_conflict_verdicts(
             except Exception as e:  # noqa: BLE001 — the fact writes unchecked
                 log.warning("bulk_set: conflict check failed for %r: %s", entry.memory_key, e)
 
-    # Each fact reads its own peers (`conflicts.nearest_peer_rows`, codes-first): one statement
-    # over the namespace's full vectors for many facts reads every vector at full width.
     pairs = list(zip(pending, value_vectors, strict=False))[:cap]
-    jobs = [_one(idx, vec) for (idx, _t, _x, _k), vec in pairs]
+    # Under append_only no fact reads peers (`check_on_commit` answers clear first).
+    prefetched = (
+        {}
+        if policy == APPEND_ONLY_POLICY
+        else await _batched_peers(input, entry_metas, pairs, floors)
+    )
+    jobs = [_one(idx, vec, prefetched.get(j)) for j, ((idx, _t, _x, _k), vec) in enumerate(pairs)]
     if jobs:
         await asyncio.gather(*jobs)
     return out

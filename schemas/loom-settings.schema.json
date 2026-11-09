@@ -3852,6 +3852,15 @@
           "type": "integer",
           "description": "Supersession pairs one bulk write follows on the triple plane in the request; the rest are recorded for the projection repair to follow. 0 = the repair follows all."
         },
+        "memory_bulk_peer_read": {
+          "default": "batched",
+          "enum": [
+            "batched",
+            "per_fact"
+          ],
+          "type": "string",
+          "description": "How a bulk write and the value-update linking read each fact's peers: batched = one join of the namespace's full vectors per memory_write_candidate_batch facts; per_fact = each fact's two-stage, codes-first read, as memory.set's, which holds one statement's memory at any scope size but may pick a different peer where distances tie at the last place."
+        },
         "memory_calibration_namespace_miss_ttl_s": {
           "default": 60.0,
           "exclusiveMinimum": 0,
@@ -5007,6 +5016,11 @@
           "minimum": 1,
           "type": "integer",
           "description": "Leases (max pass plus lease margin each) after a webhook.remove in which delivery passes still mark the removed memory webhook's events dead."
+        },
+        "memory_write_candidate_batch": {
+          "default": 6,
+          "type": "integer",
+          "description": "Facts per batched candidate lookup (conflict and value-update peers) on the write path; matches the per-fact concurrency so wall time stays flat. 0 = one statement per fact."
         },
         "mentor_max_hints_per_session": {
           "default": 6,

@@ -706,7 +706,9 @@ async def _value_updates(
     cannot confirm the `unconfirmed` ones."""
     from server.memory import store
     from server.memory.app import value_updates as vu
+    from server.settings import settings
 
+    monkeypatch.setattr(settings, "memory_write_candidate_batch", 0)
     olds = list(older) + ["gone"]
 
     async def peers(*a, **k):
@@ -753,7 +755,7 @@ async def _value_updates(
         if on_unconfirmed is not None and unconfirmed:
             await on_unconfirmed([r for r in written if r["memory_id"] in unconfirmed])
 
-    monkeypatch.setattr(vu, "_peers", peers)
+    monkeypatch.setattr(vu, "_peers_per_row", peers)
     monkeypatch.setattr(vu, "decide_links", links)
     monkeypatch.setattr(store, "write_versions_by_ids", write)
     rows = [

@@ -1,7 +1,9 @@
-"""The write path's peer reads take the two-stage, codes-first shape: stage A ranks
-the namespace's vectors with a bare distance ORDER BY + LIMIT, which the Quantized
-codec answers from its codes, and stage B reads the candidates' rows by sort key; the
-full-width join is only the fallback past `_PEER_MAX_K` candidates."""
+"""Under `LOOM_MEMORY_BULK_PEER_READ=per_fact` the bulk write's and the value-update
+linking's peer reads take the two-stage, codes-first shape: stage A ranks the
+namespace's vectors with a bare distance ORDER BY + LIMIT, which the Quantized codec
+answers from its codes, and stage B reads the candidates' rows by sort key; the
+full-width join is only the fallback past `_PEER_MAX_K` candidates. A bulk call reads the
+namespace policy and each type's threshold once, under either setting."""
 
 from __future__ import annotations
 
@@ -11,6 +13,12 @@ from typing import Any
 import pytest
 
 from server.memory.app import conflicts, value_updates
+from server.settings import settings
+
+
+@pytest.fixture(autouse=True)
+def per_fact(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "memory_bulk_peer_read", "per_fact")
 
 
 class StubCH:
@@ -235,13 +243,15 @@ async def test_a_bulk_type_threshold_that_cannot_be_read_is_read_by_each_fact(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("read", ["batched", "per_fact"])
 async def test_an_append_only_bulk_write_clears_every_entry_without_a_peer_read(
-    monkeypatch,
+    monkeypatch, read: str
 ) -> None:
     """Under `append_only` every entry of a bulk write is its own row: the batch reads the
     policy once and no entry issues a peer statement, as for a single write."""
     from server.memory.app import bulk_set
 
+    monkeypatch.setattr(settings, "memory_bulk_peer_read", read)
     ch = StubCH()
     monkeypatch.setattr(conflicts, "get_client", lambda: ch)
     reads = _no_reads(monkeypatch, "append_only")

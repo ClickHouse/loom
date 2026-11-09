@@ -53,6 +53,9 @@ from server.memory.store.conflict_candidates import (
     PEER_LIMIT,
     PINNED_PEERS_SQL,
     _peer_candidates_sql,
+    candidate_sql_many,
+    pinned_sql_many,
+    vector_params,
 )
 from server.settings import settings
 
@@ -178,6 +181,74 @@ async def resolve_conflict_floor(org: str, namespace: str, memory_type: str) -> 
     without one."""
     threshold = await _resolve_threshold(org, namespace, memory_type=memory_type)
     return threshold, _peer_query_distance(threshold)
+
+
+async def candidate_rows_many(
+    *,
+    org: str,
+    namespace: str,
+    items: list[tuple[str, str, list[float], float]],
+    batch: int | None = None,
+    ch: Any = None,
+) -> dict[int, list[dict[str, Any]]]:
+    """Peer rows for many facts at once, keyed by the fact's index in `items`
+    (each `(memory_type, memory_key, embedding, max_distance)`). Facts are
+    grouped by embedding dimension, cut into chunks of `batch`
+    (`memory_write_candidate_batch`), and the chunks run concurrently — the
+    same concurrency as the per-fact path, at one namespace read per chunk
+    instead of per fact. A fact with no embedding gets no entry. Fail-open per
+    chunk: a failed chunk's facts fall back to the per-fact statement in the
+    caller by getting no entry here — callers treat a missing key as "fetch
+    yourself", not as "no peers"."""
+    import asyncio
+
+    ch = ch or get_client()
+    scope = _scope_or_none()
+    if scope is None:
+        return {}  # every fact falls back to the per-fact path, which fails closed
+    size = int(batch if batch is not None else settings.memory_write_candidate_batch)
+    size = max(size, 1)
+    by_dim: dict[int, list[int]] = {}
+    for i, (_mt, _k, emb, _md) in enumerate(items):
+        if emb:
+            by_dim.setdefault(len(emb), []).append(i)
+    out: dict[int, list[dict[str, Any]]] = {}
+
+    async def _chunk(dim: int, idxs: list[int]) -> None:
+        params: dict[str, Any] = {
+            "org": org,
+            "ns": namespace,
+            "dim": dim,
+            **vector_params([items[i][2] for i in idxs]),
+            "types": [items[i][0] for i in idxs],
+            "keys": [items[i][1] for i in idxs],
+            "max_dists": [float(items[i][3]) for i in idxs],
+        }
+        rows = await ch.query_all(
+            candidate_sql_many(len(idxs), scope_and(scope, params, "m")), params=params
+        )
+        if scope.narrowed:  # other users' pinned rows still block; the scope hides them
+            pinned = await ch.query_all(pinned_sql_many(len(idxs)), params=params)
+            rows += [r for r in pinned if _foreign_pinned(r, scope)]
+        for i in idxs:
+            out[i] = []
+        seen: set[tuple[int, str]] = set()
+        for r in rows:
+            q = int(r.get("qidx") or 0)
+            if 0 <= q < len(idxs) and (q, str(r.get("memory_id"))) not in seen:
+                seen.add((q, str(r.get("memory_id"))))
+                out[idxs[q]].append(dict(r))
+
+    jobs = [
+        _chunk(dim, idxs[k : k + size])
+        for dim, idxs in by_dim.items()
+        for k in range(0, len(idxs), size)
+    ]
+    results = await asyncio.gather(*jobs, return_exceptions=True)
+    for res in results:
+        if isinstance(res, Exception):
+            log.warning("batched conflict candidates failed (per-fact fallback): %s", res)
+    return out
 
 
 async def _policy_before_gate(resolved_policy: str | None, org: str, namespace: str) -> str | None:

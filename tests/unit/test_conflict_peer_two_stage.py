@@ -110,8 +110,10 @@ def test_the_gates_own_stage_a_reads_every_type() -> None:
     assert "memory_type" not in conflict_candidates._peer_candidates_sql()
 
 
-def test_the_pinned_arm_takes_type_from_the_memory_row_never_the_vector() -> None:
-    sql = conflict_candidates.PINNED_PEERS_SQL
+@pytest.mark.parametrize(
+    "sql", [conflict_candidates.PINNED_PEERS_SQL, conflict_candidates.pinned_sql_many(3)]
+)
+def test_the_pinned_arm_takes_type_from_the_memory_row_never_the_vector(sql: str) -> None:
     assert "m.pinned = 1" in sql and "m.memory_type" in sql
     # Every type read is the memory row's (`m.`); a bare one would be the vector row's.
     assert not re.search(r"(?<![.\w])memory_type", sql)
@@ -142,3 +144,12 @@ def test_the_joined_fallback_takes_the_callers_limit() -> None:
     asyncio.run(cf._peer_rows_joined(_CH(), dict(_BASE), limit=7))
     asyncio.run(cf._peer_rows_joined(_CH(), dict(_BASE)))
     assert "LIMIT 7" in seen[0] and f"LIMIT {cf.PEER_LIMIT}" in seen[1]
+
+
+def test_both_pinned_statements_share_one_pinned_row_filter() -> None:
+    shared = conflict_candidates._pinned_row_filter("{t}").split("{t}")
+    for sql in (conflict_candidates.PINNED_PEERS_SQL, conflict_candidates.pinned_sql_many(2)):
+        assert all(part.strip() in sql for part in shared)
+    limit = f"LIMIT {conflict_candidates.PEER_LIMIT}"
+    assert limit in conflict_candidates.PINNED_PEERS_SQL
+    assert f"{limit} BY qidx" in conflict_candidates.pinned_sql_many(2)

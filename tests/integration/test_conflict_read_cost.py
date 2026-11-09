@@ -103,8 +103,9 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
 
     org = unique_org("conflict-cost")
     await _seed(ch, org, types)
-    # Row 47 is u7's and pinned, so it is the write's nearest row.
-    emb = [float(x) for x in (await ch.query_one(f"SELECT {_vec('47')} AS v"))["v"]]
+    # Row 47 is u7's and pinned, so it is the write's nearest row. Rounded so four
+    # facts' vectors fit in ClickHouse's HTTP form-field limit.
+    emb = [round(float(x), 3) for x in (await ch.query_one(f"SELECT {_vec('47')} AS v"))["v"]]
     params = {
         "org": org,
         "ns": _NS,
@@ -114,6 +115,7 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
         "max_dist": 2.0,
         "dim": _DIM,
     }
+    items = [("semantic", f"new{i}", emb, 2.0) for i in range(4)]
     run = secrets.token_hex(4)
 
     async def measured(phase: str, call: Any) -> Any:
@@ -124,6 +126,10 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
             set_query_tag("")
 
     wide = await measured("wide", lambda: conflicts.nearest_peer_rows(ch, params))
+    wide_bulk = await measured(
+        "wide_bulk",
+        lambda: conflicts.candidate_rows_many(org=org, namespace=_NS, items=items, batch=4, ch=ch),
+    )
     set_current_auth(
         AuthInfo(
             subject="sa:bot",
@@ -140,6 +146,12 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
         pinned = await measured(
             "pinned", lambda: conflicts._foreign_pinned_rows(ch, params, scope, own)
         )
+        bulk = await measured(
+            "bulk",
+            lambda: conflicts.candidate_rows_many(
+                org=org, namespace=_NS, items=items, batch=4, ch=ch
+            ),
+        )
     finally:
         set_current_auth(None)
 
@@ -147,10 +159,14 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
     assert len(own) == 10 and all(r["user_id"] == "u3" for r in own)
     assert [r["memory_key"] for r in pinned][:1] == ["k47"]
     assert all(r["pinned"] and r["user_id"] != "u3" for r in pinned)
+    assert len(wide_bulk) == len(bulk) == 4
+    for rows in bulk.values():
+        assert sum(1 for r in rows if r["user_id"] == "u3" and not r["pinned"]) == 10
+        assert any(r["memory_key"] == "k47" for r in rows)
 
     cost = {
         phase: _cost(await _logged(ch, f"it.conflict_cost.{run}.{phase}"))
-        for phase in ("wide", "scoped", "pinned")
+        for phase in ("wide", "wide_bulk", "scoped", "pinned", "bulk")
     }
     for phase, c in cost.items():
         print(f"{phase}: {c['read_rows']} rows, {c['read_bytes']} B, {c['memory_usage']} B mem")
@@ -160,6 +176,7 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
     single = cost["scoped"]["read_bytes"] + cost["pinned"]["read_bytes"]
     assert single <= 2 * cost["wide"]["read_bytes"]
     assert cost["scoped"]["read_bytes"] < cost["wide"]["read_bytes"] / 5
+    assert cost["bulk"]["read_bytes"] <= 2 * cost["wide_bulk"]["read_bytes"]
 
 
 def _small(i: int) -> str:
@@ -196,7 +213,7 @@ async def _seed_close_rows(ch: Any, org: str, own_rows: int, vector_type: str) -
 
 
 @pytest.mark.parametrize(("own_rows", "vector_type"), [(0, "episodic"), (40, "semantic")])
-async def test_a_foreign_pinned_row_blocks_a_narrowed_write(
+async def test_a_foreign_pinned_row_blocks_a_narrowed_write_single_and_bulk(
     ch: Any, monkeypatch: pytest.MonkeyPatch, own_rows: int, vector_type: str
 ) -> None:
     from server.auth.context import set_current_auth
@@ -208,7 +225,7 @@ async def test_a_foreign_pinned_row_blocks_a_narrowed_write(
     monkeypatch.setattr(conflicts, "get_client", lambda: ch)
     emb = [1.0] + [0.0] * (_DIM - 1)
 
-    def check() -> Any:
+    def check(candidate_rows: Any) -> Any:
         return conflicts.check_on_commit(
             org=org,
             namespace=_NS,
@@ -217,6 +234,7 @@ async def test_a_foreign_pinned_row_blocks_a_narrowed_write(
             memory_key="new",
             new_value="U lives in Lisbon",
             new_embedding=emb,
+            candidate_rows=candidate_rows,
             resolved_threshold=0.85,
             resolved_duplicate_threshold=0.9,
             resolved_policy="auto_reinforce",
@@ -234,8 +252,12 @@ async def test_a_foreign_pinned_row_blocks_a_narrowed_write(
         )
     )
     try:
-        single = await check()
+        single = await check(None)
+        rows = await conflicts.candidate_rows_many(
+            org=org, namespace=_NS, items=[("semantic", "new", emb, 0.3)], ch=ch
+        )
+        batched = await check(rows[0])
     finally:
         set_current_auth(None)
-    assert single.verdict == "rejected"
-    assert all(p.user_id == "U" for p in single.peers), "V's row is never named"
+    assert single.verdict == batched.verdict == "rejected"
+    assert all(p.user_id == "U" for p in single.peers + batched.peers), "V's row is never named"
