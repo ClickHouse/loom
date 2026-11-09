@@ -405,19 +405,22 @@ class Scenario:
         literals = re.findall(r"unhex\(\\?'([0-9a-f]+)\\?'\)", policy)
         key = next((h for h in literals if len(h) == 64), "")
         padded = bytes.fromhex(key).ljust(64, b"\0")
-        secrets = [*literals, *(bytes(b ^ p for b in padded).hex() for p in (0x36, 0x5C))]
+        pads = [bytes(b ^ p for b in padded).hex() for p in (0x36, 0x5C)]
+        # The pads end in the zero-padded key's 0x36 and 0x5C bytes, printable as they are.
+        secrets = [*literals, *pads, "6" * 32, "\\\\" * 32]
+        self.check(bool(key), "the memory policy names the scope key")
         sql(self.ch_port, "SYSTEM FLUSH LOGS")
         needles = ", ".join(f"'{h}'" for h in secrets)
         logged = sql(
             self.ch_port,
             "SELECT count() FROM system.query_log WHERE "
             f"multiSearchAnyCaseInsensitive(query, [{needles}]) "
+            f"OR multiSearchAnyCaseInsensitive(formatted_query, [{needles}]) "
             f"OR multiSearchAnyCaseInsensitive(exception, [{needles}]) "
             "SETTINGS log_queries_cut_to_length = 1",
         )
         self.check(
-            bool(key) and logged == "0",
-            "no logged statement or error holds the scope key across the upgrade",
+            logged == "0", "no logged statement or error holds the scope key after the upgrade"
         )
 
     def run_completes_across(self, a: str, b: str) -> None:

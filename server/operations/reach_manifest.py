@@ -254,7 +254,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "inbox.policy_set": ("dashboard",),
     "inbox.principals": ("dashboard",),
     "inbox.register": ("dashboard",),
-    "insights.query": ("plugin_hook",),
+    "insights.query": (
+        "sdk_example",
+        "plugin_hook",
+    ),
     "knowledge.add": (
         "sdk_method",
         "sdk_example",
