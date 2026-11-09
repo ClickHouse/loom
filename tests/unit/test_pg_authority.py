@@ -6928,3 +6928,27 @@ async def test_a_bulk_batch_writing_a_key_twice_owes_a_document_only_for_its_emb
     row = pg_memory.MEMORY_ROW | pg_memory.AUDIT_ROW
     doc = row | pg_memory.SEARCH_DOC
     assert seen == [[doc if both_embedded else row, doc]]
+
+
+@pytest.mark.asyncio
+async def test_a_connection_lost_in_a_transaction_is_503_not_the_drivers_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """asyncpg detaches a pooled connection's proxy when its connection is lost: the
+    terminate and is_closed calls on it raise InterfaceError, which must not replace the
+    outage the block raised."""
+    import asyncpg
+
+    from server.core import pg
+
+    class _Detached(_PgConn):
+        def terminate(self) -> None:
+            raise asyncpg.InterfaceError("connection has been released back to the pool")
+
+        def is_closed(self) -> bool:
+            raise asyncpg.InterfaceError("connection has been released back to the pool")
+
+    _pg_pool(monkeypatch, _Detached())
+    with pytest.raises(pg.PostgresUnavailableError):
+        async with pg.transaction():
+            raise asyncpg.exceptions.ConnectionDoesNotExistError("connection was closed")
