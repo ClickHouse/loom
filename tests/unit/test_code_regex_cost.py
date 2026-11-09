@@ -10,7 +10,8 @@ and under an absolute bound. Composite texts, a prefix the pattern spells, a run
 or of one keyword with an opener, and a closing character, catch the patterns whose
 optional parts split one run every way or that search on from each keyword. A pattern
 only ever used with `fullmatch` is anchored with `\\A`, so the searches here cost what
-its use does."""
+its use does. The lanes' own walks over a file (`_WALKS`) are timed the same way, each in
+a child process with a deadline."""
 
 from __future__ import annotations
 
@@ -355,6 +356,11 @@ _WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("markdown-heading-spaces", _markdown, _run("# a", " ", "b")),
     ("markdown-headings", _markdown, _run("", "# a\n")),
     ("markdown-links", _markdown, _links),
+    (
+        "markdown-long-parent-title",
+        _markdown,
+        lambda n: "# " + "a" * (n // 2) + "\n" + "## a\n" * (n // 10),
+    ),
     ("setup-py-unclosed-lists", _setup_py, _run("", '"console_scripts":[')),
     ("setup-py-entry-points", _setup_py, _run('"console_scripts":[', '"a=b:c",\n', "]")),
     ("setup-py-roots", _py_layout("setup.py"), _numbered("find_packages('a{}')\n")),
@@ -368,6 +374,7 @@ _WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("vue-sites", _vue, _run("<template>\n", "<A/>\n", "\n</template>\n")),
     ("vue-macro-members", _vue, _run("<script setup>\ndefineProps({", "a:1,", "})\n</script>\n")),
     ("svelte-sites", _svelte, _run("", "<A/>\n")),
+    ("svelte-event-modifiers", _svelte, _run("<b ", "onx|", ">")),
     ("dbt-raw-blocks", _dbt, _run("", "{% raw %}a{% endraw %}")),
     ("dbt-unclosed-tags", _dbt, _run("{{ config(", "tags=[", ") }}")),
     ("cmake-rows", _cmake, _run("", "a\n")),

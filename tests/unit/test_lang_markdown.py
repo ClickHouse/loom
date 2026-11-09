@@ -111,3 +111,9 @@ def test_reference_edges_read_backticked_names_once_each() -> None:
         ("Commit", "Ledger::durable", "reads", 0.7),
         ("Glossary", "Ledger::TypeOK", "reads", 0.7),
     ], "an ambiguous bare name binds nothing; a qualified mention picks its suffix"
+
+
+def test_a_heading_title_is_cut_to_a_thousand_characters() -> None:
+    # Every descendant's qualified name repeats its ancestors' titles.
+    secs, _ = sections_of("# " + "a" * 1500 + "\n## b\n")
+    assert [len(s.title) for s in secs] == [1000, 1]

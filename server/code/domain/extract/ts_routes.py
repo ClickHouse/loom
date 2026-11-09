@@ -88,9 +88,6 @@ def route_facets(pf: ParsedFile) -> list[Facet]:
     seen: set[tuple[str, int]] = set()
     newlines = newline_offsets(text)
 
-    def line_of(offset: int) -> int:
-        return line_at(newlines, offset)
-
     def add(name: str, line: int, conf: float) -> None:
         if (name, line) in seen:
             return
@@ -102,17 +99,17 @@ def route_facets(pf: ParsedFile) -> list[Facet]:
     m = _PAGES_API_RE.search(pf.path)
     if m:
         d = _DEFAULT_EXPORT_RE.search(text)
-        line = line_of(d.start()) if d else 1
+        line = line_at(newlines, d.start()) if d else 1
         add(f"ANY {_url_join('/api', _file_route(m.group(1)))}", line, 0.9)
     m = _APP_ROUTE_RE.search(pf.path)
     if m:
         route = _file_route(m.group(1))
         if m.group(2) == "route":
             for h in _APP_HANDLER_RE.finditer(text):
-                add(f"{h.group(1) or h.group(2)} {route}", line_of(h.start()), 0.9)
+                add(f"{h.group(1) or h.group(2)} {route}", line_at(newlines, h.start()), 0.9)
         else:
             d = _DEFAULT_EXPORT_RE.search(text)
-            add(f"PAGE {route}", line_of(d.start()) if d else 1, 0.9)
+            add(f"PAGE {route}", line_at(newlines, d.start()) if d else 1, 0.9)
     controllers = list(_CONTROLLER_RE.finditer(text))
     closes = _brace_closes(text) if controllers else {}
     for k, c in enumerate(controllers):
@@ -125,12 +122,12 @@ def route_facets(pf: ParsedFile) -> list[Facet]:
         body = text[body_start:body_end] if body_start >= 0 else ""
         for r in _ROUTE_DECORATOR_RE.finditer(body):
             method = r.group(1).upper()
-            line = line_of(body_start + r.start())
+            line = line_at(newlines, body_start + r.start())
             add(f"{method} {_url_join(prefix, r.group(2) or '')}", line, 1.0)
     for r in _REGISTRATION_RE.finditer(text):
-        add(f"{r.group(1).upper()} {r.group(2)}", line_of(r.start()), 1.0)
+        add(f"{r.group(1).upper()} {r.group(2)}", line_at(newlines, r.start()), 1.0)
     for r in _FASTIFY_ROUTE_RE.finditer(text):
-        add(f"{r.group(1).upper()} {r.group(2)}", line_of(r.start()), 1.0)
+        add(f"{r.group(1).upper()} {r.group(2)}", line_at(newlines, r.start()), 1.0)
     return out
 
 

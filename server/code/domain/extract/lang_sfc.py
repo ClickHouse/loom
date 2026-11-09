@@ -54,7 +54,10 @@ from server.code.domain.extract.ts_config import strip_comments
 _FENCE = "---"
 # `on:click={save}`, `on:click|preventDefault={save}`, `onclick={save}` (Svelte 5),
 # `onClick={save}` (Astro client islands): the braces hold a bare name or a call of it
-_EVENT_RE = re.compile(r"\bon:?[A-Za-z]+(?:\|[a-z]+)*\s*=\s*\{\s*([A-Za-z_$][\w$]*)\s*[(}]")
+# Not after a `|`: a search from each `on` of a modifier chain would rescan the chain.
+_EVENT_RE = re.compile(
+    r"(?<![\w|])on:?[A-Za-z]++(?:\|[a-z]++)*+\s*=\s*\{\s*([A-Za-z_$][\w$]*)\s*[(}]"
+)
 # any `{ … name( … }` expression: `{format(row)}`, `{#if check(x)}`, `{@html render(x)}`,
 # `{#each sort(items) as item}` — the first identifier that is called
 _EXPR_CALL_RE = re.compile(r"\{(?:[#:@/]\w+\s++)?[^{}\n]*?(?<![\w$])([A-Za-z_$][\w$]*+)\s*\(")
@@ -328,16 +331,13 @@ def markup_sites(
 
     newlines = newline_offsets(body)
 
-    def line_of(offset: int) -> int:
-        return line_at(newlines, offset)
-
     out: list[tuple[int, str, str]] = []
     for m in _TAG_RE.finditer(body):
         tag = m.group(1)
         bare, root = tag.split(".")[-1], (tag.split(".")[0] if "." in tag else "")
-        out.append((line_of(m.start()), bare, f"{SITE_JSX}:{root}" if root else SITE_JSX))
+        out.append((line_at(newlines, m.start()), bare, f"{SITE_JSX}:{root}" if root else SITE_JSX))
     for m in _EVENT_RE.finditer(body):
-        out.append((line_of(m.start(1)), m.group(1), SITE_HANDLER))
+        out.append((line_at(newlines, m.start(1)), m.group(1), SITE_HANDLER))
     functions = {
         s.name
         for s in pf.symbols
@@ -345,10 +345,10 @@ def markup_sites(
     }
     for m in _PROP_RE.finditer(body):
         if not m.group(1).startswith("on") and m.group(2) in functions:
-            out.append((line_of(m.start(2)), m.group(2), SITE_HANDLER))
+            out.append((line_at(newlines, m.start(2)), m.group(2), SITE_HANDLER))
     for m in _EXPR_CALL_RE.finditer(body):
         if m.group(1) in functions:
-            out.append((line_of(m.start(1)), m.group(1), SITE_HANDLER))
+            out.append((line_at(newlines, m.start(1)), m.group(1), SITE_HANDLER))
     seen: set[tuple[int, str, str]] = set()
     uniq = [s for s in out if not (s in seen or seen.add(s))]  # type: ignore[func-returns-value]
     uniq.sort(key=lambda t: t[0])

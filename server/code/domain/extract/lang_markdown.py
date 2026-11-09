@@ -50,6 +50,7 @@ KIND_SECTION = "section"
 EDGE_READS = "reads"
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
 _FENCE_RE = re.compile(r"^(```|~~~)")
+_MAX_TITLE = 1000
 _LINK_RE = re.compile(r"\]\(((?:(?!\]\()[^)\s])++)(?:\s+\"[^\"]*\")?\)")
 _CODE_REF_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)(?:\(\))?`")
 _NOISE_REFS: frozenset[str] = frozenset(
@@ -138,7 +139,8 @@ def sections_of(text: str) -> tuple[list[Section], int]:
             # title backtracks cubically on a run of spaces.
             rest = h.group(2)
             title = rest.rstrip().rstrip("#").rstrip() or rest[:1]
-            heads.append((i, len(h.group(1)), title.strip()))
+            # cut: every descendant's qualified name repeats it
+            heads.append((i, len(h.group(1)), title.strip()[:_MAX_TITLE]))
     out: list[Section] = []
     stack: list[str] = []
     for n, (line, level, title) in enumerate(heads):
