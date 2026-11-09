@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, nullcontext
 from typing import Any
+
+import coverage
 
 from server.code.domain.index.repos import RepoConfig
 
@@ -47,11 +50,27 @@ def assert_linear(
 ) -> None:
     """`cost(big)` is under `ratio` times `cost(small)` (8 suits 4 times the size: a
     quadratic one takes 16) or under `floor` seconds, and under `bound` seconds when
-    given. On a loaded host the best of three runs of each counts."""
-    a, b = cost(small), cost(big)
-    if b > ratio * a:
-        a, b = min(a, cost(small), cost(small)), min(b, cost(big), cost(big))
+    given. On a loaded host the best of three runs of each counts. A bound is on the
+    code's own cost, so with one the runs are timed with coverage's tracer paused."""
+    with _untraced() if bound is not None else nullcontext():
+        a, b = cost(small), cost(big)
+        if b > ratio * a:
+            a, b = min(a, cost(small), cost(small)), min(b, cost(big), cost(big))
     assert (b < ratio * a or b < floor) and (bound is None or b < bound), (a, b)
+
+
+@contextmanager
+def _untraced() -> Iterator[None]:
+    """Coverage's tracer paused: under it the code costs about three times as much."""
+    cov = coverage.Coverage.current()
+    if cov is None:
+        yield
+        return
+    cov.stop()
+    try:
+        yield
+    finally:
+        cov.start()
 
 
 def grows_linearly(run: Callable[[int], object], small: int, big: int) -> None:
