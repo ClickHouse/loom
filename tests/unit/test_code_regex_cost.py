@@ -27,7 +27,7 @@ from collections.abc import Callable
 
 import pytest
 
-from tests.unit.lane_walks import _WALKS
+from tests.unit.lane_walks import WALKS
 
 _PACKAGES = ("server.code.domain.extract", "server.code.app.index")
 _N = 50_000
@@ -253,12 +253,12 @@ _WALK_DEADLINE_S = 60
 _WALK_CHILD = f"""
 import faulthandler, json, sys
 faulthandler.dump_traceback_later({_WALK_DEADLINE_S}, exit=True)
-from tests.unit.lane_walks import _walk_cost
-print(json.dumps(_walk_cost(sys.argv[1])))
+from tests.unit.lane_walks import walk_cost
+print(json.dumps(walk_cost(sys.argv[1])))
 """
 
 
-@pytest.mark.parametrize("name", [w[0] for w in _WALKS])
+@pytest.mark.parametrize("name", [w[0] for w in WALKS])
 def test_a_lane_walk_costs_linear_time(name: str) -> None:
     done = subprocess.run(
         [sys.executable, "-c", _WALK_CHILD, name],

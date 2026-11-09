@@ -130,7 +130,7 @@ def _inline_templates(n: int) -> str:
 
 
 # (id, walk, the text of about n characters it walks)
-_WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
+WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("markdown-heading-spaces", _markdown, _run("# a", " ", "b")),
     ("markdown-headings", _markdown, _run("", "# a\n")),
     ("markdown-links", _markdown, _links),
@@ -178,9 +178,9 @@ _WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
 _WALK_N = 100_000
 
 
-def _walk_cost(name: str) -> tuple[float, float]:
+def walk_cost(name: str) -> tuple[float, float]:
     """The best of three times of the walk at N and 4N characters."""
-    walk, text = next((w[1], w[2]) for w in _WALKS if w[0] == name)
+    walk, text = next((w[1], w[2]) for w in WALKS if w[0] == name)
 
     def cost(n: int) -> float:
         t = text(n)
