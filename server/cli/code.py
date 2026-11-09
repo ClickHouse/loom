@@ -570,6 +570,8 @@ def _cmd_backfill_prs(args: argparse.Namespace) -> int:
 def _print_scip_lock_path(args: argparse.Namespace) -> int:
     from server.code.app.index.entry_lock import entry_lock_path
 
+    if not args.namespace:  # runs without reading the registry, so takes no default
+        raise SystemExit("scip-lock-path needs --namespace")
     org, ns = _identity(args)
     print(entry_lock_path(org, ns).resolve())
     return 0

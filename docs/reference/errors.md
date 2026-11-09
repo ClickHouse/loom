@@ -432,6 +432,10 @@ Raised in `server/main.py`.
 
 Raised in `server/memory/app/dedup.py`.
 
+#### `DEFAULT_NAMESPACE_REFUSED`
+
+Raised in `server/code/domain/index/repos.py`.
+
 #### `DUPLICATE_FIELD`
 
 Raised in `server/memory/app/records.py`.

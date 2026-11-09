@@ -381,7 +381,8 @@ def default_code_namespace(org: str) -> str:
         raise ValidationError(
             f"the default code namespace {org}/{ns} was added from the Repositories page "
             "and is not this deployment's default; name the code namespace to read "
-            "(code.repos lists them)"
+            "(code.repos lists them)",
+            code="DEFAULT_NAMESPACE_REFUSED",
         )
     return ns
 

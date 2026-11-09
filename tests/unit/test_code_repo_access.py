@@ -848,9 +848,44 @@ def test_the_default_code_namespace_never_lands_on_a_member_branch(monkeypatch) 
     # Unread, a member's namespace is not known yet.
     monkeypatch.setattr(repos, "_page_namespaces", frozenset())
     monkeypatch.setattr(repos, "_registry_loaded", False)
+    assert gate_ns("code.repos") is None
     with pytest.raises(repos.RegistryUnread):
         resolve_code_identity("", "")
-    assert gate_ns("code.repos") is None
     with pytest.raises(SystemExit, match="registry is not read yet"):
         code_run._identity(argparse.Namespace(org="", namespace=""))
     assert code_run._identity(argparse.Namespace(org="", namespace="code-x")) == (ORG, "code-x")
+
+
+def test_a_handler_never_defaults_to_a_namespace_the_gate_did_not_check(monkeypatch) -> None:
+    import argparse
+    import contextvars
+
+    from server.cli import code
+    from server.code.app.common import resolve_code_identity
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import gates
+
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(settings, "code_org", ORG)
+    monkeypatch.setattr(settings, "code_namespace", "code-weave")
+    monkeypatch.setattr(repos, "_page_namespaces", frozenset())
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    op = OPERATIONS_BY_NAME["code.search"]
+
+    def request() -> None:
+        target = gates.authz_target(op, org="", namespace="", auth=None)
+        assert target.namespace is None  # unread: the gate checks the org only
+        monkeypatch.setattr(repos, "_registry_loaded", True)  # the read lands meanwhile
+        with pytest.raises(repos.RegistryUnread):
+            resolve_code_identity("", "")
+        # The next request's gate decides afresh.
+        assert gates.authz_target(op, org="", namespace="", auth=None).namespace == "code-weave"
+        assert resolve_code_identity("", "") == (ORG, "code-weave")
+
+    contextvars.copy_context().run(request)
+    with pytest.raises(SystemExit, match="needs --namespace"):
+        code._print_scip_lock_path(argparse.Namespace(org="", namespace=""))
+    with pytest.raises(ValidationError) as e:
+        monkeypatch.setattr(repos, "_page_namespaces", frozenset({(ORG, "code-weave")}))
+        repos.default_code_namespace(ORG)
+    assert e.value.to_detail()["code"] == "DEFAULT_NAMESPACE_REFUSED"

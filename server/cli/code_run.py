@@ -19,7 +19,9 @@ log = logging.getLogger("loom.cli.code")
 
 def _identity(args: argparse.Namespace) -> tuple[str, str]:
     """(org, namespace) the command addresses: the flags, else the scalar settings.
-    Neither = exit with the missing name; a code namespace is never guessed."""
+    Neither = exit with the missing name; a code namespace is never guessed. The
+    default namespace is refused while the registry is unread or when a member added
+    it from the page (`repos.default_code_namespace`)."""
     from server.code.domain.index.repos import RegistryUnread, default_code_namespace
     from server.core.errors import ValidationError
     from server.settings import settings

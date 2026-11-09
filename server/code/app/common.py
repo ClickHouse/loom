@@ -8,6 +8,7 @@ import asyncio
 import logging
 import time
 import uuid
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -92,12 +93,20 @@ def plane_org_for(op_name: str) -> str:
     return ""
 
 
+# The gate's refusal of the default code namespace for this request, if any: the
+# handler then refuses to default too, never reading a namespace the gate did not check.
+_GATE_DEFAULT_REFUSED: ContextVar[Exception | None] = ContextVar(
+    "code_gate_default_refused", default=None
+)
+
+
 def plane_namespace_for(op_name: str, org: str | None = None) -> str:
     """The namespace a code.* op in `org` (default: the code org) is authorized
     against — and its handler reads — when the body names none: the deployment's
     code namespace (`repos.default_code_namespace`). "" for every other op, and
     when that default is refused: an op that skips the namespace never needs it, and
     one that reads it refuses in its handler (`resolve_code_identity`)."""
+    _GATE_DEFAULT_REFUSED.set(None)
     if not op_name.startswith("code."):
         return ""
     from server.code.domain.index.repos import RegistryUnread, default_code_namespace
@@ -105,7 +114,8 @@ def plane_namespace_for(op_name: str, org: str | None = None) -> str:
 
     try:
         return default_code_namespace(org or str(settings.code_org))
-    except (RegistryUnread, ValidationError):
+    except (RegistryUnread, ValidationError) as e:
+        _GATE_DEFAULT_REFUSED.set(e)
         return ""
 
 
@@ -119,6 +129,8 @@ def resolve_code_identity(org: str, namespace: str) -> tuple[str, str]:
     from server.core.errors import ValidationError
 
     org = org or settings.code_org
+    if not namespace and (refused := _GATE_DEFAULT_REFUSED.get()) is not None:
+        raise refused  # the gate checked no namespace: a registry read since changes nothing
     namespace = namespace or default_code_namespace(org)
     if not org or not namespace:
         missing = " and ".join(n for n, v in (("org", org), ("namespace", namespace)) if not v)
