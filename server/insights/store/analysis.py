@@ -41,7 +41,24 @@ def _analyst_client() -> _AnalystClient:
     return get_client()
 
 
-async def stored_entities(*, ch: _CHClient | None = None) -> boundary.Stored | None:
+async def setting_prefix(*, ch: _CHClient | None = None) -> str | None:
+    """The first of `boundary.SETTING_PREFIXES` this server takes a custom
+    setting under, or None when it takes none of them."""
+    ch = ch or _default_client()
+    for prefix in boundary.SETTING_PREFIXES:
+        try:
+            await ch.execute("SELECT 1", settings={f"{prefix}loom_probe": "1"})
+        except Exception as e:
+            if error_code(e) == UNKNOWN_SETTING:
+                continue  # not a prefix this server registers
+            raise
+        return prefix
+    return None
+
+
+async def stored_entities(
+    names: boundary.SettingNames, *, ch: _CHClient | None = None
+) -> boundary.Stored | None:
     """What the analyst's settings profile says it holds, or None when there
     is no such profile (or a write stopped before stamping it)."""
     ch = ch or _default_client()
@@ -53,18 +70,18 @@ async def stored_entities(*, ch: _CHClient | None = None) -> boundary.Stored | N
         """,
         {
             "profile": boundary.ANALYST_USER,
-            "names": [boundary.VERSION_SETTING, boundary.DIGEST_SETTING],
+            "names": [names.version, names.digest],
         },
     )
     found = {str(r["setting_name"]): str(r["value"]).strip("'") for r in rows}
-    if boundary.DIGEST_SETTING not in found:
+    if names.digest not in found:
         return None
     try:
-        version = int(found.get(boundary.VERSION_SETTING, "0"))
+        version = int(found.get(names.version, "0"))
     except ValueError:
         # A stamp edited by hand reads as the oldest version, which a write replaces.
         version = 0
-    return boundary.Stored(version, found[boundary.DIGEST_SETTING])
+    return boundary.Stored(version, found[names.digest])
 
 
 async def sealed_secrets(*, ch: _CHClient | None = None) -> str | None:
@@ -119,7 +136,7 @@ async def granted_roles(*, ch: _CHClient | None = None) -> frozenset[str]:
     return frozenset(str(r["granted_role_name"]) for r in rows)
 
 
-async def stored_caps_digest(*, ch: _CHClient | None = None) -> str:
+async def stored_caps_digest(names: boundary.SettingNames, *, ch: _CHClient | None = None) -> str:
     """The digest stamped on the caps profile ('' when there is none)."""
     ch = ch or _default_client()
     row = await ch.query_one(
@@ -127,7 +144,7 @@ async def stored_caps_digest(*, ch: _CHClient | None = None) -> str:
         SELECT value FROM system.settings_profile_elements
         WHERE profile_name = {profile:String} AND setting_name = {name:String}
         """,
-        {"profile": boundary.CAPS_PROFILE, "name": boundary.CAPS_DIGEST_SETTING},
+        {"profile": boundary.CAPS_PROFILE, "name": names.caps_digest},
     )
     return str(row["value"]).strip("'") if row else ""
 
@@ -214,15 +231,17 @@ async def can_manage_access(*, ch: _CHClient | None = None) -> bool:
 
 
 async def own_version(
-    *, password: str, extra: dict[str, Any], ch: _AnalystClient | None = None
+    names: boundary.SettingNames,
+    *,
+    password: str,
+    extra: dict[str, Any],
+    ch: _AnalystClient | None = None,
 ) -> int:
     """The version stamped on the analyst's profile, read as the analyst (0 for none)."""
     ch = ch or _analyst_client()
     with as_analyst(boundary.ANALYST_USER, password, extra):
         try:
-            _, _, rows = await ch.query_columns(
-                f"SELECT toString(getSetting('{boundary.VERSION_SETTING}'))"
-            )
+            _, _, rows = await ch.query_columns(f"SELECT toString(getSetting('{names.version}'))")
         except Exception as e:
             if error_code(e) == UNKNOWN_SETTING:
                 return 0  # no stamp yet: the setting is unknown

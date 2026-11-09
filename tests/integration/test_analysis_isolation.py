@@ -23,7 +23,7 @@ import pytest
 
 from server.insights.domain import analysis as boundary
 from tests.integration._eventually import wait_until
-from tests.integration._resources import unique_org
+from tests.integration._resources import ch_client_from_env, unique_org
 
 _REFUSED = {403, 422}
 
@@ -183,9 +183,9 @@ _ESCAPES = [
     "SELECT * FROM input('a String')",
     "SELECT aiGenerate(memory_key, map('credentials', 'default')) FROM loom.memory",
     # Settings that would change the scope, the caps or the live view.
-    "SELECT memory_key FROM loom.memory SETTINGS SQL_loom_org = '{org_b}'",
-    "SELECT memory_key FROM loom.memory SETTINGS SQL_loom_ns = '{ns_a},{ns_b}'",
-    "SELECT memory_key FROM loom.memory SETTINGS SQL_loom_exp = '9999999999'",
+    "SELECT memory_key FROM loom.memory SETTINGS {p}loom_org = '{org_b}'",
+    "SELECT memory_key FROM loom.memory SETTINGS {p}loom_ns = '{ns_a},{ns_b}'",
+    "SELECT memory_key FROM loom.memory SETTINGS {p}loom_exp = '9999999999'",
     "SELECT memory_key FROM loom.memory SETTINGS readonly = 0",
     "SELECT memory_key FROM loom.memory SETTINGS max_execution_time = 100000",
     "SELECT memory_key FROM loom.memory SETTINGS final = 0",
@@ -195,14 +195,14 @@ _ESCAPES = [
     "SELECT memory_key FROM loom.memory SETTINGS use_query_condition_cache = 1",
     "SELECT memory_key FROM loom.memory SETTINGS max_threads = 1000",
     # A scope signed with another key, and one past its expiry.
-    "SELECT memory_key FROM loom.memory SETTINGS SQL_loom_sig = '" + "AB" * 32 + "'",
-    "SELECT memory_key FROM loom.memory SETTINGS SQL_loom_exp = '1'",
+    "SELECT memory_key FROM loom.memory SETTINGS {p}loom_sig = '" + "AB" * 32 + "'",
+    "SELECT memory_key FROM loom.memory SETTINGS {p}loom_exp = '1'",
     # Typed and malformed scope values: the policy must neither throw nor be quoted.
-    "SELECT count() FROM loom.memory SETTINGS SQL_loom_org = 5",
-    "SELECT count() FROM loom.memory SETTINGS SQL_loom_ns = 5",
-    "SELECT count() FROM loom.memory SETTINGS SQL_loom_exp = 5",
-    "SELECT count() FROM loom.memory SETTINGS SQL_loom_sig = 5",
-    "SELECT count() FROM loom.memory SETTINGS SQL_loom_exp = 'abc'",
+    "SELECT count() FROM loom.memory SETTINGS {p}loom_org = 5",
+    "SELECT count() FROM loom.memory SETTINGS {p}loom_ns = 5",
+    "SELECT count() FROM loom.memory SETTINGS {p}loom_exp = 5",
+    "SELECT count() FROM loom.memory SETTINGS {p}loom_sig = 5",
+    "SELECT count() FROM loom.memory SETTINGS {p}loom_exp = 'abc'",
     # Not a SELECT.
     "INSERT INTO loom.memory (org) VALUES ('x')",
     "ALTER TABLE loom.memory DELETE WHERE 1",
@@ -254,16 +254,36 @@ def test_an_error_quotes_no_value_from_another_scope(
         assert not any(leaked.lower() in e.lower() for e in logged), logged
 
 
+@pytest.fixture(scope="module")
+def prefix() -> str:
+    """The prefix this ClickHouse takes custom settings under, found as Loom finds it."""
+    client = ch_client_from_env()
+    try:
+        for p in boundary.SETTING_PREFIXES:
+            try:
+                client.command("SELECT 1", settings={f"{p}loom_probe": "1"})
+            except Exception as e:
+                if "UNKNOWN_SETTING" not in str(e):
+                    raise  # no answer: the run must not guess
+                continue  # not a prefix this server takes
+            return p
+    finally:
+        client.close()
+    pytest.fail(f"ClickHouse takes custom settings under none of {boundary.SETTING_PREFIXES}")
+
+
 @pytest.mark.parametrize("template", _ESCAPES)
 def test_escape_is_refused_or_reads_nothing_foreign(
-    control_plane_url: str, seed: _Seed, template: str
+    control_plane_url: str, seed: _Seed, prefix: str, template: str
 ) -> None:
-    sql = template.format(org_a=seed.org_a, org_b=seed.org_b, ns_a=seed.ns_a, ns_b=seed.ns_b)
+    sql = template.format(
+        p=prefix, org_a=seed.org_a, org_b=seed.org_b, ns_a=seed.ns_a, ns_b=seed.ns_b
+    )
     _assert_contained(_query(control_plane_url, seed, sql), seed)
 
 
 def test_a_scope_read_inside_one_statement_reads_nothing_from_another(
-    control_plane_url: str, seed: _Seed
+    control_plane_url: str, seed: _Seed, prefix: str
 ) -> None:
     """A statement can read its own signed scope with getSetting. Sent by
     another org's token in SETTINGS, it must read none of the first org's
@@ -271,14 +291,14 @@ def test_a_scope_read_inside_one_statement_reads_nothing_from_another(
     r = _query(
         control_plane_url,
         seed,
-        "SELECT getSetting('SQL_loom_org'), getSetting('SQL_loom_ns'), "
-        "getSetting('SQL_loom_exp'), getSetting('SQL_loom_sig')",
+        f"SELECT getSetting('{prefix}loom_org'), getSetting('{prefix}loom_ns'), "
+        f"getSetting('{prefix}loom_exp'), getSetting('{prefix}loom_sig')",
     )
     assert r.status_code == 200, r.text
     org, ns, exp, sig = r.json()["rows"][0]
     replay = (
-        f"SELECT memory_key FROM loom.memory SETTINGS SQL_loom_org = '{org}', "
-        f"SQL_loom_ns = '{ns}', SQL_loom_exp = '{exp}', SQL_loom_sig = '{sig}'"
+        f"SELECT memory_key FROM loom.memory SETTINGS {prefix}loom_org = '{org}', "
+        f"{prefix}loom_ns = '{ns}', {prefix}loom_exp = '{exp}', {prefix}loom_sig = '{sig}'"
     )
     for token, org_called, ns_called in (
         (seed.writer_b, seed.org_b, seed.ns_a),
@@ -511,7 +531,7 @@ def test_the_statement_text_stays_out_of_the_query_log(
     assert quoted == 0
 
 
-def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client) -> None:
+def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client, prefix: str) -> None:
     """The policies hold the key and its pads as `decrypt` arguments: no
     logged statement text or error carries one. The whole query_log is read,
     the boot's writes included: an older build that kept the pads in clear also
@@ -546,9 +566,9 @@ def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client) -> Non
     # The server log records each refused read's error, whatever log_queries says.
     quoting = ch_client.query(
         "SELECT count() FROM system.text_log WHERE event_time >= {start:DateTime} "
-        "AND level = 'Error' AND position(message, 'SQL_loom_') > 0 "
+        "AND level = 'Error' AND position(message, {setting_prefix:String}) > 0 "
         "AND message LIKE '%UNKNOWN_SETTING%'",
-        parameters={"start": start},
+        parameters={"start": start, "setting_prefix": f"{prefix}loom_"},
     ).result_rows[0][0]
     assert quoting > 0, "no refused read reached the server log, so it was not checked"
     errors = ch_client.query(
@@ -676,14 +696,14 @@ def test_a_dropped_policy_reads_nothing_and_is_written_again(
 
 
 def test_a_canary_under_another_key_is_written_again(
-    control_plane_url: str, seed: _Seed, ch_client
+    control_plane_url: str, seed: _Seed, ch_client, prefix: str
 ) -> None:
     statement = _policy(ch_client, boundary.CANARY_TABLE)
     other_key = boundary.policy_sql(
         "loom",
         boundary.POLICY_NAME,
         boundary.CANARY_TABLE,
-        boundary.policy_filter(os.urandom(32)),
+        boundary.policy_filter(boundary.SettingNames(prefix), os.urandom(32)),
         f"`{boundary.ANALYST_USER}`",
     )
     ch_client.command(other_key, settings=boundary.LOG_TEXT_CUT)

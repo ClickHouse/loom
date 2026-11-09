@@ -23,11 +23,20 @@ from server.insights.app import analysis as app
 from server.insights.domain import analysis as boundary
 
 SECRETS = (bytes(range(32)), "pw")
+NAMES = boundary.SettingNames("SQL_")
+
+
+@pytest.fixture(autouse=True)
+def _sql_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    # ClickHouse's default config takes custom settings under SQL_.
+    monkeypatch.setattr(app.store, "setting_prefix", _returns("SQL_"))
+    monkeypatch.setattr(app, "_setting_names", None)
 
 
 @pytest.fixture
 def ready(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app, "_loaded", SECRETS)
+    monkeypatch.setattr(app, "_setting_names", NAMES)
     monkeypatch.setattr(app, "_ready", True)
     monkeypatch.setattr(app, "_problem", "")
     monkeypatch.setattr(app, "_running", {})
@@ -96,6 +105,17 @@ def test_a_refusal_never_quotes_a_key_pad(monkeypatch: pytest.MonkeyPatch, ready
     with pytest.raises(ValidationError) as caught:
         asyncio.run(app.handle_insights_query(_query()))
     assert "36" * 64 not in str(caught.value)
+
+
+@pytest.mark.parametrize("prefix", ["SQL_", "custom_"])
+def test_a_refusal_naming_a_scope_setting_quotes_no_clickhouse_text(
+    monkeypatch: pytest.MonkeyPatch, ready: None, prefix: str
+) -> None:
+    named = f"Code: 62. DB::Exception: Syntax error near {prefix}loom_sig quoting the filter"
+    monkeypatch.setattr(app.store, "run_statement", _failing(named))
+    with pytest.raises(ValidationError) as caught:
+        asyncio.run(app.handle_insights_query(_query()))
+    assert f"{prefix}loom_sig" not in str(caught.value) and "quoting" not in str(caught.value)
 
 
 def test_a_namespace_with_a_comma_is_refused(ready: None) -> None:
@@ -217,7 +237,7 @@ def _provisioning(monkeypatch: pytest.MonkeyPatch, *, stored: Any, caps: str, fo
 
 def _current() -> boundary.Stored:
     statements = app.entity_statements()
-    return boundary.Stored(boundary.ENTITY_VERSION, boundary.entity_digest(statements))
+    return boundary.Stored(boundary.ENTITY_VERSION, boundary.entity_digest(NAMES, statements))
 
 
 def test_a_boot_writes_only_the_caps_when_only_a_cap_changed(
@@ -225,7 +245,7 @@ def test_a_boot_writes_only_the_caps_when_only_a_cap_changed(
 ) -> None:
     written = _provisioning(monkeypatch, stored=_current(), caps="old", foreign=[])
     asyncio.run(app.provision())
-    assert written == [boundary.caps_sql(app.caps())]
+    assert written == [boundary.caps_sql(NAMES, app.caps())]
 
 
 def test_a_boot_writes_nothing_when_the_entities_and_caps_are_current(
@@ -581,14 +601,14 @@ class _FailingRead:
 
 
 def test_an_unknown_stamp_reads_as_no_version() -> None:
-    read = app.store.own_version(password="pw", extra={}, ch=_FailingRead("Code: 115."))
+    read = app.store.own_version(NAMES, password="pw", extra={}, ch=_FailingRead("Code: 115."))
     assert asyncio.run(read) == 0
 
 
 def test_a_failed_stamp_read_raises() -> None:
     # Read as 0, a timeout under a newer build's entities would run checks that
     # are that build's to make, and report a wrong cause instead of the failure.
-    read = app.store.own_version(password="pw", extra={}, ch=_FailingRead("Code: 159."))
+    read = app.store.own_version(NAMES, password="pw", extra={}, ch=_FailingRead("Code: 159."))
     with pytest.raises(RuntimeError, match="159"):
         asyncio.run(read)
 
@@ -606,7 +626,7 @@ def test_each_cap_setting_reaches_the_caps_profile(monkeypatch: pytest.MonkeyPat
         "ch_analysis_max_threads": 2,
     }.items():
         monkeypatch.setattr(settings, name, value)
-    profile = " ".join(boundary.caps_sql(app.caps()))
+    profile = " ".join(boundary.caps_sql(NAMES, app.caps()))
     for pinned in (
         "max_execution_time = 7.5 MIN 0.1 MAX 7.5",
         "max_rows_to_read = 1234 MIN 1 MAX 1234",
@@ -1037,3 +1057,25 @@ def test_a_drawn_password_has_every_character_class() -> None:
     password = app._drawn_password()
     for character_class in ("[a-z]", "[A-Z]", "[0-9]", "[^A-Za-z0-9]"):
         assert re.search(character_class, password), character_class
+
+
+def test_the_prefix_is_probed_once_per_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A refusal after the probe, here an unopenable row, must not probe again.
+    probes = []
+
+    async def probe() -> str:
+        probes.append(1)
+        return "custom_"
+
+    monkeypatch.setattr(app.store, "setting_prefix", probe)
+    monkeypatch.setattr(app.store, "sealed_secrets", _returns("not-a-sealed-value"))
+    for _ in range(2):
+        with pytest.raises(app.SetupRefused):
+            asyncio.run(app.load_secrets(may_draw=False))
+    assert probes == [1] and app._names() == boundary.SettingNames("custom_")
+
+
+def test_a_server_that_takes_neither_prefix_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(app.store, "setting_prefix", _returns(None))
+    with pytest.raises(app.SetupRefused, match="custom_settings_prefixes"):
+        asyncio.run(app.load_secrets(may_draw=True))

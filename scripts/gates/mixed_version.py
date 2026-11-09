@@ -24,9 +24,9 @@ Then it writes from each build and reads from the other, and checks:
   so N hands the lease over to it.
 
 The rules these check are docs/architecture/rolling-upgrades.md. ClickHouse
-runs in a throwaway container (the CI image and config), so the gate needs
-docker; without it, or `git`, it skips with exit 0, or fails with `--require`
-(CI).
+runs in a throwaway container on its default config, so custom settings take
+`SQL_`. The gate needs docker; without it, or `git`, it skips with exit 0, or
+fails with `--require` (CI).
 
     python scripts/gates/mixed_version.py [--base REV] [--keep] [--require]
 """
@@ -401,11 +401,12 @@ class Scenario:
         # N first: it answers only once its own entities are written and probed.
         for label in ("N", "N-1"):
             self.check(self.answers_insights(label), f"{label} answers insights.query")
+        names = boundary.SettingNames("SQL_")  # the gate runs the default config
         version = sql(
             self.ch_port,
             "SELECT trim(BOTH '\\'' FROM value) FROM system.settings_profile_elements "
             "WHERE profile_name = {user:String} AND setting_name = {name:String}",
-            {"user": boundary.ANALYST_USER, "name": boundary.VERSION_SETTING},
+            {"user": boundary.ANALYST_USER, "name": names.version},
         )
         self.check(
             version == str(boundary.ENTITY_VERSION),

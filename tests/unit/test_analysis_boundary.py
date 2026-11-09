@@ -26,7 +26,8 @@ CAPS = boundary.Caps(
     max_threads=2,
 )
 KEY = bytes(range(32))
-SQL = boundary.entity_sql("`loom`", "pw-current", KEY, CAPS)
+NAMES = boundary.SettingNames("SQL_")
+SQL = boundary.entity_sql("`loom`", NAMES, "pw-current", KEY, CAPS)
 
 
 def _grants() -> dict[str, list[str]]:
@@ -107,7 +108,7 @@ def test_every_grant_and_role_outside_the_allowlist_is_revoked_before_the_grants
             grant("SELECT", "", "", "", False),
         }
     )
-    sql = boundary.entity_sql("`loom`", "pw", KEY, CAPS, held, frozenset({"bi_reader"}))
+    sql = boundary.entity_sql("`loom`", NAMES, "pw", KEY, CAPS, held, frozenset({"bi_reader"}))
     revokes = [s for s in sql if s.startswith("REVOKE")]
     assert sorted(revokes) == sorted(
         [
@@ -140,7 +141,7 @@ def test_every_other_users_policy_is_written_before_the_analysts() -> None:
 
 
 def test_the_caps_profile_carries_its_own_digest() -> None:
-    caps_sql = boundary.caps_sql(CAPS)
+    caps_sql = boundary.caps_sql(NAMES, CAPS)
     assert all(boundary.caps_digest(CAPS) in s for s in caps_sql)
     other = boundary.Caps(**{**CAPS.__dict__, "max_threads": 3})
     assert boundary.caps_digest(other) != boundary.caps_digest(CAPS)
@@ -152,7 +153,7 @@ def test_the_payload_counts_bytes_as_clickhouse_length_does() -> None:
 
 def test_a_retired_table_keeps_a_policy_that_reads_nothing(monkeypatch) -> None:
     monkeypatch.setattr(boundary, "RETIRED_TABLES", ("old_table",))
-    sql = boundary.entity_sql("`loom`", "pw", KEY, CAPS)
+    sql = boundary.entity_sql("`loom`", NAMES, "pw", KEY, CAPS)
     assert (
         "CREATE ROW POLICY OR REPLACE `loom_analyst_scope` ON `loom`.old_table "
         "AS permissive FOR SELECT USING 0 TO `loom_analyst`"
@@ -245,13 +246,13 @@ def test_one_password_and_one_key() -> None:
 
 
 def test_the_digest_leaves_out_the_key_which_never_changes() -> None:
-    other = boundary.entity_sql("`loom`", "pw-other", bytes(32), CAPS)
-    assert boundary.entity_digest(other) == boundary.entity_digest(SQL)
+    other = boundary.entity_sql("`loom`", NAMES, "pw-other", bytes(32), CAPS)
+    assert boundary.entity_digest(NAMES, other) == boundary.entity_digest(NAMES, SQL)
     assert KEY.hex() not in SQL[-1]
 
 
 def test_needs_rewrite() -> None:
-    digest = boundary.entity_digest(SQL)
+    digest = boundary.entity_digest(NAMES, SQL)
     v = boundary.ENTITY_VERSION
     assert boundary.needs_rewrite(None, digest)
     assert boundary.needs_rewrite(boundary.Stored(v - 1, digest), digest)
@@ -262,7 +263,7 @@ def test_needs_rewrite() -> None:
 
 def test_signature_is_hmac_sha256_of_the_length_prefixed_scope() -> None:
     key = KEY
-    settings = boundary.scope_settings(key, "acme", ["b", "a", "a"], 1700000000, "qid-1")
+    settings = boundary.scope_settings(NAMES, key, "acme", ["b", "a", "a"], 1700000000, "qid-1")
     assert settings["SQL_loom_ns"] == "a,b"
     payload = b"4:acme3:a,b10:1700000000qid-1"
     assert settings["SQL_loom_sig"] == hmac.new(key, payload, hashlib.sha256).hexdigest().upper()
@@ -277,7 +278,7 @@ def test_signature_is_hmac_sha256_of_the_length_prefixed_scope() -> None:
 
 def test_the_policy_signs_the_query_id_clickhouse_gives_the_statement() -> None:
     # A signature read inside one statement and sent with another reads nothing.
-    assert "initialQueryID()" in boundary.signature_filter(KEY)
+    assert "initialQueryID()" in boundary.signature_filter(NAMES, KEY)
 
 
 def test_wrapper_drops_one_semicolon_ends_a_comment_and_asks_one_row_more() -> None:
@@ -299,7 +300,9 @@ def test_an_error_that_quotes_the_policy_quotes_no_key() -> None:
     # and ClickHouse logs that error in system.query_log.
     scope = "SELECT 'acme' AS org, 'a' AS namespace"
     with pytest.raises(AssertionError) as raised:
-        clickhouse_local.run([], f"SELECT 1 FROM ({scope}) WHERE {boundary.policy_filter(KEY)}")
+        clickhouse_local.run(
+            [], f"SELECT 1 FROM ({scope}) WHERE {boundary.policy_filter(NAMES, KEY)}"
+        )
     error = str(raised.value)
     assert "UNKNOWN_SETTING" in error
     assert "[HIDDEN]" in error
@@ -309,7 +312,7 @@ def test_an_error_that_quotes_the_policy_quotes_no_key() -> None:
 
 
 def test_policy_spellings_reads_the_key_out_of_a_filter_escaped_or_not() -> None:
-    plain = boundary.policy_filter(KEY)
+    plain = boundary.policy_filter(NAMES, KEY)
     escaped = plain.replace("'", "\\'")
     for text in (plain, escaped):
         assert boundary.policy_spellings(text) == boundary.key_spellings(KEY)
@@ -326,11 +329,53 @@ def test_policy_reads_every_setting_as_a_string() -> None:
 
 def test_the_stamp_is_written_last() -> None:
     assert SQL[-1].startswith("ALTER SETTINGS PROFILE `loom_analyst` SETTINGS ")
-    assert boundary.DIGEST_SETTING in SQL[-1]
-    assert all(boundary.DIGEST_SETTING not in s for s in SQL[:-1])
+    assert NAMES.digest in SQL[-1]
+    assert all(NAMES.digest not in s for s in SQL[:-1])
 
 
 def test_revokes_for_skips_a_line_that_is_not_a_grant() -> None:
     assert boundary.revokes_for(["not a grant", "GRANT r TO loom_analyst"]) == [
         "REVOKE r FROM loom_analyst"
     ]
+
+
+def test_a_cloud_prefix_names_every_setting_the_entities_and_the_scope_use() -> None:
+    # ClickHouse Cloud takes custom settings under custom_, not SQL_.
+    cloud = boundary.SettingNames("custom_")
+    sql = " ".join(boundary.entity_sql("`loom`", cloud, "pw", KEY, CAPS))
+    assert "SQL_" not in sql
+    for name in (cloud.org, cloud.ns, cloud.exp, cloud.sig, cloud.version, cloud.digest):
+        assert name in sql, name
+    assert cloud.caps_digest in " ".join(boundary.caps_sql(cloud, CAPS))
+    scope = boundary.scope_settings(cloud, KEY, "acme", ["a"], 1700000000, "qid-1")
+    assert set(scope) == {cloud.org, cloud.ns, cloud.exp, cloud.sig, "query_id"}
+
+
+def test_the_setting_prefix_is_the_first_one_the_server_takes() -> None:
+    class _Server:
+        def __init__(self, takes: set[str]) -> None:
+            self.takes = takes
+
+        async def execute(self, sql: str, settings: dict[str, object], **_: object) -> None:
+            (name,) = settings
+            if not any(name.startswith(p) for p in self.takes):
+                raise RuntimeError(f"Code: 115. DB::Exception: Setting {name} is unknown")
+
+    for takes, found in (
+        ({"SQL_"}, "SQL_"),
+        ({"custom_"}, "custom_"),
+        # A server that takes both keeps SQL_, as it always has.
+        ({"SQL_", "custom_"}, "SQL_"),
+        (set(), None),
+    ):
+        assert asyncio.run(store.setting_prefix(ch=_Server(takes))) == found  # type: ignore[arg-type]
+
+
+def test_a_prefix_probe_with_no_answer_raises() -> None:
+    # No answer is not "none of the prefixes": the caller must not guess.
+    class _Down:
+        async def execute(self, *_: object, **__: object) -> None:
+            raise TimeoutError("read timed out")
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(store.setting_prefix(ch=_Down()))  # type: ignore[arg-type]

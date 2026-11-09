@@ -114,6 +114,9 @@ _WRITE_LEASE = "analysis.entities"
 _LEASE_TTL_S = 60  # not a setting: the statements under it are bounded by its share
 _SECRETS_PURPOSE = "analysis.secrets"
 _loaded: tuple[bytes, str] | None = None
+# The custom settings under the server's prefix: part of its config, so probed
+# once per process.
+_setting_names: boundary.SettingNames | None = None
 
 # Whether this process's last probe passed: None = no answer yet, or its last
 # probe got no answer (the op answers OVERLOADED); False = a finding.
@@ -138,6 +141,12 @@ def _key() -> bytes:
     return _secrets()[0]
 
 
+def _names() -> boundary.SettingNames:
+    if _setting_names is None:
+        raise AnalysisUnavailableError("the server's settings prefix is not known yet")
+    return _setting_names
+
+
 def _secrets() -> tuple[bytes, str]:
     if _loaded is None:
         raise AnalysisUnavailableError("the analyst secrets are not loaded on this replica yet")
@@ -149,7 +158,9 @@ async def load_secrets(*, may_draw: bool) -> None:
     change by themselves: a signing-secret rotation only reseals them (`loom
     secrets reseal`). `may_draw` draws them when there are none: `loom
     ch-setup`, or a boot whose server user can see that no analyst user exists
-    yet. Run under the analysis lease, so one caller draws them."""
+    yet. The first load in a process also finds the server's custom settings
+    prefix (`store.setting_prefix`). Run under the analysis lease, so one caller
+    draws them."""
     if refusal := await _secrets_refusal(may_draw=may_draw):
         raise SetupRefused(refusal)
 
@@ -162,7 +173,15 @@ def _drawn_password() -> str:
 
 async def _secrets_refusal(*, may_draw: bool) -> str:
     """`load_secrets`, answering Loom's own refusal as text ('' once loaded)."""
-    global _loaded
+    global _loaded, _setting_names
+    if _setting_names is None:
+        prefix = await store.setting_prefix()
+        if prefix is None:
+            return (
+                "ClickHouse takes custom settings under none of "
+                f"{', '.join(boundary.SETTING_PREFIXES)}: add one to its custom_settings_prefixes"
+            )
+        _setting_names = boundary.SettingNames(prefix)
     sealed = await store.sealed_secrets()
     if sealed is None:
         if not may_draw:
@@ -208,7 +227,8 @@ def entity_statements(
     granted: frozenset[boundary.Grant] = frozenset(), roles: frozenset[str] = frozenset()
 ) -> list[str]:
     """The SQL that writes the analyst user for this deployment, password and key included."""
-    return boundary.entity_sql(store.target_database(), _password(), _key(), caps(), granted, roles)
+    db = store.target_database()
+    return boundary.entity_sql(db, _names(), _password(), _key(), caps(), granted, roles)
 
 
 def printed_checks() -> list[str]:
@@ -244,7 +264,7 @@ def _scope_extra(org: str, namespaces: list[str], key: bytes | None = None) -> d
     # The request's own query id where there is one, as every statement Loom
     # sends carries; a retry resends it and replaces its own orphaned attempt.
     query_id = request_query_id(query_tag_var.get()) or str(uuid.uuid4())
-    signed = boundary.scope_settings(key or _key(), org, namespaces, exp, query_id)
+    signed = boundary.scope_settings(_names(), key or _key(), org, namespaces, exp, query_id)
     return {**signed, "replace_running_query": 1}
 
 
@@ -262,17 +282,17 @@ async def provision() -> bool:
             foreign = await _foreign_problem() if await store.can_manage_access() else None
             if foreign == ("", ""):
                 statements = await _current_statements()
-                stored = await store.stored_entities()
-                if boundary.needs_rewrite(stored, boundary.entity_digest(statements)):
+                stored = await store.stored_entities(_names())
+                if boundary.needs_rewrite(stored, boundary.entity_digest(_names(), statements)):
                     await store.write_entities(statements)
                     log.info("analyst user: written (version %s)", boundary.ENTITY_VERSION)
                 elif (
                     stored is not None
                     and stored.version <= boundary.ENTITY_VERSION
-                    and (await store.stored_caps_digest() != boundary.caps_digest(caps()))
+                    and (await store.stored_caps_digest(_names()) != boundary.caps_digest(caps()))
                 ):
                     # The caps are deployment settings, written apart from the version.
-                    await store.write_entities(boundary.caps_sql(caps()))
+                    await store.write_entities(boundary.caps_sql(_names(), caps()))
         if foreign and foreign[0]:
             _set_problem(*foreign)
             return False  # nothing written: run again, once the policy is dropped
@@ -321,7 +341,7 @@ async def _write_under_lease() -> tuple[str, str]:
         foreign = await _foreign_problem()
         if foreign[0]:
             return foreign
-        stored = await store.stored_entities()
+        stored = await store.stored_entities(_names())
         if stored is None or stored.version <= boundary.ENTITY_VERSION:
             await store.write_entities(await _current_statements())
     return "", ""
@@ -371,7 +391,7 @@ async def rewrite() -> None:
         if await store.sealed_secrets() is None and not await store.analyst_user_absent():
             raise SetupRefused(_LOST_ROW)
         await load_secrets(may_draw=True)
-        stored = await store.stored_entities()
+        stored = await store.stored_entities(_names())
         if stored is not None and stored.version > boundary.ENTITY_VERSION:
             raise SetupRefused(
                 f"the analyst user was written by a newer build (version {stored.version}, this "
@@ -620,7 +640,7 @@ async def _probe() -> tuple[str, bool, str]:
                 raise  # no answer about the grant
             return f"{boundary.ANALYST_USER} was not refused {shown} ({error_kind(e)})", False, ""
         return f"{boundary.ANALYST_USER} may read {shown}: its grants are too wide", True, ""
-    if await store.own_version(password=_password(), extra={}) > boundary.ENTITY_VERSION:
+    if await store.own_version(_names(), password=_password(), extra={}) > boundary.ENTITY_VERSION:
         # A newer build's entities: the allowlist checks below are its to make.
         return "", False, ""
     for table in [*(t.name for t in boundary.TABLES), boundary.CANARY_TABLE]:
@@ -675,12 +695,14 @@ def _refusal(e: BaseException) -> ValidationError | None:
     code = error_code(e)
     if code not in _STATEMENT_CODES:
         return None
-    if code == _MEMORY_LIMIT_EXCEEDED and ("(total)" in str(e) or "(for user)" in str(e)):
+    text = str(e)
+    if code == _MEMORY_LIMIT_EXCEEDED and ("(total)" in text or "(for user)" in text):
         return None  # the server's memory, not the statement's cap
-    if "SQL_loom_" in str(e) or boundary.KEY_LITERAL.search(str(e)):
+    quotes_scope = any(f"{p}loom_" in text for p in boundary.SETTING_PREFIXES)
+    if quotes_scope or boundary.KEY_LITERAL.search(text):
         return ValidationError(
             f"ClickHouse refused the statement (code {code}) while checking the analysis "
-            "scope; a statement must not set the SQL_loom_* settings"
+            "scope; a statement must not set the scope settings"
         )
     if code in {158, 159, 241, 307, 396}:
         return ValidationError(
