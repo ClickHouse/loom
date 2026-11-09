@@ -347,7 +347,10 @@ def _setup_py_entry_points(path: str, text: str) -> list[EntryPoint]:
         group = m.group(1)
         depth, j = 1, m.end()
         while j < len(text) and depth:
-            depth += {"[": 1, "]": -1}.get(text[j], 0)
+            if text[j] == "[":
+                depth += 1
+            elif text[j] == "]":
+                depth -= 1
             j += 1
         for sm in _SETUP_STR_RE.finditer(text, m.end(), j):
             item = sm.group(1)

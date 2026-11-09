@@ -421,8 +421,8 @@ def test_files_that_miss_the_layout_cache_at_once_share_one_read(monkeypatch):
     monkeypatch.setattr(pl, "layout_from_texts", layout)
 
     async def three():
-        calls_ = [ingest_resolve._py_layout(None, "o", "n", {"setup.py"}) for _ in range(3)]  # type: ignore[arg-type]
-        return await asyncio.gather(*calls_)
+        misses = [ingest_resolve._py_layout(None, "o", "n", {"setup.py"}) for _ in range(3)]  # type: ignore[arg-type]
+        return await asyncio.gather(*misses)
 
     assert len(asyncio.run(three())) == 3
     assert calls == [1]

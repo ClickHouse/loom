@@ -121,3 +121,8 @@ def test_a_long_qualified_name_is_cut_and_stays_distinct() -> None:
     names = [s.qualified_name for s in syms]
     assert [len(n) for n in names] == [603, 1000, 1000, 1000]
     assert names[1].startswith("a::" + "x" * 600 + "::y") and len(set(names)) == 4
+
+
+def test_closing_hashes_come_off_and_a_heading_of_hashes_keeps_one() -> None:
+    secs, _ = sections_of("## Title ##\n# #\n")
+    assert [s.title for s in secs] == ["Title", "#"]

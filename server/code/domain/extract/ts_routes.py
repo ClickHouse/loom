@@ -89,6 +89,7 @@ def route_facets(pf: ParsedFile) -> list[Facet]:
     newlines = newline_offsets(text)
 
     def add(name: str, line: int, conf: float) -> None:
+        name = name[:200]  # as the Python lane cuts a route name
         if (name, line) in seen:
             return
         seen.add((name, line))
@@ -113,7 +114,8 @@ def route_facets(pf: ParsedFile) -> list[Facet]:
     controllers = list(_CONTROLLER_RE.finditer(text))
     closes = _brace_closes(text) if controllers else {}
     for k, c in enumerate(controllers):
-        prefix = c.group(1) or c.group(2) or ""
+        # cut: the prefix is joined into every route of the class
+        prefix = (c.group(1) or c.group(2) or "")[:400]
         # a class body ends at its `}`, and no later than the next controller: an unclosed
         # one is not read again for every controller before it
         stop = controllers[k + 1].start() if k + 1 < len(controllers) else len(text)

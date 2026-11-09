@@ -352,6 +352,20 @@ def _prefixed_routes(n: int) -> str:
     return prefixes + _run("", "@r.get('/b')\ndef f(): pass\n")(n // 2)
 
 
+def _declared_prefix(n: int, opener: str, route: str, close: str = "')\n") -> str:
+    """One prefix of n/2 characters, then n/2 characters of routes under it."""
+    return opener + "a" * (n // 2) + close + _run("", route)(n // 2)
+
+
+def _ts_routes(text: str) -> object:
+    from server.code.domain.extract.treesitter import ParsedFile
+    from server.code.domain.extract.ts_routes import route_facets
+
+    return route_facets(
+        ParsedFile(path="src/c.controller.ts", lang="typescript", source=text.encode())
+    )
+
+
 def _inline_templates(n: int) -> str:
     return "".join(f"@Component({{template:`<a-b{i}>`}})class A{i}{{}}\n" for i in range(n // 40))
 
@@ -394,6 +408,16 @@ _WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("python-route-rows", _py_routes, _run("", "app.add_url_rule('a')\n")),
     ("python-unclosed-include-router", _py_routes, _run("", "a.include_router(a,")),
     ("python-repeated-prefix", _py_routes, _prefixed_routes),
+    (
+        "python-declared-prefix",
+        _py_routes,
+        lambda n: _declared_prefix(n, "r = APIRouter(prefix='/", "@r.get('/b')\ndef f(): pass\n"),
+    ),
+    (
+        "ts-controller-prefix",
+        _ts_routes,
+        lambda n: _declared_prefix(n, "@Controller('", "@Get('a') a(){}\n", "')\nclass C {\n"),
+    ),
     ("python-unclosed-add-url-rule", _py_routes, _run("", "a.add_url_rule('a'")),
     ("python-unclosed-route", _py_routes, _run("import starlette.routing\n", "Route('a'")),
     ("python-env-reads", _env, _run("", "os.environ['A']\n")),

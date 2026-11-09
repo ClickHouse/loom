@@ -120,7 +120,8 @@ def _prefixes(text: str) -> dict[str, str]:
     out: dict[str, str] = {}
     for m in _PREFIX_DECL_RE.finditer(text):
         kw = _PREFIX_KW_RE.search(m.group(2))
-        out[m.group(1).rsplit(".", 1)[-1]] = kw.group(1) if kw else ""
+        # cut: the prefix is joined into every route on the router
+        out[m.group(1).rsplit(".", 1)[-1]] = (kw.group(1) if kw else "")[: 2 * _MAX_NAME]
     for m in _INCLUDE_ROUTER_RE.finditer(text):
         name = m.group(1).rsplit(".", 1)[-1]
         # cut: a route name keeps only `_MAX_NAME` characters, and a prefix joined again
