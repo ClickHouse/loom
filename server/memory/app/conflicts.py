@@ -437,10 +437,9 @@ async def check_on_commit(
         `new_valid_at`: the new row's validity date when the writer supplied one; it decides
         which side of a templated substitution `newest_wins` retires.
 
-        `candidate_rows` / `resolved_threshold`: a writer that already fetched this fact's
-        peers (`peer_rows`) or resolved the namespace threshold passes them in; that
-        statement or those lookups are then skipped and every step below runs on the rows
-        the peer statement returns."""
+        `candidate_rows`: the peers a caller already read (`peer_rows`, under the Postgres
+        authority); the peer and pinned statements are skipped. `resolved_threshold`: the
+        type's conflict threshold, when the caller read it; the lookups are skipped."""
     # Non-searchable types (episodic) carry no embedding → skip cleanly.
     if not new_embedding:
         return ConflictResult(verdict="clear", peers=[])

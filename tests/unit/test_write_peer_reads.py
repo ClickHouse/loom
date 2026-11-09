@@ -211,8 +211,8 @@ def _no_reads(monkeypatch: pytest.MonkeyPatch, policy: str) -> list[str]:
 async def test_an_append_only_bulk_write_clears_every_entry_without_a_peer_read(
     monkeypatch,
 ) -> None:
-    """Under `append_only` every entry of a bulk write is its own row: the gate reads the
-    policy and issues no peer statement, as for a single write."""
+    """Under `append_only` every entry of a bulk write is its own row: the batch reads the
+    policy once and no entry issues a peer statement, as for a single write."""
     from server.memory.app import bulk_set
 
     ch = StubCH()
@@ -221,7 +221,7 @@ async def test_an_append_only_bulk_write_clears_every_entry_without_a_peer_read(
     put, metas, pending, vectors = _bulk(3)
     out = await bulk_set._bulk_conflict_verdicts(put, [{}] * 3, metas, pending, vectors)
     assert [out[i].verdict for i in range(3)] == ["clear"] * 3
-    assert reads == ["n"] * 3
+    assert reads == ["n"]  # read once for the batch
     assert not [sql for sql, _ in ch.query_all_calls if "cosineDistance" in sql]
 
 

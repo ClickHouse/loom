@@ -1412,6 +1412,28 @@ def _supersede_pairs(plan: BulkVerdictPlan) -> list[tuple[str, str]]:
     ]
 
 
+async def _namespace_policy(org: str, namespace: str) -> str | None:
+    """The namespace's conflict policy, or None when it cannot be read."""
+    from server.memory.app.conflicts import namespace_conflict_policy
+
+    try:
+        return await namespace_conflict_policy(org, namespace, ch=get_client())
+    except Exception as e:  # noqa: BLE001 — each fact's check reads it again
+        log.warning("bulk_set: conflict policy read failed: %s", e)
+        return None
+
+
+async def _type_threshold(org: str, namespace: str, memory_type: str) -> float | None:
+    """The type's conflict threshold, or None when it cannot be read."""
+    from server.memory.app.conflicts import resolve_conflict_floor
+
+    try:
+        return (await resolve_conflict_floor(org, namespace, memory_type))[0]
+    except Exception as e:  # noqa: BLE001 — each fact's check resolves it again
+        log.warning("bulk_set: threshold lookup failed for %r: %s", memory_type, e)
+        return None
+
+
 async def _bulk_conflict_verdicts(
     input: Any,
     memory_rows: list[dict[str, Any]],
@@ -1439,12 +1461,22 @@ async def _bulk_conflict_verdicts(
     cap = max(cap, 0)
     sem = asyncio.Semaphore(int(_settings.bulk_conflict_check_concurrency))
     out: dict[int, Any] = {}
+    # The namespace's policy and each type's threshold, read once for the batch; one that
+    # cannot be read is left to each fact's check, which reads it again.
+    policy = await _namespace_policy(input.org, input.namespace)
+    thresholds: dict[str, float | None] = {}
+    for idx, _t, _x, _k in pending[:cap]:
+        mt = str(entry_metas[idx][0].memory_type)
+        if mt not in thresholds:
+            thresholds[mt] = await _type_threshold(input.org, input.namespace, mt)
 
     async def _one(idx: int, vec: list[float]) -> None:
         entry, serialized, _t, _e, _x = entry_metas[idx]
         async with sem:
             try:
                 out[idx] = await check_on_commit(
+                    resolved_policy=policy,
+                    resolved_threshold=thresholds.get(str(entry.memory_type)),
                     org=input.org,
                     namespace=input.namespace,
                     agent=input.agent,
