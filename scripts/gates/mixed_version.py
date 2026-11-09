@@ -468,7 +468,7 @@ class Scenario:
             quoted = sql(
                 self.ch_port,
                 "SELECT count() FROM system.text_log WHERE event_time >= {since:DateTime} "
-                "AND level = 'Error' AND message LIKE '%SQL_loom_%' "
+                "AND level = 'Error' AND position(message, 'SQL_loom_') > 0 "
                 "AND message LIKE '%UNKNOWN_SETTING%'",
                 {"since": since},
             )

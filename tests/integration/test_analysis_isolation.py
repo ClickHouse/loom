@@ -512,9 +512,11 @@ def test_the_statement_text_stays_out_of_the_query_log(
 
 def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client) -> None:
     """The policies hold the key and its pads as `decrypt` arguments: no
-    logged statement text or error, the boot's writes and the probe's refused
-    reads included, carries one. The whole log is read: a build before version
-    2 pinned log_queries = 0 for the analyst, so it left no such rows."""
+    logged statement text or error carries one. The whole query_log is read,
+    the boot's writes included: a build before version 2 pinned log_queries = 0
+    for the analyst, so it left no rows there. text_log is read from the start
+    of this test, since a version 1 probe's errors reached it with the pads in
+    clear."""
     start = ch_client.query("SELECT now()").result_rows[0][0]
     secrets = _key_spellings(ch_client)
 
@@ -542,7 +544,7 @@ def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client) -> Non
     # The server log records each refused read's error, whatever log_queries says.
     quoting = ch_client.query(
         "SELECT count() FROM system.text_log WHERE event_time >= {start:DateTime} "
-        "AND level = 'Error' AND message LIKE '%SQL_loom_%' "
+        "AND level = 'Error' AND position(message, 'SQL_loom_') > 0 "
         "AND message LIKE '%UNKNOWN_SETTING%'",
         parameters={"start": start},
     ).result_rows[0][0]
