@@ -245,11 +245,10 @@ async def test_a_service_account_bound_to_repositories_is_not_minted_while_unrea
     monkeypatch,
 ) -> None:
     # Its bound tracker grants come from the operator repositories, not known yet.
-    from server.identity.app import me_service_accounts
+    from server.identity.app import me_service_accounts, namespace_kinds
 
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
     monkeypatch.setattr(repos, "_registry_loaded", False)
-    from server.identity.app import namespace_kinds
 
     async def kinds(org: str) -> dict[str, str]:
         # code-x is a branch added from the page: its directory row says code

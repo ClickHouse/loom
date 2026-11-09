@@ -217,9 +217,8 @@ async def authorize(
     try:
         await authorize_op(auth, op, org=target.org, namespace=target.namespace, **scope_flags(op))
     except IdentityIncompleteError:
-        # A scoped token needs a namespace, and the default that would have been it was
-        # refused: any incomplete-identity refusal then answers with that refusal (in
-        # the token's own org), which refuses as closed.
+        # The gate had no namespace to check because the default was refused: answer
+        # with that refusal (in the token's own org), not the incomplete-identity one.
         refused = gate_default_refused()
         if refused is None or op.skip_namespace_authz:
             raise

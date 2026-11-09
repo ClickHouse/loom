@@ -101,14 +101,13 @@ def suggestable(org: str, can_access: Any) -> list[str]:
     standard (not restricted) code and tracker namespaces. A restricted
     namespace is never named to a caller outside it."""
     from server.code.domain.scope import current_code_scope
+    from server.identity.app.namespace_classification import is_restricted_cached
     from server.tracker.domain.namespaces import configured_namespaces
 
     out: list[str] = []
     scope = current_code_scope()
     if scope and (not org or scope[0] == org):
         out.append(scope[1])
-    from server.identity.app.namespace_classification import is_restricted_cached
-
     for r in _listed():
         if org and r.org != org:
             continue
