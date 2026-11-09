@@ -228,6 +228,8 @@ class Server:
             LOOM_EMBEDDING_MODEL="fake-ngram-1024",
             LOOM_LLM_PROVIDER="fake",
             LOOM_BACKGROUND_WORKERS=self.workers,
+            # The analysis probe's refused reads, which the gate searches the logs for.
+            LOOM_CH_ANALYSIS_PROBE_INTERVAL_S="5",
             LOOM_LATENCY_BUDGET_MULTIPLIER="10",
             # Low enough that the fake embedder judges the two region facts close.
             LOOM_CONFLICT_THRESHOLD="0.5",
@@ -317,7 +319,6 @@ class Server:
 
 def mint(org: str, ns: str) -> str:
     os.environ.setdefault("LOOM_JWT_SECRET", JWT_SECRET)
-    sys.path.insert(0, str(ROOT))
     import jwt
 
     from server.auth.jwt import mint_token
@@ -435,6 +436,10 @@ class Scenario:
         except ValueError as e:
             self.check(False, f"the memory policy names the scope key ({e})")
             return
+        needles = {"k": "[" + ", ".join(map(sql_string, secrets)) + "]"}
+        # N-1's version 1 probe errors reached the server log with the pads in
+        # clear before the upgrade, as on any version 1 install: search from now.
+        since = sql(self.ch_port, "SELECT now()")
         sql(self.ch_port, "SYSTEM FLUSH LOGS")
         # The probe's refused reads quote the policy in their errors: the search covers them.
         refused = sql(
@@ -450,18 +455,32 @@ class Scenario:
             "multiSearchAnyCaseInsensitive(query, {k:Array(String)}) "
             "OR multiSearchAnyCaseInsensitive(formatted_query, {k:Array(String)}) "
             "OR multiSearchAnyCaseInsensitive(exception, {k:Array(String)})",
-            {"k": "[" + ", ".join(map(sql_string, secrets)) + "]"},
+            needles,
             boundary.LOG_TEXT_CUT,
         )
         self.check(
             logged == "0", "no logged statement or error holds the scope key after the upgrade"
         )
         # The server log records each refused read's error, whatever log_queries says.
+        deadline = time.monotonic() + SETTLE_S
+        while True:
+            sql(self.ch_port, "SYSTEM FLUSH LOGS")
+            quoted = sql(
+                self.ch_port,
+                "SELECT count() FROM system.text_log WHERE event_time >= {since:DateTime} "
+                "AND level = 'Error' AND message LIKE '%SQL_loom_%' "
+                "AND message LIKE '%UNKNOWN_SETTING%'",
+                {"since": since},
+            )
+            if quoted != "0" or time.monotonic() > deadline:
+                break
+            time.sleep(2)
+        self.check(quoted != "0", f"a probe's refused read reached the server log ({quoted})")
         errors = sql(
             self.ch_port,
-            "SELECT count() FROM system.text_log WHERE level = 'Error' "
-            "AND multiSearchAnyCaseInsensitive(message, {k:Array(String)})",
-            {"k": "[" + ", ".join(map(sql_string, secrets)) + "]"},
+            "SELECT count() FROM system.text_log WHERE event_time >= {since:DateTime} "
+            "AND level = 'Error' AND multiSearchAnyCaseInsensitive(message, {k:Array(String)})",
+            {"since": since, **needles},
             boundary.LOG_TEXT_CUT,
         )
         self.check(errors == "0", "no server log error holds the scope key after the upgrade")
