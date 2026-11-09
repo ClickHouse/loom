@@ -111,6 +111,7 @@ def _invalid(message: str) -> HTTPException:
 async def _bound_trackers(org: str, subject: str, parent: AuthInfo, repos: list[str]) -> list[str]:
     """The restricted tracker records bound to `repos` that the caller holds a grant on and
     the parent token reaches; the history code ops read issues and PRs there."""
+    from server.identity.app import namespace_kinds
     from server.tracker.app.binding import (
         operator_repositories,
         refresh_overrides,
@@ -121,7 +122,8 @@ async def _bound_trackers(org: str, subject: str, parent: AuthInfo, repos: list[
     if not repos:
         return out
     # Their bound trackers come from the operator repositories, unknown until that read.
-    await token_grants.refuse_unread_code(org, repos, configured_too=True)
+    kinds = await namespace_kinds.kind_map(org)
+    token_grants.refuse_unread_code(org, repos, kinds, configured_too=True)
     await refresh_overrides()  # the links as of the refresh interval, branches included
     operator = operator_repositories()  # once for every name
     for ns in repos:

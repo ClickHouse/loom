@@ -31,7 +31,7 @@ async def org(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[str]:
         await client.execute(
             "DELETE FROM loom.code_repos WHERE org = {org:String}", params={"org": name}
         )
-        reg.reset_for_tests()
+        reg.set_registry_repos([], frozenset())  # this test's rows are gone; still read
         await client.disconnect()
 
 

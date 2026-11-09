@@ -27,7 +27,7 @@ class CodeReposMixin(CodeRepoBase):
                    toString(join_policy) AS join_policy,
                    if(active, github_token_enc, '') AS github_token_enc,
                    exclude_generated, toString(scip_producer) AS scip_producer,
-                   toString(row_kind) AS row_kind, active
+                   row_kind, active
             FROM loom.code_repos FINAL
             WHERE active OR row_kind = 'page'
             ORDER BY org, namespace

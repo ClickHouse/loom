@@ -23,7 +23,6 @@ CONFIG_ENTRY_READERS = {
     "identity/app/token_grants.py",
     # Whether a revoke on a never-read process must read the registry and fan out.
     "code/app/index/maintainers.py",
-    "transport/namespace_resolve.py",  # `suggestable`, which hides a restricted name
 }
 # The snapshot's internals and the raw configuration: only repos.py reads them.
 INTERNALS = {"_configured_from_env", "_with_registry", "_registry_repos", "_page_namespaces"}
@@ -273,7 +272,7 @@ def test_a_name_whose_cached_directory_row_is_restricted_is_not_suggested(monkey
         path_prefixes=(),
         github_token="",
     )
-    monkeypatch.setattr(repos, "config_entries", lambda: [entry])
+    monkeypatch.setattr(repos, "configured_repos", lambda: [entry])
     monkeypatch.setattr(namespace_classification, "is_restricted_cached", lambda org, ns: True)
     assert "code-x" not in namespace_resolve.suggestable("o", lambda org, ns: False)
     monkeypatch.setattr(namespace_classification, "is_restricted_cached", lambda org, ns: False)

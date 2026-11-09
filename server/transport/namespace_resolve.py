@@ -100,7 +100,6 @@ def suggestable(org: str, can_access: Any) -> list[str]:
     code scope first, then every namespace the token names, then the
     standard (not restricted) code and tracker namespaces. A restricted
     namespace is never named to a caller outside it."""
-    from server.code.domain.index.repos import config_entries
     from server.code.domain.scope import current_code_scope
     from server.tracker.domain.namespaces import configured_namespaces
 
@@ -110,7 +109,7 @@ def suggestable(org: str, can_access: Any) -> list[str]:
         out.append(scope[1])
     from server.identity.app.namespace_classification import is_restricted_cached
 
-    for r in config_entries():
+    for r in _listed():
         if org and r.org != org:
             continue
         # The directory row may say restricted where the configuration does not yet.

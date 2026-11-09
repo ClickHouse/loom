@@ -96,26 +96,22 @@ async def restricted_roles(
     return out
 
 
-async def refuse_unread_code(
-    org: str, names: list[str], *, configured_too: bool = False
-) -> dict[str, str]:
-    """The directory's kinds for `org` ({} with nothing to check), after a RegistryUnread
-    refusal while the code registry has never been read and one of `names` is not known
-    to be of another kind than code: the configuration lists no page branch then, and
-    the kinds may have fallen back to it. `configured_too` refuses for an operator
-    entry as well, whose bound trackers are not known either until that read."""
+def refuse_unread_code(
+    org: str, names: list[str], kinds: Mapping[str, str], *, configured_too: bool = False
+) -> None:
+    """RegistryUnread while the code registry has never been read and one of `names`
+    has no kind in `kinds` (the directory's, which fall back to the configuration, and
+    that lists no page branch then). `configured_too` also refuses a code namespace
+    of a known kind or an operator entry: its bound trackers are not known yet."""
     from server.code.domain.index.repos import config_entry, registry_unread, require_registry_read
-    from server.identity.app import namespace_kinds
 
-    if not names:
-        return {}
-    kinds = await namespace_kinds.kind_map(org)
-    if registry_unread():
-        for n in names:
-            listed = config_entry(org, n) is not None
-            if (configured_too and listed) or (not listed and kinds.get(n, "") in ("code", "")):
-                require_registry_read()
-    return kinds
+    if not registry_unread():
+        return
+    for n in names:
+        listed = config_entry(org, n) is not None
+        kind = kinds.get(n, "")
+        if (not listed and kind == "") or (configured_too and (listed or kind == "code")):
+            require_registry_read()
 
 
 async def code_namespace_test(
@@ -125,10 +121,12 @@ async def code_namespace_test(
     writes a token first calls this before that write, so a refusal
     (`refuse_unread_code`, for the restricted names) strands nothing."""
     from server.code.domain.index.repos import config_entry
+    from server.identity.app import namespace_kinds
     from server.tracker.domain.namespaces import tracker_namespace
 
     restricted = [n for n in names if await is_restricted(org, n)]
-    kinds = await refuse_unread_code(org, restricted)
+    kinds = await namespace_kinds.kind_map(org) if restricted else {}
+    refuse_unread_code(org, restricted, kinds)
 
     def is_code_namespace(o: str, n: str) -> bool:
         # read-only reference data: a repository index or a tracker record

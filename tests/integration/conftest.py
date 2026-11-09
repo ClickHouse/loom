@@ -251,6 +251,19 @@ def _record_loom_requests() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _code_registry_read() -> Iterator[None]:
+    """In-process code ops answer only once the self-service registry has been read
+    (`repos.configured_repos`); the server under test reads it at boot, these tests
+    stand in for that read."""
+    from server.code.domain.index import repos
+
+    before = repos._registry_loaded
+    repos._registry_loaded = True
+    yield
+    repos._registry_loaded = before
+
+
+@pytest.fixture(autouse=True)
 def _fresh_request_log() -> None:
     _requests.clear()
 
