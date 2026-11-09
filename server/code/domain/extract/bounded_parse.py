@@ -6,8 +6,9 @@ replica for hours or exhaust its memory. Every parse of repository text goes thr
 `parse`, which first parses the source in a child process (`parse_child`) held to
 `code_parse_memory_mb` of address space past its own and `code_parse_timeout_s` of
 CPU time, and raises `ParseTimeout` when that parse runs past the deadline or a signal
-ends the child, a fact of the source; the other errors `parse` names are none. Each
-caller takes its parse failure path (an indexed file is then chunks without symbols).
+other than SIGKILL ends the child: a fact of the source. The other errors `parse` raises
+are not. Each caller takes its parse failure path (an indexed file is then chunks
+without symbols).
 
 Only a source the child parsed in full within the deadline is parsed again here, where
 the same parse does the same work and so stays within the same limits (past twice the

@@ -1043,8 +1043,8 @@ class CodeSettings(BaseModel):
     code_parse_timeout_s: Annotated[float, LIVE] = Field(
         default=3.0, gt=0, le=3600, allow_inf_nan=False
     )
-    # Address space (MB) a tree-sitter parse may take, per server process (`bounded_parse`);
-    # a parse past it fails like a timed-out one (an indexed file is chunks without symbols).
+    # Address space (MB) one tree-sitter parse may take; one runs at a time per server process,
+    # which holds up to this plus about 170 MB for it. Past it the file is chunks without symbols.
     code_parse_memory_mb: Annotated[int, LIVE] = Field(default=256, ge=128, le=65536)
     # The ingest pass's own deadline (seconds), kept at the supervisor's cap;
     # `code_ingest_pass_budget_fraction` keeps a pass under it.

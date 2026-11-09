@@ -644,7 +644,8 @@ def test_a_parse_whose_child_the_kernel_killed_runs_again(
 
     monkeypatch.setattr(bounded_parse, "_start", start)
     monkeypatch.setattr(settings, "code_parse_timeout_s", 10.0)
-    # parses in over a second; the request fits the pipe, so the kill comes after it is sent
+    # parses in over a second; the kill lands while the child starts or parses, and either
+    # way the parse sees it end by SIGKILL
     source = b"package x\nvar s = " + b"`" * 16_000
     pf, err = parse_for_ingest("a.go", source)
     assert err == "" and pf is not None and len(started) == 2
@@ -727,3 +728,29 @@ def test_a_parse_whose_caller_already_gave_up_does_not_run() -> None:
     finally:
         bounded_parse.LOCK_WAIT.reset(waits)
     assert limit.gave_up
+
+
+def test_a_parse_whose_children_the_kernel_killed_twice_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import signal
+    import threading
+
+    from server.code.domain.extract import bounded_parse
+
+    monkeypatch.setattr(bounded_parse, "_idle", None)
+    real = bounded_parse._start
+    started: list[Any] = []
+
+    def start() -> Any:
+        child = real()
+        # every child is killed from outside while it starts or parses
+        threading.Timer(0.1, child.send_signal, (signal.SIGKILL,)).start()
+        started.append(child)
+        return child
+
+    monkeypatch.setattr(bounded_parse, "_start", start)
+    monkeypatch.setattr(settings, "code_parse_timeout_s", 10.0)
+    source = b"package x\nvar s = " + b"`" * 16_000  # parses in over a second
+    pf, err = parse_for_ingest("a.go", source)
+    assert "ParseUnavailable" in err and len(started) == 2
