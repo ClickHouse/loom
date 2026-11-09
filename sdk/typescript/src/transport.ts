@@ -288,6 +288,79 @@ export class Transport {
     return (await this.send<T>("POST", path, data, opts, new URLSearchParams(query).toString())).data;
   }
 
+  /**
+   * One streamed POST to `{baseUrl}{path}`, a route outside the op registry (the
+   * assistant's chat): the response once the server answered 2xx, its body for the
+   * caller to read as it arrives. It is not resent after a 429 or a failure: a streamed
+   * answer runs once. A 401 with a token provider is sent once more with a fresh token,
+   * as an op is: the server refuses it before the answer starts. A 4xx/5xx throws its
+   * typed error; a failed connection throws `BackendUnavailable` with code `NETWORK`;
+   * an abort through `signal`, at any point, throws "aborted by caller".
+   */
+  async stream(
+    path: string,
+    body: unknown,
+    opts: { headers?: Record<string, string>; signal?: AbortSignal } = {},
+  ): Promise<Response> {
+    if (!path.startsWith("/") || path.startsWith("//"))
+      throw classed(new LoomError(`not a path on ${this.baseUrl}: ${path}`), "input", false);
+    const url = `${this.baseUrl}${path}`;
+    const requestId = randomId();
+    const aborted = (cause?: unknown) =>
+      classed(new LoomError(`${path}: aborted by caller`, { op: path, cause, requestId }), "input", false);
+    const provider = this.#provider;
+    let refused: string | undefined;
+    let refusal: LoomError | undefined;
+    for (;;) {
+      const headers: Record<string, string> = {
+        ...this.headers,
+        ...(opts.headers ?? {}),
+        Accept: "text/event-stream",
+        "X-Request-Id": requestId,
+      };
+      let bearer = "";
+      if (this.#apiKey) headers.Authorization = `Bearer ${this.#apiKey}`;
+      else if (provider) {
+        bearer = await this.providerBearer(
+          provider,
+          url,
+          path,
+          (token) => untilAborted(token(), opts.signal, aborted),
+          refused,
+          refusal,
+        );
+        if (bearer) headers.Authorization = `Bearer ${bearer}`;
+      }
+      let res: Response;
+      try {
+        res = await this.fetchImpl(url, { method: "POST", headers, body: JSON.stringify(body), signal: opts.signal });
+      } catch (e) {
+        if (opts.signal?.aborted) throw aborted(e);
+        const err = new BackendUnavailable(`${path}: cannot reach ${this.baseUrl}: ${describe(e)}`, {
+          op: path,
+          cause: e,
+          requestId,
+          code: NETWORK_ERROR_CODE,
+        });
+        throw classed(err, "dependency", false);
+      }
+      if (res.ok) return res;
+      let text = "";
+      try {
+        text = await res.text();
+      } catch (e) {
+        if (opts.signal?.aborted) throw aborted(e);
+      }
+      const echoed = res.headers.get("X-Request-Id") ?? requestId;
+      const retryAfterS = res.status === 429 ? retryAfterFrom(res.headers, this.now()) : undefined;
+      const err = errorFromResponse(path, res.status, parseBody(text), echoed, retryAfterS);
+      if (res.status !== 401 || !bearer || refusal) throw err;
+      // The token may have been revoked or rotated: once more with a fresh one.
+      refused = bearer;
+      refusal = err;
+    }
+  }
+
   private async send<T>(
     method: "GET" | "POST",
     op: string,
@@ -418,20 +491,45 @@ export class Transport {
   private async authorize(ctx: AttemptContext, timeoutMs: number): Promise<void> {
     const provider = this.#provider;
     if (!provider) return;
-    if (provider.origin && new URL(ctx.url).origin !== provider.origin)
-      throw new AuthError(`refusing to send ${provider.label ?? "the provider"}'s token to ${new URL(ctx.url).host}`, {
-        op: ctx.op,
-      });
-    throwIfAborted(ctx);
     // The caller may give up on its wait, or time out; a renewal other calls share goes on.
-    const refused = ctx.refused;
-    ctx.bearer = await untilTimeoutOrAbort(provider.token(refused), timeoutMs, ctx);
+    ctx.bearer = await this.providerBearer(
+      provider,
+      ctx.url,
+      ctx.op,
+      (token) => {
+        throwIfAborted(ctx);
+        return untilTimeoutOrAbort(token(), timeoutMs, ctx);
+      },
+      ctx.refused,
+      ctx.refusal,
+    );
     ctx.refused = undefined;
-    // No fresh token to send (a token file, a key that cannot renew): the 401 stands.
-    if (refused !== undefined && ctx.bearer === refused && ctx.refusal) throw ctx.refusal;
     // A provider with nothing to send (no stored login, no token file) sends no header.
     if (ctx.bearer) ctx.headers.Authorization = `Bearer ${ctx.bearer}`;
     else delete ctx.headers.Authorization;
+  }
+
+  /**
+   * The provider's token for a request to `url`, never sent to another origin; `wait`
+   * bounds the provider's answer. After a 401 (`refused`, and its error `refusal`), a
+   * fresh token, or the 401 stands when there is none to send.
+   */
+  private async providerBearer(
+    provider: TokenProvider,
+    url: string,
+    op: string,
+    wait: (token: () => string | Promise<string>) => Promise<string>,
+    refused: string | undefined,
+    refusal: LoomError | undefined,
+  ): Promise<string> {
+    if (provider.origin && new URL(url).origin !== provider.origin)
+      throw new AuthError(`refusing to send ${provider.label ?? "the provider"}'s token to ${new URL(url).host}`, {
+        op,
+      });
+    const bearer = await wait(() => provider.token(refused));
+    // No fresh token to send (a token file, a key that cannot renew): the 401 stands.
+    if (refused !== undefined && bearer === refused && refusal) throw refusal;
+    return bearer;
   }
 
   private recordRate(op: string, r: Response): void {
@@ -723,6 +821,18 @@ function readBody(res: Response, signal: AbortSignal): Promise<string> {
 
 function abortError(): Error {
   return Object.assign(new Error("aborted"), { name: "AbortError" });
+}
+
+/** `work`, or the error `aborted()` makes once `signal` aborts, whichever comes first. */
+function untilAborted<T>(work: T | Promise<T>, signal: AbortSignal | undefined, aborted: () => LoomError): Promise<T> {
+  if (!signal) return Promise.resolve(work);
+  if (signal.aborted) return Promise.reject(aborted());
+  let onAbort = () => {};
+  const cut = new Promise<never>((_, reject) => {
+    onAbort = () => reject(aborted());
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  return Promise.race([Promise.resolve(work), cut]).finally(() => signal.removeEventListener("abort", onAbort));
 }
 
 /**

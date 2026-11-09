@@ -160,6 +160,21 @@ const status = await loom.knowledge.ingestFile({
 // status.state: ready | partial | failed | cancelled
 ```
 
+### The assistant
+
+`loom.assistant.stream({ namespace, question, history, signal, readTimeoutMs })` asks
+the Loom assistant through `POST /v1/assistant/chat/completions` as the client's token
+and yields `{ type: "text", text }` for each piece of the answer, then one
+`{ type: "answer", answer }` with its `runId`, usage and the citations the server
+checked (`{ kind, text, verified, reason, ref }`). A refusal throws its typed error
+before any text; an `error` event after the answer began throws the same way. An answer
+that began is never resent, nor one refused with a 429; a 401 with a token provider,
+which comes before the answer starts, is sent once more with a fresh token.
+`readTimeoutMs` (300,000) bounds the request and then each read, as an answer is silent
+while a tool call runs: past it the stream throws `TimeoutError`. An abort through
+`signal` closes the answer on the server too. `loom.assistant.ask` is the op: one whole
+answer.
+
 ### Probe before you rely
 
 ```ts

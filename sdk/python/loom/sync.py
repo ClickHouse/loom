@@ -47,6 +47,8 @@ _CLIENT_ATTRS: tuple[str, ...] = (
     "working_memory",
     "briefs",
     "knowledge",
+    # The Loom assistant: `sa.assistant.stream(...)` is a blocking iterator.
+    "assistant",
     "conversations",
     "learnings",
     "conflicts",
@@ -214,6 +216,7 @@ class SyncAgent:
     working_memory: _SyncClientProxy
     briefs: _SyncClientProxy
     knowledge: _SyncClientProxy
+    assistant: _SyncClientProxy
     conversations: _SyncClientProxy
     learnings: _SyncClientProxy
     conflicts: _SyncClientProxy

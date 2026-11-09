@@ -417,8 +417,10 @@ def _charge(answer: Answer) -> None:
 
 def error_event(e: LoomServerError) -> bytes:
     """LibreChat's failure once the stream has begun, as the error event OpenAI's streams
-    send, with the `category` and `retryable` every coded error body carries."""
-    return f"data: {json.dumps({'error': classified(e.to_detail(), e.status_code)})}\n\n".encode()
+    send, with the `category` and `retryable` every coded error body carries and the HTTP
+    status it would have had, so a client maps it as it maps that response."""
+    detail = {**classified(e.to_detail(), e.status_code), "status": e.status_code}
+    return f"data: {json.dumps({'error': detail})}\n\n".encode()
 
 
 async def ask(auth: AuthInfo, org: str, namespace: str, messages: Any) -> Answer:

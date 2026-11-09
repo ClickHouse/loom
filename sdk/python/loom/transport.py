@@ -11,13 +11,14 @@ when a caller asks for it.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import platform
 import re
 import sys
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC
 from email.utils import parsedate_to_datetime
@@ -507,6 +508,46 @@ class Transport:
         """`request`, decoded: the JSON object the route answers."""
         resp = await self.request(method, path, json=json, params=params, content=content)
         return _json_object(path, resp, resp.headers.get("X-Request-Id", ""))
+
+    @contextlib.asynccontextmanager
+    async def stream(
+        self,
+        path: str,
+        *,
+        json: Mapping[str, Any],
+        headers: Mapping[str, str] | None = None,
+        read_timeout_s: float | None = None,
+    ) -> AsyncIterator[httpx.Response]:
+        """One streamed POST to a route outside the op registry (the assistant's chat):
+        the open response once the server answered 2xx, for the caller to read as it
+        arrives. It is not resent after a 429 or a failure: a streamed answer runs
+        once. A stored login's 401 is sent once more with a fresh token, as a call's
+        is: the server refuses it before the answer starts.
+        Raises the typed error for a 4xx/5xx, and `unreachable_error` for a
+        connection that fails before or while the body is read. `read_timeout_s`
+        bounds each read (default: the transport's timeout)."""
+        if not path.startswith("/") or path.startswith("//"):
+            raise ValueError(f"not a path on {self.base_url}: {path!r}")
+        request_id = str(uuid.uuid4())
+        sent = {
+            **self._ident_headers,
+            **(headers or {}),
+            "Accept": "text/event-stream",
+            "X-Request-Id": request_id,
+        }
+        timeout = httpx.Timeout(self._timeout_s, read=read_timeout_s or self._timeout_s)
+        try:
+            async with self._client.stream(
+                "POST", path, json=dict(json), headers=sent, timeout=timeout
+            ) as resp:
+                if resp.status_code >= 400:
+                    await resp.aread()
+                    raise self._error_for(
+                        path, resp, resp.headers.get("X-Request-Id") or request_id
+                    )
+                yield resp
+        except httpx.RequestError as e:
+            raise unreachable_error(self.base_url, e, request_id=request_id) from e
 
     async def post_with_meta(
         self,

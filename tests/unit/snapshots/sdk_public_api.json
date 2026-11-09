@@ -137,6 +137,23 @@
         "tokens": []
       }
     },
+    "assistant": {
+      "class": "AssistantClient",
+      "methods": {
+        "ask": [
+          "question",
+          "history",
+          "namespace",
+          "read_timeout_s"
+        ],
+        "stream": [
+          "question",
+          "history",
+          "namespace",
+          "read_timeout_s"
+        ]
+      }
+    },
     "audit": {
       "class": "AuditClient",
       "methods": {
@@ -3737,6 +3754,9 @@
   "loom.__all__": [
     "Agent",
     "AgentTools",
+    "AssistantAnswer",
+    "AssistantCitation",
+    "AssistantText",
     "AuthInsufficient",
     "AuthInvalid",
     "BackendUnavailable",

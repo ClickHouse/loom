@@ -18,6 +18,7 @@ from typing import Any, Literal
 
 from loom._logging import logger
 from loom.account import AccountClient
+from loom.assistant import AssistantClient
 from loom.audit import AuditClient
 from loom.blacklist import BlacklistClient
 from loom.briefs import BriefsClient
@@ -189,6 +190,16 @@ class Agent:
         #: The consumer label as the transport stamps it ('' = none).
         self.consumer: str = self.transport.consumer
         self._caps: Capabilities | None = None
+        self._attach_clients()
+        # The ambient run, installed as the transport's
+        # before-post hook; None when auto_run is off.
+        self.ambient_run: AmbientRun | None = None
+        if self.auto_run:
+            self.ambient_run = AmbientRun(self.run)
+            self.transport.before_post = self.ambient_run.before_post
+
+    def _attach_clients(self) -> None:
+        """One client per wire-op group, each bound to this agent."""
         # Every served op as a generated method (`a.client.tracker.source_add`),
         # the same surface as the TypeScript `LoomClient`; the clients below are
         # the hand-written high-level layer.
@@ -200,6 +211,8 @@ class Agent:
         # Session briefs: a.briefs.save / get / list / delete.
         self.briefs = BriefsClient(self)
         self.knowledge = KnowledgeClient(self)
+        # The Loom assistant, asked as this agent: a.assistant.stream / ask.
+        self.assistant = AssistantClient(self)
         self.conversations = ConversationsClient(self)
         self.learnings = LearningsClient(self)
         self.conflicts = ConflictsClient(self)
@@ -223,12 +236,6 @@ class Agent:
         self.code = CodeClient(self)
         self.tracker = TrackerClient(self)
         self.context = ContextClient(self)
-        # The ambient run, installed as the transport's
-        # before-post hook; None when auto_run is off.
-        self.ambient_run: AmbientRun | None = None
-        if self.auto_run:
-            self.ambient_run = AmbientRun(self.run)
-            self.transport.before_post = self.ambient_run.before_post
 
     @property
     def ambient_run_id(self) -> str:

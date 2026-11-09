@@ -197,6 +197,27 @@ Name your agent: `""`, `"-"` and `"*"` default to `sdk-ts:<script>` with a
 warning, because an anonymous agent is every other anonymous caller to the
 ledger, the mentor and the cost views.
 
+## Ask the assistant
+
+The Loom assistant answers a question about a namespace as your token: it reads
+only what you may read, and each answer spends from the namespace's daily model
+cost cap. `loom.assistant.stream` yields the text as it is written, then the answer
+with the citations the server checked against Loom; `loom.assistant.ask`, the op,
+returns one whole:
+
+```ts
+for await (const event of loom.assistant.stream({
+  namespace: "support",
+  question: "When are deploys frozen?",
+})) {
+  if (event.type === "text") process.stdout.write(event.text);
+  else if (!event.answer.citations.some((c) => c.verified)) console.log("\n(no verified citation)");
+}
+```
+
+An answer that began is never resent, nor one refused with a 429: asking again is a new
+answer with its own spend. Abort it with `signal`; the server stops the answer too.
+
 ## The response, not just the body
 
 `callWithResponse` returns the body with what the server said about the call: the `requestId` that finds it in the server's ledger, the `schemaVersion` it answered with, its own `serverTimingMs`, the `rateLimit` reading and how many `attempts` the call took.

@@ -1,19 +1,18 @@
 # Assistant design
 
-This page is the design of Loom's assistant, which will answer questions about what a
+This page is the design of Loom's assistant, which answers questions about what a
 namespace holds and how it is used, with a citation for every claim. It names the
-surfaces, how each caller's identity will reach the agent's tools, the analysis op and
-its isolation, the deployment, what will be stored and erased, and the cost. The
-analysis op and its analyst user, LibreChat deployed headless with the agent Loom seeds,
-and the bridge's chat route and `assistant.ask` are built; the rest is design, and
-[the build order](#build-order) lists the parts.
+surfaces, how each caller's identity reaches the agent's tools, the analysis op and its
+isolation, the deployment, what is stored and erased, and the cost. Every part is built
+but the analysis key's rotation, which is design; [the build order](#build-order) lists
+the parts.
 
-LibreChat will be the assistant: it will host the agent (its model, instructions and
-tools) and run it headless beside Loom, reachable only from Loom. Loom will supply the
-agent's tools, which read under a token of the asker's own subject, and a read-only SQL
-op that ClickHouse itself holds to that token's org and namespaces. People will chat on
-the dashboard's Assistant page; agents and scripts will reach the same agent over HTTP,
-MCP and both SDKs, through Loom's origin and as themselves.
+LibreChat is the assistant: it hosts the agent (its model, instructions and tools) and
+runs it headless beside Loom, reachable only from Loom. Loom supplies the agent's tools,
+which read under a token of the asker's own subject, and a read-only SQL op that
+ClickHouse itself holds to that token's org and namespaces. People chat on the
+dashboard's Assistant page; agents and scripts reach the same agent over HTTP, MCP and
+both SDKs, through Loom's origin and as themselves.
 
 ## Surfaces
 
@@ -29,7 +28,7 @@ flowchart LR
     Q --> U["ClickHouse user loom_analyst<br/>column grants + signed row policies"]
 ```
 
-| Surface         | What the caller will call                                                                                               |
+| Surface         | What the caller calls                                                                                                   |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | Dashboard       | a chat on the Assistant page, streaming from `POST /v1/assistant/chat/completions` with the signed-in session           |
 | HTTP            | `POST /v1/assistant/chat/completions`: LibreChat's agents API request and response, OpenAI-compatible, streaming or not |
@@ -40,8 +39,9 @@ flowchart LR
 Each request names its namespace: the `X-Loom-Namespace` header on the chat route (the
 token's default namespace when absent), the `namespace` field on `assistant.ask`. The
 caller needs `viewer` there, and the answer's model spend is charged there. The chat
-route, `assistant.ask` and its MCP tool and generated SDK methods, and the dashboard's
-chat are built; the SDKs' streaming clients are not yet.
+route, `assistant.ask` and its MCP tool, the generated SDK methods, the SDKs' streaming
+clients (`agent.assistant.stream` in Python, `loom.assistant.stream` in TypeScript) and
+the dashboard's chat are built.
 
 `loom_assistant_ask` is in no curated MCP roster and, while `experimental`, not in the
 `all` listing either: each call spends model budget, so an agent calls it by name on
@@ -49,14 +49,14 @@ purpose, as every unlisted op can be called. It is never in the
 [assistant toolset](../reference/mcp.md#the-assistant-toolset), so the agent cannot call
 itself.
 
-LibreChat's web UI and API will not be published: LibreChat listens on an internal
-network only Loom reaches. A person has one sign-in and one URL, Loom's. The
+LibreChat's web UI and API are not published: LibreChat listens on an internal network
+only Loom reaches. A person has one sign-in and one URL, Loom's. The
 [LibreChat integration](../features/integrations/librechat.md), in which each person
-runs LibreChat's UI with a pasted token, is replaced by this deployment when it is
-built.
+runs LibreChat's UI with a pasted token, is a separate, optional client; this
+deployment needs none of it.
 
 **Why LibreChat hosts the agent.** One agent definition, versioned in
-`integrations/librechat/`, will serve every surface. LibreChat runs the model, the tool
+`integrations/librechat/`, serves every surface. LibreChat runs the model, the tool
 loop, streaming and cancellation, which Loom would otherwise build a second time. Loom
 keeps what makes an answer trustworthy: authorization on every tool call, the request
 ledger, the analysis boundary in the database, and the citation check.
@@ -368,17 +368,17 @@ The key and the analyst's password are random and kept together, as one sealed v
 one row of `loom.analysis_secrets`. The password holds a lower and an upper case letter, a
 digit and a symbol, which ClickHouse Cloud requires of a user's password. The row is
 sealed with `server/core/secrets_at_rest.py` in the shape `loom secrets reseal` rewrites
-(`SEALED` in `server/cli/secrets.py`). Part 1 moves the reseal's reads under
-`own_write_reads` and has it skip a row that is gone. With
-[part 2](#build-order), the CLI rotation and the reseal both hold the analysis lease, so
-they never interleave, and the printed rotation, which takes no lease, stores its row at
-a version from ClickHouse's clock at insert time in nanoseconds, far above any reseal's
-`version + 1`. A row a reseal puts back during a rotation is handled by the [order of a
-write](#provisioning). The first write draws them under the lease below and every
-replica reads the same row. A root-secret rotation only reseals them, so the policies
-never change key; when the key cannot be read, [provisioning](#provisioning) says what
-happens. The analyst user cannot read the key: it has no grant on `system.row_policies`
-or on `loom.analysis_secrets`, and it cannot run `EXPLAIN`.
+(`SEALED` in `server/cli/secrets.py`). The reseal reads under `own_write_reads`, skips
+a row that is gone and holds the analysis lease; with [part 2](#build-order) the CLI
+rotation holds it too, so they never interleave, and the printed rotation, which takes
+no lease, stores its row at a version from ClickHouse's clock at insert time in
+nanoseconds, far above any reseal's `version + 1`. A row a reseal puts back during a
+rotation is handled by the [order of a write](#provisioning). The first write draws them
+under the lease below and every replica reads the same row. A root-secret rotation only
+reseals them, so the policies never change key; when the key cannot be read,
+[provisioning](#provisioning) says what happens. The analyst user cannot read the key:
+it has no grant on `system.row_policies` or on `loom.analysis_secrets`, and it cannot
+run `EXPLAIN`.
 
 **What the query log holds.** Loom never turns query logging off: ClickHouse Cloud pins
 `log_queries` for the service's users and refuses a statement or a settings profile that
@@ -688,7 +688,7 @@ which ClickHouse's logs keep ([stored data](#stored-data-and-erasure)).
 
 `tests/integration/test_analysis_isolation.py`, in the style of
 `tests/integration/test_cross_principal_leakage.py`, seeds two orgs, each with a
-canary memory and a canary ledger row, and call `insights.query` with the first org's
+canary memory and a canary ledger row, and calls `insights.query` with the first org's
 viewer token. Each case must be refused or return no canary:
 
 - a filter on the other org, a namespace outside the token, a `JOIN` or subquery over
@@ -975,14 +975,13 @@ token never reads more than the caller's own.
 
 ## Rolling upgrades
 
-`insights.query` and `insights.catalog` are new ops, and `assistant.ask` and
-`/v1/assistant/chat/completions` are a new op and route: a build that does not know
-them answers
-`UNKNOWN_OP` or 404, so a client points at them once every replica serves them. The
-analyst user, its grants and policies, `loom.analysis_secrets`, `loom.analysis_canary`
-and `loom.assistant_service` live in ClickHouse and are shared by every replica; the
-agent definition is written as [the agent definition](#the-agent-definition) says, never
-by an older build.
+`insights.query`, `insights.catalog` and `assistant.ask` are ops, and
+`/v1/assistant/chat/completions` a route, that a build before them does not know: it
+answers `UNKNOWN_OP` or 404, so a client points at them once every replica serves them.
+The analyst user, its grants and policies, `loom.analysis_secrets`,
+`loom.analysis_canary` and `loom.assistant_service` live in ClickHouse and are shared by
+every replica; the agent definition is written as
+[the agent definition](#the-agent-definition) says, never by an older build.
 
 ## Build order
 
@@ -1005,8 +1004,8 @@ by an older build.
    Built.
 4. The bridge: the chat route and `assistant.ask`, with the answer's token, the
    refusals, the budget share, the per-process limit, the spend on the answer's ledger
-   row, the answer's id on its tool calls' rows, and the citation check (built); then
-   the SDKs' streaming clients.
+   row, the answer's id on its tool calls' rows, the citation check and the SDKs'
+   streaming clients. Built.
 5. The chat on the dashboard's Assistant page, on the signed-in session and the page's
    namespace, with a Stop button that closes the request and each answer's checked
    citations under it. Built.
@@ -1037,7 +1036,8 @@ built.
 - The analysis boundary is ClickHouse's: grants, the settings profile and signed row
   policies.
 - Every tool call the agent makes reads under a token delegated from the caller's, never
-  wider or longer-lived than it and revoked with it, and is ledgered as consumer
+  wider than it, never longer-lived except under a sign-in session, and then by at most
+  `LOOM_ASSISTANT_ANSWER_TTL_S`, and revoked with it, and is ledgered as consumer
   `loom-assistant`.
 - LibreChat stores no Loom token: each answer carries its own, and the service user's
   key reads nothing without one.

@@ -20,6 +20,7 @@ const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
 
 /** Every runtime export of `@clickhouse/loom`. Adding one is a deliberate API change: update this list. */
 const ROOT_EXPORTS = [
+  "ASSISTANT_ROUTE",
   "Agent",
   "AgentTools",
   "AuthError",

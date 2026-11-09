@@ -12,11 +12,13 @@ repeating those. Every Agent has a client per wire-op group:
 `.memory / .working_memory / .knowledge / .conversations / .profile /
 .context / .facts / .learnings / .conflicts / .blacklist / .grants /
 .erasure / .cost / .audit / .namespaces / .procedure / .run /
-.tasks / .policy / .decision / .calibration / .briefs / .code / .tracker`.
+.tasks / .policy / .decision / .calibration / .briefs / .code / .tracker`,
+and `.assistant` asks the Loom assistant (`stream` / `ask`).
 """
 
 from loom._version import __version__
 from loom.agent import Agent
+from loom.assistant import AssistantAnswer, AssistantCitation, AssistantText
 from loom.capabilities import Capabilities
 from loom.client import OpsClient
 from loom.credentials import login, logout, whoami
@@ -49,6 +51,9 @@ __all__ = [
     "ROLE_RANK",
     "Agent",
     "AgentTools",
+    "AssistantAnswer",
+    "AssistantCitation",
+    "AssistantText",
     "AuthInsufficient",
     "AuthInvalid",
     "BackendUnavailable",
