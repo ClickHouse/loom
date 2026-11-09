@@ -273,8 +273,7 @@ def test_same_key_supersession_reads_only_the_writers_rows() -> None:
 
 
 def test_value_update_peers_are_the_writers_rows() -> None:
-    from server.memory.app.value_updates import _peers_joined as _peers
-    from server.memory.app.value_updates import _peers_many
+    from server.memory.app.value_updates import _peers_joined, _peers_many
 
     ch = _SqlCH()
     _run_as(
@@ -285,7 +284,7 @@ def test_value_update_peers_are_the_writers_rows() -> None:
     )
     _run_as(
         _pinned("U"),
-        lambda: _peers(
+        lambda: _peers_joined(
             ch,
             org="o",
             namespace="n",

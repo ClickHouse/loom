@@ -275,7 +275,7 @@ async def test_an_append_only_bulk_write_keeps_every_entry(
     for key, row in got["results"].items():
         # the live row of each key is the one its own write made, with its own value
         assert row["found"] is True and row["value"] == text(int(key.split("/")[1]))
-        assert row["memory_type"] == "semantic"
+        assert row["memory_type"] == "semantic" and row["status"] == "active"
         if key in written:
             assert row["memory_id"] == written[key]["memory_id"]
             assert int(row["version"]) == int(written[key]["version"])
