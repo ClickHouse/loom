@@ -33,7 +33,10 @@ _TABLES = (
     "documents",
     "memory_code_links",
     "memory_versions",
+    "shared",
 )
+# loom.entity_vectors is left out: its quantized codec does not copy into a Replicated
+# table here; its summary statement has the chunk statement's shape.
 _VECTOR = "arrayWithConstant(3072, 0.)"
 _SUMMARY = "00000000-0000-4000-8000-0000000000c1"
 
@@ -87,8 +90,9 @@ async def ch(db: str) -> AsyncIterator[Any]:
 
 
 def _seed(raw: Any, db: str, org: str) -> None:
-    """One user's memory under every table, a locked row the clear keeps, and another
-    writer's version of the user's document."""
+    """One user's memory under every table, a locked row the clear keeps, another
+    writer's version of the user's document, and a summary of the user's memory with its
+    history, chunk, row link and a shared copy with its search row."""
     ident = "'a', 'u1', 's1'"
     for key, lock in (("k1", ""), ("k2", "read_only")):
         raw.command(
@@ -147,6 +151,18 @@ def _seed(raw: Any, db: str, org: str) -> None:
         f"INSERT INTO {db}.entity_triple_rows (org, namespace, memory_id, user_id, subject,"
         f" relation, object) VALUES ('{org}', '{NS}', '{_SUMMARY}', '-', 's', 'r', 'o')"
     )
+    raw.command(
+        f"INSERT INTO {db}.shared (org, namespace, memory_key, value, memory_type, confidence,"
+        " promoted_from, promotion_event, promoted_by, reversible_until, version)"
+        f" VALUES ('{org}', '{NS}', 'team-topic', 'v', 'fact', 1, ['{org}/{NS}/a/-/-/topic'],"
+        " generateUUIDv4(), 'explicit', now(), 1)"
+    )
+    raw.command(
+        f"INSERT INTO {db}.memory_embeddings (org, namespace, agent, user_id, session_id,"
+        " memory_key, scope, version, embedding, memory_key_embedding)"
+        f" SELECT '{org}', '{NS}', '_shared', '-', '-', 'team-topic', 'shared', 1, {_VECTOR},"
+        f" {_VECTOR}"
+    )
     for who, version in (("u2", 1), (USER, 2)):
         raw.command(
             f"INSERT INTO {db}.documents (org, namespace, source_uri, content, version, user_id)"
@@ -169,7 +185,9 @@ async def test_the_user_steps_and_a_clear_mutate_replicated_tables(
     assert await steps_graph.tombstone_source_links_by_user(org, USER, ch=ch) == 2
     # the triple, the edge and the community, then two key links and the summary's row link
     assert await steps_graph.delete_graph_links_by_user(org, USER, ch=ch) == 6
-    # the summary's history
+    # the summary's shared copy and its search row, and history
+    assert await steps_memory.tombstone_shared_embeddings_by_user(org, USER, ch=ch) == 1
+    assert await steps_memory.tombstone_shared_by_user(org, USER, ch=ch) == 1
     assert await steps_memory.delete_memory_versions_by_user(org, USER, ch=ch) == 1
     with purge_scope(True):
         assert await steps_memory.tombstone_documents_by_user(org, USER, ch=ch) == 1
