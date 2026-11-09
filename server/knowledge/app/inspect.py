@@ -469,9 +469,10 @@ class _Inspect:
         self.inp = inp
         self.skipped: list[str] = []
         self.rules = RuleLog()
-        # Under Postgres, whether every document commit of the namespace was published to
-        # ClickHouse and Postgres answered; set before the document sections are read.
-        self.documents_published = True
+        # Under Postgres, False once the document sections or the listing may miss what the
+        # authority committed: unpublished commits, an outage, a dropped listed row or a
+        # listing that could not be checked.
+        self.documents_whole = True
         self.authority_down = False
 
     async def guarded[T](self, section: str, read: Callable[[], Awaitable[T]], default: T) -> T:
@@ -501,7 +502,7 @@ class _Inspect:
             self.down()
             return
         if owed or parked:
-            self.documents_published = False
+            self.documents_whole = False
             self.skipped.append(
                 f"{pg_validation.PROJECTION}: {owed + parked} document commit(s) whose "
                 f"publication to ClickHouse has not finished, {parked} of them parked after "
@@ -512,7 +513,7 @@ class _Inspect:
     def down(self) -> None:
         """The Postgres authority did not answer: said once, and not asked again in this
         call (the memory sections' wait included)."""
-        self.documents_published = False
+        self.documents_whole = False
         if self.authority_down:
             return
         self.authority_down = True
@@ -798,7 +799,7 @@ class _Inspect:
         except Exception as exc:  # noqa: BLE001 — a read-only report; the listing stands as read
             log.warning("knowledge.inspect listed.heads skipped: %s", exc)
             self.skipped.append(f"listed.heads: {type(exc).__name__}")
-            self.documents_published = False
+            self.documents_whole = False
             return rows
         heads = {d.source_uri: d for d in got}
         kept = [
@@ -809,7 +810,7 @@ class _Inspect:
             and d.version == int(r["version"])
         ]
         if len(kept) < len(rows):
-            self.documents_published = False
+            self.documents_whole = False
             self.skipped.append(
                 f"listed.heads: {len(rows) - len(kept)} document(s) rewritten or deleted in "
                 "the Postgres authority since ClickHouse's copy; not listed"
@@ -952,7 +953,7 @@ async def handle_knowledge_inspect(input: KnowledgeInspectInput) -> KnowledgeIns
         chunks=chunks,
         decisions=decisions,
         listed=listed,
-        listed_complete=run.documents_published
+        listed_complete=run.documents_whole
         and documents.live is not None
         and len(listed) >= documents.live,
         findings=findings,

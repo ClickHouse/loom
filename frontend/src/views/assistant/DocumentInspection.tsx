@@ -474,9 +474,10 @@ function readFailed(
 
 /** Under the Postgres authority the server names, in `skipped`, the document commits not yet
  *  published to ClickHouse, or an authority that did not answer ("projection: … the document
- *  sections …"), and the listed documents it dropped because Postgres holds a newer version
- *  ("listed.heads: <n> document(s) …"): the listing and its count may be short, not cut at the
- *  sample limit. A failed check ("listed.heads: ValueError") claims nothing of the kind. */
+ *  sections …"), and the listed documents it dropped because they were rewritten, deleted or
+ *  gone in Postgres ("listed.heads: <n> document(s) …"): the listing and its count may be
+ *  short, not cut at the sample limit. A failed check ("listed.heads: ValueError") claims
+ *  nothing of the kind. */
 function documentsMayBeShort(result: KnowledgeInspection): boolean {
   return result.skipped.some(
     (s) => /^listed\.heads: \d+ document/.test(s) || (s.startsWith("projection: ") && s.includes("document sections")),
