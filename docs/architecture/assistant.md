@@ -700,7 +700,8 @@ viewer token. Each case must be refused or return no canary:
   the row to writing the version, each of which leaves `ANALYSIS_UNAVAILABLE` or a state
   the next run finishes with the stored key;
 - `loom.analysis_secrets` and `loom.analysis_canary` read directly, and neither the
-  statement's text nor the key or its pads in `system.query_log`;
+  statement's text nor the key or its pads in `system.query_log` or the server log's
+  errors;
 - reseal races:
   - a reseal whose read comes before a printed rotation and whose insert after it, which
     leaves the new key;

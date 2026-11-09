@@ -288,8 +288,8 @@ def _pads(key: bytes) -> tuple[bytes, bytes]:
 
 
 def key_spellings(key: bytes) -> list[str]:
-    """The hex and raw spellings of `key` and its HMAC pads a log could hold."""
-    # The key's zero padding XORs to runs of 0x36 ('6') and 0x5C ('\'), printable as they are.
+    """The hex spellings of `key` and its HMAC pads, and the printable runs
+    of 0x36 ('6') and 0x5C ('\\') its zero padding XORs to."""
     return [key.hex(), *(p.hex() for p in _pads(key)), "6" * 32, "\\" * 32]
 
 
@@ -299,13 +299,13 @@ KEY_LITERAL = re.compile(r"unhex\(\\?'([0-9A-Fa-f]+)\\?'\)")
 
 
 def policy_spellings(select_filter: str) -> list[str]:
-    """Every literal of a policy filter and the spellings of its key; the
-    filter may be TSV-escaped."""
+    """The spellings of the key a policy filter holds; the filter may be
+    TSV-escaped."""
     literals = KEY_LITERAL.findall(select_filter)
     key = next((h for h in literals if len(h) == 64), None)
     if key is None:
         raise ValueError("the policy holds no 32-byte key literal")
-    return [*literals, *key_spellings(bytes.fromhex(key))]
+    return key_spellings(bytes.fromhex(key))
 
 
 def _hmac_sql(key: bytes, payload: str) -> str:
@@ -467,7 +467,8 @@ def entity_sql(
     (`granted` and `roles` are what it holds now) is revoked, and then the
     allowlist is granted, since a table's revoke also takes the column grants
     under it. The profile's pins come after every policy, so an upgrade
-    never logs an older policy that holds the pads in clear, and before
+    never puts an older policy that holds the pads in clear in
+    system.query_log, and before
     every grant, so a new pin is in force before the grant it guards. A retired
     table keeps a policy that reads nothing. The stamp comes last, so a write
     cut short is written again by the next boot. `db` is already quoted."""
