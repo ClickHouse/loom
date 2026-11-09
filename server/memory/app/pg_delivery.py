@@ -198,27 +198,21 @@ async def _still_heads(claims: list[Claimed], deadline: float) -> list[Claimed]:
     content has its own document, or its retirement of the vectors below it, which one
     built for the older revision now would land live above.
 
-    A newer head is another commit than the claim's, perhaps one on the primary alone:
-    the heads are read again durably (`pg_memory.heads_by_keys`) and every document is
-    built, or settled unsent, from that read; a standby wait that ended the lease is an
-    outage (`pg_lease.check_lease_after_durable_read`)."""
+    Unless the read shows each claim's own revision as its key's head, what it shows (a
+    copy, a delete, other content, a redaction, an erasure) is another commit than the
+    claim's, perhaps one on the primary alone: the heads are read again durably
+    (`pg_memory.heads_by_keys`) and every document is built, or settled unsent, from that
+    read; a standby wait that ended the lease is an outage
+    (`pg_lease.check_lease_after_durable_read`)."""
     if not claims:
         return claims
     keys = [identity_key(c.row) for c in claims]
     heads = await pg_memory.heads_by_keys(keys, include_tombstoned=True)
-    if any(_newer_head(c, heads) for c in claims):
+    if any(_served(c, heads) is not c.row for c in claims):
         pg_lease.check_lease(deadline)  # spent before the durable read: the send's attempt
         heads = await pg_memory.heads_by_keys(keys, include_tombstoned=True, durable=True)
         pg_lease.check_lease_after_durable_read(deadline)
     return [replace(c, row=row) for c in claims if (row := _served(c, heads)) is not None]
-
-
-def _newer_head(c: Claimed, heads: dict[Any, dict[str, Any]]) -> bool:
-    """Whether `c`'s key has a head newer than its revision: another commit, whose copy
-    builds the document or whose change (a delete, other content, a redaction) settles
-    it unsent, either way decided from a durable read."""
-    head = heads.get(identity_key(c.row))
-    return head is not None and int(head["version"]) > int(c.row["version"])
 
 
 def _served(c: Claimed, heads: dict[Any, dict[str, Any]]) -> dict[str, Any] | None:

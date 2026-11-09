@@ -539,12 +539,13 @@ its own wait covers every row its transaction read.
   document built onto a newer copy of its row, which it reads again durably first; a
   copy the durable read no longer finds goes to its `stale` list, for the delivery
   worker to decide.
-- A head newer than the revision a delivery claimed, and the live decision writers a
-  record retirement keeps, are other sessions' commits. They are read again in
-  `pg.durable_transaction()`, whose COMMIT carries a transactional logical message
-  (prefix `loom.durable`) so that it waits for the standbys on the connection that read
-  the rows, and decided from that read: a copy (a pin, a touch) has a document built
-  onto it; a delete, other content or a redaction settles the claimed document unsent.
+- A key's head that is not the revision a delivery claimed (newer, redacted or gone),
+  and the live decision writers a record retirement keeps, are other sessions' commits.
+  They are read again in `pg.durable_transaction()`, whose COMMIT carries a
+  transactional logical message (prefix `loom.durable`) so that it waits for the
+  standbys on the connection that read the rows, and decided from that read: a copy (a
+  pin, a touch) has a document built onto it; a delete, other content, a redaction or an
+  erasure settles the claimed document unsent.
   The settling commit cannot cover that read, being on another connection: after a
   failover it would mark the document done on a primary where the claimed revision is
   the head again. `decision.record` checks its writers this way after its record lands,
