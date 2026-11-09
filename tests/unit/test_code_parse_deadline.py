@@ -768,3 +768,17 @@ def test_the_shell_detector_does_not_answer_for_a_parse_that_could_not_run(
     monkeypatch.setattr(bounded_parse, "parse", unavailable)
     with pytest.raises(bounded_parse.ParseUnavailable):
         detect_shell("tests/queries/tool", b"a=(1 2)\necho hi\n")
+
+
+def test_ingest_records_a_shell_detection_that_could_not_run_as_a_parse_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.code.app.index.ingest_parse import parse_unavailable
+    from server.code.domain.extract import bounded_parse
+
+    def unavailable(parser: Any, source: bytes) -> Any:
+        raise bounded_parse.ParseUnavailable("killed twice")
+
+    monkeypatch.setattr(bounded_parse, "parse", unavailable)
+    pf, err = parse_for_ingest("tests/run", b"a=(1 2)\necho hi\n")
+    assert pf is not None and pf.symbols == [] and parse_unavailable(err)

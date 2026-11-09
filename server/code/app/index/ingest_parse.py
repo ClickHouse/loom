@@ -41,6 +41,14 @@ def parse_for_ingest(path: str, source: bytes) -> tuple[ParsedFile | None, str]:
     `code.coverage.files_errored` and the Health tile read them; without it a file
     indexed without symbols would look healthy.
     """
+    try:
+        return _parse_for_ingest(path, source)
+    except ParseUnavailable as e:  # from language detection, before the parser's own catch
+        logger.warning("code ingest: parse failed for %s: %s", path, e)
+        return ParsedFile(path=path, lang="", source=source), error_text("parse", e)
+
+
+def _parse_for_ingest(path: str, source: bytes) -> tuple[ParsedFile | None, str]:
     lang = _lane_language(lang_for_path(path), path, source)
     if not lang and _statement_records_on() and is_sql_path(path):
         lang = SQL_LANG  # `.sql.j2`: the runner renders it, the splitter reads it as text
