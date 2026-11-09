@@ -13,9 +13,9 @@ def test_the_single_shape_puts_every_key_in_one_namespace() -> None:
 
 def test_the_zipf_shape_names_orgs_and_namespaces_by_tenant_rank() -> None:
     org, ns = tenant_sql("zipf", 10000, 1000)
-    # 10 namespaces per org; tenant ranks capped at the last tenant
+    # 10 namespaces per org; the rank is T^u - 1 for u in [0, 1), so below T
     assert "intDiv(" in org and ", 10))" in org and "% 10" in ns
-    assert "least(" in org and "9999" in org
+    assert "pow(10000, (n * 0.6180339887498949) % 1)" in org
 
 
 def test_a_percentile_is_nearest_rank() -> None:

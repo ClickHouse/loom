@@ -9,7 +9,7 @@ and `loom.memory_revisions`, streamed from ClickHouse in the shape
 `server.memory.store.pg_memory.encode_row` writes. `measure` then drives the real ops
 through a running server and reads what the stores report: parts, part-log rates,
 the vector read's bytes against its part count, table and index sizes, the time of a
-user erasure and an org erasure, a vacuum and a `pg_dump` of one org.
+user erasure and an org erasure, a vacuum and a `COPY` of one org's rows.
 
 Two shapes:
 
@@ -17,7 +17,7 @@ Two shapes:
 - `zipf`: `--tenants` namespaces over `--orgs` orgs, sized by a Zipf law of exponent 1
   (tenant `t` of `T` holds about `1 / ((t + 1) ln T)` of the rows).
 
-Each key gets 1 to 4 versions (2.4 on average, as the reference deployment's history);
+Each key gets 1 to 4 versions (2.4 on average, the harness's choice);
 the head is the newest. `created_at` spreads over `--months` months, so the memory
 tables get one partition per month. Rows land under org names that start with
 `scale-`; point the harness only at a ClickHouse and a Postgres of your own.
@@ -37,10 +37,10 @@ import math
 import os
 import random
 import statistics
-import subprocess
 import sys
 import time
 import uuid
+from collections import Counter
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC
@@ -106,7 +106,7 @@ def tenant_sql(shape: str, tenants: int, orgs: int) -> tuple[str, str]:
     if shape == "single":
         return f"'{SINGLE_ORG}'", f"'{SINGLE_NS}'"
     # A Weyl sequence spread through T^u - 1: log-uniform tenant ranks, Zipf of exponent 1.
-    t = f"least(toUInt32(floor(pow({tenants}, (n * 0.6180339887498949) % 1))) - 1, {tenants - 1})"
+    t = f"toUInt32(floor(pow({tenants}, (n * 0.6180339887498949) % 1))) - 1"
     per_org = max(1, math.ceil(tenants / orgs))
     return (
         f"concat('scale-z', toString(intDiv({t}, {per_org})))",
@@ -412,30 +412,28 @@ def biggest_tenants(ch: Any, k: int) -> list[tuple[str, str, int]]:
 def drive(
     base_url: str, calls: list[tuple[str, dict[str, Any]]], concurrency: int, timeout: float
 ) -> dict[str, Any]:
-    lat: list[float] = []
-    errors: dict[str, int] = {}
-    outcomes: dict[str, int] = {}
+    """Send `calls` from `concurrency` threads; the successful calls' latency, the refused
+    ones by status and Loom error code, and what the writes did."""
     with httpx.Client(base_url=base_url, timeout=timeout) as http:
 
-        def one(call: tuple[str, dict[str, Any]]) -> None:
+        def one(call: tuple[str, dict[str, Any]]) -> tuple[float | None, str, list[str]]:
             path, body = call
             t = time.perf_counter()
             try:
                 r = http.post(path, json=body)
-                ms = (time.perf_counter() - t) * 1000
-                if r.status_code == 200:
-                    lat.append(ms)
-                    for o in _outcomes(path, r.json()):
-                        outcomes[o] = outcomes.get(o, 0) + 1
-                else:
-                    code = f"{r.status_code}:{_error_code(r)}"
-                    errors[code] = errors.get(code, 0) + 1
             except httpx.HTTPError as e:
-                errors[type(e).__name__] = errors.get(type(e).__name__, 0) + 1
+                return None, type(e).__name__, []
+            ms = (time.perf_counter() - t) * 1000
+            if r.status_code != 200:
+                return None, f"{r.status_code}:{_error_code(r)}", []
+            return ms, "", _outcomes(path, r.json())
 
         with ThreadPoolExecutor(concurrency) as pool:
-            list(pool.map(one, calls))
-    return {**_summary(lat, errors), "outcomes": outcomes}
+            done = list(pool.map(one, calls))
+    lat = [ms for ms, _e, _o in done if ms is not None]
+    errors = Counter(e for _ms, e, _o in done if e)
+    outcomes = Counter(o for _ms, _e, os_ in done for o in os_)
+    return {**_summary(lat, dict(errors)), "outcomes": dict(outcomes)}
 
 
 def _error_code(r: httpx.Response) -> str:
@@ -542,10 +540,11 @@ def new_parts_per_s(ch: Any, since: float, until: float) -> dict[str, float]:
 
 
 def op_reads(ch: Any, op: str, since: float, until: float, calls: int) -> dict[str, Any]:
-    """What the op's ClickHouse statements read in the window, per call, and the largest
-    statement's memory."""
+    """What the op's ClickHouse statements read and the CPU they used in the window, per
+    call, and the largest statement's memory."""
     r = ch.query(
-        "SELECT count(), sum(read_bytes), max(memory_usage), countIf(type != 'QueryFinish') "
+        "SELECT count(), sum(read_bytes), max(memory_usage), countIf(type != 'QueryFinish'), "
+        "sum(ProfileEvents['OSCPUVirtualTimeMicroseconds']) "
         "FROM system.query_log WHERE type != 'QueryStart' AND startsWith(log_comment, {op:String}) "
         "AND event_time_microseconds BETWEEN fromUnixTimestamp64Micro({a:Int64}) "
         "AND fromUnixTimestamp64Micro({b:Int64})",
@@ -557,6 +556,7 @@ def op_reads(ch: Any, op: str, since: float, until: float, calls: int) -> dict[s
         "read_mib_per_call": round(int(r[1] or 0) / n / 2**20, 1),
         "max_statement_memory_mib": round(int(r[2] or 0) / 2**20, 1),
         "failed_statements": int(r[3]),
+        "clickhouse_cpu_ms_per_call": round(int(r[4] or 0) / n / 1000, 2),
     }
 
 
@@ -592,7 +592,9 @@ def vector_read(
 def probe_tenants(ch: Any, shape: str) -> list[dict[str, Any]]:
     """The identities a vector probe searches as: the single namespace, or one key's
     identity in each of the three biggest tenants."""
-    tenants = [(SINGLE_ORG, SINGLE_NS, 0)] if shape == "single" else biggest_tenants(ch, 3)
+    tenants = biggest_tenants(ch, 3)
+    if shape == "single":
+        tenants = [t for t in tenants if t[:2] == (SINGLE_ORG, SINGLE_NS)]
     out = []
     for org, ns, rows in tenants:
         r = ch.query(
@@ -600,7 +602,21 @@ def probe_tenants(ch: Any, shape: str) -> list[dict[str, Any]]:
             "AND namespace = {n:String} LIMIT 1",
             parameters={"o": org, "n": ns},
         ).result_rows[0]
-        out.append({"org": org, "namespace": ns, "agent": r[0], "user_id": r[1], "rows": rows})
+        scope = ch.query(
+            "SELECT count() FROM loom.memory_embeddings WHERE org = {o:String} "
+            "AND namespace = {n:String} AND agent = {a:String} AND user_id = {u:String}",
+            parameters={"o": org, "n": ns, "a": r[0], "u": r[1]},
+        ).result_rows[0][0]
+        out.append(
+            {
+                "org": org,
+                "namespace": ns,
+                "agent": r[0],
+                "user_id": r[1],
+                "namespace_rows": rows,
+                "scope_rows": int(scope),
+            }
+        )
     return out
 
 
@@ -663,30 +679,28 @@ def pg_vacuum_s(env: dict[str, str], table: str) -> float:
     return seconds
 
 
-def pg_dump_org_s(container: str, org: str) -> dict[str, float]:
-    """`COPY (… WHERE org = …) TO STDOUT` of the org's rows of every memory table,
-    the dump of one tenant out of a shared schema; seconds and bytes."""
-    t = time.monotonic()
-    total = 0
-    for table in ("memory_current", "memory_revisions", "scope_generations"):
-        out = subprocess.run(
-            [
-                "docker",
-                "exec",
-                container,
-                "psql",
-                "-U",
-                "loom",
-                "-d",
-                "loom",
-                "-Atc",
-                f"COPY (SELECT * FROM loom.{table} WHERE org = '{org}') TO STDOUT",
-            ],
-            check=True,
-            capture_output=True,
-        ).stdout
-        total += len(out)
-    return {"seconds": round(time.monotonic() - t, 2), "bytes": total}
+def pg_dump_org_s(env: dict[str, str], org: str) -> dict[str, float]:
+    """A `COPY (… WHERE org = $1) TO STDOUT` of the org's rows of every memory table,
+    the dump of one tenant out of a shared schema, streamed and counted: seconds and
+    bytes."""
+    tables = ("memory_current", "memory_revisions", "scope_generations")
+
+    async def go(pg: Any) -> dict[str, float]:
+        total = 0
+
+        async def count(chunk: bytes) -> None:
+            nonlocal total
+            total += len(chunk)
+
+        t = time.monotonic()
+        for table in tables:
+            await pg.copy_from_query(
+                f"SELECT * FROM loom.{table} WHERE org = $1", org, output=count
+            )
+        return {"seconds": round(time.monotonic() - t, 2), "bytes": total}
+
+    out: dict[str, float] = _pg_run(env, go)
+    return out
 
 
 def measure(args: argparse.Namespace) -> None:
@@ -702,6 +716,7 @@ def measure(args: argparse.Namespace) -> None:
     }
     keys = sample_keys(ch, args.shape, 2000)
     ops: dict[str, Any] = {}
+    result["ops"] = ops
     for op in args.ops.split(","):
         n = args.calls if op != "memory.bulk_set" else max(20, args.calls // 10)
         calls = op_calls(op, keys, n, rng)
@@ -714,8 +729,7 @@ def measure(args: argparse.Namespace) -> None:
         ops[op]["clickhouse"] = op_reads(ch, op, t0, t1, ops[op]["n"])
         ops[op]["host_load_1m"] = round(os.getloadavg()[0], 1)
         print(op, json.dumps(ops[op]), flush=True)
-        result["ops"] = ops
-        _save(args.out, result)
+        _save(args.out, result)  # after each op, so a run cut short keeps what it measured
     result["vector"] = []
     for key in probe_tenants(ch, args.shape):
         result["vector"].append(
@@ -740,6 +754,116 @@ def _save(path: str, result: dict[str, Any]) -> None:
     Path(path).write_text(json.dumps(result, indent=2, default=str))
 
 
+def _partition_sample(ch: Any) -> dict[str, Any]:
+    """The memory tables' most active parts in one partition, their active parts and the
+    merges running, now."""
+    rows = ch.query(
+        "SELECT table, max(c), sum(c) FROM (SELECT table, partition, count() AS c "
+        "FROM system.parts WHERE database = 'loom' AND active "
+        "AND table IN ('memory', 'memory_embeddings', 'memory_versions') "
+        "GROUP BY table, partition) GROUP BY table"
+    ).result_rows
+    merges = ch.query(
+        "SELECT count() FROM system.merges WHERE database = 'loom' "
+        "AND table IN ('memory', 'memory_embeddings', 'memory_versions')"
+    ).result_rows[0][0]
+    return {
+        "parts": {r[0]: {"max_in_partition": r[1], "active": r[2]} for r in rows},
+        "merges": int(merges),
+    }
+
+
+def fleet(args: argparse.Namespace) -> None:
+    """`memory.set` at `--rate` writes a second, open loop (write i starts at
+    start + i / rate), spread round-robin over `--base-url`'s servers, for `--seconds`;
+    then each memory table's new parts a second from `system.part_log`, the most active
+    parts any partition reached and the merges in flight (sampled every second), against
+    the tables' `parts_to_delay_insert` and `parts_to_throw_insert`."""
+    import threading
+
+    env = _env(args.env)
+    ch = ch_client(env)
+    urls = [u.strip() for u in args.base_url.split(",") if u.strip()]
+    rng = random.Random()
+    total = int(args.rate * args.seconds)
+    lat: list[float] = []
+    errors: Counter[str] = Counter()
+    lock = threading.Lock()
+    samples: list[dict[str, Any]] = []
+    stop = threading.Event()
+
+    def sample() -> None:
+        sampler = ch_client(env)
+        while not stop.is_set():
+            samples.append(_partition_sample(sampler))
+            stop.wait(1.0)
+
+    clients = [httpx.Client(base_url=u, timeout=args.timeout) for u in urls]
+    t0 = time.time()
+    start = time.monotonic()
+
+    def one(i: int) -> None:
+        delay = start + i / args.rate - time.monotonic()
+        if delay > 0:
+            time.sleep(delay)
+        body = {
+            "org": "scale-fleet",
+            "namespace": f"ns{i % args.namespaces}",
+            "agent": "agent0",
+            "memory_key": f"fleet/{uuid.uuid4().hex[:12]}",
+            "memory_type": "semantic",
+            "value": _text(rng),
+        }
+        t = time.perf_counter()
+        try:
+            r = clients[i % len(clients)].post("/v1/memory.set", json=body)
+            ok, code = r.status_code == 200, f"{r.status_code}:{_error_code(r)}"
+        except httpx.HTTPError as e:
+            ok, code = False, type(e).__name__
+        with lock:
+            if ok:
+                lat.append((time.perf_counter() - t) * 1000)
+            else:
+                errors[code] += 1
+
+    watcher = threading.Thread(target=sample, daemon=True)
+    watcher.start()
+    with ThreadPoolExecutor(args.threads) as pool:
+        list(pool.map(one, range(total)))
+    t1 = time.time()
+    stop.set()
+    watcher.join()
+    for c in clients:
+        c.close()
+    ch.command("SYSTEM FLUSH LOGS")
+    limits = {
+        r[0]: int(r[1])
+        for r in ch.query(
+            "SELECT name, value FROM system.merge_tree_settings "
+            "WHERE name IN ('parts_to_delay_insert', 'parts_to_throw_insert')"
+        ).result_rows
+    }
+    peak: dict[str, int] = {}
+    for smp in samples:
+        for table, v in smp["parts"].items():
+            peak[table] = max(peak.get(table, 0), int(v["max_in_partition"]))
+    out = {
+        "servers": len(urls),
+        "rate": args.rate,
+        "seconds": round(t1 - t0, 1),
+        "writes": _summary(lat, dict(errors)),
+        "achieved_rate": round(len(lat) / max(1e-9, t1 - t0), 1),
+        "new_parts_per_s": new_parts_per_s(ch, t0, t1),
+        "max_parts_in_a_partition": peak,
+        "max_merges_in_flight": max((smp["merges"] for smp in samples), default=0),
+        "limits": limits,
+        "after": _partition_sample(ch),
+        "host_load_1m": round(os.getloadavg()[0], 1),
+    }
+    print(json.dumps(out, indent=1))
+    _save(args.out, out)
+
+
 def optimize(args: argparse.Namespace) -> None:
     """Vector reads against part count: before, then after OPTIMIZE FINAL of the table."""
     env = _env(args.env)
@@ -747,7 +871,7 @@ def optimize(args: argparse.Namespace) -> None:
     rng = random.Random(11)
     tenants = probe_tenants(ch, args.shape)
     out: dict[str, Any] = {"before": [], "after": []}
-    for phase in ("before", "after"):
+    for phase in ("before",) if args.before_only else ("before", "after"):
         if phase == "after":
             t = time.monotonic()
             ch.command("OPTIMIZE TABLE loom.memory_embeddings FINAL", settings={"alter_sync": 2})
@@ -836,12 +960,41 @@ def erase(args: argparse.Namespace) -> None:
     Path(args.out).write_text(json.dumps(out, indent=2, default=str))
 
 
+def pg_dead_rows(env: dict[str, str], fraction: float) -> dict[str, dict[str, int]]:
+    """Rewrite about `fraction` of the harness's heads and revisions in place, leaving
+    that many dead tuples for a vacuum to reclaim; the dead and live counts after."""
+
+    async def go(pg: Any) -> dict[str, dict[str, int]]:
+        every = max(1, round(1 / fraction))
+        await pg.execute(
+            "UPDATE loom.memory_current SET version = version "
+            "WHERE starts_with(org, 'scale-') AND abs(hashtext(memory_key)) % $1 = 0",
+            every,
+        )
+        await pg.execute(
+            "UPDATE loom.memory_revisions SET request_id = request_id "
+            "WHERE starts_with(org, 'scale-') AND seq % $1 = 0",
+            every,
+        )
+        await pg.execute("SELECT pg_stat_force_next_flush()")
+        rows = await pg.fetch(
+            "SELECT relname, n_dead_tup, n_live_tup FROM pg_stat_user_tables "
+            "WHERE schemaname = 'loom' AND relname IN ('memory_current', 'memory_revisions')"
+        )
+        return {r["relname"]: {"dead": r["n_dead_tup"], "live": r["n_live_tup"]} for r in rows}
+
+    out: dict[str, dict[str, int]] = _pg_run(env, go)
+    return out
+
+
 def pg_ops(args: argparse.Namespace) -> None:
     env = _env(args.env)
-    out = {"sizes": pg_sizes(env)}
+    out: dict[str, Any] = {"sizes": pg_sizes(env)}
+    if args.dead_fraction:
+        out["dead_rows"] = pg_dead_rows(env, args.dead_fraction)
     out["vacuum_s"] = {t: pg_vacuum_s(env, t) for t in ("memory_current", "memory_revisions")}
     if args.dump_org:
-        out["dump_org"] = {"org": args.dump_org, **pg_dump_org_s(args.container, args.dump_org)}
+        out["dump_org"] = {"org": args.dump_org, **pg_dump_org_s(env, args.dump_org)}
     print(json.dumps(out, indent=2))
     Path(args.out).write_text(json.dumps(out, indent=2))
 
@@ -906,6 +1059,7 @@ def main(argv: list[str] | None = None) -> int:
     o.add_argument("--base-url", required=True)
     o.add_argument("--shape", choices=("single", "zipf"), default="single")
     o.add_argument("--vector-reps", type=int, default=10)
+    o.add_argument("--before-only", action="store_true", help="probe only; no OPTIMIZE")
     o.add_argument("--out", required=True)
     e = sub.add_parser("erase")
     e.add_argument("--base-url", required=True)
@@ -914,8 +1068,21 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--out", required=True)
     g = sub.add_parser("pg")
     g.add_argument("--dump-org")
-    g.add_argument("--container", default="loom-scale-pg")
+    g.add_argument(
+        "--dead-fraction",
+        type=float,
+        default=0.0,
+        help="rewrite this share of the rows first, so the vacuum has dead rows to reclaim",
+    )
     g.add_argument("--out", required=True)
+    f = sub.add_parser("fleet", help="memory.set at a fixed rate over several servers")
+    f.add_argument("--base-url", required=True, help="comma-separated server URLs")
+    f.add_argument("--rate", type=float, required=True, help="writes a second, all servers")
+    f.add_argument("--seconds", type=float, default=60)
+    f.add_argument("--namespaces", type=int, default=16)
+    f.add_argument("--threads", type=int, default=64)
+    f.add_argument("--timeout", type=float, default=60)
+    f.add_argument("--out", required=True)
     a = sub.add_parser("authority", help="switch this private deployment's recorded authority")
     a.add_argument("--to", choices=("clickhouse", "postgres"), required=True)
     args = p.parse_args(argv)
@@ -927,6 +1094,7 @@ def main(argv: list[str] | None = None) -> int:
         "erase": erase,
         "pg": pg_ops,
         "authority": set_authority,
+        "fleet": fleet,
     }[args.cmd](args)
     return 0
 
