@@ -559,8 +559,36 @@ settings.code_parse_memory_mb = 512
 assert parse_for_ingest("a.cpp", source)[1] == ""
 from server.code.domain.extract import bounded_parse
 assert bounded_parse._idle is None  # it grew past 64 MB and retired
+settings.code_parse_memory_mb = 2048  # past the inherited 1 GB: lowered to it
+assert parse_for_ingest("b.cpp", b"int f();\\n")[1] == ""
 """
     done = subprocess.run(
         [sys.executable, "-c", script], cwd=_SERVER.parent, capture_output=True, timeout=60
     )
     assert done.returncode == 0, done.stderr[-2000:]
+
+
+def test_a_parse_whose_child_the_kernel_killed_runs_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import signal
+    import threading
+
+    from server.code.domain.extract import bounded_parse
+
+    monkeypatch.setattr(bounded_parse, "_idle", None)
+    real = bounded_parse._start
+    started: list[Any] = []
+
+    def start() -> Any:
+        child = real()
+        if not started:  # the first child is killed from outside mid-parse
+            threading.Timer(0.2, child.send_signal, (signal.SIGKILL,)).start()
+        started.append(child)
+        return child
+
+    monkeypatch.setattr(bounded_parse, "_start", start)
+    source = b"package x\nvar s = " + b"`" * 12_000  # parses in about a second
+    pf, err = parse_for_ingest("a.go", source)
+    assert err == "" and pf is not None and len(started) == 2
+    _end(bounded_parse._idle)

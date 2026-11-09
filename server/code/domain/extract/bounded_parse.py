@@ -11,12 +11,13 @@ Only a source the child parsed in full within the deadline is parsed again here,
 the same parse does the same work and so stays within the same limits (past twice the
 deadline it stops reading, in case it does not). A child serves one parse at a time and
 is kept for the next; one that ended is replaced. One parse runs at a time in each
-server process, child included, so a server process holds at most one memory limit's
-worth of parse at once, plus up to 64 MB the child kept from earlier parses (the trees
-its callers keep are not counted). The child is the server's interpreter with `-I` and
-an empty environment; it bounds resources and is no sandbox. The pool stays in
-`domain/`, beside the parsers that call it: the child is a local process, no ClickHouse
-or network. The limits hold on Linux.
+server process, child included, so a server process holds about one memory limit's
+worth of parse at once: `code_parse_memory_mb` plus up to about 170 MB (the child's own
+40 MB, up to 64 MB it kept from earlier parses, which a parse can reuse in the child
+and take fresh in the server). The trees its callers keep are not counted. The child
+is the server's interpreter with `-I` and an empty environment; it bounds resources
+and is no sandbox. The pool stays in `domain/`, beside the parsers that call it: the
+child is a local process, no ClickHouse or network. The limits hold on Linux.
 
 The parse here reads the source `_CHUNK` bytes at a time through a callback: the binding
 holds the GIL while it parses, and the callback is where another thread can take it, so
@@ -30,6 +31,7 @@ import contextlib
 import functools
 import logging
 import selectors
+import signal
 import subprocess
 import sys
 import threading
@@ -90,32 +92,51 @@ def _in_child(grammar: str, source: bytes, budget: float, memory: int) -> bytes 
     status (negative: the signal that ended it)."""
     global _idle
     child, _idle = _idle, None
-    answer = None if child is None else _ask(child, grammar, source, budget, memory)
-    if (
-        child is None or answer is None
-    ):  # none idle, or it ended while idle, before reading the request
-        try:
-            child = subprocess.Popen(
-                [sys.executable, "-I", str(_CHILD)],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                env={},
-            )
-        except OSError as e:
-            logger.error("bounded_parse: the parse process did not start: %s", e)
-            raise
+    # Again on a fresh child, once each, when this one ended before reading the request,
+    # or the kernel killed it (memory ran out elsewhere: a parse past its own limit ends
+    # by another signal).
+    unread = killed = False
+    status = 0
+    for _ in range(3):
+        if child is None:
+            child = _start()
         answer = _ask(child, grammar, source, budget, memory)
-    return answer or cast("int", child.returncode)
+        if answer in (parse_child.DONE, parse_child.STOPPED):
+            _idle = child
+            return answer
+        if answer:  # an uppercase answer (it retires), or `_SILENT`
+            return answer.lower()
+        status = cast("int", child.returncode)
+        if answer is None and not unread:
+            unread = True
+        elif status == -signal.SIGKILL and not killed:
+            killed = True
+        else:
+            return status
+        child = None
+    return status
+
+
+def _start() -> subprocess.Popen[bytes]:
+    try:
+        return subprocess.Popen(
+            [sys.executable, "-I", str(_CHILD)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            env={},
+        )
+    except OSError as e:
+        logger.error("bounded_parse: the parse process did not start: %s", e)
+        raise
 
 
 def _ask(
     child: subprocess.Popen[bytes], grammar: str, source: bytes, budget: float, memory: int
 ) -> bytes | None:
-    """One child's answer, lowercased; b"" when the parse ended it, `_SILENT` when its
-    answer did not come within ten deadlines and five seconds of the request (stopped,
-    or never scheduled), None when the request could not be written to it. A child that
-    ends, goes silent or retires (an uppercase answer) is reaped; any other is kept."""
-    global _idle
+    """One child's answer byte; b"" when the parse ended it, `_SILENT` when its answer
+    did not come within ten deadlines and five seconds of the request (stopped, or
+    never scheduled), None when the request could not be written to it. A child that
+    does not answer `DONE` or `STOPPED` is reaped."""
     stdin, stdout = cast("IO[bytes]", child.stdin), cast("IO[bytes]", child.stdout)
     name = grammar.encode()
     answer: bytes | None = None
@@ -131,12 +152,10 @@ def _ask(
     except BrokenPipeError:
         pass  # the child had ended
     finally:
-        if answer in (parse_child.DONE, parse_child.STOPPED):
-            _idle = child
-        else:
+        if answer not in (parse_child.DONE, parse_child.STOPPED):
             child.kill()
             _close(child)
-    return answer.lower() if answer else answer
+    return answer
 
 
 def _close(child: subprocess.Popen[bytes]) -> None:
@@ -176,6 +195,8 @@ def parse(parser: Any, source: bytes) -> Any:
         if isinstance(answer, int) and answer > 0:
             logger.error("bounded_parse: the parse process failed with status %d", answer)
             raise RuntimeError(f"the parse process failed with status {answer}")
+        if answer == -signal.SIGKILL:
+            raise ParseTimeout("the parse process was killed twice: memory ran out around it")
         if answer == _SILENT:
             raise ParseTimeout(f"the parse process did not answer within {10 * budget + 5:g} s")
         if answer != parse_child.DONE:
