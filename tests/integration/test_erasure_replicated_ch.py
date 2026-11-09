@@ -134,6 +134,15 @@ def _seed(raw: Any, db: str, org: str) -> None:
         f"INSERT INTO {db}.entity_communities (org, namespace, entity, community_id, label)"
         f" VALUES ('{org}', '{NS}', 'oslo', 1, 'oslo')"
     )
+    # the user's own history of k1 and a row link of the user's
+    raw.command(
+        f"INSERT INTO {db}.memory_versions (org, namespace, agent, user_id, session_id,"
+        f" memory_key, version) VALUES ('{org}', '{NS}', {ident}, 'k1', 1)"
+    )
+    raw.command(
+        f"INSERT INTO {db}.entity_triple_rows (org, namespace, memory_id, user_id, subject,"
+        f" relation, object) VALUES ('{org}', '{NS}', generateUUIDv4(), 'u1', 'u', 'r', 'o')"
+    )
     # a summary of the user's k1 under '-', its history, a chunk and a row link
     tags = "['consolidated', 'src:k1']"
     for table in ("memory", "memory_versions"):
@@ -183,12 +192,14 @@ async def test_the_user_steps_and_a_clear_mutate_replicated_tables(
     # the user's chunk and the summary's
     assert await steps_memory.tombstone_memory_chunks_by_user(org, USER, ch=ch) == 2
     assert await steps_graph.tombstone_source_links_by_user(org, USER, ch=ch) == 2
-    # the triple, the edge and the community, then two key links and the summary's row link
-    assert await steps_graph.delete_graph_links_by_user(org, USER, ch=ch) == 6
-    # the summary's shared copy and its search row, and history
+    # the triple, the edge and the community, then the user's and the summary's row links
+    # and two key links
+    assert await steps_graph.delete_graph_links_by_user(org, USER, ch=ch) == 7
+    # the summary's shared copy and its search row, then the user's and the summary's
+    # history
     assert await steps_memory.tombstone_shared_embeddings_by_user(org, USER, ch=ch) == 1
     assert await steps_memory.tombstone_shared_by_user(org, USER, ch=ch) == 1
-    assert await steps_memory.delete_memory_versions_by_user(org, USER, ch=ch) == 1
+    assert await steps_memory.delete_memory_versions_by_user(org, USER, ch=ch) == 2
     with purge_scope(True):
         assert await steps_memory.tombstone_documents_by_user(org, USER, ch=ch) == 1
     counts = await bulk_tombstone_scope(org=org, namespace=NS, user_id=USER, ch=ch)
