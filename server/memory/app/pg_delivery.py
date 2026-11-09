@@ -207,7 +207,7 @@ async def _still_heads(claims: list[Claimed], deadline: float) -> list[Claimed]:
     keys = [identity_key(c.row) for c in claims]
     heads = await pg_memory.heads_by_keys(keys, include_tombstoned=True)
     if any(_newer_head(c, heads) for c in claims):
-        pg_lease.check_lease(deadline)  # a lease ClickHouse spent counts, as before
+        pg_lease.check_lease(deadline)  # spent before the durable read: the send's attempt
         heads = await pg_memory.heads_by_keys(keys, include_tombstoned=True, durable=True)
         pg_lease.check_lease_after_durable_read(deadline)
     return [replace(c, row=row) for c in claims if (row := _served(c, heads)) is not None]

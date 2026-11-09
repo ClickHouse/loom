@@ -216,6 +216,33 @@ def test_still_heads_reads_durably_only_for_another_commit(
     assert calls.count(True) == durable_reads
 
 
+@pytest.mark.parametrize(
+    "plain, again, built",
+    [
+        pytest.param("delete", "own", [5], id="a delete only on the primary: the claim's own"),
+        pytest.param("copy", "delete", [], id="a copy deleted since: nothing built"),
+        pytest.param("delete", "copy", [9], id="a delete read again as a copy: built onto it"),
+    ],
+)
+def test_still_heads_decides_from_the_durable_read(
+    monkeypatch: pytest.MonkeyPatch, plain: str, again: str, built: list[int]
+) -> None:
+    claim = _claim(5, "a" * 64)
+    heads = {
+        "own": claim.row,
+        "copy": _head(9),
+        "delete": {**_head(9), "tombstoned_at": "2026-01-01 00:00:00"},
+    }
+
+    async def heads_by_keys(keys, *, include_tombstoned=False, durable=False):  # type: ignore[no-untyped-def]
+        return {pg_memory.identity_key(claim.row): heads[again if durable else plain]}
+
+    monkeypatch.setattr(pg_memory, "heads_by_keys", heads_by_keys)
+    monkeypatch.setattr(pg_memory, "embedded", lambda row: True)
+    out = asyncio.run(pg_delivery._still_heads([claim], deadline=1e18))
+    assert [int(c.row["version"]) for c in out] == built
+
+
 class _Clock:
     """`pg_lease`'s clock: 0 until the durable read, then past any lease."""
 

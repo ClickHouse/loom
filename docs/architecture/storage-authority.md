@@ -535,7 +535,10 @@ its own wait covers every row its transaction read.
   an UPDATE of the rows it claims, so its commit waits for the standbys (the statement
   timeout does not cover a commit's standby wait); the client's command timeout cancels
   a wait that outlasts it and raises, and nothing claimed is sent.
-- A writer's flush sends its own commits, which returned from their wait.
+- A writer's flush sends its own commits, which returned from their wait, and a
+  document built onto a newer copy of its row, which it reads again durably first; a
+  copy the durable read no longer finds goes to its `stale` list, for the delivery
+  worker to decide.
 - A head newer than the revision a delivery claimed, and the live decision writers a
   record retirement keeps, are other sessions' commits. They are read again in
   `pg.durable_transaction()`, whose COMMIT carries a transactional logical message

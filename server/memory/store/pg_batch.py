@@ -327,8 +327,9 @@ async def _served_documents(
     """By entry, the documents still to send, each by the revision it was built from:
     its own while that is the key's head, else rebuilt onto a newer copy of it (a pin, a
     touch, a conflict mark) that owes no document of its own, as `pg_delivery._still_heads`
-    serves one, so the writer's vector is not embedded again; the heads are then read
-    again durably, since such a copy may be on the primary alone. One whose head was deleted,
+    serves one, so the writer's vector is not embedded again: when the first read shows
+    such a copy, the heads are read again durably and every document decided from that
+    read, since the copy may be on the primary alone. One whose head was deleted,
     rewritten or redacted since is not sent: it would land live above that head's own
     retirement. Its delivery goes to the entry's `stale`, for the delivery worker to
     build from the head or settle (`_hand_over`)."""
