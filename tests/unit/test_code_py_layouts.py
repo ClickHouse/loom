@@ -4,7 +4,9 @@ pytest trees — and a file the parser fails on stays a text chunk."""
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 import time
 
 import pytest
@@ -382,3 +384,22 @@ def test_python_two_and_a_bom_still_parse_to_symbols():
     assert [s.name for s in bom.symbols] == ["f"] and bom.includes == ["os"]
     py2 = parse_file("py2.py", b"print 'x'\n\n\ndef g(y):\n    print y\n    return y\n")
     assert [s.name for s in py2.symbols] == ["g"]
+
+
+def test_the_layout_is_read_off_the_event_loop(monkeypatch):
+    # A manifest is repository text up to its cap: reading it must not hold the loop.
+    threads = []
+
+    async def text(_repo, _org, _ns, _path):
+        return "setup()"
+
+    def layout(texts, present):
+        threads.append(threading.current_thread())
+        return pl.Layout()
+
+    monkeypatch.setitem(ingest_resolve._LIVE_PATHS_CACHE, ("o", "n"), (time.monotonic(), set()))
+    monkeypatch.setattr(ingest_resolve, "_PY_LAYOUT_CACHE", {})
+    monkeypatch.setattr(ingest_resolve, "_package_json_text", text)
+    monkeypatch.setattr(pl, "layout_from_texts", layout)
+    asyncio.run(ingest_resolve._py_layout(None, "o", "n", {"setup.py"}))  # type: ignore[arg-type]
+    assert threads and threads[0] is not threading.main_thread()

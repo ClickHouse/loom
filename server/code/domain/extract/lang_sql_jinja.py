@@ -56,13 +56,14 @@ FACET_MACRO_CALL = "macro_call"
 _COMMENT_RE = re.compile(r"\{#.*?(?:#\}|\Z)", re.S)
 _STATEMENT_RE = re.compile(r"\{%-?.*?(?:-?%\}|\Z)", re.S)
 _EXPR_RE = re.compile(r"\{\{-?(?:(?!\{\{).)*?-?\}\}", re.S)  # stops at the next `{{`
+_RAW_MARK_RE = re.compile("\x00RAW[0-9]+\x00")
 _RAW_RE = re.compile(r"\{%-?\s*+raw\s*+-?%\}(.*?)(?:\{%-?\s*endraw\s*-?%\}|\Z)", re.S)
 
 _REF_RE = re.compile(r"""\bref\(\s*(?:['"]([^'"]+)['"]\s*,\s*)?['"]([^'"]+)['"]""")
 _SOURCE_RE = re.compile(r"""\bsource\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]""")
 _CONFIG_RE = re.compile(r"\{\{-?\s*config\s*\(((?:(?!\{\{).)*?)\)\s*-?\}\}", re.S)
 _MATERIALIZED_RE = re.compile(r"""materialized\s*=\s*['"]([\w-]+)['"]""")
-_TAGS_RE = re.compile(r"""tags\s*=\s*(\[[^\]]*\]|['"][^'"]+['"])""")
+_TAGS_RE = re.compile(r"""tags\s*=\s*(\[[^\[\]]*\]|['"][^'"]+['"])""")  # stops at the next `[`
 _MACRO_DEF_RE = re.compile(
     r"\{%-?\s*(?P<word>macro|test|snapshot|materialization)\s+(?P<name>[A-Za-z_]\w*)"
     r"(?P<args>\s*\((?:(?!\{%)[^)])*\))?",
@@ -291,9 +292,9 @@ def neutralize(text: str) -> str:
     out = _COMMENT_RE.sub(_blank_keep_lines, out)
     out = _STATEMENT_RE.sub(_blank_keep_lines, out)
     out = _EXPR_RE.sub(_placeholder_keep_lines, out)
-    for k, body in enumerate(raws):
-        out = out.replace(f"\x00RAW{k}\x00", body)
-    return out
+    # One pass: a replace per block rescans the whole text each time.
+    marks = {f"\x00RAW{k}\x00": body for k, body in enumerate(raws)}
+    return _RAW_MARK_RE.sub(lambda m: marks.get(m.group(0), m.group(0)), out)
 
 
 def _newlines(text: str) -> list[int]:

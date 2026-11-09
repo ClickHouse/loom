@@ -28,6 +28,7 @@ the extractor stamp: a namespace gains the rows by a targeted backfill.
 
 from __future__ import annotations
 
+import bisect
 import dataclasses
 import posixpath
 import re
@@ -69,7 +70,11 @@ def component_meta(source: str) -> list[dict[str, str]]:
     class in a TypeScript source; `inline` is the template literal's text
     ('' when the template is external)."""
     out: list[dict[str, str]] = []
+    # counted on from the last class: a count from the top per class is quadratic
+    counted, line = 0, 1
     for m in _COMPONENT_RE.finditer(source):
+        line += source.count("\n", counted, m.start())
+        counted = m.start()
         meta = m.group("meta")
         sel = _SELECTOR_RE.search(meta)
         url = _TEMPLATE_URL_RE.search(meta)
@@ -84,7 +89,7 @@ def component_meta(source: str) -> list[dict[str, str]]:
                 "selector": sel.group(1).strip() if sel else "",
                 "template_url": url.group(1).strip() if url else "",
                 "inline": inline,
-                "meta_start": str(source[: m.start()].count("\n") + 1),
+                "meta_start": str(line),
             }
         )
     return out
@@ -139,8 +144,11 @@ def template_sites(text: str, base_line: int = 1) -> list[tuple[int, str, str]]:
     property-binding calls; source order, deduplicated."""
     out: list[tuple[int, str, str]] = []
 
+    # by bisection in the newlines found once: a count from the top per site is quadratic
+    newlines = [m.start() for m in re.finditer("\n", text)]
+
     def line_of(offset: int) -> int:
-        return base_line + text.count("\n", 0, offset)
+        return base_line + bisect.bisect_left(newlines, offset)
 
     for m in _KEBAB_TAG_RE.finditer(text):
         out.append((line_of(m.start()), m.group(1), "selector"))
@@ -183,11 +191,12 @@ def inline_template_sites(pf: ParsedFile) -> list[tuple[int, str, str, str]]:
     template in a component file."""
     text = pf.source.decode("utf-8", "replace")
     out: list[tuple[int, str, str, str]] = []
+    newlines = [m.start() for m in re.finditer("\n", text)]
     for m in component_meta(text):
         if not m["inline"]:
             continue
         start = text.find(m["inline"])
-        base = text.count("\n", 0, start) + 1 if start >= 0 else int(m["meta_start"])
+        base = bisect.bisect_left(newlines, start) + 1 if start >= 0 else int(m["meta_start"])
         cls = f"{module_scope(pf.path)}::{m['class']}"
         for line, name, kind in template_sites(m["inline"], base):
             out.append((line, name, kind, cls))

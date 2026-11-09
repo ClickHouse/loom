@@ -40,6 +40,7 @@ targeted backfill over its `.vue` tree, never by a heal.
 
 from __future__ import annotations
 
+import bisect
 import posixpath
 import re
 from dataclasses import dataclass
@@ -239,9 +240,9 @@ def macro_symbols(pf: ParsedFile, component: str) -> list[Symbol]:
         nodes = list(args.named_children) if args is not None else []
         if targs is not None:
             nodes.extend(targs.named_children)
-        stack = nodes
+        stack = nodes[::-1]  # reversed, popped from the end: a pop(0) per node is quadratic
         while stack:
-            n = stack.pop(0)
+            n = stack.pop()
             if n.type == "pair":
                 k = n.child_by_field_name("key")
                 if k is not None:
@@ -262,7 +263,7 @@ def macro_symbols(pf: ParsedFile, component: str) -> list[Symbol]:
                 "satisfies_expression",
                 "parenthesized_expression",
             ):
-                stack[:0] = list(n.named_children)
+                stack.extend(reversed(n.named_children))
         return names
 
     def visit(n: Any) -> None:
@@ -319,8 +320,11 @@ def template_sites(
     base = block.body_start
     out: list[tuple[int, str, str]] = []
 
+    # by bisection in the newlines found once: a count from the top per site is quadratic
+    newlines = [m.start() for m in re.finditer("\n", body)]
+
     def line_of(offset: int) -> int:
-        return base + body.count("\n", 0, offset)
+        return base + bisect.bisect_left(newlines, offset)
 
     for m in _TAG_RE.finditer(body):
         text = m.group(1)

@@ -56,7 +56,7 @@ _DEC_ROUTE_RE = re.compile(
     re.S,
 )
 _DEC_COMMAND_RE = re.compile(r"^@\s*([\w.]+)\.(command|group)\b\s*(?:\((.*)\))?\s*$", re.S)
-_METHODS_RE = re.compile(r"methods\s*=\s*[\[(]([^\])]*)[\])]")
+_METHODS_RE = re.compile(r"methods\s*=\s*[\[(]([^\[\]()]*)[\])]")  # stops at the next opener
 _NAME_KW_RE = re.compile(r"\bname\s*=\s*" + _STR)
 _FIRST_STR_RE = re.compile(r"^\s*" + _STR)
 _ANY_STR_RE = re.compile(r"""['"]([^'"]+)['"]""")

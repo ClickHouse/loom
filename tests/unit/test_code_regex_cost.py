@@ -15,8 +15,12 @@ its use does."""
 from __future__ import annotations
 
 import importlib
+import json
+import pathlib
 import pkgutil
 import re
+import subprocess
+import sys
 import time
 from collections.abc import Callable
 
@@ -129,7 +133,7 @@ def _units(p: re.Pattern) -> list[str]:
     words = _words(src)
     out = list(_UNITS)
     for w in words:
-        out += [w + " ", w + "\n", w + "(", w + " {", w]
+        out += [w + " ", w + "\n", w + "(", w + " {", w + "=[", w]
     for o in _openers(p):
         out += [o, o + "a", o + "a(", o + "a ", o + " ", "a" + o]
     return list(dict.fromkeys(out))
@@ -184,7 +188,7 @@ def test_a_pattern_costs_linear_time(name: str, pattern: re.Pattern) -> None:
 # comes costs N**2. The sizes grow 4 times a step and a run stops at the first step that
 # grows more than 8 times, so a cubic pattern stops at 8,000 characters, not hours later.
 _SIZES = (500, 2_000, 8_000, 32_000)
-_PREFIXES = ("a", "- a", "a:a", "a = a", "export default a", "'a")
+_PREFIXES = ("a", "- a", "a:a", "a = a", "export default a", "'a", "# a")
 _SEPS = ("", " a", "a=", "a(", "a ", "#a ")  # after an opener: `*a=`, `@if(`, `{#if `
 
 
@@ -233,3 +237,142 @@ def test_a_run_after_a_prefix_costs_linear_time(name: str, pattern: re.Pattern) 
         if (got := _slow(cost)) is not None:
             slow.append((pre, unit, end, *got))
     assert not slow, f"{name}: (prefix, unit, end, n, n/4 s, n s) {slow}"
+
+
+# The lanes' own walks over a file: a slice, a count from the top or a rescan per line,
+# heading or site is quadratic, and a backtracking match holds the GIL so a thread
+# timer cannot stop it. Each walk runs in a child process that dumps its stack and exits
+# when it overruns, so a regression fails here instead of hanging the suite.
+def _markdown(text: str) -> object:
+    from server.code.domain.extract.lang_markdown import markdown_chunks, parse_markdown
+
+    return markdown_chunks(parse_markdown("a.md", text.encode()))
+
+
+def _setup_py(text: str) -> object:
+    from server.code.domain.extract.py_layouts import entry_points_from_manifest
+
+    return entry_points_from_manifest("setup.py", text)
+
+
+def _dockerfile(text: str) -> object:
+    from server.code.domain.extract.lang_hosts import dockerfile_islands
+
+    return dockerfile_islands(text.split("\n"))
+
+
+def _jenkinsfile(text: str) -> object:
+    from server.code.domain.extract.lang_hosts import jenkins_islands
+
+    return jenkins_islands(text)
+
+
+def _angular(text: str) -> object:
+    from server.code.domain.extract.lang_angular import template_sites
+
+    return template_sites(text)
+
+
+def _angular_inline(text: str) -> object:
+    from server.code.domain.extract.lang_angular import inline_template_sites
+    from server.code.domain.extract.treesitter import ParsedFile
+
+    return inline_template_sites(
+        ParsedFile(path="a.component.ts", lang="typescript", source=text.encode())
+    )
+
+
+def _vue(text: str) -> object:
+    from server.code.domain.extract.lang_vue import macro_symbols, parse_vue, template_sites
+
+    pf = parse_vue("a.vue", text.encode())
+    return template_sites(pf, {}), macro_symbols(pf, "A")
+
+
+def _svelte(text: str) -> object:
+    from server.code.domain.extract.lang_sfc import markup_sites, parse_svelte
+
+    return markup_sites(parse_svelte("a.svelte", text.encode()), {})
+
+
+def _dbt(text: str) -> object:
+    from server.code.domain.extract.lang_sql_jinja import jinja_units
+
+    return jinja_units("models/a.sql", "a", text)
+
+
+def _cmake(text: str) -> object:
+    from server.code.domain.extract.lang_cmake import commands
+
+    return commands(text)
+
+
+def _run(pre: str, unit: str, end: str = "") -> Callable[[int], str]:
+    return lambda n: pre + (unit * (n // len(unit) + 1))[:n] + end
+
+
+def _links(n: int) -> str:
+    return "# a\n" + "".join(f"[a](a{i})\n" for i in range(n // 8))
+
+
+# (id, walk, the text of about n characters it walks)
+_WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
+    ("markdown-heading-spaces", _markdown, _run("# a", " ", "b")),
+    ("markdown-headings", _markdown, _run("", "# a\n")),
+    ("markdown-links", _markdown, _links),
+    ("setup-py-unclosed-lists", _setup_py, _run("", '"console_scripts":[')),
+    ("dockerfile-continued-rows", _dockerfile, _run("", "a \\\n")),
+    ("dockerfile-flags", _dockerfile, _run("RUN ", "--a ", "b")),
+    ("dockerfile-stages", _dockerfile, _run("", "FROM a AS b\n")),
+    ("jenkinsfile-steps", _jenkinsfile, _run("", "sh 'a'\n")),
+    ("angular-sites", _angular, _run("", "<a-b>\n")),
+    (
+        "angular-inline-templates",
+        _angular_inline,
+        _run("", "@Component({template:`<a-b>`})class A{}\n"),
+    ),
+    ("vue-sites", _vue, _run("<template>\n", "<A/>\n", "\n</template>\n")),
+    ("vue-macro-members", _vue, _run("<script setup>\ndefineProps({", "a:1,", "})\n</script>\n")),
+    ("svelte-sites", _svelte, _run("", "<A/>\n")),
+    ("dbt-raw-blocks", _dbt, _run("", "{% raw %}a{% endraw %}")),
+    ("dbt-unclosed-tags", _dbt, _run("{{ config(", "tags=[", ") }}")),
+    ("cmake-rows", _cmake, _run("", "a\n")),
+]
+_WALK_N = 100_000
+_WALK_BOUND_S = 5.0  # a linear walk over 4N takes about a second here at most
+_WALK_DEADLINE_S = 60
+
+
+def _walk_cost(name: str) -> tuple[float, float]:
+    """The best of three times of the walk at N and 4N characters."""
+    walk, text = next((w[1], w[2]) for w in _WALKS if w[0] == name)
+
+    def cost(n: int) -> float:
+        t = text(n)
+        t0 = time.perf_counter()
+        walk(t)
+        return time.perf_counter() - t0
+
+    return min(cost(_WALK_N) for _ in range(3)), min(cost(4 * _WALK_N) for _ in range(3))
+
+
+_WALK_CHILD = f"""
+import faulthandler, json, sys
+faulthandler.dump_traceback_later({_WALK_DEADLINE_S}, exit=True)
+from tests.unit.test_code_regex_cost import _walk_cost
+print(json.dumps(_walk_cost(sys.argv[1])))
+"""
+
+
+@pytest.mark.parametrize("name", [w[0] for w in _WALKS])
+def test_a_lane_walk_costs_linear_time(name: str) -> None:
+    done = subprocess.run(
+        [sys.executable, "-c", _WALK_CHILD, name],
+        capture_output=True,
+        text=True,
+        timeout=_WALK_DEADLINE_S * 2,
+        cwd=pathlib.Path(__file__).resolve().parents[2],
+    )
+    assert done.returncode == 0, done.stderr[-4000:]
+    small, big = json.loads(done.stdout)
+    assert big < _WALK_BOUND_S and (big < _FLOOR_S or big < _RATIO * small), (name, small, big)

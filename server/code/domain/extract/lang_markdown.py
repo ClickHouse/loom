@@ -48,7 +48,7 @@ from server.code.domain.extract.treesitter import ParsedFile, Symbol
 LANG_DOC = "doc"
 KIND_SECTION = "section"
 EDGE_READS = "reads"
-_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
 _FENCE_RE = re.compile(r"^(```|~~~)")
 _LINK_RE = re.compile(r"\]\(((?:(?!\]\()[^)\s])++)(?:\s+\"[^\"]*\")?\)")
 _CODE_REF_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)(?:\(\))?`")
@@ -134,14 +134,18 @@ def sections_of(text: str) -> tuple[list[Section], int]:
             continue
         h = _HEADING_RE.match(raw)
         if h:
-            heads.append((i, len(h.group(1)), h.group(2).strip()))
+            # The closing `#`s off in Python: a pattern that matches them after a lazy
+            # title backtracks cubically on a run of spaces.
+            text = h.group(2)
+            title = text.rstrip().rstrip("#").rstrip() or text[:1]
+            heads.append((i, len(h.group(1)), title.strip()))
     out: list[Section] = []
     stack: list[str] = []
     for n, (line, level, title) in enumerate(heads):
         end = len(lines)
-        for line2, level2, _t in heads[n + 1 :]:
-            if level2 <= level:
-                end = line2 - 1
+        for k in range(n + 1, len(heads)):  # by index: a slice per heading is quadratic
+            if heads[k][1] <= level:
+                end = heads[k][0] - 1
                 break
         stack = stack[: level - 1] + [""] * max(0, level - 1 - len(stack)) + [title]
         # first paragraph: the first non-blank, non-fence run after the heading
@@ -185,6 +189,7 @@ def markdown_units(
         for s in secs
     ]
     includes: list[str] = []
+    seen_includes: set[str] = set()
     refs: list[tuple[str, str, int]] = []
     lines = text.splitlines()
     d = posixpath.dirname(path)
@@ -205,7 +210,8 @@ def markdown_units(
             if not target or "://" in target or target.startswith(("mailto:", "#")):
                 continue
             rel = posixpath.normpath(posixpath.join(d, target)) if d else posixpath.normpath(target)
-            if not rel.startswith("..") and rel not in includes:
+            if not rel.startswith("..") and rel not in seen_includes:
+                seen_includes.add(rel)
                 includes.append(rel)
         if current_q:
             seen: set[str] = set()
@@ -241,10 +247,8 @@ def markdown_chunks(pf: ParsedFile, max_chars: int = 6000) -> list[Chunk]:
     # leaf-level pieces: a section's own lines up to its first child heading
     for n, s in enumerate(secs):
         own_end = s.end_line
-        for s2 in secs[n + 1 :]:
-            if s2.start_line > s.start_line and s2.start_line <= s.end_line:
-                own_end = s2.start_line - 1
-                break
+        if n + 1 < len(secs) and secs[n + 1].start_line <= s.end_line:
+            own_end = secs[n + 1].start_line - 1
         body = lines[s.start_line - 1 : own_end]
         sym = by_q.get(_qname(mod, s))
         heading_path = " › ".join(s.path_titles)

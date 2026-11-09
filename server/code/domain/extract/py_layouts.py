@@ -344,7 +344,10 @@ def _ini_entry_points(path: str, text: str, section: str) -> list[EntryPoint]:
 
 def _setup_py_entry_points(path: str, text: str) -> list[EntryPoint]:
     out: list[EntryPoint] = []
-    for m in _SETUP_EP_RE.finditer(text):
+    # Each search and line count goes on from the last list's end: from the top, or into a
+    # list already scanned, an unclosed list costs the rest of the file per match.
+    j, counted, line = 0, 0, 1
+    while (m := _SETUP_EP_RE.search(text, j)) is not None:
         group = m.group(1)
         depth, j = 1, m.end()
         while j < len(text) and depth:
@@ -357,8 +360,9 @@ def _setup_py_entry_points(path: str, text: str) -> list[EntryPoint]:
             name, value = (s.strip() for s in item.split("=", 1))
             tgt = _target(value)
             if name and tgt:
-                out.append(EntryPoint(name, group, tgt[0], tgt[1], path,
-                                      text.count("\n", 0, sm.start()) + 1))
+                line += text.count("\n", counted, sm.start())
+                counted = sm.start()
+                out.append(EntryPoint(name, group, tgt[0], tgt[1], path, line))
     if not out and "[console_scripts]" in text:
         out = _ini_entry_points(path, text, "")
     return out

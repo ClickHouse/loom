@@ -49,6 +49,9 @@ from server.code.domain.extract.edges_treesitter import Edge
 from server.code.domain.extract.lang_sql_model import Facet
 from server.code.domain.extract.treesitter import ParsedFile, Symbol
 
+# `\b`: a command starts after a `)`, a blank or a comment, never inside a word
+_COMMAND_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*+)\s*+\(")
+
 LANG_CMAKE = "cmake"
 KIND_TARGET = "target"
 KIND_TEST = "test"
@@ -210,14 +213,14 @@ def commands(text: str) -> list[Command]:
             i, nl = _skip_comment(text, i, doc)
             line += nl
             continue
-        m = re.match(r"([A-Za-z_][A-Za-z0-9_]*)\s*\(", text[i:])
+        m = _COMMAND_RE.match(text, i)  # at i: a slice from i per row is quadratic
         if not m:
             j = text.find("\n", i)
             i = n if j < 0 else j
             doc = []
             continue
         start_line = line
-        args, j, nl = _read_args(text, i + m.end())
+        args, j, nl = _read_args(text, m.end())
         line += nl
         out.append(
             Command(

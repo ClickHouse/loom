@@ -56,7 +56,10 @@ async def _py_layout(repo: CodeRepo, org: str, ns: str, present: set[str]) -> An
         (p for p in present if pl.is_manifest_path(p)), key=lambda p: (p.count("/"), p)
     )[: pl.MAX_MANIFESTS]
     texts = {p: await _package_json_text(repo, org, ns, p) for p in manifests}
-    layout = pl.layout_from_texts({p: t for p, t in texts.items() if t}, present)
+    # off the event loop: the manifests are repository text, up to their cap each
+    layout = await asyncio.to_thread(
+        pl.layout_from_texts, {p: t for p, t in texts.items() if t}, present
+    )
     if all(t or _oversize(org, ns, p, PACKAGE_JSON_MAX_BYTES) for p, t in texts.items()):
         _PY_LAYOUT_CACHE[(org, ns)] = (now, layout)
     return layout
