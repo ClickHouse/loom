@@ -36,7 +36,12 @@ from server.core.error_summary import error_summary
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.store import inserts, pg_memory, pg_publish
 from server.memory.store.pg_memory import AUDIT_ROW, MEMORY_ROW, SEARCH_DOC, Committed
-from server.memory.store.rows import created_month, identity_key, search_document_row
+from server.memory.store.rows import (
+    IdentityKey,
+    created_month,
+    identity_key,
+    search_document_row,
+)
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -354,7 +359,7 @@ async def _served_documents(
     return sent
 
 
-_Heads = dict[Any, tuple[dict[str, Any], int]]
+_Heads = dict[IdentityKey, tuple[dict[str, Any], int]]
 
 
 def _newer_copy(doc: Mapping[str, Any], heads: _Heads) -> dict[str, Any] | None:

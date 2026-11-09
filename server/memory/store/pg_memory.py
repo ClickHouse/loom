@@ -797,14 +797,13 @@ def embedded(row: Mapping[str, Any]) -> bool:
 
 
 def newer_copy(head: Mapping[str, Any], row: Mapping[str, Any]) -> bool:
-    """Whether `head` is a newer copy of `row` (a pin, a touch, a status): live (neither
-    deleted nor redacted, as a redaction keeps the hash), embedded and of the same content
-    by hash, so `row`'s search document serves it. It is another commit than `row`'s: a
+    """Whether `head` is a newer copy of `row` (a pin, a touch, a status): live, embedded
+    (`embedded`, which a redacted row is not: a redaction keeps the hash) and of the same
+    content by hash, so `row`'s search document serves it. It is another commit than `row`'s: a
     publisher reads it again durably before sending it."""
     return (
         int(head["version"]) > int(row["version"])
         and head.get("tombstoned_at") is None
-        and head.get("redacted_at") is None
         and embedded(head)
         and is_content_hash(str(head.get("content_sha256") or ""))
         and head.get("content_sha256") == row.get("content_sha256")

@@ -6952,3 +6952,16 @@ async def test_a_connection_lost_in_a_transaction_is_503_not_the_drivers_error(
     with pytest.raises(pg.PostgresUnavailableError):
         async with pg.transaction():
             raise asyncpg.exceptions.ConnectionDoesNotExistError("connection was closed")
+
+
+def test_a_durable_read_on_a_demoted_primary_is_the_read_only_outage() -> None:
+    """Its logical message cannot take an xid in recovery (XX000), which counts as the
+    demoted primary's 25006: the pool is expired and the caller gets a 503."""
+    from server.core import pg
+
+    class _InRecovery(Exception):
+        sqlstate = "XX000"
+
+    e = _InRecovery("cannot assign TransactionIds during recovery")
+    assert pg._read_only(e) and pg.is_outage(e)
+    assert not pg.is_outage(_InRecovery("some other internal error"))

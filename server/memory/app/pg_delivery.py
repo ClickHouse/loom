@@ -22,7 +22,12 @@ from server.core import ch_errors, pg, pg_lease
 from server.core.error_summary import error_summary
 from server.memory.store import pg_memory, pg_publish
 from server.memory.store.pg_memory import Claimed
-from server.memory.store.rows import identity_key, parse_memory_value, search_document_row
+from server.memory.store.rows import (
+    IdentityKey,
+    identity_key,
+    parse_memory_value,
+    search_document_row,
+)
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -215,7 +220,7 @@ async def _still_heads(claims: list[Claimed], deadline: float) -> list[Claimed]:
     return [replace(c, row=row) for c in claims if (row := _served(c, heads)) is not None]
 
 
-def _served(c: Claimed, heads: dict[Any, dict[str, Any]]) -> dict[str, Any] | None:
+def _served(c: Claimed, heads: dict[IdentityKey, dict[str, Any]]) -> dict[str, Any] | None:
     """The row `c`'s document is built from (`_still_heads`), None for none."""
     head = heads.get(identity_key(c.row))
     if head is None or head.get("redacted_at") is not None:

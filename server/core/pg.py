@@ -245,7 +245,7 @@ def is_outage(e: BaseException) -> bool:
     import asyncpg
 
     sqlstate = getattr(e, "sqlstate", None)
-    if sqlstate in _TRANSIENT_SQLSTATES:
+    if sqlstate in _TRANSIENT_SQLSTATES or _in_recovery(e):
         return True
     if isinstance(e, asyncpg.exceptions.ProtocolViolationError):
         return False  # 08P01: a retry repeats a protocol violation
@@ -337,7 +337,16 @@ async def _release(pool: Any, conn: Any) -> None:
 
 
 def _read_only(e: BaseException) -> bool:
-    return "25006" in (getattr(e, "sqlstate", None), getattr(e.__cause__, "sqlstate", None))
+    """A statement refused by a server in recovery (a demoted primary): a write's 25006,
+    or a durable read's logical message, which cannot take an xid there (XX000)."""
+    return any(_in_recovery(x) for x in (e, e.__cause__) if x is not None)
+
+
+def _in_recovery(e: BaseException) -> bool:
+    sqlstate = getattr(e, "sqlstate", None)
+    return sqlstate == "25006" or (
+        sqlstate == "XX000" and "cannot assign TransactionIds during recovery" in str(e)
+    )
 
 
 def _connection_lost(e: BaseException) -> bool:

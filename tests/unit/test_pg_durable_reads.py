@@ -180,6 +180,8 @@ def _claim(version: int, sha: str = "a") -> pg_memory.Claimed:
         "version": version,
         "content_sha256": sha,
         "memory_id": "m",
+        "memory_type": "semantic",
+        "sensitivity": "",
     }
     return pg_memory.Claimed("o", "n", 1, 2, 1, 0, row, {}, deadline=1e18)
 
@@ -220,7 +222,6 @@ def test_still_heads_reads_durably_only_for_another_commit(
         return {} if head is None else {pg_memory.identity_key(claim.row): head}
 
     monkeypatch.setattr(pg_memory, "heads_by_keys", heads_by_keys)
-    monkeypatch.setattr(pg_memory, "embedded", lambda row: True)
     asyncio.run(pg_delivery._still_heads([claim], deadline=1e18))
     assert calls.count(True) == durable_reads
 
@@ -247,7 +248,6 @@ def test_still_heads_decides_from_the_durable_read(
         return {pg_memory.identity_key(claim.row): heads[again if durable else plain]}
 
     monkeypatch.setattr(pg_memory, "heads_by_keys", heads_by_keys)
-    monkeypatch.setattr(pg_memory, "embedded", lambda row: True)
     out = asyncio.run(pg_delivery._still_heads([claim], deadline=1e18))
     assert [int(c.row["version"]) for c in out] == built
 
@@ -273,7 +273,6 @@ def test_still_heads_gives_back_claims_a_standby_wait_left_no_lease(
         return {pg_memory.identity_key(claim.row): _head(9)}
 
     monkeypatch.setattr(pg_memory, "heads_by_keys", heads_by_keys)
-    monkeypatch.setattr(pg_memory, "embedded", lambda row: True)
     # An outage, which the pass releases uncounted, not an attempt.
     with pytest.raises(pg.PostgresUnavailableError):
         asyncio.run(pg_delivery._still_heads([claim], deadline=10.0))
@@ -291,7 +290,6 @@ def test_flush_decides_again_from_the_durable_read(monkeypatch: pytest.MonkeyPat
 
     entry = _flush_entry(doc)
     monkeypatch.setattr(pg_memory, "heads_owing", heads_owing)
-    monkeypatch.setattr(pg_memory, "embedded", lambda row: True)
     sent = asyncio.run(pg_batch._served_documents([entry]))  # type: ignore[list-item]
     assert reads == [False, True]
     assert sent[id(entry)] == {}
@@ -358,7 +356,6 @@ def test_a_copy_read_durably_within_its_lease_is_sent(monkeypatch: pytest.Monkey
         return {pg_memory.identity_key(claim.row): _head(9)}
 
     monkeypatch.setattr(pg_memory, "heads_by_keys", heads_by_keys)
-    monkeypatch.setattr(pg_memory, "embedded", lambda row: True)
     built = asyncio.run(pg_delivery._still_heads([claim], deadline=_a_lease()))
     assert [c.row["version"] for c in built] == [9]
 
@@ -437,7 +434,6 @@ def test_a_lease_clickhouse_spent_before_the_durable_read_counts(
         return {pg_memory.identity_key(claim.row): _head(9)}
 
     monkeypatch.setattr(pg_memory, "heads_by_keys", heads_by_keys)
-    monkeypatch.setattr(pg_memory, "embedded", lambda row: True)
     with pytest.raises(pg_lease.PublicationPending):
         asyncio.run(pg_delivery._still_heads([claim], deadline=0.0))
     assert reads == [False]  # no durable read was made
@@ -462,7 +458,6 @@ def test_the_flush_builds_no_document_onto_a_redacted_or_deleted_head(
 
     entry = _flush_entry(doc)
     monkeypatch.setattr(pg_memory, "heads_owing", heads_owing)
-    monkeypatch.setattr(pg_memory, "embedded", lambda row: True)
     sent = asyncio.run(pg_batch._served_documents([entry]))  # type: ignore[list-item]
     assert sent[id(entry)] == {}
     assert entry.stale == [("o", "n", 1)]
@@ -491,7 +486,6 @@ def test_the_flush_builds_onto_a_copy_it_read_durably(monkeypatch: pytest.Monkey
         return {pg_memory.identity_key(doc): (_head(9), 0)}
 
     monkeypatch.setattr(pg_memory, "heads_owing", heads_owing)
-    monkeypatch.setattr(pg_memory, "embedded", lambda row: True)
     monkeypatch.setattr(pg_batch, "_onto", lambda d, head: dict(head))  # the head's row
     entry = _flush_entry(doc)
     sent = asyncio.run(pg_batch._served_documents([entry]))
@@ -512,6 +506,5 @@ def test_a_flush_whose_durable_read_fails_is_unanswered(monkeypatch: pytest.Monk
         return {pg_memory.identity_key(doc): (_head(9), 0)}
 
     monkeypatch.setattr(pg_memory, "heads_owing", heads_owing)
-    monkeypatch.setattr(pg_memory, "embedded", lambda row: True)
     with pytest.raises(pg.PostgresUnavailableError):
         asyncio.run(pg_batch._served_documents([_flush_entry(doc)]))
