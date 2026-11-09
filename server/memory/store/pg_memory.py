@@ -726,6 +726,7 @@ async def commit_versions(
             next_seq[s] += 1
             seqs.append((s[0], s[1], next_seq[s]))
         head_rows = [stored[heads[k]] for k in keys]
+        sparse = [sparse_row(r) for r in stored]
         await conn.execute(
             _UPSERT_HEADS,
             *_cols(head_rows, "org", "namespace", "agent", "user_id", "session_id", "memory_key"),
@@ -733,7 +734,7 @@ async def commit_versions(
             [int(r["version"]) for r in head_rows],
             [seqs[heads[k]][2] for k in keys],
             [str(r.get("content_sha256") or "") for r in head_rows],
-            [sparse_row(r) for r in head_rows],
+            [sparse[heads[k]] for k in keys],
         )
         await conn.execute(
             _INSERT_REVISIONS,
@@ -747,7 +748,7 @@ async def commit_versions(
             [str(r.get("actor") or "") for r in stored],
             [str(r.get("source_class") or "") for r in stored],
             [request_id] * len(stored),
-            [sparse_row(r) for r in stored],
+            sparse,
             [encode_audit(a) for a in audits],
         )
         await conn.execute(

@@ -300,9 +300,8 @@ async def test_a_head_that_leaves_out_its_default_fields_is_served_as_the_full_o
 ) -> None:
     """A commit stores a row without the fields at their loom.memory default: a point read
     serves such a head as it serves the full one, listing and search find it and bulk_get
-    serves its value, and the SQL readers of its fields (the journal's revisions, the
-    cross-session heads, the usage fold, the erasure export) take a missing one as its
-    default."""
+    serves its value, and the journal's revisions, the cross-session heads, the usage fold
+    and the erasure export take a missing field as its default."""
     from server.core import pg
     from server.erasure.store.exports import export_memory_heads
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
