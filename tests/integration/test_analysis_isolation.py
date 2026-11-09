@@ -45,9 +45,9 @@ def _call(
     base: str, token: str, op: str, body: dict, headers: dict[str, str] | None = None
 ) -> httpx.Response:
     """One call, waiting out a rate limit: insights.query has a small bucket."""
-    headers = {"Authorization": f"Bearer {token}", **(headers or {})}
+    sent = {"Authorization": f"Bearer {token}", **(headers or {})}
     for _ in range(10):
-        r = httpx.post(f"{base}/v1/{op}", json=body, headers=headers, timeout=60)
+        r = httpx.post(f"{base}/v1/{op}", json=body, headers=sent, timeout=60)
         if r.status_code != 429 or "analysis statements as it may at once" in r.text:
             return r
         time.sleep(float(r.headers.get("Retry-After") or 1))

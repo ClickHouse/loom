@@ -287,9 +287,9 @@ def test_the_policy_computes_the_signature_loom_signs() -> None:
 def test_an_error_that_quotes_the_policy_quotes_no_key() -> None:
     # The probe's unsigned read is refused with an error quoting the policy,
     # and ClickHouse logs that error in system.query_log.
-    rows = "SELECT 'acme' AS org, 'a' AS namespace"
+    scope = "SELECT 'acme' AS org, 'a' AS namespace"
     with pytest.raises(AssertionError) as raised:
-        clickhouse_local.run([], f"SELECT 1 FROM ({rows}) WHERE {boundary.policy_filter(KEY)}")
+        clickhouse_local.run([], f"SELECT 1 FROM ({scope}) WHERE {boundary.policy_filter(KEY)}")
     error = str(raised.value)
     assert "UNKNOWN_SETTING" in error
     assert "[HIDDEN]" in error
