@@ -1462,9 +1462,7 @@ _META_DEFAULTS = {
     "agent": "''",
     "session_id": "''",
     "memory_key": "''",
-    "memory_type": "''",
     "status": "'active'",
-    "source_trace": "''",
     "redaction_reason": "''",
 }
 
@@ -1844,7 +1842,8 @@ _HEAD_FIELDS = {
     "source_trace": "row->>'source_trace'",
     "redacted_at": "row->>'redacted_at'",
 }
-_JOURNAL_FIELDS = {f: _meta(f) for f in _HEAD_FIELDS}
+# The key arm's fields (the profile arm reads `_PROFILE_JOURNAL_FIELDS`).
+_JOURNAL_FIELDS = {f: _meta(f) for f in ("agent", "session_id", "memory_key", "redacted_at")}
 # A profile revision keeps its payload for good, so the journal's profile reach matches
 # on `row`, which `memory_revisions_profile` indexes.
 _PROFILE_JOURNAL_FIELDS = {f: f"row->>'{f}'" for f in _HEAD_FIELDS}

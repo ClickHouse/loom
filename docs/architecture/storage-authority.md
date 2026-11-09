@@ -109,15 +109,15 @@ payloads, so clearing a target never rewrites a revision's content.
 
 ### Revision metadata
 
-A revision keeps its key (`agent`, `session_id`, `memory_key`), `memory_type`, `status`,
-`source_trace`, and its redaction's time and reason in typed columns beside its payload
-(`row`). A trigger sets them from `row` whenever a writer of any build sets it, each
-falling back to the `loom.memory` column's default for a field `row` leaves out, and
-leaves them when `row` is cleared. A revision written before the columns existed has
-them NULL and its payload in place, so a reader takes each from the column or, when it
-is NULL, from `row` (`pg_memory._meta`); the migration rewrites no revision. Every
-reader of the journal but the profile reach (below) matches on that metadata and reads
-`row` only for a revision's content, which may be NULL:
+A revision keeps its key (`agent`, `session_id`, `memory_key`), `status`, and its
+redaction's time and reason in typed columns beside its payload (`row`). A trigger sets
+them from `row` whenever a writer of any build sets it, each falling back to the
+`loom.memory` column's default for a field `row` leaves out, and keeps them when `row`
+is cleared, filling any still NULL from the payload being cleared. A revision written
+before the columns existed has them NULL and its payload in place, so a reader takes
+each from the column or, when it is NULL, from `row` (`pg_memory._meta`); the migration
+rewrites no revision. Every reader of the journal but the profile reach (below) matches
+on that metadata and reads `row` only for a revision's content, which may be NULL:
 
 - an old version (`namespace.rollback`'s reinstated rows, `revisions_at`) is then
   ClickHouse's `memory_versions` row of the same key, served scrubbed when the columns

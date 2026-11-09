@@ -168,8 +168,8 @@ async def test_a_revisions_metadata_is_kept_from_its_row_and_outlives_it(
     assert (await call("memory.set", _set(ns, "k", "a fact", user_id="u"))).status_code == 200
     await _published(pg_conn, org)
     meta = (
-        "SELECT agent, session_id, memory_key, memory_type, status, source_trace, "
-        "redacted_at, redaction_reason FROM loom.memory_revisions "
+        "SELECT agent, session_id, memory_key, status, redacted_at, redaction_reason "
+        "FROM loom.memory_revisions "
         "WHERE org = $1 AND namespace = $2 AND seq = $3"
     )
     written = dict(await pg_conn.fetchrow(meta, org, ns, 1))
@@ -177,9 +177,7 @@ async def test_a_revisions_metadata_is_kept_from_its_row_and_outlives_it(
         "agent": "a",
         "session_id": "-",
         "memory_key": "k",
-        "memory_type": "semantic",
         "status": "active",
-        "source_trace": written["source_trace"],
         "redacted_at": None,
         "redaction_reason": "",
     }
@@ -222,6 +220,18 @@ async def test_a_revisions_metadata_is_kept_from_its_row_and_outlives_it(
         "redacted_at": "2026-02-01T00:00:00",
         "redaction_reason": "a secret",
     }
+    # A revision written before the columns existed (NULL there; an UPDATE that sets no
+    # `row` leaves the trigger out) takes them from the payload it loses.
+    at = "WHERE org = $1 AND namespace = $2 AND seq = $3"
+    await pg_conn.execute(
+        "UPDATE loom.memory_revisions SET agent = NULL, session_id = NULL, memory_key = NULL, "
+        f"status = NULL, redacted_at = NULL, redaction_reason = NULL {at}",
+        org,
+        ns,
+        seq,
+    )
+    await pg_conn.execute(f"UPDATE loom.memory_revisions SET row = NULL {at}", org, ns, seq)
+    assert dict(await pg_conn.fetchrow(meta, org, ns, seq)) == older
 
 
 @pytest.mark.usefixtures("pg_authority")
@@ -636,7 +646,7 @@ async def test_a_redact_reaches_a_revision_by_its_metadata(
         # An UPDATE that does not set `row` leaves the trigger out, as before the file.
         await pg_conn.execute(
             "UPDATE loom.memory_revisions SET agent = NULL, session_id = NULL, "
-            "memory_key = NULL, memory_type = NULL, status = NULL, source_trace = NULL, "
+            "memory_key = NULL, status = NULL, "
             f"redacted_at = NULL, redaction_reason = NULL {at}",
             org,
             ns,
