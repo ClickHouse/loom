@@ -1,6 +1,7 @@
 """CHClient answers ClickHouse running short of the server's or the user's memory (code
-241 with "(total)" or "(for user)") as a 503 OVERLOADED the caller retries, not a 500;
-a statement's own memory cap stays its own error."""
+241 with "(total)", or the user's limit as "(for user)" or "User memory limit exceeded")
+as a 503 OVERLOADED the caller retries, not a 500, and logs ClickHouse's line for it at
+most once per interval; a statement's own memory cap stays its own error."""
 
 from __future__ import annotations
 
@@ -69,3 +70,22 @@ async def test_a_statements_own_memory_cap_stays_its_error() -> None:
     fn, _ = _raising(_QUERY)
     with pytest.raises(DatabaseError):
         await _client()._with_retry("query_all", fn)
+
+
+async def test_the_503s_cause_is_logged_once_per_interval_and_counted(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(ch_mod, "_short_of_memory_last_log", 0.0)
+    monkeypatch.setattr(ch_mod, "_short_of_memory_since_log", 0)
+    monkeypatch.setattr(ch_mod, "_SHORT_OF_MEMORY_TOTAL", 0)
+    monkeypatch.setattr(ch_mod.time, "monotonic", lambda: 1000.0)
+    c = _client()
+    with caplog.at_level("WARNING", logger=ch_mod.log.name):
+        for _ in range(3):
+            fn, _calls = _raising(_TOTAL)
+            with pytest.raises(OverloadedError):
+                await c._with_retry("query_all", fn)
+    lines = [r.getMessage() for r in caplog.records if "short of memory" in r.getMessage()]
+    assert len(lines) == 1  # the next two fall inside the interval
+    assert "(total) memory limit exceeded" in lines[0] and "localhost" not in lines[0]
+    assert ch_mod._SHORT_OF_MEMORY_TOTAL == 3 and ch_mod._short_of_memory_since_log == 2

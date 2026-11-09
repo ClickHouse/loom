@@ -430,10 +430,36 @@ _POOL_TIMEOUTS_TOTAL = 0
 _OVERLOADED_LOG_EVERY_S = 5.0
 _overloaded_last_log = 0.0
 _overloaded_since_log = 0
+# Statements answered 503 because ClickHouse was short of the server's or the user's
+# memory, and the last time one was logged (at most one line per interval).
+_SHORT_OF_MEMORY_TOTAL = 0
+_short_of_memory_last_log = 0.0
+_short_of_memory_since_log = 0
 # Reads whose body the client pulls at its own pace (`raw_stream`) wait on this
 # gate instead, so slow downloads cannot take the pool's slots. The connector
 # has room for them beside the pool.
 STREAM_SLOTS = 4
+
+
+def _note_short_of_memory(op_name: str, e: BaseException) -> None:
+    """Count a statement ClickHouse ran short of shared memory for, and log ClickHouse's
+    line for it at most once per `_OVERLOADED_LOG_EVERY_S`: the 503 carries none of it."""
+    global _SHORT_OF_MEMORY_TOTAL, _short_of_memory_last_log, _short_of_memory_since_log
+    _SHORT_OF_MEMORY_TOTAL += 1
+    _short_of_memory_since_log += 1
+    now = time.monotonic()
+    if now - _short_of_memory_last_log < _OVERLOADED_LOG_EVERY_S:
+        return
+    log.warning(
+        "ch %s: ClickHouse is short of memory (%d statements since last line, %d in all): "
+        "%s — 503 OVERLOADED",
+        op_name,
+        _short_of_memory_since_log,
+        _SHORT_OF_MEMORY_TOTAL,
+        error_line(e),
+    )
+    _short_of_memory_last_log = now
+    _short_of_memory_since_log = 0
 
 
 def pool_reading() -> dict[str, int]:
@@ -1008,6 +1034,7 @@ class CHClient:
             if is_shared_memory_limit(e):
                 # The server's or the user's memory ran short under every query's load,
                 # not this statement's own cap: a 503 the caller retries, not a 500.
+                _note_short_of_memory(op_name, e)
                 from server.core.errors import OverloadedError
 
                 raise OverloadedError(
