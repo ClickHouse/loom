@@ -84,6 +84,8 @@ export const OP_MIN_ROLE = {
   "memory.inspect": VIEWER,
   "knowledge.inspect": VIEWER,
   "namespace.tune": VIEWER,
+  // The Assistant page's chat: its route admits whom `assistant.ask` admits.
+  "assistant.ask": VIEWER,
   "memory.move": WRITER,
   "memory.pin": WRITER,
   // The inspector's Restore on a superseded row and the Review queue's Auto-resolved Undo.
