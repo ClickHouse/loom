@@ -270,6 +270,12 @@ async def test_an_append_only_bulk_write_keeps_every_entry(
         assert all(int(w["version"]) > 0 for w in out["written"])
         got = await a.memory.bulk_get([f"run/{i}" for i in range(entries + 1)])
     assert sorted(got["results"]) == [f"run/{i}" for i in range(entries + 1)]
+    written = {str(w["memory_key"]): w for w in out["written"]}
+    assert sorted(written) == [f"run/{i}" for i in range(1, entries + 1)]
     for key, row in got["results"].items():
+        # the live row of each key is the one its own write made, with its own value
         assert row["found"] is True and row["value"] == text(int(key.split("/")[1]))
-        assert row.get("status", "active") == "active"
+        assert row["memory_type"] == "semantic"
+        if key in written:
+            assert row["memory_id"] == written[key]["memory_id"]
+            assert int(row["version"]) == int(written[key]["version"])

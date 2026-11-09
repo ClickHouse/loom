@@ -503,7 +503,16 @@ def test_a_bulk_write_answers_a_held_conflict_check(monkeypatch, error) -> None:
     from server.memory.app import bulk_set
     from server.memory.app import conflicts as cf
 
+    async def policy(*_a, **_k) -> str:
+        return "auto_reinforce"
+
+    async def threshold(*_a, **_k) -> float:
+        return 0.85
+
     monkeypatch.setattr(cf, "check_on_commit", _raise(error))
+    # the call's one policy and threshold read, without a ClickHouse
+    monkeypatch.setattr(cf, "namespace_conflict_policy", policy)
+    monkeypatch.setattr(cf, "_resolve_threshold", threshold)
     entry = SimpleNamespace(memory_type="semantic", memory_key="k", valid_at=None)
     put = SimpleNamespace(org="acme", namespace="n", agent="a", run_id="-", valid_at=None)
     with pytest.raises(type(error)):  # not "unchecked": the org's write is held

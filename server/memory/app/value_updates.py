@@ -359,10 +359,11 @@ async def link_value_updates(
             return None
         return emb
 
-    # Peers for a batch of rows come from one statement (`_peers_many`); the per-row
-    # statement remains for batch = 0, for a batch that failed and under
-    # LOOM_MEMORY_BULK_PEER_READ=per_fact. Rows are grouped by embedding dimension so
-    # one statement's `dim` holds for all of them.
+    # Under LOOM_MEMORY_BULK_PEER_READ=batched, peers for a batch of rows come from one
+    # statement (`_peers_many`), rows grouped by embedding dimension so one statement's
+    # `dim` holds for all of them. A row the batch did not cover (batch = 0, a failed
+    # batch) reads its own peers: the joined statement under `batched`, codes-first under
+    # `per_fact`.
     from server.settings import settings as _s
 
     batch = int(_s.memory_write_candidate_batch)
