@@ -9,7 +9,7 @@ from typing import Any
 
 from server.code.app.index.denylist import Denylist, default_denylist
 from server.code.app.index.ingest_stats import error_text
-from server.code.domain.extract.bounded_parse import GAVE_UP, ParseTimeout
+from server.code.domain.extract.bounded_parse import LockGaveUp, ParseTimeout
 from server.code.domain.extract.lang_detect import detect_by_extension, detect_shell, is_bats_path
 from server.code.domain.extract.lang_hosts import HostUnits, detect_host, host_kind, host_units
 from server.code.domain.extract.lang_py_islands import py_sql_units
@@ -109,7 +109,7 @@ def parse_for_ingest(path: str, source: bytes) -> tuple[ParsedFile | None, str]:
             pf = parser(path, source)
         except Exception as e:  # noqa: BLE001 — parse failure is per-file, not fatal
             # a read that gave up waiting for another parse took its fallback: no warning
-            log = logger.debug if str(e) == GAVE_UP else logger.warning
+            log = logger.debug if isinstance(e, LockGaveUp) else logger.warning
             log("code ingest: parse failed for %s: %s", path, e)
             return ParsedFile(path=path, lang=lang, source=source), error_text("parse", e)
         if lang == "shell":

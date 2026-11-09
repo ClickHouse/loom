@@ -745,3 +745,14 @@ def test_a_grammar_loaded_from_outside_the_interpreters_site_packages_is_refused
                 bounded_parse._grammar(language)  # the child would check another build
     finally:
         bounded_parse._grammar.cache_clear()
+
+
+@pytest.mark.usefixtures("fresh_child")
+def test_a_child_answering_out_of_protocol_is_a_failure_not_a_kill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.code.domain.extract import bounded_parse
+
+    monkeypatch.setattr(bounded_parse, "_ANSWERS", {})  # every answer byte is unknown
+    with pytest.raises(RuntimeError, match="out of protocol"):
+        bounded_parse._check_in_child("tree_sitter_go:language", b"package x\n", 3.0, 256 << 20)

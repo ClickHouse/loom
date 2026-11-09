@@ -59,9 +59,8 @@ def _parse(parser: Any, source: bytes, budget: float) -> bytes:
         return source[offset : offset + CHUNK]
 
     parser.parse(read)
-    # Work after the last read counts too. The server's repeat of the parse holds the GIL
-    # between reads and after the last one: a stretch past a tenth of the deadline is
-    # refused (real files take a few milliseconds at most).
+    # The server's repeat holds the GIL between reads and after the last: a stretch past a
+    # tenth of the deadline is refused (real files take a few milliseconds at most).
     end = time.thread_time()
     longest = max(longest, end - last_read)
     within = whole and not stopped and end <= deadline and longest <= budget / 10
@@ -130,9 +129,8 @@ def main() -> int:
         # the next request is read under the limits this process started with
         resource.setrlimit(resource.RLIMIT_CPU, inherited_cpu)
         resource.setrlimit(resource.RLIMIT_AS, inherited_as)
-        # Memory a parse freed stays mapped and would raise the next parse's limit: a
-        # process grown more than `_RETIRE_GROWTH` past its start (its grammars included)
-        # retires.
+        # Memory a parse freed stays mapped and would raise the next limit: one grown more
+        # than `_RETIRE_GROWTH` past its start (its grammars included) retires.
         retire = _address_space() > start + _RETIRE_GROWTH
         # and one near an inherited CPU limit, so the next parse gets its whole deadline
         need = _cpu_limit(budget)

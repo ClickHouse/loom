@@ -84,7 +84,6 @@ class LockWait:
         self.gave_up = False
 
 
-GAVE_UP = "gave up waiting for another parse in this process"  # that refusal's message
 # Set by a caller that gives up sooner than a parse may take, so its threads (which copy
 # the context) do not wait for the lock past its deadline. None: wait as long as it takes.
 LOCK_WAIT: ContextVar[LockWait | None] = ContextVar("bounded_parse_lock_wait", default=None)
@@ -95,6 +94,10 @@ _idle: subprocess.Popen[bytes] | None = None  # the child waiting for its next p
 class ParseTimeout(Exception):
     """The parse ran past `code_parse_timeout_s` or `code_parse_memory_mb`, or could not
     run here; a caller reads it as the file's parse failing."""
+
+
+class LockGaveUp(ParseTimeout):
+    """The caller's wait for the lock ran out (`LOCK_WAIT`): no parse ran."""
 
 
 @functools.cache
@@ -126,9 +129,8 @@ def _check_in_child(grammar: str, source: bytes, budget: float, memory: int) -> 
     """Return when the child parsed `source` in full within the limits; raise otherwise."""
     global _idle
     child, _idle = _idle, None
-    # Again on a fresh child, once each, when this one had ended before the request was written,
-    # or the kernel killed it (out of memory, this parse's own included; a limit hit ends
-    # by another signal).
+    # A fresh child once for each: one that had ended before the request was written, one
+    # the kernel killed (out of memory; a limit hit ends by another signal).
     unwritten = killed = False
     while True:
         if child is None:
@@ -144,6 +146,8 @@ def _check_in_child(grammar: str, source: bytes, budget: float, memory: int) -> 
             )
         if outcome is _Outcome.SILENT:
             raise ParseTimeout(f"the parse process did not answer within {_wall_bound(budget):g} s")
+        if outcome is _Outcome.GARBLED:
+            raise RuntimeError("the parse process answered out of protocol")
         status = cast("int", child.returncode)
         if outcome is _Outcome.UNWRITTEN and not unwritten:
             unwritten = True
@@ -192,11 +196,12 @@ def _wall_bound(budget: float) -> float:
 class _Outcome(enum.Enum):
     """What came of one request to a child."""
 
-    DONE = "done"  # read in full within the limits
-    STOPPED = "stopped"  # past the CPU deadline or a stretch
-    ENDED = "ended"  # it ended (a limit, a crash or a kill) after taking the request
-    SILENT = "silent"  # no answer within the wall bound (suspended, or never scheduled)
-    UNWRITTEN = "unwritten"  # it had ended before the request could be written
+    DONE = enum.auto()  # read in full within the limits
+    STOPPED = enum.auto()  # past the CPU deadline or a stretch
+    ENDED = enum.auto()  # it ended (a limit, a crash or a kill) after taking the request
+    SILENT = enum.auto()  # no answer within the wall bound (suspended, or never scheduled)
+    UNWRITTEN = enum.auto()  # it had ended before the request could be written
+    GARBLED = enum.auto()  # it answered a byte the protocol does not have
 
 
 _ANSWERS = {
@@ -225,7 +230,7 @@ def _ask(
             waiting.register(stdout, selectors.EVENT_READ)
             if waiting.select(_wall_bound(budget)):
                 answer = stdout.read(1)
-                outcome = _ANSWERS.get(answer, _Outcome.ENDED)
+                outcome = _ANSWERS.get(answer, _Outcome.GARBLED if answer else _Outcome.ENDED)
     except BrokenPipeError:
         pass  # the child had ended
     finally:
@@ -254,9 +259,8 @@ def parse(parser: Any, source: bytes) -> Any:
     budget = settings.code_parse_timeout_s
     memory = settings.code_parse_memory_mb << 20
 
-    # The same parse finished within the deadline in the child; twice that here means
-    # it is not the same parse, and it stops reading. Only while it parses: the tree
-    # reads `Node.text` through this callback for as long as it lives.
+    # Past twice the deadline this is not the child's parse: stop reading, only while it
+    # parses (the tree reads `Node.text` through this callback for as long as it lives).
     deadline = 0.0
     expired = False
 
@@ -274,7 +278,7 @@ def parse(parser: Any, source: bytes) -> Any:
         _LOCK.acquire()
     elif (left := lock_wait.deadline - time.monotonic()) <= 0 or not _LOCK.acquire(timeout=left):
         lock_wait.gave_up = True  # past the deadline, a free lock is no reason to parse
-        raise ParseTimeout(GAVE_UP)
+        raise LockGaveUp("gave up waiting for another parse in this process")
     try:
         _check_in_child(_grammar(parser.language), source, budget, memory)
         deadline = time.thread_time() + 2 * budget
