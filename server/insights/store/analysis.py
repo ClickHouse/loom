@@ -76,11 +76,11 @@ async def sealed_secrets(*, ch: _CHClient | None = None) -> str | None:
     return str(row["sealed"]) if row else None
 
 
-async def store_secrets(sealed: str, *, ch: _CHClient | None = None) -> None:
+async def store_secrets(sealed: str, *, version: int, ch: _CHClient | None = None) -> None:
     ch = ch or _default_client()
     await ch.insert(
         "loom.analysis_secrets",
-        [{"id": 0, "sealed": sealed, "version": 1}],
+        [{"id": 0, "sealed": sealed, "version": version}],
         settings={"async_insert": 0},
     )
 
