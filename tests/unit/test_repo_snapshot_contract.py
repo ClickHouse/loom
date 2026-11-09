@@ -244,3 +244,18 @@ def test_a_name_whose_cached_directory_row_is_restricted_is_not_suggested(monkey
     assert "code-x" not in namespace_resolve.suggestable("o", lambda org, ns: False)
     monkeypatch.setattr(namespace_classification, "is_restricted_cached", lambda org, ns: False)
     assert "code-x" in namespace_resolve.suggestable("o", lambda org, ns: False)
+
+
+@pytest.mark.asyncio
+async def test_a_refused_plane_call_is_not_told_the_namespace_is_unknown_while_unread(
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from server.transport import access_refusal, mcp_auth
+
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    monkeypatch.setattr(access_refusal, "is_plane_tool", lambda name: True)
+    auth = SimpleNamespace(org="o", can_access=lambda org, ns: False)
+    assert await mcp_auth._plane_namespace("loom_code_search", auth, "code-x") == (None, False)

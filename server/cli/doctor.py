@@ -483,7 +483,7 @@ def _doctor_tier_failures() -> tuple[Any, ...] | None:
         finally:
             await client.disconnect()
 
-    _read_code_registry()  # the self-service entries too, once per doctor run
+    _read_code_registry()  # the self-service entries too; a no-op once a read succeeded
     try:
         # bounded: with ClickHouse down, `clickhouse_reachable` already says so
         return asyncio.run(asyncio.wait_for(read(), timeout=5))
@@ -492,7 +492,7 @@ def _doctor_tier_failures() -> tuple[Any, ...] | None:
 
 
 def _read_code_registry() -> None:
-    """Read the self-service registry once, bounded; a failure leaves it unread."""
+    """Read the self-service registry, bounded; a failure leaves it unread."""
     import asyncio
 
     from server.code.app.index import repo_registry

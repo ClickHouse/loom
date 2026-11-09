@@ -112,13 +112,15 @@ async def grant_restricted_to_token(
 
         is_restricted = _isr
     if is_code_namespace is None:
-        from server.code.domain.index.repos import config_entry
+        from server.code.domain.index.repos import config_entry, registry_unread
         from server.identity.app import namespace_kinds
         from server.tracker.domain.namespaces import tracker_namespace
 
-        # The directory's kinds too: before the code registry's first read the
-        # configuration lists no branch added from the page.
-        kinds = await namespace_kinds.kind_map(org)
+        # The directory's kinds too while the code registry is unread: the
+        # configuration lists no branch added from the page then. `kind_map` answers the
+        # configured kinds alone when the directory is unreadable, so a page branch can
+        # be missed; the restricted check below would then usually refuse first.
+        kinds = await namespace_kinds.kind_map(org) if registry_unread() else {}
 
         def is_code_namespace(o: str, n: str) -> bool:
             # read-only reference data: a repository index or a tracker record

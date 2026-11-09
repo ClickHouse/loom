@@ -177,11 +177,14 @@ async def _plane_namespace(
     exists (the caller refuses as before). A resolution the caller cannot
     read either is refused on the real namespace. Beside it, whether that
     refusal was made because a read it needed failed."""
+    from server.code.domain.index.repos import registry_unread
     from server.transport import access_refusal as ar
     from server.transport import namespace_resolve as nr
 
     if not ar.is_plane_tool(str(tool_name or "")):
         return None, False
+    if registry_unread():
+        return None, False  # which names exist is not known yet: refuse as before
     org = str(getattr(auth, "org", "") or "")
     known = nr.known_namespaces(org)
     if ns in known:

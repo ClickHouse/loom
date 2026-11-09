@@ -30,6 +30,7 @@ from server.code.domain.index.repos import (
     registry_unread,
     set_registry_repos,
 )
+from server.core import readiness
 from server.core.secrets_at_rest import seal, unseal
 from server.settings import settings
 
@@ -177,11 +178,9 @@ def registry_read() -> bool:
     return not registry_unread()
 
 
-def readiness_check() -> Any:
+def readiness_check() -> readiness.CheckResult:
     """Reported, not required: until the first read a code op answers 503 and an
     operator entry a page namespace skips is not known."""
-    from server.core import readiness
-
     return readiness.result(registry_read(), "the self-service repository registry is not read")
 
 
