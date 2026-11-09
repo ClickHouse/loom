@@ -207,7 +207,6 @@ async def start_refresher(ch: Any | None = None) -> asyncio.Task[None]:
 
 def reset_for_tests() -> None:
     global _LOADED_AT
-    set_registry_repos([], frozenset())
     reset_snapshot_for_tests()
     _LOADED_AT = -1e12
 

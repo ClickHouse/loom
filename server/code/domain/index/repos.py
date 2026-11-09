@@ -340,8 +340,9 @@ _skipped_logged: set[str] = set()
 
 
 def reset_for_tests() -> None:
-    """No registry read yet, and each skipped entry logged again."""
-    global _registry_loaded
+    """No registry read yet, an empty snapshot, and each skipped entry logged again."""
+    global _registry_repos, _registry_namespaces, _page_namespaces, _registry_loaded
+    _registry_repos, _registry_namespaces, _page_namespaces = [], frozenset(), frozenset()
     _registry_loaded = False
     _skipped_logged.clear()
 
@@ -417,7 +418,8 @@ def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:
     unread = registry_unread()
     entries = registry_repos()
     rows = {(c.org, c.namespace): c for c in entries}
-    # A page row counts on its own: a later read publishes rows and page set apart.
+    # A page row counts on its own: a thread reader (`mirror_status`) can see a later
+    # read's rows before its page set.
     taken = page_namespaces() | {k for k, c in rows.items() if c.row_kind == "page"}
     out: list[RepoConfig] = []
     for c in env_repos:

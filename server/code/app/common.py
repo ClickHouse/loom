@@ -103,21 +103,24 @@ _GATE_DEFAULT_REFUSED: ContextVar[Exception | None] = ContextVar(
 def plane_namespace_for(op_name: str, org: str | None = None) -> str:
     """The namespace a code.* op in `org` (default: the code org) is authorized
     against — and its handler reads — when the body names none: the deployment's
-    code namespace (`repos.default_code_namespace`). "" for every other op, and
-    when that default is refused: an op that skips the namespace never needs it, and
-    one that reads it refuses in its handler (`resolve_code_identity`). It records
-    that refusal for the request, so only the gate calls it."""
-    _GATE_DEFAULT_REFUSED.set(None)
+    code namespace (`repos.default_code_namespace`, which may refuse it). "" for
+    every other op."""
     if not op_name.startswith("code."):
         return ""
-    from server.code.domain.index.repos import RegistryUnread, default_code_namespace
-    from server.core.errors import ValidationError
+    from server.code.domain.index.repos import default_code_namespace
 
-    try:
-        return default_code_namespace(org or str(settings.code_org))
-    except (RegistryUnread, ValidationError) as e:
-        _GATE_DEFAULT_REFUSED.set(e)
-        return ""
+    return default_code_namespace(org or str(settings.code_org))
+
+
+def note_gate_default_refused(refused: Exception | None) -> None:
+    """What the request gate decided about the default namespace, for this request's
+    handler (`resolve_code_identity`); the gate sets it on every call."""
+    _GATE_DEFAULT_REFUSED.set(refused)
+
+
+def gate_default_refused() -> Exception | None:
+    """The request gate's refusal of the default namespace for this request, if any."""
+    return _GATE_DEFAULT_REFUSED.get()
 
 
 def resolve_code_identity(org: str, namespace: str) -> tuple[str, str]:
@@ -130,7 +133,7 @@ def resolve_code_identity(org: str, namespace: str) -> tuple[str, str]:
     from server.core.errors import ValidationError
 
     org = org or settings.code_org
-    if not namespace and (refused := _GATE_DEFAULT_REFUSED.get()) is not None:
+    if not namespace and (refused := gate_default_refused()) is not None:
         raise refused  # the gate checked no namespace: a registry read since changes nothing
     namespace = namespace or default_code_namespace(org)
     if not org or not namespace:

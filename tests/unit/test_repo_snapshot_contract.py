@@ -67,14 +67,32 @@ def test_only_the_registry_and_the_add_read_the_raw_registry_snapshot() -> None:
     assert readers <= {"code/app/index/repo_registry.py", "code/app/repo_admin.py"}, readers
 
 
-def test_only_the_request_gate_resolves_the_plane_default_namespace() -> None:
-    # It records the gate's refusal for the handler; another caller would reset it.
-    callers = {
+def test_only_the_request_gate_records_its_refusal_of_the_default_namespace() -> None:
+    # The handler trusts it: another writer could clear the gate's refusal.
+    writers = {
         path
         for path, tree in _modules()
-        if path != "code/app/common.py" and "plane_namespace_for" in _names(tree)
+        if path != "code/app/common.py" and "note_gate_default_refused" in _names(tree)
     }
-    assert callers == {"transport/gates.py"}, callers
+    assert writers == {"transport/gates.py"}, writers
+
+
+def test_only_repos_reads_the_default_code_namespace_setting() -> None:
+    # Everything else defaults through `repos.default_code_namespace`, which refuses a
+    # namespace a member added from the page. The CLI only names it in an exit message.
+    readers = {
+        path
+        for path, tree in _modules()
+        if not path.startswith("settings/")
+        and any(
+            isinstance(n, ast.Attribute)
+            and n.attr == "code_namespace"
+            and isinstance(n.value, ast.Name)
+            and n.value.id == "settings"
+            for n in ast.walk(tree)
+        )
+    }
+    assert readers <= {"code/domain/index/repos.py", "cli/code_run.py"}, readers
 
 
 def test_no_module_reads_the_snapshot_or_the_raw_configuration_around_the_accessors() -> None:

@@ -326,6 +326,18 @@ async def test_set_access_on_a_removed_page_branch_writes_nothing(monkeypatch) -
     with pytest.raises(ValidationError) as e:
         await h.handle_code_repo_set_access(inp)
     assert e.value.to_detail()["code"] == "NOT_A_REPO" and ch.inserts == []
+    # A busy account claim (an add or a removal of that name) refuses before any write.
+
+    @asynccontextmanager
+    async def busy(org: str, ns: str, **k: Any) -> Any:
+        raise GrantBusyError("busy")
+        yield
+
+    monkeypatch.setattr(h, "account_change", busy)
+    ch.registry = _LIVE
+    with pytest.raises(GrantBusyError):
+        await h.handle_code_repo_set_access(inp)
+    assert ch.inserts == []
 
 
 @pytest.mark.asyncio
@@ -885,3 +897,50 @@ def test_a_handler_never_defaults_to_a_namespace_the_gate_did_not_check(monkeypa
     with pytest.raises(ValidationError) as e:
         repos.default_code_namespace(ORG)
     assert e.value.to_detail()["code"] == "DEFAULT_NAMESPACE_REFUSED"
+
+
+@pytest.mark.asyncio
+async def test_a_scoped_token_gets_the_default_namespace_refusal(monkeypatch) -> None:
+    """A scoped token needs a namespace; with the default refused it is told why (in its
+    own org), not that the request is incomplete."""
+    from server.auth.jwt import AuthInfo
+    from server.operations.base import Role
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import gates
+
+    async def _noop(*a: Any, **k: Any) -> None:
+        return None
+
+    monkeypatch.setattr("server.auth.authz.check_acted_for", _noop)
+    monkeypatch.setattr("server.auth.personal_namespace.ensure_personal_namespace_cached", _noop)
+    monkeypatch.setattr(gates, "_admitted", _noop)
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(settings, "code_org", ORG)
+    monkeypatch.setattr(settings, "code_namespace", "code-weave")
+    op = OPERATIONS_BY_NAME["code.search"]
+
+    def scoped(org: str) -> AuthInfo:
+        return AuthInfo(
+            subject="agent",
+            org=org,
+            namespaces=("code-x",),
+            roles=(Role.VIEWER,),
+            is_service_account=True,
+            ns_roles=(("code-x", "viewer"),),
+        )
+
+    async def call(org: str, auth: AuthInfo) -> None:
+        target = gates.authz_target(op, org=org, namespace="", auth=auth)
+        await gates.authorize(op, auth, target, transport="http")
+
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    with pytest.raises(repos.RegistryUnread):
+        await call("", scoped(ORG))
+    monkeypatch.setattr(repos, "_registry_loaded", True)
+    monkeypatch.setattr(repos, "_page_namespaces", frozenset({(ORG, "code-weave")}))
+    with pytest.raises(ValidationError) as e:
+        await call("", scoped(ORG))
+    assert e.value.to_detail()["code"] == "DEFAULT_NAMESPACE_REFUSED"
+    # Another org's token learns nothing of this org's namespaces.
+    with pytest.raises(PermissionError):
+        await call(ORG, scoped("other-org"))
