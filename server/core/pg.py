@@ -433,9 +433,7 @@ async def transaction() -> AsyncIterator[Any]:
                 if isinstance(e, Exception):
                     _raise_if_unavailable(e)
                 raise
-            # The commit waits for the synchronous standby, outside the statement timeout;
-            # the client's command timeout cancels the wait, which leaves the commit on the
-            # primary alone, and raises outcome_unknown.
+            # The standby wait is outside the statement timeout (the module docstring).
             committing = True
             try:
                 await tx.commit()
