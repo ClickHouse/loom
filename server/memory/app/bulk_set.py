@@ -1495,10 +1495,10 @@ async def _bulk_conflict_verdicts(
     out: dict[int, Any] = {}
     if not pending[:cap]:
         return out
-    # The namespace's policy and each type's threshold, read once for the batch; one that
-    # cannot be read is left to each fact's check, which reads it again.
+    # The namespace's policy and each type's (threshold, reach), read once for the batch
+    # (`floors` stays on the call's state for the Postgres gap check); one that cannot be
+    # read is left to each fact's check, which reads it again.
     policy = await _namespace_policy(input.org, input.namespace)
-    # floors: (threshold, reach) by type, kept on the call's state for the commit
     for mt in dict.fromkeys(str(entry_metas[idx][0].memory_type) for idx, *_ in pending[:cap]):
         if mt not in floors and (floor := await _type_floor(input.org, input.namespace, mt)):
             floors[mt] = floor

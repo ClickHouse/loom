@@ -213,12 +213,27 @@ async def test_a_bulk_type_threshold_that_cannot_be_read_is_read_by_each_fact(
 async def test_an_append_only_bulk_write_clears_every_entry_without_a_peer_read(
     monkeypatch, read: str
 ) -> None:
-    """Under `append_only` every entry of a bulk write is its own row: the batch reads the
-    policy once and no entry issues a peer statement, as for a single write."""
+    """Under `append_only` every entry of a bulk write is its own row, even beside a live
+    row with its text, which any other policy would merge into: the batch reads the policy
+    once and no entry issues a peer statement, as for a single write."""
     from server.memory.app import bulk_set
 
     monkeypatch.setattr(settings, "memory_bulk_peer_read", read)
     ch = StubCH()
+    same_text = {
+        "memory_id": "p1",
+        "memory_key": "earlier",
+        "value": "U lives in Lisbon",
+        "pinned": 0,
+        "agent": "bot",
+        "user_id": "-",
+        "session_id": "-",
+        "run_id": "-",
+        "valid_at": None,
+        "dist": 0.01,
+    }
+    # Every peer statement would find it, the batched one for each of its facts.
+    ch.query_all_returns = [[{**same_text, "qidx": q} for q in (1, 2, 3)]] * 20
     monkeypatch.setattr(conflicts, "get_client", lambda: ch)
     reads = _no_reads(monkeypatch, "append_only")
     put, metas, pending, vectors = _bulk(3)
