@@ -31,11 +31,11 @@ def reset_cache() -> None:
 
 
 def configured_kinds(org: str) -> dict[str, str]:
-    """`code` for each repository the code config lists in `org` (`configured_repos`):
+    """`code` for each repository the code config lists in `org` (`config_entries`):
     one with no directory row is a repository all the same."""
-    from server.code.domain.index.repos import configured_repos
+    from server.code.domain.index.repos import config_entries
 
-    return {r.namespace: "code" for r in configured_repos() if r.org == org}
+    return {r.namespace: "code" for r in config_entries() if r.org == org}
 
 
 async def kind_map(org: str) -> dict[str, str]:

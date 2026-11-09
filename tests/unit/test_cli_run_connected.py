@@ -200,3 +200,41 @@ def test_a_command_leaves_no_deployment_check_armed(
     monkeypatch.setattr(pg_profile, "check_configured", _arm)
     _ch.run_connected(_run)
     asyncio.run(pg._check_deployment(_Conn()))
+
+
+def test_a_skipped_namespace_names_why_the_entry_is_not_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.cli import code_run
+    from server.code.domain.index import repos
+
+    monkeypatch.setattr(repos, "configured_repos", lambda: [])
+    monkeypatch.setattr(repos, "_page_namespaces", frozenset({("acme", "code-x")}))
+    with pytest.raises(SystemExit, match="an operator entry for this name, if any, is skipped"):
+        code_run._repo_cfg(argparse.Namespace(org="acme", namespace="code-x"))
+
+
+def test_a_code_subcommand_exits_with_one_line_while_the_registry_is_unread(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    from server.cli import code_run
+    from server.code.app.index import repo_registry
+    from server.code.domain.index import repos
+    from server.settings import settings
+
+    async def _unread(*, force: bool = False, ch: object = None) -> list[object]:
+        return []  # the read failed: the snapshot stays unread
+
+    monkeypatch.setattr(repo_registry, "refresh_db_repos", _unread)
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+
+    async def _sub() -> int:
+        code_run._repo_cfg(argparse.Namespace(org="acme", namespace="code-x"))
+        return 0
+
+    with pytest.raises(SystemExit, match="registry could not be read; retry"):
+        asyncio.run(code_run._then_disconnect(_sub()))
+    assert not ch.open

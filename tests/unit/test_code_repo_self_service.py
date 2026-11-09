@@ -131,6 +131,7 @@ def test_configured_repos_appends_registry_and_operator_wins(
     monkeypatch.setattr(settings, "code_repos_json", json.dumps([{"namespace": "code-acme"}]))
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
     reg.reset_for_tests()
+    monkeypatch.setattr(repos, "_registry_loaded", True)  # as a read leaves it
     monkeypatch.setattr(
         repos,
         "_registry_repos",
@@ -183,7 +184,7 @@ class _CH:
                 if t == "loom.namespaces" and r["classification"] == "restricted"
             ]
         return [
-            dict(r, **{"classification": "standard"})
+            {"active": True, **r, "classification": "standard"}
             for _t, rows in self.inserted
             for r in rows
             if _t == "loom.code_repos"
@@ -433,6 +434,7 @@ async def test_code_repo_add_branch_inherits_the_repository(plane) -> None:
     assert out.namespace == "code-widgets-release-1-2" and out.join_policy == "open"
     rows = [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
     assert rows[-1]["path_prefixes"] == ["src/"] and rows[-1]["git_branch"] == "release/1.2"
+    assert [r["row_kind"] for r in rows] == ["page", "page"]
     with pytest.raises(ValidationError) as ei:
         await admin.handle_code_repo_add_branch(
             CodeRepoAddBranchInput(org=ORG, namespace="not-a-repo", branch="x")
@@ -524,7 +526,8 @@ async def test_a_branch_of_a_self_service_source_ignores_an_operator_entry_of_it
         "code_repos_json",
         json.dumps([{"org": ORG, "namespace": "code-widgets", "repo": "acme/widgets"}]),
     )
-    assert links.tracker_namespaces_for(ORG, "code-widgets") == ["tracker-w"]
+    # The entry is skipped: the member's namespace stays theirs and reads no map.
+    assert links.tracker_namespaces_for(ORG, "code-widgets") == []
     assert links.tracker_namespaces_for(ORG, "code-widgets-release-1-2") == []
 
 
@@ -970,6 +973,7 @@ async def test_a_branch_already_indexed_under_another_name_is_refused(
     entry = {"namespace": "code-ch", "repo": "ClickHouse/ClickHouse", "git_branch": "master"}
     monkeypatch.setattr(settings, "code_repos_json", json.dumps([entry]))
     reg.reset_for_tests()
+    monkeypatch.setattr(repos, "_registry_loaded", True)  # as a read leaves it
     plane.ch.heads["code-ch"] = "a" * 40
     with pytest.raises(ValidationError) as ei:
         await admin.handle_code_repo_add_branch(
@@ -1144,6 +1148,7 @@ async def test_the_entry_not_the_namespace_name_is_what_refuses(
     }
     monkeypatch.setattr(settings, "code_repos_json", json.dumps([entry]))
     reg.reset_for_tests()
+    monkeypatch.setattr(repos, "_registry_loaded", True)  # as a read leaves it
     plane.ch.heads["code-ch"] = "a" * 40
     assert not await admin._namespace_taken(
         ORG, reg.namespace_for("ClickHouse/ClickHouse", "master")

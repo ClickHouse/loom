@@ -13,7 +13,8 @@ One code namespace indexes one branch of one repository. There are two ways to a
 | Self-service    | dashboard **Repositories → Add repository** | parser (`code_ingest`) | [repositories](../features/code-index/repositories.md) |
 | Operator config | `LOOM_CODE_REPOS_JSON`                      | parser + compiler      | this page                                              |
 
-An operator entry wins over a self-service one with the same namespace.
+An operator entry for a namespace a member added from the page is skipped
+([adding repositories](../features/code-index/repositories.md)).
 
 Run `loom code` inside the container that runs the workers (`loom-workers` in
 `dev/docker-compose.cloud.yml`, `loom-server` on single-container stacks), so it uses the

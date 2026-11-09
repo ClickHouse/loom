@@ -113,6 +113,7 @@ def test_an_operator_entry_with_a_maintainer_access_row_keeps_its_glob_link(monk
         github_token="",
         classification="restricted",
         source="registry",
+        row_kind="access",
     )
     _set_registry(monkeypatch, [access])
     (entry,) = repos.configured_repos()
@@ -148,7 +149,7 @@ def _set_registry(monkeypatch, entries: list[repos.RepoConfig]) -> None:
     """Set the registry snapshot through its writer; monkeypatch restores both globals."""
     monkeypatch.setattr(repos, "_registry_repos", repos._registry_repos)
     monkeypatch.setattr(repos, "_registry_namespaces", repos._registry_namespaces)
-    repos.set_registry_repos(entries)
+    repos.set_registry_repos(entries, frozenset())
 
 
 def _entry(org: str, namespace: str) -> repos.RepoConfig:
@@ -192,7 +193,7 @@ def test_the_registry_namespaces_follow_each_snapshot(monkeypatch) -> None:
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
     _set_registry(monkeypatch, [_entry(ORG_X, "code-widgets-26-8")])
     assert repos.registry_namespaces() == {(ORG_X, "code-widgets-26-8")}
-    repos.set_registry_repos([_entry(ORG_Y, "code-widgets-26-8")])
+    repos.set_registry_repos([_entry(ORG_Y, "code-widgets-26-8")], frozenset())
     assert repos.registry_namespaces() == {(ORG_Y, "code-widgets-26-8")}
     monkeypatch.setattr(settings, "code_self_service_enabled", False)
     assert repos.registry_namespaces() == frozenset()

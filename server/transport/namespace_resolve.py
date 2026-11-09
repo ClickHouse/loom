@@ -33,14 +33,24 @@ def _norm(text: str) -> str:
     return str(text or "").strip().strip("/").lower()
 
 
+def _listed() -> list[Any]:
+    """The configured repositories; none until the code registry's first read, when an
+    entry it will skip would map a member's namespace to the operator's repository."""
+    from server.code.domain.index.repos import RegistryUnread, configured_repos
+
+    try:
+        return configured_repos()
+    except RegistryUnread:
+        return []
+
+
 def known_namespaces(org: str) -> dict[str, str]:
     """namespace → its repository (owner/name), for every configured code
     repository and tracker namespace of `org`."""
-    from server.code.domain.index.repos import configured_repos
     from server.tracker.domain.namespaces import configured_namespaces
 
     out: dict[str, str] = {}
-    for r in configured_repos():
+    for r in _listed():
         if not org or r.org == org:
             out[r.namespace] = r.repo
     for ns, t in configured_namespaces().items():
@@ -90,18 +100,20 @@ def suggestable(org: str, can_access: Any) -> list[str]:
     code scope first, then every namespace the token names, then the
     standard (not restricted) code and tracker namespaces. A restricted
     namespace is never named to a caller outside it."""
-    from server.code.domain.index.repos import configured_repos
     from server.code.domain.scope import current_code_scope
+    from server.identity.app.namespace_classification import is_restricted_cached
     from server.tracker.domain.namespaces import configured_namespaces
 
     out: list[str] = []
     scope = current_code_scope()
     if scope and (not org or scope[0] == org):
         out.append(scope[1])
-    for r in configured_repos():
+    for r in _listed():
         if org and r.org != org:
             continue
-        if can_access(org, r.namespace) or str(r.classification or "standard") != "restricted":
+        # The directory row may say restricted where the configuration does not yet.
+        restricted = r.classification == "restricted" or is_restricted_cached(r.org, r.namespace)
+        if can_access(org, r.namespace) or not restricted:
             out.append(r.namespace)
     for ns, t in configured_namespaces().items():
         if org and t.org != org:
@@ -113,11 +125,9 @@ def suggestable(org: str, can_access: Any) -> list[str]:
 
 def default_branches(org: str) -> set[str]:
     """The code namespaces that index their repository's default branch."""
-    from server.code.domain.index.repos import configured_repos
-
     return {
         r.namespace
-        for r in configured_repos()
+        for r in _listed()
         if (not org or r.org == org) and str(r.git_branch or "") in ("", "main", "master")
     }
 

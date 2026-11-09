@@ -111,6 +111,7 @@ def _invalid(message: str) -> HTTPException:
 async def _bound_trackers(org: str, subject: str, parent: AuthInfo, repos: list[str]) -> list[str]:
     """The restricted tracker records bound to `repos` that the caller holds a grant on and
     the parent token reaches; the history code ops read issues and PRs there."""
+    from server.identity.app import namespace_kinds
     from server.tracker.app.binding import (
         operator_repositories,
         refresh_overrides,
@@ -120,6 +121,9 @@ async def _bound_trackers(org: str, subject: str, parent: AuthInfo, repos: list[
     out: list[str] = []
     if not repos:
         return out
+    # Their bound trackers come from the operator repositories, unknown until that read.
+    kinds = await namespace_kinds.kind_map(org)
+    token_grants.refuse_unread_code(org, repos, kinds, configured_too=True)
     await refresh_overrides()  # the links as of the refresh interval, branches included
     operator = operator_repositories()  # once for every name
     for ns in repos:
@@ -359,6 +363,7 @@ async def me_service_accounts_create(
         restricted_roles = await token_grants.restricted_roles(
             org, subject, delegated, requested_role
         )
+        is_code = await token_grants.code_namespace_predicate(org, list(restricted_roles))
         sa_subject = new_token_subject(org, name, subject)
         minted = delegated.mint(sa_subject)
         now = naive_utc_now_seconds()  # after the mint: the row is never older than the token's iat
@@ -368,7 +373,7 @@ async def me_service_accounts_create(
     # direct grant: write it now, capped, revoked with the token; a name in the claim alone
     # would have every read of it refused.
     restricted_granted = await token_grants.grant_restricted_to_token(
-        org, sa_subject, subject, restricted_roles
+        org, sa_subject, subject, restricted_roles, is_code_namespace=is_code
     )
     await note_restricted_grants(
         caller,

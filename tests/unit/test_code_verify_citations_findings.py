@@ -295,7 +295,7 @@ def _run(
             patch.object(h, "schedule_code_trace", new=lambda **k: None),
             patch("server.code.domain.index.repos.repo_for_namespace", return_value=cfg),
             patch("server.code.domain.index.repos.configured_repos", return_value=[]),
-            patch.object(h.settings, "code_git_dir", "/nonexistent/mirror.git"),
+            patch.object(h, "default_git_dir", return_value="/nonexistent/mirror.git"),
             patch.object(h.gitrepo, "resolve_commit", new=git.resolve),
             patch.object(h.gitrepo, "run", new=git.run),
             patch.object(h.gitrepo, "show_file", new=git.show),

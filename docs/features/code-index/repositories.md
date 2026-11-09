@@ -1,9 +1,9 @@
 # Adding repositories
 
 A fresh install indexes no repository. Entries come from two sources, merged: the
-repositories people add themselves and the operator's configuration. When both name the
-same namespace, the operator's entry wins. One code namespace is one branch
-([overview](overview.md#one-namespace-is-one-branch)).
+repositories people add themselves and the operator's configuration. An operator entry
+for a namespace added here is skipped (see the rules below). One code namespace is one
+branch ([overview](overview.md#one-namespace-is-one-branch)).
 
 | Path                | How                                                                                                  | Built by                               | Tiers                                              |
 | ------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------- | -------------------------------------------------- |
@@ -94,10 +94,19 @@ Rules:
   source is not an operator entry (one whose holder keeps an admin grant given on an
   operator entry other than the revoked one is rewritten by the next sync instead); an
   operator copy kept there goes at the next sync once its operator grant is gone.
-- An operator entry that names a namespace already added here keeps that namespace's
-  admins, who then reach the repository's other operator entries, and its access row,
-  whose classification and join policy win over the entry's: review both before
-  listing it.
+- An operator entry that names a namespace added here (`code.repo.add` or
+  `code.repo.add_branch`), even one removed since, is skipped, with a warning in the
+  server log, since the grants of whoever added it would become an operator entry's.
+  Removing the branch does not free the name: list the entry under another namespace.
+  A registry row that records no kind is read as the entry's access row, a namespace
+  a member created with `namespace.register` has no registry row, and while
+  self-service is off the registry is not read: review a namespace's grants before
+  listing it in each case.
+- The access row `code.repo.set_access` writes for an operator entry is not listed
+  while the entry is out of the configuration, so the namespace is not indexed; it
+  applies again if the entry returns, and it does not count against the org's
+  repository quota. A registry row that records no kind is listed as a branch added
+  here once its entry is gone.
 - A copy on an operator namespace whose `granted_by` is `repo-maintainers:<namespace>`
   naming a branch added here, or a namespace no longer configured, stays until revoked:
   list those grants and revoke the ones that should not stand.
@@ -184,7 +193,7 @@ and survives restarts. `code.refresh` (writer) and the admin ops always need a g
 
 | Symptom                                           | Cause and fix                                                                                                                                                                                                                                                          |
 | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A configured entry never indexes                  | no `git_head` watermark: run `loom code init` and `loom code backfill`                                                                                                                                                                                                 |
+| A configured entry never indexes                  | no `git_head` watermark: run `loom code init` and `loom code backfill`; or the namespace was added from the page (removed since or not), and the log says the entry is skipped: list it under another namespace                                                        |
 | Adding a repository answers `SANDBOX_UNAVAILABLE` | this deployment cannot run the sandbox: list the repository in `LOOM_CODE_REPOS_JSON` instead (unless `LOOM_CODE_SANDBOX_REQUIRED` is set, which skips those too), or see the [sandbox requirements](../../operations/code-index-operations.md#repository-job-sandbox) |
 | A self-service card stays at `error`              | read `stage_detail` in `code.repos`; a failed clone retries next pass (timeout `LOOM_CODE_BOOTSTRAP_CLONE_TIMEOUT_S`)                                                                                                                                                  |
 | A private self-service repository stops fetching  | `LOOM_JWT_SECRET` was rotated; re-enter the token                                                                                                                                                                                                                      |

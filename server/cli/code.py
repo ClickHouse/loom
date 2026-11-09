@@ -126,7 +126,9 @@ def _add_scip_full_parser(csub: Any) -> None:
         "harness run goes under `loom code entry-lock`, which takes this file and "
         "the deployment lease; scip-full and scip-delta take both themselves.",
     )
-    _add_common(p_lock)
+    p_lock.add_argument("--org", default=None, help="default: LOOM_CODE_ORG")
+    # It reads no registry, so it cannot tell whether the default is a member's.
+    p_lock.add_argument("--namespace", required=True, help="the entry's code namespace")
     p_lock.set_defaults(func=_print_scip_lock_path)
 
     p_run = csub.add_parser(

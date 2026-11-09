@@ -15,10 +15,12 @@ here, once:
   org is set to the org the call acts in and a padded org or namespace is
   stripped; after authorization an absent code namespace is set to the
   authorized one, so the handler reads and writes where the call was
-  authorized.
+  authorized. A refused default (a member's namespace, or the registry unread)
+  sets none and is kept for the request, so the handler refuses too.
 - `authorize`: the refusal of a revoked subject a trusted caller acts for
   (`authz.check_acted_for`), first-contact provisioning, the role + namespace gate
-  (`authorize_op`, raising PermissionError / IdentityIncompleteError), then
+  (`authorize_op`, raising PermissionError / IdentityIncompleteError; a scoped
+  token in its own org gets a refused default's own refusal instead), then
   the restricted-access audit row and the first-write registration.
 - `policy`: the history policy gate on the authorized identity (raises
   PolicyForbiddenError).
@@ -38,7 +40,12 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
-from server.code.app.common import plane_namespace_for, plane_org_for
+from server.code.app.common import (
+    gate_default_refused,
+    note_gate_default_refused,
+    plane_namespace_for,
+    plane_org_for,
+)
 from server.core import fail_open
 from server.core.errors import IdentityIncompleteError
 from server.core.naming import present
@@ -95,7 +102,8 @@ def authz_target(op: Operation, *, org: Any, namespace: Any, auth: AuthInfo | No
     names a namespace with no resolvable org (auth off authorizes nothing)."""
     named_ns = present(namespace)
     resolved_org = resolve_org(op, org, auth)
-    resolved_ns = named_ns or present(plane_namespace_for(op.name))
+    note_gate_default_refused(None)
+    resolved_ns = named_ns or present(_plane_default(op, resolved_org))
     authz_ns = None if op.skip_namespace_authz else resolved_ns
     if auth is not None and authz_ns is not None and resolved_org is None:
         raise IdentityIncompleteError(
@@ -108,6 +116,21 @@ def authz_target(op: Operation, *, org: Any, namespace: Any, auth: AuthInfo | No
         named_namespace=named_ns,
         register_namespace=resolved_ns,
     )
+
+
+def _plane_default(op: Operation, org: str | None) -> str:
+    """The plane's default namespace for a call naming none, or "" when it is refused
+    (a member's namespace, or the registry unread). The refusal is kept for the
+    request: an op that skips the namespace check never needs the default, and one
+    that reads it refuses (`resolve_code_identity`, `authorize`)."""
+    from server.code.domain.index.repos import RegistryUnread
+    from server.core.errors import ValidationError
+
+    try:
+        return plane_namespace_for(op.name, org)
+    except (RegistryUnread, ValidationError) as e:
+        note_gate_default_refused(e)
+        return ""
 
 
 def resolve_org(op: Operation, org: Any, auth: AuthInfo | None) -> str | None:
@@ -191,7 +214,19 @@ async def authorize(
         await ensure_personal_namespace_cached(
             org=auth.org, subject=auth.subject, is_service_account=auth.is_service_account
         )
-    await authorize_op(auth, op, org=target.org, namespace=target.namespace, **scope_flags(op))
+    try:
+        await authorize_op(auth, op, org=target.org, namespace=target.namespace, **scope_flags(op))
+    except IdentityIncompleteError:
+        # The gate had no namespace to check because the default was refused: answer
+        # with that refusal (in the token's own org), not the incomplete-identity one.
+        refused = gate_default_refused()
+        if refused is None or op.skip_namespace_authz:
+            raise
+        if auth.org not in ("*", target.org):
+            raise PermissionError(
+                f"token of org {auth.org!r} cannot act in org {target.org!r}"
+            ) from None
+        raise refused from None
     _note_admitted(target)
     await _admitted(op, auth, target, transport=transport)
 

@@ -842,6 +842,40 @@ async def test_a_revoke_off_a_code_namespace_reads_no_registry(
     assert reads == [True]
 
 
+async def test_a_revoke_on_a_process_that_never_read_the_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Unread, the snapshot refuses: a memory namespace is told by its directory row and
+    # reads no registry; a code namespace reads it, and answers busy while that fails.
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    monkeypatch.setattr(repo_registry, "registry_read", lambda: repos._registry_loaded)
+    reads: list[bool] = []
+
+    async def _failed(_ch: Any = None) -> bool:
+        reads.append(True)
+        return False
+
+    monkeypatch.setattr(repo_registry, "read_registry", _failed)
+    _code_rows(monkeypatch, {"code-x"})
+    assert await maintainers.read_repo("clickhouse", "team-kb", ch=object()) is None
+    assert reads == []
+    with pytest.raises(GrantBusyError):
+        await maintainers.read_repo("clickhouse", "code-x", ch=object())
+    assert reads == [True]
+    # The revoke itself, on that memory namespace: nothing to fan out, nothing refused.
+    assert (
+        await maintainers.revoke_repo_maintainer(
+            "clickhouse", "team-kb", "alice", repo=None, ch=object()
+        )
+        == 0
+    )
+    # An operator entry whose directory row is not (yet) code: its configuration says so.
+    monkeypatch.setattr(repos, "config_entry", lambda org, ns: object() if ns == "code-y" else None)
+    with pytest.raises(GrantBusyError):
+        await maintainers.read_repo("clickhouse", "code-y", ch=object())
+    assert reads == [True, True]
+
+
 async def test_a_branch_added_after_read_repo_is_reached_by_the_revoke(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

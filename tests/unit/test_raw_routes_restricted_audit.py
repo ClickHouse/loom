@@ -410,7 +410,9 @@ def mint_env(monkeypatch: pytest.MonkeyPatch) -> Any:
     async def _nothing(*_a: Any, **_k: Any) -> None:
         return None
 
-    async def _granted(org: str, sa_subject: str, creator: str, ns_roles: Any) -> list[str]:
+    async def _granted(
+        org: str, sa_subject: str, creator: str, ns_roles: Any, **_k: Any
+    ) -> list[str]:
         return [ns for ns in ns_roles if ns == NS]
 
     @asynccontextmanager
@@ -456,7 +458,9 @@ async def test_a_star_mint_writes_a_row_for_each_namespace_its_grant_write_grant
     me_service_accounts = mint_env
     asked: dict[str, str] = {}
 
-    async def _granted_one(org: str, sa_subject: str, creator: str, ns_roles: Any) -> list[str]:
+    async def _granted_one(
+        org: str, sa_subject: str, creator: str, ns_roles: Any, **_k: Any
+    ) -> list[str]:
         asked.update(ns_roles)
         return [NS]
 
@@ -585,7 +589,7 @@ async def test_a_mint_of_two_restricted_namespaces_writes_a_row_for_each(
 ) -> None:
     me_service_accounts = mint_env
 
-    async def _both(org: str, sa_subject: str, creator: str, ns_roles: Any) -> list[str]:
+    async def _both(org: str, sa_subject: str, creator: str, ns_roles: Any, **_k: Any) -> list[str]:
         return [NS, "vault-2"]
 
     monkeypatch.setattr(token_grants, "grant_restricted_to_token", _both)

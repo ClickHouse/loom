@@ -639,6 +639,11 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
     # A lock on a profile key built from this memory refuses the redact before
     # anything is scrubbed, as a lock on the memory's own key does.
     profiles = await _profiles_built_from(input.org, target, input.memory_id)
+    # A live head's link inputs, which the scrubs below read, need the code registry:
+    # refuse before the first mutation while it is unread, so nothing is half scrubbed.
+    from server.code.domain.index.repos import require_registry_read
+
+    require_registry_read()
 
     now = naive_utc_now()
     reason_blob = (input.reason or "")[:512]

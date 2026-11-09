@@ -245,8 +245,11 @@ def test_the_doctor_reads_the_failing_tiers_once_and_none_when_clickhouse_is_dow
     monkeypatch.setattr(settings, "code_intel_enabled", True)
     monkeypatch.setattr(settings, "ch_host", "localhost")
 
+    read = {"done": False}  # not read yet in this doctor process
+
     async def registry(**_: Any) -> list[Any]:
         calls.append("registry")
+        read["done"] = True
         return []
 
     async def refresh(ch: Any = None) -> None:
@@ -255,7 +258,7 @@ def test_the_doctor_reads_the_failing_tiers_once_and_none_when_clickhouse_is_dow
 
     monkeypatch.setattr("server.core.ch.get_client", lambda: client)
     monkeypatch.setattr(repo_registry, "refresh_db_repos", registry)
-    monkeypatch.setattr(repo_registry, "registry_read", lambda: True)
+    monkeypatch.setattr(repo_registry, "registry_read", lambda: read["done"])
     monkeypatch.setattr(recorder, "refresh_failing", refresh)
 
     async def overrides(**_: Any) -> None:

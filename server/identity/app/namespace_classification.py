@@ -66,9 +66,9 @@ def note_restricted(org: str, namespace: str) -> None:
 def config_classification(org: str, namespace: str) -> str:
     """Classification from the code-plane repo config, `standard` when the
     namespace is not a configured code entry. No I/O."""
-    from server.code.domain.index.repos import repo_for_namespace
+    from server.code.domain.index.repos import config_entry
 
-    cfg = repo_for_namespace(org, namespace)
+    cfg = config_entry(org, namespace)
     if cfg is None:
         return STANDARD
     return str(getattr(cfg, "classification", STANDARD) or STANDARD)

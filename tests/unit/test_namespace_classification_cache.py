@@ -72,9 +72,7 @@ async def test_is_restricted_consults_config_first(monkeypatch) -> None:
     class _Cfg:
         classification = "restricted"
 
-    monkeypatch.setattr(
-        repos, "repo_for_namespace", lambda org, ns: _Cfg() if ns == "priv" else None
-    )
+    monkeypatch.setattr(repos, "config_entry", lambda org, ns: _Cfg() if ns == "priv" else None)
     client = _Client(rows=[])
     monkeypatch.setattr(ch, "get_client", lambda: client)
     assert await nc.is_restricted("clickhouse", "priv") is True

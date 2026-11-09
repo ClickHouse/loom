@@ -1795,3 +1795,30 @@ def test_every_profile_ledger_read_leaves_the_inspectors_out() -> None:
     for sql, params in zip(ch.sqls, ch.params, strict=True):
         assert "consumer NOT IN {inspectors:Array(String)}" in sql
         assert params["inspectors"] == ["loom-ui", "loom-assistant"]
+
+
+def test_a_profile_whose_repository_fact_failed_is_remembered_briefly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import dataclasses
+
+    m.reset_cache()
+    computed: list[int] = []
+    profile = _fake_profile()
+
+    async def _compute(*a: Any, **k: Any) -> Any:
+        computed.append(1)
+        return profile
+
+    monkeypatch.setattr(m, "_compute", _compute)
+    asyncio.run(m.mentor_profile("o", "ns", "a", clock=lambda: 5.0))
+    asyncio.run(m.mentor_profile("o", "ns", "a", clock=lambda: 5.0 + m.FAILURE_TTL_SECONDS + 1))
+    assert len(computed) == 1  # a whole profile is kept for the full TTL
+    m.reset_cache()
+    profile = dataclasses.replace(profile, skipped=("repos: RegistryUnread",))
+    asyncio.run(m.mentor_profile("o", "ns", "a", clock=lambda: 5.0))
+    asyncio.run(m.mentor_profile("o", "ns", "a", clock=lambda: 6.0))
+    assert len(computed) == 2  # still cached inside the short TTL
+    asyncio.run(m.mentor_profile("o", "ns", "a", clock=lambda: 5.0 + m.FAILURE_TTL_SECONDS + 1))
+    assert len(computed) == 3
+    m.reset_cache()

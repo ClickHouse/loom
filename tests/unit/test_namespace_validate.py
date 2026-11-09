@@ -14,8 +14,11 @@ import pytest
 
 from server.identity.api.models_namespace_catalog import NamespaceValidateInput
 from server.identity.app import namespace_validate as nv
+from server.memory.app import code_link_reads
 from server.operations import toolsets
 from server.transport import mcp_descriptions
+
+_STALE_LINKS = code_link_reads.stale_links  # the real read, before `_no_code_links`
 
 
 class _CH:
@@ -398,3 +401,19 @@ async def test_an_unpublished_projection_reads_on_and_marks_the_report_incomplet
     assert {*nv._CHECKS} <= set(out.coverage.rules_run)
     assert out.coverage.rules_skipped == ["projection"] and not out.coverage.complete
     assert [s.split(": ")[:2] for s in out.skipped] == [["projection", "PROJECTION_BEHIND"]]
+
+
+@pytest.mark.asyncio
+async def test_stale_code_links_are_named_skipped_while_the_code_registry_is_unread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.code.domain.index import repos
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    monkeypatch.setattr(code_link_reads, "stale_links", _STALE_LINKS)
+    monkeypatch.setattr(nv, "get_client", lambda: _CH({}))
+    out = await nv.handle_namespace_validate(_inp())
+    assert out.skipped == ["code_links_stale: RegistryUnread"]
+    assert out.coverage.complete is False

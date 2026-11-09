@@ -1,6 +1,6 @@
-"""Statements over loom.code_repos, the self-service repository registry: the active
-entries, a namespace's row, the count an org's cap is checked against, a new version
-row, and the deactivation that mirrors a row with `active = false`.
+"""Statements over loom.code_repos, the self-service repository registry: the rows the
+snapshot is read from, a namespace's row, the count an org's cap is checked against, a
+new version row, and the deactivation that mirrors a row with `active = false`.
 """
 
 from __future__ import annotations
@@ -14,16 +14,26 @@ from server.code.store.index.base import CodeRepoBase
 class CodeReposMixin(CodeRepoBase):
     """The self-service repository registry."""
 
-    async def active_code_repos(self) -> list[dict[str, Any]]:
-        """Every active registry row, the columns a `RepoConfig` is built from."""
+    async def registry_rows(self) -> list[dict[str, Any]]:
+        """The rows the registry snapshot is read from, in one statement: every active
+        row, the columns a `RepoConfig` is built from, and the removed branches a member
+        added from the page, which an operator entry is never listed for
+        (`repos._with_registry`)."""
         rows: list[dict[str, Any]] = await self._ch.query_all(
             """
-            SELECT org, namespace, repo, git_remote, git_branch, path_prefixes, exclude,
+            -- A removed row's repository, remote, branch, paths and token read empty.
+            SELECT org, namespace, if(active, repo, '') AS repo,
+                   if(active, git_remote, '') AS git_remote,
+                   if(active, git_branch, '') AS git_branch,
+                   if(active, path_prefixes, []) AS path_prefixes,
+                   if(active, exclude, []) AS exclude,
                    toString(classification) AS classification,
-                   toString(join_policy) AS join_policy, github_token_enc,
-                   exclude_generated, toString(scip_producer) AS scip_producer
+                   toString(join_policy) AS join_policy,
+                   if(active, github_token_enc, '') AS github_token_enc,
+                   exclude_generated, toString(scip_producer) AS scip_producer,
+                   row_kind, active
             FROM loom.code_repos FINAL
-            WHERE active
+            WHERE active OR row_kind = 'page'
             ORDER BY org, namespace
             """
         )
@@ -31,7 +41,9 @@ class CodeReposMixin(CodeRepoBase):
 
     async def active_code_repo_count(self, org: str) -> int:
         row = await self._ch.query_one(
-            "SELECT count() AS n FROM loom.code_repos FINAL WHERE org = {org:String} AND active",
+            # An operator entry's access row is not a repository the org added.
+            "SELECT count() AS n FROM loom.code_repos FINAL"
+            " WHERE org = {org:String} AND active AND row_kind != 'access'",
             params={"org": org},
         )
         return int((row or {}).get("n") or 0)

@@ -3,6 +3,7 @@ the MCP one for the same request."""
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
@@ -44,10 +45,12 @@ def _principal(subject: str, org: str) -> AuthInfo:
     )
 
 
-def serve_probe(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+def serve_probe(
+    monkeypatch: pytest.MonkeyPatch, handler: Callable[[Any], Awaitable[Any]] | None = None
+) -> dict[str, Any]:
     """Two write ops on both transports, one in the code plane and one outside it. The
-    role gate refuses subject "intruder"; the handler raises NotFoundError when asked
-    for a missing row."""
+    role gate refuses subject "intruder"; the handler (by default, one that raises
+    NotFoundError when asked for a missing row) is `handler` when given."""
     import server.code.app.member_writes as member_writes
     from server.transport import http as http_mod
 
@@ -61,7 +64,7 @@ def serve_probe(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             name=name,
             input_model=_In,
             output_model=_Out,
-            handler=_handler,
+            handler=handler or _handler,
             idempotent=False,
             required_role=Role.WRITER,
         )

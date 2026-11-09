@@ -4,10 +4,10 @@ beside LOOM_CODE_REPOS_JSON.
 The environment variable is the operator's; this table is everyone's. A
 person adds a repository (or a branch of one) from the Repositories page,
 becomes its first maintainer, and the ingest worker clones and indexes it.
-``configured_repos()`` stays synchronous — it is on the authz hot path — so
-this module keeps an in-process snapshot refreshed by ``refresh_db_repos``
-(boot and every ``code_repos_refresh_seconds`` on every process, every ingest
-pass, every code.repos call, and at once after an add).
+``config_entries()`` (authorization) and ``configured_repos()`` (every other
+reader) stay synchronous, so this module keeps an in-process snapshot refreshed by
+``refresh_db_repos`` (boot and every ``code_repos_refresh_seconds`` on every process,
+every ingest pass, every code.repos call, and at once after an add).
 
 A private remote's token is stored encrypted (Fernet keyed from the JWT
 secret with a domain separator) and never returned over the wire.
@@ -23,15 +23,20 @@ import time
 from typing import Any
 
 from server.code.domain.index.remote import parse_remote
-from server.code.domain.index.repos import RepoConfig, registry_repos, set_registry_repos
+from server.code.domain.index.repos import (
+    RepoConfig,
+    registry_repos,
+    registry_unread,
+    set_registry_repos,
+)
+from server.code.domain.index.repos import reset_for_tests as reset_snapshot_for_tests
+from server.core import readiness
 from server.core.secrets_at_rest import seal, unseal
 from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.repo_registry")
 
 _LOADED_AT: float = -1e12
-# A read of loom.code_repos has succeeded since the process started (or the last reset).
-_EVER_LOADED = False
 _BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./-]{0,120}$")
 _NS_MAX = 63
 
@@ -126,6 +131,7 @@ def row_to_config(r: dict[str, Any]) -> RepoConfig:
         # The two indexing knobs; '' producer = inferred
         exclude_generated=bool(r.get("exclude_generated", False)),
         scip_producer=str(r.get("scip_producer") or ""),
+        row_kind=str(r.get("row_kind") or ""),
     )
 
 
@@ -143,16 +149,19 @@ async def refresh_db_repos(*, force: bool = False, ch: Any | None = None) -> lis
 async def read_registry(ch: Any | None = None) -> bool:
     """Read loom.code_repos into the snapshot now. False when that read failed
     and the last snapshot was kept; True with self-service off."""
-    global _LOADED_AT, _EVER_LOADED
+    global _LOADED_AT
     if not settings.code_self_service_enabled:
         return True
     try:
         from server.code.store.index import CodeRepo
 
-        rows = await CodeRepo(ch).active_code_repos()
-        set_registry_repos([row_to_config(r) for r in rows if r.get("namespace") and r.get("repo")])
+        rows = await CodeRepo(ch).registry_rows()
+        page = frozenset(
+            (str(r["org"]), str(r["namespace"])) for r in rows if r.get("row_kind") == "page"
+        )
+        active = [r for r in rows if r.get("active") and r.get("namespace") and r.get("repo")]
+        set_registry_repos([row_to_config(r) for r in active], page)
         _LOADED_AT = time.monotonic()
-        _EVER_LOADED = True
         return True
     except Exception as e:  # noqa: BLE001 — keep the last snapshot
         logger.warning(
@@ -163,8 +172,15 @@ async def read_registry(ch: Any | None = None) -> bool:
 
 def registry_read() -> bool:
     """The snapshot holds what loom.code_repos held at some read, or there is no registry
-    (self-service off): False while every read since the process started failed."""
-    return not settings.code_self_service_enabled or _EVER_LOADED
+    (self-service off): False while every read since the process started failed. Reads
+    `repos.registry_unread`, which owns the flag."""
+    return not registry_unread()
+
+
+def readiness_check() -> readiness.CheckResult:
+    """Reported, not required: until the first read a code op answers 503 and an
+    operator entry a page namespace skips is not known."""
+    return readiness.result(registry_read(), "the self-service repository registry is not read")
 
 
 async def start_refresher(ch: Any | None = None) -> asyncio.Task[None]:
@@ -190,10 +206,9 @@ async def start_refresher(ch: Any | None = None) -> asyncio.Task[None]:
 
 
 def reset_for_tests() -> None:
-    global _LOADED_AT, _EVER_LOADED
-    set_registry_repos([])
+    global _LOADED_AT
+    reset_snapshot_for_tests()
     _LOADED_AT = -1e12
-    _EVER_LOADED = False
 
 
 async def row_active(org: str, namespace: str, ch: Any | None = None) -> bool:
@@ -245,6 +260,7 @@ async def insert_entry(
             "exclude": list(exclude),
             "exclude_generated": bool(exclude_generated),
             "scip_producer": str(scip_producer or ""),
+            "row_kind": "page",
             "classification": classification,
             "join_policy": join_policy,
             "github_token_enc": encrypt_token(github_token),
@@ -257,27 +273,50 @@ async def insert_entry(
     )
 
 
+async def live_row(cfg: Any, ch: Any | None = None) -> dict[str, Any] | None:
+    """`cfg`'s registry row read now, when active; None for an operator entry with no
+    active row. NOT_A_REPO for a branch added from the page whose row is gone or
+    inactive, and for an operator entry whose namespace holds a member's row."""
+    from server.code.store.index import CodeRepo
+    from server.core.ch import sequential_reads
+    from server.core.errors import ValidationError
+
+    with sequential_reads():  # a lagging read must not replace a row with a new one
+        current = await CodeRepo(ch).code_repo_row(cfg.org, cfg.namespace)
+    if cfg.source == "config" and (current or {}).get("row_kind") == "page":
+        raise ValidationError(
+            f"a member added {cfg.namespace} from the page; list the entry under another namespace",
+            code="NOT_A_REPO",
+        )
+    if current and current.get("active"):
+        return current
+    if cfg.source != "config":
+        raise ValidationError(f"{cfg.namespace} was removed", code="NOT_A_REPO")
+    return None
+
+
 async def upsert_access(
     cfg: Any,
     *,
     classification: str,
     join_policy: str,
     created_by: str,
+    current: dict[str, Any] | None,
     ch: Any | None = None,
 ) -> None:
-    """A maintainer's access row for `cfg`'s namespace — a new version of the registry
-    row carrying the chosen classification and join policy. An existing registry row is
-    copied whole (every column, including ones added by later migrations) with only
-    those two fields, `created_by` and the stamps changed; an entry that had no row gets
-    one built from the repository as configured, so `refresh_db_repos` reads one row per
-    namespace and `_with_registry` lets it win over the entry."""
+    """A maintainer's access row for `cfg`'s namespace: a new version of the registry
+    row carrying the chosen classification and join policy. `current` is the row
+    `live_row` read under the caller's account claim. It is copied whole (every column,
+    including ones added by later migrations) with only those two fields, `created_by`
+    and the stamps changed, so a member's add stays one. An operator entry with no
+    active row gets an access row built from the repository as configured, which
+    `_with_registry` lets win over the entry."""
     from datetime import UTC, datetime
 
     from server.code.store.index import CodeRepo
 
     repo = CodeRepo(ch)
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
-    current = await repo.code_repo_row(cfg.org, cfg.namespace)
     if current:
         row = dict(current)
     else:
@@ -289,8 +328,10 @@ async def upsert_access(
             "git_branch": cfg.git_branch,
             "path_prefixes": list(cfg.path_prefixes),
             "exclude": list(cfg.exclude),
-            "github_token_enc": encrypt_token(cfg.github_token),
+            # The entry fetches with its own configured token; this row is never fetched with.
+            "github_token_enc": "",
             "created_at": now,
+            "row_kind": "access",
         }
     row.update(
         {

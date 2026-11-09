@@ -19,11 +19,23 @@ log = logging.getLogger("loom.cli.code")
 
 def _identity(args: argparse.Namespace) -> tuple[str, str]:
     """(org, namespace) the command addresses: the flags, else the scalar settings.
-    Neither = exit with the missing name; a code namespace is never guessed."""
+    Neither = exit with the missing name; a code namespace is never guessed. The
+    default namespace is refused while the registry is unread or when a member added
+    it from the page (`repos.default_code_namespace`)."""
+    from server.code.domain.index.repos import RegistryUnread, default_code_namespace
+    from server.core.errors import ValidationError
     from server.settings import settings
 
     org = args.org or settings.code_org
-    ns = args.namespace or settings.code_namespace
+    try:
+        ns = args.namespace or default_code_namespace(org)
+    except RegistryUnread:
+        raise SystemExit("the self-service repository registry could not be read; retry") from None
+    except ValidationError:
+        raise SystemExit(
+            f"the default code namespace {org}/{settings.code_namespace} was added from the "
+            "Repositories page: pass --namespace"
+        ) from None
     if not org or not ns:
         missing = " and ".join(
             f
@@ -44,6 +56,7 @@ def _repo_cfg(args: argparse.Namespace) -> Any:
     from server.code.domain.index.repos import (
         config_errors_for,
         configured_repos,
+        page_namespaces,
         repo_for_namespace,
     )
 
@@ -51,6 +64,11 @@ def _repo_cfg(args: argparse.Namespace) -> Any:
     cfg = repo_for_namespace(org, ns)
     if cfg is not None:
         return cfg
+    if (org, ns) in page_namespaces():
+        raise SystemExit(
+            f"{org}/{ns} was added from the Repositories page and removed: an operator "
+            "entry for this name, if any, is skipped, so list it under another namespace"
+        )
     repos = configured_repos()
     if not repos:
         raise SystemExit(
@@ -86,16 +104,19 @@ async def _then_disconnect(coro: asyncio.Future[int] | Coroutine[Any, Any, int])
         # A repository added from the Repositories page lives in the registry, not in
         # LOOM_CODE_REPOS_JSON: read it before the subcommand resolves its namespace.
         from server.code.app.index.repo_registry import refresh_db_repos
+        from server.code.domain.index.repos import RegistryUnread
 
         await get_client().connect()
         async with model_command():
-            try:
-                await refresh_db_repos(force=True)
-            except Exception as e:  # noqa: BLE001 — configured repositories remain usable
-                log.info("code cli: repository registry not read: %s", e)
+            # Never raises; while it has never succeeded, `configured_repos` refuses.
+            await refresh_db_repos(force=True)
             started = True
             try:
                 return int(await coro)
+            except RegistryUnread:
+                raise SystemExit(
+                    "the self-service repository registry could not be read; retry"
+                ) from None
             finally:
                 # Some native commands close their own client. Reopen it for
                 # buffered-write drain/retirement before leaving enrollment.
@@ -153,7 +174,7 @@ def _run(name: str, coro: asyncio.Future[int] | Coroutine[Any, Any, int]) -> int
         if isinstance(e, Terminated):
             log.warning("cli.code.%s: terminated", name)
             raise SystemExit(rc) from None
-        if not isinstance(e, KeyboardInterrupt):
+        if not isinstance(e, KeyboardInterrupt | SystemExit):  # an exit says its own why
             log.exception("cli.code.%s: failed", name)
         raise
     finally:

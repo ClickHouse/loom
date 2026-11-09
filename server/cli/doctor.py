@@ -475,7 +475,6 @@ def _doctor_tier_failures() -> tuple[Any, ...] | None:
         client = get_client()
         try:
             await client.connect()
-            await repo_registry.refresh_db_repos(force=True)  # the self-service entries too
             if not repo_registry.registry_read():
                 return None  # which entries are configured is unknown: say nothing
             await settings_overrides.refresh()  # the thresholds `/v1/health` grades with
@@ -484,11 +483,37 @@ def _doctor_tier_failures() -> tuple[Any, ...] | None:
         finally:
             await client.disconnect()
 
+    _read_code_registry()  # the self-service entries too; a no-op once a read succeeded
     try:
         # bounded: with ClickHouse down, `clickhouse_reachable` already says so
         return asyncio.run(asyncio.wait_for(read(), timeout=5))
     except Exception:  # noqa: BLE001 — a doctor line must never crash the doctor
         return None
+
+
+def _read_code_registry() -> None:
+    """Read the self-service registry, bounded; a failure leaves it unread."""
+    import asyncio
+
+    from server.code.app.index import repo_registry
+    from server.core.ch import get_client
+    from server.settings import settings
+
+    if repo_registry.registry_read() or not settings.ch_host:
+        return
+
+    async def read() -> None:
+        client = get_client()
+        try:
+            await client.connect()
+            await repo_registry.refresh_db_repos(force=True)
+        finally:
+            await client.disconnect()
+
+    try:
+        asyncio.run(asyncio.wait_for(read(), timeout=5))
+    except Exception:  # noqa: BLE001 — a doctor line must never crash the doctor
+        return
 
 
 def _doctor_problems() -> list[Any]:
@@ -549,6 +574,7 @@ def _code_mirror_checks() -> list[tuple[str, str, str]]:
     try:
         from server.code.app.index.mirrors import doctor_checks
 
+        _read_code_registry()  # the entries the checks list refuse until it is read
         return doctor_checks()
     except Exception as e:  # noqa: BLE001 — a doctor line must never crash the doctor
         return [("code_mirrors", WARN, f"not checked: {type(e).__name__}: {e}")]

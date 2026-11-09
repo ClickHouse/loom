@@ -63,6 +63,8 @@ PACK_MAX_HINTS = 3
 PACK_CHARS = 480
 # A failed profile read is remembered this long (bounded by the TTL).
 FAILURE_TTL_SECONDS = 300
+# The `skipped` label of the repository fact: a profile missing it is kept briefly.
+REPOS_FACT = "repos"
 CACHE_MAX_ENTRIES = 4096
 # Per-session state for the per-call channel: which codes were shown, how
 # many hints went out, and how often each key was set.
@@ -293,7 +295,7 @@ class _Read:
             ]
             self.facts["repos_total"] = len(self.code_entries)
         except Exception as exc:  # noqa: BLE001 — optional fact source: named in skipped
-            self.skipped.append(f"repos: {type(exc).__name__}")
+            self.skipped.append(f"{REPOS_FACT}: {type(exc).__name__}")
         try:
             from server.tracker.domain import sources
 
@@ -373,7 +375,9 @@ async def mentor_profile(
     except Exception as exc:  # noqa: BLE001 — advisory; the caller must not fail on it
         log.warning("mentor profile %s/%s/%s failed: %s", org, namespace, agent, exc)
         profile = None
-    _cache_put(key, now + (ttl if profile is not None else min(ttl, FAILURE_TTL_SECONDS)), profile)
+    # A profile whose repository fact failed (the code registry unread, say) is short-lived.
+    whole = profile is not None and not any(s.startswith(f"{REPOS_FACT}:") for s in profile.skipped)
+    _cache_put(key, now + (ttl if whole else min(ttl, FAILURE_TTL_SECONDS)), profile)
     return profile
 
 

@@ -40,6 +40,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from server.core.errors import BackendUnavailableError, ValidationError
 from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.repos")
@@ -124,6 +125,9 @@ class RepoConfig:
     # "registry" (a maintainer's access row in loom.code_repos, which wins over the
     # entry).
     access_source: str = "config"
+    # A registry entry's `row_kind` (migration 089): "page" a branch added from the
+    # page, "access" an operator entry's access row, "" a row from before the column.
+    row_kind: str = ""
 
     @property
     def label(self) -> str:
@@ -201,9 +205,16 @@ def _scalar_repo() -> RepoConfig:
 
 def default_git_dir() -> str:
     """The scalar entry's bare clone (configured or derived from `code_repo`); '' when
-    no scalar repository is configured. The fallback of a read whose namespace has no
-    entry."""
-    return _scalar_repo().git_dir
+    no scalar repository is configured or `configured_repos()` does not list it (a
+    namespace added from the page skips it). The fallback of a read whose namespace has
+    no entry."""
+    base = _scalar_repo()
+    listed = (
+        c
+        for c in configured_repos()
+        if c.source == "config" and (c.org, c.namespace) == (base.org, base.namespace)
+    )
+    return next((c.git_dir for c in listed), "")
 
 
 def checkout_for(cfg: RepoConfig, producer: str) -> str:
@@ -280,11 +291,24 @@ _registry_repos: list[RepoConfig] = []
 
 
 def registry_repos() -> list[RepoConfig]:
-    """The registry snapshot (no I/O); empty while self-service is off."""
+    """The registry snapshot (no I/O); empty while self-service is off. Raw: it holds
+    operator entries' access rows and is not gated on the first read, so a list of
+    configured entries is `configured_repos()` (`test_repo_snapshot_contract.py`
+    pins this one's callers)."""
     return list(_registry_repos) if settings.code_self_service_enabled else []
 
 
 _registry_namespaces: frozenset[tuple[str, str]] = frozenset()
+# Namespaces a member added from the page, active or removed (`set_registry_repos`).
+_page_namespaces: frozenset[tuple[str, str]] = frozenset()
+# A read of loom.code_repos has reached the snapshot since the process started.
+_registry_loaded = False
+
+
+def registry_unread() -> bool:
+    """Self-service is on and loom.code_repos has not reached the snapshot since the
+    process started (no I/O)."""
+    return settings.code_self_service_enabled and not _registry_loaded
 
 
 def registry_namespaces() -> frozenset[tuple[str, str]]:
@@ -292,32 +316,125 @@ def registry_namespaces() -> frozenset[tuple[str, str]]:
     return _registry_namespaces if settings.code_self_service_enabled else frozenset()
 
 
-def set_registry_repos(entries: list[RepoConfig]) -> None:
-    """Replace the registry snapshot with a fresh read."""
-    global _registry_repos, _registry_namespaces
+def set_registry_repos(entries: list[RepoConfig], page: frozenset[tuple[str, str]]) -> None:
+    """Replace the registry snapshot with a fresh read: the active entries, and the
+    (org, namespace) of every branch a member added from the page, removed ones too."""
+    global _registry_repos, _registry_namespaces, _page_namespaces, _registry_loaded
     _registry_repos = list(entries)
-    _registry_namespaces = frozenset((c.org, c.namespace) for c in _registry_repos)
+    # An access row is not a branch (`_with_registry`).
+    _registry_namespaces = frozenset(
+        (c.org, c.namespace) for c in _registry_repos if c.row_kind != "access"
+    )
+    _page_namespaces = page
+    _registry_loaded = True  # last: no reader sees a first read before all of it
+
+
+def page_namespaces() -> frozenset[tuple[str, str]]:
+    """(org, namespace) of every branch added from the page, removed ones too (no I/O);
+    empty while self-service is off."""
+    return _page_namespaces if settings.code_self_service_enabled else frozenset()
+
+
+# The operator entries skipped for a member's namespace, logged once each per process.
+_skipped_logged: set[str] = set()
+
+
+def reset_for_tests() -> None:
+    """No registry read yet, an empty snapshot, and each skipped entry logged again."""
+    global _registry_repos, _registry_namespaces, _page_namespaces, _registry_loaded
+    _registry_repos, _registry_namespaces, _page_namespaces = [], frozenset(), frozenset()
+    _registry_loaded = False
+    _skipped_logged.clear()
+
+
+class RegistryUnread(BackendUnavailableError):
+    """The self-service registry has not been read since the process started: which
+    operator entries a member's namespace skips is not known yet."""
 
 
 def configured_repos() -> list[RepoConfig]:
-    """The repo list every code worker iterates: the operator's entries, then the
-    self-service registry's (the operator wins on a namespace collision). Invalid JSON
-    degrades to the scalar single-repo config with a loud log (a typo must not silently
-    stop all indexing) — loud once, then a gauge."""
+    """The repo list every code worker and op reads: the operator's entries, then the
+    self-service registry's. RegistryUnread while self-service is on and the registry
+    has never been read, since an operator entry for a namespace added from the page
+    would be listed and its repository read, fetched or indexed there. Invalid JSON
+    degrades to the scalar single-repo config with a loud log (a typo must not
+    silently stop all indexing) — loud once, then a gauge."""
+    require_registry_read()
     return _with_registry(_configured_from_env())
 
 
+def require_registry_read() -> None:
+    """RegistryUnread while self-service is on and the registry has never been read."""
+    if registry_unread():
+        raise RegistryUnread("the self-service repository registry is not read yet; retry")
+
+
+def default_code_namespace(org: str) -> str:
+    """The deployment's code namespace (`code_namespace`), the default of a code call
+    in `org` that names none. ValidationError when a member added that namespace from
+    the page: its operator entry is skipped (`_with_registry`), so the default never
+    lands on the member's branch. RegistryUnread while that is not known yet."""
+    ns = str(settings.code_namespace)
+    if not ns:
+        return ""
+    require_registry_read()
+    if (org, ns) in page_namespaces():
+        raise ValidationError(
+            f"the default code namespace {org}/{ns} was added from the Repositories page "
+            "and is not this deployment's default; name the code namespace to read "
+            "(code.repos lists them)",
+            code="DEFAULT_NAMESPACE_REFUSED",
+        )
+    return ns
+
+
+def config_entries() -> list[RepoConfig]:
+    """`configured_repos()` before the registry's first read too, for what decides
+    access: a namespace's kind and classification, whether it is a code entry. Until
+    that read no operator entry is org-readable and no access row applies: an entry
+    carries the classification its configuration gives, so an entry a maintainer
+    restricted through an access row reads as its configuration says until then. Never
+    for reading, fetching or indexing a repository:
+    `tests/unit/test_repo_snapshot_contract.py` pins its callers."""
+    return _with_registry(_configured_from_env()) if registry_unread() else configured_repos()
+
+
+def config_entry(org: str, namespace: str) -> RepoConfig | None:
+    """`config_entries()`' entry for (org, namespace), with the same limits."""
+    return next((c for c in config_entries() if (c.org, c.namespace) == (org, namespace)), None)
+
+
 def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:
-    """The operator's entries first, then the registry's. A registry row for an entry's
-    own namespace is a maintainer's ACCESS row — its classification and join policy win
-    over the entry's (the entry keeps every other field); the row is what
-    `code.repo.set_access` writes, so the deployment's default stays where it is and the
-    maintainer's decision survives every boot."""
+    """The operator's entries first, then the registry's. An entry whose namespace a
+    member added from the page, even one removed since, is skipped: that member's
+    grants there must not become an operator entry's. A registry row for an entry's
+    own namespace is a maintainer's ACCESS row: its classification and join policy win
+    over the entry's (the entry keeps every other field), so the maintainer's decision
+    survives every boot. An access row whose entry is gone is dropped."""
     import dataclasses
 
-    rows = {(c.org, c.namespace): c for c in registry_repos()}
+    # Unread, a member's namespace is not known yet: no operator entry is org-readable.
+    # Read before the rows: the first read sets its flag only after them.
+    unread = registry_unread()
+    entries = registry_repos()
+    rows = {(c.org, c.namespace): c for c in entries}
+    # A page row counts on its own: a thread reader (`mirror_status`) can see a later
+    # read's rows before its page set.
+    taken = page_namespaces() | {k for k, c in rows.items() if c.row_kind == "page"}
     out: list[RepoConfig] = []
     for c in env_repos:
+        if (c.org, c.namespace) in taken:
+            if c.label not in _skipped_logged:
+                _skipped_logged.add(c.label)
+                logger.warning(
+                    "code repo %s skipped: a member added that namespace from the "
+                    "Repositories page; list the entry under another namespace",
+                    c.label,
+                )
+            continue
+        _skipped_logged.discard(c.label)  # listed: a later skip is logged again
+        if unread:
+            c = dataclasses.replace(c, org_readable=False)
         access = rows.get((c.org, c.namespace))
         if access is None:
             out.append(c)
@@ -332,8 +449,8 @@ def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:
                 access_source="registry",
             )
         )
-    seen = {(c.org, c.namespace) for c in env_repos}
-    extra = [c for c in registry_repos() if (c.org, c.namespace) not in seen]
+    seen = {(c.org, c.namespace) for c in out}
+    extra = [c for c in entries if (c.org, c.namespace) not in seen and c.row_kind != "access"]
     return out + extra
 
 

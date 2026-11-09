@@ -18,8 +18,8 @@ from server.operations.read_projection import ProjectedRow
 class CodeReposInput(_CodeIdentity):
     """Lists the code namespaces (repo@branch entries) configured on this
     deployment that the caller is authorized to read, across orgs — each row
-    carries its org. Transport authz targets the default code namespace
-    (like every code op); the handler then checks each entry separately, so
+    carries its org. Transport authz targets the default code namespace when
+    there is one to use; the handler then checks each entry separately, so
     unreadable entries are omitted, never 403'd, and the dashboard renders an
     empty state."""
 

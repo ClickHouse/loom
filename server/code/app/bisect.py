@@ -86,6 +86,7 @@ from server.code.app.index.mirrors import history_dir
 from server.code.app.spans import code_span, set_code_span_attributes
 from server.code.domain.index import blame_range as br
 from server.code.domain.index.coverage_claim import is_test_file
+from server.code.domain.index.repos import default_git_dir
 from server.code.domain.time_window import _iso, _parse_when
 from server.code.store.index import CodeRepo
 from server.core.errors import ValidationError
@@ -317,7 +318,7 @@ async def _attach_merge_shas(repo: CodeRepo, org: str, ns: str, ranked: list[bi.
         stored = {}
     cfg, _siblings = cb.repo_siblings(org, ns)
     # no mirror here yet: the ledger's shas alone (history_dir starts the clone)
-    git_dir = (await history_dir(cfg))[0] if cfg is not None else settings.code_git_dir
+    git_dir = (await history_dir(cfg))[0] if cfg is not None else default_git_dir()
     branch = (cfg.git_branch if cfg is not None else "") or settings.code_git_branch
     since = min((br.unix_of(c.merged_at) for c in ranked), default=0)
     got = await merge_shas.resolve(

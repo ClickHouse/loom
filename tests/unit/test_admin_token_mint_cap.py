@@ -81,7 +81,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
     restricted: dict = {}
 
-    async def _grant_restricted(org, sa_subject, creator, ns_roles):
+    async def _grant_restricted(org, sa_subject, creator, ns_roles, **_k):
         restricted.update(ns_roles)
         return []
 
@@ -130,7 +130,7 @@ def test_restricted_namespace_needs_the_callers_grant_at_the_role(client) -> Non
 def test_a_mint_onto_a_restricted_namespace_writes_the_access_audit_row(
     client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def _grant_restricted(org, sa_subject, creator, ns_roles):
+    async def _grant_restricted(org, sa_subject, creator, ns_roles, **_k):
         return [ns for ns in ns_roles if ns == PRIV]
 
     monkeypatch.setattr(token_grants, "grant_restricted_to_token", _grant_restricted)
@@ -395,4 +395,24 @@ def test_a_mint_without_a_name_says_which_field_to_send(client) -> None:
 def test_a_name_holding_a_nul_is_a_422(client) -> None:
     r = _mint(client, _bearer(["org_admin"]), ["clickgap-public"], name="ci\x00bot")
     assert r.status_code == 422 and r.json()["detail"]["code"] == "VALIDATION_FAILED"
+    assert client.saved == []
+
+
+def test_a_mint_refused_for_an_unread_code_registry_saves_no_token(
+    client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A restricted name of unknown kind before the registry's first read: refused before
+    # the token row is written, so a retry under the same name is not taken.
+    from server.code.domain.index import repos
+    from server.identity.app import namespace_kinds
+
+    async def kinds(org: str) -> dict[str, str]:
+        return {}
+
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    monkeypatch.setattr(namespace_kinds, "kind_map", kinds)
+    client.grants[(ORG, PRIV, "ops@x")] = Role.VIEWER
+    with pytest.raises(repos.RegistryUnread):  # the app's handler answers it 503
+        _mint(client, _bearer(["org_admin"]), [PRIV], roles=["viewer"])
     assert client.saved == []

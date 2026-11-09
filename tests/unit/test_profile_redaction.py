@@ -913,3 +913,22 @@ async def test_redact_announces_each_later_copy_it_scrubs(monkeypatch) -> None:
         ("memory.redacted", "user_timezone", 2),
         ("memory.redacted", "user_timezone", 3),
     ]
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_an_unread_code_registry_refuses_the_redact_before_any_scrub(monkeypatch) -> None:
+    # The live head's link inputs read the code registry: half a scrub must not land.
+    from server.code.domain.index import repos
+    from server.memory.api.models_crud import MemoryRedactInput
+    from server.memory.app import curation
+    from server.settings import settings
+
+    ch = _redact_setup(monkeypatch)
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    with pytest.raises(repos.RegistryUnread):
+        await curation.handle_memory_redact(
+            MemoryRedactInput(org="o", memory_id=_SECRET, version=1, reason="pii")
+        )
+    assert not any("UPDATE" in sql and "redacted_at" in sql for sql in ch.executed)

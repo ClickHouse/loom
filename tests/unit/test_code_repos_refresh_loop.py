@@ -19,8 +19,8 @@ class _Repo:
     def __init__(self, ch: Any = None) -> None:
         pass
 
-    async def active_code_repos(self) -> list[dict[str, Any]]:
-        return list(self.rows)
+    async def registry_rows(self) -> list[dict[str, Any]]:
+        return [dict(r, active=True) for r in self.rows]
 
 
 def _row(classification: str) -> dict[str, Any]:
@@ -63,7 +63,7 @@ def test_the_registry_counts_as_read_only_after_a_read_succeeded(
     import server.code.store.index as store
 
     class _Down(_Repo):
-        async def active_code_repos(self) -> list[dict[str, Any]]:
+        async def registry_rows(self) -> list[dict[str, Any]]:
             raise ConnectionError("store unreachable")
 
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
@@ -90,7 +90,7 @@ def test_a_failed_read_says_so_after_an_earlier_one_succeeded(
     import server.code.store.index as store
 
     class _Down(_Repo):
-        async def active_code_repos(self) -> list[dict[str, Any]]:
+        async def registry_rows(self) -> list[dict[str, Any]]:
             raise ConnectionError("store unreachable")
 
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
@@ -103,5 +103,26 @@ def test_a_failed_read_says_so_after_an_earlier_one_succeeded(
         assert not asyncio.run(repo_registry.read_registry())
         assert repo_registry.registry_read()  # the last snapshot is kept
         assert [c.namespace for c in registry_repos()] == ["code-widgets"]
+    finally:
+        repo_registry.reset_for_tests()
+
+
+def test_the_snapshot_keeps_the_namespace_of_a_removed_page_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.code.store.index as store
+    from server.code.domain.index import repos
+
+    class _Removed(_Repo):
+        async def registry_rows(self) -> list[dict[str, Any]]:
+            return [_row("standard") | {"active": False, "row_kind": "page"}]
+
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    repo_registry.reset_for_tests()
+    try:
+        monkeypatch.setattr(store, "CodeRepo", _Removed)
+        assert asyncio.run(repo_registry.read_registry())
+        assert repos.registry_repos() == []
+        assert repos.page_namespaces() == {("acme", "code-widgets")}
     finally:
         repo_registry.reset_for_tests()

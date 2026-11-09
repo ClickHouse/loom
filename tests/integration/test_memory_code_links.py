@@ -143,14 +143,14 @@ async def env(ch_client, tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
     # the writes below land at once; no in-flight write to wait for
     monkeypatch.setattr(settings, "memory_code_links_settle_seconds", 0)
-    set_registry_repos(entries)
+    set_registry_repos(entries, frozenset())
 
     async def _no_refresh() -> None:
         return None
 
     monkeypatch.setattr(code_side, "refresh_repos", _no_refresh)
     yield repo
-    set_registry_repos([])
+    set_registry_repos([], frozenset())
 
 
 async def _remember(namespace: str, key: str, value: str, **kw: Any) -> str:
@@ -1318,12 +1318,12 @@ async def test_a_host_that_does_not_know_the_repository_keeps_its_links(env) -> 
     await _relink_once(env, "src/f.py", "def fetch_rows():\n    return 2\n")
     assert [x["state"] for x in await _links(mid)] == ["changed"]
     entries = [c for c in configured_repos() if c.source == "registry"]
-    set_registry_repos([])  # a registry not loaded yet, or one that failed to refresh
+    set_registry_repos([], frozenset())  # a registry read that lists none
     try:
         await _remember(MEM, "rows", "`fetch_rows` returns one", pinned=True)
         await _pass()
     finally:
-        set_registry_repos(entries)
+        set_registry_repos(entries, frozenset())
     await _pass()
     assert [x["state"] for x in await _links(mid)] == ["changed"]
 
@@ -2249,13 +2249,13 @@ async def test_a_repository_configured_later_links_the_memories_read_before_it(
 
     monkeypatch.setattr(settings, "memory_code_links_batch", 100_000)  # one backfill page
     entries = [c for c in configured_repos() if c.source == "registry"]
-    set_registry_repos([])
+    set_registry_repos([], frozenset())
     mid = await _remember(MEM, "early", "`fetch_rows` returns one")
     await run_pass()  # read before its repository is configured: nothing to link it to
     await code.set_link_cursor("backfill", _BACKFILL_DONE)
     await run_pass()
     assert await _links(mid) == []
-    set_registry_repos(entries)
+    set_registry_repos(entries, frozenset())
     c1 = env.commit({"src/k.py": "def fetch_rows():\n    return 1\n"})
     await _index(TRUNK, env, c1, ["src/k.py"])
     await run_pass()
@@ -2275,13 +2275,13 @@ async def test_a_pass_that_fails_after_a_repository_is_configured_still_backfill
 
     monkeypatch.setattr(settings, "memory_code_links_batch", 100_000)  # one backfill page
     entries = [c for c in configured_repos() if c.source == "registry"]
-    set_registry_repos([])
+    set_registry_repos([], frozenset())
     mid = await _remember(MEM, "early", "`fetch_rows` returns one")
     await run_pass()
     await code.set_link_cursor("backfill", _BACKFILL_DONE)
     await code.set_link_cursor("repos", "[]")  # none seen: the next configured one is new
     await run_pass()
-    set_registry_repos(entries)
+    set_registry_repos(entries, frozenset())
     c1 = env.commit({"src/k.py": "def fetch_rows():\n    return 1\n"})
     await _index(TRUNK, env, c1, ["src/k.py"])
 
@@ -2307,13 +2307,13 @@ async def test_another_org_configuring_the_same_namespace_name_backfills(env, mo
     monkeypatch.setattr(settings, "memory_code_links_batch", 100_000)  # one backfill page
     entries = [c for c in configured_repos() if c.source == "registry"]
     # another org's repository under the same namespace names
-    set_registry_repos([dataclasses.replace(c, org=f"{ORG}-other") for c in entries])
+    set_registry_repos([dataclasses.replace(c, org=f"{ORG}-other") for c in entries], frozenset())
     mid = await _remember(MEM, "early", "`fetch_rows` returns one")
     await run_pass()
     await code.set_link_cursor("backfill", _BACKFILL_DONE)
     await run_pass()
     assert await _links(mid) == []
-    set_registry_repos(entries)
+    set_registry_repos(entries, frozenset())
     c1 = env.commit({"src/k.py": "def fetch_rows():\n    return 1\n"})
     await _index(TRUNK, env, c1, ["src/k.py"])
     await run_pass()
@@ -2692,7 +2692,7 @@ async def _moved_to_another_repository(
         git_remote=other_remote,
         git_branch="main",
     )
-    set_registry_repos([*registry_repos(), gadgets])
+    set_registry_repos([*registry_repos(), gadgets], frozenset())
     await _index(TRUNK, env, env.commit({"src/io.py": src}), ["src/io.py"])
     await _index(other_ns, other, other.commit({"src/io.py": src}), ["src/io.py"])
     mid = await _remember(MEM, "io", "`load_rows` returns n")

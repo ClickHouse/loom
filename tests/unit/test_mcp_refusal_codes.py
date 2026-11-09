@@ -3,7 +3,8 @@
 Claude Code hands the model only an `isError` result's structuredContent, so
 the code has to be there for a client to tell a wrong argument from a missing
 grant or a missing row. Each case sends one request to both transports: HTTP
-answers `detail.code`, MCP answers `structuredContent.code`.
+answers `detail.code`, MCP answers `structuredContent.code`; an unavailable
+backend (503) answers over MCP as a JSON-RPC error whose `data.code` is HTTP's.
 """
 
 from __future__ import annotations
@@ -104,3 +105,34 @@ def test_an_unknown_tool_is_unknown_op_as_through_loom_op() -> None:
     req["params"]["arguments"] = {"op": "no.such_op"}
     _, via_op = route(req, toolset=None, auth=None)
     assert via_op is not None and via_op["result"]["structuredContent"]["code"] == body["code"]
+
+
+def test_a_registry_read_between_gate_and_handler_never_defaults_the_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The gate found the registry unread and checked the org only; the read that lands
+    before the handler runs must not let the handler default to an unchecked namespace."""
+    from server.code.app.common import resolve_code_identity
+    from server.code.domain.index import repos
+
+    reached: list[str] = []
+    defaulted: list[tuple[str, str]] = []
+
+    async def _defaults(inp: Any) -> Any:
+        reached.append("handler")
+        monkeypatch.setattr(repos, "_registry_loaded", True)  # the read lands meanwhile
+        defaulted.append(resolve_code_identity(inp.org, inp.namespace))
+        return None
+
+    probe = serve_probe(monkeypatch, handler=_defaults)
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    r = probe["http"].post(PATH, json={}, headers={"Authorization": "Bearer alice"})
+    assert r.status_code == 503, r.text
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    out = asyncio.run(
+        mcp_call._call_tool(1, {"name": TOOL, "arguments": {}}, auth=probe["tokens"]["alice"])
+    )
+    # A JSON-RPC error, as for any unavailable backend, with the code HTTP answers.
+    assert r.json()["detail"]["code"] == out["error"]["data"]["code"] == "BACKEND_UNAVAILABLE"
+    assert reached == ["handler", "handler"] and defaulted == []

@@ -249,8 +249,26 @@ async def test_the_sweep_removes_what_no_active_entry_names(monkeypatch, tmp_pat
         _old_file(root / lock)
 
     class _Repo:
-        async def active_code_repos(self) -> list[dict[str, Any]]:
-            return [{"org": "o", "namespace": "code-kept", "repo": "o/kept"}]
+        async def registry_rows(self) -> list[dict[str, Any]]:
+            return [
+                {"org": "o", "namespace": "code-kept", "repo": "o/kept", "active": True},
+                # An operator entry's access row names no self-service clone.
+                {
+                    "org": "o",
+                    "namespace": "code-removed",
+                    "repo": "o/removed",
+                    "active": True,
+                    "row_kind": "access",
+                },
+                # A removed branch's row names nothing either.
+                {
+                    "org": "o",
+                    "namespace": "code-gone",
+                    "repo": "o/removed",
+                    "active": False,
+                    "row_kind": "page",
+                },
+            ]
 
     monkeypatch.setattr(store, "CodeRepo", _Repo)
     _repos(monkeypatch, [])
@@ -288,7 +306,7 @@ async def test_a_mirror_named_like_a_temp_dir_is_swept_as_a_mirror(monkeypatch, 
         _old(root / name)
 
     class _Repo:
-        async def active_code_repos(self) -> list[dict[str, Any]]:
+        async def registry_rows(self) -> list[dict[str, Any]]:
             return []
 
     monkeypatch.setattr(store, "CodeRepo", _Repo)
@@ -308,7 +326,7 @@ async def test_an_unreadable_registry_sweeps_nothing(monkeypatch, tmp_path) -> N
     _old(root / "o__r.git")
 
     class _Down:
-        async def active_code_repos(self) -> list[dict[str, Any]]:
+        async def registry_rows(self) -> list[dict[str, Any]]:
             raise ConnectionError("ClickHouse down")
 
     monkeypatch.setattr(store, "CodeRepo", _Down)

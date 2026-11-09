@@ -8,6 +8,7 @@ import asyncio
 import logging
 import time
 import uuid
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -92,11 +93,34 @@ def plane_org_for(op_name: str) -> str:
     return ""
 
 
-def plane_namespace_for(op_name: str) -> str:
-    """The namespace a code.* op is authorized against — and its handler
-    reads — when the body names none: the deployment's code namespace. ""
-    for every other op."""
-    return str(settings.code_namespace) if op_name.startswith("code.") else ""
+# The gate's refusal of the default code namespace for this request, if any: the
+# handler then refuses to default too, never reading a namespace the gate did not check.
+_GATE_DEFAULT_REFUSED: ContextVar[Exception | None] = ContextVar(
+    "code_gate_default_refused", default=None
+)
+
+
+def plane_namespace_for(op_name: str, org: str | None = None) -> str:
+    """The namespace a code.* op in `org` (default: the code org) is authorized
+    against — and its handler reads — when the body names none: the deployment's
+    code namespace (`repos.default_code_namespace`, which may refuse it). "" for
+    every other op."""
+    if not op_name.startswith("code."):
+        return ""
+    from server.code.domain.index.repos import default_code_namespace
+
+    return default_code_namespace(org or str(settings.code_org))
+
+
+def note_gate_default_refused(refused: Exception | None) -> None:
+    """What the request gate decided about the default namespace, for this request's
+    handler (`resolve_code_identity`); the gate sets it on every call."""
+    _GATE_DEFAULT_REFUSED.set(refused)
+
+
+def gate_default_refused() -> Exception | None:
+    """The request gate's refusal of the default namespace for this request, if any."""
+    return _GATE_DEFAULT_REFUSED.get()
 
 
 def resolve_code_identity(org: str, namespace: str) -> tuple[str, str]:
@@ -105,10 +129,13 @@ def resolve_code_identity(org: str, namespace: str) -> tuple[str, str]:
     its name. Explicit values pass through (authz already ran on them). A
     deployment that sets no default (LOOM_CODE_ORG / LOOM_CODE_NAMESPACE empty)
     refuses a request naming none: a read of namespace "" answers nothing."""
+    from server.code.domain.index.repos import default_code_namespace
     from server.core.errors import ValidationError
 
     org = org or settings.code_org
-    namespace = namespace or settings.code_namespace
+    if not namespace and (refused := gate_default_refused()) is not None:
+        raise refused  # the gate checked no namespace: a registry read since changes nothing
+    namespace = namespace or default_code_namespace(org)
     if not org or not namespace:
         missing = " and ".join(n for n, v in (("org", org), ("namespace", namespace)) if not v)
         raise ValidationError(

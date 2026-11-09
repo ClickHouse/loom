@@ -7,7 +7,9 @@ or a revoke. Each such op holds `grant_change` for that key from its read to its
 write, as a lease (`server.core.leases`) every replica sees, with or without a
 Keeper.
 
-Claims nest in one order: a sign-up's name claim (`self_signup.name_claim`) or
+Claims nest in one order: a namespace's document sources lease
+(`knowledge.app.sources.sources_lease`), which `code.repo.remove` holds around its
+account claim; a sign-up's name claim (`self_signup.name_claim`) or
 a personal namespace's (`personal-ns:`), which never wait, so they may come first;
 account claims (several sorted by org and namespace) or a service-account name's,
 then the names of the tokens its former holder made (parent before child,

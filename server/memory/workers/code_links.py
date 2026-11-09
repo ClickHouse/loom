@@ -97,7 +97,12 @@ async def _link_writes(batch: int, result: PassResult) -> None:
         backfill = Backfill(stall=True)
     elif not behind and backfill.stall:
         backfill = replace(backfill, stall=False)  # caught up
-    configured = code.configured_code_namespaces()
+    from server.code.domain.index.repos import RegistryUnread
+
+    try:
+        configured = code.configured_code_namespaces()
+    except RegistryUnread:
+        configured = []  # not read yet: nothing links this pass; the sweep below runs
     if {tuple(r) for r in configured} - {tuple(r) for r in await repos_cursor.read()}:
         # a repository configured since: memories read before it now resolve
         backfill = backfill.restarted()
@@ -106,8 +111,8 @@ async def _link_writes(batch: int, result: PassResult) -> None:
         # after either still owes it
         await backfill_cursor.write(backfill.to_json())
     if configured:
-        # with none nothing links, and the cursor keeps the last ones: an empty snapshot
-        # is a registry read that failed, and their return must not restart the backfill
+        # with none nothing links, and the cursor keeps the last ones: their return after
+        # a pass that listed none (the registry unread) must not restart the backfill
         await repos_cursor.write(configured)
         position = tuple(queue) or None
         for _ in range(_QUEUE_PAGES):

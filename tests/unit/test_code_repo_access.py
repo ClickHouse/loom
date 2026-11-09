@@ -7,6 +7,7 @@ override is read before the config map and "" clears it."""
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -18,6 +19,7 @@ from server.auth import grant_claims
 from server.code.app.index import repo_registry as reg
 from server.code.domain.index import repos
 from server.core.errors import GrantBusyError, ValidationError
+from server.settings import settings
 from server.tracker.app import binding
 from tests.unit.claims_fake import MemoryClaims
 
@@ -49,6 +51,7 @@ def test_an_access_row_wins_over_the_entry_but_keeps_its_other_fields(monkeypatc
         _cfg("code-weave", classification="standard", public=True, source="registry"),
         path_prefixes=("other/",),
         github_token="tok",
+        row_kind="access",
     )
     other = _cfg("code-added", classification="standard", public=True, source="registry")
     monkeypatch.setattr(repos, "registry_repos", lambda: [row, other])
@@ -81,9 +84,77 @@ def test_an_access_row_wins_over_the_entry_but_keeps_its_other_fields(monkeypatc
     assert repos._with_registry([entry])[0].access_source == "config"
 
 
+def test_an_entry_whose_namespace_a_member_added_is_skipped(monkeypatch, caplog) -> None:
+    # The member's branch is listed as it was, and the entry is logged once.
+    row = dataclasses.replace(_cfg("code-weave", source="registry"), row_kind="page")
+    monkeypatch.setattr(repos, "registry_repos", lambda: [row])
+    monkeypatch.setattr(repos, "_page_namespaces", frozenset({(ORG, "code-weave")}))
+    monkeypatch.setattr(repos, "_skipped_logged", set())
+    assert repos._with_registry([_cfg("code-weave")]) == [row]
+    assert repos._with_registry([_cfg("code-weave")]) == [row]
+    assert len([r for r in caplog.records if "code-weave" in r.getMessage()]) == 1
+    # Removed since: the namespace still holds the member's grants, so it stays skipped.
+    monkeypatch.setattr(repos, "registry_repos", lambda: [])
+    assert repos._with_registry([_cfg("code-weave")]) == []
+    monkeypatch.setattr(repos, "_page_namespaces", frozenset())
+    assert repos._with_registry([_cfg("code-weave")]) == [_cfg("code-weave")]
+    # A row that is not a member's add is no skip, and logs nothing.
+    monkeypatch.setattr(repos, "registry_repos", lambda: [dataclasses.replace(row, row_kind="")])
+    assert repos._with_registry([_cfg("code-weave")])[0].source == "config"
+    assert len([r for r in caplog.records if "code-weave" in r.getMessage()]) == 1
+    # Listed in between: a later skip is logged again.
+    monkeypatch.setattr(repos, "_page_namespaces", frozenset({(ORG, "code-weave")}))
+    repos._with_registry([_cfg("code-weave")])
+    assert len([r for r in caplog.records if "code-weave" in r.getMessage()]) == 2
+    # A page row skips the entry before its read's page set is published.
+    monkeypatch.setattr(repos, "registry_repos", lambda: [row])
+    monkeypatch.setattr(repos, "_page_namespaces", frozenset())
+    assert repos._with_registry([_cfg("code-weave")]) == [row]
+
+
+def test_no_operator_entry_is_org_readable_before_the_registry_is_read(monkeypatch) -> None:
+    # Unread, a namespace a member added is not known yet: the whole org must not read it.
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repos, "registry_repos", lambda: [])
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    (entry,) = repos._with_registry([_cfg("code-weave", classification="standard")])
+    assert entry.org_readable is False
+
+    # The first read finishing between the flag and the rows still answers unread.
+    def _read_lands() -> list[repos.RepoConfig]:
+        monkeypatch.setattr(repos, "_registry_loaded", True)
+        return []
+
+    monkeypatch.setattr(repos, "registry_repos", _read_lands)
+    (entry,) = repos._with_registry([_cfg("code-weave", classification="standard")])
+    assert entry.org_readable is False
+    monkeypatch.setattr(repos, "_registry_loaded", True)
+    (entry,) = repos._with_registry([_cfg("code-weave", classification="standard")])
+    assert entry.org_readable is True
+
+
+def test_an_access_row_whose_entry_is_gone_is_not_a_branch(monkeypatch) -> None:
+    access = dataclasses.replace(_cfg("code-weave", source="registry"), row_kind="access")
+    added = dataclasses.replace(_cfg("code-added", source="registry"), row_kind="page")
+    monkeypatch.setattr(repos, "registry_repos", lambda: [access, added])
+    assert [c.namespace for c in repos._with_registry([])] == ["code-added"]
+    monkeypatch.setattr(repos, "_registry_namespaces", repos._registry_namespaces)
+    monkeypatch.setattr(repos, "_registry_repos", repos._registry_repos)
+    monkeypatch.setattr(repos, "_page_namespaces", repos._page_namespaces)
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    repos.set_registry_repos([access, added], frozenset())
+    assert repos.registry_namespaces() == {(ORG, "code-added")}
+
+
+# A live registry row, as the namespace's read answers.
+_LIVE = {"active": True, "row_kind": ""}
+
+
 class _CH:
-    def __init__(self, row: dict[str, Any] | None) -> None:
-        self.row = row
+    """`row` answers the directory read, `registry` the loom.code_repos one."""
+
+    def __init__(self, row: dict[str, Any] | None, registry: dict[str, Any] | None = _LIVE) -> None:
+        self.row, self.registry = row, registry
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
         self.queries: list[str] = []
 
@@ -91,7 +162,8 @@ class _CH:
         self, sql: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any] | None:
         self.queries.append(sql)
-        return dict(self.row) if self.row else None
+        found = self.registry if "loom.code_repos" in sql else self.row
+        return dict(found) if found else None
 
     async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         # The caller holds an admin grant given there, unless a test says otherwise.
@@ -133,7 +205,7 @@ async def test_set_access_writes_registry_and_directory_and_needs_confirm_to_wid
     async def refresh(*a, **k):
         return []
 
-    async def upsert(c, *, classification, join_policy, created_by, ch=None):
+    async def upsert(c, *, classification, join_policy, created_by, current, ch=None):
         written.append(
             {
                 "ns": c.namespace,
@@ -228,6 +300,47 @@ async def test_set_access_writes_registry_and_directory_and_needs_confirm_to_wid
 
 
 @pytest.mark.asyncio
+async def test_set_access_on_a_removed_page_branch_writes_nothing(monkeypatch) -> None:
+    # Its row went inactive after this process's snapshot: no directory row either.
+    from server.code.app import repo_admin as h
+
+    async def refresh(*a, **k):
+        return []
+
+    cfg = _cfg("code-weave-dev", classification="standard", source="registry")
+    ch = _CH({"org": ORG, "namespace": "code-weave-dev"}, registry=_LIVE | {"active": False})
+    monkeypatch.setattr(reg, "refresh_db_repos", refresh)
+    monkeypatch.setattr("server.code.domain.index.repos.repo_for_namespace", lambda o, n: cfg)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr(h, "current_caller", lambda: ("alice", ORG))
+    inp = SimpleNamespace(
+        org=ORG, namespace="code-weave-dev", classification="restricted", join_policy="approval"
+    )
+    with pytest.raises(ValidationError) as e:
+        await h.handle_code_repo_set_access(inp)
+    assert e.value.to_detail()["code"] == "NOT_A_REPO" and ch.inserts == []
+    # An operator entry a stale snapshot still lists, whose namespace a member added.
+    entry = _cfg("code-weave-dev", classification="standard")
+    monkeypatch.setattr("server.code.domain.index.repos.repo_for_namespace", lambda o, n: entry)
+    ch.registry = _LIVE | {"row_kind": "page"}
+    with pytest.raises(ValidationError) as e:
+        await h.handle_code_repo_set_access(inp)
+    assert e.value.to_detail()["code"] == "NOT_A_REPO" and ch.inserts == []
+    # A busy account claim (an add or a removal of that name) refuses before any write.
+
+    @asynccontextmanager
+    async def busy(org: str, ns: str, **k: Any) -> Any:
+        raise GrantBusyError("busy")
+        yield
+
+    monkeypatch.setattr(h, "account_change", busy)
+    ch.registry = _LIVE
+    with pytest.raises(GrantBusyError):
+        await h.handle_code_repo_set_access(inp)
+    assert ch.inserts == []
+
+
+@pytest.mark.asyncio
 async def test_set_source_writes_the_binding_state_and_the_override_is_read_first(
     monkeypatch,
 ) -> None:
@@ -314,7 +427,8 @@ async def test_upsert_access_copies_an_existing_registry_row_and_builds_one_for_
     none gets one from the repository as configured."""
 
     class _CH2(_CH):
-        pass
+        def __init__(self, row: dict[str, Any] | None) -> None:
+            super().__init__(row, registry=row)
 
     existing = {
         "org": ORG,
@@ -334,10 +448,17 @@ async def test_upsert_access_copies_an_existing_registry_row_and_builds_one_for_
         "version": 1,
         "exclude_generated": True,
         "scip_producer": "go",
+        "row_kind": "page",
     }
     ch = _CH2(existing)
+    page = _cfg("code-x", source="registry")
     await reg.upsert_access(
-        _cfg("code-x"), classification="standard", join_policy="open", created_by="alice", ch=ch
+        page,
+        classification="standard",
+        join_policy="open",
+        created_by="alice",
+        current=await reg.live_row(page, ch),
+        ch=ch,
     )
     ((table, rows),) = ch.inserts
     row = rows[0]
@@ -354,10 +475,11 @@ async def test_upsert_access_copies_an_existing_registry_row_and_builds_one_for_
     )
     ch2 = _CH2(None)
     await reg.upsert_access(
-        _cfg("code-weave", classification="restricted"),
+        dataclasses.replace(_cfg("code-weave", classification="restricted"), github_token="tok"),
         classification="standard",
         join_policy="open",
         created_by="alice",
+        current=await reg.live_row(_cfg("code-weave"), ch2),
         ch=ch2,
     )
     row = ch2.inserts[0][1][0]
@@ -367,6 +489,28 @@ async def test_upsert_access_copies_an_existing_registry_row_and_builds_one_for_
         and row["path_prefixes"] == ["src/"]
     )
     assert row["classification"] == "standard" and row["active"] is True and "created_at" in row
+    assert row["github_token_enc"] == ""  # the entry fetches with its own configured token
+    # A member's add stays one; an entry's new row is its access row.
+    assert ch.inserts[0][1][0]["row_kind"] == "page" and row["row_kind"] == "access"
+    # An inactive access row is not copied back: the entry gets a fresh one.
+    ch3 = _CH2(existing | {"active": False, "row_kind": "access"})
+    await reg.upsert_access(
+        _cfg("code-x"),
+        classification="restricted",
+        join_policy="approval",
+        created_by="a",
+        current=await reg.live_row(_cfg("code-x"), ch3),
+        ch=ch3,
+    )
+    row = ch3.inserts[0][1][0]
+    assert row["row_kind"] == "access" and row["repo"] == "ClickHouse/weave"
+    for active in (False, True):  # a member's branch, removed or not, keeps its namespace
+        with pytest.raises(ValidationError) as e:
+            await reg.live_row(_cfg("code-x"), _CH2(existing | {"active": active}))
+        assert e.value.to_detail()["code"] == "NOT_A_REPO"
+    with pytest.raises(ValidationError) as e:  # a removed branch added from the page
+        await reg.live_row(_cfg("code-x", source="registry"), _CH2(existing | {"active": False}))
+    assert e.value.to_detail()["code"] == "NOT_A_REPO"
 
 
 @pytest.mark.asyncio
@@ -448,6 +592,8 @@ async def test_restricting_a_page_branch_revokes_the_copy_a_sibling_gave_it(monk
     async def upsert(*a, **k):
         # The directory row first: a restriction cut short after it still stops copies.
         assert ch.inserts[-1][0] == "loom.namespaces"
+        # Under the account claim an add from the page holds: no add lands in between.
+        assert grant_claims._account(ORG, "code-weave-rc")[0] in claims.held
 
     monkeypatch.setattr(reg, "refresh_db_repos", refresh)
     monkeypatch.setattr(reg, "upsert_access", upsert)
@@ -679,3 +825,122 @@ async def test_only_an_own_admin_grant_widens_a_restricted_branch(
             await h.handle_code_repo_set_access(widen)
         assert ch.inserts == []
     assert seen == [["mallory", "mallory@corp.example"]]
+
+
+def test_the_default_code_namespace_never_lands_on_a_member_branch(monkeypatch) -> None:
+    import argparse
+
+    from server.cli import code_run
+    from server.code.app.common import resolve_code_identity
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.tracker.app import test_signal
+    from server.transport import gates
+
+    def gate_ns(op: str) -> str | None:
+        return gates.authz_target(OPERATIONS_BY_NAME[op], org="", namespace="", auth=None).namespace
+
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(settings, "code_org", ORG)
+    monkeypatch.setattr(settings, "code_namespace", "code-weave")
+    monkeypatch.setattr(repos, "_page_namespaces", frozenset())
+    assert resolve_code_identity("", "") == (ORG, "code-weave")
+    assert gate_ns("code.search") == "code-weave"
+    # A member added that namespace from the page: no call naming none lands there, and
+    # an op that takes no namespace is not refused for it.
+    monkeypatch.setattr(repos, "_page_namespaces", frozenset({(ORG, "code-weave")}))
+    with pytest.raises(ValidationError, match="added from the Repositories page"):
+        resolve_code_identity("", "")
+    for op in ("code.search", "code.repos", "code.repo.add", "code.repo.remote_branches"):
+        assert gate_ns(op) is None, op
+    assert resolve_code_identity("", "code-weave") == (ORG, "code-weave")  # named: authz ran
+    _, ns, why = asyncio.run(test_signal._code_namespace_authorized(ORG, ""))
+    assert ns == "" and "added from the Repositories page" in why
+    with pytest.raises(SystemExit, match="added from the Repositories page"):
+        code_run._identity(argparse.Namespace(org="", namespace=""))
+    # Unread, a member's namespace is not known yet.
+    monkeypatch.setattr(repos, "_page_namespaces", frozenset())
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    assert gate_ns("code.repos") is None
+    with pytest.raises(repos.RegistryUnread):
+        resolve_code_identity("", "")
+    with pytest.raises(SystemExit, match="registry could not be read; retry"):
+        code_run._identity(argparse.Namespace(org="", namespace=""))
+    assert code_run._identity(argparse.Namespace(org="", namespace="code-x")) == (ORG, "code-x")
+
+
+def test_a_handler_never_defaults_to_a_namespace_the_gate_did_not_check(monkeypatch) -> None:
+    import contextvars
+
+    from server.code.app.common import resolve_code_identity
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import gates
+
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(settings, "code_org", ORG)
+    monkeypatch.setattr(settings, "code_namespace", "code-weave")
+    monkeypatch.setattr(repos, "_page_namespaces", frozenset())
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    op = OPERATIONS_BY_NAME["code.search"]
+
+    def request() -> None:
+        target = gates.authz_target(op, org="", namespace="", auth=None)
+        assert target.namespace is None  # unread: the gate checks the org only
+        monkeypatch.setattr(repos, "_registry_loaded", True)  # the read lands meanwhile
+        with pytest.raises(repos.RegistryUnread):
+            resolve_code_identity("", "")
+        # The next request's gate decides afresh.
+        assert gates.authz_target(op, org="", namespace="", auth=None).namespace == "code-weave"
+        assert resolve_code_identity("", "") == (ORG, "code-weave")
+
+    contextvars.copy_context().run(request)
+    monkeypatch.setattr(repos, "_page_namespaces", frozenset({(ORG, "code-weave")}))
+    with pytest.raises(ValidationError) as e:
+        repos.default_code_namespace(ORG)
+    assert e.value.to_detail()["code"] == "DEFAULT_NAMESPACE_REFUSED"
+
+
+@pytest.mark.asyncio
+async def test_a_scoped_token_gets_the_default_namespace_refusal(monkeypatch) -> None:
+    """A scoped token needs a namespace; with the default refused it is told why (in its
+    own org), not that the request is incomplete."""
+    from server.auth.jwt import AuthInfo
+    from server.operations.base import Role
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import gates
+
+    async def _noop(*a: Any, **k: Any) -> None:
+        return None
+
+    monkeypatch.setattr("server.auth.authz.check_acted_for", _noop)
+    monkeypatch.setattr("server.auth.personal_namespace.ensure_personal_namespace_cached", _noop)
+    monkeypatch.setattr(gates, "_admitted", _noop)
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(settings, "code_org", ORG)
+    monkeypatch.setattr(settings, "code_namespace", "code-weave")
+    op = OPERATIONS_BY_NAME["code.search"]
+
+    def scoped(org: str) -> AuthInfo:
+        return AuthInfo(
+            subject="agent",
+            org=org,
+            namespaces=("code-x",),
+            roles=(Role.VIEWER,),
+            is_service_account=True,
+            ns_roles=(("code-x", "viewer"),),
+        )
+
+    async def call(org: str, auth: AuthInfo) -> None:
+        target = gates.authz_target(op, org=org, namespace="", auth=auth)
+        await gates.authorize(op, auth, target, transport="http")
+
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    with pytest.raises(repos.RegistryUnread):
+        await call("", scoped(ORG))
+    monkeypatch.setattr(repos, "_registry_loaded", True)
+    monkeypatch.setattr(repos, "_page_namespaces", frozenset({(ORG, "code-weave")}))
+    with pytest.raises(ValidationError) as e:
+        await call("", scoped(ORG))
+    assert e.value.to_detail()["code"] == "DEFAULT_NAMESPACE_REFUSED"
+    # Another org's token learns nothing of this org's namespaces.
+    with pytest.raises(PermissionError):
+        await call(ORG, scoped("other-org"))

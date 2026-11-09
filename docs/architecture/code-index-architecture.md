@@ -45,16 +45,30 @@ turns it off: only the worker's host clones, and a history read anywhere else an
 
 Repository entries come from two sources, merged:
 
-| Source            | Read by                           | Notes                                                                               |
-| ----------------- | --------------------------------- | ----------------------------------------------------------------------------------- |
-| Environment       | `code/domain/index/repos.py`      | `LOOM_CODE_REPOS_JSON`, or the scalar `LOOM_CODE_*` settings.                       |
-| `loom.code_repos` | `code/app/index/repo_registry.py` | Self-service rows. A private remote's token is stored encrypted and never returned. |
+| Source            | Read by                           | Notes                                                                                                      |
+| ----------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Environment       | `code/domain/index/repos.py`      | `LOOM_CODE_REPOS_JSON`, or the scalar `LOOM_CODE_*` settings.                                              |
+| `loom.code_repos` | `code/app/index/repo_registry.py` | Self-service rows, by `row_kind` (below). A private remote's token is stored encrypted and never returned. |
 
-`configured_repos()` is on the authorization hot path, so it reads an in-process
-snapshot refreshed at boot, on every ingest pass and after an add. Retiring an entry
-(`code/app/index/retire.py`) deactivates its rows, runs an erasure saga over every
-`code_*` table for the namespace, and removes the mirror when no other entry uses it on
-the host that served the call; every other host's sweep removes its own copy.
+A `loom.code_repos` row's `row_kind` says what it is:
+
+- `page`: a branch added from the page. It keeps an operator entry off its namespace,
+  removed or not.
+- `access`: an operator entry's classification and join policy.
+- `''`: a row written before the column, read as the access row of an operator entry's
+  namespace and as a branch added from the page elsewhere.
+
+`configured_repos()` reads an in-process snapshot refreshed at boot, on every ingest
+pass and after an add. Until the snapshot's first read it raises `RegistryUnread`
+(self-service on), since the entries a page namespace skips are not known yet; the
+modules that decide access read `config_entries()`, which lists the entries before that
+read with none org-readable (`tests/unit/test_repo_snapshot_contract.py`). An op that
+needs the full list answers 503 in that window; memory reads, search and
+`memory.for_file` answer without code links. A code call naming no namespace defaults to
+`LOOM_CODE_NAMESPACE` only when no member added that namespace from the page. Retiring
+an entry (`code/app/index/retire.py`) deactivates its rows, runs an erasure saga over
+every `code_*` table for the namespace, and removes the mirror when no other entry uses
+it on the host that served the call; every other host's sweep removes its own copy.
 
 ## Git mirrors on every replica
 

@@ -136,6 +136,7 @@ def test_boot_registers_every_check(monkeypatch) -> None:
         "keyring",
         "grant_watermark",
         "tracker_registry",
+        "code_registry",
         "runtime_overrides",
         "calibration",
         "config_drift",
@@ -455,3 +456,17 @@ def test_the_lifespan_starts_the_mirror_warm_up_itself() -> None:
 
     assert "start_warmup()" in inspect.getsource(main.lifespan)
     assert "start_warmup" not in inspect.getsource(boot.start_tracker_sources_refresher)
+
+
+def test_the_code_registry_check_fails_until_the_first_read(monkeypatch) -> None:
+    from server.code.app.index import repo_registry
+    from server.code.domain.index import repos
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    assert repo_registry.readiness_check() == readiness.CheckResult(
+        False, "the self-service repository registry is not read"
+    )
+    monkeypatch.setattr(repos, "_registry_loaded", True)
+    assert repo_registry.readiness_check().ok

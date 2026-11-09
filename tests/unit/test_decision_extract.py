@@ -3847,7 +3847,7 @@ async def test_a_run_without_repo_reads_the_registry_for_a_branchs_trunk(monkeyp
     ]
 
     async def refresh(**kw):
-        set_registry_repos(entries)
+        set_registry_repos(entries, frozenset())
         return entries
 
     c = _candidate()
@@ -3855,11 +3855,11 @@ async def test_a_run_without_repo_reads_the_registry_for_a_branchs_trunk(monkeyp
     world.record(_key(c), _same_fields(c), namespace=TRUNK, files=[HEADER])
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
     monkeypatch.setattr(repo_registry, "refresh_db_repos", refresh)
-    set_registry_repos([])
+    set_registry_repos([], frozenset())
     try:
         report = await _run()
     finally:
-        set_registry_repos([])
+        set_registry_repos([], frozenset())
     assert report.error == (
         f"this document's decisions are in o/{TRUNK}; run as the run that wrote "
         "them (with no --repo, or its --repo and --into), or delete them there first"
@@ -3997,11 +3997,11 @@ async def test_into_source_on_a_branch_of_the_same_repository_stays_tagged_there
 
     monkeypatch.setattr(code_symbol, "handle_code_symbol", code_symbol_handler)
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
-    set_registry_repos(entries)
+    set_registry_repos(entries, frozenset())
     try:
         report = await _run(repo="acme/widgets", into="source")
     finally:
-        set_registry_repos([])
+        set_registry_repos([], frozenset())
     assert report.error == ""
     (inp,) = world.recorded
     assert inp.namespace == "ns" and repo_tag(remote) in inp.tags

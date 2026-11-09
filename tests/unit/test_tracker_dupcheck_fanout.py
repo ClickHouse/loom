@@ -391,7 +391,7 @@ async def test_a_self_service_repository_matching_the_glob_opens_nothing(monkeyp
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
     monkeypatch.setattr(repos, "_registry_namespaces", repos._registry_namespaces)
     monkeypatch.setattr(repos, "_registry_repos", repos._registry_repos)
-    repos.set_registry_repos([_registry_entry("code-clickhouse")])
+    repos.set_registry_repos([_registry_entry("code-clickhouse")], frozenset())
     assert await fo.readable_tracker_namespaces(ORG, PRIV, [], 4) == [PRIV]
 
 
@@ -432,3 +432,34 @@ async def test_requested_names_read_configured_repos_once(monkeypatch) -> None:
     )
     assert got == [PUB, PRIV]
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_answer_computed_before_the_code_registry_is_read_is_not_remembered(
+    monkeypatch,
+) -> None:
+    from server.code.domain.index import repos
+
+    _wire_namespaces(monkeypatch, readable={PRIV})
+
+    async def _bind(input):
+        return input.model_copy(update={"namespace": PRIV})
+
+    async def _one(input, wall, **_kw):
+        return _out("none", [])
+
+    remembered: list[str] = []
+    monkeypatch.setattr(tcommon, "_bound_input", _bind)
+    monkeypatch.setattr(tcommon, "_with_default_org", lambda i: i)
+    monkeypatch.setattr(hd, "_check_one", _one)
+    monkeypatch.setattr(hd, "remember_answer", lambda org, ns, text, out: remembered.append(ns))
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    ask = TrackerDuplicateCheckInput(
+        org=ORG, namespace="code-example-private", title="x", related_prs=False
+    )
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    await hd.handle_tracker_duplicate_check(ask)
+    assert remembered == []
+    monkeypatch.setattr(repos, "_registry_loaded", True)
+    await hd.handle_tracker_duplicate_check(ask)
+    assert remembered == ["code-example-private"]

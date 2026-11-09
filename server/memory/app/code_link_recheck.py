@@ -70,7 +70,13 @@ _LOST_STATES = ("unresolved", "missing")
 async def recheck_all(result: link_pass.PassResult) -> None:
     """Follow every code namespace's links from the head they were checked at to its
     indexed head, settle its pending names, then run the policy of every memory a change
-    left due. A repository that fails is retried from the same head next pass."""
+    left due. A repository that fails is retried from the same head next pass. Nothing
+    while the code registry has never been read: which repositories are configured is
+    not known yet."""
+    from server.code.domain.index.repos import registry_unread
+
+    if registry_unread():
+        return
     # a repository no longer configured keeps its links as last checked
     repositories = [(o, c) for o, c in await store.code_namespaces() if repo_for_namespace(o, c)]
     # each pass starts one repository further on: those last in line are not always last

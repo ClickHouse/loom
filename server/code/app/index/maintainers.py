@@ -191,10 +191,14 @@ async def read_repo(org: str, namespace: str, *, ch: Any | None = None) -> str |
     so a branch another process added since this one's last read is seen. It
     names the claims `repo_admin_claims` takes. Off a code namespace only its
     directory row is read, and None returned."""
+    from server.code.domain.index.repos import config_entry
     from server.core.ch import get_client
 
     client = ch or get_client()
-    if repo_of(org, namespace) is None and not await _is_code_namespace(client, org, namespace):
+    # `config_entry` answers before the first read too; the directory row tells a
+    # branch added from the page that no snapshot lists yet.
+    listed = config_entry(org, namespace) is not None
+    if not listed and not await _is_code_namespace(client, org, namespace):
         return None
     await _read_registry_now(client)
     return repo_of(org, namespace)
@@ -562,11 +566,10 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
     repository, or by a branch added to it."""
     from server.code.app.index.repo_registry import registry_read
 
-    repo = repo_of(org, namespace)
-    sources = _branches(org, repo) if repo is not None else {}
-    branches = list(sources)
-    if sources and not registry_read():
-        if (org, namespace) not in _UNSYNCED:
+    if not registry_read():
+        from server.code.domain.index.repos import config_entry
+
+        if config_entry(org, namespace) is not None and (org, namespace) not in _UNSYNCED:
             _UNSYNCED.add((org, namespace))
             log.warning(
                 "repo maintainers: %s/%s not synced — the self-service registry is not read yet",
@@ -574,6 +577,9 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
                 namespace,
             )
         return 0
+    repo = repo_of(org, namespace)
+    sources = _branches(org, repo) if repo is not None else {}
+    branches = list(sources)
     if not branches:
         return 0
     from server.core.ch import get_client
@@ -740,11 +746,14 @@ async def revoke_repo_maintainer(
     first, is then among the branches. Raises `GrantBusyError` when that read
     fails, or when it puts `namespace` in another repository than the claims
     hold. Returns rows written."""
+    from server.code.app.index.repo_registry import registry_read
     from server.core.ch import get_client
 
     client = ch or get_client()
     if repo is not None:
         await _read_registry_now(client)
+    elif not registry_read():
+        return 0  # `read_repo` found no code namespace, and `repo_of` would refuse
     if repo_of(org, namespace) != repo:
         raise GrantBusyError("the repository's branches changed; retry shortly")
     if repo is None:

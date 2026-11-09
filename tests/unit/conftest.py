@@ -355,6 +355,23 @@ def _no_repo_job_sandbox() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _code_registry_read() -> Iterator[None]:
+    """Every reader of the configured repositories refuses until the self-service
+    registry has been read; unit tests fake that read. A test of an unread registry
+    sets `repos._registry_loaded` itself. A gate's refusal of the default namespace
+    is one request's; no test inherits another's."""
+    from server.code.app import common
+    from server.code.domain.index import repos
+
+    before = repos._registry_loaded
+    repos._registry_loaded = True
+    token = common._GATE_DEFAULT_REFUSED.set(None)
+    yield
+    common._GATE_DEFAULT_REFUSED.reset(token)
+    repos._registry_loaded = before
+
+
+@pytest.fixture(autouse=True)
 def _no_copy_head_check(request: pytest.FixtureRequest) -> Iterator[None]:
     """A vector copy re-reads its keys' heads after its insert
     (`retire_copies_under_unembedded_heads`); unit fakes answer statements by

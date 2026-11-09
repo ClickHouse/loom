@@ -484,7 +484,11 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
     # (and is retired here) or after (and sees the repository gone). Sources first, so
     # a call that fails between the two leaves the repository registered to retry.
     ch = get_client()
-    async with sources_lease(input.org, input.namespace):
+    # set_access's account claim: it cannot write the row back to life; busy refuses.
+    async with (
+        sources_lease(input.org, input.namespace),
+        account_change(input.org, input.namespace),
+    ):
         # First, so a failed clear stops the removal while it can be retried.
         await _empty_tracker_links(input.org, input.namespace, detail="repository removed")
         sources_off = await deactivate_namespace_sources(input.org, input.namespace)
@@ -743,8 +747,8 @@ async def handle_code_repo_set_access(input: Any) -> Any:
     subject, _org = current_caller()
     from server.code.app.index import maintainers
 
-    # The account claim every writer that rewrites the directory row holds; a fan-out write onto
-    # this branch holds the admins claims: it lands before the sync below, or sees both rows.
+    # The account claim (every directory-row writer's, and an add's); the admins claims
+    # order a fan-out write onto this branch before the sync below.
     async with (
         account_change(input.org, input.namespace),
         admins_change(input.org, maintainers.repo_claim_key(str(cfg.repo))),
@@ -761,6 +765,8 @@ async def handle_code_repo_set_access(input: Any) -> Any:
         previous_policy = str(
             (row or {}).get("join_policy") or ("open" if cfg.public else "approval")
         )
+        # A removed branch is refused before either row is written.
+        current = await reg.live_row(cfg, ch)
         # The directory row first, which every replica reads now: a restriction cut short
         # after it still stops copies, and the registrar widens no row newer than the
         # access row.
@@ -785,7 +791,12 @@ async def handle_code_repo_set_access(input: Any) -> Any:
             await ch.insert("loom.namespaces", [new_row])
             directory_updated = True
         await reg.upsert_access(
-            cfg, classification=cls, join_policy=pol, created_by=subject or "maintainer", ch=ch
+            cfg,
+            classification=cls,
+            join_policy=pol,
+            created_by=subject or "maintainer",
+            current=current,
+            ch=ch,
         )
     with sequential_reads():  # the sync below reads this snapshot
         await reg.refresh_db_repos(force=True, ch=ch)

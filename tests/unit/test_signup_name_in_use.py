@@ -158,7 +158,7 @@ def test_a_configured_code_repository_is_in_use_before_its_first_row(
     configured = {("dev", namespace)}
     monkeypatch.setattr(
         repos,
-        "repo_for_namespace",
+        "config_entry",
         lambda org, ns: object() if (org, ns) in configured else None,
     )
     status, detail = _refusal(call, name)

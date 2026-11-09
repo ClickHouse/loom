@@ -860,8 +860,8 @@ class CodeSettings(BaseModel):
     # back to the scalars.
     code_repos_json: Annotated[str, JsonArray] = ""
     # Repositories added from the Repositories page (loom.code_repos) merge with the
-    # configured entries (`code_repos_json` and the scalar entry); the environment wins
-    # on a namespace collision.
+    # configured entries (`code_repos_json` and the scalar entry); a configured entry
+    # for a namespace a member added from the page is skipped.
     # Off = the operator's JSON is the only source.
     code_self_service_enabled: bool = True
     # Where the code ingest worker clones a self-service entry's bare mirror (one per

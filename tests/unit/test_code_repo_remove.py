@@ -136,14 +136,15 @@ def plane(monkeypatch):
         repos.set_registry_repos(
             [reg.row_to_config(r) for r in state["rows"]]
             if ch_mod.get_client().registry_active
-            else []
+            else [],
+            frozenset(),
         )
         return repos.registry_repos()
 
     monkeypatch.setattr(reg, "refresh_db_repos", _refresh)
     monkeypatch.setattr(repos, "_registry_namespaces", repos._registry_namespaces)
     monkeypatch.setattr(repos, "_registry_repos", repos._registry_repos)
-    repos.set_registry_repos([reg.row_to_config(row)])
+    repos.set_registry_repos([reg.row_to_config(row)], frozenset())
 
     import server.code.store.index as code_repo_mod
 
@@ -390,6 +391,37 @@ async def test_remove_retires_sources_and_registry_row_under_one_lease(plane) ->
 
 
 @pytest.mark.asyncio
+async def test_remove_deactivates_the_registry_row_under_the_account_claim(
+    plane, monkeypatch
+) -> None:
+    # code.repo.set_access holds it from its read of the row to its write.
+    from contextlib import asynccontextmanager
+
+    from server.code.app.index import retire
+
+    held: list[str] = []
+    real, deactivate = admin.account_change, retire.deactivate_registry_row
+
+    @asynccontextmanager
+    async def account(org: str, ns: str, **k: Any) -> Any:
+        async with real(org, ns, **k):
+            held.append(ns)
+            yield
+            held.remove(ns)
+
+    async def _deactivate(ch: Any, org: str, ns: str) -> bool:
+        assert held == [ns]
+        return await deactivate(ch, org, ns)
+
+    monkeypatch.setattr(admin, "account_change", account)
+    monkeypatch.setattr(retire, "deactivate_registry_row", _deactivate)
+    await admin.handle_code_repo_remove(
+        CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+    )
+    assert plane.registry_active_under_lease == [False]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("lease", ["busy", "down"])
 async def test_remove_refuses_without_the_lease_and_writes_nothing(
     plane, monkeypatch, lease: str
@@ -413,6 +445,29 @@ async def test_remove_refuses_without_the_lease_and_writes_nothing(
         )
     assert plane.registry_active and plane.inserted == [] and plane.sagas == []
     assert plane.states == []  # a refused removal leaves the live repository's links
+
+
+@pytest.mark.asyncio
+async def test_remove_refuses_on_a_busy_account_claim_and_writes_nothing(
+    plane, monkeypatch
+) -> None:
+    # A code.repo.set_access holding it: the removal refuses before any write.
+    from contextlib import asynccontextmanager
+
+    from server.core.errors import GrantBusyError
+
+    @asynccontextmanager
+    async def busy(org: str, ns: str, **k: Any) -> Any:
+        raise GrantBusyError("busy")
+        yield
+
+    monkeypatch.setattr(admin, "account_change", busy)
+    with pytest.raises(GrantBusyError):
+        await admin.handle_code_repo_remove(
+            CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+        )
+    assert plane.registry_active and plane.inserted == [] and plane.sagas == []
+    assert plane.states == []
 
 
 @pytest.mark.asyncio

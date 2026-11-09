@@ -896,13 +896,17 @@ async def admin_token_mint(
             # Every namespace of the token; the grant below keeps only the restricted ones.
             flat_role = (delegated.roles or ["viewer"])[0]
             roles_on = delegated.ns_roles or dict.fromkeys(delegated.namespaces, flat_role)
+        # Before the token is saved: a refusal (an unread code registry) strands nothing.
+        is_code = await token_grants.code_namespace_predicate(input.org, list(roles_on))
         sa_subject = tokens.new_token_subject(input.org, name, creator)
         minted = delegated.mint(sa_subject, jti=jti, consumer=input.consumer or None)
         await tokens.save_token(
             name, sa_subject, delegated, created_by=creator, now=naive_utc_now_seconds()
         )
     # A restricted namespace is read only by a subject with a direct grant there.
-    granted = await token_grants.grant_restricted_to_token(input.org, sa_subject, creator, roles_on)
+    granted = await token_grants.grant_restricted_to_token(
+        input.org, sa_subject, creator, roles_on, is_code_namespace=is_code
+    )
     await note_restricted_grants(
         info, op="admin.token.mint", org=input.org, namespaces=granted, granted_to=sa_subject
     )
