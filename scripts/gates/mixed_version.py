@@ -56,6 +56,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:  # run as a file: this checkout's server, not an installed one
     sys.path.insert(0, str(ROOT))
 
+from server.core.sql_literal import sql_string  # noqa: E402
 from server.insights.domain import analysis as boundary  # noqa: E402
 
 CH_IMAGE = "clickhouse/clickhouse-server:26.5.1.882"
@@ -449,12 +450,21 @@ class Scenario:
             "multiSearchAnyCaseInsensitive(query, {k:Array(String)}) "
             "OR multiSearchAnyCaseInsensitive(formatted_query, {k:Array(String)}) "
             "OR multiSearchAnyCaseInsensitive(exception, {k:Array(String)})",
-            {"k": "[" + ", ".join("'" + h.replace("\\", "\\\\") + "'" for h in secrets) + "]"},
+            {"k": "[" + ", ".join(map(sql_string, secrets)) + "]"},
             boundary.LOG_TEXT_CUT,
         )
         self.check(
             logged == "0", "no logged statement or error holds the scope key after the upgrade"
         )
+        # The server log records each refused read's error, whatever log_queries says.
+        errors = sql(
+            self.ch_port,
+            "SELECT count() FROM system.text_log WHERE level = 'Error' "
+            "AND multiSearchAnyCaseInsensitive(message, {k:Array(String)})",
+            {"k": "[" + ", ".join(map(sql_string, secrets)) + "]"},
+            boundary.LOG_TEXT_CUT,
+        )
+        self.check(errors == "0", "no server log error holds the scope key after the upgrade")
 
     def run_completes_across(self, a: str, b: str) -> None:
         run_id = self.call(a, "run.begin", {**self.ident, "goal": f"begun on {a}"})["run_id"]

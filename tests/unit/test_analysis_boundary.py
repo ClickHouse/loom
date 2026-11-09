@@ -308,6 +308,17 @@ def test_an_error_that_quotes_the_policy_quotes_no_key() -> None:
         assert spelling.lower() not in error.lower(), spelling
 
 
+def test_policy_spellings_reads_the_key_out_of_a_filter_escaped_or_not() -> None:
+    plain = boundary.policy_filter(KEY)
+    escaped = plain.replace("'", "\\'")
+    for text in (plain, escaped):
+        spellings = boundary.policy_spellings(text)
+        assert KEY.hex() in spellings
+        assert set(boundary.key_spellings(KEY)) <= set(spellings)
+    with pytest.raises(ValueError):
+        boundary.policy_spellings("org = 'acme'")
+
+
 def test_policy_reads_every_setting_as_a_string() -> None:
     # A typed override (SQL_loom_ns = 5) would make the policy throw, and the
     # error would quote the policy, key included.

@@ -293,15 +293,14 @@ def _pads(key: bytes) -> tuple[bytes, bytes]:
 
 
 def key_spellings(key: bytes) -> list[str]:
-    """Every way a log could spell `key` or its pads, which the tests and the
-    mixed-version gate search ClickHouse's logs for."""
+    """The hex and raw spellings of `key` and its HMAC pads a log could hold."""
     # The key's zero padding XORs to runs of 0x36 ('6') and 0x5C ('\'), printable as they are.
     return [key.hex(), *(p.hex() for p in _pads(key)), "6" * 32, "\\" * 32]
 
 
 def policy_spellings(select_filter: str) -> list[str]:
-    """`key_spellings` of the key a policy's filter text holds, as
-    system.row_policies shows it (TSV escapes its quotes), with its literals."""
+    """Every literal of a policy filter and the spellings of its key; the
+    filter may be TSV-escaped."""
     literals = re.findall(r"unhex\(\\?'([0-9a-f]+)\\?'\)", select_filter)
     key = next((h for h in literals if len(h) == 64), None)
     if key is None:
