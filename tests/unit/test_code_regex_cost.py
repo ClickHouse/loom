@@ -347,11 +347,6 @@ def _where(n: int) -> str:
     return "[tool.setuptools.packages.find]\nwhere = [" + _numbered('"a{}",')(n) + "]\n"
 
 
-def _prefixed_routes(n: int) -> str:
-    prefixes = _run("", "a.include_router(r, prefix='/aaaaaaaaaaaaaaaa')\n")(n // 2)
-    return prefixes + _run("", "@r.get('/b')\ndef f(): pass\n")(n // 2)
-
-
 def _declared_prefix(n: int, opener: str, route: str, close: str = "')\n") -> str:
     """One prefix of n/2 characters, then n/2 characters of routes under it."""
     return opener + "a" * (n // 2) + close + _run("", route)(n // 2)
@@ -407,12 +402,6 @@ _WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("cmake-rows", _cmake, _run("", "a\n")),
     ("python-route-rows", _py_routes, _run("", "app.add_url_rule('a')\n")),
     ("python-unclosed-include-router", _py_routes, _run("", "a.include_router(a,")),
-    ("python-repeated-prefix", _py_routes, _prefixed_routes),
-    (
-        "python-declared-prefix",
-        _py_routes,
-        lambda n: _declared_prefix(n, "r = APIRouter(prefix='/", "@r.get('/b')\ndef f(): pass\n"),
-    ),
     (
         "ts-controller-prefix",
         _ts_routes,

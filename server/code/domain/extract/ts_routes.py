@@ -31,6 +31,8 @@ from server.code.domain.extract.text_lines import line_at, newline_offsets
 from server.code.domain.extract.treesitter import ParsedFile
 
 FACET_KIND = "http_route"
+# not a setting: the cut the Python lane applies to a route name, kept the same here
+_MAX_NAME = 200
 # Each body stops at the next `@Controller(` / `.route(`: an unclosed one is not read to
 # the end of the file again from every opener before it.
 _CONTROLLER_RE = re.compile(
@@ -89,7 +91,7 @@ def route_facets(pf: ParsedFile) -> list[Facet]:
     newlines = newline_offsets(text)
 
     def add(name: str, line: int, conf: float) -> None:
-        name = name[:200]  # as the Python lane cuts a route name
+        name = name[:_MAX_NAME]
         if (name, line) in seen:
             return
         seen.add((name, line))
@@ -115,7 +117,7 @@ def route_facets(pf: ParsedFile) -> list[Facet]:
     closes = _brace_closes(text) if controllers else {}
     for k, c in enumerate(controllers):
         # cut: the prefix is joined into every route of the class
-        prefix = (c.group(1) or c.group(2) or "")[:400]
+        prefix = (c.group(1) or c.group(2) or "")[: 2 * _MAX_NAME]
         # a class body ends at its `}`, and no later than the next controller: an unclosed
         # one is not read again for every controller before it
         stop = controllers[k + 1].start() if k + 1 < len(controllers) else len(text)

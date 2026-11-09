@@ -299,3 +299,13 @@ def test_a_methods_list_with_a_bracket_inside_gives_the_default_method() -> None
     src = b'@app.route("/a", methods=["GET", ("POST")])\ndef a(): pass\n'
     facets = py_facets(parse_python("svc/a.py", src))
     assert [f.name for f in facets if f.kind == "http_route"] == ["GET /a"]
+
+
+def test_a_router_prefix_is_cut_however_it_grows() -> None:
+    # A route name keeps 200 characters; a prefix joined into every route must not grow.
+    from server.code.domain.extract.py_routes import _prefixes
+
+    repeated = "a.include_router(r, prefix='/aaaaaaaaaa')\n" * 100
+    declared = "r = APIRouter(prefix='/" + "a" * 1000 + "')\n"
+    assert len(_prefixes(repeated)["r"]) == 400
+    assert len(_prefixes(declared)["r"]) == 400
