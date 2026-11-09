@@ -546,9 +546,9 @@ its own wait covers every row its transaction read.
   standbys on the connection that read the rows, and decided from that read: a copy (a
   pin, a touch) has a document built onto it; a delete, other content, a redaction or an
   erasure settles the claimed document unsent.
-  The settling commit cannot cover that read, being on another connection: after a
-  failover it would mark the document done on a primary where the claimed revision is
-  the head again. `decision.record` checks its writers this way after its record lands,
+  The read is made durable on its own connection because the settling commit, on
+  another, could not cover it: after a failover it would mark the document done on a
+  primary where the claimed revision is the head again. `decision.record` checks its writers this way after its record lands,
   and a delete of a decision retires its record this way in its flush, so each waits
   for one more standby round trip.
 

@@ -76,7 +76,8 @@ _CALLERS = {
     "server/memory/store/pg_batch.py": "a newer head copy is read again durably",
     "server/memory/store/pg_publish.py": "live decision writers are read durably",
     "server/memory/store/reads.py": "point reads to the caller; send nothing",
-    "server/memory/store/records.py": "live decision writers are read durably",
+    "server/memory/store/records.py": "a retirement reads its writers durably; "
+    "`live_writer_record` filters a request's read, which commits through `memory.set`",
     "server/memory/store/redaction.py": "decides a redaction, which commits",
 }
 
@@ -492,3 +493,55 @@ def test_the_flush_builds_no_document_onto_a_redacted_or_deleted_head(
     sent = asyncio.run(pg_batch._served_documents([entry]))  # type: ignore[list-item]
     assert sent[id(entry)] == {}
     assert entry.stale == [("o", "n", 1)]
+
+
+def _flush_entry(doc: dict[str, Any]) -> Any:
+    class _Committed:
+        seqs = [("o", "n", 1)]
+        rows = [doc]
+
+    class _Entry:
+        documents_sent = False
+        documents = [doc]
+        committed = _Committed()
+        stale: list[Any] = []
+
+    return _Entry()
+
+
+def test_the_flush_builds_onto_a_copy_it_read_durably(monkeypatch: pytest.MonkeyPatch) -> None:
+    doc = {**_claim(5, "a" * 64).row}
+    reads: list[bool] = []
+
+    async def heads_owing(keys, *, durable=False):  # type: ignore[no-untyped-def]
+        reads.append(durable)
+        return {pg_memory.identity_key(doc): (_head(9), 0)}
+
+    monkeypatch.setattr(pg_memory, "heads_owing", heads_owing)
+    monkeypatch.setattr(pg_memory, "embedded", lambda row: True)
+    monkeypatch.setattr(pg_batch, "_onto", lambda d, head: dict(head))  # the head's row
+    entry = _flush_entry(doc)
+    sent = asyncio.run(pg_batch._served_documents([entry]))
+    assert reads == [False, True]
+    assert [int(d["version"]) for d in sent[id(entry)].values()] == [9]
+
+
+def test_a_flush_whose_durable_read_fails_is_unanswered(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The standby away: the whole group is left to the delivery worker, with no resends
+    one by one."""
+
+    async def unavailable(*a: Any, **k: Any) -> Any:
+        raise pg.PostgresUnavailableError("the commit's answer was lost", outcome_unknown=True)
+
+    assert pg_batch._unanswered(pg.PostgresUnavailableError("x", outcome_unknown=True))
+    doc = {**_claim(5, "a" * 64).row}
+
+    async def heads_owing(keys, *, durable=False):  # type: ignore[no-untyped-def]
+        if durable:
+            return await unavailable()
+        return {pg_memory.identity_key(doc): (_head(9), 0)}
+
+    monkeypatch.setattr(pg_memory, "heads_owing", heads_owing)
+    monkeypatch.setattr(pg_memory, "embedded", lambda row: True)
+    with pytest.raises(pg.PostgresUnavailableError):
+        asyncio.run(pg_batch._served_documents([_flush_entry(doc)]))
