@@ -124,6 +124,7 @@ def _start() -> subprocess.Popen[bytes]:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             env={},
+            start_new_session=True,  # a terminal's Ctrl-C is the server's to take
         )
     except OSError as e:
         logger.error("bounded_parse: the parse process did not start: %s", e)

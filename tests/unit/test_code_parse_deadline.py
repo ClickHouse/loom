@@ -465,6 +465,11 @@ def test_every_grammar_the_server_imports_is_one_the_child_loads() -> None:
     for f in _SERVER.rglob("*.py"):
         imported |= set(re.findall(r"(?:from|import) (tree_sitter_\w+)", f.read_text()))
     assert imported and imported <= listed
+    from server.code.domain.declaration import _parser
+    from server.code.domain.extract.lang_detect import _bash_parser
+
+    for parser in [_parser(g) for g in (*_GRAMMARS, "tsx")] + [_bash_parser()]:
+        bounded_parse._grammar(parser.language)  # each Language the server builds matches
 
 
 def test_a_child_that_ended_while_idle_is_replaced_without_failing_the_parse(
