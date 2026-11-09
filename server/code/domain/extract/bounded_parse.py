@@ -6,7 +6,7 @@ replica for hours or exhaust its memory. Every parse of repository text goes thr
 `parse`, which first parses the source in a child process (`parse_child`) held to
 `code_parse_memory_mb` of address space past its own and `code_parse_timeout_s` of
 CPU time, and raises `ParseTimeout` when that parse runs past a limit, ends the child,
-or cannot run here (the child silent, or killed twice from outside); each caller takes
+or could not run in its process; each caller takes
 its parse failure path (an indexed file is then chunks without symbols).
 
 Only a source the child parsed in full within the deadline is parsed again here, where
@@ -220,9 +220,9 @@ def _close(child: subprocess.Popen[bytes]) -> None:
 
 def parse(parser: Any, source: bytes) -> Any:
     """`parser.parse(source)`, raising `ParseTimeout` past the deadline or the memory
-    limit (or when its process gave no answer, was killed twice from outside, or the
-    caller's wait for the lock ran out); `RuntimeError` or `OSError` when the child fails
-    or cannot start, `LookupError` for a grammar not in `_LOADERS`."""
+    limit, or when it could not run in its process or the caller's wait for the lock ran
+    out; `RuntimeError` or `OSError` when the child fails or cannot start, `LookupError`
+    for a grammar not in `_LOADERS`."""
     from server.settings import settings
 
     budget = settings.code_parse_timeout_s
