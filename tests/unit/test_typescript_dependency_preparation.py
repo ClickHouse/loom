@@ -198,7 +198,7 @@ async def test_long_unbroken_output_is_redacted_only_in_a_window(
     )
     with pytest.raises(RuntimeError) as failed:
         await deps.prepare_dependencies(checkout, (), env)
-    assert seen and max(seen) <= 4 * tier_health.ERROR_CHARS
+    assert seen and max(seen) <= deps._WINDOW_CHARS
     assert str(failed.value).endswith("a.a.a.")
 
 
@@ -221,11 +221,11 @@ async def test_a_credential_cut_at_the_window_start_is_not_kept(
     checkout: Path, tmp_path: Path
 ) -> None:
     env = _installer(tmp_path)
-    # The redaction window (the output's last 4 * ERROR_CHARS characters) starts
+    # The redaction window (the output's last _WINDOW_CHARS characters) starts
     # inside "user:hunter2", after the scheme its pattern needs.
     start = "fetch https://us"
     rest = "er:hunter2@h.example/x?token="
-    line = start + rest + "t" * (4 * tier_health.ERROR_CHARS - 1 - len(rest))
+    line = start + rest + "t" * (deps._WINDOW_CHARS - 1 - len(rest))
     (tmp_path / "npm").write_text(f"#!/bin/sh\necho first\necho '{line}'\nexit 1\n")
     with pytest.raises(RuntimeError) as failed:
         await deps.prepare_dependencies(checkout, (), env)
@@ -237,7 +237,7 @@ async def test_a_credential_cut_at_the_window_start_is_not_kept(
 async def test_a_last_line_the_window_holds_whole_is_kept(checkout: Path, tmp_path: Path) -> None:
     env = _installer(tmp_path)
     # With its newline the last line fills the window exactly.
-    width = 4 * tier_health.ERROR_CHARS - 1
+    width = deps._WINDOW_CHARS - 1
     (tmp_path / "npm").write_text(
         f"#!/bin/sh\necho first\nprintf 'x%.0s' $(seq {width})\necho\nexit 1\n"
     )

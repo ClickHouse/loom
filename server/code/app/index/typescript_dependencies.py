@@ -128,6 +128,8 @@ def _install_command(checkout: Path, root: Path) -> tuple[list[str], dict[str, s
     ], {}
 
 
+# How much of a failed install's output is redacted for the record.
+_WINDOW_CHARS = 4 * ERROR_CHARS
 _LINE_TOO_LONG = "(the last output line is too long to keep; the server log has its end)"
 
 
@@ -138,7 +140,7 @@ def _recorded_tail(head: str, output: str) -> str:
     cut at the window's start can lose the scheme a credential pattern needs."""
     room = max(0, ERROR_CHARS - len(error_text(ToolOutputError(head))) - 1)
     # One character more, so a window that starts on a line keeps that line.
-    window = output[-4 * ERROR_CHARS - 1 :]
+    window = output[-_WINDOW_CHARS - 1 :]
     if len(output) > len(window):
         window = window.partition("\n")[2].strip() or _LINE_TOO_LONG
     return redact(window)[-room:] if room else ""
