@@ -1,7 +1,7 @@
 """The write path's peer reads take the two-stage, codes-first shape: stage A ranks
 the namespace's vectors with a bare distance ORDER BY + LIMIT, which the Quantized
-codec answers from its codes, and stage B reads the candidates' rows by sort key. No
-write reads the namespace's vectors at full width in a join."""
+codec answers from its codes, and stage B reads the candidates' rows by sort key; the
+full-width join is only the fallback past `_PEER_MAX_K` candidates."""
 
 from __future__ import annotations
 

@@ -119,7 +119,6 @@ def decide_links(
     new_key: str,
     new_text: str,
     new_at: Any,
-    new_created: Any,
     peers: list[dict[str, Any]],
 ) -> list[UpdateLink]:
     """Pure half: which peers form a value-update pair with the new row, and
@@ -127,13 +126,13 @@ def decide_links(
     valid_at, cos. Only a pair dated on different days is an update; the later
     `valid_at` is the newer side."""
     out: list[UpdateLink] = []
-    n_at, n_cr = _as_dt(new_at), _as_dt(new_created)
+    n_at = _as_dt(new_at)
     for p in peers:
         if str(p.get("memory_key") or "") == new_key:
             continue
         if not is_value_update(new_text, str(p.get("value") or "")):
             continue
-        p_at, p_cr = _as_dt(p.get("valid_at")), _as_dt(p.get("created_at"))
+        p_at = _as_dt(p.get("valid_at"))
         # An update happens ACROSS time: the newer side must be dated strictly
         # later (by calendar day). Two rows on the same date, or two undated
         # rows, are an enumeration, not an update ("Article 12 …" and
@@ -143,7 +142,6 @@ def decide_links(
         if n_at is None or p_at is None or n_at.date() == p_at.date():
             continue
         new_is_newer = n_at > p_at
-        del n_cr, p_cr
         pid = str(p.get("memory_id") or "")
         cos = float(p.get("cos") or 0.0)
         if new_is_newer:
@@ -183,8 +181,8 @@ async def _peers(
 ) -> list[dict[str, Any]]:
     """The row's nearest live peers of its type at cosine `min_cosine` or more, inside
     the writer's read scope, nearest first: the conflict check's two-stage read
-    (`conflicts.nearest_peer_rows`, codes-first), so a write never reads the namespace's
-    vectors at full width."""
+    (`conflicts.nearest_peer_rows`): codes-first, falling back to the full-width join
+    only past `_PEER_MAX_K` candidates."""
     from server.memory.app.conflicts import nearest_peer_rows
 
     params: dict[str, Any] = {
@@ -268,7 +266,6 @@ async def link_value_updates(
             key,
             str(row.get("value") or ""),
             row.get("valid_at"),
-            row.get("created_at"),
             peers,
         )
 

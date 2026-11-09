@@ -56,19 +56,13 @@ _PEER_ROWS_SQL = """
 # The pinned rows' keys come from `loom.memory` first, so the memory row decides type
 # and liveness (a vector row's own type is never read) and only those keys' vectors
 # are read. Every pinned row is weighed by distance, not only the nearest few vectors.
-def _pinned_row_filter(type_filter: str) -> str:
-    """The pinned, live rows of the namespace, under `type_filter` (a predicate on `m`)."""
-    return f"""m.org = {{org:String}}
-          AND m.namespace = {{ns:String}}
-          AND {type_filter}
+_PINNED_ROW_FILTER = """m.org = {org:String}
+          AND m.namespace = {ns:String}
+          AND m.memory_type = {mt:String}
+          AND m.memory_key != {self_key:String}
           AND m.pinned = 1
           AND m.tombstoned_at IS NULL
           AND m.status IN ('active', 'conflicted')"""
-
-
-_PINNED_ROW_FILTER = _pinned_row_filter(
-    "m.memory_type = {mt:String}\n          AND m.memory_key != {self_key:String}"
-)
 
 PINNED_PEERS_SQL = f"""
         SELECT

@@ -54,15 +54,12 @@ def test_is_value_update_on_the_measured_pair() -> None:
     assert not vu.is_value_update("User likes tea", "User likes coffee")
 
 
-def _peer(
-    mid: str, key: str, value: str, valid_at: str | None, created: str = "2026-01-01"
-) -> dict[str, Any]:
+def _peer(mid: str, key: str, value: str, valid_at: str | None) -> dict[str, Any]:
     return {
         "memory_id": mid,
         "memory_key": key,
         "value": value,
         "valid_at": datetime.fromisoformat(valid_at) if valid_at else None,
-        "created_at": datetime.fromisoformat(created),
         "cos": 0.82,
         # what the two-stage peer read returns for it (stage A's identity and distance)
         "agent": "a",
@@ -76,36 +73,24 @@ def _peer(
 
 def test_decide_links_marks_the_older_side() -> None:
     peers = [_peer("p1", "user_running_personal_best", OLD, "2023-05-23")]
-    links = vu.decide_links(
-        "n1", "user_5k_personal_best_time", NEW, "2023-05-30", "2026-01-02", peers
-    )
+    links = vu.decide_links("n1", "user_5k_personal_best_time", NEW, "2023-05-30", peers)
     assert len(links) == 1 and links[0].older_id == "p1" and links[0].newer_id == "n1"
     # The new row can be the OLDER one (backfilled): then it is superseded.
-    links = vu.decide_links(
-        "n1", "k", OLD, "2023-05-23", "2026-01-02", [_peer("p2", "k2", NEW, "2023-05-30")]
-    )
+    links = vu.decide_links("n1", "k", OLD, "2023-05-23", [_peer("p2", "k2", NEW, "2023-05-30")])
     assert links[0].older_id == "n1" and links[0].newer_id == "p2"
 
 
 def test_decide_links_needs_a_strictly_later_day() -> None:
     # Undated on either side: no link (an update happens across time).
-    assert (
-        vu.decide_links("n1", "k", NEW, "2023-05-30", "2026-01-02", [_peer("p1", "k1", OLD, None)])
-        == []
-    )
-    assert (
-        vu.decide_links("n1", "k", NEW, None, "2026-01-03", [_peer("p1", "k1", OLD, "2023-05-23")])
-        == []
-    )
+    assert vu.decide_links("n1", "k", NEW, "2023-05-30", [_peer("p1", "k1", OLD, None)]) == []
+    assert vu.decide_links("n1", "k", NEW, None, [_peer("p1", "k1", OLD, "2023-05-23")]) == []
     # Same day: an enumeration ("Article 12 …" / "Article 13 …"), not an update.
     assert (
-        vu.decide_links("n1", "k", NEW, "2023-05-30", None, [_peer("p1", "k1", OLD, "2023-05-30")])
-        == []
+        vu.decide_links("n1", "k", NEW, "2023-05-30", [_peer("p1", "k1", OLD, "2023-05-30")]) == []
     )
     # Same memory_key is a rewrite, never a link.
     assert (
-        vu.decide_links("n1", "k", NEW, "2023-05-30", None, [_peer("p1", "k", OLD, "2023-05-23")])
-        == []
+        vu.decide_links("n1", "k", NEW, "2023-05-30", [_peer("p1", "k", OLD, "2023-05-23")]) == []
     )
 
 
