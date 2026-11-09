@@ -77,22 +77,51 @@ def test_only_the_request_gate_records_its_refusal_of_the_default_namespace() ->
     assert writers == {"transport/gates.py"}, writers
 
 
+def _reads_code_namespace_setting(tree: ast.Module) -> bool:
+    """`settings.code_namespace`, under any name the settings object is imported as,
+    read as an attribute or through getattr."""
+    names = {"settings"} | {
+        a.asname
+        for n in ast.walk(tree)
+        if isinstance(n, ast.ImportFrom) and n.module == "server.settings"
+        for a in n.names
+        if a.name == "settings" and a.asname
+    }
+    for n in ast.walk(tree):
+        if (
+            isinstance(n, ast.Attribute)
+            and n.attr == "code_namespace"
+            and isinstance(n.value, ast.Name)
+            and n.value.id in names
+        ):
+            return True
+        if (
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "getattr"
+            and len(n.args) >= 2
+            and isinstance(n.args[0], ast.Name)
+            and n.args[0].id in names
+            and isinstance(n.args[1], ast.Constant)
+            and n.args[1].value == "code_namespace"
+        ):
+            return True
+    return False
+
+
 def test_only_repos_reads_the_default_code_namespace_setting() -> None:
     # Everything else defaults through `repos.default_code_namespace`, which refuses a
     # namespace a member added from the page. The CLI only names it in an exit message.
     readers = {
         path
         for path, tree in _modules()
-        if not path.startswith("settings/")
-        and any(
-            isinstance(n, ast.Attribute)
-            and n.attr == "code_namespace"
-            and isinstance(n.value, ast.Name)
-            and n.value.id == "settings"
-            for n in ast.walk(tree)
-        )
+        if not path.startswith("settings/") and _reads_code_namespace_setting(tree)
     }
     assert readers <= {"code/domain/index/repos.py", "cli/code_run.py"}, readers
+    probe = ast.parse(
+        "from server.settings import settings as s\nx = getattr(s, 'code_namespace')\n"
+    )
+    assert _reads_code_namespace_setting(probe)
 
 
 def test_no_module_reads_the_snapshot_or_the_raw_configuration_around_the_accessors() -> None:

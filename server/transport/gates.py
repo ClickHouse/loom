@@ -15,10 +15,12 @@ here, once:
   org is set to the org the call acts in and a padded org or namespace is
   stripped; after authorization an absent code namespace is set to the
   authorized one, so the handler reads and writes where the call was
-  authorized.
+  authorized. A refused default (a member's namespace, or the registry unread)
+  sets none and is kept for the request, so the handler refuses too.
 - `authorize`: the refusal of a revoked subject a trusted caller acts for
   (`authz.check_acted_for`), first-contact provisioning, the role + namespace gate
-  (`authorize_op`, raising PermissionError / IdentityIncompleteError), then
+  (`authorize_op`, raising PermissionError / IdentityIncompleteError; a scoped
+  token in its own org gets a refused default's own refusal instead), then
   the restricted-access audit row and the first-write registration.
 - `policy`: the history policy gate on the authorized identity (raises
   PolicyForbiddenError).
@@ -218,7 +220,7 @@ async def authorize(
         # A scoped token needs a namespace; the call has none only because its default
         # was refused, so it gets that refusal (in its own org) instead.
         refused = gate_default_refused()
-        if refused is None or target.namespace is not None or op.skip_namespace_authz:
+        if refused is None or op.skip_namespace_authz:
             raise
         if auth.org not in ("*", target.org):
             raise PermissionError(
