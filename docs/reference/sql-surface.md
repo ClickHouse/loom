@@ -198,9 +198,11 @@ loom sql-access revoke --user acme_bi
   configuration, so run the command with the server's. A namespace restricted there after
   a grant that reaches it is in that grant's views: `list` names each such grant, to
   replace with the other namespaces by name, and exits 2.
-- `revoke` takes the scope rows away first, then drops the user. A namespace with a granted
-  scope row counts as in use until `revoke` takes the row away: its name is not handed to a
-  new owner, and a first write into it registers it without an owner.
+- `revoke` takes the scope rows away first, then drops the user. A namespace a grant names
+  counts as in use until `revoke` takes that row away: its name is not handed to a new owner,
+  and a first write into it registers it without an owner. A `*` grant names no namespace:
+  it reads every namespace of the org, those created later included, so never give one on an
+  org that sign-ups share (`LOOM_SELF_SIGNUP_ORG`).
 - The command runs as `LOOM_CH_USER`, which needs access management: `CREATE USER`,
   `ALTER USER`, `DROP USER`, `CREATE SETTINGS PROFILE` and `ALTER SETTINGS PROFILE`,
   `SELECT ... WITH GRANT OPTION` on the five views, and `SHOW USERS` with reads of
