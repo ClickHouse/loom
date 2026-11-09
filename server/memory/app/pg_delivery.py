@@ -18,8 +18,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from server.core import pg
-from server.core.ch_errors import is_connection_failure, is_passing_state
+from server.core import ch_errors, pg, pg_lease
 from server.core.error_summary import error_summary
 from server.memory.domain.redaction_lineage import is_content_hash
 from server.memory.store import pg_memory, pg_publish
@@ -78,7 +77,7 @@ async def publish_audit_outbox(limit: int) -> int:
     a namespace's claim at a time (`pg_memory.claim_outbox`), skipping a row already
     there. A refused batch is tried row by row: a row ClickHouse keeps refusing is
     counted alone, and parked at the attempts limit. ClickHouse unavailable
-    (`_refused_nothing`) or a claim that ran out refused nothing: the pass stops and the
+    (`ch_errors.refused_nothing`) or a claim that ran out refused nothing: the pass stops and the
     rows wait for their claim to end. Returns how many were published."""
     published = claimed = 0
     while claimed < limit:
@@ -107,16 +106,9 @@ async def publish_audit_outbox(limit: int) -> int:
 
 
 async def _stops_pass(error: Exception) -> bool:
-    return isinstance(error, pg_publish.ClaimExpired) or await _refused_nothing(error, probe=True)
-
-
-async def _clickhouse_answers() -> bool:
-    from server.core.ch import get_client
-
-    try:
-        return await get_client().query_one("SELECT 1 AS ok") is not None
-    except Exception:  # noqa: BLE001 — a probe that fails is its answer
-        return False
+    return isinstance(error, pg_publish.ClaimExpired) or await ch_errors.refused_nothing(
+        error, probe=True
+    )
 
 
 async def _refused(rows: list[dict[str, Any]], error: Exception) -> None:
@@ -172,7 +164,7 @@ async def _publish(claims: list[Claimed], *, stub: bool = False) -> None:
     build = await _still_heads([c for c in owed if pg_publish.document_id(c.row) not in held])
     docs = await _search_documents(build, stub=stub)
     if docs:
-        with pg_memory.leased(deadline):
+        with pg_lease.leased(deadline):
             await memory_repo.insert_embedding_rows(docs, ch=ch)
         after_write.index_late_rows(docs, ch=ch)
     await pg_memory.complete(
@@ -251,18 +243,6 @@ async def _retire_old_vectors(
 class _Stopped(Exception):
     """The pass ends with nothing refused (ClickHouse unavailable, or the worker's time
     for it is up): its claims are released."""
-
-
-async def _refused_nothing(error: BaseException, *, probe: bool) -> bool:
-    """ClickHouse did not refuse the rows: it answered with a state that clears by
-    itself, or it does not answer at all. A connection that failed while ClickHouse
-    answers a probe is the request's own: a batch that drops it every time counts its
-    attempts and is tried row by row. Without the probe it counts nothing."""
-    if is_passing_state(error):
-        return True
-    if not is_connection_failure(error):
-        return False
-    return not probe or not await _clickhouse_answers()
 
 
 def _key(c: Claimed) -> tuple[str, str, int]:
@@ -349,7 +329,7 @@ async def _publish_namespace(group: list[Claimed], run: _Pass) -> None:
             raise
         except Exception as e:  # each claim is tried on its own below
             why = error_summary(e)
-            if await _refused_nothing(e, probe=run.worker):
+            if await ch_errors.refused_nothing(e, probe=run.worker):
                 log.warning("pg_delivery: ClickHouse unavailable (%s); pass stopped", why)
                 raise _Stopped from e
             log.warning("pg_delivery: a batch of %s failed (%s); one at a time", _ns(batch[0]), why)
@@ -360,7 +340,7 @@ async def _publish_namespace(group: list[Claimed], run: _Pass) -> None:
         except pg.PostgresUnavailableError:
             raise
         except Exception as e:  # one revision must not hold back the rest
-            if await _refused_nothing(e, probe=run.worker):
+            if await ch_errors.refused_nothing(e, probe=run.worker):
                 raise _Stopped from e
             # A publish its lease ran out on (PublicationPending) counts too: one that
             # always outlasts it would otherwise be claimed again on every pass.
@@ -396,7 +376,7 @@ async def _last_attempt(c: Claimed, error: Exception | None, run: _Pass) -> None
     except pg.PostgresUnavailableError:
         raise
     except Exception as e:  # the stub's refusal is the attempt's
-        if await _refused_nothing(e, probe=run.worker):
+        if await ch_errors.refused_nothing(e, probe=run.worker):
             raise _Stopped from e
         error = e
     if error is None:

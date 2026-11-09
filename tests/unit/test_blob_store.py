@@ -9,7 +9,12 @@ import hashlib
 from contextlib import asynccontextmanager
 from typing import Any
 
-from server.knowledge.store import blobs
+import pytest
+
+from server.core import pg
+from server.core.ch import sequential_reads_active
+from server.knowledge.store import blobs, pg_documents
+from server.knowledge.workers import blob_gc
 
 
 class _CH:
@@ -145,18 +150,25 @@ def test_a_delete_with_a_min_age_spares_a_fresh_row_and_counts_what_went() -> No
     assert asyncio.run(blobs.delete("o", "ns", [], min_age_s=3600, ch=ch)).gone == 0
 
 
-def test_unreferenced_is_one_namespace_after_a_cursor() -> None:
+@pytest.mark.parametrize("postgres", [True, False])
+def test_unreferenced_is_one_namespace_after_a_cursor(
+    monkeypatch: pytest.MonkeyPatch, postgres: bool
+) -> None:
     """The candidates read is bounded by the namespace on both sides of the NOT
-    IN, so no statement scans every tenant's documents."""
+    IN, so no statement scans every tenant's documents. Under the Postgres authority
+    it is sequentially consistent, so a row published after the owed read is seen; under
+    ClickHouse's there is no such read before it, and it costs no replica sync."""
     seen: dict[str, Any] = {}
+    monkeypatch.setattr(pg, "enabled", lambda: postgres)
 
     class _Rec:
         async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
             seen["sql"], seen["params"] = sql, params
+            seen["sequential"] = sequential_reads_active()
             return [{"sha": "a" * 64}]
 
     got = asyncio.run(blobs.unreferenced("o", "ns", 60, 10, after="0" * 64, ch=_Rec()))
-    assert got == ["a" * 64]
+    assert got == ["a" * 64] and seen["sequential"] is postgres
     sql = seen["sql"]
     assert "HAVING max(created_at) < now64(3) - INTERVAL {age:UInt32} SECOND" in sql
     # the originals, the documents naming them, and the uploads and jobs holding them
@@ -166,6 +178,53 @@ def test_unreferenced_is_one_namespace_after_a_cursor() -> None:
 
     assert LIVE_ORIGINAL_SQL in sql
     assert seen["params"] == {"org": "o", "ns": "ns", "after": "0" * 64, "age": 60, "lim": 10}
+
+
+def test_under_postgres_an_unpublished_commits_original_is_spared_and_needed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A committed write whose document row has not landed (owed, or parked for an
+    operator) names its new original only in Postgres: the sweep deletes the other
+    candidates of the page and spares that one, its cursor moving past both, and the
+    move's read counts it needed, however long the row takes. The owed read comes
+    before each ClickHouse read it amends, so a row published between them is in the
+    second."""
+    owed_sha, gone_sha = "b" * 64, "c" * 64
+    order: list[str] = []
+
+    async def owed(org: str, ns: str) -> set[str]:
+        assert (org, ns) == ("o", "ns")
+        order.append("postgres")
+        return {owed_sha}
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg_documents, "owed_originals", owed)
+
+    async def unreferenced(org, ns, min_age_s, limit, *, after=""):
+        order.append("clickhouse")
+        return [owed_sha, gone_sha] if after == "" else []
+
+    deleted: list[list[str]] = []
+
+    async def delete(org, ns, shas, *, min_age_s=0):
+        deleted.append(list(shas))
+        return blobs.Deleted(len(shas))
+
+    monkeypatch.setattr(blobs, "unreferenced", unreferenced)
+    monkeypatch.setattr(blobs, "delete", delete)
+    monkeypatch.setattr(blob_gc, "_BATCH", 2)
+    assert asyncio.run(blob_gc.sweep_namespace("o", "ns", 60)) == 1
+    assert deleted == [[gone_sha]]
+    assert order == ["postgres", "clickhouse"] * 2  # a page, then the empty one after it
+    order.clear()
+
+    class _Rec:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            order.append("clickhouse")
+            return []
+
+    wanted = asyncio.run(blobs.needed("o", "ns", [owed_sha, "d" * 64], ch=_Rec()))
+    assert wanted == {owed_sha} and order == ["postgres", "clickhouse"]
 
 
 def test_upload_records_are_forgotten_a_bounded_number_of_keys_per_statement() -> None:

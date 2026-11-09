@@ -145,7 +145,9 @@ class NamespaceRegisterInput(BaseModel):
     daily_cost_cap_usd: float | None = Field(default=None, ge=0.0)
     # Omitted keeps the stored threshold; an explicit null inherits LOOM_CONFLICT_THRESHOLD.
     conflict_threshold: float | None = None
-    # 0 = inherit global retention/tiering; positive overrides per-(org, namespace).
+    # Days rows are kept, except memory, document and chunk rows under the Postgres
+    # authority; 0 inherits the global retention, a positive value overrides it per
+    # (org, namespace).
     retention_days: int | None = Field(default=None, ge=0, le=36500)
     # Rows older than this many days move to the warm storage tier; 0 inherits the global
     # tiering setting.
@@ -268,7 +270,8 @@ class NamespaceGetOutput(BaseModel):
     daily_cost_cap_usd: float | None = None
     # Cosine at which a write is flagged `conflicted`; None inherits the server threshold.
     conflict_threshold: float | None = None
-    # Rows older than this many days are deleted; 0 inherits the global retention.
+    # Rows older than this many days are deleted, except memory, document and chunk rows
+    # under the Postgres authority; 0 inherits the global retention.
     retention_days: int | None = None
     # Rows older than this many days move to the warm tier; 0 inherits the global tiering.
     warm_days: int | None = None

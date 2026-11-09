@@ -24,7 +24,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [Maintenance](docs/operations/maintenance.md): Every command here is a `loom` subcommand; run it inside the container that has the deployment's environment (`docker exec loom-server loom …`, or `loom-workers` in a split deployment).
 - [Monitoring](docs/operations/monitoring.md): This page says what to watch.
 - [Copying a namespace to another Loom](docs/operations/okf-sync.md): A job inside the private network copies one namespace from a private Loom to a public one on a schedule: `loom export-okf` reads it from the private Loom, and `loom import-okf --prune` writes it to the public Loom.
-- [Postgres memory authority](docs/operations/postgres.md): This guide sets up a Loom deployment whose live memory is held in Postgres, on ClickHouse Managed Postgres or on a self-hosted Postgres, and covers what to check before it serves.
+- [Postgres memory authority](docs/operations/postgres.md): This guide sets up a Loom deployment whose live memory and knowledge document heads are held in Postgres, on ClickHouse Managed Postgres or on a self-hosted Postgres, and covers what to check before it serves.
 - [Running N replicas](docs/operations/replicas.md): Every Loom process is a full replica.
 - [Runtime settings](docs/operations/runtime-settings.md): Every setting is an environment variable `LOOM_<FIELD>` read at startup, and can also go in the YAML settings file (configuration reference).
 - [Single sign-on (OIDC)](docs/operations/sso.md): Loom can hand the human sign-in to an OpenID Connect identity provider.

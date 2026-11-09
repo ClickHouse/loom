@@ -16,7 +16,7 @@ from typing import Any
 from uuid import UUID
 
 import server.memory.store as store
-from server.core import pg
+from server.core import pg, pg_lease
 from server.core.datetimes import fits_datetime_column
 from server.core.errors import PreconditionFailedError, ValidationError
 from server.core.hashing import hash_text
@@ -192,7 +192,7 @@ async def insert_version_rows(rows: Sequence[Mapping[str, Any]], *, ch: Any) -> 
             await store.insert_memory_versions(
                 rows[start : start + step], ch=ch, publish_now=publish_now
             )
-        except pg_memory.PublicationPending:
+        except pg_lease.PublicationPending:
             publish_now = False
         except pg_memory.MemoryErased:
             raise PreconditionFailedError(

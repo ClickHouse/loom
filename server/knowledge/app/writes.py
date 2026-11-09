@@ -13,11 +13,14 @@ import json
 import logging
 import time
 import uuid
+from collections import Counter
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from server.core.error_summary import error_summary
 from server.core.errors import BackendUnavailableError, PreconditionFailedError, ValidationError
 from server.core.hashing import sha256_document_text as _content_sha256
+from server.core.pg_lease import PublicationPending
 from server.core.vectors import codes_state
 from server.embedding import get_embedder
 from server.knowledge.api.models_knowledge import (
@@ -40,6 +43,8 @@ from server.knowledge.api.models_knowledge import (
 from server.knowledge.domain.chunking import Chunk, chunk_context, chunk_document, embedding_text
 from server.knowledge.domain.sources import SYNC_WORKER_ACTOR, source_tags
 from server.knowledge.store import datasets as datasets_repo
+from server.knowledge.store.pg_documents import DocumentErased, HeadMoved
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
@@ -96,6 +101,120 @@ def _fresh_sha(input: KnowledgeAddInput) -> str:
         return ""
 
 
+def _published_anyway(e: BaseException) -> bool:
+    """Whether a document write that raised `e` may still serve its row: committed under
+    the Postgres authority (the worker publishes it), its row in with only the
+    retirement failed, or a commit whose answer was lost. Its chunks then stay."""
+    from server.core import pg
+    from server.knowledge.store.documents import OlderNotRetired
+
+    return isinstance(e, PublicationPending | OlderNotRetired) or pg.may_have_committed(e)
+
+
+async def _drop_own_chunks(
+    org: str,
+    namespace: str,
+    own: list[tuple[str, int]],
+    refusal: BaseException,
+    now: datetime,
+    embedding_model: str,
+) -> None:
+    """The chunks of a write whose document did not land (`own`: each (source, version)
+    this write inserted, embedded with `embedding_model`) serve no published version and
+    go before the error answers: retired, by rows that also cover chunks of an insert
+    still to land, and deleted when an erasure removed the document the write was built
+    from, so its text and author do not outlive the erasure."""
+    from server.knowledge.store import chunks as knowledge_repo
+
+    if isinstance(refusal, DocumentErased):  # first, and whatever the retirement does
+        try:
+            await knowledge_repo.delete_versions(org, namespace, own)
+        except Exception as e:  # noqa: BLE001 — the write's own error is the answer, not this
+            log.warning("knowledge write: its erased chunks stay: %s", error_summary(e))
+    try:
+        await knowledge_repo.retire_versions(
+            org, namespace, own, embedding_model=embedding_model, when=now
+        )
+    except Exception as e:  # noqa: BLE001 — the write's own error is the answer, not this one
+        log.warning(
+            "knowledge write: its unpublished chunks of %d sources stay: %s",
+            len(own),
+            error_summary(e),
+        )
+
+
+# Clock skew between hosts allowed for when an orphan's age is judged by its writer's
+# `time_ns` version stamp.
+_CLOCK_SKEW_MARGIN_S = 300  # not a setting: the orphan age setting widens the window
+
+
+async def _retire_orphans(
+    org: str, namespace: str, source_uris: list[str], now: datetime
+) -> dict[str, int]:
+    """Retire the chunks of sources with no document row whose version (a `time_ns`
+    stamp) is older than the orphan age, and answer how many each source had: every
+    writer inserts a new source's chunks before its row, so a younger version may be a
+    first write's still to commit, which keeps its chunks; one that fails retires its own.
+    The age is LOOM_KNOWLEDGE_ORPHAN_CHUNK_MIN_AGE_SECONDS, never less than an ingest
+    pass and a margin for clock skew, the longest a writer holds chunks before its row."""
+    from server.knowledge.store import chunks as knowledge_repo
+
+    if not source_uris:
+        return {}
+    age_s = max(
+        settings.knowledge_orphan_chunk_min_age_seconds,
+        settings.knowledge_ingest_max_pass_seconds + _CLOCK_SKEW_MARGIN_S,
+    )
+    cut = time.time_ns() - int(age_s * 1_000_000_000)
+    old = await knowledge_repo.count_active_by_uri(org, namespace, source_uris, before_version=cut)
+    if old:
+        await knowledge_repo.mark_docs_superseded(org, namespace, dict.fromkeys(old, cut), when=now)
+    return old
+
+
+async def _retire_leftovers(
+    org: str, namespace: str, source_uri: str, *, operation: str
+) -> int | None:
+    """Retire a deleted document's leftover chunks, under the source's claim, which
+    restore holds from its read to its write-back, read again under it (the caller's
+    reads are sequentially consistent): one restored or written again meanwhile is live
+    then, keeps them, and this answers None. They go up to its version (a write that
+    inserted newer chunks and has not committed keeps them), stamped at its delete as its
+    tombstone retires them: under the Postgres authority that retirement may still be
+    owed, and restore finds the delete by that stamp. Answers how many it retired. A
+    claim another write holds answers a retryable 503. A source with no document row is
+    `_retire_orphans`'s."""
+    from server.knowledge.app import ingest_run
+    from server.knowledge.store import chunks as knowledge_repo
+    from server.knowledge.store import documents as documents_repo
+
+    async with ingest_run.claim_source(org, namespace, source_uri) as held:
+        if not held:
+            raise BackendUnavailableError(
+                "another write of this source holds it", operation=operation
+            )
+        doc = await documents_repo.get_one(org, namespace, source_uri, include_superseded=True)
+        if doc is None or doc.superseded_at is None:
+            return None  # restored or written since
+        counts = await knowledge_repo.count_active_by_uri(
+            org, namespace, [source_uri], before_version=doc.version + 1
+        )
+        await knowledge_repo.mark_doc_superseded(
+            org,
+            namespace,
+            source_uri,
+            before_version=doc.version + 1,
+            when=doc.superseded_at,
+        )
+    return counts.get(source_uri, 0)
+
+
+def _live_id(prior: DocumentRow | None) -> str:
+    """The `doc_id` of the live document a write carries columns from (its original, its
+    author), which an erasure since refuses (`documents.insert_one`'s `built_from`)."""
+    return prior.doc_id if prior is not None and prior.superseded_at is None else ""
+
+
 def _author_for(
     prior: DocumentRow | None, content: str, author: dict[str, str], fresh_sha: str = ""
 ) -> dict[str, str]:
@@ -124,16 +243,13 @@ def _require_source_tags_kept(
         )
 
 
-def _nano_version() -> int:
-    return time.time_ns()
-
-
 def next_revision(prior: DocumentRow | None) -> int:
     """The revision a new version of the source publishes: one past the
     latest, deleted or not. Sequential writes never reuse one. Ingests of a
-    source publish under its claim, one at a time; a text write takes no claim,
-    so a text write racing another write of the same source can number the
-    same revision (the later version row wins)."""
+    source publish under its claim, one at a time; a text write takes no claim.
+    Under the Postgres authority the second of two racing writes of a source is
+    refused (`HeadMoved`); under ClickHouse's both can number the same revision
+    (the later version row wins)."""
     return (prior.revision if prior is not None else 0) + 1
 
 
@@ -198,15 +314,15 @@ def _embedding_texts(chunks: list[Chunk], contexts: list[str]) -> list[str]:
 
 def _chunk_text(content: str) -> list[Chunk]:
     """Chunk a document at the configured size and stride. Empty content is one empty chunk."""
-    from server.settings import settings
-
     size = settings.knowledge_chunk_size
     # The two are set one at a time: a step past the window would skip text unindexed.
     stride = min(settings.knowledge_chunk_stride, size)
     return chunk_document(content, size=size, stride=stride)
 
 
-async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpsertOutput:
+async def handle_knowledge_upsert(
+    input: KnowledgeUpsertInput, *, read_version: int | None = None
+) -> KnowledgeUpsertOutput:
     """Insert new chunks for `source_uri`; soft-supersede prior chunks.
 
     Used when an upstream source changes after initial ingestion. Searches
@@ -218,6 +334,11 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
     different `source_uri` with the same doc hash) and
     `duplicate_chunk_count` (newly-inserted chunks whose hash already
     lives under a different source_uri).
+
+    `read_version`: the version an in-process caller built `input` from (a reindex, a
+    rechunk); the write commits over it, so under the Postgres authority a source
+    written since refuses it (HeadMoved, 409) and the caller's copy never replaces a
+    newer write.
     """
     from server.knowledge.store import chunks as knowledge_repo
 
@@ -226,7 +347,6 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
     embedder = get_embedder()
     await codes_state.refuse_width("chunks", embedder.dim)
     doc_id = str(uuid.uuid4())
-    version = _nano_version()
     now = datetime.now(UTC).replace(tzinfo=None)
 
     doc_sha = _content_sha256(f"{input.title}\n{input.content}")
@@ -250,10 +370,10 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
     #       blob_path forward (a metadata-only edit must not strip the
     #       user's download capability).
     #   (c) no new bytes and no prior blob → blob-less row, no cleanup.
-    from server.knowledge.store import documents as _documents_repo
+    from server.knowledge.store import documents as documents_repo
 
     # Read even when nothing is live: a deleted document's revision still counts.
-    prior = await _documents_repo.get_one(
+    prior = await documents_repo.get_one(
         input.org,
         input.namespace,
         input.source_uri,
@@ -265,45 +385,23 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
     writer = author["actor"]
     author = _author_for(prior, input.content, author, _fresh_sha(input))
     _require_source_tags_kept(prior, writer, author["actor"], input.tags)
+    # Refused before anything is written, the original's bytes included.
+    documents_repo.check_storable(
+        [{**author, "org": input.org, "namespace": input.namespace, "source_uri": input.source_uri}]
+    )
     blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(
         input, _original_of(prior, author), uploader=uploader
     )
-    # Only once the original is stored: a store that fails or is busy must leave the
+
+    # The new version's chunks first, then its document row, and only then the older
+    # versions' chunks retired (`retire_older`): a store that fails or is busy leaves the
     # current version searchable, not its chunks retired with no new version.
-    if superseded_count > 0:
-        await knowledge_repo.mark_doc_superseded(
-            input.org,
-            input.namespace,
-            input.source_uri,
-            when=now,
-        )
-
-    from server.knowledge.store import documents as documents_repo
-
-    await documents_repo.insert_one(
-        documents_repo.build_document_row(
-            **author,
-            org=input.org,
-            namespace=input.namespace,
-            source_uri=input.source_uri,
-            doc_id=doc_id,
-            title=input.title,
-            description=input.description,
-            content=input.content,
-            tags=input.tags,
-            metadata=json.dumps(input.metadata, sort_keys=True),
-            version=version,
-            ingested_at=now,
-            blob_path=blob_path,
-            blob_size=blob_size,
-            blob_content_type=blob_content_type,
-            original_filename=original_filename,
-            revision=revision,
-        )
-    )
-
     chunks = _chunk_text(input.content)
     contexts = _contexts(chunks, input.title, input.description)
+    embeddings = await _embed_inline_batch(embedder, _embedding_texts(chunks, contexts))
+    # Stamped once embedded: a version is the clock when its chunks are written, which a
+    # delete's orphan age measures (`_retire_orphans`).
+    version = documents_repo.version_past(documents_repo.version_of(prior))
     rows = knowledge_repo.build_chunk_rows(
         org=input.org,
         namespace=input.namespace,
@@ -311,7 +409,7 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
         title=input.title,
         chunks=chunks,
         contexts=contexts,
-        embeddings=await _embed_inline_batch(embedder, _embedding_texts(chunks, contexts)),
+        embeddings=embeddings,
         tags=input.tags,
         metadata=json.dumps(input.metadata, sort_keys=True),
         doc_version=version,
@@ -322,7 +420,53 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
         now=now,
         author=author,
     )
-    await knowledge_repo.insert_chunks(rows)
+    doc_row = documents_repo.build_document_row(
+        **author,
+        org=input.org,
+        namespace=input.namespace,
+        source_uri=input.source_uri,
+        doc_id=doc_id,
+        title=input.title,
+        description=input.description,
+        content=input.content,
+        tags=input.tags,
+        metadata=json.dumps(input.metadata, sort_keys=True),
+        version=version,
+        ingested_at=now,
+        blob_path=blob_path,
+        blob_size=blob_size,
+        blob_content_type=blob_content_type,
+        original_filename=original_filename,
+        revision=revision,
+    )
+    try:
+        # Inside the cleanup: a chunk insert that timed out may land later.
+        await knowledge_repo.insert_chunks(rows)
+        # Written over the version read (the caller's, when it built the input): under
+        # the Postgres authority a write of the source that committed since refuses this
+        # one (`pg_documents.HeadMoved`).
+        await documents_repo.insert_one(
+            doc_row,
+            over=documents_repo.version_of(prior) if read_version is None else read_version,
+            # Always: a count taken before the prior read may miss chunks a write
+            # committed since; retiring none costs one statement.
+            retire_older=True,
+            built_from=_live_id(prior),
+        )
+    except BaseException as e:  # re-raised: the chunks of a write that did not land go first
+        if not _published_anyway(e):
+            # Shielded: a cancelled request's cleanup still runs.
+            await asyncio.shield(
+                _drop_own_chunks(
+                    input.org,
+                    input.namespace,
+                    [(input.source_uri, version)],
+                    e,
+                    now,
+                    embedder.model_name,
+                )
+            )
+        raise
 
     duplicate_chunk_count = await knowledge_repo.count_matching_chunk_hashes(
         input.org,
@@ -352,7 +496,6 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
     embedder = get_embedder()
     await codes_state.refuse_width("chunks", embedder.dim)
     doc_id = str(uuid.uuid4())
-    version = _nano_version()
     now = datetime.now(UTC).replace(tzinfo=None)
 
     with traced("chunk.text", content_len=len(input.content)):
@@ -360,9 +503,9 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
 
     # Carry a prior blob forward across a metadata-only edit (no fresh
     # bytes) so the user's download capability isn't silently dropped.
-    from server.knowledge.store import documents as _documents_repo
+    from server.knowledge.store import documents as documents_repo
 
-    prior = await _documents_repo.get_one(
+    prior = await documents_repo.get_one(
         input.org,
         input.namespace,
         input.source_uri,
@@ -374,13 +517,43 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
     writer = author["actor"]
     author = _author_for(prior, input.content, author, _fresh_sha(input))
     _require_source_tags_kept(prior, writer, author["actor"], input.tags)
+    # Refused before anything is written, the original's bytes included.
+    documents_repo.check_storable(
+        [{**author, "org": input.org, "namespace": input.namespace, "source_uri": input.source_uri}]
+    )
     blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(
         input, _original_of(prior, author), uploader=uploader
     )
 
+    from server.knowledge.store import chunks as knowledge_repo
+
+    with traced("embed.chunks", model=embedder.model_name, chunk_count=len(chunks)):
+        contexts = _contexts(chunks, input.title, input.description)
+        embeddings = await _embed_inline_batch(embedder, _embedding_texts(chunks, contexts))
+        # Stamped once embedded, as upsert's.
+        version = documents_repo.version_past(documents_repo.version_of(prior))
+        rows = knowledge_repo.build_chunk_rows(
+            org=input.org,
+            namespace=input.namespace,
+            source_uri=input.source_uri,
+            title=input.title,
+            chunks=chunks,
+            contexts=contexts,
+            embeddings=embeddings,
+            tags=input.tags,
+            metadata=json.dumps(input.metadata, sort_keys=True),
+            doc_version=version,
+            revision=revision,
+            doc_format="",
+            embedding_model=embedder.model_name,
+            embedding_dim=embedder.dim,
+            now=now,
+            author=author,
+        )
+
     # The builder sets every loom.documents column, content_sha256 included
     # so cross-URI dedup can match.
-    doc_row = _documents_repo.build_document_row(
+    doc_row = documents_repo.build_document_row(
         **author,
         org=input.org,
         namespace=input.namespace,
@@ -400,42 +573,30 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
         revision=revision,
     )
 
-    from server.knowledge.store import chunks as knowledge_repo
-
-    with traced("embed.chunks", model=embedder.model_name, chunk_count=len(chunks)):
-        contexts = _contexts(chunks, input.title, input.description)
-        rows = knowledge_repo.build_chunk_rows(
-            org=input.org,
-            namespace=input.namespace,
-            source_uri=input.source_uri,
-            title=input.title,
-            chunks=chunks,
-            contexts=contexts,
-            embeddings=await _embed_inline_batch(embedder, _embedding_texts(chunks, contexts)),
-            tags=input.tags,
-            metadata=json.dumps(input.metadata, sort_keys=True),
-            doc_version=version,
-            revision=revision,
-            doc_format="",
-            embedding_model=embedder.model_name,
-            embedding_dim=embedder.dim,
-            now=now,
-            author=author,
-        )
-
-    # documents + chunks INSERTs are independent — run them concurrently.
-    from server.knowledge.store import documents as documents_repo
-
-    async def _insert_doc() -> None:
-        with traced("ch.insert.documents", table="loom.documents"):
-            await documents_repo.insert_one(doc_row)
-
-    async def _insert_chunks() -> None:
+    # The chunks first, as upsert and bulk add: a commit that answers PUBLICATION_PENDING
+    # is published by the delivery worker, which publishes the document row alone.
+    try:
+        # Inside the cleanup: a chunk insert that timed out may land later.
         with traced("ch.insert.chunks", table="loom.chunks", chunk_count=len(rows)):
             await knowledge_repo.insert_chunks(rows)
-
-    with traced("ch.insert.dual_write", concurrent=2):
-        await asyncio.gather(_insert_doc(), _insert_chunks())
+        with traced("ch.insert.documents", table="loom.documents"):
+            await documents_repo.insert_one(
+                doc_row, over=documents_repo.version_of(prior), built_from=_live_id(prior)
+            )
+    except BaseException as e:  # re-raised: the chunks of a write that did not land go first
+        if not _published_anyway(e):
+            # Shielded: a cancelled request's cleanup still runs.
+            await asyncio.shield(
+                _drop_own_chunks(
+                    input.org,
+                    input.namespace,
+                    [(input.source_uri, version)],
+                    e,
+                    now,
+                    embedder.model_name,
+                )
+            )
+        raise
 
     return KnowledgeAddOutput(
         doc_id=doc_id,
@@ -455,12 +616,25 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
 async def handle_knowledge_delete(
     input: KnowledgeDeleteInput,
 ) -> KnowledgeDeleteOutput:
-    """Tombstone all live chunks for a source_uri and supersede the document.
-
-    Idempotent: if no live chunks exist, returns deleted=False with zero
-    counts (no ALTER UPDATE, no document write). Re-deleting an already-
-    deleted document is a cheap COUNT().
+    """Tombstone a live document, chunks or none; its publication retires the older chunk
+    versions. A source with no document row has its chunks older than the orphan age
+    retired (`_retire_orphans`), and answers how many. deleted=False for a source with
+    nothing, one with no document row whose chunks are all younger than the orphan age,
+    one already deleted with no active chunks, or none up to its tombstone (a newer write's
+    still to commit; only its leftover datasets go), or one restored or written again
+    before the leftovers' claim (`_retire_leftovers`); an already-deleted source with
+    leftover chunks has them retired up to its tombstone and answers deleted=True when any
+    were.
+    Every read is sequentially consistent, as a restore's are: a delete right after a
+    write sees it on any replica.
     """
+    from server.core.ch import own_write_reads
+
+    with own_write_reads():
+        return await _delete(input)
+
+
+async def _delete(input: KnowledgeDeleteInput) -> KnowledgeDeleteOutput:
     from server.knowledge.store import chunks as knowledge_repo
     from server.knowledge.store import documents as documents_repo
 
@@ -472,22 +646,26 @@ async def handle_knowledge_delete(
         input.source_uri,
     )
 
-    # Look up the doc row regardless of chunk count: a doc whose chunks
-    # were never embedded still needs superseded_at set, or it lingers
-    # in the Library list. Delete must end with the doc row superseded
-    # regardless of chunk state.
+    # The doc row regardless of chunk count: a doc whose chunks were never embedded still
+    # needs its tombstone, or it lingers in the Library list.
     doc = await documents_repo.get_one(
         input.org,
         input.namespace,
         input.source_uri,
         include_superseded=True,
     )
-    if doc is None and active == 0:
-        return KnowledgeDeleteOutput(deleted=False, chunks_tombstoned=0)
+    if doc is None:
+        if active == 0:
+            return KnowledgeDeleteOutput(deleted=False, chunks_tombstoned=0)
+        # No document, chunks left (a failed write's cleanup that failed too, a crash, a
+        # TTL that took the row): those old enough to belong to no write still to commit go.
+        old = await _retire_orphans(input.org, input.namespace, [input.source_uri], now)
+        n = old.get(input.source_uri, 0)
+        return KnowledgeDeleteOutput(deleted=n > 0, chunks_tombstoned=n)
 
     # Re-delete of an already-deleted doc: deleted=False lets callers
     # distinguish a real first delete from a re-ask on something gone.
-    if active == 0 and doc is not None and doc.superseded_at is not None:
+    if active == 0 and doc.superseded_at is not None:
         # A snapshot an earlier delete could not reach (one an approval wrote as it
         # ran, or one N-1 left) goes now; one catalog read when there is none.
         await datasets_repo.forget_published(
@@ -495,26 +673,40 @@ async def handle_knowledge_delete(
         )
         return KnowledgeDeleteOutput(deleted=False, chunks_tombstoned=0)
 
-    if active > 0:
-        await knowledge_repo.mark_doc_superseded(
-            input.org,
-            input.namespace,
-            input.source_uri,
-            when=now,
+    if doc.superseded_at is None:
+        # The tombstone retires the chunks once it is the source's head, so a delete
+        # that loses the head to another write leaves that write's chunks alone.
+        try:
+            await documents_repo.insert_one(
+                documents_repo.build_document_row(
+                    doc, version=documents_repo.version_past(doc.version), superseded_at=now
+                ),
+                over=doc.version,
+                retire_older=True,
+            )
+        except PublicationPending:  # committed: its datasets go now, as on success
+            await datasets_repo.forget_published(
+                input.org, input.namespace, {input.source_uri: doc.version}
+            )
+            raise
+    elif active > 0:
+        # Counted by what went: a newer write's chunks, still to commit, stay.
+        left = await _retire_leftovers(
+            input.org, input.namespace, input.source_uri, operation="knowledge.delete"
         )
+        if left is None:  # restored meanwhile: nothing of it is deleted
+            return KnowledgeDeleteOutput(deleted=False, chunks_tombstoned=0)
+        active = left
+    # Unserved once the document is gone; deleted without waiting.
+    await datasets_repo.forget_published(
+        input.org, input.namespace, {input.source_uri: doc.version}
+    )
 
-    if doc is not None and doc.superseded_at is None:
-        await documents_repo.insert_one(
-            documents_repo.build_document_row(doc, version=_nano_version(), superseded_at=now)
-        )
-    # Unserved once the document is gone; deleted without waiting. A first ingest
-    # still running has no document row, and its datasets are its own.
-    if doc is not None:
-        await datasets_repo.forget_published(
-            input.org, input.namespace, {input.source_uri: doc.version}
-        )
-
-    return KnowledgeDeleteOutput(deleted=True, chunks_tombstoned=active)
+    # A re-ask on a deleted source whose only chunks are a newer write's still to commit
+    # deleted nothing, as `active == 0` above.
+    return KnowledgeDeleteOutput(
+        deleted=doc.superseded_at is None or active > 0, chunks_tombstoned=active
+    )
 
 
 # ============================================================
@@ -547,11 +739,17 @@ async def _edit_ingested(
                 raise PreconditionFailedError(
                     "the document changed while it was edited; read it again"
                 )
-            version = _nano_version()
+            version = documents_repo.version_past(live.version)
+            row = documents_repo.build_document_row(live, version=version, **edited)
+            documents_repo.check_storable([row])  # refused before the datasets are carried
             await datasets.carry(org, ns, uri, live.version, version)
-            await documents_repo.insert_one(
-                documents_repo.build_document_row(live, version=version, **edited)
-            )
+            try:
+                await documents_repo.insert_one(row, over=live.version)
+            except BaseException as e:  # re-raised: an edit that did not land forgets them
+                if not _published_anyway(e):
+                    # Shielded: a cancelled request's cleanup still runs.
+                    await asyncio.shield(datasets_repo.forget(org, ns, [uri], only=version))
+                raise
 
 
 async def handle_knowledge_update_metadata(
@@ -601,26 +799,27 @@ async def handle_knowledge_update_metadata(
 
     _require_source_tags_kept(existing, writer_actor(), existing.actor, next_tags)
 
-    # No-op if nothing changed, so idempotent re-applies don't pile up versions.
-    if (
-        next_title == existing.title
-        and next_description == existing.description
-        and list(next_tags) == list(existing.tags)
-    ):
-        return KnowledgeUpdateMetadataOutput(
-            updated=False,
-            title=existing.title,
-            description=existing.description,
-            tags=existing.tags,
-        )
-
     edited = {"title": next_title, "description": next_description, "tags": next_tags}
-    if existing.ingestion_id:
+    # No-op if nothing changed, so idempotent re-applies don't pile up versions; a
+    # reindex still runs, so a retry after one that did not finish completes it.
+    changed = (
+        next_title != existing.title
+        or next_description != existing.description
+        or list(next_tags) != list(existing.tags)
+    )
+    pending: PublicationPending | None = None
+    read_version = existing.version  # the version the reindex rewrites over
+    if changed and existing.ingestion_id:
         await _edit_ingested(input, existing, edited)
-    else:
-        await documents_repo.insert_one(
-            documents_repo.build_document_row(existing, version=_nano_version(), **edited)
-        )
+    elif changed:
+        read_version = documents_repo.version_past(existing.version)
+        try:
+            await documents_repo.insert_one(
+                documents_repo.build_document_row(existing, version=read_version, **edited),
+                over=existing.version,
+            )
+        except PublicationPending as e:  # committed: the reindex below still runs
+            pending = e
 
     chunks_reindexed = 0
     if input.reindex:
@@ -637,11 +836,23 @@ async def handle_knowledge_update_metadata(
             metadata=(json.loads(existing.metadata) if existing.metadata else {}),
         )
         # The same text: `knowledge.upsert` keeps its author (`_author_for`).
-        upsert_out = await handle_knowledge_upsert(upsert_in)
+        try:
+            upsert_out = await handle_knowledge_upsert(upsert_in, read_version=read_version)
+        except HeadMoved:
+            if not changed:  # this call wrote nothing
+                raise
+            # The edit committed (published or still owed): only the reindex was refused.
+            raise PreconditionFailedError(
+                "the metadata was committed; its reindex was refused because another write"
+                " took the source since: call knowledge.update_metadata with reindex=true"
+                " again"
+            ) from None
         chunks_reindexed = upsert_out.chunks_superseded
+    if pending is not None:
+        raise pending
 
     return KnowledgeUpdateMetadataOutput(
-        updated=True,
+        updated=changed,
         title=next_title,
         description=next_description,
         tags=list(next_tags),
@@ -661,6 +872,15 @@ async def handle_knowledge_bulk_add(
     Chunking + embedding still per-doc per the configured policy."""
     author = authorship(input)
 
+    # One row per source per commit (`pg_documents.commit` refuses a repeat): refused
+    # here, before anything is written.
+    uris = [e.source_uri for e in input.entries]
+    repeated = sorted(u for u, n in Counter(uris).items() if n > 1)
+    if repeated:
+        named = ", ".join(repeated[:5])
+        more = f" and {len(repeated) - 5} more" if len(repeated) > 5 else ""
+        raise ValidationError(f"entries name a source_uri more than once: {named}{more}")
+
     embedder = get_embedder()
     await codes_state.refuse_width("chunks", embedder.dim)
     now = datetime.now(UTC).replace(tzinfo=None)
@@ -679,7 +899,7 @@ async def handle_knowledge_bulk_add(
         for d in await documents_repo.get_many_by_uris(
             input.org,
             input.namespace,
-            list({e.source_uri for e in input.entries}),
+            uris,
             include_superseded=True,
         )
     }
@@ -690,12 +910,33 @@ async def handle_knowledge_bulk_add(
         prior_doc = priors.get(entry.source_uri)
         authors.append(_author_for(prior_doc, entry.content, author))
         _require_source_tags_kept(prior_doc, author["actor"], authors[-1]["actor"], entry.tags)
+        documents_repo.check_storable(
+            [
+                {
+                    **authors[-1],
+                    "org": input.org,
+                    "namespace": input.namespace,
+                    "source_uri": entry.source_uri,
+                }
+            ]
+        )
 
-    for entry, entry_author in zip(input.entries, authors, strict=True):
-        doc_id = str(uuid.uuid4())
-        version = _nano_version()
-        revision = next_revision(priors.get(entry.source_uri))
+    # Every entry embedded before any version is stamped: a version is the clock when its
+    # chunks are written, which a delete's orphan age measures (`_retire_orphans`).
+    embedded = []
+    for entry in input.entries:
         chunks = _chunk_text(entry.content)
+        contexts = _contexts(chunks, entry.title, entry.description)
+        vectors = await _embed_inline_batch(embedder, _embedding_texts(chunks, contexts))
+        embedded.append((chunks, contexts, vectors))
+    for entry, entry_author, (chunks, contexts, vectors) in zip(
+        input.entries, authors, embedded, strict=True
+    ):
+        doc_id = str(uuid.uuid4())
+        version = documents_repo.version_past(
+            documents_repo.version_of(priors.get(entry.source_uri))
+        )
+        revision = next_revision(priors.get(entry.source_uri))
         prior = _original_of(priors.get(entry.source_uri), entry_author)
         prior = prior if documents_repo.serves_original(prior) else None
 
@@ -721,8 +962,6 @@ async def handle_knowledge_bulk_add(
             )
         )
 
-        # Batched per-doc; cross-doc batching is not done here.
-        contexts = _contexts(chunks, entry.title, entry.description)
         chunk_rows.extend(
             knowledge_repo.build_chunk_rows(
                 org=input.org,
@@ -731,7 +970,7 @@ async def handle_knowledge_bulk_add(
                 title=entry.title,
                 chunks=chunks,
                 contexts=contexts,
-                embeddings=await _embed_inline_batch(embedder, _embedding_texts(chunks, contexts)),
+                embeddings=vectors,
                 tags=entry.tags,
                 metadata=json.dumps(entry.metadata, sort_keys=True),
                 doc_version=version,
@@ -752,8 +991,23 @@ async def handle_knowledge_bulk_add(
             )
         )
 
-    await documents_repo.insert_many(doc_rows)
-    await knowledge_repo.insert_chunks(chunk_rows)
+    # The chunks first: a commit that answers PUBLICATION_PENDING is published by the
+    # delivery worker, which publishes the document rows alone.
+    try:
+        # Inside the cleanup: a chunk insert that timed out may land later.
+        await knowledge_repo.insert_chunks(chunk_rows)
+        await documents_repo.insert_many(
+            doc_rows,
+            over={uri: d.version for uri, d in priors.items()},
+            built_from=[i for i in map(_live_id, priors.values()) if i],
+        )
+    except BaseException as e:  # re-raised: the chunks of a write that did not land go first
+        if not _published_anyway(e):
+            own = [(str(r["source_uri"]), int(r["version"])) for r in doc_rows]
+            await asyncio.shield(
+                _drop_own_chunks(input.org, input.namespace, own, e, now, embedder.model_name)
+            )
+        raise
 
     return KnowledgeBulkAddOutput(
         written=results,
@@ -770,49 +1024,76 @@ async def handle_knowledge_bulk_add(
 async def handle_knowledge_bulk_delete(
     input: KnowledgeBulkDeleteInput,
 ) -> KnowledgeBulkDeleteOutput:
-    """Tombstone all chunks for the listed source_uris in one ALTER UPDATE,
-    with per-uri chunk counts. Document rows are superseded via a single
-    batched INSERT, and the datasets of the versions they retire are deleted."""
+    """Delete the listed sources: one tombstone row per live document in a single
+    commit, whose publication retires each source's chunks up to its tombstone, as
+    `knowledge.delete` does, chunks or none. First it retires the leftovers of an
+    already-deleted source up to that tombstone, under its claim (`_retire_leftovers`; one
+    restored meanwhile counts 0), and a source with no document row's old enough chunks
+    (`_retire_orphans`), as `knowledge.delete` does. Answers per-uri chunk counts, and deletes
+    the datasets of the versions the tombstones retire. Every read is sequentially
+    consistent, as `knowledge.delete`'s."""
+    from server.core.ch import own_write_reads
+
+    with own_write_reads():
+        return await _bulk_delete(input)
+
+
+async def _bulk_delete(input: KnowledgeBulkDeleteInput) -> KnowledgeBulkDeleteOutput:
     from server.knowledge.store import chunks as knowledge_repo
     from server.knowledge.store import documents as documents_repo
 
     now = datetime.now(UTC).replace(tzinfo=None)
+    uris = list(dict.fromkeys(input.source_uris))  # a source named twice is deleted once
     # Each source's latest row before this delete, superseded or not: the datasets
     # of the versions up to it go, so a source deleted before (by this build or an
     # older one, or as an approval landed) loses what is left. An ingest running
     # meanwhile writes a later version, which this leaves to it.
     latest = await documents_repo.get_many_by_uris(
-        input.org, input.namespace, input.source_uris, include_superseded=True
+        input.org, input.namespace, uris, include_superseded=True
     )
     retired = {d.source_uri: d.version for d in latest}
 
     counts = await knowledge_repo.count_active_by_uri(
         input.org,
         input.namespace,
-        input.source_uris,
+        uris,
     )
-    total = sum(counts.values())
-
-    if total > 0:
-        await knowledge_repo.mark_docs_superseded(
-            input.org,
-            input.namespace,
-            input.source_uris,
-            when=now,
+    existing_docs = [d for d in latest if d.superseded_at is None]
+    live_uris = {d.source_uri for d in existing_docs}
+    orphans = [u for u in uris if counts.get(u, 0) and u not in retired]
+    old = await _retire_orphans(input.org, input.namespace, orphans, now)  # as the delete's
+    for u in orphans:  # counted by what went: a first write's young chunks stay
+        counts[u] = old.get(u, 0)
+    for u in uris:  # each deleted source's leftovers, as `knowledge.delete`'s
+        if u in live_uris or u not in retired or not counts.get(u, 0):
+            continue
+        left = await _retire_leftovers(
+            input.org, input.namespace, u, operation="knowledge.bulk_delete"
         )
-
-        # Supersede the live document rows: re-INSERT with superseded_at set +
-        # bumped versions.
-        existing_docs = [d for d in latest if d.superseded_at is None]
+        if left is None:  # restored meanwhile: nothing of it is deleted
+            counts.pop(u)
+            retired.pop(u)
+        else:  # counted by what went, as a delete's
+            counts[u] = left
+    total = sum(counts.values())
+    if existing_docs:
+        # Supersede the live document rows: re-INSERT with superseded_at set and bumped
+        # versions; each tombstone retires its source's chunks (`documents.publish`).
         doc_rows = [
             documents_repo.build_document_row(
-                d,
-                version=_nano_version() + i,  # unique per row
-                superseded_at=now,
+                d, version=documents_repo.version_past(d.version), superseded_at=now
             )
-            for i, d in enumerate(existing_docs)
+            for d in existing_docs
         ]
-        await documents_repo.insert_many(doc_rows)
+        try:
+            await documents_repo.insert_many(
+                doc_rows,
+                over={d.source_uri: d.version for d in existing_docs},
+                retire_older=live_uris,
+            )
+        except PublicationPending:  # committed: their datasets go now, as on success
+            await datasets_repo.forget_published(input.org, input.namespace, retired)
+            raise
     await datasets_repo.forget_published(input.org, input.namespace, retired)
 
     deleted_results = [

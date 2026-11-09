@@ -97,6 +97,7 @@ EXEMPT: dict[str, str] = {
 PG_EXEMPT: dict[str, str] = {
     "loom.memory_deliveries": "which targets a revision still owes; beside its revision",
     "loom.erased_memories": "evidence that rows were erased; holds no content",
+    "loom.erased_documents": "evidence that documents were erased; holds no content",
     "loom.audit_outbox": _REQUEST,
     "loom.scope_generations": "a counter per scope; no content",
 }

@@ -1,8 +1,9 @@
 # Postgres memory authority
 
-This guide sets up a Loom deployment whose live memory is held in Postgres, on
-ClickHouse Managed Postgres or on a self-hosted Postgres, and covers what to check
-before it serves. How it works inside is in [storage authority](../architecture/storage-authority.md).
+This guide sets up a Loom deployment whose live memory and knowledge document heads are
+held in Postgres, on ClickHouse Managed Postgres or on a self-hosted Postgres, and covers
+what to check before it serves. How it works inside is in
+[storage authority](../architecture/storage-authority.md).
 
 The authority is chosen once, at a deployment's first boot. A ClickHouse that already
 holds memory keeps the ClickHouse authority; start a Postgres deployment on an empty
@@ -102,21 +103,26 @@ waits for them, up to `LOOM_PG_STATEMENT_TIMEOUT_MS` plus one second, and then a
 the primary alone, and the delivery worker publishes it.
 
 `GET /v1/health` reports `storage_authority` and, under Postgres, `pg_ok`; with
-`?include=postgres` also a `postgres` block of `standby`, `parked_deliveries` and
-`parked_audits`, statements the default answer leaves out of a liveness probe. `pg_ok` is
-false when a query on the request pool got no answer within two seconds, every pooled
-connection busy included. `/v1/health/ready` does not wait for Postgres: a replica that
-cannot reach it still serves the planes that do not use it, and answers memory ops with
-503 `POSTGRES_UNAVAILABLE`. `parked_deliveries` counts revisions committed in Postgres
-that ClickHouse refused `LOOM_PG_DELIVERY_MAX_ATTEMPTS` times. One whose `targets` holds
-none of 1, 2 and 4 has its memory row in ClickHouse (its search document too when it gets
-one), its audit row there or in `loom.audit_outbox`, and owes only retirements: 8, its
-deleted decision's record, which `decision.chain` still serves until it is retired; 16,
-the vectors of the version it replaced, which search still finds until they are retired
-(for a `high` row, its fence hides the served model's vectors meanwhile). A parked
-revision is not retried; its `last_error` in `loom.memory_deliveries` holds the error's
-type and its ClickHouse code, HTTP status or Postgres SQLSTATE, never its text, which may
-quote the memory. This statement retries one:
+`?include=postgres` also a `postgres` block of `standby`, `parked_deliveries`,
+`parked_audits` and `parked_knowledge_deliveries`, statements the default answer leaves
+out of a liveness probe. `pg_ok` is false when a query on the request pool got no answer
+within two seconds, every pooled connection busy included. `/v1/health/ready` does not
+wait for Postgres: a replica that cannot reach it still serves the planes that do not
+use it, and answers memory ops and every knowledge op that reads a document's current
+row from its head or commits one with 503 `POSTGRES_UNAVAILABLE`; the knowledge ops that
+read or write ClickHouse alone, such as `knowledge.list`, search, `knowledge.query` and
+`knowledge.dedup_resolve`, keep serving. `knowledge.ingest` accepts its job, which waits
+and runs once Postgres answers; an outage that begins during a run counts that attempt.
+`parked_deliveries` counts revisions committed in Postgres that ClickHouse refused
+`LOOM_PG_DELIVERY_MAX_ATTEMPTS` times. One whose `targets` holds none of 1, 2 and 4 has
+its memory row in ClickHouse (its search document too when it gets one), its audit row
+there or in `loom.audit_outbox`, and owes only retirements: 8, its deleted decision's
+record, which `decision.chain` still serves until it is retired; 16, the vectors of the
+version it replaced, which search still finds until they are retired (for a `high` row,
+its fence hides the served model's vectors meanwhile). A parked revision is not retried;
+its `last_error` in `loom.memory_deliveries` holds the error's type and its ClickHouse
+code, HTTP status or Postgres SQLSTATE, never its text, which may quote the memory. This
+statement retries one:
 
 ```sql
 UPDATE loom.memory_deliveries SET attempts = 0, held = false, lease_until = now() WHERE …
@@ -130,6 +136,29 @@ document, gets a stub the embedding worker fills.
 A publish that runs past its ClickHouse statement deadline counts as the rows' own
 failure, since ClickHouse still answers: after a slowdown that parked healthy
 revisions, the statement above with `WHERE attempts >= …` retries them all.
+
+The knowledge delivery worker publishes one delivery at a time, each retirement its own:
+up to two inserts per delivery and `LOOM_PG_DELIVERY_BATCH_ROWS` deliveries a pass,
+within one `LOOM_PG_DELIVERY_LEASE_SECONDS` lease, which on a backlog usually ends the
+pass first. A pass the lease's end cuts short releases the rest uncounted, and the next
+pass takes them.
+
+`parked_knowledge_deliveries` counts knowledge documents committed in Postgres whose
+`loom.documents` row ClickHouse refused `LOOM_PG_DELIVERY_MAX_ATTEMPTS` times: the head
+serves `knowledge.get`, while search serves the new chunks beside the older version's,
+which stay until the delivery's retirement runs. A parked delete's retirement runs
+before its row: `knowledge.get` answers it deleted, search stops serving its chunks only
+if that retirement ran, and `knowledge.restore` answers 503 while a publication of the
+source may still land: until the delivery lands, and for the insert bound after. The
+originals sweep keeps the original a parked live document names, and so does the erasure
+of a user other than its writer. Its `last_error` in `loom.knowledge_deliveries` holds
+the error's type and code. A delivery of a scope an older build erased during a rolling
+upgrade is not retried: run that erasure again first ([rolling
+upgrades](../architecture/rolling-upgrades.md)). This statement retries one:
+
+```sql
+UPDATE loom.knowledge_deliveries SET attempts = 0, lease_until = now() WHERE …
+```
 
 `parked_audits` counts the rows of `loom.audit_outbox` that ClickHouse refused as many
 times, left there with their `last_error`: an erasure's audit rows, and those a claim

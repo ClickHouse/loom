@@ -105,6 +105,28 @@ def is_connection_failure(e: BaseException) -> bool:
     return isinstance(e, BackendUnavailableError | OperationalError)
 
 
+async def clickhouse_answers() -> bool:
+    """ClickHouse answers a trivial query now."""
+    from server.core.ch import get_client
+
+    try:
+        return await get_client().query_one("SELECT 1 AS ok") is not None
+    except Exception:  # noqa: BLE001 — a probe that fails is its answer
+        return False
+
+
+async def refused_nothing(error: BaseException, *, probe: bool) -> bool:
+    """ClickHouse did not refuse the rows: it answered with a state that clears by
+    itself, or it does not answer at all. A connection that failed while ClickHouse
+    answers a probe is the request's own: a refusal. Without the probe, no connection
+    failure is."""
+    if is_passing_state(error):
+        return True
+    if not is_connection_failure(error):
+        return False
+    return not probe or not await clickhouse_answers()
+
+
 def is_unknown_quantized_setting(e: BaseException) -> bool:
     if not isinstance(e, DatabaseError):
         return False

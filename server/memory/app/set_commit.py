@@ -16,7 +16,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from server.core import pg
+from server.core import pg, pg_lease
 from server.core.datetimes import to_naive_utc
 from server.core.hashing import served_content_sha256
 from server.embedding import get_embedder
@@ -272,7 +272,7 @@ class _SetWrite:
     peer_rows: list[dict[str, Any]] | None = None
     # A commit whose publication is left to the delivery worker: raised once the write's
     # follow-ups (conflict marks, supersession, audit) ran.
-    pending: pg_memory.PublicationPending | None = None
+    pending: pg_lease.PublicationPending | None = None
     max_distance: float = 0.0
 
 
@@ -439,7 +439,7 @@ async def _land_plain_row(w: _SetWrite, ch: Any, *, high: bool) -> int:
                 try:
                     with traced("ch.insert.memory", table="loom.memory"):
                         await pg_publish.publish(committed, ch=ch)
-                except pg_memory.PublicationPending as e:
+                except pg_lease.PublicationPending as e:
                     w.pending = e  # committed: what follows still runs
                 return await _lift_after_insert(w, ch)
             finally:
@@ -892,7 +892,7 @@ async def _insert_row_and_vector(w: _SetWrite, ch: Any, embedding_row: dict[str,
         ):
             import server.memory.store as memory_repo
 
-            with pg_memory.leased(committed.deadline if committed is not None else None):
+            with pg_lease.leased(committed.deadline if committed is not None else None):
                 await memory_repo.insert_embedding_rows([embedding_row], ch=ch)
 
     with traced("ch.insert.dual_write", concurrent=2):
@@ -903,19 +903,19 @@ async def _insert_row_and_vector(w: _SetWrite, ch: Any, embedding_row: dict[str,
         if committed is None:
             raise memory_done
         await _announce_set(w)  # durable in Postgres: the worker publishes the row
-        if isinstance(memory_done, pg_memory.PublicationPending):
+        if isinstance(memory_done, pg_lease.PublicationPending):
             raise memory_done
-        raise pg_memory.PublicationPending.after(memory_done) from memory_done
+        raise pg_lease.PublicationPending.after(memory_done) from memory_done
     try:
         if isinstance(embedding_done, BaseException):
-            if committed is None or isinstance(embedding_done, pg_memory.PublicationPending):
+            if committed is None or isinstance(embedding_done, pg_lease.PublicationPending):
                 raise embedding_done
-            raise pg_memory.PublicationPending.after(embedding_done) from embedding_done
+            raise pg_lease.PublicationPending.after(embedding_done) from embedding_done
         if committed is not None:
             try:
                 await pg_memory.complete(committed.seqs, pg_memory.SEARCH_DOC)
             except Exception as e:
-                raise pg_memory.PublicationPending.after(e) from e
+                raise pg_lease.PublicationPending.after(e) from e
         await _lift_after_insert(w, ch, [embedding_row])
     finally:
         await _announce_set(w)  # the row is in, whatever failed after it
@@ -963,7 +963,7 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
 
     try:
         await _insert_row_and_vector(w, ch, embedding_row)
-    except pg_memory.PublicationPending as e:
+    except pg_lease.PublicationPending as e:
         # Committed: the write's own follow-ups still run, and the caller is told
         # afterwards (`settled`).
         w.pending = e

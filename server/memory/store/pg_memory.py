@@ -14,17 +14,16 @@ by seq, then the idempotency key's row.
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import math
 import time
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from server.core import pg, rmt_carry
+from server.core import pg
 from server.core.datetimes import to_naive_utc_second
 from server.core.error_summary import error_summary
 from server.core.errors import (
@@ -33,6 +32,7 @@ from server.core.errors import (
     ValidationError,
 )
 from server.core.numbers import FLOAT32_MAX, float32
+from server.core.pg_lease import lease_deadline
 from server.memory.domain import lock as _lock
 from server.memory.domain.memory_types import is_embedded
 from server.memory.domain.redaction_lineage import REDACTED_VALUE, Version, later_copies
@@ -271,53 +271,6 @@ class Committed:
     # time.monotonic() past which this holder's lease may have run out: it sends
     # nothing more (an erasure waits out only the leases it removed).
     deadline: float = 0.0
-
-
-class PublicationPending(LoomServerError):
-    """503: the write is committed and the delivery worker publishes its rows; it is
-    not to be made again. Which ops answer it: storage-authority.md, "The write path"."""
-
-    code = "PUBLICATION_PENDING"
-    status_code = 503
-
-    def __init__(self) -> None:
-        super().__init__(
-            "the write is committed; do not repeat it. Its ClickHouse rows follow shortly",
-            committed=True,
-            retry_after_s=1,
-        )
-
-    @classmethod
-    def after(cls, cause: BaseException) -> PublicationPending:
-        """The answer to a committed write whose publication failed, the cause logged."""
-        log.warning(
-            "a committed write's publication is left to the delivery worker: %s",
-            error_summary(cause),
-        )
-        return cls()
-
-
-def lease_deadline(lease_seconds: float, started: float) -> float:
-    return started + lease_seconds - settings.pg_lease_margin_seconds
-
-
-def check_lease(deadline: float) -> None:
-    if time.monotonic() >= deadline:
-        raise PublicationPending()
-
-
-@contextlib.contextmanager
-def leased(deadline: float | None) -> Iterator[None]:
-    """ClickHouse writes made under the lease ending at `deadline` (None: under none):
-    refused once the lease is about to end, and every insert they send starts within
-    the transit allowance of that end however long it waits (`rmt_carry.under_lease`),
-    which an erasure waits out."""
-    if deadline is None:
-        yield
-        return
-    check_lease(deadline)
-    with rmt_carry.under_lease(deadline):
-        yield
 
 
 # The scope names of the policy generations, which no namespace may take.

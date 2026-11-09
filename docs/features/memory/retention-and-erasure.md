@@ -77,6 +77,14 @@ All off by default (0 = keep forever).
 | A whole namespace            | `retention_days`, `warm_days` on `namespace.register`                                                      | A table TTL (and warm-tier move) for that namespace's rows.                                                                                              |
 | The deployment               | `LOOM_RETENTION_<TABLE>_DAYS`, `LOOM_TIERING_<TABLE>_WARM_DAYS`                                            | A table TTL (and warm-tier move) on `audit_log`, `agent_events`, `memory`, `memory_embeddings`, `conversations`, `chunks`, `documents`.                  |
 
+Under the Postgres authority neither of the last two rows puts a retention TTL on
+`memory`, `memory_embeddings` or `documents`: it would delete ClickHouse's copy of rows
+Postgres still serves, so the boot refuses `LOOM_RETENTION_MEMORY_DAYS`,
+`LOOM_RETENTION_MEMORY_EMBEDDINGS_DAYS` and `LOOM_RETENTION_DOCUMENTS_DAYS`
+([storage authority](../../architecture/storage-authority.md)). A namespace's
+`retention_days` leaves `chunks` too, so a document that stays keeps the chunks search
+finds it by; `LOOM_RETENTION_CHUNKS_DAYS` still applies.
+
 The `retention_reconcile` worker applies the last two rows as one idempotent
 `ALTER TABLE … MODIFY TTL` per table, per `(org, namespace)` when overrides exist, and
 removes a table's TTL once no namespace and no deployment window is left on it. On

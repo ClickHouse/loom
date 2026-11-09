@@ -622,3 +622,59 @@ def test_no_ttl_deletes_memory_or_its_vectors_under_the_postgres_authority(
         "loom.memory_embeddings" not in by_table
         or "DELETE" not in by_table["loom.memory_embeddings"]
     )
+
+
+def test_postgres_authority_puts_no_ttl_on_the_tables_it_holds(monkeypatch) -> None:
+    """Under the Postgres authority a TTL on memory or document rows would delete
+    ClickHouse's copy alone, leaving the text in Postgres: neither the global days
+    nor a namespace's retention_days reaches those tables. A namespace's retention_days
+    leaves the documents' chunks too; the deployment's chunks setting still applies."""
+    from server.core import pg
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    alters = retention_overrides.compute_alters(
+        _FakeSettings(
+            retention_memory_days=30, retention_documents_days=30, retention_chunks_days=30
+        ),
+        namespace_overrides=[{"org": "o", "namespace": "n", "retention_days": 7, "warm_days": 0}],
+    )
+    planned = {target.table: sql for target, sql, _ in alters}
+    assert not set(planned) & {"loom.memory", "loom.memory_embeddings", "loom.documents"}
+    assert "multiIf" not in planned["loom.chunks"]
+    assert "INTERVAL 7 DAY" not in planned["loom.chunks"]
+    assert "INTERVAL 30 DAY" in planned["loom.chunks"]
+
+
+def test_a_namespace_retention_leaves_chunks_under_postgres(monkeypatch) -> None:
+    """With only a namespace's retention_days set, chunks get no TTL under the Postgres
+    authority (their documents stay), and do under ClickHouse's."""
+    from server.core import pg
+
+    overrides = [{"org": "o", "namespace": "n", "retention_days": 7, "warm_days": 0}]
+    monkeypatch.setattr(pg, "enabled", lambda: False)
+    under_ch = retention_overrides.compute_alters(_FakeSettings(), namespace_overrides=overrides)
+    assert {"loom.chunks", "loom.documents"} <= {t.table for t, _, _ in under_ch}
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    under_pg = retention_overrides.compute_alters(_FakeSettings(), namespace_overrides=overrides)
+    assert not {"loom.chunks", "loom.documents"} & {t.table for t, _, _ in under_pg}
+
+
+@pytest.mark.asyncio
+async def test_a_ttl_left_from_the_clickhouse_authority_goes_under_postgres(monkeypatch) -> None:
+    """A documents TTL an older build or the ClickHouse authority left, here from a
+    namespace's retention_days, is removed under Postgres: left, it would delete the
+    rows the heads still serve."""
+    from server.core import pg
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    left = "ingested_at + toIntervalDay(30) DELETE"
+    ch = _DiffCH({"documents": left})
+    n = await retention_overrides.apply(
+        _FakeSettings(),
+        ch=ch,
+        namespace_overrides=[{"org": "o", "namespace": "n", "retention_days": 30}],
+        leader=True,
+    )
+    assert n >= 1
+    documents = [c for c in ch.execute_calls if "loom.documents " in c]
+    assert documents == ["ALTER TABLE loom.documents REMOVE TTL"], ch.execute_calls

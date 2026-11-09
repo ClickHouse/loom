@@ -973,8 +973,10 @@ async def test_a_relabel_whose_publication_is_pending_owes_its_facts_until_publi
         version=scanned["version"],
     )
 
+    from server.core import pg_lease
+
     async def refused(*_a: Any, **_k: Any) -> None:
-        raise pg_memory.PublicationPending()
+        raise pg_lease.PublicationPending()
 
     publish = pg_publish.publish
     monkeypatch.setattr(pg_publish, "publish", refused)

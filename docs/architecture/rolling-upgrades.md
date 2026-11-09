@@ -444,6 +444,39 @@ schema. These rules keep that safe. The operator procedure is in
     rollback, those requested since the rollback once N serves again
     ([upgrade procedure](../operations/upgrades.md#upgrade-procedure), step 10, which
     names what the new saga also erases); no gate holds the rollout.
+38. **Knowledge document heads** (`loom.knowledge_heads`, Postgres migration
+    `002_knowledge_documents.sql`): under the Postgres authority N commits each document
+    write as its source's head; N-1 writes `loom.documents` alone. N reads both and
+    serves the newer version, and a commit over a head older than the row its writer
+    read replaces it, so N serves N-1's writes and a rollback loses none. Two writes of
+    one source are refused one against the other only when both run N. N-1's erasure has
+    no `pg_knowledge.delete` step and leaves the scope's heads. Its tombstone stamps the
+    rows at their version, and at a tie N serves ClickHouse's copy, so the document
+    reads as deleted; after a purge the first N read finds no ClickHouse row at the
+    head's version and nothing owed, and deletes the head instead of serving it. A
+    delivery still owed or parked when N-1 erases its scope stays, and N's delivery
+    worker publishes it again; an erased document's text stays in its head. Once N-1
+    stops serving, run again with N every erasure that completed while an N-1 replica
+    served since N first served, a rollback's included, before an operator retries a
+    parked delivery ([upgrade procedure](../operations/upgrades.md#upgrade-procedure),
+    step 11). N refuses to boot with `LOOM_RETENTION_DOCUMENTS_DAYS` set under this
+    authority (unset it first, step 2) and puts no namespace retention TTL on
+    `loom.documents` or `loom.chunks`; while an N-1 replica leads the
+    `retention_reconcile` pass it applies a namespace's `retention_days` to both again
+    and N's next pass removes it, so a document whose rows age out in that window is
+    gone from ClickHouse, and the first N read of it drops its head as a purged one.
+    N-1's originals sweep and user erasure read `loom.documents` alone, so while N-1
+    runs them they may delete an original only an unpublished N commit names (any owed
+    or parked one for a user erasure; for the sweep, one whose original is older than
+    `LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS`): that document's download then answers 410
+    once its row lands, until the file is uploaded again. N-1's restore does not wait for
+    a delivery still owed, or for one the worker settled whose replaced request may still
+    be sending: one that restores a source whose N tombstone landed in ClickHouse before
+    its delivery finished (an insert that timed out and landed, a failed completion) has
+    its chunks retired again when N's worker publishes that delivery or the replaced
+    request's retirement lands, and the document serves no search hits until it is
+    written again. No gate holds the rollout, and the mixed-version gate does not check
+    this rule.
 
 ## What checks them
 

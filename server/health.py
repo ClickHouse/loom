@@ -412,17 +412,25 @@ async def _pg_ok() -> bool:
 
 
 async def _postgres_block() -> dict[str, object]:
-    """How commits are acknowledged (`pg_profile.standby_now`), and the deliveries and
-    audit rows ClickHouse kept refusing past the attempt cap; each None when unread."""
+    """How commits are acknowledged (`pg_profile.standby_now`), and the deliveries, audit
+    rows and knowledge document deliveries ClickHouse kept refusing past the attempt cap;
+    each None when unread."""
     from server.core import pg_profile
+    from server.knowledge.store import pg_documents
     from server.memory.store import pg_memory
 
-    standby, deliveries, audits = await asyncio.gather(
+    standby, deliveries, audits, documents = await asyncio.gather(
         _bounded(pg_profile.standby_now(), None),
         _bounded(pg_memory.parked_count(), None),
         _bounded(pg_memory.parked_audits_count(), None),
+        _bounded(pg_documents.parked_count(), None),
     )
-    return {"standby": standby, "parked_deliveries": deliveries, "parked_audits": audits}
+    return {
+        "standby": standby,
+        "parked_deliveries": deliveries,
+        "parked_audits": audits,
+        "parked_knowledge_deliveries": documents,
+    }
 
 
 async def _bounded(read: Awaitable[Any], default: Any) -> Any:

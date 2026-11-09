@@ -42,6 +42,7 @@ from server.erasure.store.scope_reads import (
     user_summary_rows,
 )
 from server.knowledge.domain.ingest_states import OPEN_STATES
+from server.knowledge.domain.owed_originals import NEEDS_ORIGINAL, OWED_SHAS
 from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY
 from server.settings import settings
 
@@ -1069,13 +1070,42 @@ async def erase_blobs_by_user(org: str, user_id: str, *, ch: _CHClient | None = 
 async def _still_own(
     org: str, user_id: str, pairs: list[tuple[str, str]], ch: _CHClient
 ) -> list[tuple[str, str]]:
-    """The originals of `pairs` that are still the user's alone."""
+    """The originals of `pairs` that are still the user's alone. Under the Postgres
+    authority another writer's commit whose document row has not landed (owed, or
+    parked) may name one; it is read before ClickHouse, so a row it publishes in
+    between is read there."""
+    owed = await _others_owed_originals(org, user_id, pairs)
     rows = await ch.query_all(
         f"SELECT namespace, sha FROM ({_USERS_OWN_ORIGINALS})"
         " WHERE (namespace, sha) IN {pairs:Array(Tuple(String, String))}",
         params={"org": org, "uid": user_id, "pairs": pairs},
     )
-    return sorted((str(r["namespace"]), str(r["sha"])) for r in rows)
+    return sorted(pair for r in rows if (pair := (str(r["namespace"]), str(r["sha"]))) not in owed)
+
+
+async def _others_owed_originals(
+    org: str, user_id: str, pairs: list[tuple[str, str]]
+) -> set[tuple[str, str]]:
+    """Under the Postgres authority, which of `pairs` (namespace, sha) the originals and
+    extraction artifacts of other writers' unpublished commits in the org are: one batch's
+    worth at most, however many deliveries are owed or parked."""
+    from server.core import pg
+
+    # No delivery holds an org, or a namespace, Postgres cannot store.
+    pairs = [p for p in pairs if not pg.unstorable(list(p))]
+    if not pg.enabled() or pg.unstorable([org]) or not pairs:
+        return set()
+    sql = (
+        f"SELECT DISTINCT namespace, sha FROM loom.knowledge_deliveries, {OWED_SHAS} AS sha "
+        f"WHERE org = $1 AND {NEEDS_ORIGINAL} AND (namespace, sha) IN "
+        "(SELECT * FROM unnest($2::text[], $3::text[]))"
+    )
+    namespaces, shas = [p[0] for p in pairs], [p[1] for p in pairs]
+    if pg.unstorable([user_id]):  # no delivery is this user's: every one is another's
+        rows = await pg.fetch(sql, org, namespaces, shas)
+    else:
+        rows = await pg.fetch(sql + " AND user_id <> $4", org, namespaces, shas, user_id)
+    return {(str(r["namespace"]), str(r["sha"])) for r in rows}
 
 
 async def _erase_user_originals_by_batch(org: str, user_id: str, ch: _CHClient) -> int:

@@ -116,7 +116,7 @@ Fetch one namespace's metadata + settings (owner, visibility, feature flags, ret
 | `consolidation_enabled` | `bool \| None` | True when background `memory.consolidate` runs on this namespace. |
 | `daily_cost_cap_usd` | `float \| None` | Upstream spend cap per rolling 24 hours, in USD; 0 inherits the global cap. |
 | `conflict_threshold` | `float \| None` | Cosine at which a write is flagged `conflicted`; None inherits the server threshold. |
-| `retention_days` | `int \| None` | Rows older than this many days are deleted; 0 inherits the global retention. |
+| `retention_days` | `int \| None` | Rows older than this many days are deleted, except memory, document and chunk rows under the Postgres authority; 0 inherits the global retention. |
 | `warm_days` | `int \| None` | Rows older than this many days move to the warm tier; 0 inherits the global tiering. |
 | `visibility` | `Literal['private', 'public'] \| None` | `private` (members only) or `public` (readable org-wide, listed by `namespace.browse`). |
 | `requires_approval` | `bool \| None` | True when writer/admin self-joins wait for an admin's approval. |
@@ -364,7 +364,7 @@ Create a shared memory workspace within an org; caller becomes admin.
 | `consolidation_enabled` | `bool \| None` | `None` | background memory.consolidate |
 | `daily_cost_cap_usd` | `float \| None` | `None` | 0.0 inherits the global cap. |
 | `conflict_threshold` | `float \| None` | `None` | Omitted keeps the stored threshold; an explicit null inherits LOOM_CONFLICT_THRESHOLD. |
-| `retention_days` | `int \| None` | `None` | 0 = inherit global retention/tiering; positive overrides per-(org, namespace). |
+| `retention_days` | `int \| None` | `None` | Days rows are kept, except memory, document and chunk rows under the Postgres authority; 0 inherits the global retention, a positive value overrides it per (org, namespace). |
 | `warm_days` | `int \| None` | `None` | Rows older than this many days move to the warm storage tier; 0 inherits the global tiering setting. |
 | `visibility` | `Literal['private', 'public'] \| None` | `None` | `private` = members-only; `public` = read-by-anyone-in-org + appears in namespace.browse. |
 | `requires_approval` | `bool \| None` | `None` | When true, writer/admin self-joins go pending; viewer stays auto-approved. |

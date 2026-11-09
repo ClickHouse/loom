@@ -94,6 +94,11 @@ TARGETS: tuple[RetentionTarget, ...] = (
 )
 
 
+# Tables a retention TTL must not touch under the Postgres authority: it would delete
+# ClickHouse's copy of rows Postgres still serves, or the vectors of live memories.
+_PG_HELD = ("loom.memory", "loom.memory_embeddings", "loom.documents")
+
+
 def _warm_volume_name(settings_obj: Any) -> str:
     """Cluster operator can name the volume anything; default 'warm'."""
     name = settings_obj.tiering_warm_volume_name
@@ -242,11 +247,15 @@ def compute_alters(
         r_days = max(0, target.retention_days(settings_obj) or 0)
         t_days = max(0, target.warm_days(settings_obj) or 0)
         overrides = ovr_all
-        if target.table in ("loom.memory", "loom.memory_embeddings") and pg.enabled():
-            # Postgres holds the memory: a TTL here would delete only ClickHouse's copy
-            # (or only its vectors, leaving live memories search no longer finds).
-            r_days = 0
+        if target.table in (*_PG_HELD, "loom.chunks") and pg.enabled():
+            # Postgres holds memory and document heads: a TTL here would delete only
+            # ClickHouse's copy (or only its vectors, leaving live memories search no
+            # longer finds), and the text would stay in Postgres. A namespace's
+            # retention_days leaves a document's chunks with it; LOOM_RETENTION_CHUNKS_DAYS,
+            # set alone, expires chunks alone under either authority.
             overrides = [{**o, "retention_days": 0} for o in ovr_all]
+            if target.table in _PG_HELD:
+                r_days = 0
 
         ttl_clause = _compose_ttl(
             target,

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import HTTPException
 
 from server.code.app.member_writes import assert_own_row
-from server.core import pg
+from server.core import pg, pg_lease
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import served_content_sha256
@@ -672,7 +672,7 @@ async def _land_revision(
     record: Callable[[], Awaitable[None]],
     exact: bool,
     op: str,
-) -> pg_memory.PublicationPending | None:
+) -> pg_lease.PublicationPending | None:
     """Write the revision, record it (`record`: its audit row and announcement) and fence
     a 'high' one. Under Postgres a committed revision whose publication failed returns its
     PublicationPending, so the caller's follow-ups still run; any other failure raises.
@@ -742,7 +742,7 @@ async def _land_committed(
     record: Callable[[], Awaitable[None]],
     exact: bool,
     op: str,
-) -> pg_memory.PublicationPending | None:
+) -> pg_lease.PublicationPending | None:
     """Under Postgres: a commit refused before it ran raises with nothing in; a committed
     revision is recorded, and the first failure after it is returned as pending. A fence
     that fails once the revision may be in is recorded, never the answer: the revision
@@ -819,7 +819,7 @@ async def _commit_revision(
 
 async def _publish_revision(
     committed: pg_memory.Committed, emb_rows: list[dict[str, Any]], ch: Any
-) -> pg_memory.PublicationPending | None:
+) -> pg_lease.PublicationPending | None:
     """A committed revision's publication and search document: the first of those that
     failed, as pending."""
     import server.memory.store as memory_repo
@@ -827,13 +827,13 @@ async def _publish_revision(
 
     async def _document() -> None:
         try:
-            with pg_memory.leased(committed.deadline):
+            with pg_lease.leased(committed.deadline):
                 await memory_repo.insert_embedding_rows(emb_rows, ch=ch)
             await pg_memory.complete(committed.seqs, pg_memory.SEARCH_DOC)
-        except pg_memory.PublicationPending:
+        except pg_lease.PublicationPending:
             raise  # the lease ran out before the insert (`leased`)
         except Exception as e:
-            raise pg_memory.PublicationPending.after(e) from e
+            raise pg_lease.PublicationPending.after(e) from e
 
     done = await asyncio.gather(
         pg_publish.publish(committed, ch=ch),
@@ -843,9 +843,9 @@ async def _publish_revision(
     # publish and _document turn every failure into PublicationPending; anything else (a
     # child's cancellation) is raised as itself, whichever child it came from
     for d in done:
-        if isinstance(d, BaseException) and not isinstance(d, pg_memory.PublicationPending):
+        if isinstance(d, BaseException) and not isinstance(d, pg_lease.PublicationPending):
             raise d
-    return next((d for d in done if isinstance(d, pg_memory.PublicationPending)), None)
+    return next((d for d in done if isinstance(d, pg_lease.PublicationPending)), None)
 
 
 async def _refuse_blacklisted(

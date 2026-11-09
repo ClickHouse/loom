@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 
+from server.core import pg_lease
 from server.memory.api.models_crud import MemoryUpdateInput
 from server.memory.app import handlers as mem_handlers
 from server.memory.app import restore as _restore_mod
@@ -177,13 +178,12 @@ async def test_an_update_left_pending_still_follows_what_it_retired(
 ) -> None:
     # committed under Postgres with its publication pending: the follow runs, then the 503
     from server.memory.app.auto_resolution import Follow
-    from server.memory.store import pg_memory
 
     wired([_cand(_ID_A)], _row())
     followed: list[Any] = []
 
     async def _pending(*_: Any, **__: Any) -> Any:
-        return pg_memory.PublicationPending()
+        return pg_lease.PublicationPending()
 
     async def _retires(org: str, existing: Any, value: str, ch: Any, policy: Any, follows: Any):
         follows.append(Follow("loser-id", _ID_A))
@@ -191,7 +191,7 @@ async def test_an_update_left_pending_still_follows_what_it_retired(
     monkeypatch.setattr(update_mod, "_land_revision", _pending)
     monkeypatch.setattr(update_mod, "_revision_supersession", _retires)
     monkeypatch.setattr(update_mod, "follow_beside_response", lambda **kw: followed.append(kw))
-    with pytest.raises(pg_memory.PublicationPending):
+    with pytest.raises(pg_lease.PublicationPending):
         await update_mod.handle_memory_update(
             MemoryUpdateInput(
                 org="test", namespace="personal", memory_key="deploy_day", value="Thursday"

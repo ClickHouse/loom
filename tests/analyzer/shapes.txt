@@ -118,7 +118,6 @@
 0dfeec766c5d	SELECT thread_id, count() AS n FROM loom.conversations WHERE org = {org:String} AND namespace = {ns:String} AND thread_id IN {tids:Array(String)} AND tombstoned_at IS NULL AND agent = {agent:String} G
 0e2b55bdb693	SELECT count() AS n FROM loom.entity_edge_memories WHERE org = {org:String} AND (namespace, memory_key) IN {keys:Array(Tuple(String, String))}
 0e350a5bb24b	SELECT memory_key, memory_type, content_excerpt, ? - cosineDistance(embedding, {qv:Array(Float32)}) AS similarity, toString(coalesce(temporal_anchor, toDateTime(?))) AS temporal_anchor, temporal_confi
-0e6cd7d9e23c	SELECT org, namespace, source_uri, doc_id, title, description, content, tags, metadata, version, superseded_at, ingested_at, blob_path, blob_size, toString(blob_content_type) AS blob_content_type, ori
 0ea97db9d612	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.agent AS agent, c.user
 0eb34d1b24ce	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, cosineDistance(e.embedding, {q:Array(Float32)}) AS dist
 0eb4f21ebd1c	ALTER TABLE loom.delete_version_checks DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
@@ -503,7 +502,6 @@
 3fa46eec9e22	SELECT path, scope, symbol_ids, start_line, end_line, content FROM ( SELECT path, scope, symbol_ids, start_line, end_line, content, chunk_id, tombstoned_at FROM loom.code_chunks WHERE org = {org:Strin
 3fc2702e0bf1	SELECT count() AS n FROM loom.entity_edge_rows WHERE org = {org:String} AND user_id = {uid:String}
 3fcee425ac0e	SELECT head.? AS subject, if(active_rows > ?, active_role, head.?) AS role, if(active_rows > ?, ?, head.?) AS status, if(active_rows > ?, request.?, head.?) AS pending_role, if(active_rows > ?, reques
-3ff494de5484	INSERT INTO loom.chunk_supersessions (org, namespace, embedding_model, source_uri, doc_version, superseded_at) SELECT DISTINCT org, namespace, embedding_model, source_uri, doc_version, {when:DateTime}
 40044ac7ac85	SELECT path, scope, symbol_ids, start_line, end_line, content, shingles, uniqExact(path) OVER () AS admitted_files FROM ( SELECT path, scope, symbol_ids, start_line, end_line, content, chunk_id, array
 4004b3d17ade	SELECT count() OVER () AS total, a.memory_key AS memory_key, a.created_at AS created_at FROM (SELECT org, namespace, agent, user_id, session_id, memory_key, created_at FROM loom.memory_embeddings FINA
 4014f350fe0d	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, cosineDistance(e.embedding, {q:Array(Float32)}) AS dist
@@ -751,6 +749,7 @@
 5e9d05fdddf9	SELECT * FROM loom.code_scip_batches FINAL WHERE org = {org:String} AND namespace = {ns:String} AND batch_id = {bid:UUID}
 5ec21e0b6ff9	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, cosineDistance(e.embedding, {q:Array(Float32)}) AS dist
 5eff22c5d922	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
+5f07507d00b9	INSERT INTO loom.chunk_supersessions (org, namespace, embedding_model, source_uri, doc_version, superseded_at) SELECT DISTINCT org, namespace, embedding_model, source_uri, doc_version, {when:DateTime}
 5f0aadd21dd2	ALTER TABLE loom.memory_belief_sources UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND (namespace, memory_key) IN {keys:Array(Tuple(String, String))}) AND
 5f133473e914	SELECT path, scope, symbol_ids, start_line, end_line, content FROM ( SELECT path, scope, symbol_ids, start_line, end_line, content, chunk_id, tombstoned_at FROM loom.code_chunks WHERE org = {org:Strin
 5f3660ea1130	SELECT agent, user_id, session_id, memory_key, version_now, tombstoned_now, version_at FROM ( SELECT agent, user_id, session_id, memory_key, version AS version_now, toUInt8(tombstoned_at IS NOT NULL)
@@ -823,6 +822,7 @@
 675a57195847	SELECT memory_id, version, agent, user_id, session_id, memory_key, created_at FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND memory_key IN {keys:Array(String)} AND tom
 6765755688ca	SELECT kind, name, status, description, cardinality, created_by, updated_at FROM loom.namespace_ontology FINAL WHERE org = {org:String} AND namespace = {ns:String} AND status = {status:String} ORDER B
 679eb23e3a9f	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.agent AS agent, c.user
+67b04af64852	SELECT DISTINCT namespace FROM loom.documents WHERE org = {org:String} AND user_id = {uid:String} ORDER BY namespace
 67e29bf73ff4	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 680d46eea97c	SELECT count() AS n FROM loom.memory_record_fields FINAL WHERE org = {org:String} AND tombstoned_at IS NULL AND record_id IN {ids:Array(UUID)}
 687082296f51	SELECT count() AS n FROM loom.chunks WHERE org = {org:String} AND user_id = {uid:String} AND doc_superseded_at IS NULL AND (org, namespace, embedding_model, source_uri, doc_version) NOT IN (SELECT org
@@ -1105,6 +1105,7 @@
 882bbabb160a	WITH (SELECT (toFloat64(count()), sumMap(arrayFilter(s -> has({stems:Array(String)}, s), arrayDistinct(arrayMap( t -> stem(t, ?), splitByChar(?, lower(memory_key))))) AS ks, arrayResize([toUInt64(?)],
 8863d1cc780b	SELECT author, uniqExact(pr_number) AS prs FROM loom.code_pr_reviews FINAL WHERE org = {org:String} AND namespace = {ns:String} AND comment_created_at >= now() - INTERVAL {days:UInt32} DAY AND is_bot
 88729ea3700f	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.agent AS agent, c.user
+888ce735eb8f	SELECT DISTINCT source_uri, toString(doc_id) AS id FROM loom.documents WHERE org = {org:String} AND namespace = {ns:String} AND source_uri >= {uri:String} AND (source_uri, id) > ({uri:String}, {id:Str
 888f7269df70	ALTER TABLE loom.memory_exposures DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 88917e6300cc	SELECT count() AS n FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL AND agent = {agent:String} AND user_id = {uid:String} AND session_id = {sid:St
 88c588eddf27	SELECT model, count() AS turns, uniqExact(session_id) AS sessions, sum(toUInt64(input_tokens)) AS input_tokens, sum(toUInt64(cache_read_tokens)) AS cache_read_tokens, sum(toUInt64(cache_creation_5m_to
@@ -1292,6 +1293,7 @@
 9e7b47b91e9c	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 9e9e8424f7db	SELECT chunk_id, path, scope, kind, start_line, end_line, content, symbol_ids, context_description, arraySum( arrayMap( (tok, idf) -> idf * countSubstrings( concat(?, lexemes, ?), concat(?, tok, ?) ),
 9eafee0b23b4	SELECT count() AS n FROM loom.memory_extraction_queue WHERE org = {org:String} AND user_id = {uid:String} AND ?
+9ed5e750e8c9	DELETE FROM loom.chunks WHERE org = {org:String} AND namespace = {ns:String} AND (source_uri, doc_version) IN {rows:Array(Tuple(String, UInt64))} SETTINGS lightweight_deletes_sync = ?
 9ed6e8cc8634	SELECT count() AS n FROM loom.dataset_rows WHERE org = {org:String} AND namespace = {ns:String} AND ?
 9f27e9d4a145	SELECT role, granted_by, status, pending_role, pending_since FROM loom.namespace_grants FINAL WHERE org = {org:String} AND namespace = {ns:String} AND subject = {sub:String} AND revoked_at IS NULL LIM
 9f2b2ef74833	SELECT c.session_id AS session_id, c.chunk_index AS chunk_index, c.parent_memory_key AS parent_memory_key, cosineDistance(c.embedding, {q:Array(Float32)}) AS distance FROM loom.memory_chunks AS c WHER
@@ -1548,6 +1550,7 @@ b98c5b9096ba	SELECT count() AS n FROM loom.session_summaries FINAL WHERE org = {
 b99ba261d940	SELECT pr_number, merge_sha, payload, sections, built_at, indexed_commit, tokens, build_ms FROM loom.code_review_briefs FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS
 b9bc47ece20e	SELECT count() AS n FROM loom.entity_triple_rows WHERE org = {org:String} AND namespace = {ns:String} AND ?
 b9f6cfd45b7f	SELECT count() AS n FROM loom.conversations WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String} AND thread_id = {tid:String} AND tombstoned_at IS NOT NULL
+ba2554cad547	SELECT source_uri, count() AS n FROM loom.chunks WHERE org = {org:String} AND namespace = {ns:String} AND source_uri IN {uris:Array(String)} AND doc_superseded_at IS NULL AND (org, namespace, embeddin
 ba2843155ed7	SELECT queue_id, agent, user_id, session_id, status, version, enqueued_at < now64(?) - toIntervalDay(?) AS past_last_day FROM loom.memory_extraction_queue FINAL PREWHERE org = {org:String} AND namespa
 ba28d3f48cd1	SELECT ts, org, namespace, agent, user_id, session_id, operation, request_id, mode, decision, enforced, determining_rules, errors, detail, latency_ms FROM loom.policy_decisions WHERE org = {org:String
 ba3aa58d4a58	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
@@ -1626,7 +1629,6 @@ c33a4f7fda0e	SELECT p.namespace AS namespace, ifNull(n.kind, ?) AS kind, p.subje
 c346e781ad7d	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.agent AS agent, c.user
 c3761ab74dee	SELECT path, count() AS chunks, min(start_line) AS first_line, count() OVER () AS total FROM ( SELECT path, start_line, tombstoned_at FROM loom.code_chunks WHERE org = {org:String} AND namespace = {ns
 c38a4fe1ee03	SELECT count() AS n FROM loom.memory_record_fields FINAL WHERE org = {org:String} AND record_id IN (SELECT record_id FROM loom.memory_records WHERE org = {org:String} AND user_id = {uid:String}) AND t
-c391b41050f2	SELECT org, namespace, source_uri, doc_id, title, description, content, tags, metadata, version, superseded_at, ingested_at, blob_path, blob_size, toString(blob_content_type) AS blob_content_type, ori
 c3b3b37f4f4e	SELECT count() AS n FROM loom.entity_degree WHERE org = {org:String} AND namespace = {ns:String}
 c3da8556865c	SELECT pr_number, title, merged_at FROM loom.code_pr_history FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL AND merged_at >= {since:DateTime} AND (hasAny(files, {
 c4044146076d	SELECT retrieval_defaults FROM loom.namespaces FINAL WHERE org = {org:String} AND namespace = {ns:String} LIMIT ?

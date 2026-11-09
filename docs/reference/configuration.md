@@ -872,6 +872,7 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | --- | --- | --- | --- | --- |
 | `LOOM_KNOWLEDGE_CHUNK_SIZE` | `int` | `1500` | live | Sliding-window chunking on knowledge.add/upsert, in characters. chunk_size 0 = one chunk per doc (hurts long-form retrieval). Smaller chunks mean more embed calls; 1500/1230 stays well under the text-embedding-3 context. |
 | `LOOM_KNOWLEDGE_CHUNK_STRIDE` | `int` | `1230` | live | Characters between chunk starts: below chunk_size the chunks overlap; above it the step is chunk_size, so no text falls between chunks. |
+| `LOOM_KNOWLEDGE_ORPHAN_CHUNK_MIN_AGE_SECONDS` | `int` | `3600` |  | Seconds a no-row source's chunks must have aged before a delete retires them (a first write's are younger); never less than an ingest pass plus 5 minutes of clock skew. |
 
 ### Server-side ingestion (knowledge.upload, knowledge.ingest)
 
@@ -1719,7 +1720,7 @@ Storage: document originals, per-table retention and warm-tier moves.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_DOCUMENT_BLOB_GC_ENABLED` | `bool` | `True` |  | The sweep that deletes originals no live document points at: those of deleted and re-uploaded documents, and of documents that retention (retention_documents_days, a namespace's retention_days) aged out. Their bucket objects go with them; a walk of the bucket deletes any object left. |
+| `LOOM_DOCUMENT_BLOB_GC_ENABLED` | `bool` | `True` |  | The sweep that deletes originals no live document points at: those of deleted and re-uploaded documents, and of documents that retention (retention_documents_days, a namespace's retention_days; the ClickHouse authority only) aged out. Their bucket objects go with them; a walk of the bucket deletes any object left. |
 | `LOOM_DOCUMENT_BLOB_GC_OBJECT_PAGES` | `int` | `20` |  | Pages of 1,000 bucket keys the sweep's walk reads a pass, from where the last stopped: one walk takes a pass per this many thousand keys. |
 | `LOOM_DOCUMENT_BLOB_GC_INTERVAL_SECONDS` | `int` | `3600` |  | Seconds between document-original GC sweeps. |
 | `LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS` | `int` | `3600` |  | Seconds an original must have gone unwritten before the sweep may remove it. A write stores its original before the document row that names it, so a younger original may belong to a write still in flight. Erasure ignores it and deletes every original of its scope. With a bucket, the settings refuse one under a minimum: a write's upload budget plus its row insert's retries (906 s at the defaults; a much larger value leaves room for what the minimum does not count), or an unbounded write timeout, read timeout or pool wait. |
@@ -1739,11 +1740,11 @@ Opt-in retention, applied as idempotent ALTER TABLE MODIFY TTL by server/storage
 | --- | --- | --- | --- | --- |
 | `LOOM_RETENTION_AUDIT_LOG_DAYS` | `int` | `0` |  | Days `loom.audit_log` rows are kept; 0 = forever. A person's Undo of a retirement holds by its record there: one aged out stops holding, and the conflict resolver may judge and retire that pair again. |
 | `LOOM_RETENTION_AGENT_EVENTS_DAYS` | `int` | `0` |  | Days `loom.agent_events` rows are kept; 0 = forever. |
-| `LOOM_RETENTION_MEMORY_DAYS` | `int` | `0` |  | Days `loom.memory` rows are kept; 0 = forever. |
-| `LOOM_RETENTION_MEMORY_EMBEDDINGS_DAYS` | `int` | `0` |  | Days `loom.memory_embeddings` rows are kept; 0 = forever. |
+| `LOOM_RETENTION_MEMORY_DAYS` | `int` | `0` |  | Days `loom.memory` rows are kept; 0 = forever. The Postgres authority refuses it. |
+| `LOOM_RETENTION_MEMORY_EMBEDDINGS_DAYS` | `int` | `0` |  | Days `loom.memory_embeddings` rows are kept; 0 = forever. The Postgres authority refuses it. |
 | `LOOM_RETENTION_CONVERSATIONS_DAYS` | `int` | `0` |  | Days `loom.conversations` rows are kept; 0 = forever. |
 | `LOOM_RETENTION_CHUNKS_DAYS` | `int` | `0` |  | Days `loom.chunks` rows are kept; 0 = forever. |
-| `LOOM_RETENTION_DOCUMENTS_DAYS` | `int` | `0` |  | Days `loom.documents` rows are kept; 0 = forever. |
+| `LOOM_RETENTION_DOCUMENTS_DAYS` | `int` | `0` |  | Days `loom.documents` rows are kept; 0 = forever. The Postgres authority refuses it. |
 | `LOOM_RETENTION_RECONCILE_ENABLED` | `bool` | `True` |  | The supervisor re-applies table TTLs from settings + namespace rows on this timer as metadata changes (materialize_ttl_after_modify = 0): rows already past a new TTL leave at their part's next merge or a manual MATERIALIZE TTL. |
 | `LOOM_RETENTION_RECONCILE_INTERVAL_SECONDS` | `int` | `300` |  | Seconds between TTL re-apply passes. |
 
@@ -1781,14 +1782,15 @@ Opt-in tiering, applied as idempotent ALTER TABLE MODIFY TTL by server/storage/r
 | `LOOM_PG_ADMISSION_HELP_ROWS` | `int` | `20` |  | Revisions a waiting admission publishes itself for a writer that stopped before publishing them; the delivery worker publishes the rest. |
 | `LOOM_PG_PROJECTION_WAIT_MS` | `int` | `2000` |  | Milliseconds an admission waits for earlier commits in its scope to reach search before answering 503 PROJECTION_BEHIND; a diagnostic report waits as long, then reads on and names `projection` in `skipped`. |
 | `LOOM_PG_REQUEST_LEASE_SECONDS` | `int` | `5` |  | Seconds the writing request holds its revisions' delivery; past it, the delivery worker or a waiting admission in the namespace publishes them instead. |
-| `LOOM_PG_DELIVERY_LEASE_SECONDS` | `int` | `30` |  | Seconds the delivery worker holds a revision's delivery before another may take it; also how long the conflict resolver sets aside a row whose flagged peer is not yet in ClickHouse. |
-| `LOOM_PG_DELIVERY_ENABLED` | `bool` | `True` |  | Background delivery of committed revisions a request did not publish. |
+| `LOOM_PG_DELIVERY_LEASE_SECONDS` | `int` | `30` |  | Seconds the delivery workers hold a memory revision's or a knowledge document's delivery before another may take it; also how long the conflict resolver sets aside a row whose flagged peer is not yet in ClickHouse. |
+| `LOOM_PG_DELIVERY_ENABLED` | `bool` | `True` |  | Background delivery of committed memory revisions and knowledge documents a request did not publish (the pg_delivery and knowledge_pg_delivery workers). |
 | `LOOM_PG_DELIVERY_INTERVAL_SECONDS` | `int` | `2` |  | Seconds between delivery passes while there is work. |
 | `LOOM_PG_DELIVERY_IDLE_INTERVAL_SECONDS` | `int` | `10` |  | Seconds between delivery passes that found nothing. |
-| `LOOM_PG_DELIVERY_BATCH_ROWS` | `int` | `500` |  | Revisions one delivery pass publishes. |
+| `LOOM_PG_DELIVERY_BATCH_ROWS` | `int` | `500` |  | Deliveries one pass of each delivery worker publishes; also the expired deletion evidence and settled knowledge deliveries one pass sweeps. |
 | `LOOM_PG_RESTORE_BATCH_ROWS` | `int` | `500` |  | Memories one Postgres commit of a `namespace.restore` writes; each batch commits within a request's lease (`pg_request_lease_seconds`). |
-| `LOOM_PG_DELIVERY_MAX_ATTEMPTS` | `int` | `10` |  | Times a delivery is tried before it is parked: a search document it cannot build is published as a stub for the embedding worker; a memory row ClickHouse keeps refusing is left out of claims and of its namespace's watermark, and counted in /v1/health?include=postgres (`postgres.parked_deliveries`). An audit row waiting in the outbox (a row an erasure moved there, or one a claim deferred because the holder it replaced may still insert it) is parked the same way (`postgres.parked_audits`). An unavailable ClickHouse counts no attempt. |
-| `LOOM_PG_ERASURE_EVIDENCE_HOURS` | `int` | `24` |  | Hours an erased memory's id is kept as deletion evidence, refusing a write built from a head read before the erasure (longer than any request holds a head); a `namespace.restore` into its namespace leaves the memory out meanwhile. |
+| `LOOM_PG_DELIVERY_MAX_ATTEMPTS` | `int` | `10` |  | Times a delivery is tried before it is parked: a search document it cannot build is published as a stub for the embedding worker; a memory row ClickHouse keeps refusing is left out of claims and of its namespace's watermark, and counted in /v1/health?include=postgres (`postgres.parked_deliveries`). An audit row waiting in the outbox (a row an erasure moved there, or one a claim deferred because the holder it replaced may still insert it) is parked the same way (`postgres.parked_audits`), and so is a knowledge document's row (`postgres.parked_knowledge_deliveries`). An unavailable ClickHouse counts no attempt. |
+| `LOOM_PG_ERASURE_EVIDENCE_HOURS` | `int` | `24` |  | Hours an erased memory's id, or an erased knowledge document's `doc_id`, is kept as deletion evidence, refusing a write built from a head read before the erasure (longer than any request holds a head); a `namespace.restore` into its namespace leaves the memory out meanwhile. |
+| `LOOM_PG_ERASURE_EVIDENCE_PAGE_ROWS` | `int` | `10000` |  | Document ids an erasure reads from ClickHouse per statement, and keeps as deletion evidence per insert: what one page of a large scope holds in memory. |
 
 ### Timeouts, budgets and caches
 

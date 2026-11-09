@@ -690,7 +690,7 @@ HTTP 503, raised as `server.memory.app.pg_admission.ProjectionBehindError`. 503 
 
 #### `PUBLICATION_PENDING`
 
-HTTP 503, raised as `server.memory.store.pg_memory.PublicationPending`. 503: the write is committed and the delivery worker publishes its rows; it is not to be made again. Category `dependency`, retryable: no.
+HTTP 503, raised as `server.core.pg_lease.PublicationPending`. 503: the write is committed and the delivery worker publishes its rows; it is not to be made again. Category `dependency`, retryable: no.
 
 #### `RATE_LIMITED`
 

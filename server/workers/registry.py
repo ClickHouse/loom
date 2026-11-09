@@ -225,6 +225,15 @@ _WORKERS: tuple[_Worker, ...] = (
         "pg_delivery_interval_seconds",
         idle_interval="pg_delivery_idle_interval_seconds",
     ),
+    # The knowledge documents a request committed and did not publish; idle under the
+    # ClickHouse authority.
+    _Worker(
+        "knowledge_pg_delivery",
+        "server.knowledge.workers.pg_delivery",
+        "pg_delivery_enabled",
+        "pg_delivery_interval_seconds",
+        idle_interval="pg_delivery_idle_interval_seconds",
+    ),
     _Worker(
         "usage_fold",
         "server.memory.workers.usage_fold",

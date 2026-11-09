@@ -20,10 +20,11 @@ from typing import Any
 
 import pytest
 
-from server.core import object_store
+from server.core import object_store, pg
 from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_memory
-from server.knowledge.store import blobs
+from server.knowledge.domain.owed_originals import NEEDS_ORIGINAL, OWED_SHAS
+from server.knowledge.store import blobs, pg_documents
 from server.knowledge.workers import blob_gc
 from server.settings import settings
 
@@ -1729,3 +1730,95 @@ def test_object_residue_finds_the_scopes_keys_behind_a_page_of_another_scopes(
     own = f"loom/originals/acme/{'f' * 64}/w"  # org `originals`, namespace `acme`
     s3.objects[(BUCKET, own)] = (b"x", datetime.now(UTC))
     assert asyncio.run(erasure_census.object_residue("originals", "acme")) >= 1
+
+
+def test_under_postgres_an_original_another_writers_unpublished_commit_names_stays(
+    s3: FakeS3, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another user's commit whose document row has not landed (owed, or parked) names
+    the same bytes only in Postgres: erasing this user keeps the shared original. The
+    Postgres read comes before the ClickHouse one it amends, so a row published between
+    them is in the second."""
+    shared, mine = "7" * 64, "8" * 64
+    for sha in (shared, mine):
+        s3.objects[(BUCKET, f"loom/originals/o/ns/{sha}/w")] = (b"x", datetime.now(UTC))
+    s3.age_all(60)
+    order: list[str] = []
+    sent: list[tuple[str, tuple[Any, ...]]] = []
+
+    async def fetch(sql: str, *args: Any) -> list[dict[str, str]]:
+        order.append("postgres")
+        sent.append((sql, args))
+        return [{"namespace": "ns", "sha": shared}]
+
+    class _Ordered(EraseCH):
+        async def query_all(self, sql: str, params: Any = None, **kw: Any) -> list[dict[str, Any]]:
+            if "WHERE (namespace, sha) IN {pairs" in sql:  # the batch's re-read
+                order.append("clickhouse")
+            return await super().query_all(sql, params, **kw)
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg, "fetch", fetch)
+    own = [{"namespace": "ns", "sha": shared}, {"namespace": "ns", "sha": mine}]
+    ch = _Ordered(0, own)
+    asyncio.run(steps_memory.erase_blobs_by_user("o", "alice", ch=ch))
+    assert s3.keys() == [f"loom/originals/o/ns/{shared}/w"]
+    assert _blob_pairs(ch) == {(("ns", mine),)}
+    assert order == ["postgres", "clickhouse"]
+    # One read for the batch, its pairs bound, other writers' live documents only (the
+    # rows the fragment selects are pinned against Postgres in test_knowledge_pg_heads).
+    [(sql, args)] = sent
+    assert args == ("o", ["ns", "ns"], [shared, mine], "alice") and "user_id <> $4" in sql
+    assert NEEDS_ORIGINAL in sql and OWED_SHAS in sql
+
+
+def test_an_erased_user_id_postgres_cannot_store_still_keeps_others_owed_originals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No delivery can hold such a user id, so every owed delivery is another writer's:
+    the check reads the batch's pairs among them all rather than none."""
+    sent: list[tuple[Any, ...]] = []
+
+    async def fetch(sql: str, *args: Any) -> list[dict[str, str]]:
+        sent.append(args)
+        return [{"namespace": "ns", "sha": "9" * 64}]
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg, "fetch", fetch)
+    pairs = [("ns", "9" * 64)]
+    owed = asyncio.run(steps_memory._others_owed_originals("o", "al\x00ice", pairs))
+    assert owed == {("ns", "9" * 64)} and sent == [("o", ["ns"], ["9" * 64])]
+
+
+def test_a_namespace_postgres_cannot_store_is_not_sent_to_the_owed_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No delivery holds such a namespace, and asyncpg refuses the text: its pair is left
+    out of the read, the batch's other pairs are read."""
+    sent: list[tuple[Any, ...]] = []
+
+    async def fetch(sql: str, *args: Any) -> list[dict[str, str]]:
+        sent.append(args)
+        return []
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg, "fetch", fetch)
+    pairs = [("n\x00s", "1" * 64), ("ns", "2" * 64)]
+    assert asyncio.run(steps_memory._others_owed_originals("o", "alice", pairs)) == set()
+    assert sent == [("o", ["ns"], ["2" * 64], "alice")]
+
+
+def test_owed_originals_reads_the_shared_fragment_for_the_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The namespace's read binds the namespace and the live-only, unsettled clause."""
+    sent: list[tuple[str, tuple[Any, ...]]] = []
+
+    async def fetch(sql: str, *args: Any) -> list[dict[str, str]]:
+        sent.append((sql, args))
+        return [{"sha": "a" * 64}]
+
+    monkeypatch.setattr(pg, "fetch", fetch)
+    assert asyncio.run(pg_documents.owed_originals("o", "ns")) == {"a" * 64}
+    [(sql, args)] = sent
+    assert args == ("o", "ns") and NEEDS_ORIGINAL in sql and OWED_SHAS in sql

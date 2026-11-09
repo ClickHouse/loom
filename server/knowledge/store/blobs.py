@@ -28,6 +28,7 @@ only that row names (`unwrite`).
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import time
@@ -268,12 +269,14 @@ async def needed(
     org: str, namespace: str, shas: list[str], *, ch: _CHClient | None = None
 ) -> set[str]:
     """Of `shas`, the originals the namespace still needs: named by a live document (as
-    its original or its extraction artifact), or held by an unexpired upload or an open
-    ingestion. The rest are the sweep's (`unreferenced`). One read for a page of the
-    walk."""
+    its original or its extraction artifact), or held by an unexpired upload, an open
+    ingestion or an unpublished commit (`owed_originals`). The rest are the sweep's
+    (`unreferenced`). One ClickHouse read for a page of the walk, after the Postgres
+    read of the owed originals under that authority."""
     ch = ch or _default_client()
     if not shas:
         return set()
+    owed = await owed_originals(org, namespace) & set(shas)
     with sequential_reads():
         rows = await ch.query_all(
             "SELECT sha FROM ("
@@ -284,7 +287,7 @@ async def needed(
             ") WHERE sha IN {shas:Array(String)}",
             params={"org": org, "ns": namespace, "shas": shas},
         )
-    return {str(r["sha"]) for r in rows}
+    return {str(r["sha"]) for r in rows} | owed
 
 
 async def switch_to(held: Held, loc: objects.Location, *, ch: _CHClient | None = None) -> None:
@@ -457,36 +460,55 @@ async def unreferenced(
     after: str = "",
     ch: _CHClient | None = None,
 ) -> list[str]:
-    """Up to `limit` shas of the namespace's originals, in order after `after`,
-    that no live document names (as its original or as its extraction
-    artifact), no unexpired upload or open ingestion needs, and nothing has
-    written for `min_age_s`: those of deleted and re-uploaded documents, of
-    documents retention removed, and of uploads never ingested."""
+    """Up to `limit` shas of the namespace's originals, in order after `after`, that no
+    live document names (as its original or as its extraction artifact), no unexpired
+    upload or open ingestion needs, and nothing has written for `min_age_s`: those of
+    deleted and re-uploaded documents, of documents retention removed, and of uploads
+    never ingested. Under the Postgres authority the sweep also spares what unpublished
+    commits name (`owed_originals`, read before this): read sequentially consistent then,
+    so a row published since that read is seen here."""
+    from server.core import pg
+
     ch = ch or _default_client()
-    rows = await ch.query_all(
-        f"""
-        SELECT toString(sha256) AS sha
-        FROM {TABLE}
-        WHERE org = {{org:String}} AND namespace = {{ns:String}} AND sha256 > {{after:String}}
-          AND toString(sha256) NOT IN (
-              SELECT arrayJoin([blob_path, artifact_sha256]) FROM loom.documents FINAL
-              WHERE org = {{org:String}} AND namespace = {{ns:String}} AND {LIVE_ORIGINAL_SQL}
-          )
-          AND toString(sha256) NOT IN ({HELD_SQL})
-        GROUP BY sha256
-        HAVING max(created_at) < now64(3) - INTERVAL {{age:UInt32}} SECOND
-        ORDER BY sha256
-        LIMIT {{lim:UInt32}}
-        """,
-        params={
-            "org": org,
-            "ns": namespace,
-            "after": after,
-            "age": int(min_age_s),
-            "lim": int(limit),
-        },
-    )
+    with sequential_reads() if pg.enabled() else contextlib.nullcontext():
+        rows = await ch.query_all(
+            f"""
+            SELECT toString(sha256) AS sha
+            FROM {TABLE}
+            WHERE org = {{org:String}} AND namespace = {{ns:String}} AND sha256 > {{after:String}}
+              AND toString(sha256) NOT IN (
+                  SELECT arrayJoin([blob_path, artifact_sha256]) FROM loom.documents FINAL
+                  WHERE org = {{org:String}} AND namespace = {{ns:String}} AND {LIVE_ORIGINAL_SQL}
+              )
+              AND toString(sha256) NOT IN ({HELD_SQL})
+            GROUP BY sha256
+            HAVING max(created_at) < now64(3) - INTERVAL {{age:UInt32}} SECOND
+            ORDER BY sha256
+            LIMIT {{lim:UInt32}}
+            """,
+            params={
+                "org": org,
+                "ns": namespace,
+                "after": after,
+                "age": int(min_age_s),
+                "lim": int(limit),
+            },
+        )
     return [str(r["sha"]) for r in rows]
+
+
+async def owed_originals(org: str, namespace: str) -> set[str]:
+    """Under the Postgres authority, the originals named by live documents of commits
+    ClickHouse has not received yet (owed, or parked): needed, though no loom.documents
+    row names them yet. Read before the ClickHouse read it amends, so a row published in
+    between is read there. Filtered in Python: their number is not bounded."""
+    from server.core import pg
+
+    if not pg.enabled():
+        return set()
+    from server.knowledge.store import pg_documents
+
+    return await pg_documents.owed_originals(org, namespace)
 
 
 async def _named(

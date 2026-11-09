@@ -20,7 +20,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, NamedTuple
 
-from server.core import rmt_carry
+from server.core import pg_lease, rmt_carry
 from server.core.ch_writes import batched_insert_settings
 from server.core.error_summary import error_summary
 from server.core.hashing import hash_text
@@ -144,10 +144,10 @@ async def publish(
         await _retire_owed(committed, ch=ch)
         if owing:
             await retire_decision_records(owing, deadline=committed.deadline, ch=ch)
-    except pg_memory.PublicationPending:
+    except pg_lease.PublicationPending:
         raise
     except Exception as e:  # committed: any failure to publish is PublicationPending
-        raise pg_memory.PublicationPending.after(e) from e
+        raise pg_lease.PublicationPending.after(e) from e
 
 
 async def publish_rows(
@@ -169,7 +169,7 @@ async def publish_rows(
     earlier attempt may have stored some of the audit rows, which are not inserted
     again."""
     ch = ch or _default_client()
-    with pg_memory.leased(deadline):
+    with pg_lease.leased(deadline):
         memory_done, audit_done = await asyncio.gather(
             insert_memory_versions(rows, ch=ch, published=True),
             insert_audit_rows(audits, ch=ch, retried=retried),
@@ -205,7 +205,7 @@ async def retire_old_vectors(
     from server.memory.store.embeddings import retire_vectors_for_keys
 
     # A retirement reads first: on a replica that has what landed before it.
-    with pg_memory.leased(deadline), sequential_reads():
+    with pg_lease.leased(deadline), sequential_reads():
         await retire_vectors_for_keys(
             [(identity_key(r), int(r["version"])) for r in rows], ch=ch, bare=True
         )
@@ -257,7 +257,7 @@ async def retire_decision_records(
             # the hosts' clock skew, as every `next_version` is.
             version = next_version()
             live = await pg_memory.live_decision_writers(org, namespace, keys)
-            with pg_memory.leased(deadline):
+            with pg_lease.leased(deadline):
                 await tombstone_decision_records(
                     org, namespace, keys, version=version, ch=ch, live=live
                 )

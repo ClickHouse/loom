@@ -15,7 +15,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
-from server.core import pg
+from server.core import pg, pg_lease
 from server.core.ch import sequential_reads
 from server.core.datetimes import naive_utc_now, naive_utc_now_seconds
 from server.core.error_summary import error_summary
@@ -344,17 +344,17 @@ async def insert_versions_over_heads(
     answer, failed = 0, None
     if then is not None:
         try:
-            with pg_memory.leased(committed.deadline), sequential_reads():
+            with pg_lease.leased(committed.deadline), sequential_reads():
                 answer = await then() or 0
             if documented:
                 await _settle_documents(committed, documented, held=settle_held, ch=ch)
-        except pg_memory.PublicationPending:
+        except pg_lease.PublicationPending:
             _log.warning("a copy's follow-up was left: its commit's lease ended first")
         except Exception as e:  # noqa: BLE001 — raised once the commit is published
             failed = e
     try:
         await pg_publish.publish(committed, ch=ch)
-    except pg_memory.PublicationPending:
+    except pg_lease.PublicationPending:
         _log.info("committed %d version row(s) left for the delivery worker", len(rows))
     if landed is not None:
         await landed()
@@ -385,14 +385,14 @@ async def insert_documented_versions(
     owed = pg_memory.MEMORY_ROW | pg_memory.SEARCH_DOC | pg_memory.AUDIT_ROW
     committed = await pg_publish.commit(rows, targets=owed)
     try:
-        with pg_memory.leased(committed.deadline):
+        with pg_lease.leased(committed.deadline):
             await insert_embedding_rows(documents, ch=ch)
         await _settle_documents(committed, [True] * len(rows))
     except Exception as e:  # noqa: BLE001 — the commit stands; the delivery worker builds them
         _log.warning("search documents not written, owed: %s", error_summary(e))
     try:
         await pg_publish.publish(committed, ch=ch)
-    except pg_memory.PublicationPending:
+    except pg_lease.PublicationPending:
         _log.info("committed %d version row(s) left for the delivery worker", len(rows))
         return False
     return True
@@ -1035,7 +1035,7 @@ async def _tombstone_heads(
                 continue  # a head of the page changed since it was read: read it again
             try:
                 await pg_publish.publish(committed, ch=ch)
-            except pg_memory.PublicationPending:
+            except pg_lease.PublicationPending:
                 # Committed, so done: search serves no hit of a tombstoned head meanwhile.
                 _log.info("a cleared page is left for the delivery worker")
             total += len(rows)

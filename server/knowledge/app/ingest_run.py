@@ -14,8 +14,9 @@ it is:
 3. **publish**: decide the revision (and check the expected one), record the
    new chunk version (`doc_version`) on the job and insert its chunks, each
    naming that revision; then, under the source's claim (which other ingests
-   of the source, a dataset approval and a metadata edit of an ingested
-   document take; text writes and deletes do not), check a cancel and refuse the
+   of the source, a dataset approval, a metadata edit of an ingested document,
+   a restore and a delete's retirement of a deleted source's leftovers take;
+   every other write does not), check a cancel and refuse the
    publish when the source changed since the revision was decided, write the
    document row (the switch: revision, format, artifact, parser, coverage) and
    retire the chunks and the dataset snapshots of earlier versions. A table of
@@ -43,15 +44,23 @@ import asyncio
 import hashlib
 import json
 import logging
-import time
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from server.core import pg
 from server.core.ch import sequential_reads
-from server.core.errors import BACKEND_NOT_NOW, BackendUnavailableError, EmbedTimeoutError
+from server.core.error_summary import error_summary
+from server.core.errors import (
+    BACKEND_NOT_NOW,
+    BackendUnavailableError,
+    EmbedTimeoutError,
+    ValidationError,
+)
 from server.core.leases import LeaseLost
+from server.core.pg import PostgresUnavailableError
+from server.core.pg_lease import PublicationPending
 from server.knowledge.app import datasets
 from server.knowledge.app.extractors import (
     ExtractionFailed,
@@ -64,7 +73,10 @@ from server.knowledge.domain.extract.artifact import Artifact
 from server.knowledge.domain.extract.structural import StructuralChunk, chunk_artifact
 from server.knowledge.domain.ingest_states import OPEN_STATES
 from server.knowledge.store import datasets as datasets_repo
+from server.knowledge.store import documents as documents_repo
 from server.knowledge.store import ingestions
+from server.knowledge.store.documents import DocumentInsertRow, DocumentRow, OlderNotRetired
+from server.knowledge.store.pg_documents import HeadMoved
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -87,7 +99,10 @@ _RETRY_MAX_S = 3600  # not a setting: a longer outage is the attempts' to ride o
 
 # A store that cannot answer now (down, past its deadline, out of slots), an
 # embedder past its deadline, an extractor that cannot take the source now.
-_TRANSIENT = (*BACKEND_NOT_NOW, EmbedTimeoutError, ExtractorUnavailable)
+# A Postgres error at the document's commit that may have committed it
+# (`outcome_unknown`) stops the run as an uncertain insert does, and the next one
+# settles it; one that committed nothing (a lock timeout under an erasure) retries.
+_TRANSIENT = (*BACKEND_NOT_NOW, EmbedTimeoutError, ExtractorUnavailable, PostgresUnavailableError)
 
 
 class JobFailed(Exception):
@@ -136,9 +151,10 @@ class Parsed:
 
 
 def claim_source(org: str, namespace: str, source_uri: str) -> AbstractAsyncContextManager[bool]:
-    """The source's claim, which an ingest's publish, a dataset approval and a
-    metadata edit of an ingested document take (text writes and deletes do
-    not): `async with` it yields whether it is held."""
+    """The source's claim, which an ingest's publish, a dataset approval, a metadata
+    edit of an ingested document, a restore and a delete's retirement of a deleted
+    source's leftovers take (text writes and a live document's delete do not):
+    `async with` it yields whether it is held."""
     from server.core import leases
 
     return leases.holding(
@@ -178,8 +194,6 @@ async def _own_publish(job: dict[str, Any]) -> int | None:
     """The revision this job published (an earlier run that stopped after its
     document row), whatever has been written to the source since; None when it
     published nothing."""
-    from server.knowledge.store import documents as documents_repo
-
     return await documents_repo.revision_by_ingestion(
         job["org"], job["namespace"], job["source_uri"], job["ingestion_id"]
     )
@@ -218,8 +232,6 @@ async def _overtaken(job: dict[str, Any]) -> bool:
     has folded the row away, so a rerun cannot publish without perhaps putting
     this job's older file over the later write. A job a retry put back to
     pending, or one stopped before it published, is not judged."""
-    from server.knowledge.store import documents as documents_repo
-
     version = int(job["doc_version"])
     if job["state"] != "processing" or job["stage"] != ingestions.PUBLISH or not version:
         return False
@@ -336,7 +348,7 @@ def _context(job: dict[str, Any], chunk: StructuralChunk) -> str:
     return chunk_context(job["title"], job["description"], chunk.breadcrumb)
 
 
-def _revision_for(job: dict[str, Any], prior: Any) -> int:
+def _revision_for(job: dict[str, Any], prior: DocumentRow | None) -> int:
     """The revision this publish takes over the source's latest row `prior`, or
     JobFailed("revision_conflict") when the job may not publish over it."""
     from server.knowledge.app.writes import next_revision
@@ -352,49 +364,93 @@ def _revision_for(job: dict[str, Any], prior: Any) -> int:
     return next_revision(prior)
 
 
-def _version_of(doc: Any) -> int | None:
-    return None if doc is None else int(doc.version)
-
-
 async def _check_unchanged(
-    job: dict[str, Any], prior: Any, version: int, datasets_read: datasets.Published
+    job: dict[str, Any], prior: DocumentRow | None, datasets_read: datasets.Published
 ) -> None:
     """Under the source's claim: JobFailed("revision_conflict") when the source is no
-    longer as it was when this publish decided its revision, or when its latest row
-    would outrank this one; a retry when one of its datasets was approved since
-    the publish read them (`datasets.check_unchanged`)."""
-    from server.knowledge.store import documents as documents_repo
-
+    longer as it was when this publish decided its revision; a retry when one of its
+    datasets was approved since the publish read them (`datasets.check_unchanged`)."""
     latest = await documents_repo.get_one(
         job["org"], job["namespace"], job["source_uri"], include_superseded=True
     )
-    # Any write of the source since the revision was decided (a text write or a delete,
-    # which take no claim, or a metadata edit, which took it before this publish did)
-    # changes its latest version: this publish's revision, which its chunks record, is stale.
-    if _version_of(latest) != _version_of(prior):
+    # Any row written since the revision was decided (a text write or a live delete, which
+    # take no claim, or a metadata edit or restore that took it first) changes the latest
+    # version, so this publish's revision, which its chunks record, is stale. Its version
+    # is past the one it read (`_publish`): with the source unchanged its row outranks
+    # every earlier one in FINAL.
+    if documents_repo.version_of(latest) != documents_repo.version_of(prior):
         raise JobFailed("revision_conflict", "the source changed while it was published")
-    # A row stamped after this one (a writer whose clock runs ahead) would outrank it in
-    # FINAL: this publish would report a revision no reader sees.
-    if latest is not None and latest.version >= version:
-        raise JobFailed("revision_conflict", "a later write of this source landed first")
     await datasets.check_unchanged(job, datasets_read)
 
 
 async def _publish_datasets(
-    job: dict[str, Any], parsed: Parsed, version: int, revision: int, prior: Any, lease: Any
+    job: dict[str, Any],
+    parsed: Parsed,
+    version: int,
+    revision: int,
+    prior: DocumentRow | None,
+    lease: Any,
 ) -> datasets.Published:
     """The artifact's tables as datasets of the job's document version; an
     approved dataset of the live `prior` row carries its types."""
-    live = prior is not None and prior.superseded_at is None
+    live = prior if prior is not None and prior.superseded_at is None else None
     return await datasets.publish(
         job,
         parsed.artifact,
         doc_version=version,
         revision=revision,
         artifact_sha256=parsed.artifact_sha256,
-        prior_version=prior.version if live else 0,
+        prior_version=live.version if live else 0,
         lease=lease,
         alive=lambda: _current(job),  # an erased job writes no more of its rows
+    )
+
+
+def _refuse_unstorable_keys(job: dict[str, Any]) -> None:
+    """JobFailed("unstorable_text") when the document row could not be committed: its
+    source URI or its writer's id holds a NUL character or a lone surrogate, which a
+    Postgres key column cannot store (`documents.check_storable`). `knowledge.ingest`
+    refuses such a job (422); this catches one an older build queued."""
+    try:
+        documents_repo.check_storable([{**job, **_author(job)}])
+    except ValidationError as e:
+        raise JobFailed(
+            "unstorable_text",
+            "the source URI or the writer's id holds a NUL character or a lone surrogate",
+        ) from e
+
+
+def _chunk_rows(
+    job: dict[str, Any],
+    parsed: Parsed,
+    vectors: list[list[float]],
+    *,
+    version: int,
+    revision: int,
+    now: datetime,
+) -> list[Any]:
+    """The new version's chunk rows, embedded with the configured model."""
+    from server.embedding import get_embedder
+    from server.knowledge.store import chunks as chunks_repo
+
+    embedder = get_embedder()
+    return chunks_repo.build_chunk_rows(
+        org=job["org"],
+        namespace=job["namespace"],
+        source_uri=job["source_uri"],
+        title=job["title"],
+        chunks=parsed.chunks,
+        contexts=[_context(job, c) for c in parsed.chunks],
+        embeddings=vectors,
+        tags=list(job["tags"]),
+        metadata=job["metadata"],
+        doc_version=version,
+        revision=revision,
+        doc_format=parsed.artifact.format,
+        embedding_model=embedder.model_name,
+        embedding_dim=embedder.dim,
+        now=now,
+        author=_author(job),
     )
 
 
@@ -403,9 +459,7 @@ async def _publish(
 ) -> tuple[dict[str, Any], int]:
     """Insert the new version and switch the document to it; returns the job
     row as saved and the revision."""
-    from server.embedding import get_embedder
     from server.knowledge.store import chunks as chunks_repo
-    from server.knowledge.store import documents as documents_repo
 
     org, ns, uri = job["org"], job["namespace"], job["source_uri"]
     if await _cancelled(job):
@@ -415,29 +469,10 @@ async def _publish(
     # it; the claimed block refuses the publish if the source has changed since.
     prior = await documents_repo.get_one(org, ns, uri, include_superseded=True)
     revision = _revision_for(job, prior)
-    embedder = get_embedder()
     now = datetime.now(UTC).replace(tzinfo=None)
-    version = time.time_ns()
-    author = _author(job)
-    tags = list(job["tags"])
-    rows = chunks_repo.build_chunk_rows(
-        org=org,
-        namespace=ns,
-        source_uri=uri,
-        title=job["title"],
-        chunks=parsed.chunks,
-        contexts=[_context(job, c) for c in parsed.chunks],
-        embeddings=vectors,
-        tags=tags,
-        metadata=job["metadata"],
-        doc_version=version,
-        revision=revision,
-        doc_format=parsed.artifact.format,
-        embedding_model=embedder.model_name,
-        embedding_dim=embedder.dim,
-        now=now,
-        author=author,
-    )
+    version = documents_repo.version_past(documents_repo.version_of(prior))
+    _refuse_unstorable_keys(job)  # refused before any chunk is written
+    rows = _chunk_rows(job, parsed, vectors, version=version, revision=revision, now=now)
     if not lease.held:  # another worker may have taken the job: it publishes, not this run
         raise LeaseLost(f"knowledge-ingest:{job['ingestion_id']}")
     # Recorded before the insert, so a run that stops after it is retired; the
@@ -457,50 +492,84 @@ async def _publish(
                 )
             if await _cancelled(job):
                 raise JobFailed("cancelled", "cancelled before it was published")
-            await _check_unchanged(job, prior, version, datasets_read)
+            await _check_unchanged(job, prior, datasets_read)
             if not lease.held:
                 raise LeaseLost(f"knowledge-ingest:{job['ingestion_id']}")
-            row = documents_repo.build_document_row(
-                **author,
-                org=org,
-                namespace=ns,
-                source_uri=uri,
-                title=job["title"],
-                description=job["description"],
-                content=render_text(parsed.artifact),
-                tags=tags,
-                metadata=job["metadata"],
-                version=version,
-                ingested_at=now,
-                blob_path=job["sha256"],
-                blob_size=parsed.original_size,
-                blob_content_type=job["content_type"],
-                original_filename=job["filename"],
-                revision=revision,
-                format=parsed.artifact.format,
-                artifact_sha256=parsed.artifact_sha256,
-                parser=f"{parsed.artifact.parser}/{parsed.artifact.parser_version}",
-                coverage=json.dumps(parsed.artifact.coverage.to_dict(), sort_keys=True),
-                ingestion_id=job["ingestion_id"],
-            )
+            row = _document_row(job, parsed, version=version, revision=revision, now=now)
             await _current(job)  # an erased job writes no document row
             in_flight = True
-            await documents_repo.insert_one(row)
+            try:
+                await _insert_document(row, prior)
+            except OlderNotRetired:  # the row is in: the publish stands
+                in_flight, published = False, True
+                raise
             in_flight, published = False, True
-            await chunks_repo.mark_doc_superseded(org, ns, uri, before_version=version, when=now)
             await datasets_repo.forget(org, ns, [uri], before=version)
     except asyncio.CancelledError:
         if in_flight:  # stopped (a pass deadline, a shutdown) with the insert in flight
             lease.let_expire()
         raise
     except Exception as e:
-        if in_flight and isinstance(e, _TRANSIENT):
+        if in_flight and isinstance(e, _TRANSIENT) and _may_have_landed(e):
             lease.let_expire()
             raise _InsertUncertain(e) from e
         if published:  # whatever failed after the row, the publish stands
-            raise _AfterRow(revision, e) from e
+            raise _AfterRow(revision, OlderNotRetired.unwrap(e)) from e
         raise
     return job, revision
+
+
+def _document_row(
+    job: dict[str, Any], parsed: Parsed, *, version: int, revision: int, now: datetime
+) -> DocumentInsertRow:
+    """The loom.documents row the job publishes: its extracted text, original and
+    artifact, at `version` and `revision`."""
+    return documents_repo.build_document_row(
+        **_author(job),
+        org=job["org"],
+        namespace=job["namespace"],
+        source_uri=job["source_uri"],
+        title=job["title"],
+        description=job["description"],
+        content=render_text(parsed.artifact),
+        tags=list(job["tags"]),
+        metadata=job["metadata"],
+        version=version,
+        ingested_at=now,
+        blob_path=job["sha256"],
+        blob_size=parsed.original_size,
+        blob_content_type=job["content_type"],
+        original_filename=job["filename"],
+        revision=revision,
+        format=parsed.artifact.format,
+        artifact_sha256=parsed.artifact_sha256,
+        parser=f"{parsed.artifact.parser}/{parsed.artifact.parser_version}",
+        coverage=json.dumps(parsed.artifact.coverage.to_dict(), sort_keys=True),
+        ingestion_id=job["ingestion_id"],
+    )
+
+
+def _may_have_landed(e: Exception) -> bool:
+    """Whether a transient failure of the document's insert may still have written it:
+    a ClickHouse insert that failed may land later; a Postgres commit only when its
+    answer was lost."""
+    if isinstance(e, PostgresUnavailableError):
+        return pg.may_have_committed(e)
+    return True
+
+
+async def _insert_document(row: DocumentInsertRow, prior: DocumentRow | None) -> None:
+    """The document row, then the older versions' chunks retired (`retire_older`).
+    OlderNotRetired when only the retirement failed, the row in; JobFailed when a write
+    of the source committed since `prior` was read."""
+    try:
+        await documents_repo.insert_one(
+            row, over=documents_repo.version_of(prior), retire_older=True
+        )
+    except HeadMoved as e:
+        raise JobFailed("revision_conflict", "another write of the source committed first") from e
+    except PublicationPending:
+        pass  # committed: the delivery worker publishes the row and the retirement
 
 
 async def _retry_or_fail(job: dict[str, Any], e: Exception) -> str:
@@ -564,6 +633,12 @@ async def run(job: dict[str, Any], lease: Any) -> str:
     except JobFailed as e:
         return await _end(job, "cancelled" if e.code == "cancelled" else "failed", e.code, str(e))
     except _AfterRow as e:  # the row was written: the retire of older chunks runs again
+        log.warning(
+            "knowledge_ingest: job %s published; a step after its row failed: %s",
+            job["ingestion_id"],
+            error_summary(e.cause),
+            exc_info=e.cause,  # its own cause chain, as the funnel raised it
+        )
         return await _finish_published(await _current(job), e.revision)
     except _InsertUncertain as e:
         log.warning(

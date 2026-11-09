@@ -641,9 +641,9 @@ def test_a_document_rewrite_keeps_who_wrote_it(monkeypatch: pytest.MonkeyPatch) 
     }
 
     class _CH:
-        async def query_one(self, sql: str, params: Any = None, **_k: Any) -> dict[str, Any]:
+        async def query_all(self, sql: str, params: Any = None, **_k: Any) -> list[dict[str, Any]]:
             assert all(c in sql for c in ("agent", "user_id", "actor", "source_class"))
-            return stored
+            return [stored]
 
     row = asyncio.run(documents.get_one(ORG, "col-hr", "doc/1", ch=_CH()))  # type: ignore[arg-type]
     rewritten = documents.build_document_row(row, title="new", version=2)

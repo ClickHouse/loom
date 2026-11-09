@@ -10113,7 +10113,7 @@ class KnowledgeBulkEntryResult(TypedDict, total=False):
 
 
 class KnowledgeBulkDeleteInput(TypedDict, total=False):
-    "Tombstone multiple documents by source_uri in one lightweight UPDATE."
+    "Soft-delete multiple documents by source_uri, in one commit."
 
     org: Required[str]
     namespace: Required[str]
@@ -10121,7 +10121,7 @@ class KnowledgeBulkDeleteInput(TypedDict, total=False):
 
 
 class KnowledgeBulkDeleteBody(TypedDict, total=False):
-    "Tombstone multiple documents by source_uri in one lightweight UPDATE."
+    "Soft-delete multiple documents by source_uri, in one commit."
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -10303,7 +10303,7 @@ class KnowledgeDedupResolveOutput(TypedDict, total=False):
 
 
 class KnowledgeDeleteInput(TypedDict, total=False):
-    "Soft-delete a document by source_uri: tombstones all live chunks"
+    "Soft-delete a document by source_uri: writes its tombstone."
 
     org: Required[str]
     namespace: Required[str]
@@ -10311,7 +10311,7 @@ class KnowledgeDeleteInput(TypedDict, total=False):
 
 
 class KnowledgeDeleteBody(TypedDict, total=False):
-    "Soft-delete a document by source_uri: tombstones all live chunks"
+    "Soft-delete a document by source_uri: writes its tombstone."
 
     org: NotRequired[str]
     namespace: NotRequired[str]

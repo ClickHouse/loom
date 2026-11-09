@@ -225,7 +225,7 @@ _LATE_STEPS_USER: tuple[UserStep, ...] = (
 
 
 # Steps a ClickHouse-authority saga never runs.
-_PG_ONLY_STEPS = frozenset({"pg_memory.delete"})
+_PG_ONLY_STEPS = frozenset({"pg_memory.delete", "pg_knowledge.delete"})
 
 
 def authority_steps[StepT: tuple[str, Any]](steps: tuple[StepT, ...]) -> list[StepT]:
@@ -242,6 +242,7 @@ USER_STEPS: tuple[UserStep, ...] = (
     # First: the authority's copy, then the wait for its publishers, so every
     # ClickHouse copy the steps below look for has landed.
     ("pg_memory.delete", pg_steps.delete_pg_memory_by_user),
+    ("pg_knowledge.delete", pg_steps.delete_pg_knowledge_by_user),
     ("memory.tombstone", memory_steps.tombstone_memory_by_user),
     ("memory_embeddings.tombstone", memory_steps.tombstone_embeddings_by_user),
     # The summaries built from the user's memories, under another identity: retired
@@ -298,6 +299,7 @@ USER_STEPS: tuple[UserStep, ...] = (
 # saga order. Names as for USER_STEPS.
 NAMESPACE_STEPS: tuple[NamespaceStep, ...] = (
     ("pg_memory.delete", pg_steps.delete_pg_memory_by_namespace),
+    ("pg_knowledge.delete", pg_steps.delete_pg_knowledge_by_namespace),
     ("memory.tombstone", memory_steps.tombstone_memory_by_namespace),
     ("memory_embeddings.tombstone", memory_steps.tombstone_embeddings_by_namespace),
     ("memory_versions.delete", memory_steps.delete_memory_versions_by_namespace),

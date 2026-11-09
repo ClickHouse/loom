@@ -50,7 +50,7 @@ Batched ingestion: many documents in one CH round-trip.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `entries` | `list[_KnowledgeBulkEntry]` | required | The documents to add (1-500), each chunked and embedded like a `knowledge.add`. |
+| `entries` | `list[_KnowledgeBulkEntry]` | required | The documents to add (1-500), each chunked and embedded like a `knowledge.add`; each `source_uri` at most once, or the call is refused (422) with nothing written. |
 | `agent` | `str` | `''` | The agent writing the documents, stored on each and on every chunk for provenance; an end-user token's signed `agent` takes its place. |
 | `session_id` | `str` | `''` | The session the documents were written in (a chat, an agent run): stored on each and on every chunk, and `knowledge.search` filters on it. |
 | `source_class` | `str \| None` | `None` | What the content is, when it is not the writer's own: `derived` (an agent wrote it from other content), `external` (fetched: a page, a tool's result) or `imported`. |
@@ -63,7 +63,7 @@ Batched ingestion: many documents in one CH round-trip.
 
 ## `knowledge.bulk_delete`
 
-Tombstone multiple documents by source_uri in one lightweight UPDATE.
+Soft-delete multiple documents by source_uri, in one commit.
 
 `POST /v1/knowledge.bulk_delete` · MCP `loom_knowledge_bulk_delete` · role `writer` · idempotent · audited · not listed under the MCP `all` toolset
 
@@ -76,7 +76,7 @@ Tombstone multiple documents by source_uri in one lightweight UPDATE.
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `deleted` | `list[_KnowledgeBulkDeleteResult]` | One result per input URI, in input order, with its tombstoned chunk count (0 if none). |
-| `total_chunks_tombstoned` | `int` | Sum of the chunks tombstoned across every URI. |
+| `total_chunks_tombstoned` | `int` | Sum of each source's count, a source named twice counted once (`deleted` repeats it). |
 
 ## `knowledge.dataset_approve`
 
@@ -161,7 +161,7 @@ Resolve one document duplicate pair.
 
 ## `knowledge.delete`
 
-Soft-delete a document by source_uri: tombstones all live chunks and version-bumps the documents row.
+Soft-delete a document by source_uri: writes its tombstone.
 
 `POST /v1/knowledge.delete` · MCP `loom_knowledge_delete` · role `writer` · idempotent · audited
 
@@ -173,8 +173,8 @@ Soft-delete a document by source_uri: tombstones all live chunks and version-bum
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `deleted` | `bool` | true if any live chunks were tombstoned |
-| `chunks_tombstoned` | `int` | How many live chunks were tombstoned; 0 when the document was already gone. |
+| `deleted` | `bool` | True when a live document was tombstoned, or leftover chunks of a deleted or never committed source were retired. |
+| `chunks_tombstoned` | `int` | The chunks the delete retired; 0 when it had none, or when a deleted source was restored or written again before the delete took its claim. |
 
 ## `knowledge.formats`
 
@@ -679,7 +679,7 @@ Edit doc-level metadata (title, description, tags).
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `updated` | `bool` | True when a new version was written; False when every field already matched. |
+| `updated` | `bool` | True when the title, description or tags changed; a reindex's rewrite shows in chunks_reindexed. |
 | `title` | `str` | Echo the post-update state so the client doesn't need to refetch. |
 | `description` | `str` | The document's description after the call. |
 | `tags` | `list[str]` | The document's tags after the call. |

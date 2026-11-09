@@ -198,7 +198,7 @@ async def _pool_for_loop() -> Any:
                     "default_transaction_isolation": "read committed",
                     "statement_timeout": str(settings.pg_statement_timeout_ms),
                     # A transaction left open by a cancelled request is ended by the server.
-                    "idle_in_transaction_session_timeout": _idle_timeout_ms(),
+                    "idle_in_transaction_session_timeout": idle_timeout_ms(),
                 },
                 command_timeout=settings.pg_statement_timeout_ms / 1000 + 1,
             )
@@ -213,7 +213,7 @@ async def _pool_for_loop() -> Any:
     return _pools[loop]
 
 
-def _idle_timeout_ms() -> str:
+def idle_timeout_ms() -> str:
     """How long the server keeps a transaction a client left idle (a cancelled request, a
     stalled process) before it ends it and releases its locks."""
     return str(settings.pg_statement_timeout_ms * 2)
@@ -372,7 +372,7 @@ async def dedicated() -> AsyncIterator[Any]:
                 "statement_timeout": "0",
                 # Its statements may run long; a transaction left idle by a stalled
                 # process does not hold its locks past the pool's bound.
-                "idle_in_transaction_session_timeout": _idle_timeout_ms(),
+                "idle_in_transaction_session_timeout": idle_timeout_ms(),
             },
         )
     except Exception as e:
@@ -559,6 +559,11 @@ async def fence_lock(conn: Any, org: str) -> None:
     while the step holding it fences the org's claims."""
     await conn.execute(f"SELECT pg_advisory_xact_lock({_IDEMPOTENCY_LOCK_KEY})", org)
 
+
+# The advisory lock of a namespace's knowledge documents (`$1` the org, `$2` the
+# namespace): a document commit holds it shared, and an erasure of the namespace's
+# documents alone, so no commit lands between the erasure's read and its delete.
+KNOWLEDGE_LOCK_KEY = "hashtextextended('loom.knowledge/' || $1::text || '/' || $2::text, 0)"
 
 # The advisory lock of a policy scope (`k.org`, `k.scope`), one key per scope.
 POLICY_LOCK_KEY = "hashtextextended('loom.policy/' || k.org || '/' || k.scope, 0)"
