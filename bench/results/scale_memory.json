@@ -1,6 +1,6 @@
 {
  "setup": {
-  "host": "one shared host, 32 cores, 61 GB RAM; other workloads ran beside it (1-minute load 13 to 165, recorded per op)",
+  "host": "one shared host, 32 cores, 61 GB RAM; other workloads ran beside it (1-minute load 13 to 224, recorded per op)",
   "clickhouse": "26.10, max_server_memory_usage 12 GiB",
   "postgres": "16, no standby, shared_buffers 2 GB",
   "embedder": "fake-ngram-3072 (two 3072-dimension BFloat16 vectors per embedding row)",
@@ -377,12 +377,13 @@
      "bytes": 3646524273,
      "uncompressed": 3787336151
     }
-   }
+   },
+   "build": "not recorded"
   },
   "single_500k_clickhouse_partial": {
    "shape": "single",
    "authority": "clickhouse",
-   "build": "unknown",
+   "build": "not recorded",
    "parts_before": {
     "memory": {
      "parts": 28,
@@ -469,12 +470,13 @@
    "vector_max_ms": 959.0,
    "read_rows": 560640,
    "read_mib": 282.8,
-   "memory_mib": 154.3
+   "memory_mib": 154.3,
+   "build": "not recorded"
   },
   "zipf_200k_postgres": {
    "shape": "zipf",
    "authority": "postgres",
-   "build": "unknown",
+   "build": "not recorded",
    "parts_before": {
     "memory": {
      "parts": 13,
@@ -702,7 +704,7 @@
   "zipf_200k_clickhouse_partial": {
    "shape": "zipf",
    "authority": "clickhouse",
-   "build": "unknown",
+   "build": "not recorded",
    "parts_before": {
     "memory": {
      "parts": 18,
@@ -835,7 +837,8 @@
      "seconds": 0.89
     }
    },
-   "vacuum_with_dead_rows_note": "dead rows made by rewriting every fifth head and revision in place (now: bench/scale_load.py pg --dead-fraction 0.2)"
+   "vacuum_with_dead_rows_note": "dead rows made by rewriting every fifth head and revision in place (now: bench/scale_load.py pg --dead-fraction 0.2)",
+   "build": "not recorded"
   },
   "zipf_200k_erasure_postgres": {
    "user": {
@@ -863,7 +866,8 @@
      "residue_count": 0,
      "steps": 48
     }
-   }
+   },
+   "build": "not recorded"
   },
   "zipf_200k_erasure_clickhouse": {
    "user": {
@@ -924,12 +928,13 @@
       "read_rows": 52590
      }
     ]
-   }
+   },
+   "build": "not recorded"
   },
   "bulk_peer_read_batched_round_1": {
    "shape": "single",
    "authority": "postgres",
-   "build": "unknown",
+   "build": "not recorded",
    "parts_before": {
     "memory": {
      "parts": 18,
@@ -1072,7 +1077,7 @@
   "bulk_peer_read_batched_round_2": {
    "shape": "single",
    "authority": "postgres",
-   "build": "unknown",
+   "build": "not recorded",
    "parts_before": {
     "memory": {
      "parts": 14,
@@ -1217,7 +1222,7 @@
   "bulk_peer_read_batched_round_3": {
    "shape": "single",
    "authority": "postgres",
-   "build": "unknown",
+   "build": "not recorded",
    "parts_before": {
     "memory": {
      "parts": 16,
@@ -1362,7 +1367,7 @@
   "bulk_peer_read_per_fact_round_1": {
    "shape": "single",
    "authority": "postgres",
-   "build": "unknown",
+   "build": "not recorded",
    "parts_before": {
     "memory": {
      "parts": 14,
@@ -1504,7 +1509,7 @@
   "bulk_peer_read_per_fact_round_2": {
    "shape": "single",
    "authority": "postgres",
-   "build": "unknown",
+   "build": "not recorded",
    "parts_before": {
     "memory": {
      "parts": 15,
@@ -1646,7 +1651,7 @@
   "bulk_peer_read_per_fact_round_3": {
    "shape": "single",
    "authority": "postgres",
-   "build": "unknown",
+   "build": "not recorded",
    "parts_before": {
     "memory": {
      "parts": 16,
@@ -1787,166 +1792,6 @@
     }
    }
   },
-  "fleet_15_per_s": {
-   "servers": 2,
-   "rate": 15.0,
-   "seconds": 42.4,
-   "writes": {
-    "n": 302,
-    "p50_ms": 1988.2,
-    "p99_ms": 5317.2,
-    "mean_ms": 2255.5,
-    "errors": {
-     "503:PROJECTION_BEHIND": 196,
-     "503:ADMISSION_CONTENDED": 92,
-     "503:OVERLOADED": 8,
-     "500:INTERNAL_ERROR": 2
-    }
-   },
-   "achieved_rate": 7.1,
-   "new_parts_per_s": {
-    "memory": 4.1,
-    "memory_versions": 4.05,
-    "memory_embeddings": 3.87
-   },
-   "max_parts_in_a_partition": {
-    "memory": 13,
-    "memory_versions": 13,
-    "memory_embeddings": 17
-   },
-   "max_merges_in_flight": 4,
-   "limits": {
-    "parts_to_delay_insert": 1000,
-    "parts_to_throw_insert": 3000
-   },
-   "after": {
-    "parts": {
-     "memory": {
-      "max_in_partition": 16,
-      "active": 16
-     },
-     "memory_versions": {
-      "max_in_partition": 15,
-      "active": 15
-     },
-     "memory_embeddings": {
-      "max_in_partition": 15,
-      "active": 15
-     }
-    },
-    "merges": 3
-   },
-   "host_load_1m": 146.2,
-   "setup": "2 servers x 2 web workers, Postgres authority, ClickHouse capped at 4 GiB, empty org scale-fleet"
-  },
-  "fleet_150_per_s": {
-   "servers": 2,
-   "rate": 150.0,
-   "seconds": 467.1,
-   "writes": {
-    "n": 3212,
-    "p50_ms": 5478.5,
-    "p99_ms": 42082.7,
-    "mean_ms": 8710.1,
-    "errors": {
-     "500:INTERNAL_ERROR": 2344,
-     "503:PROJECTION_BEHIND": 2997,
-     "503:ADMISSION_CONTENDED": 245,
-     "503:OVERLOADED": 193,
-     "ReadTimeout": 9
-    }
-   },
-   "achieved_rate": 6.9,
-   "new_parts_per_s": {
-    "memory": 3.54,
-    "memory_versions": 3.54,
-    "memory_embeddings": 2.48
-   },
-   "max_parts_in_a_partition": {
-    "memory": 8,
-    "memory_versions": 4,
-    "memory_embeddings": 2
-   },
-   "max_merges_in_flight": 1,
-   "limits": {
-    "parts_to_delay_insert": 1000,
-    "parts_to_throw_insert": 3000
-   },
-   "after": {
-    "parts": {
-     "memory": {
-      "max_in_partition": 5,
-      "active": 5
-     },
-     "memory_versions": {
-      "max_in_partition": 1,
-      "active": 1
-     },
-     "memory_embeddings": {
-      "max_in_partition": 4,
-      "active": 4
-     }
-    },
-    "merges": 0
-   },
-   "host_load_1m": 123.4,
-   "setup": "2 servers x 2 web workers, Postgres authority, ClickHouse capped at 4 GiB, empty org scale-fleet"
-  },
-  "fleet_1500_per_s": {
-   "servers": 2,
-   "rate": 1500.0,
-   "seconds": 338.0,
-   "writes": {
-    "n": 3413,
-    "p50_ms": 6307.8,
-    "p99_ms": 22377.0,
-    "mean_ms": 7342.9,
-    "errors": {
-     "500:INTERNAL_ERROR": 4615,
-     "503:ADMISSION_CONTENDED": 383,
-     "503:PROJECTION_BEHIND": 3508,
-     "503:POSTGRES_UNAVAILABLE": 41,
-     "503:OVERLOADED": 3035,
-     "ReadError": 1,
-     "ReadTimeout": 4
-    }
-   },
-   "achieved_rate": 10.1,
-   "new_parts_per_s": {
-    "memory": 5.17,
-    "memory_versions": 5.0,
-    "memory_embeddings": 3.73
-   },
-   "max_parts_in_a_partition": {
-    "memory": 36,
-    "memory_versions": 43,
-    "memory_embeddings": 33
-   },
-   "max_merges_in_flight": 7,
-   "limits": {
-    "parts_to_delay_insert": 1000,
-    "parts_to_throw_insert": 3000
-   },
-   "after": {
-    "parts": {
-     "memory": {
-      "max_in_partition": 4,
-      "active": 4
-     },
-     "memory_versions": {
-      "max_in_partition": 6,
-      "active": 6
-     },
-     "memory_embeddings": {
-      "max_in_partition": 6,
-      "active": 6
-     }
-    },
-    "merges": 0
-   },
-   "host_load_1m": 134.2,
-   "setup": "2 servers x 2 web workers, Postgres authority, ClickHouse capped at 4 GiB, empty org scale-fleet"
-  },
   "cost_20k_postgres": {
    "shape": "single",
    "authority": "postgres",
@@ -1988,7 +1833,8 @@
       "failed_statements": 0,
       "clickhouse_cpu_ms_per_call": 5.37
      },
-     "host_load_1m": 121.9
+     "host_load_1m": 121.9,
+     "calls_sent": 200
     },
     "memory.set": {
      "n": 182,
@@ -2010,13 +1856,14 @@
       "memory_embeddings": 0.03
      },
      "clickhouse": {
-      "statements_per_call": 16.0,
-      "read_mib_per_call": 12.4,
+      "statements_per_call": 14.6,
+      "read_mib_per_call": 11.3,
       "max_statement_memory_mib": 19.8,
       "failed_statements": 275,
-      "clickhouse_cpu_ms_per_call": 144.14
+      "clickhouse_cpu_ms_per_call": 131.17
      },
-     "host_load_1m": 189.0
+     "host_load_1m": 189.0,
+     "calls_sent": 200
     },
     "memory.bulk_set": {
      "n": 0,
@@ -2035,13 +1882,14 @@
       "memory_embeddings": 0.26
      },
      "clickhouse": {
-      "statements_per_call": 544.0,
-      "read_mib_per_call": 3257.9,
+      "statements_per_call": 27.2,
+      "read_mib_per_call": 162.9,
       "max_statement_memory_mib": 32.3,
       "failed_statements": 0,
-      "clickhouse_cpu_ms_per_call": 25448.6
+      "clickhouse_cpu_ms_per_call": 1272.43
      },
-     "host_load_1m": 178.9
+     "host_load_1m": 178.9,
+     "calls_sent": 20
     },
     "memory.search": {
      "n": 168,
@@ -2061,13 +1909,14 @@
       "memory_embeddings": 0.02
      },
      "clickhouse": {
-      "statements_per_call": 11.2,
-      "read_mib_per_call": 14.9,
+      "statements_per_call": 9.4,
+      "read_mib_per_call": 12.5,
       "max_statement_memory_mib": 32.3,
       "failed_statements": 13,
-      "clickhouse_cpu_ms_per_call": 128.43
+      "clickhouse_cpu_ms_per_call": 107.88
      },
-     "host_load_1m": 224.2
+     "host_load_1m": 224.2,
+     "calls_sent": 200
     }
    },
    "vector": [
@@ -2183,7 +2032,8 @@
       "failed_statements": 0,
       "clickhouse_cpu_ms_per_call": 16.39
      },
-     "host_load_1m": 122.7
+     "host_load_1m": 122.7,
+     "calls_sent": 200
     },
     "memory.set": {
      "n": 200,
@@ -2207,7 +2057,8 @@
       "failed_statements": 33,
       "clickhouse_cpu_ms_per_call": 214.7
      },
-     "host_load_1m": 97.4
+     "host_load_1m": 97.4,
+     "calls_sent": 200
     },
     "memory.bulk_set": {
      "n": 20,
@@ -2231,7 +2082,8 @@
       "failed_statements": 0,
       "clickhouse_cpu_ms_per_call": 1761.26
      },
-     "host_load_1m": 92.8
+     "host_load_1m": 92.8,
+     "calls_sent": 20
     },
     "memory.search": {
      "n": 200,
@@ -2251,7 +2103,8 @@
       "failed_statements": 5,
       "clickhouse_cpu_ms_per_call": 182.34
      },
-     "host_load_1m": 113.4
+     "host_load_1m": 113.4,
+     "calls_sent": 200
     }
    },
    "vector": [
@@ -2327,6 +2180,116 @@
     }
    },
    "setup": "20,000 keys, single shape, ClickHouse capped at 4 GiB, Postgres 16 with shared_buffers 256 MB, one server process"
+  },
+  "fleet_15_per_s": {
+   "servers": 2,
+   "rate": 15.0,
+   "max_in_flight": 512,
+   "seconds": 47.5,
+   "offered_rate": 15.0,
+   "not_sent_at_cap": 0,
+   "served_rate": 8.6,
+   "writes": {
+    "n": 407,
+    "p50_ms": 1680.5,
+    "p99_ms": 23251.5,
+    "mean_ms": 3875.0,
+    "errors": {
+     "503:PROJECTION_BEHIND": 161,
+     "503:ADMISSION_CONTENDED": 29,
+     "503:OVERLOADED": 3
+    }
+   },
+   "new_parts_per_s": {
+    "memory": 5.39,
+    "memory_versions": 5.39,
+    "memory_embeddings": 4.25
+   },
+   "max_parts_in_a_partition": {
+    "memory": 36,
+    "memory_versions": 43,
+    "memory_embeddings": 30
+   },
+   "max_merges_in_flight": 11,
+   "limits": {
+    "parts_to_delay_insert": 1000,
+    "parts_to_throw_insert": 3000
+   },
+   "after": {
+    "parts": {
+     "memory": {
+      "max_in_partition": 5,
+      "active": 18
+     },
+     "memory_versions": {
+      "max_in_partition": 4,
+      "active": 17
+     },
+     "memory_embeddings": {
+      "max_in_partition": 4,
+      "active": 17
+     }
+    },
+    "merges": 0
+   },
+   "host_load_1m": 87.7,
+   "setup": "2 servers x 2 web workers, Postgres authority, ClickHouse capped at 4 GiB, empty org scale-fleet; open loop, at most 512 writes in flight",
+   "build": "not recorded"
+  },
+  "fleet_150_per_s": {
+   "servers": 2,
+   "rate": 150.0,
+   "max_in_flight": 512,
+   "seconds": 50.2,
+   "offered_rate": 56.9,
+   "not_sent_at_cap": 3724,
+   "served_rate": 24.4,
+   "writes": {
+    "n": 1224,
+    "p50_ms": 9192.8,
+    "p99_ms": 14428.5,
+    "mean_ms": 8728.6,
+    "errors": {
+     "503:ADMISSION_CONTENDED": 405,
+     "503:PROJECTION_BEHIND": 550,
+     "503:OVERLOADED": 97
+    }
+   },
+   "new_parts_per_s": {
+    "memory": 5.72,
+    "memory_versions": 5.7,
+    "memory_embeddings": 4.68
+   },
+   "max_parts_in_a_partition": {
+    "memory": 48,
+    "memory_versions": 55,
+    "memory_embeddings": 37
+   },
+   "max_merges_in_flight": 8,
+   "limits": {
+    "parts_to_delay_insert": 1000,
+    "parts_to_throw_insert": 3000
+   },
+   "after": {
+    "parts": {
+     "memory": {
+      "max_in_partition": 2,
+      "active": 15
+     },
+     "memory_versions": {
+      "max_in_partition": 4,
+      "active": 17
+     },
+     "memory_embeddings": {
+      "max_in_partition": 9,
+      "active": 22
+     }
+    },
+    "merges": 0
+   },
+   "host_load_1m": 99.0,
+   "setup": "2 servers x 2 web workers, Postgres authority, ClickHouse capped at 4 GiB, empty org scale-fleet; open loop, at most 512 writes in flight",
+   "build": "not recorded"
   }
  }
 }

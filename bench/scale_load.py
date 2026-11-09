@@ -105,8 +105,9 @@ def tenant_sql(shape: str, tenants: int, orgs: int) -> tuple[str, str]:
     """(org, namespace) expressions of the key number `n`."""
     if shape == "single":
         return f"'{SINGLE_ORG}'", f"'{SINGLE_NS}'"
-    # A Weyl sequence spread through T^u - 1: log-uniform tenant ranks, Zipf of exponent 1.
-    t = f"toUInt32(floor(pow({tenants}, (n * 0.6180339887498949) % 1))) - 1"
+    # A Weyl sequence spread through (T + 1)^u - 1: log-uniform tenant ranks 0 to T - 1,
+    # Zipf of exponent 1.
+    t = f"toUInt32(floor(pow({tenants + 1}, (n * 0.6180339887498949) % 1))) - 1"
     per_org = max(1, math.ceil(tenants / orgs))
     return (
         f"concat('scale-z', toString(intDiv({t}, {per_org})))",
@@ -148,8 +149,23 @@ def _key_cte(
     """
 
 
+def own_stores(ch: Any) -> None:
+    """Refuse to touch a ClickHouse that holds any org's memory but the harness's own
+    (`scale-…`): the harness loads, optimizes and rewrites the recorded authority."""
+    other = ch.query(
+        "SELECT count() FROM loom.memory WHERE NOT startsWith(org, 'scale-') "
+        "AND org NOT IN ('shape')"
+    ).result_rows[0][0]
+    if other:
+        raise SystemExit(
+            f"this ClickHouse holds {other} memory rows of other orgs: point the harness "
+            "only at stores of its own"
+        )
+
+
 def load_ch(args: argparse.Namespace) -> None:
     ch = ch_client(_env(args.env))
+    own_stores(ch)
     batch = args.batch
     t0 = time.monotonic()
     for start in range(args.offset, args.offset + args.rows, batch):
@@ -235,6 +251,7 @@ async def _load_pg(args: argparse.Namespace) -> None:
 
     env = _env(args.env)
     ch = ch_client(env)
+    own_stores(ch)
     scopes = ch.query(
         "SELECT org, namespace, count() FROM loom.memory_versions "
         "WHERE startsWith(org, 'scale-') GROUP BY org, namespace ORDER BY org, namespace"
@@ -455,7 +472,8 @@ def _outcomes(path: str, body: dict[str, Any]) -> list[str]:
             return ["duplicate"]
         return ["written"]
     if path.endswith("memory.bulk_set"):
-        out = ["written"] * len(body.get("written") or [])
+        # `written` holds one result per entry; an entry that wrote no row has version 0.
+        out = ["written"] * sum(1 for w in body.get("written") or [] if int(w.get("version") or 0))
         out += ["duplicate"] * len(body.get("duplicates") or [])
         out += ["merged"] * len(body.get("merged") or [])
         out += ["unchecked"] * int(body.get("unchecked") or 0)
@@ -539,9 +557,22 @@ def new_parts_per_s(ch: Any, since: float, until: float) -> dict[str, float]:
     return {r[0]: round(r[1] / span, 2) for r in rows}
 
 
+def flush_logs(ch: Any, attempts: int = 10) -> None:
+    """`SYSTEM FLUSH LOGS`, waiting out a ClickHouse that is short of memory right after a
+    load (code 241) for up to `attempts` tries, 5 s apart."""
+    for attempt in range(attempts):
+        try:
+            ch.command("SYSTEM FLUSH LOGS")
+            return
+        except Exception as e:
+            if "Code: 241." not in str(e) or attempt == attempts - 1:
+                raise
+            time.sleep(5)
+
+
 def op_reads(ch: Any, op: str, since: float, until: float, calls: int) -> dict[str, Any]:
     """What the op's ClickHouse statements read and the CPU they used in the window, per
-    call, and the largest statement's memory."""
+    call sent (refused calls' statements included), and the largest statement's memory."""
     r = ch.query(
         "SELECT count(), sum(read_bytes), max(memory_usage), countIf(type != 'QueryFinish'), "
         "sum(ProfileEvents['OSCPUVirtualTimeMicroseconds']) "
@@ -568,7 +599,7 @@ def vector_read(
     t0 = time.time()
     res = drive(base_url, op_calls("memory.search", [key], reps, rng), 1, 120)
     t1 = time.time()
-    ch.command("SYSTEM FLUSH LOGS")
+    flush_logs(ch)
     log = ch.query(
         "SELECT count(), quantile(0.5)(query_duration_ms), max(query_duration_ms), avg(read_rows), "
         "avg(read_bytes), avg(memory_usage) FROM system.query_log "
@@ -712,6 +743,7 @@ def measure(args: argparse.Namespace) -> None:
         "shape": args.shape,
         "authority": health.get("storage_authority"),
         "build": health.get("build_commit"),
+        "bulk_peer_read": env.get("LOOM_MEMORY_BULK_PEER_READ", "batched"),
         "parts_before": parts(ch),
     }
     keys = sample_keys(ch, args.shape, 2000)
@@ -724,9 +756,10 @@ def measure(args: argparse.Namespace) -> None:
         ops[op] = drive(args.base_url, calls, args.concurrency, args.timeout)
         t1 = time.time()
         ops[op]["seconds"] = round(t1 - t0, 1)
-        ch.command("SYSTEM FLUSH LOGS")
+        flush_logs(ch)
         ops[op]["new_parts_per_s"] = new_parts_per_s(ch, t0, t1)
-        ops[op]["clickhouse"] = op_reads(ch, op, t0, t1, ops[op]["n"])
+        ops[op]["calls_sent"] = len(calls)
+        ops[op]["clickhouse"] = op_reads(ch, op, t0, t1, len(calls))
         ops[op]["host_load_1m"] = round(os.getloadavg()[0], 1)
         print(op, json.dumps(ops[op]), flush=True)
         _save(args.out, result)  # after each op, so a run cut short keeps what it measured
@@ -744,8 +777,7 @@ def measure(args: argparse.Namespace) -> None:
     result["parts_after"] = parts(ch)
     if env.get("LOOM_PG_DSN"):
         result["pg"] = pg_sizes(env)
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text(json.dumps(result, indent=2, default=str))
+    _save(args.out, result)
     print(f"wrote {args.out}")
 
 
@@ -774,21 +806,19 @@ def _partition_sample(ch: Any) -> dict[str, Any]:
 
 
 def fleet(args: argparse.Namespace) -> None:
-    """`memory.set` at `--rate` writes a second, open loop (write i starts at
-    start + i / rate), spread round-robin over `--base-url`'s servers, for `--seconds`;
-    then each memory table's new parts a second from `system.part_log`, the most active
-    parts any partition reached and the merges in flight (sampled every second), against
-    the tables' `parts_to_delay_insert` and `parts_to_throw_insert`."""
+    """`memory.set` at `--rate` writes a second, open loop (write i is sent at
+    start + i / rate whatever earlier writes are doing, up to `--max-in-flight` at once),
+    spread round-robin over `--base-url`'s servers, for `--seconds`; then each memory
+    table's new parts a second from `system.part_log`, the most active parts any partition
+    reached and the merges in flight (sampled every second), against the tables'
+    `parts_to_delay_insert` and `parts_to_throw_insert`. It reports the rate offered (writes
+    sent a second) beside the rate served (successful writes a second)."""
     import threading
 
     env = _env(args.env)
     ch = ch_client(env)
     urls = [u.strip() for u in args.base_url.split(",") if u.strip()]
     rng = random.Random()
-    total = int(args.rate * args.seconds)
-    lat: list[float] = []
-    errors: Counter[str] = Counter()
-    lock = threading.Lock()
     samples: list[dict[str, Any]] = []
     stop = threading.Event()
 
@@ -798,44 +828,65 @@ def fleet(args: argparse.Namespace) -> None:
             samples.append(_partition_sample(sampler))
             stop.wait(1.0)
 
-    clients = [httpx.Client(base_url=u, timeout=args.timeout) for u in urls]
-    t0 = time.time()
-    start = time.monotonic()
+    async def drive_open_loop() -> tuple[list[float], Counter[str], int, float]:
+        lat: list[float] = []
+        errors: Counter[str] = Counter()
+        gate = asyncio.Semaphore(args.max_in_flight)
+        skipped = 0
+        clients = [httpx.AsyncClient(base_url=u, timeout=args.timeout) for u in urls]
 
-    def one(i: int) -> None:
-        delay = start + i / args.rate - time.monotonic()
-        if delay > 0:
-            time.sleep(delay)
-        body = {
-            "org": "scale-fleet",
-            "namespace": f"ns{i % args.namespaces}",
-            "agent": "agent0",
-            "memory_key": f"fleet/{uuid.uuid4().hex[:12]}",
-            "memory_type": "semantic",
-            "value": _text(rng),
-        }
-        t = time.perf_counter()
-        try:
-            r = clients[i % len(clients)].post("/v1/memory.set", json=body)
-            ok, code = r.status_code == 200, f"{r.status_code}:{_error_code(r)}"
-        except httpx.HTTPError as e:
-            ok, code = False, type(e).__name__
-        with lock:
-            if ok:
-                lat.append((time.perf_counter() - t) * 1000)
-            else:
-                errors[code] += 1
+        async def one(i: int) -> None:
+            body = {
+                "org": "scale-fleet",
+                "namespace": f"ns{i % args.namespaces}",
+                "agent": "agent0",
+                "memory_key": f"fleet/{uuid.uuid4().hex[:12]}",
+                "memory_type": "semantic",
+                "value": _text(rng),
+            }
+            t = time.perf_counter()
+            try:
+                r = await clients[i % len(clients)].post("/v1/memory.set", json=body)
+                if r.status_code == 200:
+                    lat.append((time.perf_counter() - t) * 1000)
+                else:
+                    errors[f"{r.status_code}:{_error_code(r)}"] += 1
+            except httpx.HTTPError as e:
+                errors[type(e).__name__] += 1
+            finally:
+                gate.release()
+
+        tasks = []
+        start = time.monotonic()
+        for i in range(int(args.rate * args.seconds)):
+            delay = start + i / args.rate - time.monotonic()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            if gate.locked():  # at the in-flight cap: this write is not sent, and counted
+                skipped += 1
+                continue
+            await gate.acquire()
+            tasks.append(asyncio.create_task(one(i)))
+        sent_for = time.monotonic() - start
+        await asyncio.gather(*tasks)
+        for c in clients:
+            await c.aclose()
+        return lat, errors, skipped, sent_for
 
     watcher = threading.Thread(target=sample, daemon=True)
     watcher.start()
-    with ThreadPoolExecutor(args.threads) as pool:
-        list(pool.map(one, range(total)))
+    t0 = time.time()
+    lat, errors, skipped, sent_for = asyncio.run(drive_open_loop())
     t1 = time.time()
     stop.set()
     watcher.join()
-    for c in clients:
-        c.close()
-    ch.command("SYSTEM FLUSH LOGS")
+    # New parts a second come from system.part_log; a ClickHouse that cannot flush its
+    # logs after the load still has the sampled parts and merges, so the run keeps those.
+    try:
+        flush_logs(ch)
+        parts_per_s: dict[str, float] | str = new_parts_per_s(ch, t0, t1)
+    except Exception as e:  # noqa: BLE001 — the writes and samples are already measured
+        parts_per_s = f"not measured: logs not flushed ({str(e)[:160]})"
     limits = {
         r[0]: int(r[1])
         for r in ch.query(
@@ -847,13 +898,17 @@ def fleet(args: argparse.Namespace) -> None:
     for smp in samples:
         for table, v in smp["parts"].items():
             peak[table] = max(peak.get(table, 0), int(v["max_in_partition"]))
+    sent = len(lat) + sum(errors.values())
     out = {
         "servers": len(urls),
         "rate": args.rate,
+        "max_in_flight": args.max_in_flight,
         "seconds": round(t1 - t0, 1),
+        "offered_rate": round(sent / max(1e-9, sent_for), 1),
+        "not_sent_at_cap": skipped,
+        "served_rate": round(len(lat) / max(1e-9, t1 - t0), 1),
         "writes": _summary(lat, dict(errors)),
-        "achieved_rate": round(len(lat) / max(1e-9, t1 - t0), 1),
-        "new_parts_per_s": new_parts_per_s(ch, t0, t1),
+        "new_parts_per_s": parts_per_s,
         "max_parts_in_a_partition": peak,
         "max_merges_in_flight": max((smp["merges"] for smp in samples), default=0),
         "limits": limits,
@@ -868,6 +923,7 @@ def optimize(args: argparse.Namespace) -> None:
     """Vector reads against part count: before, then after OPTIMIZE FINAL of the table."""
     env = _env(args.env)
     ch = ch_client(env)
+    own_stores(ch)
     rng = random.Random(11)
     tenants = probe_tenants(ch, args.shape)
     out: dict[str, Any] = {"before": [], "after": []}
@@ -894,6 +950,7 @@ def erase(args: argparse.Namespace) -> None:
     """Time a user erasure and an org erasure through the server's own ops."""
     env = _env(args.env)
     ch = ch_client(env)
+    own_stores(ch)
     out: dict[str, Any] = {}
     with httpx.Client(base_url=args.base_url, timeout=3600) as http:
         if args.user:
@@ -968,7 +1025,7 @@ def pg_dead_rows(env: dict[str, str], fraction: float) -> dict[str, dict[str, in
         every = max(1, round(1 / fraction))
         await pg.execute(
             "UPDATE loom.memory_current SET version = version "
-            "WHERE starts_with(org, 'scale-') AND abs(hashtext(memory_key)) % $1 = 0",
+            "WHERE starts_with(org, 'scale-') AND hashtext(memory_key) % $1 = 0",
             every,
         )
         await pg.execute(
@@ -1006,6 +1063,7 @@ def set_authority(args: argparse.Namespace) -> None:
     authority is recorded once and never switched this way."""
     env = _env(args.env)
     ch = ch_client(env)
+    own_stores(ch)
     rows = ch.query("SELECT deployment_id FROM loom.storage_authority FINAL").result_rows
     deployment = rows[0][0] if rows else str(uuid.uuid4())
     if args.to == "postgres":
@@ -1080,7 +1138,7 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("--rate", type=float, required=True, help="writes a second, all servers")
     f.add_argument("--seconds", type=float, default=60)
     f.add_argument("--namespaces", type=int, default=16)
-    f.add_argument("--threads", type=int, default=64)
+    f.add_argument("--max-in-flight", type=int, default=512)
     f.add_argument("--timeout", type=float, default=60)
     f.add_argument("--out", required=True)
     a = sub.add_parser("authority", help="switch this private deployment's recorded authority")
