@@ -28,7 +28,7 @@ flowchart LR
     Q --> U["ClickHouse user loom_analyst<br/>column grants + signed row policies"]
 ```
 
-| Surface         | What the caller will call                                                                                               |
+| Surface         | What the caller calls                                                                                                   |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | Dashboard       | a chat on the Assistant page, streaming from `POST /v1/assistant/chat/completions` with the signed-in session           |
 | HTTP            | `POST /v1/assistant/chat/completions`: LibreChat's agents API request and response, OpenAI-compatible, streaming or not |
@@ -49,14 +49,14 @@ purpose, as every unlisted op can be called. It is never in the
 [assistant toolset](../reference/mcp.md#the-assistant-toolset), so the agent cannot call
 itself.
 
-LibreChat's web UI and API will not be published: LibreChat listens on an internal
-network only Loom reaches. A person has one sign-in and one URL, Loom's. The
+LibreChat's web UI and API are not published: LibreChat listens on an internal network
+only Loom reaches. A person has one sign-in and one URL, Loom's. The
 [LibreChat integration](../features/integrations/librechat.md), in which each person
-runs LibreChat's UI with a pasted token, is replaced by this deployment when it is
-built.
+runs LibreChat's UI with a pasted token, is a separate, optional client; this
+deployment needs none of it.
 
 **Why LibreChat hosts the agent.** One agent definition, versioned in
-`integrations/librechat/`, will serve every surface. LibreChat runs the model, the tool
+`integrations/librechat/`, serves every surface. LibreChat runs the model, the tool
 loop, streaming and cancellation, which Loom would otherwise build a second time. Loom
 keeps what makes an answer trustworthy: authorization on every tool call, the request
 ledger, the analysis boundary in the database, and the citation check.
