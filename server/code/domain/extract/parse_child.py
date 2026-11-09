@@ -77,6 +77,11 @@ def _within(soft: int, inherited: tuple[int, int]) -> int:
     return soft
 
 
+def _cpu_limit(budget: float) -> int:
+    """The CPU limit, in whole seconds, a parse with `budget` gets from now."""
+    return math.ceil(_cpu() + budget) + 1
+
+
 def _cpu() -> float:
     usage = resource.getrusage(resource.RUSAGE_SELF)
     return usage.ru_utime + usage.ru_stime
@@ -114,7 +119,7 @@ def main() -> int:
         if grammar not in parsers:
             parsers[grammar] = tree_sitter.Parser(language(grammar))
         # under a hard CPU limit: past it the kernel kills, which reads as memory running out
-        cpu = _within(math.ceil(_cpu() + budget) + 1, inherited_cpu)
+        cpu = _within(_cpu_limit(budget), inherited_cpu)
         space = _within(_address_space() + memory, inherited_as)
         resource.setrlimit(resource.RLIMIT_CPU, (cpu, inherited_cpu[1]))
         resource.setrlimit(resource.RLIMIT_AS, (space, inherited_as[1]))
@@ -130,7 +135,7 @@ def main() -> int:
         # retires.
         retire = _address_space() > start + _RETIRE_GROWTH
         # and one near an inherited CPU limit, so the next parse gets its whole deadline
-        need = math.ceil(_cpu() + budget) + 1
+        need = _cpu_limit(budget)
         retire = retire or _within(need, inherited_cpu) < need
         stdout.write(answer.upper() if retire else answer)
         stdout.flush()
