@@ -75,12 +75,17 @@ async def handle_tracker_duplicate_check(
     # The PRs that may already address the draft are searched while the checks run, on the
     # code namespace the call was addressed at.
     wants_prs = bool(input.related_prs) and not explicit
+    # Read before anything the answer is built from: one computed before the code
+    # registry's first read is narrower, and is not kept.
+    cache = not registry_unread()
     pr_task = _start_pr_check(input.org, code_ns, title, body) if wants_prs else None
     deadline = dl.start_deadline()
     try:
         if explicit:
             out = await _checked([input], wall, int(input.top_k))
-            return await _with_links(out, input.org, input.namespace, pr_task, wall, code_ns, title)
+            return await _with_links(
+                out, input.org, input.namespace, pr_task, wall, code_ns, title, cache=cache
+            )
         bound = input.namespace if tracker_namespace(input.org, input.namespace) is not None else ""
         cap = int(settings.tracker_dupcheck_fanout_namespaces)
         # A namespace with no tracker of its own (unbound, unlinked) widens to nobody's:
@@ -95,11 +100,15 @@ async def handle_tracker_duplicate_check(
         if len(targets) <= 1:
             one = input.model_copy(update={"namespace": targets[0]}) if targets else input
             out = await _checked([one], wall, int(input.top_k))
-            return await _with_links(out, input.org, one.namespace, pr_task, wall, code_ns, title)
+            return await _with_links(
+                out, input.org, one.namespace, pr_task, wall, code_ns, title, cache=cache
+            )
         out = await _checked(
             [input.model_copy(update={"namespace": ns}) for ns in targets], wall, int(input.top_k)
         )
-        return await _with_links(out, input.org, targets[0], pr_task, wall, code_ns, title)
+        return await _with_links(
+            out, input.org, targets[0], pr_task, wall, code_ns, title, cache=cache
+        )
     finally:
         dl.end_deadline(deadline)
         if pr_task is not None and not pr_task.done():
@@ -135,6 +144,8 @@ async def _with_links(
     wall: datetime | None = None,
     code_ns: str = "",
     title: str = "",
+    *,
+    cache: bool = True,
 ) -> TrackerDuplicateCheckOutput:
     """Every issue row shown carries its linked PRs and the release its fix ships in; on
     none / related the PRs that may already address the draft ride along; and one sentence
@@ -174,8 +185,7 @@ async def _with_links(
     final = out.model_copy(
         update={k: d.get(k) for k in ("items", "closest", "nearest", "related_prs", "answer")},
     )
-    # An answer from before the code registry's first read is narrower: not kept.
-    if wall is None and code_ns and not registry_unread():
+    if wall is None and code_ns and cache:
         remember_answer(org, code_ns, title, final)
     return final
 

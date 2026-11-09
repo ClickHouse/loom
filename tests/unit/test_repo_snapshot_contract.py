@@ -197,3 +197,50 @@ async def test_the_link_recheck_reads_nothing_while_the_registry_is_unread(monke
     monkeypatch.setattr(repos, "_registry_loaded", False)
     monkeypatch.setattr(code_link_recheck.store, "code_namespaces", no_read)
     await code_link_recheck.recheck_all(code_link_pass.PassResult())
+
+
+@pytest.mark.asyncio
+async def test_a_source_sync_retires_removed_sources_while_the_registry_is_unread(
+    monkeypatch,
+) -> None:
+    from server.knowledge.app import source_sync
+
+    order: list[str] = []
+
+    async def sources() -> list[object]:
+        return []
+
+    async def retire(*_a: object, **_k: object) -> None:
+        order.append("retire")
+
+    async def usable(_found: object) -> list[object]:
+        order.append("usable")
+        raise repos.RegistryUnread("not read")
+
+    monkeypatch.setattr(source_sync.store, "all_active_sources", sources)
+    monkeypatch.setattr(source_sync, "_retire_removed_sources", retire)
+    monkeypatch.setattr(source_sync, "_usable", usable)
+    with pytest.raises(repos.RegistryUnread):
+        await source_sync.run_sync()
+    assert order == ["retire", "usable"]
+
+
+def test_a_name_whose_cached_directory_row_is_restricted_is_not_suggested(monkeypatch) -> None:
+    from server.identity.app import namespace_classification
+    from server.transport import namespace_resolve
+
+    entry = repos.RepoConfig(
+        org="o",
+        namespace="code-x",
+        repo="o/x",
+        git_dir="",
+        git_remote="",
+        git_branch="main",
+        path_prefixes=(),
+        github_token="",
+    )
+    monkeypatch.setattr(repos, "config_entries", lambda: [entry])
+    monkeypatch.setattr(namespace_classification, "is_restricted_cached", lambda org, ns: True)
+    assert "code-x" not in namespace_resolve.suggestable("o", lambda org, ns: False)
+    monkeypatch.setattr(namespace_classification, "is_restricted_cached", lambda org, ns: False)
+    assert "code-x" in namespace_resolve.suggestable("o", lambda org, ns: False)

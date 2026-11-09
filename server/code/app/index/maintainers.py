@@ -191,17 +191,13 @@ async def read_repo(org: str, namespace: str, *, ch: Any | None = None) -> str |
     so a branch another process added since this one's last read is seen. It
     names the claims `repo_admin_claims` takes. Off a code namespace only its
     directory row is read, and None returned."""
-    from server.code.app.index.repo_registry import registry_read
     from server.code.domain.index.repos import config_entry
     from server.core.ch import get_client
 
     client = ch or get_client()
-    # Never read, `repo_of` refuses: the configuration and the directory row say
-    # whether this is code, an operator entry with no code directory row included.
-    if registry_read():
-        listed = repo_of(org, namespace) is not None
-    else:
-        listed = config_entry(org, namespace) is not None
+    # `config_entry` answers before the first read too; the directory row tells a
+    # branch added from the page that no snapshot lists yet.
+    listed = config_entry(org, namespace) is not None
     if not listed and not await _is_code_namespace(client, org, namespace):
         return None
     await _read_registry_now(client)
