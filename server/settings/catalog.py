@@ -1039,7 +1039,9 @@ class CodeSettings(BaseModel):
     code_ingest_max_files_per_commit: int = 500
     # CPU seconds a tree-sitter parse may take, a tenth of them at a stretch between reads
     # (raising it re-reads nothing); a PR overlay waits up to this long past its window.
-    code_parse_timeout_s: Annotated[float, LIVE] = Field(default=3.0, gt=0)
+    code_parse_timeout_s: Annotated[float, LIVE] = Field(
+        default=3.0, gt=0, le=3600, allow_inf_nan=False
+    )
     # Address space (MB) a tree-sitter parse may take, per server process (`bounded_parse`);
     # a parse past it fails like a timed-out one (an indexed file is chunks without symbols).
     code_parse_memory_mb: Annotated[int, LIVE] = Field(default=256, ge=128)

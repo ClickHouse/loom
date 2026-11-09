@@ -361,11 +361,11 @@ def test_the_event_loop_runs_while_an_ingest_round_parses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.code.app.index.round_reads import RoundReads
-    from server.code.domain.extract import bounded_parse, parse_child
+    from server.code.domain.extract import bounded_parse
     from tests.unit.test_code_ingest_pass_budget import _ReadRepo
 
     # the child passes it, so the server makes the whole slow parse itself
-    monkeypatch.setattr(bounded_parse, "_in_child", lambda *a: parse_child.DONE)
+    monkeypatch.setattr(bounded_parse, "_check_in_child", lambda *a: None)
     source = b"package x\nvar s = " + b"`" * 12_000
     reads = RoundReads(_ReadRepo(), "o", "code-ns")
     ticks = 0
@@ -500,16 +500,16 @@ def test_a_child_that_ended_while_idle_is_replaced_without_failing_the_parse(
 def test_a_child_reads_its_next_request_under_no_earlier_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from server.code.domain.extract import bounded_parse, parse_child
+    from server.code.domain.extract import bounded_parse
 
     grammar = "tree_sitter_go:language"
-    assert bounded_parse._in_child(grammar, b"package x\n", 3.0, 256 << 20) == parse_child.DONE
+    bounded_parse._check_in_child(grammar, b"package x\n", 3.0, 256 << 20)
     child = bounded_parse._idle
     assert child is not None
     # a limit the next request's 8 MB source would not fit under
-    assert bounded_parse._in_child(grammar, b"package x\n", 3.0, 4 << 20) == parse_child.DONE
+    bounded_parse._check_in_child(grammar, b"package x\n", 3.0, 4 << 20)
     big = b"package x\n// " + b"x" * (8 << 20)
-    assert bounded_parse._in_child(grammar, big, 3.0, 256 << 20) == parse_child.DONE
+    bounded_parse._check_in_child(grammar, big, 3.0, 256 << 20)  # does not raise
     assert bounded_parse._idle is child
 
 
@@ -519,10 +519,10 @@ def test_a_parse_in_the_server_past_twice_the_deadline_stops(
     import tree_sitter
     import tree_sitter_go
 
-    from server.code.domain.extract import bounded_parse, parse_child
+    from server.code.domain.extract import bounded_parse
 
     monkeypatch.setattr(settings, "code_parse_timeout_s", 0.05)
-    monkeypatch.setattr(bounded_parse, "_in_child", lambda *a: parse_child.DONE)
+    monkeypatch.setattr(bounded_parse, "_check_in_child", lambda *a: None)
     parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_go.language()))
     with pytest.raises(bounded_parse.ParseTimeout, match="in the server"):
         bounded_parse.parse(parser, _SLOW[0][1])

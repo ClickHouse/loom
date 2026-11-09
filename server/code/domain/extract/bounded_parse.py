@@ -90,10 +90,8 @@ def _grammar(language: Any) -> str:
     raise LookupError(f"no grammar in bounded_parse._LOADERS loads {language!r}")
 
 
-def _in_child(grammar: str, source: bytes, budget: float, memory: int) -> bytes | int:
-    """The child's answer for one parse: `parse_child.DONE`, `STOPPED`, or `_SILENT`
-    (it was ended for not answering); or, when the child ended (mid-parse, or twice
-    before reading the request), its exit status (negative: the signal that ended it)."""
+def _check_in_child(grammar: str, source: bytes, budget: float, memory: int) -> None:
+    """Return when the child parsed `source` in full within the limits; raise otherwise."""
     global _idle
     child, _idle = _idle, None
     # Again on a fresh child, once each, when this one ended before reading the request,
@@ -106,27 +104,26 @@ def _in_child(grammar: str, source: bytes, budget: float, memory: int) -> bytes 
         answer, keep = _ask(child, grammar, source, budget, memory)
         if keep:
             _idle = child
-        if answer in (parse_child.DONE, parse_child.STOPPED, _SILENT):
-            return answer
+        if answer == parse_child.DONE:
+            return
+        if answer == parse_child.STOPPED:
+            raise ParseTimeout(
+                f"parse ran past {budget:g} CPU seconds, or {budget / 10:g} s at a stretch"
+            )
+        if answer == _SILENT:
+            raise ParseTimeout(f"the parse process did not answer within {_wall_bound(budget):g} s")
         status = cast("int", child.returncode)
         if answer is None and not unread:
             unread = True
         elif status == -signal.SIGKILL and not killed:
             killed = True
         else:
-            return status
+            _ended(status, budget, memory)
         child = None
 
 
-def _refuse(answer: bytes | int, budget: float, memory: int) -> NoReturn:
-    """The error for a child's answer other than `DONE`."""
-    if answer == parse_child.STOPPED:
-        raise ParseTimeout(
-            f"parse ran past {budget:g} CPU seconds, or {budget / 10:g} s at a stretch"
-        )
-    if answer == _SILENT:
-        raise ParseTimeout(f"the parse process did not answer within {_wall_bound(budget):g} s")
-    status = cast("int", answer)
+def _ended(status: int, budget: float, memory: int) -> NoReturn:
+    """The error for a child that ended with `status` instead of answering."""
     if status > 0:
         logger.error("bounded_parse: the parse process failed with status %d", status)
         raise RuntimeError(f"the parse process failed with status {status}")
@@ -226,9 +223,7 @@ def parse(parser: Any, source: bytes) -> Any:
         return source[offset : offset + _CHUNK]
 
     with _LOCK:
-        answer = _in_child(_grammar(parser.language), source, budget, memory)
-        if answer != parse_child.DONE:
-            _refuse(answer, budget, memory)
+        _check_in_child(_grammar(parser.language), source, budget, memory)
         deadline = time.thread_time() + 2 * budget
         try:
             tree = parser.parse(read)

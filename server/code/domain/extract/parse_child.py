@@ -93,6 +93,8 @@ def _address_space() -> int:
 
 
 def main() -> int:
+    import tree_sitter  # here, not at the top: the server imports this module
+
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     # the first process the kernel ends when memory runs out (before the server); written
     # before the process is made non-dumpable, which hands /proc/self to root
@@ -111,8 +113,6 @@ def main() -> int:
         grammar = stdin.read(grammar_len).decode()
         source = stdin.read(source_len)
         if grammar not in parsers:
-            import tree_sitter
-
             parsers[grammar] = tree_sitter.Parser(language(grammar))
         cpu = _within(math.ceil(_cpu() + budget) + 1, inherited_cpu)
         space = _within(_address_space() + memory, inherited_as)
