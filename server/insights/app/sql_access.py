@@ -115,7 +115,7 @@ async def grant(
         if password is None:
             raise
         raise AccessRefused(
-            f"{user} has a new password but its scope or grants were not written ({e}); "
+            f"{user} has a new password but its scope or grants were not written; "
             "run grant again with --rotate"
         ) from e
     return Granted(user, not kind, password, scope.rows())
@@ -132,9 +132,9 @@ async def _check_login(
     except LoginUnchecked as e:
         if created:
             await revoke(user, ch=ch)
-            raise AccessRefused(f"{user} was dropped: {e}") from e
+            raise AccessRefused(f"{user} was dropped: its login could not be checked") from e
         raise AccessRefused(
-            f"{user}'s new password could not be checked ({e}); its scope is unchanged: "
+            f"{user}'s new password could not be checked; its scope is unchanged: "
             "run grant again with --rotate"
         ) from e
     if problem:

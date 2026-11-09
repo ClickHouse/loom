@@ -313,7 +313,7 @@ def test_an_unchecked_rotation_leaves_the_users_scope_and_grants() -> None:
         raise LoginUnchecked("could not log in as it: timed out")
 
     ch = _fake(exists=True)
-    with pytest.raises(AccessRefused, match="could not be checked .* --rotate"):
+    with pytest.raises(AccessRefused, match="could not be checked; .* --rotate"):
         _grant(ch, unchecked, rotate=True)
     assert ch.statements("ALTER USER `acme_bi`")
     assert not ch.inserted("sql_access") and not ch.statements("DROP USER")
@@ -370,7 +370,7 @@ def test_a_failure_after_a_new_password_says_to_rotate() -> None:
     from server.insights.app.sql_access import AccessRefused
 
     ch = _fake(exists=False, cls=_FailingInsertCH)
-    with pytest.raises(AccessRefused, match="new password but its scope or grants .* --rotate"):
+    with pytest.raises(AccessRefused, match="new password but its scope or grants were not written; run grant again with --rotate"):
         _grant(ch, lambda user, password: "")
     assert ch.statements("CREATE USER `acme_bi`") and not ch.statements("GRANT ")
 

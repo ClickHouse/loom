@@ -9,6 +9,7 @@ import sys
 from typing import Any
 
 REFUSED = 2
+# not a setting: a few seconds for a replica to see a user just created, not a knob
 LOGIN_ATTEMPTS = 5
 
 
@@ -88,6 +89,9 @@ def _cmd_grant(args: argparse.Namespace) -> int:
         )
     except AccessRefused as e:
         print(f"  ✗ {e}", file=sys.stderr)
+        if e.__cause__ is not None:
+            # The operator ran the command: the cause is theirs to read.
+            print(f"    {e.__cause__}", file=sys.stderr)
         return REFUSED
     verb = "created" if done.created else "updated"
     reads = ", ".join(f"{org}/{ns}" for org, ns in sorted(done.rows))

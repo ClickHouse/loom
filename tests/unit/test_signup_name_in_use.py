@@ -301,6 +301,7 @@ def test_every_table_the_lookup_reads_is_ordered_by_org_and_namespace() -> None:
         "loom.qa_sources": "org, name",
         "loom.erasure_requests": "id",
         "loom.sso_links": "email, org, namespace",
+        "loom.sql_access": "user_name, org, namespace",  # one row per SQL user's grant
     }
     for table in [*namespace_tables(), *namespace_census.STATE_TABLES]:
         body = schema.split(f"CREATE TABLE IF NOT EXISTS {table}\n", 1)[1].split(";", 1)[0]
@@ -375,6 +376,17 @@ def test_a_live_webhook_marks_the_name_in_use_and_a_deleted_one_does_not() -> No
     assert _in_use(_local_ch(hook.format(deleted=0, version=1)))
     deleted = hook.format(deleted=1, version=2)
     assert not _in_use(_local_ch(hook.format(deleted=0, version=1), deleted))
+
+
+@needs_clickhouse
+def test_a_sql_surface_grant_marks_the_name_in_use_and_a_revoked_one_does_not() -> None:
+    """A SQL user granted the name would read the next owner's rows through the views."""
+    grant = (
+        "INSERT INTO loom.sql_access (user_name, org, namespace, granted, updated_at) VALUES"
+        " ('acme_bi', 'dev', 'team', {granted}, toDateTime64({at}, 3))"
+    )
+    assert _in_use(_local_ch(grant.format(granted=1, at=1)))
+    assert not _in_use(_local_ch(grant.format(granted=1, at=1), grant.format(granted=0, at=2)))
 
 
 @needs_clickhouse

@@ -90,6 +90,8 @@ STATE_TABLES: dict[str, str] = {
     "loom.collections": f"FINAL WHERE {_AT} AND NOT deleted",
     "loom.shared": f"WHERE {_AT}",
     "loom.sso_links": f"FINAL WHERE {_AT} AND linked = 1",
+    # A SQL user granted the name would read a new owner's rows through the SQL surface.
+    "loom.sql_access": f"FINAL WHERE {_AT} AND granted",
     # An open erasure of the name, alone or in a list (an array or {"namespaces": [...]}),
     # would sweep a new owner's rows as its own.
     "loom.erasure_requests": "FINAL WHERE org = {org:String} AND status != 'completed'"
