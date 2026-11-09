@@ -99,7 +99,9 @@ missing field as that default, `decode_row` in Python and `coalesce` (or a test 
 holds for NULL) in SQL. Every other field is always stored, a default-valued one
 included. A commit stores each row without the fields at their default
 (`pg_memory.sparse_row`), which keeps it smaller: most of a row's fields hold their
-default, and every stored field repeats its name.
+default, and every stored field repeats its name. The writers that change a stored row in
+place (the usage fold, a redaction) merge fields into it, and may store a field at its
+default.
 
 A memory id is not unique within an org: a namespace restored from another's snapshot
 keeps the memory ids under newer versions. Every head read by id therefore names its

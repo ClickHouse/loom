@@ -156,8 +156,9 @@ def test_a_row_that_leaves_out_its_default_fields_reads_as_the_full_row() -> Non
 def test_the_fields_read_as_stored_are_never_left_out() -> None:
     """The profile reach matches on `row->>'agent'` and `row->>'memory_type'`
     (`memory_revisions_profile`, `_profile_built_from`), other statements read the key and
-    session, the value and the creation time as stored, and the erasure export reads the type, value
-    and confidence from the stored JSON: none has a default a row may leave out."""
+    session, the value and the creation time as stored, and the erasure export reads the
+    type, value and confidence from the stored JSON: none has a default a row may leave
+    out."""
     read_as_stored = {
         "agent",
         "memory_type",
