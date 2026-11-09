@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import ast
 import asyncio
-import faulthandler
 import pathlib
+import subprocess
+import sys
 import time
 from typing import Any
 
@@ -37,36 +38,34 @@ def test_a_slow_parse_stops_at_the_deadline_and_the_file_is_chunked(
     assert "ParseTimeout" in err
 
 
-def test_a_node_reads_its_text_after_the_deadline_has_passed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import threading
+# Parses, then sets every thread's CPU clock past the deadline and reads a node's text
+# from another thread, as the event loop reads a tree a worker thread parsed.
+_READ_AFTER_DEADLINE = """
+import threading, time
+import tree_sitter_python
+from tree_sitter import Language, Parser
+from server.code.domain.extract.bounded_parse import parse
+tree = parse(Parser(Language(tree_sitter_python.language())), b"x = 'a'.format(1)\\n")
+time.thread_time = lambda: float("inf")
+texts = []
+reader = threading.Thread(target=lambda: texts.append(tree.root_node.children[0].text))
+reader.start()
+reader.join()
+print(texts[0].decode())
+"""
 
-    import tree_sitter_python
-    from tree_sitter import Language, Parser
 
-    from server.code.domain.extract import bounded_parse
-
-    tree = bounded_parse.parse(
-        Parser(Language(tree_sitter_python.language())), b"x = 'a'.format(1)\n"
+def test_a_node_reads_its_text_after_the_deadline_has_passed() -> None:
+    # In a child process: a read that spins is killed with it, not left running here.
+    done = subprocess.run(
+        [sys.executable, "-c", _READ_AFTER_DEADLINE],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=_SERVER.parent,
     )
-    # Every thread's CPU clock is now past the deadline; the text is read from
-    # another thread, as the event loop reads a tree a worker thread parsed.
-    monkeypatch.setattr(bounded_parse.time, "thread_time", lambda: float("inf"))
-    texts: list[bytes | None] = []
-    reader = threading.Thread(
-        target=lambda: texts.append(tree.root_node.children[0].text), daemon=True
-    )
-    # The join bounds a read that spins; faulthandler's C watchdog bounds one that never
-    # lets the join wake.
-    faulthandler.dump_traceback_later(20, exit=True)
-    try:
-        reader.start()
-        reader.join(10)
-    finally:
-        faulthandler.cancel_dump_traceback_later()
-    assert not reader.is_alive(), "reading the tree's text spins past the deadline"
-    assert texts == [b"x = 'a'.format(1)"]
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "x = 'a'.format(1)"
 
 
 def test_a_file_parsed_in_time_keeps_its_symbols() -> None:
