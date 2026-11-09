@@ -432,6 +432,23 @@ async def owed_originals(org: str, namespace: str) -> set[str]:
     return {str(r["sha"]) for r in rows}
 
 
+async def unpublished(org: str, namespace: str) -> tuple[int, int]:
+    """The namespace's commits whose publication has not finished: (owed, parked), owed
+    ones still within a publisher's lease or due for the delivery worker, parked ones past
+    LOOM_PG_DELIVERY_MAX_ATTEMPTS refusals. A delivery whose row landed but whose older
+    chunk versions are not retired yet counts too."""
+    if pg.unstorable([org, namespace]):
+        return 0, 0  # no delivery holds what Postgres cannot store
+    row = await pg.fetchrow(
+        "SELECT count(*) FILTER (WHERE lease_until <> 'infinity') AS owed, "
+        "count(*) FILTER (WHERE lease_until = 'infinity') AS parked "
+        "FROM loom.knowledge_deliveries WHERE org = $1 AND namespace = $2 AND NOT settled",
+        org,
+        namespace,
+    )
+    return int(row["owed"]), int(row["parked"])
+
+
 async def parked_count() -> int:
     """Deliveries past LOOM_PG_DELIVERY_MAX_ATTEMPTS: documents committed in Postgres
     that ClickHouse keeps refusing; an operator reads `last_error`."""

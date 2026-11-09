@@ -6,14 +6,23 @@ current version, with the coverage its extraction reported), the live chunks and
 retired ingestions, the knowledge.ingest job rows, the decision rows whose citation
 names a document section, and namespace.audit's findings on memory rows shaped like
 documents, called in process and cited by code and count. Nothing parses a document,
-nothing calls an extractor, and nothing is written.
+nothing calls an extractor, and nothing is written but what `knowledge.get`'s read
+repairs under the Postgres authority (below).
 
 Documents are the namespace's under any read scope, as every `knowledge.*` read serves
 them, and so are the job rows, which knowledge.ingest_status serves to any of the
 namespace's viewers by id; the decision rows are memory rows and are read inside the
 request's scope, and the audit, which reads every user's rows, is not run under a scope
 narrowed to one user or session. A section that cannot be read is named in `skipped`
-and its fields stay null or empty; a store that is down fails the call, as any read does.
+and its fields stay null or empty; a store that is down fails the call, as any read does,
+but a Postgres authority that does not answer is named in `skipped` once and not asked
+again in the call.
+
+Under the Postgres authority the document rows ClickHouse holds can trail the heads
+Postgres commits: `skipped` counts the namespace's commits ClickHouse does not have yet
+(owed and parked), and a listed document is kept only while `knowledge.get` serves it at
+the version read (that read drops a head an older build purged, as `knowledge.get`
+does). Either makes `listed_complete` false.
 """
 
 from __future__ import annotations
@@ -22,6 +31,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
+from server.core import pg
 from server.core.datetimes import naive_utc_now
 from server.core.errors import BACKEND_NOT_NOW
 from server.embedding import get_embedder
@@ -53,12 +63,20 @@ from server.knowledge.api.models_inspect import (
 )
 from server.knowledge.app.ingest_run import JOB_LEASE_S
 from server.knowledge.domain.ingest_states import OPEN_STATES
+from server.knowledge.store import documents as documents_repo
 from server.knowledge.store import inspect as store
+from server.knowledge.store import pg_documents
 from server.memory.app.query import document_decision_tally
 from server.memory.app.search import pg_validation
 from server.settings import settings
 
 log = logging.getLogger(__name__)
+
+# The `skipped` names, under the Postgres authority, of a document section that may miss
+# what the authority committed, and of the listed rows it dropped (`<n> document(s) …`):
+# the dashboard keys on these prefixes (DocumentInspection.tsx `documentsMayBeShort`).
+DOCUMENTS_PROJECTION = "documents.projection"
+LISTED_HEADS = "listed.heads"
 
 SOURCE_OP = "knowledge.inspect"
 # namespace.audit's checks on memory rows that may belong in documents.
@@ -458,10 +476,17 @@ class _Inspect:
         self.inp = inp
         self.skipped: list[str] = []
         self.rules = RuleLog()
+        # Under Postgres, False once the document sections or the listing may miss what the
+        # authority committed: unpublished commits, an outage, a dropped listed row or a
+        # listing that could not be checked.
+        self.documents_whole = True
+        self.authority_down = False
 
     async def guarded[T](self, section: str, read: Callable[[], Awaitable[T]], default: T) -> T:
         """One section's read; a failure lands in `skipped` and the default stands. A
-        store that is down or overloaded fails the call."""
+        store that is down or overloaded fails the call; a Postgres authority that does
+        not answer is a section's failure (`pg.PostgresUnavailableError` is not in
+        BACKEND_NOT_NOW)."""
         try:
             return await read()
         except BACKEND_NOT_NOW:
@@ -470,6 +495,38 @@ class _Inspect:
             log.warning("knowledge.inspect %s skipped: %s", section, exc)
             self.skipped.append(f"{section}: {type(exc).__name__}")
             return default
+
+    async def unpublished(self) -> None:
+        """Under Postgres, the namespace's document commits ClickHouse does not have yet:
+        the document sections read ClickHouse, so they may miss them, and `skipped` says
+        how many. A Postgres that does not answer is said the same way."""
+        if not pg.enabled():
+            return
+        i = self.inp
+        try:
+            owed, parked = await pg_documents.unpublished(i.org, i.namespace)
+        except pg.PostgresUnavailableError:
+            self.down()
+            return
+        if owed or parked:
+            self.documents_whole = False
+            self.skipped.append(
+                f"{DOCUMENTS_PROJECTION}: {owed + parked} document commit(s) whose "
+                f"publication to ClickHouse has not finished, {parked} of them parked after "
+                "LOOM_PG_DELIVERY_MAX_ATTEMPTS refusals; the document sections may miss "
+                "them or still count older versions"
+            )
+
+    def down(self) -> None:
+        """The Postgres authority did not answer: said, and not asked again in this call
+        (`served` and the memory sections' wait read `authority_down`)."""
+        self.documents_whole = False
+        self.authority_down = True
+        self.skipped.append(
+            f"{DOCUMENTS_PROJECTION}: POSTGRES_UNAVAILABLE: the Postgres authority did "
+            "not answer; the document sections and the memory sections read what ClickHouse "
+            "holds, which may miss committed writes"
+        )
 
     async def documents(self) -> DocumentTotals:
         i = self.inp
@@ -677,6 +734,9 @@ class _Inspect:
         )
         if not rows:
             return []
+        rows = await self.served(rows)
+        if not rows:
+            return []
         uris = [str(r["source_uri"]) for r in rows]
         # Without the server's model, nothing says which chunks search serves.
         chunks = (
@@ -721,6 +781,44 @@ class _Inspect:
                 doc.chunks = _document_chunks(c)
             out.append(doc)
         return out
+
+    async def served(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Under Postgres, the listed ClickHouse rows `knowledge.get` still serves at the
+        version read, live: a document rewritten or deleted since in the authority is not
+        listed, and `skipped` counts it. A failed read lists ClickHouse's rows as read."""
+        if not pg.enabled() or self.authority_down:
+            # Down already: one more read would wait out the pool again.
+            return rows
+        i = self.inp
+        uris = [str(r["source_uri"]) for r in rows]
+        # knowledge.get's own read, whole documents included (at most `sample_limit`): its
+        # newer-of rule, with the head an older build purged, is what a reader is served,
+        # and a version-only copy of that rule could drift from it.
+        try:
+            got = await documents_repo.get_many_by_uris(i.org, i.namespace, uris)
+        except pg.PostgresUnavailableError:
+            self.down()
+            return rows
+        except BACKEND_NOT_NOW:
+            raise
+        except Exception as exc:  # noqa: BLE001 — a read-only report; the listing stands as read
+            log.warning("knowledge.inspect listed.heads skipped: %s", exc)
+            self.skipped.append(f"{LISTED_HEADS}: {type(exc).__name__}")
+            self.documents_whole = False
+            return rows
+        heads = {d.source_uri: d for d in got}
+        kept = [
+            r
+            for r in rows
+            if (d := heads.get(str(r["source_uri"]))) is not None and d.version == int(r["version"])
+        ]
+        if len(kept) < len(rows):
+            self.documents_whole = False
+            self.skipped.append(
+                f"{LISTED_HEADS}: {len(rows) - len(kept)} document(s) rewritten or deleted in "
+                "the Postgres authority since ClickHouse's copy; not listed"
+            )
+        return kept
 
     async def decisions(self, listed: list[InspectDocument]) -> DecisionTotals:
         i = self.inp
@@ -823,6 +921,7 @@ async def handle_knowledge_inspect(input: KnowledgeInspectInput) -> KnowledgeIns
     run = _Inspect(input)
     computed_at = naive_utc_now()
     model = await run.guarded("embedder", _embedder_model, "")
+    await run.unpublished()
     documents = await run.documents()
     if model:
         chunks = await run.chunks(model)
@@ -839,11 +938,12 @@ async def handle_knowledge_inspect(input: KnowledgeInspectInput) -> KnowledgeIns
     listed = await run.listed(model)
     # The decision rows and the audit's findings are memory rows: under Postgres they are
     # read once ClickHouse holds what the namespace committed, in one wait the audit
-    # does not repeat.
+    # does not repeat, and none at all once Postgres was found down (already said).
     published = pg_validation.published_reads(
         input.org,
         [input.namespace],
         lambda reason: run.skipped.append(f"{pg_validation.PROJECTION}: {reason}"),
+        down=run.authority_down,
     )
     async with published:
         decisions = await run.decisions(listed)
@@ -856,7 +956,9 @@ async def handle_knowledge_inspect(input: KnowledgeInspectInput) -> KnowledgeIns
         chunks=chunks,
         decisions=decisions,
         listed=listed,
-        listed_complete=documents.live is not None and len(listed) >= documents.live,
+        listed_complete=run.documents_whole
+        and documents.live is not None
+        and len(listed) >= documents.live,
         findings=findings,
         ingestions=ingestions,
         extraction=extraction,

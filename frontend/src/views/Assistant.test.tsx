@@ -1740,6 +1740,68 @@ describe("Assistant: documents", () => {
     },
   );
 
+  it.each([
+    ["every live document listed", 2, false],
+    ["one listed document dropped", 1, true],
+    ["the only listed document dropped", 0, true],
+  ])(
+    "says documents may be missing when the authority holds writes the counts lack (%s)",
+    async (_label, kept, dropped) => {
+      // Under the Postgres authority: a commit's publication has not finished, so the
+      // listing is not complete; a listed row Postgres holds a newer version of is dropped.
+      inspectKnowledge.mockResolvedValueOnce({
+        ...KNOWLEDGE,
+        listed: KNOWLEDGE.listed.slice(0, kept),
+        listed_complete: false,
+        skipped: [
+          "documents.projection: 1 document commit(s) whose publication to ClickHouse has not finished, 1 of them parked after LOOM_PG_DELIVERY_MAX_ATTEMPTS refusals; the document sections may miss them or still count older versions",
+          ...(dropped
+            ? [
+                "listed.heads: 1 document(s) rewritten or deleted in the Postgres authority since ClickHouse's copy; not listed",
+              ]
+            : []),
+        ],
+      });
+      render(<Assistant />);
+      const result = await pickDocuments();
+      expect(within(result).queryByText("The documents could not be listed.")).toBeNull();
+      expect(
+        within(result).getByText("Some documents may be missing: the latest writes may not be in the counts yet."),
+      ).toBeInTheDocument();
+      expect(within(result).queryByText(/^Newest \d+ of \d+ listed\.$/)).toBeNull();
+      expect(within(result).queryByText("No live document to list.")).toBeNull();
+    },
+  );
+
+  it.each([
+    "projection: PROJECTION_BEHIND: ClickHouse has not yet published every write the namespace committed; the report reads what it holds",
+    "listed.heads: ValueError",
+  ])("does not read %s as a short document listing", async (line) => {
+    inspectKnowledge.mockResolvedValueOnce({
+      ...KNOWLEDGE,
+      listed: KNOWLEDGE.listed.slice(0, 1),
+      listed_complete: false,
+      skipped: [line],
+    });
+    render(<Assistant />);
+    const result = await pickDocuments();
+    expect(within(result).getByText("Newest 1 of 2 listed.")).toBeInTheDocument();
+    expect(within(result).queryByText(/Some documents may be missing/)).toBeNull();
+  });
+
+  it("says a listing whose check failed was not checked, not that it was cut", async () => {
+    // The server lists every ClickHouse row when its check against Postgres fails.
+    inspectKnowledge.mockResolvedValueOnce({
+      ...KNOWLEDGE,
+      listed_complete: false,
+      skipped: ["listed.heads: ValueError"],
+    });
+    render(<Assistant />);
+    const result = await pickDocuments();
+    expect(within(result).getByText("The listing could not be checked against the latest writes.")).toBeInTheDocument();
+    expect(within(result).queryByText(/^Newest \d+ of \d+ listed\.$/)).toBeNull();
+  });
+
   it("does not call a namespace empty when its job count could not be read", async () => {
     inspectKnowledge.mockResolvedValueOnce(jobsUnread(emptyNamespace()));
     render(<Assistant />);

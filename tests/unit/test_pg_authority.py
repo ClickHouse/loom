@@ -5360,6 +5360,27 @@ async def test_a_report_waits_once_for_the_projection_and_reads_sequentially(
 
 
 @pytest.mark.asyncio
+async def test_a_report_whose_caller_found_postgres_down_does_not_wait_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`down`: the caller already found Postgres down and said so; the reads run
+    sequentially with no wait and nothing more is reported, nested reads included."""
+    from server.core.ch import sequential_reads_active
+    from server.memory.app.search import pg_validation
+
+    async def admit(*_: object) -> bool:
+        raise AssertionError("no wait against a Postgres found down")
+
+    monkeypatch.setattr(pg_validation, "admit", admit)
+    reasons: list[str] = []
+    async with pg_validation.published_reads("o", ["n"], reasons.append, down=True):
+        assert sequential_reads_active()
+        async with pg_validation.published_reads("o", ["n"], reasons.append):
+            assert sequential_reads_active()
+    assert reasons == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("unpublished", ["behind", "down"])
 async def test_a_report_without_a_skip_fails_on_an_unpublished_projection(
     monkeypatch: pytest.MonkeyPatch, unpublished: str

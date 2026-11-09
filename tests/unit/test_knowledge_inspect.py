@@ -16,7 +16,9 @@ the scope.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -1177,3 +1179,173 @@ def test_an_exception_names_another_finding_by_its_label_on_the_page() -> None:
     assert f"counted under {labels['extraction_incomplete']}." in (
         ki._INGEST_CHECKS["ingest_content_rejected"][0].exceptions
     )
+
+
+class _Authority:
+    """The Postgres authority as knowledge.inspect reads it: its unpublished document
+    commits and what `knowledge.get` serves for each listed source."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from server.core import pg
+        from server.knowledge.store import documents, pg_documents
+        from server.memory.app.search import pg_validation
+
+        self.unpublished: Any = (0, 0)
+        self.served: Any = {"docs/b.md": (9, False), "docs/b.md#v2": (4, False)}
+
+        async def unpublished(org: str, ns: str) -> tuple[int, int]:
+            return Stubs._answer(self.unpublished)
+
+        async def get_many(org: str, ns: str, uris: list[str]) -> Any:
+            # As knowledge.get reads: a deleted document is not served.
+            served = Stubs._answer(self.served)
+            return [
+                SimpleNamespace(source_uri=u, version=v)
+                for u, (v, deleted) in served.items()
+                if u in uris and not deleted
+            ]
+
+        async def nothing_behind(*_: object) -> bool:
+            return False  # the memory rows are all in ClickHouse
+
+        monkeypatch.setattr(pg, "enabled", lambda: True)
+        monkeypatch.setattr(pg_documents, "unpublished", unpublished)
+        monkeypatch.setattr(documents, "get_many_by_uris", get_many)
+        monkeypatch.setattr(pg_validation, "admit", nothing_behind)
+
+
+@pytest.fixture
+def authority(monkeypatch: pytest.MonkeyPatch) -> _Authority:
+    return _Authority(monkeypatch)
+
+
+def _whole(stubs: Stubs) -> None:
+    """A namespace whose two listed documents are all of its live ones."""
+    stubs.answers["document_groups"] = [_group(".md", "(none)", 2, 5, T1)]
+
+
+@pytest.mark.asyncio
+async def test_under_postgres_a_published_namespace_reads_as_on_clickhouse(
+    stubs: Stubs, authority: _Authority
+) -> None:
+    _whole(stubs)
+    out = await ki.handle_knowledge_inspect(_inp())
+    assert [d.source_uri for d in out.listed] == ["docs/b.md", "docs/b.md#v2"]
+    assert out.listed_complete and not [s for s in out.skipped if "projection" in s]
+
+
+@pytest.mark.asyncio
+async def test_under_postgres_unpublished_document_commits_are_counted_and_said(
+    stubs: Stubs, authority: _Authority
+) -> None:
+    """Commits ClickHouse does not have yet, owed or parked, are named in `skipped`, and
+    the listing is not called complete: the document sections read ClickHouse."""
+    _whole(stubs)
+    authority.unpublished = (2, 1)
+    out = await ki.handle_knowledge_inspect(_inp())
+    lines = [s for s in out.skipped if s.startswith("documents.projection: ")]
+    assert lines == [
+        "documents.projection: 3 document commit(s) whose publication to ClickHouse has not "
+        "finished, 1 of them parked after LOOM_PG_DELIVERY_MAX_ATTEMPTS refusals; the "
+        "document sections may miss them or still count older versions"
+    ]
+    assert len(out.listed) == 2 and not out.listed_complete
+
+
+@pytest.mark.asyncio
+async def test_under_postgres_an_unanswering_authority_reads_on_and_says_so(
+    stubs: Stubs, authority: _Authority, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Postgres down: the unpublished count and the listing's check go unread, the report
+    still answers from ClickHouse, and says why it may be short."""
+    from server.core import pg
+    from server.memory.app.search import pg_validation
+
+    async def down(*_: object) -> bool:
+        raise AssertionError("the memory sections' wait is not tried against a dead pool")
+
+    _whole(stubs)
+    authority.unpublished = pg.PostgresUnavailableError()
+    authority.served = AssertionError("the listing's check is not tried against a dead pool")
+    monkeypatch.setattr(pg_validation, "admit", down)
+    out = await ki.handle_knowledge_inspect(_inp())
+    assert [d.source_uri for d in out.listed] == ["docs/b.md", "docs/b.md#v2"]
+    outages = [
+        s for s in out.skipped if s.startswith("documents.projection: POSTGRES_UNAVAILABLE: ")
+    ]
+    assert len(outages) == 1  # said once, waited out once
+    assert stubs.calls["decisions"] and out.memory_findings  # the memory sections still read
+    # The listing's check is not tried again against a Postgres already found down.
+    assert not [s for s in out.skipped if s.startswith("listed.heads")]
+    assert not out.listed_complete
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("moved", [(10, False), (9, True), None])
+async def test_under_postgres_a_listed_document_the_authority_moved_past_is_not_listed(
+    stubs: Stubs, authority: _Authority, moved: Any
+) -> None:
+    """A listed ClickHouse row is kept only while knowledge.get serves it at that version,
+    live: rewritten, deleted or gone in the authority, it leaves the listing, its chunks
+    are not read, and `skipped` counts it."""
+    _whole(stubs)
+    authority.served = {"docs/b.md#v2": (4, False)}
+    if moved is not None:
+        authority.served["docs/b.md"] = moved
+    out = await ki.handle_knowledge_inspect(_inp())
+    assert [d.source_uri for d in out.listed] == ["docs/b.md#v2"]
+    ((_, _, uris, _, _),) = stubs.calls["document_chunks"]
+    assert uris == ["docs/b.md#v2"]
+    assert (
+        "listed.heads: 1 document(s) rewritten or deleted in the Postgres authority since "
+        "ClickHouse's copy; not listed"
+    ) in out.skipped
+    # The dashboard's match for a dropped row (DocumentInspection.tsx `documentsMayBeShort`).
+    assert [s for s in out.skipped if re.match(r"^listed\.heads: \d+ ", s)]
+    assert not out.listed_complete
+
+
+@pytest.mark.asyncio
+async def test_under_postgres_a_listing_whose_every_row_moved_reads_nothing_more(
+    stubs: Stubs, authority: _Authority
+) -> None:
+    """Every listed row rewritten or deleted in the authority: nothing is listed, no
+    chunk, version or job read runs for an empty listing, and `skipped` counts both."""
+    _whole(stubs)
+    authority.served = {"docs/b.md": (10, False), "docs/b.md#v2": (4, True)}
+    out = await ki.handle_knowledge_inspect(_inp())
+    assert out.listed == [] and not out.listed_complete
+    assert not {"document_chunks", "document_retired_versions", "source_jobs"} & set(stubs.calls)
+    assert any(s.startswith("listed.heads: 2 document(s) ") for s in out.skipped)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["down", "error"])
+async def test_under_postgres_a_failed_listing_check_lists_clickhouses_rows(
+    stubs: Stubs, authority: _Authority, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    """The count answered but the listing's check did not: the rows are listed as
+    ClickHouse holds them, the failure is named once, and the listing is not complete.
+    Postgres down there is said as an outage, and the memory sections do not wait on it
+    again."""
+    from server.core import pg
+    from server.memory.app.search import pg_validation
+
+    async def no_wait(*_: object) -> bool:
+        raise AssertionError("the memory sections' wait is not tried against a dead pool")
+
+    _whole(stubs)
+    if failure == "down":
+        authority.served = pg.PostgresUnavailableError()
+        monkeypatch.setattr(pg_validation, "admit", no_wait)
+    else:
+        authority.served = ValueError("bad row")
+    out = await ki.handle_knowledge_inspect(_inp())
+    assert [d.source_uri for d in out.listed] == ["docs/b.md", "docs/b.md#v2"]
+    expected = (
+        [s for s in out.skipped if s.startswith("documents.projection: POSTGRES_UNAVAILABLE: ")]
+        if failure == "down"
+        else [s for s in out.skipped if s == "listed.heads: ValueError"]
+    )
+    assert len(expected) == 1
+    assert not out.listed_complete

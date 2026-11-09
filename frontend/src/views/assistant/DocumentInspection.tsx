@@ -472,8 +472,15 @@ function readFailed(
   return result.skipped.some((s) => s.startsWith(`${section}: `));
 }
 
+/** `skipped` says the listing may be short (unpublished commits, an outage, a dropped row), not cut at the sample limit
+ *  (`DOCUMENTS_PROJECTION` and `LISTED_HEADS` in server/knowledge/app/inspect.py). */
+function documentsMayBeShort(result: KnowledgeInspection): boolean {
+  return result.skipped.some((s) => s.startsWith("documents.projection: ") || /^listed\.heads: \d+ /.test(s));
+}
+
 function ListedSection({ result }: { result: KnowledgeInspection }) {
   const live = result.documents.live;
+  const short = !result.listed_complete && documentsMayBeShort(result);
   return (
     <section aria-labelledby="docs-listed" className="space-y-2 text-sm">
       <SectionHeading id="docs-listed" level={3} label="Newest documents" count={result.listed.length || undefined} />
@@ -481,15 +488,24 @@ function ListedSection({ result }: { result: KnowledgeInspection }) {
         <p className="text-text-muted">The documents could not be listed.</p>
       ) : (
         <>
-          {!result.listed_complete && result.listed.length > 0 && (
+          {short ? (
             <p className="text-xs text-text-muted">
-              {live === null
-                ? `Newest ${fmtInt(result.listed.length)} listed; the total was not counted.`
-                : `Newest ${fmtInt(result.listed.length)} of ${fmtInt(live)} listed.`}
+              Some documents may be missing: the latest writes may not be in the counts yet.
             </p>
+          ) : (
+            !result.listed_complete &&
+            result.listed.length > 0 && (
+              <p className="text-xs text-text-muted">
+                {live === null
+                  ? `Newest ${fmtInt(result.listed.length)} listed; the total was not counted.`
+                  : result.listed.length < live
+                    ? `Newest ${fmtInt(result.listed.length)} of ${fmtInt(live)} listed.`
+                    : "The listing could not be checked against the latest writes."}
+              </p>
+            )
           )}
           {result.listed.length === 0 ? (
-            <p className="text-text-muted">No live document to list.</p>
+            !short && <p className="text-text-muted">No live document to list.</p>
           ) : (
             <ul className="space-y-2" aria-label="Newest documents">
               {result.listed.map((d) => (

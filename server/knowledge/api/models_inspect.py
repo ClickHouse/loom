@@ -422,7 +422,9 @@ class KnowledgeInspectOutput(BaseModel):
     decisions: DecisionTotals
     # The newest live documents, at most `sample_limit`, newest first.
     listed: list[InspectDocument] = Field(default_factory=list)
-    # True when `listed` holds every live document and the count was read.
+    # True when `listed` holds every live document and the count was read, and, under the
+    # Postgres authority, every document commit of the namespace was published and the
+    # listed rows were checked against it.
     listed_complete: bool = False
     # One per check that ran over the documents and chunks; a clean check is an `info`
     # finding with count 0.
