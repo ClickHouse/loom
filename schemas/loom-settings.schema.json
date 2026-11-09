@@ -1350,6 +1350,7 @@
         },
         "code_parse_memory_mb": {
           "default": 256,
+          "maximum": 65536,
           "minimum": 128,
           "type": "integer",
           "description": "Address space (MB) a tree-sitter parse may take, per server process (`bounded_parse`); a parse past it fails like a timed-out one (an indexed file is chunks without symbols)."
