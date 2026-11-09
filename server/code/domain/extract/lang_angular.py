@@ -66,7 +66,7 @@ def is_angular_template(path: str) -> bool:
 
 
 def component_meta(source: str) -> list[dict[str, str]]:
-    """[{class, selector, template_url, inline, meta_start, inline_line}] for every
+    """[{class, selector, template_url, inline, inline_line}] for every
     `@Component` class in a TypeScript source; `inline` is the template literal's text
     ('' when the template is external), `inline_line` the line it starts on."""
     out: list[dict[str, str]] = []
@@ -91,7 +91,6 @@ def component_meta(source: str) -> list[dict[str, str]]:
                 "selector": sel.group(1).strip() if sel else "",
                 "template_url": url.group(1).strip() if url else "",
                 "inline": inline,
-                "meta_start": str(line),
                 "inline_line": str(inline_line),
             }
         )

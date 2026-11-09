@@ -292,3 +292,10 @@ def test_a_router_naming_its_class_in_its_arguments_keeps_its_prefix() -> None:
         'bp = Blueprint("UserBlueprint", __name__, url_prefix="/u")\n'
     )
     assert [m.group(1) for m in _PREFIX_DECL_RE.finditer(src)] == ["r", "bp"]
+
+
+def test_a_methods_list_with_a_bracket_inside_gives_the_default_method() -> None:
+    # The list's scan stops at the next opener, so one search cannot run to the file's end.
+    src = b'@app.route("/a", methods=["GET", ("POST")])\ndef a(): pass\n'
+    facets = py_facets(parse_python("svc/a.py", src))
+    assert [f.name for f in facets if f.kind == "http_route"] == ["GET /a"]

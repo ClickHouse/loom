@@ -210,3 +210,9 @@ def test_an_unclosed_statement_tag_names_no_macro_call() -> None:
     for tail in ("> 0\n", "> {{ var('n') }}"):  # the second ends the file in `}}`
         text = "{{ dollars(x) }}\nselect a from t where b like '{%'\nand coalesce(c, 0) " + tail
         assert lj._calls(text, set(), newline_offsets(text)) == {"dollars": 1}, tail
+
+
+def test_a_tags_list_with_a_bracket_inside_gives_no_tags() -> None:
+    # The list's scan stops at the next `[`, so one search cannot run to the file's end.
+    ju = lj.jinja_units("models/m.sql", "m", "{{ config(tags=['x', ['y']]) }}\nselect 1\n")
+    assert [f for f in ju.facets if f.kind == "tag"] == []

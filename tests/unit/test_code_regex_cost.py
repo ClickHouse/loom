@@ -309,6 +309,15 @@ def _env(text: str) -> object:
     return env_facets(ParsedFile(path="a.py", lang="python", source=text.encode()))
 
 
+def _py_layout(path: str) -> Callable[[str], object]:
+    def walk(text: str) -> object:
+        from server.code.domain.extract.py_layouts import layout_from_texts
+
+        return layout_from_texts({path: text}, [])
+
+    return walk
+
+
 def _dbt(text: str) -> object:
     from server.code.domain.extract.lang_sql_jinja import jinja_units
 
@@ -329,6 +338,14 @@ def _links(n: int) -> str:
     return "# a\n" + "".join(f"[a](a{i})\n" for i in range(n // 8))
 
 
+def _numbered(unit: str) -> Callable[[int], str]:
+    return lambda n: "".join(unit.format(i) for i in range(n // len(unit)))
+
+
+def _where(n: int) -> str:
+    return "[tool.setuptools.packages.find]\nwhere = [" + _numbered('"a{}",')(n) + "]\n"
+
+
 def _inline_templates(n: int) -> str:
     return "".join(f"@Component({{template:`<a-b{i}>`}})class A{i}{{}}\n" for i in range(n // 40))
 
@@ -339,6 +356,9 @@ _WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("markdown-headings", _markdown, _run("", "# a\n")),
     ("markdown-links", _markdown, _links),
     ("setup-py-unclosed-lists", _setup_py, _run("", '"console_scripts":[')),
+    ("setup-py-entry-points", _setup_py, _run('"console_scripts":[', '"a=b:c",\n', "]")),
+    ("setup-py-roots", _py_layout("setup.py"), _numbered("find_packages('a{}')\n")),
+    ("pyproject-roots", _py_layout("pyproject.toml"), _where),
     ("dockerfile-continued-rows", _dockerfile, _run("", "a \\\n")),
     ("dockerfile-flags", _dockerfile, _run("RUN ", "--a ", "b")),
     ("dockerfile-stages", _dockerfile, _run("", "FROM a AS b\n")),

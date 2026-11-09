@@ -239,11 +239,8 @@ def roots_from_manifest(path: str, text: str) -> list[str]:
         cp = _ini(text)
         if cp is not None and cp.has_option("pytest", "pythonpath"):
             out.extend(_join(base, p) for p in _as_list(cp.get("pytest", "pythonpath")))
-    seen: list[str] = []
-    for r in out:
-        if r not in seen and ".." not in r.split("/"):
-            seen.append(r)
-    return seen
+    # ordered and deduplicated by a dict: a list's `in` per root is quadratic
+    return list(dict.fromkeys(r for r in out if ".." not in r.split("/")))
 
 
 def conftest_roots(present: Iterable[str]) -> list[str]:
@@ -258,8 +255,7 @@ def conftest_roots(present: Iterable[str]) -> list[str]:
         d = _dir(p)
         if (f"{d}/__init__.py" if d else "__init__.py") in paths:
             continue
-        if d not in out:
-            out.append(d)
+        out.append(d)  # one conftest.py per directory: no duplicates
     return out
 
 
@@ -393,7 +389,7 @@ def layout_from_texts(texts: dict[str, str], present: Iterable[str]) -> Layout:
     """The roots and entry points of a checkout from its manifests' texts
     ({path: text}) and its path set. A manifest under a vendored tree is a
     root for that tree's own files only (`Layout.roots_for`)."""
-    roots: list[str] = []
+    roots: dict[str, None] = {}  # ordered and deduplicated: a list's `in` per root is quadratic
     eps: list[EntryPoint] = []
     notes: dict[str, str] = {}
     # shallow manifests first: the repository's own before a fixture package's
@@ -404,14 +400,10 @@ def layout_from_texts(texts: dict[str, str], present: Iterable[str]) -> Layout:
         if not text.strip():
             notes[p] = "empty"
             continue
-        for r in roots_from_manifest(p, text):
-            if r not in roots:
-                roots.append(r)
+        roots.update(dict.fromkeys(roots_from_manifest(p, text)))
         eps.extend(entry_points_from_manifest(p, text))
-    for r in conftest_roots(present):
-        if r not in roots:
-            roots.append(r)
-    return Layout(tuple(roots[:MAX_ROOTS]), tuple(eps), tuple(manifests), notes)
+    roots.update(dict.fromkeys(conftest_roots(present)))
+    return Layout(tuple(list(roots)[:MAX_ROOTS]), tuple(eps), tuple(manifests), notes)
 
 
 # ---------------------------------------------------------------------------
