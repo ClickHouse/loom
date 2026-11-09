@@ -600,8 +600,9 @@ async def _commit_batch(
 ) -> pg_memory.Committed:
     """The batch's commit to the Postgres authority: its verdicts' generations and every
     key's protection as the batch read it are checked again inside (AdmissionMoved,
-    HeadMoved); a row with a vector of its own version owes ClickHouse its search
-    document too, not an earlier row of a key the batch writes twice. `retire`:
+    HeadMoved); a row owes ClickHouse its search document only when the batch built one at
+    its own version (an earlier row of a key written twice owes none unless it was
+    embedded too). `retire`:
     keys whose replaced vectors the locked head cannot show (a winner left without its
     type's vector, a key the batch embedded earlier, a failed lookup); they owe
     OLD_VECTORS. The commit adds any row over an embedded head itself."""

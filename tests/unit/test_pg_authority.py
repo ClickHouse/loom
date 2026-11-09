@@ -6735,13 +6735,14 @@ async def test_the_postgres_profile_refuses_a_ttl_on_a_table_it_holds(monkeypatc
         await pg_profile.start()
 
 
-async def test_a_bulk_batch_writing_a_key_twice_owes_a_document_only_for_its_embedded_row(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("both_embedded", [False, True])
+async def test_a_bulk_batch_writing_a_key_twice_owes_a_document_only_for_its_embedded_rows(
+    monkeypatch: pytest.MonkeyPatch, both_embedded: bool
 ) -> None:
-    """A batch that writes a key twice embeds only the key's last row: only that row's
-    revision owes ClickHouse a search document, since the publication clears the target
-    for the version the document was built from. The earlier revision owing one would
-    hold the namespace's searches at their barrier until its lease ran out."""
+    """A row owes ClickHouse a search document only when the batch built one at its
+    version, since the publication clears the target for that version alone: an earlier
+    revision of a key written twice and not embedded owing one would hold the namespace's
+    searches at their barrier until its lease ran out. Both embedded, both owe one."""
     from server.memory.app import bulk_set
     from server.memory.store import pg_publish
 
@@ -6760,11 +6761,14 @@ async def test_a_bulk_batch_writing_a_key_twice_owes_a_document_only_for_its_emb
     first, last = key | {"memory_key": "k", "version": 1}, key | {"memory_key": "k", "version": 2}
     state = SimpleNamespace(
         memory_rows=[first, last],
-        embedding_rows=[last | {"embedding": [0.1]}],
+        embedding_rows=[
+            r | {"embedding": [0.1]} for r in ([first, last] if both_embedded else [last])
+        ],
         existing_rows={},
         generations={},
         retry=SimpleNamespace(start=lambda: None),
     )
     await bulk_set._commit_batch(state, {})
     row = pg_memory.MEMORY_ROW | pg_memory.AUDIT_ROW
-    assert seen == [[row, row | pg_memory.SEARCH_DOC]]
+    doc = row | pg_memory.SEARCH_DOC
+    assert seen == [[doc if both_embedded else row, doc]]
