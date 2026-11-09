@@ -1754,7 +1754,7 @@ describe("Assistant: documents", () => {
         listed: KNOWLEDGE.listed.slice(0, kept),
         listed_complete: false,
         skipped: [
-          "projection: 1 document commit(s) whose publication to ClickHouse has not finished, 1 of them parked after LOOM_PG_DELIVERY_MAX_ATTEMPTS refusals; the document sections may miss them or still count older versions",
+          "documents.projection: 1 document commit(s) whose publication to ClickHouse has not finished, 1 of them parked after LOOM_PG_DELIVERY_MAX_ATTEMPTS refusals; the document sections may miss them or still count older versions",
           ...(dropped
             ? [
                 "listed.heads: 1 document(s) rewritten or deleted in the Postgres authority since ClickHouse's copy; not listed",
@@ -1766,7 +1766,7 @@ describe("Assistant: documents", () => {
       const result = await pickDocuments();
       expect(within(result).queryByText("The documents could not be listed.")).toBeNull();
       expect(
-        within(result).getByText("Some documents may be missing: their latest writes are not in the counts yet."),
+        within(result).getByText("Some documents may be missing: the latest writes may not be in the counts yet."),
       ).toBeInTheDocument();
       expect(within(result).queryByText(/^Newest \d+ of \d+ listed\.$/)).toBeNull();
       expect(within(result).queryByText("No live document to list.")).toBeNull();

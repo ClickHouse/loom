@@ -984,7 +984,7 @@ async def test_inspect_says_what_clickhouse_does_not_hold_and_lists_only_served_
     assert [d["source_uri"] for d in after["listed"]] == [kept]
     assert after["listed_complete"] is False
     assert (
-        "projection: 1 document commit(s) whose publication to ClickHouse has not finished, "
+        "documents.projection: 1 document commit(s) whose publication to ClickHouse has not finished, "
         "1 of them parked after LOOM_PG_DELIVERY_MAX_ATTEMPTS refusals; the document "
         "sections may miss them or still count older versions"
     ) in after["skipped"]

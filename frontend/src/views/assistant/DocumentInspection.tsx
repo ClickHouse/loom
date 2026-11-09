@@ -472,16 +472,10 @@ function readFailed(
   return result.skipped.some((s) => s.startsWith(`${section}: `));
 }
 
-/** Under the Postgres authority the server names, in `skipped`, the document commits not yet
- *  published to ClickHouse, or an authority that did not answer ("projection: … the document
- *  sections …"), and the listed documents it dropped because they were rewritten, deleted or
- *  gone in Postgres ("listed.heads: <n> document(s) …"): the listing and its count may be
- *  short, not cut at the sample limit. A failed check ("listed.heads: ValueError") claims
- *  nothing of the kind. */
+/** `skipped` says the listing may be short (unpublished commits, an outage, a dropped row), not cut at the sample limit
+ *  (`DOCUMENTS_PROJECTION` and `LISTED_HEADS` in server/knowledge/app/inspect.py). */
 function documentsMayBeShort(result: KnowledgeInspection): boolean {
-  return result.skipped.some(
-    (s) => /^listed\.heads: \d+ document/.test(s) || (s.startsWith("projection: ") && s.includes("document sections")),
-  );
+  return result.skipped.some((s) => s.startsWith("documents.projection: ") || /^listed\.heads: \d+ /.test(s));
 }
 
 function ListedSection({ result }: { result: KnowledgeInspection }) {
@@ -496,7 +490,7 @@ function ListedSection({ result }: { result: KnowledgeInspection }) {
         <>
           {short ? (
             <p className="text-xs text-text-muted">
-              Some documents may be missing: their latest writes are not in the counts yet.
+              Some documents may be missing: the latest writes may not be in the counts yet.
             </p>
           ) : (
             !result.listed_complete &&

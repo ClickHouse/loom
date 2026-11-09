@@ -15,7 +15,8 @@ namespace's viewers by id; the decision rows are memory rows and are read inside
 request's scope, and the audit, which reads every user's rows, is not run under a scope
 narrowed to one user or session. A section that cannot be read is named in `skipped`
 and its fields stay null or empty; a store that is down fails the call, as any read does,
-but a Postgres authority that does not answer, which is named in `skipped` (below).
+but a Postgres authority that does not answer is named in `skipped` once and not asked
+again in the call.
 
 Under the Postgres authority the document rows ClickHouse holds can trail the heads
 Postgres commits: `skipped` counts the namespace's commits ClickHouse does not have yet
@@ -70,6 +71,12 @@ from server.memory.app.search import pg_validation
 from server.settings import settings
 
 log = logging.getLogger(__name__)
+
+# The `skipped` names, under the Postgres authority, of a document section that may miss
+# what the authority committed, and of the listed rows it dropped (`<n> document(s) …`):
+# the dashboard keys on these prefixes (DocumentInspection.tsx `documentsMayBeShort`).
+DOCUMENTS_PROJECTION = "documents.projection"
+LISTED_HEADS = "listed.heads"
 
 SOURCE_OP = "knowledge.inspect"
 # namespace.audit's checks on memory rows that may belong in documents.
@@ -504,7 +511,7 @@ class _Inspect:
         if owed or parked:
             self.documents_whole = False
             self.skipped.append(
-                f"{pg_validation.PROJECTION}: {owed + parked} document commit(s) whose "
+                f"{DOCUMENTS_PROJECTION}: {owed + parked} document commit(s) whose "
                 f"publication to ClickHouse has not finished, {parked} of them parked after "
                 "LOOM_PG_DELIVERY_MAX_ATTEMPTS refusals; the document sections may miss "
                 "them or still count older versions"
@@ -518,7 +525,7 @@ class _Inspect:
             return
         self.authority_down = True
         self.skipped.append(
-            f"{pg_validation.PROJECTION}: POSTGRES_UNAVAILABLE: the Postgres authority did "
+            f"{DOCUMENTS_PROJECTION}: POSTGRES_UNAVAILABLE: the Postgres authority did "
             "not answer; the document sections and the memory sections read what ClickHouse "
             "holds, which may miss committed writes"
         )
@@ -798,7 +805,7 @@ class _Inspect:
             raise
         except Exception as exc:  # noqa: BLE001 — a read-only report; the listing stands as read
             log.warning("knowledge.inspect listed.heads skipped: %s", exc)
-            self.skipped.append(f"listed.heads: {type(exc).__name__}")
+            self.skipped.append(f"{LISTED_HEADS}: {type(exc).__name__}")
             self.documents_whole = False
             return rows
         heads = {d.source_uri: d for d in got}
@@ -812,7 +819,7 @@ class _Inspect:
         if len(kept) < len(rows):
             self.documents_whole = False
             self.skipped.append(
-                f"listed.heads: {len(rows) - len(kept)} document(s) rewritten or deleted in "
+                f"{LISTED_HEADS}: {len(rows) - len(kept)} document(s) rewritten or deleted in "
                 "the Postgres authority since ClickHouse's copy; not listed"
             )
         return kept

@@ -1242,9 +1242,9 @@ async def test_under_postgres_unpublished_document_commits_are_counted_and_said(
     _whole(stubs)
     authority.unpublished = (2, 1)
     out = await ki.handle_knowledge_inspect(_inp())
-    lines = [s for s in out.skipped if s.startswith("projection: ")]
+    lines = [s for s in out.skipped if s.startswith("documents.projection: ")]
     assert lines == [
-        "projection: 3 document commit(s) whose publication to ClickHouse has not "
+        "documents.projection: 3 document commit(s) whose publication to ClickHouse has not "
         "finished, 1 of them parked after LOOM_PG_DELIVERY_MAX_ATTEMPTS refusals; the "
         "document sections may miss them or still count older versions"
     ]
@@ -1269,7 +1269,9 @@ async def test_under_postgres_an_unanswering_authority_reads_on_and_says_so(
     monkeypatch.setattr(pg_validation, "admit", down)
     out = await ki.handle_knowledge_inspect(_inp())
     assert [d.source_uri for d in out.listed] == ["docs/b.md", "docs/b.md#v2"]
-    outages = [s for s in out.skipped if s.startswith("projection: POSTGRES_UNAVAILABLE: ")]
+    outages = [
+        s for s in out.skipped if s.startswith("documents.projection: POSTGRES_UNAVAILABLE: ")
+    ]
     assert len(outages) == 1  # said once, waited out once
     assert stubs.calls["decisions"] and out.memory_findings  # the memory sections still read
     # The listing's check is not tried again against a Postgres already found down.
@@ -1324,9 +1326,21 @@ async def test_under_postgres_a_failed_listing_check_lists_clickhouses_rows(
     out = await ki.handle_knowledge_inspect(_inp())
     assert [d.source_uri for d in out.listed] == ["docs/b.md", "docs/b.md#v2"]
     expected = (
-        [s for s in out.skipped if s.startswith("projection: POSTGRES_UNAVAILABLE: ")]
+        [s for s in out.skipped if s.startswith("documents.projection: POSTGRES_UNAVAILABLE: ")]
         if failure == "down"
         else [s for s in out.skipped if s == "listed.heads: ValueError"]
     )
     assert len(expected) == 1
     assert not out.listed_complete
+
+
+def test_the_lines_the_dashboard_keys_on_keep_their_prefixes() -> None:
+    """DocumentInspection.tsx's `documentsMayBeShort` reads a short listing from these
+    two names alone, never from the wording after them."""
+    import re
+
+    assert ki.DOCUMENTS_PROJECTION == "documents.projection"
+    assert ki.LISTED_HEADS == "listed.heads"
+    dropped = f"{ki.LISTED_HEADS}: 1 document(s) rewritten or deleted"
+    assert re.match(r"^listed\.heads: \d+ ", dropped)
+    assert not re.match(r"^listed\.heads: \d+ ", f"{ki.LISTED_HEADS}: ValueError")
