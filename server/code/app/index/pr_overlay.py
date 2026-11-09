@@ -396,9 +396,9 @@ async def load_pr_overlay(
 ) -> PrOverlay:
     """The overlay of one PR from the mirror. Never raises: a head the
     mirror lacks, or a range with no merge-base, returns an overlay whose
-    `reason` says so and whose `ok` is False. Cached 60 s per (mirror, PR)
-    keyed on the head sha, so the brief's impact read parses once, unless it left
-    changed files unreached."""
+    `reason` says so and whose `ok` is False. Cached for
+    `code_pr_overlay_cache_ttl_s` per (mirror, PR) keyed on the head sha, so the
+    brief's impact read parses once, unless it left changed files unreached."""
     from server.code.app.index import gitrepo
 
     ov = PrOverlay(pr_number=int(pr_number))
@@ -454,9 +454,9 @@ async def load_posted_overlay(
 ) -> PrOverlay:
     """The overlay of one PR from the post-image its caller sent: no git read.
     The sent files are the post-image; the diff's hunks classify `modified` and
-    its paths add the deletions. Cached 60 s on the content's digest, so the
-    calls of one review parse once, unless it left changed files unreached. Never
-    raises."""
+    its paths add the deletions. Cached for `code_pr_overlay_cache_ttl_s` on the
+    content's digest, so the calls of one review parse once, unless it left changed
+    files unreached. Never raises."""
     digest = img.digest()
     key = (f"{POSTED_PREFIX}{org}/{ns}", int(img.pr_number))
     hit = _CACHE.get(key)
