@@ -509,3 +509,20 @@ def test_a_flush_whose_durable_read_fails_is_unanswered(monkeypatch: pytest.Monk
     monkeypatch.setattr(pg_memory, "heads_owing", heads_owing)
     with pytest.raises(pg.PostgresUnavailableError):
         asyncio.run(pg_batch._served_documents([_flush_entry(doc)]))
+
+
+def test_the_usual_flush_reads_no_head_durably(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The writer's own revision is the head: its document is sent from the plain read,
+    with no standby round trip."""
+    doc = {**_claim(5, "a" * 64).row}
+    reads: list[bool] = []
+
+    async def heads_owing(keys, *, durable=False):  # type: ignore[no-untyped-def]
+        reads.append(durable)
+        return {pg_memory.identity_key(doc): (dict(doc), pg_memory.SEARCH_DOC)}
+
+    monkeypatch.setattr(pg_memory, "heads_owing", heads_owing)
+    entry = _flush_entry(doc)
+    sent = asyncio.run(pg_batch._served_documents([entry]))
+    assert reads == [False]
+    assert list(sent[id(entry)].values()) == [doc]

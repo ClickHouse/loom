@@ -6949,9 +6949,11 @@ async def test_a_connection_lost_in_a_transaction_is_503_not_the_drivers_error(
             raise asyncpg.InterfaceError("connection has been released back to the pool")
 
     _pg_pool(monkeypatch, _Detached())
-    with pytest.raises(pg.PostgresUnavailableError):
+    with pytest.raises(pg.PostgresUnavailableError) as raised:
         async with pg.transaction():
             raise asyncpg.exceptions.ConnectionDoesNotExistError("connection was closed")
+    assert raised.value.status_code == 503
+    assert isinstance(raised.value.__cause__, asyncpg.exceptions.ConnectionDoesNotExistError)
 
 
 @pytest.mark.asyncio

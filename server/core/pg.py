@@ -240,8 +240,9 @@ _TRANSIENT_SQLSTATES = _RETRYABLE_SQLSTATES | _RESOURCE_SQLSTATES
 
 
 def is_outage(e: BaseException) -> bool:
-    """A lost or refused connection, or a retryable SQLSTATE. Not an InterfaceError: a
-    bad argument or a misuse of the connection fails the same way on a retry."""
+    """A lost or refused connection, a retryable SQLSTATE, or a server in recovery (a
+    demoted primary, `_in_recovery`). Not an InterfaceError: a bad argument or a misuse of
+    the connection fails the same way on a retry."""
     import asyncpg
 
     sqlstate = getattr(e, "sqlstate", None)
