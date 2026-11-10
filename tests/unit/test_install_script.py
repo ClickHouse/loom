@@ -749,15 +749,19 @@ def test_an_unreachable_docker_daemon_is_named_before_any_pull(
     assert not Path(installer_env["LOOM_INSTALL_DIR"]).exists()  # nor any file written
 
 
-# curl's `-o FILE` or `-O` (alone or among short flags): the download is saved, so `&&` can stop on its failure.
-_SAVES = re.compile(r"\s-(?:o\s*(?!-(?:\s|$))\S|[A-Za-z]*O\b)")
+# curl's own save flags: `-o FILE`, `--output FILE`, or `-O` / a short-flag group
+# ending in `o FILE` or holding `O`. A FILE of `-` is stdout, not a save.
+_SAVES = re.compile(r"\s(?:-[A-Za-z]*o|--output)\s*(?!-(?![\w.]))[\w.~/$\"'{}-]|\s-[A-Za-z]*O\b")
+# Where a shell command ends and the next one, or a substitution, begins.
+_COMMAND_BREAK = re.compile(r"\\?\||&&|;|\$\(|<\(")
 # Installed dependencies, which hold other projects' install lines.
 _NOT_OURS = {"node_modules", ".venv", ".git"}
 
 
 def _unsaved_download(line: str) -> bool:
-    """A line that runs curl on `install.sh` without saving it to a file."""
-    return "curl" in line and "install.sh" in line and not _SAVES.search(line)
+    """A line whose curl of `install.sh` does not save it to a file."""
+    curls = [part for part in _COMMAND_BREAK.split(line) if "curl" in part]
+    return "install.sh" in line and any(not _SAVES.search(part) for part in curls)
 
 
 def test_every_installer_download_is_saved_first() -> None:
@@ -789,6 +793,8 @@ def test_every_installer_download_is_saved_first() -> None:
         'sh -c "$(curl -fsSL https://x/install.sh)"',
         "bash <(curl -fsSL https://x/install.sh)",
         "curl https://x/install.sh -o - | sh",
+        "curl https://x/install.sh -o -|sh",
+        "curl -fsSL https://x/install.sh | sh -o errexit",
     ],
 )
 def test_an_unsaved_download_is_flagged(line: str) -> None:
@@ -802,6 +808,9 @@ def test_an_unsaved_download_is_flagged(line: str) -> None:
         "curl -fL https://x/install.sh -o loom-install.sh",
         "curl -fsSLO https://x/install.sh && sh install.sh",
         "| `install.sh` | bash-compatible installer |",
+        "curl -fsSLo loom-install.sh https://x/install.sh && sh loom-install.sh",
+        "curl https://x/install.sh --output loom-install.sh && sh loom-install.sh",
+        'curl -fsSL "https://x/install.sh" -o ~/loom-agent-setup/loom-install.sh',
     ],
 )
 def test_a_saved_download_passes(line: str) -> None:
