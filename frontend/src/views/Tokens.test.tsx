@@ -269,12 +269,39 @@ describe("the token form", () => {
     expect(order()).toEqual(["ns-c", "ns-a", "ns-b"]);
     // At the top its Move up is gone; focus moves to its Move down, not to the page.
     expect(screen.getByRole("button", { name: "Move ns-c down" })).toHaveFocus();
-    expect(screen.getByRole("status", { hidden: true })).toHaveTextContent("ns-c moved to 1 of 3");
+    expect(screen.getByRole("status")).toHaveTextContent("ns-c moved to 1 of 3");
     expect((await create()).namespaces.map((n) => (typeof n === "string" ? n : n.namespace))).toEqual([
       "ns-c",
       "ns-a",
       "ns-b",
     ]);
+  });
+
+  it("only these: a role is picked in the ordered list and sent with the namespace", async () => {
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-a" }, WAIT));
+    await pickOption(/^Role on ns-a$/, /^Viewer$/);
+    expect((await create()).namespaces).toEqual([{ namespace: "ns-a", role: "viewer" }]);
+  });
+
+  it("the result of a list token names its namespaces in the order they are searched", async () => {
+    vi.mocked(createToken).mockResolvedValueOnce(
+      created({
+        namespaces: ["ns-c", "ns-a"],
+        ns_roles: { "ns-c": "viewer", "ns-a": "admin" },
+        reads_everything: false,
+        saves_to: "ns-a",
+      }),
+    );
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-c" }, WAIT));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-a" }));
+    await create();
+    expect(await screen.findByTestId("minted-token-scope", undefined, WAIT)).toHaveTextContent(
+      "Reads only these, searched in this order: 1. ns-c, 2. ns-a. Saves to ns-a.",
+    );
   });
 
   it("only these: a row dragged onto another takes its place", async () => {

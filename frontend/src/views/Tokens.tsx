@@ -291,13 +291,14 @@ function SearchOrder({
                 setDragging(null);
                 setOver(null);
               }}
-              className={`flex items-center gap-2 px-2 py-1.5 text-sm ${over === i && dragging !== ns ? "bg-surface" : ""} ${dragging === ns ? "opacity-60" : ""}`}
+              className={`flex flex-wrap items-center gap-2 px-2 py-1.5 text-sm ${over === i && dragging !== ns ? "bg-surface" : ""} ${dragging === ns ? "opacity-60" : ""}`}
             >
               <span className="cursor-grab text-text-muted" aria-hidden="true">
                 <Icon name="dots-vertical-double" size="sm" />
               </span>
               <span className="w-5 shrink-0 text-right tabular text-text-muted">{i + 1}</span>
-              <span className="font-mono flex-1 truncate">{label(ns)}</span>
+              {/* At least 10rem for the name: on a phone the role and arrows wrap under it. */}
+              <span className="font-mono min-w-0 flex-1 basis-40 truncate">{label(ns)}</span>
               {repo ? (
                 <span className="text-xs text-text-muted shrink-0">read-only</span>
               ) : (
@@ -325,7 +326,6 @@ function SearchOrder({
                 }}
                 icon="arrow-up"
                 label={`Move ${label(ns)} up`}
-                tooltip="Move up"
                 disabled={i === 0}
                 onClick={() => move(ns, i, -1)}
               />
@@ -335,7 +335,6 @@ function SearchOrder({
                 }}
                 icon="arrow-down"
                 label={`Move ${label(ns)} down`}
-                tooltip="Move down"
                 disabled={i === order.length - 1}
                 onClick={() => move(ns, i, 1)}
               />
@@ -408,8 +407,8 @@ function TokenForm({
   // and the restricted repositories (by repo name) added to it.
   const [homeEdited, setHomeEdited] = useState<string | null>(null);
   const [restrictedRepos, setRestrictedRepos] = useState<Set<string>>(() => new Set());
-  // Only these: `selectedNs` order = read priority (index 0 = searched first, and where it
-  // saves when it may write there). nsRole is the role per namespace, capped at your grant.
+  // Only these: `selectedNs` order = read priority (index 0 is searched first); where it
+  // saves is the server's rule. nsRole is the role per namespace, capped at your grant.
   const [selectedNs, setSelectedNs] = useState<string[]>([]);
   const [nsRole, setNsRole] = useState<Record<string, GrantRole>>({});
   const [newNs, setNewNs] = useState("");
@@ -417,7 +416,6 @@ function TokenForm({
   const [loadFailed, setLoadFailed] = useState(false);
 
   // Once per identity; an answer for an org or namespace the page has left is dropped.
-  // Nothing is ticked for "Only these": the person picks every namespace, their own too.
   useAbortableEffect(
     async (_signal, live) => {
       let all: MyNamespaceEntry[];

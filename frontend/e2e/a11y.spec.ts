@@ -601,3 +601,40 @@ test("reduced motion stops Click UI's dialog animation", async ({ page }) => {
   await expect(dialog).toBeVisible();
   expect(await dialog.evaluate((el) => getComputedStyle(el).animationName)).toBe("none");
 });
+
+// The token form's search order: the ticked namespaces as one ordered list, moved by drag or
+// by arrows. Axe-clean at both widths; on a touch phone each name keeps room to be read,
+// the role and arrows wrapping under it.
+for (const [width, touch] of [
+  [1400, false],
+  [375, true],
+] as const) {
+  test.describe(`the token form's search order at ${width} px`, () => {
+    test.use({ viewport: { width, height: 900 }, hasTouch: touch });
+    test("is axe-clean and leaves each name readable", async ({ page }) => {
+      const row = (namespace: string, role: string) => ({
+        namespace,
+        role,
+        status: "active",
+        visibility: "private",
+        kind: "memory",
+        description: "",
+        joined_at: "2026-01-01T00:00:00Z",
+        is_new: false,
+      });
+      await installApi(page, {
+        mine: [row("bench", "admin"), row("team-research-notes", "writer"), row("shared-handbook", "viewer")],
+      });
+      await page.goto("/settings");
+      await page.getByRole("radio", { name: "Only these namespaces" }).click();
+      await page.getByRole("checkbox", { name: "Read team-research-notes" }).click();
+      await page.getByRole("checkbox", { name: "Read shared-handbook" }).click();
+      const order = page.getByRole("list", { name: "Search order" });
+      await expect(order.getByRole("listitem")).toHaveCount(2);
+      await page.waitForTimeout(300);
+      expect(await violations(page)).toEqual([]);
+      const name = order.getByText("team-research-notes", { exact: true });
+      expect((await name.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(140);
+    });
+  });
+}
