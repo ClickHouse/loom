@@ -6,10 +6,10 @@ its own ([container images](#container-images)). The server image serves HTTP, M
 the dashboard, and runs the background workers. Its containers keep no durable state of
 their own, so you can replace or add them freely: ClickHouse holds Loom's data, uploaded
 document originals included unless their bytes are kept in an S3-compatible bucket
-([where originals are stored](../features/knowledge.md#where-originals-are-stored)), and
-under the
+([where originals are stored](../features/knowledge.md#where-originals-are-stored)).
+Under the
 [Postgres memory authority](../architecture/storage-authority.md#why-two-stores),
-Postgres holds live memory and knowledge state; the code index keeps bare git mirrors on
+Postgres holds live memory and knowledge state. The code index keeps bare git mirrors on
 disk, a cache of the remotes ClickHouse records. A deployment moves with ClickHouse (and
 Postgres, under that authority), its env config, `LOOM_JWT_SECRET` and, while rows name
 objects in it, the document bucket
