@@ -59,7 +59,8 @@ def support_of(
     `ran` the ops whose calls ran, found or not; `citable` the ops whose rows an answer can
     cite; `no_data` the ops that return no namespace data.
 
-    - none: no text, or it cites nothing and is an abstention or made no citable call;
+    - none: no text; or it cites nothing and is an abstention, or its calls were read and
+      none was citable, found data or failed;
     - supported: a citation verified;
     - unsupported: a citation failed for a reason of its own, or it cites nothing although
       a citable op's call found data, or ran and found nothing while no other call found

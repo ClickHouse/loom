@@ -53,11 +53,9 @@ class AssistantText:
 class AssistantAnswer:
     """The whole answer: its text, its id (the `run_id` of its ledger rows), the
     model, its checked citations, its token usage and how far it rests on what Loom
-    holds (`support`): `supported` (a citation verified), `unsupported` (a citation
-    failed, or it cites nothing although a citable call found rows or ran and found
-    nothing), `unchecked` (its checks could not say; also a value this SDK does not know,
-    or none from an older server) or `none` (it makes no claim: a greeting, an
-    abstention)."""
+    holds (`support`): `supported`, `unsupported`, `unchecked` or `none`, as
+    docs/architecture/assistant.md#support defines them; a value this SDK does not know,
+    or none from an older server, reads as `unchecked`."""
 
     text: str
     run_id: str
