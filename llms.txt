@@ -115,7 +115,7 @@ Start with docs/index.md (the map). A coding agent installing Loom: follow docs/
 ## Architecture
 
 - [Assistant design](docs/architecture/assistant.md): This page is the design of Loom's assistant, which answers questions about what a namespace holds and how it is used, with a citation for every claim.
-- [ClickHouse](docs/architecture/clickhouse.md): Durable Loom state lives in ClickHouse, in the `loom` and `loom_telemetry` databases, except what the Postgres memory authority moves to Postgres.
+- [ClickHouse](docs/architecture/clickhouse.md): Durable Loom state lives in ClickHouse, in the `loom` and `loom_telemetry` databases, except what the Postgres memory authority moves to Postgres and the original bytes kept in an S3-compatible bucket.
 - [Code index architecture](docs/architecture/code-index-architecture.md): This page is the inside view of the code index: how files become chunks, symbols and edges, and how the two tiers stay current.
 - [Document extraction](docs/architecture/document-extraction.md): An uploaded original is parsed into one shape, the extraction artifact, by an extractor service: a separate process with its own dependencies, never the Loom server.
 - [Failure and recovery](docs/architecture/failure-and-recovery.md): The primary write and every access decision fail closed.

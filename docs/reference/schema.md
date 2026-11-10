@@ -3,10 +3,10 @@
 Loom keeps its ClickHouse state in the `loom` and `loom_telemetry` databases. Under the
 [Postgres memory authority](../architecture/storage-authority.md), live memory, its
 revision journal, the knowledge heads, the ingestion jobs and the dataset catalog are in
-Postgres (`schemas/pg_migrations/`). The shape of the
-ClickHouse databases is defined by the numbered migrations in `schemas/migrations/`;
-`schemas/schema.sql` is the result of applying all of them, dumped from a live
-server. The table at the end of this page is generated from `schema.sql`.
+Postgres (`schemas/pg_migrations/`). The shape of the ClickHouse databases is defined by
+the numbered migrations in `schemas/migrations/`; `schemas/schema.sql` is the result of
+applying all of them, dumped from a live server. The table at the end of this page is
+generated from `schema.sql`.
 
 ## Where the schema comes from
 
