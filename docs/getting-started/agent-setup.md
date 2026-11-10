@@ -49,7 +49,8 @@ This copy names no release, so its commands do not run as they are. Follow the
 ```sh
 mkdir -p ~/loom-agent-setup
 curl -fsSL "https://github.com/ClickHouse/loom/releases/download/v<version>/install.sh" \
-  -o ~/loom-agent-setup/loom-install.sh && sh ~/loom-agent-setup/loom-install.sh
+  -o ~/loom-agent-setup/loom-install.sh && sh ~/loom-agent-setup/loom-install.sh \
+  && rm ~/loom-agent-setup/loom-install.sh
 ```
 
 The installer verifies the bundle's SHA-256, installs under `~/.loom`, starts the stack
