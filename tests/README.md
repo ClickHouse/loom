@@ -60,6 +60,7 @@ Each helper is narrow, typed and has its own test. A helper builds the input or 
 | `tests/unit/install_versions.py`   | `GUARD_CASES`: release versions as `install.sh`'s downgrade guard orders them        |
 | `tests/unit/_memory_search_pkg.py` | patching a name every module of `server/memory/app/search/` binds                    |
 | `tests/unit/git_repo.py`           | `git(repo, ...)`: git in a repository the test made, no signing, no hooks            |
+| `tests/unit/markdown_links.py`     | the links and GitHub heading anchors of a Markdown page                              |
 
 A new shared helper earns its place when several independent files need the same stable boundary. Don't create a catch-all utils module.
 

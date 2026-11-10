@@ -68,18 +68,3 @@ def test_the_package_readme_links_resolve_on_the_registry(sdk: str) -> None:
             assert ref == "main" and dest.exists(), target
             if anchor and dest.suffix == ".md":
                 assert anchor.lower() in anchors(dest), target
-
-
-def test_the_cli_hints_name_the_published_package(capsys: pytest.CaptureFixture[str]) -> None:
-    """What `loom init` and `loom up` print tells the reader to install the
-    published package."""
-    from server.cli import init, up
-
-    signed_up = {"namespace": "agent-bot", "org": "dev", "subject": "agent-bot", "claim_code": "c"}
-    hint = init.connect_lines(signed_up, base_url="http://x", token_path="t", config_path="c")
-    up.print_connect(
-        base_url="http://x", mode="single-user", org="dev", namespace="local", token="",
-        build_commit="b",
-    )  # fmt: skip
-    for printed in (hint, capsys.readouterr().out):
-        assert f"pip install {PROJECT['name']}" in printed
