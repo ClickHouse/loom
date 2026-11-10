@@ -25,7 +25,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from server.code.domain.extract.text_lines import first_span_at
+from server.code.domain.extract.spans import first_span_at
 from server.code.domain.extract.treesitter import node_text
 
 # Builtins, typing helpers and containers are not receivers a repository

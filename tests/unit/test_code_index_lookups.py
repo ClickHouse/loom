@@ -1,6 +1,7 @@
 """Each lookup the code index builds once per file answers what the scan it replaced
-answered, on random inputs: same-named definitions under a scope, the span that holds a
-line, a Go import's module, a tsconfig `paths` pattern and the ancestor ladders."""
+answered, on random inputs: same-named definitions under a scope, rung 3's narrowing and
+the member and package-clause indexes, the span that holds a line, a Go import's module, a
+tsconfig `paths` pattern and the ancestor ladders."""
 
 from __future__ import annotations
 
@@ -8,10 +9,14 @@ import posixpath
 import random
 
 from server.code.app.index.ingest_headers import include_candidates
-from server.code.domain.extract.edges_treesitter import _Namesakes
+from server.code.domain.extract.edges_treesitter import (
+    _CallResolver,
+    _Namesakes,
+    prefer_implementation,
+)
 from server.code.domain.extract.lane_units import ancestor_candidates
 from server.code.domain.extract.lang_go import go_modules
-from server.code.domain.extract.text_lines import first_span_at, last_span_at
+from server.code.domain.extract.spans import first_span_at, last_span_at
 from server.code.domain.extract.treesitter import Symbol
 from server.code.domain.extract.ts_config import PathsTable
 
@@ -134,3 +139,56 @@ def test_the_ladders_answer_what_the_loops_answered_within_the_cap() -> None:
         bases = ["/".join(parts[:depth]) for depth in range(len(parts), -1, -1)]
         ladder = list(dict.fromkeys(f"{b}/{spec}" if b else spec for b in bases)) if spec else []
         assert ancestor_candidates(from_path, include) == ladder
+
+
+def _bare_resolver(go: bool = False, script: bool = False) -> _CallResolver:
+    resolver = _CallResolver.__new__(_CallResolver)
+    resolver._memo, resolver.go, resolver.script = {}, go, script
+    return resolver
+
+
+def _old_narrowed(
+    resolver: _CallResolver, rows: list[tuple[str, str, str]], skip: str
+) -> list[tuple[str, str, str]]:
+    rows = [c for c in rows if c[1] != skip] if skip else rows
+    if resolver.go and len(rows) > 1:
+        concrete = [c for c in rows if c[2] not in ("method", "field")]
+        rows = concrete if len(concrete) == 1 else rows
+    if resolver.script and len(rows) > 1:
+        rows = prefer_implementation(rows)
+    return rows
+
+
+def test_rung_three_answers_what_the_narrowing_filters_answered() -> None:
+    rnd = random.Random(6)
+    for _ in range(3000):
+        resolver = _bare_resolver(go=rnd.random() < 0.5, script=rnd.random() < 0.5)
+        names = {f"{rnd.choice(['m', 'm.d', 'n'])}::{_word(rnd, 'ab', 2)}a" for _ in range(6)}
+        pool = [
+            (f"s{i}", qn, rnd.choice(["function", "method", "field"])) for i, qn in enumerate(names)
+        ]
+        for skip in ["", *names, "z::a"]:
+            old = _old_narrowed(resolver, pool, skip)
+            assert resolver._repo_wide_one(pool, skip) == (old[0] if len(old) == 1 else None)
+
+
+def test_member_and_clause_indexes_keep_what_their_filters_kept() -> None:
+    rnd = random.Random(7)
+    for _ in range(3000):
+        resolver = _bare_resolver()
+        rows = [
+            (f"s{i}", "::".join(_word(rnd, "ab.", 3) for _ in range(rnd.randint(1, 4))), "function")
+            for i in range(rnd.randint(0, 8))
+        ]
+        owner, name = _word(rnd, "ab", 2), _word(rnd, "ab", 2)
+        assert resolver._member_rows(rows, owner, name) == [
+            c for c in rows if c[1].endswith(f"::{owner}::{name}")
+        ]
+        receiver = _word(rnd, "ab", 2)
+        assert resolver._by_clause(rows, name).get(receiver, []) == [
+            c
+            for c in rows
+            if c[1].count("::") == 1
+            and c[1].endswith("::" + name)
+            and c[1].partition("::")[0].endswith("." + receiver)
+        ]

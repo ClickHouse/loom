@@ -342,8 +342,8 @@ def ancestor_dirs(from_path: str) -> tuple[str, ...]:
 
 
 __all__ = [
-    "Site",
     "MAX_ANCESTOR_DIRS",
+    "Site",
     "SiteRule",
     "ancestor_candidates",
     "ancestor_dirs",

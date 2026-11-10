@@ -23,6 +23,7 @@ specific decisions, both load-bearing:
 
 from __future__ import annotations
 
+import bisect
 import functools
 import re
 from functools import lru_cache
@@ -37,7 +38,7 @@ from server.code.domain.extract.py_members import (
     module_bindings,
 )
 from server.code.domain.extract.py_receivers import type_name_of
-from server.code.domain.extract.text_lines import last_span_at, line_at, newline_offsets
+from server.code.domain.extract.spans import last_span_at
 from server.code.domain.extract.treesitter import ParsedFile, Symbol, node_text
 
 _MAX_DOC = 2000
@@ -297,14 +298,14 @@ def parse_python(path: str, source: bytes) -> ParsedFile:
     # request.getfixturevalue("x") — a string-literal fixture request from
     # anywhere in a body; the enclosing definition is the requestor.
     text = source.decode("utf-8", "replace")
-    newlines = newline_offsets(text)
+    newlines = [m.start() for m in re.finditer("\n", text)]  # a line by bisection, per match
     enclosing = last_span_at(sorted(
         ((s.start_line, s.end_line, s.qualified_name)
          for s in pf.symbols if s.kind in {"function", "fixture"}),
         key=lambda t: (t[0], -t[1]),
     ))  # innermost wins: spans sort widest-first per start
     for m in _GETFIXTURE_RE.finditer(text):
-        line = line_at(newlines, m.start())
+        line = bisect.bisect_left(newlines, m.start()) + 1
         encl = enclosing(line)
         if encl:
             pf.fixture_requests.append((encl, m.group(1), line))

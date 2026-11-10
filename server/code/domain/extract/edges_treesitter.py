@@ -54,11 +54,11 @@ from __future__ import annotations
 
 import bisect
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-from server.code.domain.extract.text_lines import last_span_at
+from server.code.domain.extract.spans import last_span_at
 from server.code.domain.extract.treesitter import (
     ParsedFile,
     Symbol,
@@ -1755,8 +1755,16 @@ class _Namesakes:
 _NO_ROWS: list[tuple[str, str, str]] = []
 
 
-def _first_per_name(pairs: Any) -> dict[str, Any]:
-    out: dict[str, Any] = {}
+def _base_rows(
+    name_table: dict[str, list[tuple[str, str, str]]], bare: str,
+) -> list[tuple[str, str, str]]:
+    """The rows a heritage clause can name: a type, never a `field` row spelled by its
+    embedded type's name, a method or a value."""
+    return [c for c in name_table.get(bare, []) if c[2] not in _NOT_A_BASE_KIND]
+
+
+def _first_per_name[T](pairs: Iterable[tuple[str, T]]) -> dict[str, T]:
+    out: dict[str, T] = {}
     for qn, row in pairs:
         out.setdefault(qn, row)
     return out
@@ -2095,11 +2103,7 @@ def _heritage_target(
     # a heritage clause names a type: a `field` row spelled by its embedded
     # type's name, a method or a value of that name never
     # qualifies and must not make the type ambiguous
-    def base_rows() -> list[tuple[str, str, str]]:
-        return [c for c in name_table.get(bare, []) if c[2] not in _NOT_A_BASE_KIND]
-
-    # the resolver's rungs index a list once and keep it: one list per base name
-    candidates = resolver._once(("bases", bare), base_rows) if resolver else base_rows()
+    candidates = resolver.base_rows(bare) if resolver else _base_rows(name_table, bare)
     if resolver is not None:
         bound = resolver.import_bound(receiver, bare, candidates)
         if isinstance(bound, tuple):
@@ -2662,6 +2666,10 @@ class _CallResolver:
             s for s in self.local_by_name.get(bare, []) if s.kind not in _NEVER_CALLABLE
         ]))
 
+    def base_rows(self, bare: str) -> list[tuple[str, str, str]]:
+        """`_base_rows`, once per name: the rungs index a list once and keep it."""
+        return self._once(("bases", bare), lambda: _base_rows(self.name_table, bare))
+
     def candidates(self, name: str, bare: str) -> list[tuple[str, str, str]]:
         """`candidates_for_call`, once per call text; callers never change the list."""
         return self._once(
@@ -2913,7 +2921,7 @@ class _CallResolver:
 
     @staticmethod
     def field_based(
-        receiver: str, candidates: list[tuple[str, str, str]],
+        member_call: bool, candidates: list[tuple[str, str, str]],
     ) -> list[tuple[str, str, str]]:
         """Rung 3's candidate set for a script call, ordered the way the
         language reads it (a field-based call graph): a member call `obj.f()` names a PROPERTY,
@@ -2928,7 +2936,7 @@ class _CallResolver:
 
         members = [c for c in candidates if is_member(c[1])]
         free = [c for c in candidates if not is_member(c[1])]
-        first, second = (free, members) if receiver == "" else (members, free)
+        first, second = (members, free) if member_call else (free, members)
         return first if first else second
 
     def _class_of(self, caller: Symbol) -> str:
@@ -3056,8 +3064,8 @@ class _CallResolver:
         def build() -> dict[str, list[tuple[str, str, str]]]:
             out: dict[str, list[tuple[str, str, str]]] = {}
             for c in candidates:
-                scope, _, rest = c[1].partition("::")
-                if rest == bare and "." in scope:
+                scope, sep, rest = c[1].partition("::")
+                if sep and rest == bare and "." in scope:
                     out.setdefault(scope.rsplit(".", 1)[1], []).append(c)
             return out
 
@@ -3284,7 +3292,7 @@ class _CallResolver:
         call (a member call names a property, a bare call a binding), and of the caller's
         language."""
         if self.script and member:
-            candidates = self.field_based("" if bare_call else "x", candidates)
+            candidates = self.field_based(not bare_call, candidates)
         if self.present is not None and not self.python:
             # A TypeScript, Go or shell call binds a definition of its own
             # language — the shared module-scoped name scheme also holds the other
@@ -3462,7 +3470,9 @@ def callee_targets(
         if typed is not None:
             out[callee] = typed[1]
             continue
-        narrowed = resolver.field_based(receiver, candidates) if receiver != "this" else candidates
+        narrowed = (
+            candidates if receiver == "this" else resolver.field_based(receiver != "", candidates)
+        )
         if len({c[1] for c in narrowed}) == 1:
             out[callee] = narrowed[0][1]
     return out

@@ -72,7 +72,7 @@ STAGE_MODULES: dict[str, tuple[str, ...]] = {
         "lang_python.py",
         "py_members.py",
         "lang_bash.py",
-        "text_lines.py",
+        "spans.py",
     ),
     "edge": (
         "edges_treesitter.py",
