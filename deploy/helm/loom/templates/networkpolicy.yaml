@@ -95,7 +95,7 @@ spec:
         - port: {{ .Values.clickhouse.port }}
         {{- end }}
         {{- $pg := include "loom.postgres" . | fromYaml }}
-        {{- if and $pg.host (ne (int $pg.port) 443) (or .Values.devClickhouse.enabled (ne (int $pg.port) (int .Values.clickhouse.port))) }}
+        {{- if $pg.host }}
         - port: {{ $pg.port }}
         {{- end }}
     # The EKS Pod Identity agent, which hands out this service account's credentials.

@@ -78,8 +78,8 @@ Jobs and the analytics export):
 The chart refuses to render without `postgres.passwordSecret.name` or
 `postgres.caSecret.name`, and when `env`, `extraEnv` or `secrets.extra` also sets one of
 the names it renders (`LOOM_STORAGE_AUTHORITY`, `LOOM_PG_DSN`, `LOOM_PG_DURABILITY`,
-`LOOM_PG_POOL_MAX_SIZE`, `PGPASSWORD`). Its values win over the same names in
-`existingSecret`, `envFrom` and `settingsFile`.
+`LOOM_PG_POOL_MAX_SIZE`, `PGPASSWORD`), or `settingsFile` the matching setting. Its values
+win over the same names in `existingSecret` and `envFrom`.
 
 ### Connections
 
@@ -144,13 +144,14 @@ pod=$(kubectl get deploy -n loom -o name \
   -l app.kubernetes.io/instance=loom,app.kubernetes.io/component=web)
 kubectl exec -i -n loom "$pod" -- sh -c \
   'read -r LOOM_CH_PASSWORD; export LOOM_CH_PASSWORD LOOM_CH_USER=default;
-   exec loom sql-access grant --user acme_sql --org acme --namespaces "*"' < admin.pass
+   exec loom sql-access grant --user acme_sql --org acme --namespaces support,research' < admin.pass
 ```
 
-The command prints the SQL user's password once, to the terminal only: an exec stream is
-not a container log. `--all` instead of `--org … --namespaces …` fits a deployment whose
-data belongs to one org. Revoke the user before uninstalling:
-`loom sql-access revoke --user acme_sql`, run the same way.
+The command prints the SQL user's password once, to the terminal only: an exec stream is not
+a container log. `--namespaces '*'` also covers namespaces made later; never give it on an
+org that sign-ups share ([access](../reference/sql-surface.md#access)). `--all` instead of
+`--org … --namespaces …` fits a deployment whose data belongs to one org. Revoke the user
+before uninstalling: `loom sql-access revoke --user acme_sql`, run the same way.
 
 ## Related
 

@@ -29,5 +29,5 @@ postgres:
   poolMaxSize: 5
 
 # What the image picks for the chart's 2-CPU limit, set so the count above is stated;
-# raise it with resources.limits.cpu.
+# raise it together with resources.limits.cpu and memory (1 GiB per process).
 webWorkers: "2"

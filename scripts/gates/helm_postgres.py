@@ -116,7 +116,7 @@ def main() -> None:
     eks = ("-f", str(CHART / "values-eks.yaml"))
     assert web_policies(render(*CLOUD, *off)) == web_policies(render(*eks, *off)), "policy off"
     check_unconfigured(render(*sets(*EVERYTHING)), "defaults")
-    check_unconfigured(render("-f", str(CHART / "values-eks.yaml"), *sets(*EVERYTHING)), "eks")
+    check_unconfigured(render(*eks, *sets(*EVERYTHING)), "eks")
     for name in RENDERED:
         want = f"set {name} through postgres.*"
         refused(f"{want}, not env", *sets(f"env.{name}=x"))
@@ -125,7 +125,18 @@ def main() -> None:
     refused("postgres.host needs postgres.caSecret.name", *sets("postgres.caSecret.name="))
     for field, bad in (("user", "lo@m"), ("database", "a/b"), ("host", "h?x")):
         refused(f"postgres.{field} goes into the DSN as written", *sets(f"postgres.{field}={bad}"))
-    refused("postgres.poolMaxSize must be 2 or more", *sets("postgres.poolMaxSize=1"))
+    for field in ("storage_authority", "pg_dsn", "pg_durability", "pg_pool_max_size"):
+        refused(
+            f"set {field} through postgres.*, not settingsFile", *sets(f"settingsFile.{field}=x")
+        )
+    for port in ("0", "70000", "5432?x"):
+        refused("postgres.port must be a port number", "--set-string", f"postgres.port={port}")
+    pool = "postgres.poolMaxSize must be at least the pool's minimum"
+    refused(pool, *sets("postgres.poolMaxSize=1"))
+    refused(pool, *sets("env.LOOM_PG_POOL_MIN_SIZE=10"))
+    refused(pool, *sets("settingsFile.pg_pool_min_size=10"))
+    # A minimum of 0 admits a pool of 1.
+    render(*CLOUD, *sets("postgres.poolMaxSize=1", "env.LOOM_PG_POOL_MIN_SIZE=0"))
     refused(
         "postgres.host needs postgres.passwordSecret.name", *sets("postgres.passwordSecret.name=")
     )
