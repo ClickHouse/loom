@@ -71,7 +71,7 @@ def _health_provider_fields(
     from server.core.vectors import codes_state
     from server.embedding.embedder import effective_embedding_dim, embedder_is_fake
     from server.insights.app import provider_runtime
-    from server.insights.app.analysis import analysis_state
+    from server.insights.app.analysis import analysis_fix, analysis_state
     from server.llm.client import llm_is_fake
     from server.observability import instance as _instance
     from server.observability import provider_health
@@ -112,6 +112,7 @@ def _health_provider_fields(
             ch_reader_error=reader_user_error(),
             analysis_ok=analysis_ok,
             analysis_error=analysis_error,
+            analysis_fix=analysis_fix(),
             assistant_ok=assistant_ok,
             assistant_error=assistant_error,
             oauth_signin_state_full=signin_claims.keeper_full(),

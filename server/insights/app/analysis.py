@@ -121,6 +121,7 @@ _setting_names: boundary.SettingNames | None = None
 # probe got no answer (the op answers OVERLOADED); False = a finding.
 _ready: bool | None = None
 _problem = ""
+_fix = ""  # the finding's own fix, or '' for health's default
 
 # Statements each org is running on this replica, so one org's slow
 # statements cannot take the analyst user's whole share of ClickHouse.
@@ -130,6 +131,11 @@ _running: dict[str, int] = {}
 def analysis_state() -> tuple[bool | None, str]:
     """(ready, why not) for health and `loom doctor`."""
     return _ready, _problem
+
+
+def analysis_fix() -> str:
+    """The fix for the standing finding when it has its own ('' for the default)."""
+    return _fix
 
 
 def _password() -> str:
@@ -502,7 +508,11 @@ def _probe_failed(what: str, e: BaseException) -> None:
         _set_problem(f"{what}: {e}")
         return
     if not _no_answer(e):
-        _set_problem(f"{what}: {error_kind(e)}", error_line(e))
+        code = error_code(e)
+        cause, fix = (
+            boundary.refusal_cause(code, str(e)) if code is not None else (error_kind(e), "")
+        )
+        _set_problem(f"{what}: {cause}", error_line(e), fix)
         return
     kind = error_kind(e)
     if kind != _unreached_kind:
@@ -554,12 +564,13 @@ async def _canary_reads(secrets_: tuple[bytes, str]) -> bool:
         return False  # a refused login, a refused or capped read: the key is not in force
 
 
-def _set_problem(problem: str, detail: str = "") -> None:
+def _set_problem(problem: str, detail: str = "", fix: str = "") -> None:
     """Record the probe's answer. `problem` is Loom's own text, which
     `/v1/health` shows without a token; `detail` (a driver's text, the names
     of policies or databases) goes only to the log."""
-    global _ready, _problem, _unreached_kind, _unreached_since
+    global _ready, _problem, _fix, _unreached_kind, _unreached_since
     _unreached_kind, _unreached_since = "", 0.0  # the probe ran: no answer logs again
+    _fix = fix
     scrubbed = _scrubbed(problem)
     changed = scrubbed != _problem
     _problem = scrubbed

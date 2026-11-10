@@ -21,6 +21,7 @@ from server.core.ratelimit import op_class_for
 from server.insights.api.models_analysis import InsightsQueryInput
 from server.insights.app import analysis as app
 from server.insights.domain import analysis as boundary
+from server.observability import problems
 
 SECRETS = (bytes(range(32)), "pw")
 NAMES = boundary.SettingNames("SQL_")
@@ -1058,6 +1059,54 @@ def test_a_write_clickhouse_refuses_is_a_kept_finding_and_not_done(
         assert asyncio.run(app.provision()) is False
         ready_now, problem = app.analysis_state()
         assert ready_now is False and problem.startswith("writing or probing loom_analyst failed")
+
+
+_CLOUD_PASSWORD_REFUSAL = (
+    "Received ClickHouse exception, code: 36, server response: Code: 36. DB::Exception: "
+    "Invalid password. The password should: contain at least 1 uppercase character, "
+    "contain at least 1 special character. (BAD_ARGUMENTS) (version 26.10.2.93 (official build))"
+)
+
+
+@pytest.mark.parametrize(
+    ("raised", "shown", "fix_names"),
+    [
+        (
+            _CLOUD_PASSWORD_REFUSAL,
+            "Code 36 (BAD_ARGUMENTS): the password does not meet the server's password policy",
+            "loom.analysis_secrets",
+        ),
+        (
+            "Code: 497. DB::Exception: loom: Not enough privileges. (ACCESS_DENIED) (version 1)",
+            "Code 497 (ACCESS_DENIED): the server user lacks a privilege the write needs",
+            "access management",
+        ),
+        (
+            "Code: 180. DB::Exception: There is no settings profile `loom_analyst_caps` in "
+            "`user directories`. (THERE_IS_NO_PROFILE) (version 1)",
+            "Code 180 (THERE_IS_NO_PROFILE)",
+            "server log",
+        ),
+        ("connection reset by peer", "RuntimeError", "server log"),
+    ],
+)
+def test_a_refused_write_names_clickhouse_code_and_its_fix(
+    monkeypatch: pytest.MonkeyPatch, ready: None, raised: str, shown: str, fix_names: str
+) -> None:
+    _provisioning(monkeypatch, stored=None, caps="", foreign=[])
+
+    async def refuse(*_: Any, **__: Any) -> None:
+        raise RuntimeError(raised)
+
+    monkeypatch.setattr(app.store, "write_entities", refuse)
+    assert asyncio.run(app.provision()) is False
+    ready_now, problem = app.analysis_state()
+    assert (ready_now, problem) == (False, f"writing or probing loom_analyst failed: {shown}")
+    state = problems.HealthState(
+        analysis_ok=ready_now, analysis_error=problem, analysis_fix=app.analysis_fix()
+    )
+    (shown_problem,) = problems._analysis_problems(None, state)
+    assert fix_names in shown_problem.fix
 
 
 def test_a_drawn_password_has_every_character_class() -> None:

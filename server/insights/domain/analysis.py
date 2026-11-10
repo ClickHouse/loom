@@ -602,3 +602,27 @@ def wrap_statement(sql: str, limit: int) -> str:
     the closing parenthesis."""
     body = sql.strip().removesuffix(";").rstrip()
     return f"SELECT * FROM (\n{body}\n) LIMIT {int(limit) + 1}"
+
+
+_ERROR_NAME = re.compile(r"\(([A-Z][A-Z0-9_]*)\) \(version ")
+
+PASSWORD_FIX = (
+    "Loom draws a password with a lower and an upper case letter, a digit and a symbol. "
+    "A loom.analysis_secrets row drawn before the server's password rules applied holds "
+    "one they refuse: while no loom_analyst user exists, delete that row and restart Loom, "
+    "which draws a new pair. Rules that ask for more than that refuse a new pair too."
+)
+
+
+def refusal_cause(code: int, text: str) -> tuple[str, str]:
+    """ClickHouse's refusal with `code` and message `text` in Loom's words, as
+    (cause, fix): its code and error name and, for a cause Loom knows, what it
+    means, never the message, which can quote a statement; `/v1/health` shows
+    it without a token. The fix is '' where health's default fits."""
+    name = _ERROR_NAME.search(text)
+    shown = f"Code {code} ({name.group(1)})" if name else f"Code {code}"
+    if code == 36 and "Invalid password" in text:
+        return f"{shown}: the password does not meet the server's password policy", PASSWORD_FIX
+    if code == 497:
+        return f"{shown}: the server user lacks a privilege the write needs", ""
+    return shown, ""

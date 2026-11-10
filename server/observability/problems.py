@@ -90,6 +90,8 @@ class HealthState:
     # finding, None = no probe answer (`analysis_error` set once that lasts).
     analysis_ok: bool | None = None
     analysis_error: str = ""
+    # The finding's own fix, when it has one.
+    analysis_fix: str = ""
     # The assistant's LibreChat service: None = not set up yet or no LibreChat
     # configured, False = its setup failed (`assistant_error` says why).
     assistant_ok: bool | None = None
@@ -820,10 +822,12 @@ def _analysis_problems(settings: Any, state: HealthState) -> list[Problem]:
             "analysis_user_failing",
             "warn",
             f"insights.query is unavailable: {state.analysis_error}",
-            "Act on the cause above. Where it names a write the analyst user needs, give "
-            "LOOM_CH_USER access management (the bundled ClickHouse's loom user has it), which the "
-            "next probe uses, or run `loom ch-setup` as a user that has it, or "
-            "have an admin run the SQL `loom ch-setup --print-analyst-sql` prints.",
+            state.analysis_fix
+            or "Act on the cause above; the server log holds ClickHouse's own message. Where "
+            "it names a write the analyst user needs, give LOOM_CH_USER access management (the "
+            "bundled ClickHouse's loom user has it), which the next probe uses, or run "
+            "`loom ch-setup` as a user that has it, or have an admin run the SQL "
+            "`loom ch-setup --print-analyst-sql` prints.",
             source="runtime",
         )
     ]
