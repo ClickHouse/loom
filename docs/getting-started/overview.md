@@ -1,9 +1,9 @@
 # Overview
 
 Loom is a server that stores memory, documents, conversations, an entity
-graph and a code index for AI agents, as rows in one ClickHouse database. Agents and
-people reach it over MCP, HTTP, the Python and TypeScript SDKs, and the dashboard.
-It is Apache-2.0. This page helps you decide whether it fits.
+graph and a code index for AI agents, as rows in ClickHouse, with Postgres as an option
+for live memory. Agents and people reach it over MCP, HTTP, the Python and TypeScript
+SDKs, and the dashboard. It is Apache-2.0. This page helps you decide whether it fits.
 
 ## What it does
 
@@ -51,7 +51,8 @@ use both.
   dashboard) need the same memory.
 - You want SQL over what your agents know: facts, traces, costs and audit rows are
   ClickHouse tables.
-- You already run ClickHouse, or can. It is Loom's only storage dependency.
+- You already run ClickHouse, or can. It is Loom's one required store;
+  [Postgres](../operations/postgres.md) is an option for live memory.
 - An abstain or a flagged conflict is better than a confident wrong answer.
 - You need history, provenance, audit or verifiable erasure.
 - Coding agents need an index of your repositories.
@@ -77,7 +78,7 @@ ClickStack.
 
 | Property                        | Mechanism                                                                                               | Cost                                                                                                                          |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| One engine, no second store     | Vector, lexical, graph, filters, audit and erasure are SQL over the same rows                           | Every read is a query. Readers pay `FINAL` on versioned rows. Derived rows (entities, summaries) land later, through workers. |
+| One search engine               | Vector, lexical, graph, filters, audit and erasure are SQL over the same rows                           | Every read is a query. Readers pay `FINAL` on versioned rows. Derived rows (entities, summaries) land later, through workers. |
 | Abstain instead of a weak match | Gates derived at boot from the embedder's own cosine distribution (`LOOM_ADAPTIVE_THRESHOLDS`)          | Some weak but correct matches are refused; set `min_similarity` or `floor_mode` per request.                                  |
 | Facts that change               | Merge, duplicate, conflict and pinned verdicts on each write; append-only `loom.memory_versions`        | Each write compares against neighbours. A paraphrase can wait in the review queue until someone resolves it.                  |
 | Explainable ranking             | `memory.search` with `explain=true` itemises each hit's score; hits carry `source_class` and `verified` | Above `top_k` 15, where `explain` is off by default, `explain=true` makes each hit larger.                                    |

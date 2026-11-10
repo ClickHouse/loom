@@ -1,6 +1,7 @@
 # ClickHouse
 
-All durable Loom state lives in one ClickHouse database, `loom`. The canonical schema is
+Durable Loom state lives in one ClickHouse database, `loom`, except what the
+[Postgres memory authority](storage-authority.md) moves to Postgres. The canonical schema is
 [`schemas/schema.sql`](../../schemas/schema.sql), dumped from a server with every
 migration applied. The generated [schema reference](../reference/schema.md) lists every
 table with its engine, keys, TTL and indexes. This page covers the table families, how

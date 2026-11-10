@@ -1,8 +1,9 @@
 # System overview
 
 Loom is a Python server (a FastAPI application plus a supervisor of background workers)
-and one ClickHouse database. Loom is stateful: everything it knows is stored in
-ClickHouse, including facts and their vectors, documents, conversations, the entity graph,
+and ClickHouse, with Postgres as the memory authority when `LOOM_STORAGE_AUTHORITY` is
+`postgres` ([storage authority](storage-authority.md)). Loom is stateful: everything it
+knows is stored in those stores, including facts and their vectors, documents, conversations, the entity graph,
 the code index, tasks, audit, cost and erasure progress. The server processes keep no
 durable state of their own, so any number of them can serve the same database and a
 request can land on any of them. The few pieces of state kept

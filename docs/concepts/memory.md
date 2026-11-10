@@ -11,8 +11,11 @@ against what is stored, and how rows change over time.
 
 Memories, document chunks, conversation turns, entity edges, code symbols, runs, audit
 entries and erasure requests are all rows in one ClickHouse database, created by
-numbered migrations the server applies on boot. Uploaded document originals are rows
-too (`loom.document_blobs`), unless the deployment keeps their bytes in an S3-compatible
+numbered migrations the server applies on boot. Under the
+[Postgres memory authority](../architecture/storage-authority.md), Postgres holds the
+current content and revisions of every memory key and the head of every knowledge
+document, and ClickHouse keeps the vectors, search and history. Uploaded document
+originals are rows too (`loom.document_blobs`), unless the deployment keeps their bytes in an S3-compatible
 bucket. Outside ClickHouse and that bucket, Loom keeps the code index's git mirrors, a
 cache of the remotes ClickHouse records, and the rate-limit buckets on a shared volume.
 
@@ -21,8 +24,9 @@ cache of the remotes ClickHouse records, and the rate-limit buckets on a shared 
   namespace, user or session is a primary-key range.
   [Identities and namespaces](identities-and-namespaces.md) covers the tuple.
 - **One engine.** Vector search, lexical search, the graph walk, filters, audit and
-  erasure are SQL over the same rows. There is no second store to keep in step. The cost
-  is that every read is a query, not a key-value hit.
+  erasure are SQL over the same rows. Under the default ClickHouse authority there is no
+  second store to keep in step. The cost is that every read is a query, not a key-value
+  hit.
 - **A write is a new version.** The memory tables are `ReplacingMergeTree(version)` read
   with `FINAL`. A revision, tombstone, pin or restore inserts a new version row.
 
