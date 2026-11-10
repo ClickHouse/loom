@@ -192,8 +192,8 @@ def test_a_pattern_costs_linear_time(name: str, pattern: re.Pattern) -> None:
 # A run after a prefix the pattern spells: a pattern that splits a run of spaces k ways
 # costs N**k, and one that searches on from each repeated keyword to a closer that never
 # comes costs N**2. The sizes grow 4 times a step and a run stops at the first step that
-# grows more than 8 times; one under a sixty-fourth of the bound is confirmed at 4 times
-# its size first, so a cubic pattern costs seconds, not hours.
+# grows more than 8 times; a step that takes at most a sixty-fourth of the bound is
+# confirmed at 4 times its size first, so a cubic pattern costs seconds, not hours.
 _SIZES = (500, 2_000, 8_000, 32_000)
 _PREFIXES = ("a", "- a", "a:a", "a = a", "export default a", "'a", "# a")
 _SEPS = ("", " a", "a=", "a(", "a ", "#a ")  # after an opener: `*a=`, `@if(`, `{#if `
@@ -217,6 +217,8 @@ def _composites(p: re.Pattern) -> list[tuple[str, str, str]]:
 
 
 def _over(small: float, big: float) -> bool:
+    """Whether `big`, the time at 4 times the size of `small`'s, grows over linear: over
+    the bound, or past the floor and over 8 times `small`."""
     return big > _BOUND_S or (big > _FLOOR_S / 10 and big > _RATIO * small)
 
 
@@ -238,8 +240,8 @@ def _slow(cost: Callable[[int], float]) -> tuple[int, float, float] | None:
 def _confirmed(cost: Callable[[int], float], n: int, before: float) -> bool:
     """Whether the time at n is over 8 times `before` in each of three runs: a load spike
     does not grow 8 times again, a pattern over linear does. The first run over the bound
-    or not over 8 times settles it. `_slow` asks only below a sixty-fourth of the bound,
-    so a cubic pattern's run here costs under 2 s."""
+    or not over 8 times settles it. `_slow` asks only for a step of at most a sixty-fourth
+    of the bound, so a cubic pattern's run here costs at most 2 s."""
     for _ in range(3):
         took = cost(n)
         if took > _BOUND_S:
