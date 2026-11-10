@@ -118,12 +118,29 @@ async def test_a_retried_attempt_that_finds_clickhouse_short_of_memory_is_a_503(
     assert calls["n"] == 2 and c.reconnects == 1
 
 
-async def test_a_stream_open_that_finds_clickhouse_short_of_memory_is_a_503() -> None:
-    # `raw_stream` opens through the retry ladder without `_with_retry`'s pool slot; the
-    # ladder maps the error for both.
-    fn, calls = _raising(_USER_NOW)
+class _StreamDriver:
+    """A driver whose stream open meets ClickHouse short of the user's memory."""
+
+    def __init__(self) -> None:
+        self.opens = 0
+
+    async def raw_stream(self, *_a: Any, **_k: Any) -> Any:
+        self.opens += 1
+        raise DatabaseError(_USER_NOW)
+
+
+async def test_a_stream_open_that_finds_clickhouse_short_of_memory_is_a_503(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def no_pending(*_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(ch_mod, "guard_pending_schema", no_pending)
     c = _client()
-    c._ensure_state()  # as raw_stream does before it opens
+    c._client = driver = _StreamDriver()
+    c._ensure_state()
+    free = c._stream_slots._value
     with pytest.raises(OverloadedError):
-        await c._retry_ladder("raw_stream", fn, cls="read")
-    assert calls["n"] == 1
+        async with c.raw_stream("SELECT 1"):
+            pass
+    assert driver.opens == 1 and c._stream_slots._value == free  # its slot is released

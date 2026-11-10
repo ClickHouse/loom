@@ -1013,10 +1013,9 @@ class CHClient:
                 self._release_slot()
 
     async def _retry_ladder(self, op_name: str, fn, *, cls: str):  # type: ignore[no-untyped-def]
-        """`_attempts`, with ClickHouse short of the server's or the user's memory, under
-        every query's load, answered as a 503 the caller retries rather than a 500,
-        whichever attempt met it. A statement's own cap is the caller's
-        (`_raise_if_caller_cap`)."""
+        """`_attempts`, with a 241 against the server's or the user's memory (shared by
+        every query) answered as a retryable 503, whichever attempt met it. A statement's
+        own cap is the caller's (`_raise_if_caller_cap`)."""
         try:
             return await self._attempts(op_name, fn, cls=cls)
         except Exception as e:
