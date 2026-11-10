@@ -63,15 +63,20 @@ def assert_linear(
 def untraced() -> Iterator[None]:
     """This thread's tracer and the garbage collector off, so a coverage run times the
     code, not the tracer (about three times its cost), nor a full collection walking
-    every earlier test's heap. Only this thread's tracer: other threads stay measured."""
+    every earlier test's heap. Only this thread's tracer: other threads stay measured.
+    The collector's own cost is linear overall, so leaving it out hides no growth of the
+    code's own. Both come back as they were, so a nested use keeps the collector off for
+    its caller."""
     previous = sys.gettrace()
+    collecting = gc.isenabled()
     sys.settrace(None)
     gc.collect()
     gc.disable()
     try:
         yield
     finally:
-        gc.enable()
+        if collecting:
+            gc.enable()
         sys.settrace(previous)
 
 
