@@ -68,3 +68,10 @@ def test_the_package_readme_links_resolve_on_the_registry(sdk: str) -> None:
             assert ref == "main" and dest.exists(), target
             if anchor and dest.suffix == ".md":
                 assert anchor.lower() in anchors(dest), target
+
+
+@pytest.mark.parametrize("cli", ["init.py", "up.py", "login.py"])
+def test_the_cli_hints_name_the_published_package(cli: str) -> None:
+    """`loom init`, `loom up` and `loom login` print how to install the SDK."""
+    source = (SDK_ROOT.parents[1] / "server" / "cli" / cli).read_text()
+    assert f"pip install {PROJECT['name']}" in source

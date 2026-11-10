@@ -2,7 +2,8 @@
 
 This tutorial builds a small agent with the Python SDK. It continues from the
 [quickstart](./quickstart.md): the stack runs on `http://localhost:7777` and
-`pip install clickhouse-loom` is done. Every step runs on the stock stack. Extraction and
+the Python SDK is installed
+([quickstart step 5](./quickstart.md#5-first-memory-from-python)). Every step runs on the stock stack. Extraction and
 `memory.ask` synthesis need a real LLM; ranking is meaningful on the released stack's
 local embedder, not on a checkout's fake one
 ([providers](../operations/deployment.md#providers)).

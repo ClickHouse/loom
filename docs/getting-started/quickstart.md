@@ -344,6 +344,9 @@ each one from the browser. Shapes are in the [HTTP API reference](../reference/h
 pip install clickhouse-loom    # or, from a clone: pip install ./sdk/python
 ```
 
+A release not yet on PyPI installs from its assets
+([Python SDK → Install](../reference/python-sdk.md#install)).
+
 ```python
 import asyncio
 
