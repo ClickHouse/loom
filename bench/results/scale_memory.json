@@ -838,7 +838,7 @@
      "seconds": 0.89
     }
    },
-   "vacuum_with_dead_rows_note": "dead rows: the Postgres run's erasures' deleted rows plus every fifth remaining head and revision rewritten in place; `pg --dead-fraction 0.2` writes such a run as dead_rows, sizes_with_dead_rows and vacuum_s",
+   "vacuum_with_dead_rows_note": "dead rows: the Postgres run's erasures' deleted rows plus about a fifth of the remaining heads (by key hash) and every fifth revision rewritten in place; `pg --dead-fraction 0.2` writes such a run as dead_rows, sizes_with_dead_rows and vacuum_s",
    "build": "not recorded"
   },
   "zipf_200k_erasure_postgres": {

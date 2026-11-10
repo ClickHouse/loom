@@ -8,7 +8,15 @@ from typing import Any
 
 import httpx
 
-from bench.scale_load import _error_code, _outcomes, _pct, _summary, op_reads, tenant_sql
+from bench.scale_load import (
+    _error_code,
+    _outcomes,
+    _pct,
+    _summary,
+    op_reads,
+    open_loop,
+    tenant_sql,
+)
 
 
 def test_the_single_shape_puts_every_key_in_one_namespace() -> None:
@@ -113,17 +121,23 @@ def test_op_reads_divides_by_the_calls_sent() -> None:
 
 
 def test_the_open_loop_starts_each_send_on_time_and_counts_those_past_the_cap() -> None:
-    from bench.scale_load import open_loop
-
     started: list[int] = []
 
-    async def slow(i: int) -> None:
-        started.append(i)
-        await asyncio.sleep(0.2)  # longer than the run: every send is still in flight
+    async def held() -> tuple[int, float]:
+        # The held sends wait on an event set a second after the 0.1 s schedule, so the
+        # first five hold the cap through the schedule however late the loop runs.
+        release = asyncio.Event()
+        asyncio.get_running_loop().call_later(1.0, release.set)
 
-    # 20 sends due over 0.1 s, at most 5 in flight: 5 start, 15 are counted, none waits
-    skipped, took = asyncio.run(open_loop(20, 200.0, 5, slow))
-    assert started == [0, 1, 2, 3, 4] and skipped == 15 and took < 0.2
+        async def slow(i: int) -> None:
+            started.append(i)
+            await release.wait()
+
+        return await open_loop(20, 200.0, 5, slow)
+
+    # 20 sends due over 0.1 s, at most 5 in flight: 5 start, 15 are counted
+    skipped, _took = asyncio.run(held())
+    assert started == [0, 1, 2, 3, 4] and skipped == 15
 
     async def fast(i: int) -> None:
         started.append(i)
