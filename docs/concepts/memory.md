@@ -13,7 +13,7 @@ Memories, document chunks, conversation turns, entity edges, code symbols, runs,
 entries and erasure requests are all rows in ClickHouse, created by numbered migrations
 the server applies on boot. Under the
 [Postgres memory authority](../architecture/storage-authority.md), Postgres holds the
-current content and revisions of every memory key and the knowledge catalog, and
+current content and revisions of every memory key and the knowledge document heads, and
 ClickHouse keeps the vectors, search and history. Uploaded document
 originals are rows too (`loom.document_blobs`), unless the deployment keeps their bytes
 in an S3-compatible bucket. Outside those stores, Loom keeps the code index's git

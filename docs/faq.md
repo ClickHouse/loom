@@ -125,6 +125,6 @@ Under the default ClickHouse authority, one ClickHouse database holds the rows, 
 text index, graph, audit and erasure state, so nothing has to be kept in sync, and each
 write is checked against what is stored. The
 [Postgres memory authority](architecture/storage-authority.md) moves live memory to
-Postgres, and a delivery worker brings each revision into ClickHouse, so the app still
-writes to one place. The [overview](getting-started/overview.md) lists what each property
-costs and when Loom does not fit.
+Postgres, and Loom keeps the two stores in step itself. The
+[overview](getting-started/overview.md) lists what each property costs and when Loom does
+not fit.

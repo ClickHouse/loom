@@ -2,14 +2,13 @@
 
 Loom is a Python server (a FastAPI application plus a supervisor of background workers)
 and ClickHouse, with Postgres as an option for live memory. Under
-`LOOM_STORAGE_AUTHORITY=postgres`, Postgres holds live memory and the knowledge catalog
-([storage authority](storage-authority.md)). Loom is stateful:
-everything it knows is stored in those stores, including facts and their vectors,
-documents, conversations, the entity graph, the code index, tasks, audit, cost and
-erasure progress. The server processes keep no durable state of their own, so any number
-of them can serve the same stores and a request can land on any of them. The few pieces
-of state kept outside those stores are listed under
-[Deployment topology](#deployment-topology).
+`LOOM_STORAGE_AUTHORITY=postgres`, Postgres holds live memory and knowledge document heads
+([storage authority](storage-authority.md)). Loom is stateful: everything it knows is
+stored in those stores, including facts and their vectors, documents, conversations, the
+entity graph, the code index, tasks, audit, cost and erasure progress. The server
+processes keep no durable state of their own, so any number of them can serve the same
+stores and a request can land on any of them. The few pieces of state kept outside those
+stores are listed under [Deployment topology](#deployment-topology).
 
 The storage layout is in [ClickHouse](clickhouse.md).
 
@@ -17,7 +16,7 @@ The storage layout is in [ClickHouse](clickhouse.md).
 
 | Goals                                                                                                  | Non-goals                                                                                         |
 | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| One engine for every kind of state: vectors, full text, graph edges, time series and ledgers.          | File formats in the server: `knowledge.add` takes `content: str`; parsing is the CLI's job.       |
+| One engine (default authority): vectors, full text, graph edges, time series and ledgers.              | File formats in the server: `knowledge.add` takes `content: str`; parsing is the CLI's job.       |
 | One wire surface, declared once, served the same over HTTP and MCP.                                    | Cross-table transactions. Derived rows catch up after the primary write.                          |
 | Server processes hold no durable state: add web capacity by running more of them.                      | Bi-temporal history. Validity is valid-time only; transaction-time history is the version mirror. |
 | Every row attributable to a tenant (identity tuple), a writer (`actor`) and a request (`log_comment`). | A GDPR-compliance guarantee. Erasure and audit hashing are engineering primitives.                |
@@ -345,7 +344,7 @@ flowchart LR
   erasure checkpoints, the blacklist version, the idempotency cache) and uploaded document
   originals live in ClickHouse, the bytes of those written with
   `LOOM_DOCUMENT_OBJECT_STORE=s3` in an S3-compatible bucket instead. Under the Postgres
-  authority, the idempotency cache lives in Postgres instead. A new Loom with the same
+  authority, the idempotency cache lives in Postgres. A new Loom with the same
   ClickHouse (and Postgres, under that authority), env config and `LOOM_JWT_SECRET`, and
   that bucket while rows name objects in it, gets every feature back.
 - **State outside ClickHouse and Postgres.** The code plane's git mirrors under
@@ -377,12 +376,6 @@ is a set of ClickHouse tables.
 and joins between memory and its telemetry without a sync job. Hybrid retrieval runs as
 SQL next to the data. A separate vector store would add a second consistency domain,
 dual writes and fusion across network hops.
-
-Under the Postgres memory authority, Postgres holds live memory, its revision journal and
-the knowledge catalog; a delivery worker brings each revision into ClickHouse,
-which keeps the vectors, the search legs, the history and the analytics
-([storage authority](storage-authority.md)). A backup then covers both stores
-([backup and recovery](../operations/backup-and-recovery.md#under-the-postgres-authority)).
 
 **Cost:** no transactional row updates. Mutable tables are `ReplacingMergeTree` read with
 `FINAL`, so every write path carries every column forward
