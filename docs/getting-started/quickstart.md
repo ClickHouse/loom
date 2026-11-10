@@ -270,13 +270,13 @@ docker compose --project-directory "$HOME/.loom" up -d --force-recreate loom
 docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --profile bundled up -d --force-recreate loom
 ```
 
-The dashboard then opens on **Sign up**, and every SDK and MCP call needs a token. The identity
-modes are in [Identities and namespaces](../concepts/identities-and-namespaces.md#identity-modes).
-Naming `trust-network` is also what lets a non-loopback `LOOM_BIND_HOST` start with
-sign-up open, so anyone who reaches the port can then sign up. Before making the server
-reachable by a team, follow the
-[deployment guide](../operations/deployment.md#identity-modes) for operator access and
-[TLS](../operations/deployment.md#proxy-and-tls).
+The dashboard then opens on its sign-in page, which has a **Sign up** tab, and every SDK
+and MCP call needs a token. The identity modes are in [Identities and
+namespaces](../concepts/identities-and-namespaces.md#identity-modes). Naming
+`trust-network` is also what lets a non-loopback `LOOM_BIND_HOST` start with sign-up open,
+so anyone who reaches the port can then sign up. Before making the server reachable by a
+team, follow the [deployment guide](../operations/deployment.md#identity-modes) for
+operator access and [TLS](../operations/deployment.md#proxy-and-tls).
 
 ## 3. Get a token
 
@@ -319,18 +319,17 @@ Every operation is a `POST /v1/<op>` with a JSON body that names the identity
 `(org, namespace, agent)`:
 
 ```bash
-curl -sX POST http://localhost:7777/v1/memory.set \
-  -H "Authorization: Bearer $LOOM_API_KEY" -H 'Content-Type: application/json' \
+curl -sX POST http://localhost:7777/v1/memory.set -H 'Content-Type: application/json' \
   -d '{"org":"dev","namespace":"local","agent":"quickstart",
        "memory_key":"deploy_window","value":"Tue and Thu only; never Friday."}'
 
-curl -sX POST http://localhost:7777/v1/memory.search \
-  -H "Authorization: Bearer $LOOM_API_KEY" -H 'Content-Type: application/json' \
+curl -sX POST http://localhost:7777/v1/memory.search -H 'Content-Type: application/json' \
   -d '{"org":"dev","namespace":"local","query":"when can we deploy?"}' \
   | jq '.results[0].content_excerpt'
 ```
 
-In single-user mode, leave out the `Authorization` header. The `memory.set` response
+With auth on, add `-H "Authorization: Bearer $LOOM_API_KEY"` and use your account's org
+and namespace; a header with an empty token is refused. The `memory.set` response
 carries `memory_id`, `content_sha256` and `status`. The search response carries
 `results` and `abstain`, which says whether the best hit is strong enough to answer from.
 Search reads every agent's memories in the namespace, including those added in the
