@@ -14,6 +14,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from server.core.ch_params import chunks
 from server.core.repo_base import _CHClient, _default_client
 
 UPLOADS = "loom.knowledge_uploads"
@@ -314,6 +315,32 @@ async def older_open(job: dict[str, Any], *, limit: int, ch: _CHClient | None = 
         },
     )
     return [str(r["id"]) for r in rows]
+
+
+def uuid_key_order(ingestion_id: str) -> tuple[int, int]:
+    """Where ClickHouse sorts a UUID: by its last 8 bytes, then its first 8."""
+    n = uuid.UUID(ingestion_id).int
+    return n & 0xFFFF_FFFF_FFFF_FFFF, n >> 64
+
+
+async def versions(
+    org: str, namespace: str, ids: list[str], *, ch: _CHClient | None = None
+) -> dict[str, int]:
+    """The version ClickHouse holds of each of `ids` it holds, in chunks that fit one
+    form field (`ch_params.chunks`). The ids go in the table's key order, so each chunk
+    reads one stretch of the namespace's granules (random ids in each would read most of
+    a large namespace every time)."""
+    ch = ch or _default_client()
+    out: dict[str, int] = {}
+    for batch in chunks(sorted(ids, key=uuid_key_order)):
+        rows = await ch.query_all(
+            f"SELECT toString(ingestion_id) AS id, version FROM {INGESTIONS} FINAL"
+            " WHERE org = {org:String} AND namespace = {ns:String}"
+            " AND ingestion_id IN {ids:Array(UUID)}",
+            params={"org": org, "ns": namespace, "ids": batch},
+        )
+        out.update((str(r["id"]), int(r["version"])) for r in rows)
+    return out
 
 
 # The originals the namespace's unexpired uploads and open ingestions need.

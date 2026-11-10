@@ -295,6 +295,11 @@ function IngestionSection({ result, notes }: { result: KnowledgeInspection; note
           )}
         </p>
       )}
+      {i.sources !== null && jobsMayBeOlder(result) && (
+        <p className="text-xs text-text-muted" data-testid="docs-jobs-older">
+          Some jobs may be missing or show an older state: their latest saves may not be shown here yet.
+        </p>
+      )}
       {/* A read of its own: when it fails the count stands and nothing is listed. */}
       {readFailed(result, "ingestions.without_document") && (
         <p className="text-xs text-text-muted" data-testid="docs-without-document-unlisted">
@@ -478,6 +483,14 @@ function documentsMayBeShort(result: KnowledgeInspection): boolean {
   return result.skipped.some((s) => s.startsWith("documents.projection: ") || /^listed\.heads: \d+ /.test(s));
 }
 
+/** `skipped` counts jobs whose latest state ClickHouse does not hold yet, or says the jobs were not compared;
+ *  only the bounded line says neither (`INGESTIONS_PROJECTION`, `JOBS_BOUNDED` in server/knowledge/app/inspect.py). */
+function jobsMayBeOlder(result: KnowledgeInspection): boolean {
+  return result.skipped.some(
+    (s) => s.startsWith("ingestions.projection: ") && !s.startsWith("ingestions.projection: at most "),
+  );
+}
+
 function ListedSection({ result }: { result: KnowledgeInspection }) {
   const live = result.documents.live;
   const short = !result.listed_complete && documentsMayBeShort(result);
@@ -507,11 +520,18 @@ function ListedSection({ result }: { result: KnowledgeInspection }) {
           {result.listed.length === 0 ? (
             !short && <p className="text-text-muted">No live document to list.</p>
           ) : (
-            <ul className="space-y-2" aria-label="Newest documents">
-              {result.listed.map((d) => (
-                <DocumentRow key={d.source_uri} doc={d} jobsUnread={readFailed(result, "listed.jobs")} />
-              ))}
-            </ul>
+            <>
+              {jobsMayBeOlder(result) && !readFailed(result, "listed.jobs") && (
+                <p className="text-xs text-text-muted" data-testid="docs-listed-jobs-older">
+                  Some listed jobs may be missing or show an older state.
+                </p>
+              )}
+              <ul className="space-y-2" aria-label="Newest documents">
+                {result.listed.map((d) => (
+                  <DocumentRow key={d.source_uri} doc={d} jobsUnread={readFailed(result, "listed.jobs")} />
+                ))}
+              </ul>
+            </>
           )}
         </>
       )}

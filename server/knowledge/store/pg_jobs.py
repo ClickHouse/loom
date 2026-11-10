@@ -265,6 +265,32 @@ async def held_ids(org: str, namespace: str, ids: list[str]) -> set[str]:
     return {str(r["ingestion_id"]) for r in rows}
 
 
+async def versions(org: str, namespace: str, limit: int) -> tuple[dict[str, int], bool]:
+    """The versions of the namespace's live jobs a report compares: up to `limit` open
+    ones and the `limit` most recently saved non-pending ones; and whether either read
+    found more."""
+    if not _storable(org, namespace):
+        return {}, False
+    # Each read takes its partial index's predicate and order (knowledge_jobs_open,
+    # knowledge_jobs_served), so the index serves its LIMIT within the namespace; on the
+    # open index `_LIVE` filters fetched rows, which the 30-day expiry bounds. A
+    # processing job may come from both.
+    out: dict[str, int] = {}
+    more = False
+    for sql in (
+        "SELECT ingestion_id, version FROM loom.knowledge_jobs WHERE org = $1"
+        f" AND namespace = $2 AND {OPEN_JOB} AND {_LIVE}"
+        " ORDER BY source_uri, created_at, ingestion_id LIMIT $3",
+        "SELECT ingestion_id, version FROM loom.knowledge_jobs WHERE org = $1"
+        f" AND namespace = $2 AND state <> 'pending' AND {_LIVE}"
+        " ORDER BY updated_at DESC LIMIT $3",
+    ):
+        rows = await pg.fetch(sql, org, namespace, limit + 1)
+        more = more or len(rows) > limit
+        out.update((str(r["ingestion_id"]), int(r["version"])) for r in rows[:limit])
+    return out, more
+
+
 async def request_cancel(org: str, namespace: str, ingestion_id: str) -> None:
     if _storable(org, namespace):
         await _write(

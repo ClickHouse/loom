@@ -451,5 +451,7 @@ class KnowledgeInspectOutput(BaseModel):
     # may belong in documents; mentor.brief reports the same shape per agent as
     # `documents_as_memories`.
     memory_findings: list[MemoryFindingRef] = Field(default_factory=list)
-    # Sections not read, as "section: reason"; their fields are null or empty, not zero.
+    # Sections not read or read in part (under the Postgres authority, also what a read
+    # section may miss), as "section: reason"; an unread section's fields are null or
+    # empty, not zero.
     skipped: list[str] = Field(default_factory=list)

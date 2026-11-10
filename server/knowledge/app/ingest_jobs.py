@@ -20,6 +20,8 @@ from server.knowledge.store import ingestions, pg_jobs
 
 # ClickHouse's earlier open jobs of a source `earlier_open` reads at most.
 _EARLIER_PAGE = 100  # not a setting: a source with more waits until they are repaired or run
+# The open jobs, and the newest-saved non-pending ones, `unprojected` compares at most, each.
+UNPROJECTED_PAGE = 1_000  # not a setting: a report's bound, said when reached
 # Which store's due jobs lead this process's next pass (`due`).
 _passes = itertools.count()  # not a setting: only the order of the two lists
 
@@ -60,6 +62,20 @@ async def earlier_open(job: dict[str, Any]) -> bool:
     if len(earlier) == _EARLIER_PAGE:
         return True
     return bool(set(earlier) - await pg_jobs.held_ids(job["org"], job["namespace"], earlier))
+
+
+async def unprojected(org: str, namespace: str) -> tuple[int, bool]:
+    """Under Postgres, of the namespace's open jobs and most recently saved non-pending
+    ones (at most `UNPROJECTED_PAGE` each), how many ClickHouse holds at an older
+    version or not at all, and whether the namespace holds more than were compared. A
+    version whose projection did not land stays behind until the job's next save; once
+    the job ended, until a run of the copy ClickHouse holds open projects it again
+    (`ingest_run._take`), or, with no copy there, until the job expires."""
+    held, more = await pg_jobs.versions(org, namespace, UNPROJECTED_PAGE)
+    # Default consistency, as the job sections read: on one replica a lag overcounts only.
+    projected = await ingestions.versions(org, namespace, list(held))
+    behind = sum(1 for job, version in held.items() if projected.get(job, -1) < version)
+    return behind, more
 
 
 async def submit(row: dict[str, Any]) -> None:
