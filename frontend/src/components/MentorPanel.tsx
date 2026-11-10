@@ -145,7 +145,7 @@ export function MentorPanel({ identity }: { identity: Identity }) {
       setResult(r);
     } catch (e) {
       if (scopeRef.current !== started) return;
-      const text = humanizeError(e);
+      const text = humanizeError(e, { read: true });
       setError(text);
       toast(`Mentor brief failed: ${text}`, "error");
     } finally {

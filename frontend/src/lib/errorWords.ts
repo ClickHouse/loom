@@ -2,7 +2,7 @@
 // (docs/development/dashboard-design.md, errors). Kept out of lib/format.ts so the boot
 // chunk does not carry it: the toast viewport loads it soon after the shell paints, and
 // toastError falls back to its context alone if it cannot.
-import { ApiError, isLostConnection, LOST_CONNECTION, PUBLICATION_PENDING } from "./errors";
+import { ApiError, isLostConnection, LOST_CONNECTION, PUBLICATION_PENDING, TIMED_OUT } from "./errors";
 import { errorRequestId } from "./format";
 
 /** Sentences for the server's error codes (`server/core/errors.py` and the
@@ -86,19 +86,21 @@ function sentenceForStatus(status: number): string {
 /** What to do next, from the body alone: whether resending can work and when. Silent when
  *  the server's own words already say it. */
 function retryTail(err: ApiError, read: boolean): string {
-  // Made by the dashboard (api.ts) before anything was sent: it carries no body.
+  // Made by the dashboard (api.ts) from a 401 that came before any handler ran: no body.
   if (err.code === "SIGNED_IN_ELSEWHERE") return "It is safe to send it once more.";
   const mayHaveLanded = read ? "Try again in a moment." : "It may have been saved; check before trying again.";
   // Made by the dashboard (api.ts readJson): the answer was ok, only its body unreadable.
   if (err.code === "ANSWER_UNREADABLE") return mayHaveLanded;
   const category = typeof err.detail.category === "string" ? err.detail.category : "";
   const retryable = err.detail.retryable;
-  // Busy or a dependency, yet not retryable: the server's mark for a write that may have
-  // landed before it failed (`handler_failure_detail`). It wins over a message that says to
-  // retry: the message was written for the error, the mark for this call. An op the server
-  // does not call idempotent may still only have read (a dry run): its caller says so.
-  if (retryable === false && err.detail.committed !== true && (category === "capacity" || category === "dependency"))
-    return mayHaveLanded;
+  // A 5xx not marked retryable may follow a write the call made (`handler_failure_detail`;
+  // a handler that raised partway answers INTERNAL_ERROR; a proxy's 502 or 504 says
+  // nothing). It wins over a message that says to retry: the message was written for the
+  // error, the mark for this call. A caller that only read (a dry run too) says so.
+  if (err.status >= 500 && retryable !== true && category !== "configuration") {
+    if (!read) return mayHaveLanded;
+    if (retryable === false && (category === "capacity" || category === "dependency")) return mayHaveLanded;
+  }
   if (/\b(retry\w*|again|resend\w*)\b/i.test(err.serverMessage)) return "";
   if (category === "configuration") return "Trying again won't help until that's changed.";
   const wait = Number(err.detail.retry_after_s ?? err.retryAfter);
@@ -130,7 +132,6 @@ function withTail(text: string, tail: string): string {
 
 /** The same, for a caller that only read (`read`): nothing can have committed. */
 const LOST_CONNECTION_READ = "Lost connection to Loom.";
-const TIMED_OUT = "Loom didn't answer in time. It may still finish; check before trying again.";
 const TIMED_OUT_READ = "Loom didn't answer in time.";
 
 /** Shown for anything thrown that is not a plain `Error`: the dashboard words its own

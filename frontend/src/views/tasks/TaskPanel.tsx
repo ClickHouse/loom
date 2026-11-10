@@ -358,7 +358,7 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
       })
       .catch((e) => {
         if (live) {
-          setError(humanizeError(e));
+          setError(humanizeError(e, { read: true }));
           setEvents([]);
         }
       });

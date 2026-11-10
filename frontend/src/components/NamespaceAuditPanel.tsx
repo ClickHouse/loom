@@ -143,7 +143,7 @@ export function NamespaceAuditPanel({ identity }: { identity: Identity }) {
       setOpen(new Set());
     } catch (e) {
       if (scopeRef.current !== started) return;
-      const text = humanizeError(e);
+      const text = humanizeError(e, { read: true });
       setError(text);
       toast(`Audit failed: ${text}`, "error");
     } finally {

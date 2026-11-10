@@ -70,7 +70,7 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
         // Someone may have written one since the caller looked: then it is read first.
         if (startEditing && canEdit && !g.found) startEdit(g);
       } catch (e) {
-        if (live()) setError(humanizeError(e));
+        if (live()) setError(humanizeError(e, { read: true }));
       }
     },
     [org, namespace],
@@ -236,7 +236,7 @@ function GuideHistory({ org, namespace, current }: { org: string; namespace: str
       setError(null);
       guideHistory(org, namespace, GUIDE_HISTORY_LIMIT, { signal })
         .then((r) => live() && setRevisions(r))
-        .catch((e) => live() && setError(humanizeError(e)));
+        .catch((e) => live() && setError(humanizeError(e, { read: true })));
     },
     [open, reads, org, namespace],
   );

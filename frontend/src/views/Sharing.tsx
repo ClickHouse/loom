@@ -81,7 +81,7 @@ export function Sharing() {
           if (live()) setData(d);
         })
         .catch((e) => {
-          if (live()) setError(humanizeError(e));
+          if (live()) setError(humanizeError(e, { read: true }));
         });
     },
     [identity.org, identity.namespace],

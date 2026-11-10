@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { IconButton } from "./IconButton";
-import { ApiError, isLostConnection, LOST_CONNECTION, PUBLICATION_PENDING } from "../lib/errors";
+import { ApiError, PUBLICATION_PENDING, writeWarning } from "../lib/errors";
 import { errorRequestId } from "../lib/format";
 
 /**
@@ -109,8 +109,8 @@ export function toastError(context: string, err: unknown, opts: { read?: boolean
     // The wording could not load (a deploy replaced the chunk, the network dropped): the
     // context alone still says what failed.
     .catch(() => {
-      const raw = err instanceof Error ? err.message : String(err);
-      toast(isLostConnection(raw) && !opts.read ? `${context}: ${LOST_CONNECTION}` : `${context}.`, "error", detail);
+      const warning = opts.read ? "" : writeWarning(err);
+      toast(warning ? `${context}: ${warning}` : `${context}.`, "error", detail);
     });
 }
 

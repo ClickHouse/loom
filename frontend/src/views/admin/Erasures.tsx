@@ -358,7 +358,7 @@ function ErasureDetails({ erasureId, onClose }: { erasureId: string; onClose: ()
   const residue = Object.entries(status?.residue ?? {}).filter(([, n]) => n > 0);
   return (
     <Modal open onOpenChange={(v) => !v && onClose()} title="Erasure details" className="w-full max-w-[560px]">
-      {!!error && <Alert role="alert" state="danger" text={humanizeError(error)} />}
+      {!!error && <Alert role="alert" state="danger" text={humanizeError(error, { read: true })} />}
       {!error && status === null && <Loading label="Loading erasure" />}
       {status && !status.found && <Alert state="warning" text="This erasure is no longer recorded." />}
       {status?.found && (

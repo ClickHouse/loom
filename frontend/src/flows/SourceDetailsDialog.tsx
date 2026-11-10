@@ -33,7 +33,7 @@ export function SourceDetailsDialog({
   const okTurn = detail?.sync.status === "ok";
   return (
     <Modal open onOpenChange={(v) => !v && onClose()} title={name} className="w-full max-w-[640px]">
-      {!!error && <Alert role="alert" state="danger" text={humanizeError(error)} />}
+      {!!error && <Alert role="alert" state="danger" text={humanizeError(error, { read: true })} />}
       {!error && detail === null && <Loading label="Loading the source" />}
       {detail && (
         <div className="space-y-4">

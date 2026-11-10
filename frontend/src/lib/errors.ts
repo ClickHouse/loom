@@ -142,3 +142,21 @@ export const LOST_CONNECTION =
 export function isLostConnection(text: string): boolean {
   return /^(failed to fetch|fetch failed|load failed|networkerror|network error)\b/i.test(text);
 }
+
+/** The line for a call the dashboard stopped waiting for: a write may still finish. */
+export const TIMED_OUT = "Loom didn't answer in time. It may still finish; check before trying again.";
+
+/** What a write's toast keeps when the wording cannot load: the one sentence that stops a
+ *  second write, for the failures that may have left the first one behind. */
+export function writeWarning(err: unknown): string {
+  const name = typeof err === "object" && err !== null && "name" in err ? String(err.name) : "";
+  const raw = err instanceof Error ? err.message : String(err);
+  if (isLostConnection(raw)) return LOST_CONNECTION;
+  if (name === "TimeoutError") return TIMED_OUT;
+  if (
+    err instanceof ApiError &&
+    (err.code === "ANSWER_UNREADABLE" || (err.status >= 500 && err.detail.retryable !== true))
+  )
+    return "It may have been saved; check before trying again.";
+  return "";
+}

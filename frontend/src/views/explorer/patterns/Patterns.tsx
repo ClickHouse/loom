@@ -148,7 +148,7 @@ export function Patterns({ identity, binding, isEntity, onWalk, initial, onUrlSt
         // The previous window's board is not this one's: no counts from it stay on screen.
         setFull(null);
         setBoardStatus("error");
-        setBoardError(humanizeError(e));
+        setBoardError(humanizeError(e, { read: true }));
       }
     },
     [tracker.org, tracker.namespace, facets.days],
@@ -207,7 +207,7 @@ export function Patterns({ identity, binding, isEntity, onWalk, initial, onUrlSt
           sections: [],
           open: null,
           status: "error",
-          error: humanizeError(e),
+          error: humanizeError(e, { read: true }),
         });
       }
     },
@@ -299,7 +299,7 @@ export function Patterns({ identity, binding, isEntity, onWalk, initial, onUrlSt
       } catch (e) {
         if (!live()) return;
         setItemStatus("error");
-        setGraphError(humanizeError(e));
+        setGraphError(humanizeError(e, { read: true }));
       } finally {
         if (live()) setGraphBusy(false);
       }

@@ -399,7 +399,7 @@ export function Explorer() {
         setCollapsed((c) => new Set([...c].filter((e) => m.nodes.has(e) || e === m.seed)));
       } catch (e) {
         if (!live()) return;
-        setError(humanizeError(e));
+        setError(humanizeError(e, { read: true }));
         replaceModel(null);
       } finally {
         if (live()) setLoading(false);
@@ -443,7 +443,7 @@ export function Explorer() {
         );
       } catch (e) {
         if (!live()) return;
-        setError(humanizeError(e));
+        setError(humanizeError(e, { read: true }));
         replaceModel(null);
         setPathRes(null);
       } finally {

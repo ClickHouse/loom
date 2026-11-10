@@ -46,7 +46,7 @@ export function DatasetsDialog({
   );
   return (
     <Modal open onOpenChange={(v) => !v && onClose()} title="Tables" className="w-full max-w-[720px]">
-      {!!error && <Alert role="alert" state="danger" text={humanizeError(error)} />}
+      {!!error && <Alert role="alert" state="danger" text={humanizeError(error, { read: true })} />}
       {!error && read === null && <Loading label="Loading the tables" />}
       {read && !read.found && <p className="text-sm text-text-muted">This document is no longer here.</p>}
       {read?.found && read.datasets.length === 0 && (
