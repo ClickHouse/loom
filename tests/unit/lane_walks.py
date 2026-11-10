@@ -215,10 +215,11 @@ def _rust_parse(text: str) -> object:
 
 
 def _edges(
-    path: str, table_size: int = 0, context: dict[str, object] | None = None
+    path: str, table_size: int = 0, context: dict[str, object] | None = None, own: bool = False
 ) -> Callable[[str], object]:
-    """A file's call edges, against a name table of `table_size` definitions of `a` and
-    the ingest's lane `context` (its present Python paths, as the file's includes). The
+    """A file's call edges, against a name table of `table_size` definitions of `a` (with
+    `own`, the file's own definitions too, as a re-index reads them) and the ingest's
+    lane `context` (its present Python paths, as the file's includes). The
     parse is kept per text, so the best of three times the edges alone; its deadline is
     lifted in the walk's child process, where a loaded host would trip it."""
     parsed: dict[str, object] = {}
@@ -237,6 +238,9 @@ def _edges(
             parsed.clear()
             parsed[text] = pf
         table = {"a": [(f"s{i}", f"m{i}::a", "function") for i in range(table_size)]}
+        if own:
+            for s in parsed[text].symbols:  # type: ignore[attr-defined]
+                table.setdefault(s.name, []).append((s.id, s.qualified_name, s.kind))
         pf = copy.copy(parsed[text])
         if context:
             pf.includes = list(context.get("py_present", []))  # type: ignore[call-overload]
@@ -448,6 +452,11 @@ WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
             "a/b/c/d/e.py", 2, {"py_present": ["q.py"], "py_roots": [f"r{i}" for i in range(66)]}
         ),
         lambda n: "import " + ".".join(["m"] * 1000) + " as x\n" + _run("", "x.f()\n")(n),
+    ),
+    (
+        "python-delegating-methods",
+        _edges("a.py", own=True),
+        _numbered("class A{0}:\n    def a(self):\n        return self.inner.a()\n"),
     ),
     (
         "go-callers",

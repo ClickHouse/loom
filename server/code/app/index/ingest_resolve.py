@@ -128,9 +128,9 @@ async def _live_paths(repo: CodeRepo, org: str, ns: str, pf: ParsedFile) -> set[
 
 
 def _probes(wanted: Callable[[list[str]], list[str]], specs: list[str]) -> list[str]:
-    """`wanted(specs)[:_MAX_INCLUDE_PROBES]` for a lane whose candidates are the union of
-    each specifier's in order, read one specifier at a time and no further than the cut:
-    a file's whole list can run to hundreds of megabytes."""
+    """The first `_MAX_INCLUDE_PROBES` distinct candidates of the specifiers, in order, read
+    one specifier at a time and no further than the cut: a file's whole list can run to
+    hundreds of megabytes."""
     out: dict[str, None] = {}
     for spec in specs:
         for path in wanted([spec]):

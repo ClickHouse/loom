@@ -235,9 +235,6 @@ NON_EXTRACTOR_MODULES: dict[str, str] = {
         "add facets to rows that never carried them, so Python files gain them by "
         "`loom code backfill --paths-file`"
     ),
-    "text_lines.py": (
-        "the line of an offset, for the route, environment, template and dbt lanes outside the stamp"
-    ),
     "ts_routes.py": (
         "HTTP route facets for TypeScript/JavaScript files: file-system, "
         "decorator and registration routers become `http_route` facet rows, dispatched from "
@@ -272,7 +269,13 @@ def test_stage_partition_is_pinned() -> None:
     assert STAGES == ("chunk", "symbol", "edge", "guard")
     assert STAGE_MODULES == {
         "chunk": ("chunker.py", "context_text.py", "tokenize.py", "callee_outline.py"),
-        "symbol": ("treesitter.py", "lang_python.py", "py_members.py", "lang_bash.py"),
+        "symbol": (
+            "treesitter.py",
+            "lang_python.py",
+            "py_members.py",
+            "lang_bash.py",
+            "text_lines.py",
+        ),
         "edge": (
             "edges_treesitter.py",
             "crossref.py",
@@ -313,6 +316,7 @@ def test_stage_partition_is_pinned() -> None:
         "py_members.py",
         "py_receivers.py",
         "registration.py",
+        "text_lines.py",
         "tokenize.py",
         "treesitter.py",
         "ts_config.py",
@@ -324,6 +328,7 @@ def test_stage_partition_is_pinned() -> None:
         "lang_bash.py",
         "lang_python.py",
         "py_members.py",
+        "text_lines.py",
         "treesitter.py",  # members
     )
     assert stage_modules("edge") == (
@@ -337,6 +342,7 @@ def test_stage_partition_is_pinned() -> None:
         "py_members.py",
         "py_receivers.py",
         "registration.py",
+        "text_lines.py",
         "treesitter.py",
         "ts_config.py",
         "ts_receivers.py",
@@ -355,6 +361,7 @@ def test_stage_partition_is_pinned() -> None:
         "py_members.py",
         "py_receivers.py",
         "registration.py",
+        "text_lines.py",
         "treesitter.py",
         "ts_config.py",
         "ts_receivers.py",

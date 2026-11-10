@@ -53,6 +53,7 @@ header the index does not hold leaves the site declined.
 from __future__ import annotations
 
 import bisect
+import itertools
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -1749,6 +1750,11 @@ class _Namesakes:
         return 1, self.syms[lo] if lo < s_lo else self.syms[s_hi]
 
 
+# the rows of a name the table does not hold: one shared list, so the per-list memos of
+# `_CallResolver._of` keep one entry for every absent name
+_NO_ROWS: list[tuple[str, str, str]] = []
+
+
 def _first_per_name(pairs: Any) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for qn, row in pairs:
@@ -2595,7 +2601,7 @@ class _CallResolver:
     ) -> Edge | None:
         """`cls_qn`'s own `bare`, else (depth permitting) its bases'."""
         wanted = f"{cls_qn}::{bare}"
-        hits = self._by_qn(self.name_table.get(bare, [])).get(wanted, [])
+        hits = self._by_qn(self.name_table.get(bare, _NO_ROWS)).get(wanted, [])
         if len(hits) == 1:
             return Edge(
                 "calls", caller.id, hits[0][0], caller.qualified_name, hits[0][1],
@@ -2629,7 +2635,7 @@ class _CallResolver:
         return any(
             kind == "class"
             for _sid, _qn, kind in self._by_qn(
-                self.name_table.get(parent.rsplit("::", 1)[-1], [])
+                self.name_table.get(parent.rsplit("::", 1)[-1], _NO_ROWS)
             ).get(parent, ())
         )
 
@@ -3066,15 +3072,6 @@ class _CallResolver:
         if len(own) == 1:
             return own[0][0], own[0][1], SAME_PACKAGE_CONFIDENCE
         return None
-        # the package's scope is `<dotted dir>.<package clause>`; the clause
-        # is usually the directory's name but need not be (`pgx/v5` → pgx)
-        exact = [
-            c for c in candidates
-            if c[1].startswith(scope + ".") and c[1].count("::") == 1 and c[1].endswith("::" + bare)
-        ]
-        if len(exact) == 1:
-            return exact[0][0], exact[0][1], IMPORT_BOUND_CONFIDENCE
-        return None
 
     def typed_target(self, receiver: str, bare: str, line: int) -> tuple[str, str] | None:
         """Rung 2b: `client.query()` where the tree types
@@ -3295,24 +3292,39 @@ class _CallResolver:
                 candidates = [c for c in candidates if not self._py_method_qualified(c[1])]
         return candidates
 
-    def _narrowed(
-        self, candidates: list[tuple[str, str, str]], skip: str,
-    ) -> list[tuple[str, str, str]]:
-        """Rung 3's candidates without the caller (`skip`, '' for none): a member call on
-        a receiver other than `this` that names only the caller is a library object's
-        method, not recursion."""
-        if skip:
-            candidates = [c for c in candidates if c[1] != skip]
-        if self.go and len(candidates) > 1:
-            # An interface's method signature (kind `method`)
-            # is not what an untyped `x.Get()` reaches for when one concrete
-            # method of the name exists — the concrete method binds
-            concrete = [c for c in candidates if c[2] not in ("method", "field")]
-            if len(concrete) == 1:
-                candidates = concrete
-        if self.script and len(candidates) > 1:
-            candidates = prefer_implementation(candidates)
-        return candidates
+    def _repo_wide_one(
+        self, pool: list[tuple[str, str, str]], skip: str,
+    ) -> tuple[str, str, str] | None:
+        """Rung 3's one candidate with the caller (`skip`, '' for none) left out — a
+        member call on a receiver other than `this` that names only the caller is a
+        library object's method, not recursion — then, of several, the one concrete Go
+        method or the script implementations over their `.d.ts` twins. The pool holds
+        one row per qualified name (`candidates_for_call`), so the caller is at most one
+        row: each count is the pool's less that row, and no list is copied per caller."""
+        n, rows = self._without(pool, skip)
+        if self.go and n > 1:
+            concrete = self._of(pool, ("concrete",), lambda: [
+                c for c in pool if c[2] not in ("method", "field")
+            ])
+            k, kept = self._without(concrete, skip)
+            if k == 1:
+                n, rows = k, kept
+        if self.script and n > 1:
+            impl = self._of(pool, ("implementations",), lambda: [
+                c for c in pool if not c[1].split("::", 1)[0].endswith(".d")
+            ])
+            k, kept = self._without(impl, skip)
+            if k and k < n:
+                n, rows = k, kept
+        return rows[0] if n == 1 else None
+
+    def _without(
+        self, rows: list[tuple[str, str, str]], skip: str,
+    ) -> tuple[int, list[tuple[str, str, str]]]:
+        """How many of `rows` remain without the one named `skip`, and the first two."""
+        qns = self._of(rows, ("qns",), lambda: {c[1] for c in rows})
+        n = len(rows) - (1 if skip and skip in qns else 0)
+        return n, list(itertools.islice((c for c in rows if not skip or c[1] != skip), 2))
 
     @staticmethod
     def _call_scope(name: str, bare: str) -> str:
@@ -3361,11 +3373,9 @@ class _CallResolver:
             lambda: self._repo_wide_pool(candidates, receiver == "", member),
         )
         skip = caller.qualified_name if receiver not in ("", "this", "super") else ""
-        if skip not in self._of(pool, ("qns",), lambda: {c[1] for c in pool}):
-            skip = ""
-        candidates = self._of(pool, ("narrowed", skip), lambda: self._narrowed(pool, skip))
-        if len(candidates) == 1:
-            cid, cqname = candidates[0][0], candidates[0][1]
+        one = self._repo_wide_one(pool, skip)
+        if one is not None:
+            cid, cqname = one[0], one[1]
             return Edge(
                 "calls", caller.id, cid, caller.qualified_name,
                 cqname, self.path, line, REPO_WIDE_CONFIDENCE,
@@ -3454,7 +3464,7 @@ def _bind_name_receiver(
     binds to its definition through the import alone (never a repo-wide
     guess); the caller reads that definition's annotation as the type."""
     name = callee[len("name:"):]
-    bound = resolver.import_bound("", name, candidates_for_call(name_table, name, name))
+    bound = resolver.import_bound("", name, resolver._table(name, name))
     if isinstance(bound, tuple):
         out[callee] = bound[1]
 

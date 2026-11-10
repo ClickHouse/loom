@@ -23,7 +23,7 @@ _TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
 _MAX_EXTENDS = 8
 # A config's `paths` keeps at most this many patterns, and each at most this many
 # targets (real ones: tens and one to three).
-# not a setting: every import specifier is matched against every pattern; a bound on that
+# not a setting: a bound on the lookup a config's `paths` builds
 PATHS_PATTERNS_MAX = 1000
 # not a setting: every target of the matching pattern is a candidate path to look up
 PATHS_TARGETS_MAX = 50
