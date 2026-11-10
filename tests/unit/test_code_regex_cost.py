@@ -192,8 +192,8 @@ def test_a_pattern_costs_linear_time(name: str, pattern: re.Pattern) -> None:
 # A run after a prefix the pattern spells: a pattern that splits a run of spaces k ways
 # costs N**k, and one that searches on from each repeated keyword to a closer that never
 # comes costs N**2. The sizes grow 4 times a step and a run stops at the first step that
-# grows more than 8 times, confirmed at the next size, so a cubic pattern is reported at
-# 8,000 characters and timed no further than 32,000, not hours later.
+# grows more than 8 times; one under a thirty-second of the bound is confirmed at 4 times
+# its size first, so a cubic pattern costs seconds, not hours.
 _SIZES = (500, 2_000, 8_000, 32_000)
 _PREFIXES = ("a", "- a", "a:a", "a = a", "export default a", "'a", "# a")
 _SEPS = ("", " a", "a=", "a(", "a ", "#a ")  # after an opener: `*a=`, `@if(`, `{#if `
@@ -241,21 +241,23 @@ def _slow(cost: Callable[[int], float]) -> tuple[int, float, float] | None:
     return None
 
 
-def test_a_step_over_linear_fails_only_once_the_next_size_confirms_it() -> None:
+def test_slow_tells_a_load_spike_from_a_step_over_linear() -> None:
     def linear(n: int) -> float:
         return n * 1e-7
 
-    spikes = iter([0.0101] * 3)  # three runs at 32,000 characters, each a load spike
-
-    def spiked(n: int) -> float:
-        return next(spikes, linear(n)) if n == 32_000 else linear(n)
+    def spiked(at: int, runs: int) -> Callable[[int], float]:
+        spikes = iter([0.0101] * runs)  # each run at `at` characters a load spike
+        return lambda n: next(spikes, linear(n)) if n == at else linear(n)
 
     assert _slow(linear) is None
-    assert _slow(spiked) is None
-    # quadratic: over the thirty-second at once, and under it, confirmed at 32,000
+    # a spike over the three runs at 32,000, then one spiked run at 128,000 of three
+    assert _slow(spiked(32_000, 3)) is None
+    spike_then_confirm = iter([0.0101] * 3 + [0.09] + [linear(128_000)] * 2)
+    assert _slow(lambda n: next(spike_then_confirm) if n >= 32_000 else linear(n)) is None
+    # over linear: at once past a thirty-second of the bound, else confirmed at 4n
     assert _slow(lambda n: (n / 1000) ** 2 * 1e-3) == (8_000, 0.004, 0.064)
     assert _slow(lambda n: (n / 1000) ** 2 * 5e-4) == (8_000, 0.002, 0.032)
-    assert _slow(lambda n: (n / 2000) ** 3 * 1e-3) == (8_000, 0.001, 0.064)  # cubic
+    assert _slow(lambda n: (n / 2000) ** 3 * 5e-4) == (8_000, 0.0005, 0.032)
 
 
 @pytest.mark.parametrize("name,pattern", _ALL, ids=[n for n, _ in _ALL])
