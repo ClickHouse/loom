@@ -102,13 +102,19 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   usage-event and write-mark flushes) for up to
   `LOOM_CH_BATCHED_INSERT_BACKGROUND_WAIT_MAX_MS` and the flush
   ([batched inserts](../architecture/clickhouse.md#batched-inserts)).
+  `OVERLOADED` can also mean a statement found ClickHouse short of the server's or the
+  ClickHouse user's memory (code 241, shared by every query; the server log has
+  `ClickHouse is short of memory` with ClickHouse's line, once per 5 s).
   From `conversation.delete` or `conversation.compact`, `OVERLOADED` can also mean writes
   to the thread's embeddings kept landing for 8 reconcile rounds; resend once the
   thread's writes settle.
 - **Check:** the slowest sources in `system.query_log` by `log_comment`
   ([monitoring](./monitoring.md#logs-traces-and-query-attribution)); `ops.health` for part
-  pressure.
-- **Fix:** the query or worker that dominates. A Loom far from its ClickHouse (a WAN)
+  pressure; for memory, the statements of `system.query_log` with `exception_code = 241`
+  and the largest `memory_usage` beside them, against the server's
+  `max_server_memory_usage` and the user's `max_memory_usage_for_user`.
+- **Fix:** the query or worker that dominates; for memory, that statement, or more
+  memory for the ClickHouse service. A Loom far from its ClickHouse (a WAN)
   needs `LOOM_LATENCY_BUDGET_MULTIPLIER` near 20 so its latency budgets do not fire on
   every call. For `OVERLOADED` under a sustained write rate, size the pool for the
   connections batched inserts hold

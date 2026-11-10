@@ -78,18 +78,27 @@ _SERVER_STATE_CODES: tuple[int, ...] = (202, 225, 242, 252, 319, 999)
 # own refusal, which a smaller batch avoids.
 _ROWS_SPAN_PARTITIONS = "Too many partitions for single INSERT block"
 # 241 MEMORY_LIMIT_EXCEEDED against the server's whole memory or the user's, which other
-# queries share, not the query's own limit: "(total)" or "(for user)" in the message.
-_SHARED_MEMORY = ("(total)", "(for user)")
+# queries share, not the query's own limit: "(total)", or the user's as "(for user)" in
+# older servers' text and "User memory limit exceeded" in current ones (26.5 and later).
+_SHARED_MEMORY = ("(total)", "(for user)", "user memory limit exceeded")
+
+
+def is_shared_memory_limit(e: BaseException) -> bool:
+    """ClickHouse ran short of the server's or the user's memory, which other queries
+    share: a state that passes, not a refusal of this statement."""
+    return (
+        isinstance(e, DatabaseError)
+        and error_code(e) == 241
+        and any(scope in str(e).lower() for scope in _SHARED_MEMORY)
+    )
 
 
 def is_passing_state(e: BaseException) -> bool:
     """ClickHouse answered with a state of its own that clears by itself (a merge
     backlog, Keeper lost, too many queries), or every pooled connection was busy: the
     rows were not refused, and the same insert lands later."""
-    if isinstance(e, OverloadedError):
+    if isinstance(e, OverloadedError) or is_shared_memory_limit(e):
         return True
-    if isinstance(e, DatabaseError) and error_code(e) == 241:
-        return any(scope in str(e).lower() for scope in _SHARED_MEMORY)
     return (
         isinstance(e, DatabaseError)
         and error_code(e) in _SERVER_STATE_CODES
@@ -176,6 +185,7 @@ __all__ = [
     "error_code",
     "is_connection_failure",
     "is_passing_state",
+    "is_shared_memory_limit",
     "is_replica_bound_error",
     "is_transient_network_error",
     "is_unknown_quantized_setting",

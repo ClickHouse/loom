@@ -116,7 +116,7 @@ def test_a_cap_hit_says_how_the_caller_narrows_its_own_request() -> None:
         ),
     ],
 )
-def test_the_server_or_user_memory_limit_stays_a_server_error(err: RuntimeError) -> None:
+def test_the_server_or_user_memory_limit_is_not_the_callers_cap(err: RuntimeError) -> None:
     with ch.caller_shaped():
         ch._raise_if_caller_cap(err)
 

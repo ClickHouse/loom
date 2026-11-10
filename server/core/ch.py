@@ -35,6 +35,7 @@ from server.core.ch_errors import (
     error_code,
     error_line,
     is_replica_bound_error,
+    is_shared_memory_limit,
     is_transient_network_error,
     is_unknown_quantized_setting,
     strip_quantized_setting,
@@ -45,6 +46,7 @@ from server.core.ch_schema_guard import guard_pending_schema
 from server.core.ch_statement_text import capture_statement, statement_digest, statement_shape
 from server.core.ch_target import connection_kwargs
 from server.core.ch_writes import dedup_settings, insert_dedup_token
+from server.core.errors import OverloadedError
 from server.core.sql_literal import sql_string
 from server.core.traffic_context import traffic_class_var
 from server.settings import settings
@@ -424,15 +426,53 @@ def _apply_class_timeout(out: dict[str, Any], cls: str) -> dict[str, Any]:
 # feed the `loom.ch.pool.*` gauges.
 _POOL_WAITERS = 0
 _POOL_IN_USE = 0
-_POOL_OVERLOADED_TOTAL = 0
 _POOL_TIMEOUTS_TOTAL = 0
 _OVERLOADED_LOG_EVERY_S = 5.0
-_overloaded_last_log = 0.0
-_overloaded_since_log = 0
+
+
+class _Refusals:
+    """A count of one kind of 503 this process answered, and whether a log line for it
+    is due: at most one per `_OVERLOADED_LOG_EVERY_S`, naming the refusals since the last."""
+
+    def __init__(self) -> None:
+        self.total = 0
+        self.since_log = 0
+        self.last_log = 0.0
+
+    def count(self) -> int | None:
+        """Count one; the refusals since the last line when a line is due, else None."""
+        self.total += 1
+        self.since_log += 1
+        now = time.monotonic()
+        if now - self.last_log < _OVERLOADED_LOG_EVERY_S:
+            return None
+        since, self.since_log, self.last_log = self.since_log, 0, now
+        return since
+
+
+# No pool slot within ch_pool_wait_ms; ClickHouse short of the server's or the user's memory.
+_POOL_REFUSALS = _Refusals()
+_SHORT_OF_MEMORY = _Refusals()
 # Reads whose body the client pulls at its own pace (`raw_stream`) wait on this
 # gate instead, so slow downloads cannot take the pool's slots. The connector
 # has room for them beside the pool.
 STREAM_SLOTS = 4
+
+
+def _short_of_memory(op_name: str, e: BaseException) -> OverloadedError:
+    """The 503 for a statement ClickHouse ran short of shared memory for, counted, with
+    ClickHouse's line logged when one is due: the answer carries none of it."""
+    since = _SHORT_OF_MEMORY.count()
+    if since is not None:
+        log.warning(
+            "ch %s: ClickHouse is short of memory (%d statements since last line, %d in "
+            "all): %s — 503 OVERLOADED",
+            op_name,
+            since,
+            _SHORT_OF_MEMORY.total,
+            error_line(e),
+        )
+    return OverloadedError("ClickHouse is short of memory; retry shortly", retry_after_s=5)
 
 
 def pool_reading() -> dict[str, int]:
@@ -442,7 +482,7 @@ def pool_reading() -> dict[str, int]:
         "limit": int(settings.ch_pool_maxsize),
         "in_use": _POOL_IN_USE,
         "waiters": _POOL_WAITERS,
-        "overloaded_total": _POOL_OVERLOADED_TOTAL,
+        "overloaded_total": _POOL_REFUSALS.total,
         "timeouts_total": _POOL_TIMEOUTS_TOTAL,
     }
 
@@ -913,8 +953,7 @@ class CHClient:
     async def _acquire_slot(self, op_name: str) -> bool:
         """Take one pool slot or raise 503 OVERLOADED after `ch_pool_wait_ms`.
         Returns whether a slot was taken (False when the gate is off)."""
-        global _POOL_WAITERS, _POOL_IN_USE, _POOL_OVERLOADED_TOTAL
-        global _overloaded_last_log, _overloaded_since_log
+        global _POOL_WAITERS, _POOL_IN_USE
         sem = self._slots
         wait_ms = int(settings.ch_pool_wait_ms)
         if sem is None or wait_ms <= 0:
@@ -924,24 +963,18 @@ class CHClient:
             try:
                 await asyncio.wait_for(sem.acquire(), timeout=wait_ms / 1000.0)
             except TimeoutError:
-                _POOL_OVERLOADED_TOTAL += 1
-                _overloaded_since_log += 1
-                now = time.monotonic()
-                if now - _overloaded_last_log >= _OVERLOADED_LOG_EVERY_S:
+                since = _POOL_REFUSALS.count()
+                if since is not None:
                     log.warning(
                         "ch %s: no pool slot within %d ms (%d refused since last line; "
                         "limit %d, in use %d, waiting %d) — 503 OVERLOADED",
                         op_name,
                         wait_ms,
-                        _overloaded_since_log,
+                        since,
                         int(settings.ch_pool_maxsize),
                         _POOL_IN_USE,
                         _POOL_WAITERS - 1,
                     )
-                    _overloaded_last_log = now
-                    _overloaded_since_log = 0
-                from server.core.errors import OverloadedError
-
                 raise OverloadedError(
                     "every ClickHouse connection of this process is busy; retry shortly",
                     retry_after_s=1,
@@ -980,6 +1013,17 @@ class CHClient:
                 self._release_slot()
 
     async def _retry_ladder(self, op_name: str, fn, *, cls: str):  # type: ignore[no-untyped-def]
+        """`_attempts`, with a 241 against the server's or the user's memory (shared by
+        every query) answered as a retryable 503, whichever attempt met it. A statement's
+        own cap is the caller's (`_raise_if_caller_cap`)."""
+        try:
+            return await self._attempts(op_name, fn, cls=cls)
+        except Exception as e:
+            if is_shared_memory_limit(e):
+                raise _short_of_memory(op_name, e) from e
+            raise
+
+    async def _attempts(self, op_name: str, fn, *, cls: str):  # type: ignore[no-untyped-def]
         seen = int(self._generation)
         try:
             return await self._bounded(op_name, cls, fn)

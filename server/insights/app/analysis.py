@@ -66,7 +66,6 @@ log = logging.getLogger(__name__)
 _ACCESS_DENIED = 497
 _AUTHENTICATION_FAILED = 516
 _TOO_MANY_SIMULTANEOUS_QUERIES = 202
-_MEMORY_LIMIT_EXCEEDED = 241  # not a setting: ClickHouse's error code
 _STATEMENT_CODES = frozenset(
     {
         _ACCESS_DENIED,
@@ -485,9 +484,7 @@ def _no_answer(e: BaseException) -> bool:
         return True
     # The same answers as text, from a client that keeps no exception type.
     code = error_code(e)
-    if code in _NETWORK_CODES or code == _TOO_MANY_SIMULTANEOUS_QUERIES:
-        return True
-    return code == _MEMORY_LIMIT_EXCEEDED and ("(total)" in str(e) or "(for user)" in str(e))
+    return code in _NETWORK_CODES or code == _TOO_MANY_SIMULTANEOUS_QUERIES
 
 
 _unreached_kind = ""
@@ -695,9 +692,9 @@ def _refusal(e: BaseException) -> ValidationError | None:
     code = error_code(e)
     if code not in _STATEMENT_CODES:
         return None
+    # A 241 here is the statement's own memory cap: the client answers the server's or the
+    # user's memory running short as OverloadedError.
     text = str(e)
-    if code == _MEMORY_LIMIT_EXCEEDED and ("(total)" in text or "(for user)" in text):
-        return None  # the server's memory, not the statement's cap
     quotes_scope = any(f"{p}loom_" in text for p in boundary.SETTING_PREFIXES)
     if quotes_scope or boundary.KEY_LITERAL.search(text):
         return ValidationError(
@@ -764,11 +761,6 @@ async def _run(input: InsightsQueryInput) -> InsightsQueryOutput:
                 "the analyst user already runs as many statements as it may at once; retry"
             ) from None
         refusal = _refusal(e)
-        if code == _MEMORY_LIMIT_EXCEEDED and refusal is None:
-            raise OverloadedError(
-                "ClickHouse is short of memory for analysis statements; retry later",
-                retry_after_s=5,
-            ) from None
         if refusal is None:
             raise
         raise refusal from None

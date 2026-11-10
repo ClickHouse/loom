@@ -404,6 +404,7 @@ async def test_a_connection_failure_counts_only_while_clickhouse_answers(
         (DatabaseError("Code: 241. Memory limit (total) exceeded: would use 30 GiB"), True),
         (DatabaseError("Code: 241. DB::Exception: (total) memory limit exceeded: would use"), True),
         (DatabaseError("Code: 241. Memory limit (for user) exceeded: would use 12 GiB"), True),
+        (DatabaseError("Code: 241. DB::Exception: User memory limit exceeded: would use"), True),
         (DatabaseError("Code: 241. Memory limit (for query) exceeded: would use 9 GiB"), False),
     ],
 )
