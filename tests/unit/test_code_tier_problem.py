@@ -687,7 +687,8 @@ def test_a_go_module_that_needs_a_private_module_says_so() -> None:
     )
     health = _failing_with(error)
     assert health.kind == "module"
-    assert "private repository" in health.fix and "without a credential" in health.fix
+    assert "Where it says a private repository" in health.fix
+    assert "without a credential" in health.fix
 
 
 def test_a_linked_or_changed_file_reads_refused_with_its_own_fix() -> None:
@@ -701,3 +702,29 @@ def test_a_linked_or_changed_file_reads_refused_with_its_own_fix() -> None:
         health = _failing_with(recorder.error_text(FileRefused(text)))
         assert health.kind == "file_refused", text
         assert health.fix.startswith("The tier refused a file it reads"), text
+
+
+def test_a_harness_failure_quotes_the_tools_last_line() -> None:
+    record = (
+        "ToolOutputError: harness exit 1: Traceback (most recent call last):\n"
+        '  File "convert.py", line 3, in main\n'
+        "ValueError: bad delta"
+    )
+    assert tier_health.classify(record) == "harness"
+    assert tier_health.error_line("harness", record) == "ValueError: bad delta"
+
+
+def test_restricted_entries_come_after_the_named_ones() -> None:
+    recorder._FAILING = (
+        recorder.FailingTier("a", "code-a", _failing_with(LOCKED), 0, "a/a", "main", True),
+        recorder.FailingTier("b", "code-b", _failing_with(LOCKED), 0, "b/b", "main", False),
+    )
+    rows = recorder.problem_rows(T0 + timedelta(hours=3)) or ()
+    (p,) = [
+        p
+        for p in collect_problems(
+            settings, HealthState(code_tier_failures=rows, code_tier_names="unrestricted")
+        )
+        if p.code == "code_tier_failing"
+    ]
+    assert p.message.index("b/b@main") < p.message.index("a restricted entry's")

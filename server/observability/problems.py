@@ -934,6 +934,9 @@ def _code_tier_problems(st: HealthState) -> list[Problem]:
         error = f' — "{r["error"]}"' if r["error"] else ""
         return f"{entry} {line}{error}"
 
+    if st.code_tier_names == "unrestricted":
+        # the restricted lines last: their place among the named ones would place them
+        rows = tuple(sorted(rows, key=lambda r: bool(r["restricted"])))
     shown = [named(r) for r in rows[:_TIER_FAILURES_NAMED]]
     more = len(rows) - len(shown)
     tail = f" and {more} more" if more > 0 else ""

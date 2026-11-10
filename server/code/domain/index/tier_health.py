@@ -345,10 +345,11 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
         return "The disk is full: free space under the code-index work directory."
     if kind == "module" and "if this is a private repository" in text.lower():
         return (
-            "A Go module did not build: a module it requires is in a private repository "
-            "(often this repository's own, through a vanity import path), and the Go tier "
-            "fetches modules without a credential. The rest of the repository is indexed; "
-            "the record clears on the next run that builds the modules it changes."
+            "A Go module did not build: the error names each and why. Where it says a "
+            "private repository, a module it requires is in one (often this repository's "
+            "own, through a vanity import path), and the Go tier fetches modules without a "
+            "credential. The rest of the repository is indexed; the record clears on the "
+            "next run that builds the modules it changes."
         )
     if kind == "file_refused" and "(code_scip_delta_max_nodes)" in text:
         return (
@@ -435,9 +436,9 @@ def reason(kind: str) -> str:
 
 def error_line(kind: str, error: str) -> str:
     """The line of a (redacted) recorded error that says why, its last
-    `ERROR_LINE_CHARS` kept: the line the kind's pattern matched (for `cmake` and
-    `harness`, whose line is only a marker, the line that says what failed), else the last line,
-    where git's `fatal:` and the exception sit."""
+    `ERROR_LINE_CHARS` kept: the line the kind's pattern matched (for `cmake`, CMake's
+    own error line), else the last line, where git's `fatal:` and the exception sit (also
+    for `harness`, whose marker leads the record)."""
     lines = [s.strip() for s in error.splitlines() if s.strip()]
     patterns = [pattern for k, pattern in _KINDS if k == kind]
     at = next((i for i, s in enumerate(lines) if any(p.search(s) for p in patterns)), None)
@@ -451,8 +452,8 @@ def error_line(kind: str, error: str) -> str:
             at = error_at + 1
         else:
             at = error_at
-    elif at is not None and kind == "harness" and at > 0:
-        at -= 1
+    elif kind == "harness":
+        at = None  # its marker leads the record; the tool's own output, cause last, follows
     line = lines[-1 if at is None else at] if lines else ""
     # a long line keeps its end, where a tool's message puts the cause
     return line if len(line) <= ERROR_LINE_CHARS else "…" + line[-(ERROR_LINE_CHARS - 1) :]
