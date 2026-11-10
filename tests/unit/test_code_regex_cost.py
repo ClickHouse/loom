@@ -227,9 +227,8 @@ def _slow(cost: Callable[[int], float]) -> tuple[int, float, float] | None:
 
     Each step times n / 4 and n back to back, so a load spike that lasts a few runs
     slows both alike; a step that looks over linear is timed twice more that way and
-    fails only if all three pairs are over. A pattern over linear is over in every pair. A
-    spike on the n / 4 of any one pair can hide a step; nothing is carried, so the next
-    step, or the next run, reports it."""
+    fails only if all three pairs are over. A spike on the n / 4 of any one pair can hide
+    a step; nothing is carried, so the next step, or the next run, reports it."""
     for n in _SIZES[1:]:
         pairs = [(cost(n // 4), cost(n))]
         if _over(*pairs[0]):
