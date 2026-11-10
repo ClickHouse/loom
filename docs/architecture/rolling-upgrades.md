@@ -386,7 +386,7 @@ schema. These rules keep that safe. The operator procedure is in
     statements are idempotent. No gate holds the rollout, and the mixed-version gate
     does not check this rule.
 35. **One token mint** (`service_accounts.create`, `caller_home._minted_home`,
-    `me_service_accounts.dev_caller`).
+    `me_service_accounts.dev_caller`, `admin_routes.admin_token_mint`).
     - _Where a token saves._ N sends a delegated token's unaddressed calls to the
       namespace its claim names before `*` when it may write there; N-1 sends them to the
       owner's saved pick, as for a bare `*` token. A token of that shape (one from
@@ -409,12 +409,13 @@ schema. These rules keep that safe. The operator procedure is in
       under another spelling of theirs neither sees nor revokes there a token made under
       the first, and N-1's dashboard lists a `*` token N minted by the names in its claim
       (it reads every namespace all the same).
-    - _Who owns an auth-off token._ With auth off and no bearer, N acts as the single user
-      `you` in `self_signup_org` and N-1 as `dev` in `default`, and each build lists and
-      revokes only its own owner's tokens; a request the other build answers does not find
-      the token (404 on a revoke). Every token stays valid. A token N-1 saved is reached on
-      N by naming its owner: `?subject=dev&org=default` on `GET /v1/me/service_accounts`,
-      the same two fields on `POST /v1/me/service_accounts.revoke`.
+    - _Who owns an auth-off token._ With auth off and no bearer, N saves a token with
+      the single user `you` as its owner and N-1 with `dev`. Each build's Tokens page shows
+      the tokens of its own owner (and, as for any owner, those on a namespace it
+      administers); every token stays valid. On N, a token N-1 saved is listed and revoked
+      by naming its owner: `subject=dev` and the token's `org` (`default` for one made on
+      the Tokens page) on `GET /v1/me/service_accounts` and
+      `POST /v1/me/service_accounts.revoke`.
 36. **The memory a cached `code.ask` answer quoted** (`loom.code_answers.memory_namespace`
     and `memory_keys`, migration `086_code_answer_memory_scope.sql`): N-1 writes an
     answer without them, and a tombstone N-1 writes of an entry N stamped (a stale entry,
