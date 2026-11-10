@@ -1,9 +1,9 @@
 # Schema reference
 
-Loom keeps its state in one ClickHouse database, `loom`; under the
-[Postgres memory authority](../architecture/storage-authority.md) live memory and document
-heads are in Postgres. The shape of
-that database is defined by the numbered migrations in `schemas/migrations/`;
+Loom keeps its ClickHouse state in the `loom` and `loom_telemetry` databases; under the
+[Postgres memory authority](../architecture/storage-authority.md), live memory and
+knowledge document heads are in Postgres (`schemas/pg_migrations/`). The shape of the
+ClickHouse databases is defined by the numbered migrations in `schemas/migrations/`;
 `schemas/schema.sql` is the result of applying all of them, dumped from a live
 server. The table at the end of this page is generated from `schema.sql`.
 

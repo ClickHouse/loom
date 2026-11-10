@@ -10,7 +10,7 @@ against what is stored, and how rows change over time.
 ## Rows in ClickHouse
 
 Memories, document chunks, conversation turns, entity edges, code symbols, runs, audit
-entries and erasure requests are all rows in one ClickHouse database, created by
+entries and erasure requests are all rows in ClickHouse, created by
 numbered migrations the server applies on boot. Under the
 [Postgres memory authority](../architecture/storage-authority.md), Postgres holds the
 current content and revisions of every memory key and the head of every knowledge
@@ -24,10 +24,10 @@ shared volume.
   `(org, namespace, agent, user_id, session_id, memory_key)`, so scoping a read to a
   namespace, user or session is a primary-key range.
   [Identities and namespaces](identities-and-namespaces.md) covers the tuple.
-- **One engine.** Vector search, lexical search, the graph walk, filters, audit and
-  erasure are SQL over the same rows. Under the default ClickHouse authority there is no
-  second store to keep in step. The cost is that every read is a query, not a key-value
-  hit.
+- **One engine.** Under the default ClickHouse authority, vector search, lexical search,
+  the graph walk, filters, audit and erasure are SQL over the same rows, with no second
+  store to keep in step. The cost is that every read is a query, not a key-value hit. The
+  Postgres authority moves live memory and key reads to Postgres.
 - **A write is a new version.** The memory tables are `ReplacingMergeTree(version)` read
   with `FINAL`. A revision, tombstone, pin or restore inserts a new version row.
 

@@ -78,7 +78,7 @@ ClickStack.
 
 | Property                        | Mechanism                                                                                               | Cost                                                                                                                          |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| One search engine               | Vector, lexical, graph and filters are SQL over the same rows                                           | Every read is a query. Readers pay `FINAL` on versioned rows. Derived rows (entities, summaries) land later, through workers. |
+| One engine (default authority)  | Vector, lexical, graph, filters, audit and erasure are SQL over the same rows                           | Every read is a query. Readers pay `FINAL` on versioned rows. Derived rows (entities, summaries) land later, through workers. |
 | Abstain instead of a weak match | Gates derived at boot from the embedder's own cosine distribution (`LOOM_ADAPTIVE_THRESHOLDS`)          | Some weak but correct matches are refused; set `min_similarity` or `floor_mode` per request.                                  |
 | Facts that change               | Merge, duplicate, conflict and pinned verdicts on each write; append-only `loom.memory_versions`        | Each write compares against neighbours. A paraphrase can wait in the review queue until someone resolves it.                  |
 | Explainable ranking             | `memory.search` with `explain=true` itemises each hit's score; hits carry `source_class` and `verified` | Above `top_k` 15, where `explain` is off by default, `explain=true` makes each hit larger.                                    |
@@ -109,16 +109,16 @@ Two or more answers in the right-hand column mean Loom is probably the wrong too
 
 ## Prerequisites
 
-| You need                                          | For                                                                                                    |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| ClickHouse (OSS to evaluate, Cloud in production) | Everything. See [ClickHouse requirements](../operations/deployment.md#clickhouse-requirements).        |
-| Postgres (optional)                               | Live memory under the [Postgres memory authority](../operations/postgres.md).                          |
-| Docker with Compose 2.20 or later                 | The released local stack (one-line installer) and server image.                                        |
-| Python 3.12+                                      | Contributor-only `loom up`, server development and operator CLI work.                                  |
-| An embedding provider                             | Real retrieval: OpenAI, Gemini, or the local CPU embedder the released stack uses.                     |
-| An LLM provider                                   | Extraction, `memory.ask` synthesis, `code.ask`: OpenAI or Anthropic.                                   |
-| Tokens and namespaces                             | Access. See [tokens and grants](../guides/tokens-and-grants.md).                                       |
-| For the code index                                | Git access to the repositories, `LOOM_CODE_GITHUB_TOKEN` for PR history, and time for the first index. |
+| You need                                          | For                                                                                                                                          |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| ClickHouse (OSS to evaluate, Cloud in production) | Everything but live memory under the Postgres authority. See [ClickHouse requirements](../operations/deployment.md#clickhouse-requirements). |
+| Postgres (optional)                               | Live memory under the [Postgres memory authority](../operations/postgres.md).                                                                |
+| Docker with Compose 2.20 or later                 | The released local stack (one-line installer) and server image.                                                                              |
+| Python 3.12+                                      | Contributor-only `loom up`, server development and operator CLI work.                                                                        |
+| An embedding provider                             | Real retrieval: OpenAI, Gemini, or the local CPU embedder the released stack uses.                                                           |
+| An LLM provider                                   | Extraction, `memory.ask` synthesis, `code.ask`: OpenAI or Anthropic.                                                                         |
+| Tokens and namespaces                             | Access. See [tokens and grants](../guides/tokens-and-grants.md).                                                                             |
+| For the code index                                | Git access to the repositories, `LOOM_CODE_GITHUB_TOKEN` for PR history, and time for the first index.                                       |
 
 ## Next
 

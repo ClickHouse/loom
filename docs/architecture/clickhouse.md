@@ -1,7 +1,8 @@
 # ClickHouse
 
-Durable Loom state lives in one ClickHouse database, `loom`, except what the
-[Postgres memory authority](storage-authority.md) moves to Postgres. The canonical schema is
+Durable Loom state lives in ClickHouse, in the `loom` and `loom_telemetry` databases,
+except what the [Postgres memory authority](storage-authority.md) moves to Postgres. The
+canonical schema is
 [`schemas/schema.sql`](../../schemas/schema.sql), dumped from a server with every
 migration applied. The generated [schema reference](../reference/schema.md) lists every
 table with its engine, keys, TTL and indexes. This page covers the table families, how
@@ -11,7 +12,7 @@ Loom uses engines, indexes and views, and how migrations run.
 
 | Goals                                                                                     | Non-goals                                                                                   |
 | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| One engine and one database for every search, so a search never joins across stores.      | Cross-table transactions. A primary row lands first; derived rows follow.                   |
+| One engine and one database for every plane under the default ClickHouse authority.       | Cross-table transactions. A primary row lands first; derived rows follow.                   |
 | Every row names its tenant, writer (`actor`) and content (`content_sha256`).              | Transaction-time history on every table. The version mirror covers `loom.memory`.           |
 | Mutable state as append-only versions: a write is an INSERT, a read is deterministic.     | In-place updates on the request path. Updates are new versions or batched background folds. |
 | Nothing that holds memory content expires unless its writer or the operator asked for it. | Default retention on facts, documents, conversations or the graph.                          |
