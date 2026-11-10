@@ -2591,6 +2591,13 @@
           "type": "integer",
           "description": "Bytes of conversation text after which `erasure.export` stops its `conversations` section, marked `truncated`; a page holds up to this plus the turn that crosses it."
         },
+        "erasure_ledger_days": {
+          "default": 89,
+          "maximum": 89,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Days `loom.erasure_ledger` keeps each erasure under the Postgres authority: the oldest backup's age plus the longest an erasure runs (at most 89, as ClickHouse's ledger reads)."
+        },
         "erasure_mutation_wait_s": {
           "default": 3600,
           "type": "integer",

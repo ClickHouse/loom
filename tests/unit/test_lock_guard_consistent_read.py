@@ -167,7 +167,7 @@ def test_every_write_feeding_head_read_is_strong() -> None:
         restore_mod._read_restorable,
         restore_mod._status_before_retirement,
         _memory_lock._head,
-        _memory_curation.handle_memory_redact,
+        _memory_curation.redact_version,
         memory_apply.resolve,
         memory_move._load_source,
         memory_move._destination_id,

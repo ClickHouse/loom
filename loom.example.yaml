@@ -2310,6 +2310,11 @@ settings:
   # [live]
   # erasure_export_conversation_max_bytes: 67108864
 
+  # Days `loom.erasure_ledger` keeps each erasure under the Postgres authority: the
+  # oldest backup's age plus the longest an erasure runs (at most 89, as ClickHouse's
+  # ledger reads). [live]
+  # erasure_ledger_days: 89
+
   # --- external erasure backends ---
 
   # The database ClickStack's OTel tables (HyperDX's) live in, on the same ClickHouse

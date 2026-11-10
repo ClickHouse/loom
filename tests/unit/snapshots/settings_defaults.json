@@ -469,6 +469,7 @@
  "entity_heal_interval_seconds": 900,
  "erasure_event_drain_timeout_s": 5.0,
  "erasure_export_conversation_max_bytes": 67108864,
+ "erasure_ledger_days": 89,
  "erasure_mutation_wait_s": 3600,
  "erasure_reclaim_enabled": true,
  "erasure_reclaim_interval_seconds": 3600,

@@ -202,7 +202,18 @@ async def _erase_once(
             f"RETURNING org, namespace, memory_id), {_evidence()} SELECT count(*) FROM gone",
             *args,
         )
+        await _mark_step(conn, org)
     return int(revisions or 0) + int(heads or 0), [float(x) for x in leases]
+
+
+async def _mark_step(conn: Any, org: str) -> None:
+    """The running saga's step recorded in its ledger row, in this step's transaction
+    (`pg_ledger.mark_step`); outside a saga, nothing."""
+    from server.erasure.store import mutations, pg_ledger
+
+    saga, step = mutations.current_saga()
+    if saga and step:
+        await pg_ledger.mark_step(conn, org, saga, step)
 
 
 async def _lock_user_scope(
@@ -314,6 +325,7 @@ async def _erase_knowledge_once(
             org,
             arg,
         )
+        await _mark_step(conn, org)
     return len(heads) + len(leases) + int(jobs), [*left, *earlier]
 
 
@@ -505,6 +517,10 @@ PG_NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.erased_memories": (
         "deletion evidence: the namespace and id of each erased memory, when, and when "
         "its publishers are quiet; no content; swept after LOOM_PG_ERASURE_EVIDENCE_HOURS."
+    ),
+    "loom.erasure_ledger": (
+        "the erasures requested of the deployment (the scope each matched, no content), "
+        "which a restore runs again; swept after LOOM_ERASURE_LEDGER_DAYS."
     ),
     "loom.erased_documents": (
         "deletion evidence: the namespace and doc_id of each version of an erased knowledge "

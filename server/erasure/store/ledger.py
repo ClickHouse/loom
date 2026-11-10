@@ -8,7 +8,7 @@ from typing import Any, cast
 
 from server.core.ch import sequential_reads
 from server.core.repo_base import _CHClient, _default_client
-from server.erasure.domain.failure_reason import ABANDONED_REASON_PREFIX
+from server.erasure.domain.failure_reason import ABANDONED_REASON_PREFIX, REPLAY_PENDING_REASON
 from server.erasure.store.rows import (
     CheckpointRow,
     LedgerRow,
@@ -47,6 +47,7 @@ async def list_stuck_in_progress(
         + """
           AND last_checkpoint_at < now() - INTERVAL {st:UInt32} SECOND
           AND attempts < {ma:UInt16}
+          AND failure_reason != {pending:String}
         ORDER BY requested_at
         LIMIT {bs:UInt32}
         """,
@@ -54,6 +55,7 @@ async def list_stuck_in_progress(
             "st": int(stale_threshold_seconds),
             "ma": int(max_attempts),
             "bs": int(batch_size),
+            "pending": REPLAY_PENDING_REASON,
         },
     )
     return cast("list[ResumeRow]", rows)
@@ -84,6 +86,7 @@ async def list_unabandoned_exhausted(
           AND last_checkpoint_at < now() - INTERVAL {st:UInt32} SECOND
           AND attempts >= {ma:UInt16}
           AND NOT startsWith(failure_reason, {pfx:String})
+          AND failure_reason != {pending:String}
         ORDER BY requested_at
         LIMIT {bs:UInt32}
         """,
@@ -92,6 +95,7 @@ async def list_unabandoned_exhausted(
             "ma": int(max_attempts),
             "bs": int(batch_size),
             "pfx": ABANDONED_REASON_PREFIX,
+            "pending": REPLAY_PENDING_REASON,
         },
     )
     return cast("list[LedgerRow]", rows)
@@ -319,3 +323,90 @@ async def unfinished_reaching(
                 "margin": int(margin_s),
             },
         )
+
+
+_LEDGER_ROW = (
+    "SELECT id, org, scope_type, scope_value, requester, urgency, purge, requested_at, "
+    "completed_at, steps_completed, attempts FROM loom.erasure_requests FINAL "
+)
+
+
+async def completed_since(point: datetime, *, ch: _CHClient | None = None) -> list[dict[str, Any]]:
+    """The erasures that completed after `point`, requested within the live ledger's 89
+    days (`LIVE_LEDGER`), oldest first: those a Postgres restore to `point` undid
+    (`erasure.app.replay`). From the point's whole second, as `completed_at` keeps whole
+    seconds: running again one that completed just before the point changes nothing its
+    steps did not."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        _LEDGER_ROW
+        + "WHERE status = 'completed' AND completed_at >= {point:DateTime} AND "
+        + LIVE_LEDGER
+        + " "
+        "ORDER BY requested_at, org, id",
+        params={"point": point.replace(microsecond=0)},
+    )
+    return [dict(r) for r in rows]
+
+
+async def trusted_row(
+    org: str,
+    erasure_id: str,
+    *,
+    before: datetime,
+    actor: str,
+    ch: _CHClient | None = None,
+) -> dict[str, Any] | None:
+    """The latest row of saga `erasure_id` a restore to `before` can be trusted with: one
+    checkpointed before it, or one `actor` (the reconcile) wrote. A `BACKUP` copies its
+    tables one after another from its start, so a step checkpointed after it may be in
+    the restored ledger without its deletes in a table copied earlier. Its status
+    ("completed", "abandoned" for the recovery worker's terminal row, else the stored
+    one), `completed_at`, and `done`: the steps it names less those whose tables its
+    last census found rows in (`census.steps_to_reopen`). None for no such row, which a
+    merge that kept only a later version also leaves: every step then runs again."""
+    from server.erasure.store.census import steps_to_reopen
+
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        "SELECT argMax(toString(status), version) AS status, "
+        "argMax(completed_at, version) AS completed_at, "
+        "argMax(failure_reason, version) AS failure_reason, "
+        "argMax(steps_completed, version) AS steps_completed, "
+        "argMax(residue, version) AS residue, any(scope_type) AS scope_type "
+        "FROM loom.erasure_requests WHERE id = {id:UUID} AND org = {org:String} "
+        "AND (last_checkpoint_at < {before:DateTime} OR actor = {actor:String}) AND "
+        + LIVE_LEDGER
+        + " "
+        "HAVING count() > 0",
+        params={
+            "id": erasure_id,
+            "org": org,
+            "before": before.replace(microsecond=0),
+            "actor": actor,
+        },
+    )
+    if not row:
+        return None
+    status = str(row["status"])
+    if status == "failed" and str(row["failure_reason"]).startswith(ABANDONED_REASON_PREFIX):
+        status = "abandoned"
+    scope = "user_id" if row["scope_type"] == "user_id" else "namespace"
+    done = set(row["steps_completed"]) - steps_to_reopen(row["residue"], scope)
+    return {"status": status, "completed_at": row["completed_at"], "done": done}
+
+
+async def still_open(*, ch: _CHClient | None = None) -> list[dict[str, Any]]:
+    """The erasures not completed and not abandoned: running, or awaiting the recovery
+    worker, which resumes them."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        _LEDGER_ROW
+        + "WHERE "
+        + LIVE_LEDGER
+        + " AND (status IN ('queued', 'in_progress') OR (status = 'failed' "
+        "AND NOT startsWith(failure_reason, {abandoned:String}) "
+        "AND failure_reason != {pending:String})) ORDER BY requested_at, org, id",
+        params={"abandoned": ABANDONED_REASON_PREFIX, "pending": REPLAY_PENDING_REASON},
+    )
+    return [dict(r) for r in rows]

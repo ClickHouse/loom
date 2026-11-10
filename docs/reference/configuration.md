@@ -760,6 +760,7 @@ Erasure: saga recovery, reclaim, purge and the external backends it cascades to.
 | `LOOM_ERASURE_MUTATION_WAIT_S` | `int` | `3600` |  | Seconds one erasure step waits for its mutation (submitted with mutations_sync=0, polled in system.mutations); past it the saga fails naming the mutation. |
 | `LOOM_ERASURE_EVENT_DRAIN_TIMEOUT_S` | `float` | `5.0` |  | Seconds erasure waits for this replica's buffered events before deleting them; a timeout leaves the saga retryable. Must be positive and finite. |
 | `LOOM_ERASURE_EXPORT_CONVERSATION_MAX_BYTES` | `int` | `67108864` | live | Bytes of conversation text after which `erasure.export` stops its `conversations` section, marked `truncated`; a page holds up to this plus the turn that crosses it. |
+| `LOOM_ERASURE_LEDGER_DAYS` | `int` | `89` | live | Days `loom.erasure_ledger` keeps each erasure under the Postgres authority: the oldest backup's age plus the longest an erasure runs (at most 89, as ClickHouse's ledger reads). |
 
 ### External erasure backends
 

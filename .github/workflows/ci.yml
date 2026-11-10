@@ -850,6 +850,7 @@ jobs:
           pytest -q
           tests/integration/test_pg_authority.py
           tests/integration/test_pg_durable_publish.py
+          tests/integration/test_restore_reconcile.py
           tests/integration/test_knowledge_pg_heads.py
           tests/integration/test_knowledge.py
           tests/integration/test_knowledge_upsert.py

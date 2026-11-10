@@ -160,6 +160,12 @@ org that sign-ups share ([access](../reference/sql-surface.md#access)). `--all` 
 `--org … --namespaces …` fits a deployment whose data belongs to one org. Revoke the user
 before uninstalling: `loom sql-access revoke --user acme_sql`, run the same way.
 
+## Restoring a service
+
+A restore of either service is followed by `loom reconcile`, run in a Job made from the
+web pod's spec while the release is stopped ([restoring one
+store](backup-and-recovery.md#restoring-one-store)).
+
 ## Related
 
 [Kubernetes](kubernetes.md) · [Postgres memory authority](postgres.md) ·

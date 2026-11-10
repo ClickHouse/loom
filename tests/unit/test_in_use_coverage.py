@@ -100,6 +100,7 @@ PG_EXEMPT: dict[str, str] = {
     "loom.erased_documents": "evidence that documents were erased; holds no content",
     "loom.audit_outbox": _REQUEST,
     "loom.scope_generations": "a counter per scope; no content",
+    "loom.erasure_ledger": "the erasures requested of an org; holds no content",
 }
 
 

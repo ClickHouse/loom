@@ -76,6 +76,8 @@ async def rechunk_namespace(
             org,
             namespace,
             include_superseded=False,
+            # One source reads its own prefix of the namespace, not the whole of it.
+            uri_prefixes=[source_uri] if source_uri else None,
             cursor=cursor,
             limit=page_size,
         )

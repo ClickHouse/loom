@@ -1873,6 +1873,9 @@ class ErasureSettings(BaseModel):
     # Bytes of conversation text after which `erasure.export` stops its `conversations`
     # section, marked `truncated`; a page holds up to this plus the turn that crosses it.
     erasure_export_conversation_max_bytes: Annotated[int, LIVE] = Field(default=67108864, ge=1)
+    # Days `loom.erasure_ledger` keeps each erasure under the Postgres authority: the oldest
+    # backup's age plus the longest an erasure runs (at most 89, as ClickHouse's ledger reads).
+    erasure_ledger_days: Annotated[int, LIVE] = Field(default=89, ge=1, le=89)
 
     # ---- external erasure backends ----
     # The database ClickStack's OTel tables (HyperDX's) live in, on the same ClickHouse

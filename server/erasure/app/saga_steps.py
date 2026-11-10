@@ -225,14 +225,14 @@ _LATE_STEPS_USER: tuple[UserStep, ...] = (
 
 
 # Steps a ClickHouse-authority saga never runs.
-_PG_ONLY_STEPS = frozenset({"pg_memory.delete", "pg_knowledge.delete"})
+PG_ONLY_STEPS = frozenset({"pg_memory.delete", "pg_knowledge.delete"})
 
 
 def authority_steps[StepT: tuple[str, Any]](steps: tuple[StepT, ...]) -> list[StepT]:
     """The steps a saga runs: the Postgres authority's step only under that authority."""
     from server.core import pg
 
-    return [s for s in steps if pg.enabled() or s[0] not in _PG_ONLY_STEPS]
+    return [s for s in steps if pg.enabled() or s[0] not in PG_ONLY_STEPS]
 
 
 # The loom-side steps of a user erasure over (org, user_id), in saga order.

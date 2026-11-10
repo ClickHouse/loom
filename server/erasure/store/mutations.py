@@ -80,6 +80,11 @@ def saga_scope(erasure_id: str) -> Iterator[None]:
         _SAGA_ID.reset(token)
 
 
+def current_saga() -> tuple[str, str]:
+    """The saga id and step the running statement belongs to ("" outside one)."""
+    return _SAGA_ID.get(), _STEP.get()
+
+
 @contextlib.contextmanager
 def step_scope(step: str) -> Iterator[None]:
     """Name the saga step every mutation inside the block belongs to (its tag)."""
