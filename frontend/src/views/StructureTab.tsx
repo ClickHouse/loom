@@ -330,7 +330,7 @@ function RecordsDialog({ schema, onClose }: { schema: RecordSchema; onClose: () 
       const r = await recordHistory(identity, c.prior_record_id, { signal: ctrl.signal });
       if (!ctrl.signal.aborted) setPrior({ key: c.memory_key, rows: r.rows });
     } catch (e) {
-      if (!ctrl.signal.aborted) toastError("Couldn't read the prior record", e);
+      if (!ctrl.signal.aborted) toastError("Couldn't read the prior record", e, { read: true });
     } finally {
       if (!ctrl.signal.aborted) setOpening(false);
     }

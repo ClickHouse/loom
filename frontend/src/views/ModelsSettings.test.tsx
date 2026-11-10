@@ -132,9 +132,7 @@ describe("Failed reads and writes", () => {
     );
     render(<ModelsSettings />);
     expect(
-      await screen.findByText(
-        "Couldn't load model settings: Loom's database didn't answer. ClickHouse did not answer. Try again in a moment.",
-      ),
+      await screen.findByText("Couldn't load model settings: ClickHouse did not answer. Try again in a moment."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Platform administrator access is required/)).toBeNull();
   });

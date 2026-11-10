@@ -201,14 +201,14 @@ describe("humanizeError", () => {
         "A service Loom relies on didn't answer: resending can extract the messages twice",
       ],
       [
-        "an upgrade says when it works again, and no tail",
+        "a migration not applied yet keeps the server's words and says retrying won't help",
         {
           status: 503,
           code: "SCHEMA_PENDING",
           message: "table x missing",
           detail: { category: "configuration", retryable: false },
         },
-        "Loom is being upgraded and this isn't ready yet. It works again once the upgrade finishes.",
+        "Loom's database is not upgraded for this yet: table x missing. Trying again won't help until that's changed.",
       ],
       [
         "a code with no message is kept in brackets, never as the sentence",

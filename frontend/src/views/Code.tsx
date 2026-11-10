@@ -2527,7 +2527,7 @@ function ExploreTab({ id }: { id: CodeId }) {
       ]);
       setSym({ name, defs: s.definitions, callers: callers.edges, callees: callees.edges, ambiguous: s.ambiguous });
     } catch (e) {
-      toastError("Symbol lookup failed", e);
+      toastError("Symbol lookup failed", e, { read: true });
     } finally {
       setSymBusy(false);
     }
@@ -2538,7 +2538,7 @@ function ExploreTab({ id }: { id: CodeId }) {
     try {
       setMap((await codeMap(id, { token_budget: 1500 })).map);
     } catch (e) {
-      toastError("Map failed", e);
+      toastError("Map failed", e, { read: true });
     } finally {
       setMapBusy(false);
     }
@@ -2791,7 +2791,7 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
       const p = await codeContextPack(id, pr, 6000);
       setPack({ pr, text: p.context, tokens: p.tokens_used, source: p.source });
     } catch (e) {
-      toastError("Pack load failed", e);
+      toastError("Pack load failed", e, { read: true });
       // Fold the row back rather than leave it loading.
       setOpen((o) => (o === pr ? null : o));
     }

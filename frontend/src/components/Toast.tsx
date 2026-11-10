@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { IconButton } from "./IconButton";
-import { ApiError } from "../lib/errors";
+import { isCommitted } from "../lib/errors";
 import { errorRequestId } from "../lib/format";
 
 /**
@@ -90,24 +90,26 @@ export function toast(msg: string, kind: ToastKind = "ok", opts: ToastOpts = {})
  *  lead-in, so humanizeError's own is left out) with the request id underneath when the
  *  failure carried one. It stays up long enough to read: 8 s plus 50 ms a character, at
  *  most 20 s, and hovering or focusing it holds it. */
-export function toastError(context: string, err: unknown): void {
+export function toastError(context: string, err: unknown, opts: { read?: boolean } = {}): void {
   const rid = errorRequestId(err);
+  const detail = rid ? { detail: `request id ${rid}` } : {};
+  // A write that committed while only its search copy lags is not a failure, even when the
+  // wording cannot load.
+  const committed = isCommitted(err);
   // The wording is a lazy chunk (the boot chunk's budget), loaded by the viewport soon
   // after paint; this import then resolves at once.
-  const detail = rid ? { detail: `request id ${rid}` } : {};
   import("../lib/errorWords")
     .then(({ humanizeError }) => {
-      // A write that committed and only its search copy lags is not a failure.
-      if (err instanceof ApiError && (err.code === "PUBLICATION_PENDING" || err.detail.committed === true)) {
+      if (committed) {
         toast(humanizeError(err), "info", detail);
         return;
       }
-      const msg = `${context}: ${humanizeError(err, { bare: true })}`;
+      const msg = `${context}: ${humanizeError(err, { bare: true, read: opts.read })}`;
       toast(msg, "error", { ...detail, durationMs: errorToastMs(msg) });
     })
     // The wording could not load (a deploy replaced the chunk, the network dropped): the
     // context alone still says what failed.
-    .catch(() => toast(`${context}.`, "error", detail));
+    .catch(() => toast(committed ? "Done." : `${context}.`, committed ? "info" : "error", detail));
 }
 
 export function errorToastMs(msg: string): number {

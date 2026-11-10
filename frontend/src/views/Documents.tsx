@@ -364,7 +364,7 @@ export function Documents() {
       setRows((prev) => [...(prev || []), ...(r.rows || [])]);
       setNextCursor(r.next_cursor ?? null);
     } catch (e) {
-      if (scopeRef.current === scope) toastError("Load more failed", e);
+      if (scopeRef.current === scope) toastError("Load more failed", e, { read: true });
     } finally {
       // Always: a load for a scope the list has left must not leave the button spinning.
       setLoadingMore(false);
@@ -467,7 +467,7 @@ export function Documents() {
         r.original_filename || textDownloadName(r.source_uri),
       );
     } catch (e) {
-      toastError("Download failed", e);
+      toastError("Download failed", e, { read: true });
     }
   };
 

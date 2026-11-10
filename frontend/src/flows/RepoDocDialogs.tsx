@@ -320,7 +320,7 @@ export function RepoDocViewer({
         doc.original_filename || textDownloadName(doc.source_uri),
       );
     } catch (e) {
-      toastError("Download failed", e);
+      toastError("Download failed", e, { read: true });
     } finally {
       setDownloading(false);
     }

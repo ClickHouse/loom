@@ -72,6 +72,7 @@ import { canCall } from "../lib/canCall";
 import { historyChange, previousVersion } from "../lib/historyChange";
 import { MenuTrigger } from "./ui/Menu";
 import { shortcutOff } from "../lib/shortcuts";
+import { isCommitted } from "../lib/errors";
 
 type SectionId = "history" | "related" | "provenance" | "lineage" | "evidence" | "links";
 const SECTIONS_KEY = "loom_inspector_sections_v1";
@@ -357,7 +358,7 @@ export function MemoryInspector({
       })
       .catch((e) => {
         if (!live) return;
-        toastError("Load failed", e);
+        toastError("Load failed", e, { read: true });
         setLoading(false);
       });
     // Nothing else is read on open. The secondary sections read when opened (below);
@@ -600,7 +601,7 @@ export function MemoryInspector({
         setRenaming(false);
       }
     } catch (e) {
-      if (showing()) toastError("Couldn't read the memory again", e);
+      if (showing()) toastError("Couldn't read the memory again", e, { read: true });
     }
   };
 
@@ -765,7 +766,8 @@ export function MemoryInspector({
       if (formSession.current === session) setEditing(false);
     } catch (e) {
       toastError("Save failed", e);
-      return;
+      if (!isCommitted(e)) return;
+      if (formSession.current === session) setEditing(false);
     }
     await reread();
   };
@@ -833,7 +835,7 @@ export function MemoryInspector({
         const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
         if (!stale()) setDetail(fresh);
       } catch (e) {
-        if (!stale()) toastError("Reload failed", e);
+        if (!stale()) toastError("Reload failed", e, { read: true });
       }
     } catch (e) {
       if (stale()) toastError(`Restore of ${memoryKey} failed`, e);

@@ -48,7 +48,7 @@ describe("ListState", () => {
     render(<ListState kind="error" things="documents" error={err} onRetry={onRetry} />);
     expect(screen.getByRole("alert")).toHaveTextContent("Couldn't load documents");
     expect(screen.getByRole("heading", { name: "Couldn't load documents" })).toBeInTheDocument();
-    expect(screen.getByText(/Loom's database didn't answer/)).toBeInTheDocument();
+    expect(screen.getByText(/Loom didn't answer: ch down/)).toBeInTheDocument();
     // The id is the identifier, in code; its caption is prose.
     const rid = screen.getByText("req-123");
     expect(rid.tagName).toBe("CODE");

@@ -70,6 +70,25 @@ describe("toastError", () => {
     expect(screen.queryByText(/Saved/)).toBeNull();
   });
 
+  it("words a failed read as a read: no may-have-committed warning", async () => {
+    render(<ToastViewport />);
+    act(() => toastError("Load failed", new DOMException("signal timed out", "TimeoutError"), { read: true }));
+    expect(await screen.findByText("Load failed: Loom didn't answer in time.")).toBeInTheDocument();
+  });
+
+  it("keeps an identifier at the start of the server's words as it is", async () => {
+    render(<ToastViewport />);
+    act(() =>
+      toastError(
+        "Save failed",
+        new ApiError({ status: 403, code: "AUTH_INSUFFICIENT", message: "memory.set needs writer on t" }),
+      ),
+    );
+    expect(
+      await screen.findByText("Save failed: Your role doesn't allow this. memory.set needs writer on t."),
+    ).toBeInTheDocument();
+  });
+
   it("adds only the code when a coded refusal carries no message", async () => {
     render(<ToastViewport />);
     act(() => toastError("Pin failed", new ApiError({ status: 422, code: "BAD_SHA" })));

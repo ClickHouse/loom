@@ -123,3 +123,10 @@ export async function apiErrorFromResponse(r: Response): Promise<ApiError> {
     retryAfter: Number(r.headers.get("Retry-After")) || 0,
   });
 }
+
+/** The write committed and only Loom's search copy of it lags (a `PUBLICATION_PENDING`
+ *  answer under the Postgres authority, `server/core/pg_lease.py`): a write's caller takes
+ *  its success path, since sending it again would write twice. */
+export function isCommitted(err: unknown): boolean {
+  return err instanceof ApiError && (err.code === "PUBLICATION_PENDING" || err.detail.committed === true);
+}

@@ -407,7 +407,7 @@ function ConflictsPanel() {
       });
       setNext(r.next_before_version);
     } catch (e) {
-      toastError("Couldn't load more conflicts", e);
+      toastError("Couldn't load more conflicts", e, { read: true });
     } finally {
       readsOut.current.delete(goneHere);
       if (visit.current === myVisit) setLoadingMore(false);
@@ -610,7 +610,7 @@ function RevisionHint({ memoryId }: { memoryId: string }) {
       // The link that had focus is gone; the answer takes it.
       region.current?.focus();
     } catch (e) {
-      toastError("Couldn't read a suggestion", e);
+      toastError("Couldn't read a suggestion", e, { read: true });
     } finally {
       setBusy(false);
     }

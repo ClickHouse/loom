@@ -297,7 +297,7 @@ export function ThreadReplayDialog({
       if (!next) focusTurn.current = r.rows.length > 0 ? turnId(r.rows[0]) : "";
     } catch (e) {
       if (signal.aborted) return;
-      toastError("Load more failed", e);
+      toastError("Load more failed", e, { read: true });
     } finally {
       if (!signal.aborted) setLoadingMore(false);
     }

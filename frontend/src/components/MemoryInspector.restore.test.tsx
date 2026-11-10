@@ -258,7 +258,9 @@ describe("MemoryInspector restore of a superseded row", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Restore" }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Restored", "ok"));
     await waitFor(() =>
-      expect(toastError).toHaveBeenCalledWith("Reload failed", expect.objectContaining({ message: "network down" })),
+      expect(toastError).toHaveBeenCalledWith("Reload failed", expect.objectContaining({ message: "network down" }), {
+        read: true,
+      }),
     );
     expect(onChanged).toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalledWith(expect.stringContaining("Restore failed"), expect.anything());

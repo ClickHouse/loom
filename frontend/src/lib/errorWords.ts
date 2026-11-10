@@ -2,7 +2,7 @@
 // (docs/development/dashboard-design.md, errors). Kept out of lib/format.ts so the boot
 // chunk does not carry it: the toast viewport loads it soon after the shell paints, and
 // toastError falls back to its context alone if it cannot.
-import { ApiError } from "./errors";
+import { ApiError, isCommitted } from "./errors";
 import { errorRequestId } from "./format";
 
 /** Sentences for the server's error codes (`server/core/errors.py` and the
@@ -31,9 +31,9 @@ export const ERROR_CODE_PREFIXES: Record<string, string> = {
   RATE_LIMITED: "Too many requests.",
   OVERLOADED: "Loom is busy right now.",
   BACKEND_TIMEOUT: "Loom took too long to answer.",
-  BACKEND_UNAVAILABLE: "Loom's database didn't answer.",
   CODED_WIDTH_MISMATCH: "The embedding model's width doesn't match the vector tables — see Settings › Models & keys.",
   SELF_SIGNUP_DISABLED: "Sign-up is off on this instance. Ask your operator.",
+  SCHEMA_PENDING: "Loom's database is not upgraded for this yet:",
   INTERNAL_ERROR: "Loom hit an internal error. If it keeps happening, send the request id to your operator.",
   EMAIL_IN_USE: "That email belongs to another account:",
   NAMESPACE_CLAIMED: "That name is already taken:",
@@ -49,9 +49,6 @@ export const ERROR_CODE_PREFIXES: Record<string, string> = {
   REPO_EXISTS: "This repository is already indexed:",
   REPO_QUOTA: "The repository limit is reached:",
 };
-
-/** Upgrade in progress: says when it works again, so it takes no tail. */
-const SCHEMA_PENDING = "Loom is being upgraded and this isn't ready yet. It works again once the upgrade finishes.";
 
 /** The write committed and its copy for search follows (`server/core/pg_lease.py`): a
  *  success said late, so no cause and no retry advice. */
@@ -115,7 +112,8 @@ function joinSentence(friendly: string, message: string): string {
 function asSentence(msg: string): string {
   const t = msg.trim();
   const closed = /[.!?]$/.test(t) ? t : `${t}.`;
-  return closed.charAt(0).toUpperCase() + closed.slice(1);
+  // A message that opens with an identifier (`if_match_sha256 …`, `memory.set …`) keeps it.
+  return /^[a-z]+(\s|$)/.test(closed) ? closed.charAt(0).toUpperCase() + closed.slice(1) : closed;
 }
 
 function withTail(text: string, tail: string): string {
@@ -203,8 +201,7 @@ function humanizeApiError(err: ApiError, bare: boolean): string {
     (err.sessionEnded || SESSION_GONE.test(err.serverMessage))
   )
     return "Your session ended — sign in again.";
-  if (err.code === "SCHEMA_PENDING") return SCHEMA_PENDING;
-  if (err.code === "PUBLICATION_PENDING" || err.detail.committed === true) return PUBLICATION_PENDING;
+  if (isCommitted(err)) return PUBLICATION_PENDING;
   const lead = leadFor(err);
   let text: string;
   if (err.serverMessage && bare) {
