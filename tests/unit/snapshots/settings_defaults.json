@@ -284,6 +284,7 @@
  "code_scip_delta_interval_seconds": 300,
  "code_scip_delta_max_nodes": 6000000,
  "code_scip_delta_max_tus": 200,
+ "code_scip_delta_round_max_nodes": 3000000,
  "code_scip_delta_timeout_seconds": 3600,
  "code_scip_full_enabled": true,
  "code_scip_full_every_hours": 168,

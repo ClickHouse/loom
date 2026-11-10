@@ -152,7 +152,7 @@ async def test_first_run_is_full_over_every_module_and_applies_each_delta(monkey
     applied: list[str] = []
 
     async def fake_apply(repo, org, ns, delta):
-        applied.append(delta.files[0].path)
+        applied.append(delta.paths[0])
         from server.code.app.index.scip_delta import ScipApplyStats
 
         return ScipApplyStats(files=1, symbols_new=1)

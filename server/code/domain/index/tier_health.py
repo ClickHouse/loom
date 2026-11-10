@@ -407,6 +407,18 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
             "LOOM_CODE_SCIP_DELTA_MAX_NODES with LOOM_CODE_SCIP_DELTA_FILE_MAX_MB, within "
             "the memory the sizing in code-index-operations.md gives."
         )
+    if kind == "file_refused" and "(code_scip_delta_round_max_nodes)" in text:
+        return (
+            "One value of the compiler tier's delta (the error names its file entry) holds "
+            "more JSON values than a round may: raise LOOM_CODE_SCIP_DELTA_ROUND_MAX_NODES, "
+            "within the memory a round costs in code-index-operations.md."
+        )
+    if kind == "file_refused" and "(a fixed cap, not a setting)" in text:
+        return (
+            "One value of the compiler tier's delta (the error names its file entry and "
+            "the cap) holds more characters than a round may, a cap no setting changes: "
+            "the file it indexes is what to split. It recurs every pass until then."
+        )
     if kind == "file_refused" and _CHECKOUT_FILE.search(text):
         return (
             "A file of the checkout is larger than the tier reads (the error names it): a "

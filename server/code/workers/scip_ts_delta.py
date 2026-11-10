@@ -46,13 +46,13 @@ from server.code.app.index.compiler_tier import (
     run_harness,
     run_tier,
 )
+from server.code.app.index.delta_file import open_delta
 from server.code.app.index.gitrepo import auth_env, communicate_or_kill, git_config_env
 from server.code.app.index.sandbox import tool_mounts
 from server.code.app.index.typescript_dependencies import (
     LOCKFILES,
     prepare_dependencies,
 )
-from server.code.app.index.untrusted_files import read_delta
 from server.core.paths import SCIP_HARNESS_DIR
 from server.settings import settings
 
@@ -139,27 +139,24 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipTsDeltaResu
             cfg.scip_ts_projects,
         )
         try:
-            raw = await asyncio.to_thread(read_delta, delta_path)
+            delta = await asyncio.to_thread(open_delta, delta_path)
         except FileNotFoundError:
             # the harness exits 0 with no delta when no TypeScript file changed
             logger.info("code_scip_ts_delta: %s no TypeScript changes in window", cfg.namespace)
             await repo.set_state(cfg.org, cfg.namespace, WATERMARK, target)
             return
-        from server.code.app.index.scip_delta import apply_delta, parse_delta
+        from server.code.app.index.scip_delta import apply_delta
 
-        delta = parse_delta(raw)
-        del raw  # the bytes are not needed past the parse
-
-    if not scip_commit:
-        # A full run sees the whole tree, so a document with
-        # live compiler rows that the new index does not emit is gone
-        # (moved or deleted since the last full run); retire it
-        delta.deleted_files = gone_documents(
-            await repo.live_scip_paths(cfg.org, cfg.namespace),
-            delta,
-            PRODUCER,
-        )
-    stats = await apply_delta(repo, cfg.org, cfg.namespace, delta)
+        if not scip_commit:
+            # A full run sees the whole tree, so a document with
+            # live compiler rows that the new index does not emit is gone
+            # (moved or deleted since the last full run); retire it
+            delta.deleted_files = gone_documents(
+                await repo.live_scip_paths(cfg.org, cfg.namespace),
+                delta,
+                PRODUCER,
+            )
+        stats = await apply_delta(repo, cfg.org, cfg.namespace, delta)
     await repo.set_state(cfg.org, cfg.namespace, WATERMARK, target)
     result.deltas_applied += 1
     logger.info(
