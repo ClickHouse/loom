@@ -37,11 +37,11 @@ Sizing (web replicas, uvicorn processes, the workers container) is in
 `compose.yaml` is the one shipped stack. Its `clickhouse` service runs under the
 `bundled` Compose profile, so `COMPOSE_PROFILES` in `.env` decides the target:
 
-| Target                      | Install                                                                                                         | `.env`                                           |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| Bundled container (default) | `curl -fsSL …/install.sh -o loom-install.sh && sh loom-install.sh`                                              | `COMPOSE_PROFILES=bundled`, no `LOOM_CH_*`       |
-| Self-managed server         | `curl -fsSL …/install.sh -o loom-install.sh && sh loom-install.sh --clickhouse http://loom@ch.example.com:8123` | `COMPOSE_PROFILES=` and `LOOM_CH_*` from the URL |
-| ClickHouse Cloud            | `curl -fsSL …/install.sh -o loom-install.sh && sh loom-install.sh --clickhouse https://loom@<host>:8443`        | `COMPOSE_PROFILES=` and `LOOM_CH_*` from the URL |
+| Target                      | Install                                                                                                                               | `.env`                                           |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Bundled container (default) | `curl -fsSL …/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh`                                              | `COMPOSE_PROFILES=bundled`, no `LOOM_CH_*`       |
+| Self-managed server         | `curl -fsSL …/install.sh -o loom-install.sh && sh loom-install.sh --clickhouse http://loom@ch.example.com:8123 && rm loom-install.sh` | `COMPOSE_PROFILES=` and `LOOM_CH_*` from the URL |
+| ClickHouse Cloud            | `curl -fsSL …/install.sh -o loom-install.sh && sh loom-install.sh --clickhouse https://loom@<host>:8443 && rm loom-install.sh`        | `COMPOSE_PROFILES=` and `LOOM_CH_*` from the URL |
 
 The same command with `--bundled` switches an install back to the bundled container.
 

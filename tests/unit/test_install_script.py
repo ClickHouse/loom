@@ -775,7 +775,9 @@ def test_no_tracked_file_pipes_the_installer_into_sh() -> None:
         except (UnicodeDecodeError, IsADirectoryError, FileNotFoundError):
             continue  # a binary file, a submodule, a file deleted in the work tree
         # A line ending in `\` or `|` goes on in the next one.
-        lines = re.sub(r"(\\|\|)\n\s*", lambda m: " | " if m[1] == "|" else " ", text).splitlines()
+        lines = re.sub(
+            r"(\\|\|)\n[ \t]*", lambda m: " | " if m[1] == "|" else " ", text
+        ).splitlines()
         if any("install.sh" in line and _runs_a_download(line) for line in lines):
             piped.append(name)
     assert piped == []

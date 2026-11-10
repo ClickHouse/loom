@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run the one-line installer,
-`curl -fsSL …/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh`,
+`curl -fsSL …/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh
+&& rm loom-install.sh`,
 in clean Linux containers: install, a memory round trip, a re-run, a refused
 downgrade, and an upgrade from the previous release.
 
@@ -101,7 +102,7 @@ def run(*args: str, **kwargs) -> subprocess.CompletedProcess[str]:
 
 def install_command(url: str) -> str:
     """The documented install command, which saves the script before it runs."""
-    return f'curl -fsSL "{url}" -o loom-install.sh && sh loom-install.sh'
+    return f'curl -fsSL "{url}" -o loom-install.sh && sh loom-install.sh && rm loom-install.sh'
 
 
 def free_port() -> int:

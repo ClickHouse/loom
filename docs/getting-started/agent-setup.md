@@ -263,7 +263,7 @@ On a failure the summary reads `<n> check(s) failed: <names>`, and the first `FA
 is the one to fix. A step that stops the run is one line and its summary:
 
 - a rule that stops you before step 1: `[FAIL]  setup  <what was missing or found>`;
-- a failed install: `[FAIL]  install  <the installer's last line>`;
+- a failed install: `[FAIL]  install  <the command's last line>`;
 - a failed step 2: `[FAIL]  plugin  <the failed command's last line>`;
 
 each followed by `1 check(s) failed: <its name>`.
