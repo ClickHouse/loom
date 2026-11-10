@@ -267,7 +267,7 @@ def test_an_approval_over_the_reviewed_head_commits(monkeypatch: pytest.MonkeyPa
 
 
 def test_a_forget_deletes_in_a_transaction(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A commit the standby's wait leaves unknown then answers `outcome_unknown`."""
+    """A commit whose standby wait was cut off answers `outcome_unknown`."""
     ends = _transactions(monkeypatch, _Conn(None))
     assert asyncio.run(pg_datasets.forget("o", "ns", ["repo://a.csv"], before=100)) == {"ds_a"}
     assert ends == ["commit"]

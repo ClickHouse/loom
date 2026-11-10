@@ -23,31 +23,30 @@ from server.settings import settings
 # (`datasets_repo.dataset_row`) and as ISO text in `row`.
 TIME_COLUMNS = ("approved_at", "created_at", "updated_at")
 
-# The approval's catalog row, inserted or written over its key's row when the WHERE
-# that follows allows.
-_WRITE = (
+# A catalog row's insert, and its write over the key's row, which each statement's WHERE
+# limits.
+_INSERT = (
     "INSERT INTO loom.knowledge_datasets"
     " (org, namespace, source_uri, doc_version, dataset_id, snapshot_id, version, user_id, row)"
-    " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)"
+)
+_ON_CONFLICT = (
     " ON CONFLICT (org, namespace, source_uri, doc_version, dataset_id) DO UPDATE SET"
     " snapshot_id = EXCLUDED.snapshot_id, version = EXCLUDED.version,"
     " user_id = EXCLUDED.user_id, row = EXCLUDED.row"
 )
 # Over an older version only, as ReplacingMergeTree(version) decides: every row in one
-# statement, returning the keys it wrote.
+# statement, returning the keys it wrote in `_args`' order.
 _UPSERT = (
-    "INSERT INTO loom.knowledge_datasets"
-    " (org, namespace, source_uri, doc_version, dataset_id, snapshot_id, version, user_id, row)"
-    " SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::bigint[], $5::text[],"
-    " $6::bigint[], $7::bigint[], $8::text[], $9::jsonb[])"
-    " ON CONFLICT (org, namespace, source_uri, doc_version, dataset_id) DO UPDATE SET"
-    " snapshot_id = EXCLUDED.snapshot_id, version = EXCLUDED.version,"
-    " user_id = EXCLUDED.user_id, row = EXCLUDED.row"
-    " WHERE knowledge_datasets.version < EXCLUDED.version"
+    f"{_INSERT} SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::bigint[],"
+    " $5::text[], $6::bigint[], $7::bigint[], $8::text[], $9::jsonb[])"
+    f"{_ON_CONFLICT} WHERE knowledge_datasets.version < EXCLUDED.version"
     " RETURNING org, namespace, source_uri, doc_version, dataset_id"
 )
 # The approval: over the version of the row it read ($10), or no row, never a later one.
-_APPROVE = f"{_WRITE} WHERE knowledge_datasets.version <= $10 RETURNING 1"
+_APPROVE = (
+    f"{_INSERT} VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)"
+    f"{_ON_CONFLICT} WHERE knowledge_datasets.version <= $10 RETURNING 1"
+)
 # The publishing job, held against an erasure's delete for the publish's transaction.
 _JOB = (
     "SELECT 1 FROM loom.knowledge_jobs WHERE org = $1 AND namespace = $2"
