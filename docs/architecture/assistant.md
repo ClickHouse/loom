@@ -247,9 +247,9 @@ that applies wins:
 
 | `support`     | When                                                                                                                                                                                                                                                                                                                                                     |
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `none`        | The answer has no text; or it cites nothing and either says the abstention sentence the agent's instructions give ("Nothing stored in Loom answers this.", in any case or emphasis) or none of its calls found data and none failed. A greeting, a capability reply and an abstention make no claim.                                                     |
+| `none`        | The answer has no text; or it cites nothing and either says the abstention sentence the agent's instructions give ("Nothing stored in Loom answers this.", in any case or emphasis) or it made no call to an op whose rows it could cite and none of its calls found data or failed. A greeting, a capability reply and an abstention make no claim.     |
 | `supported`   | A citation verified.                                                                                                                                                                                                                                                                                                                                     |
-| `unsupported` | A citation failed for a reason of its own (its key was not returned to this answer, its document or section is not there, its statement did not run in this answer); or it cites nothing although a call of an op whose rows it could cite found data.                                                                                                   |
+| `unsupported` | A citation failed for a reason of its own (its key was not returned to this answer, its document or section is not there, its statement did not run in this answer); or it cites nothing although a call of an op whose rows it could cite found data, or ran and found nothing (a claim nothing backs).                                                 |
 | `unchecked`   | Otherwise: its checks could not say (a read failed or ran past its bound, no run id, memory reads not recorded, code citations, past the 50 checked), or it cites nothing and what found data has no citation form (counts and findings: the ops in `ASSISTANT_UNCITABLE_OPS`, such as `namespace.summary` and `namespace.inventory`), or a call failed. |
 
 The ops whose rows an answer can cite, those whose output has no citation form, and
@@ -267,12 +267,13 @@ presence answer of `code.symbol` finds only where the symbol is present.
 
 The rule reads no wording beyond the abstention sentence, and accepts these residuals:
 
-- A greeting, capability reply or uncited question back after a call that found data
-  is `unsupported` (`unchecked` when only ops with no citation form found it). The
+- A greeting, capability reply or uncited question back after a citable call is
+  `unsupported` (`unchecked` when only ops with no citation form found data). The
   instructions keep such calls rare: a greeting calls no tool, and a question back lists
   each match with its citation.
-- An uncited fact after calls that found nothing, or whose rows land past the re-read
-  or are dropped (the ledger keeps them at most once), is `none`.
+- An uncited fact with no call at all (a later turn restating an earlier one), or after
+  calls whose rows land past the re-read or are dropped (the ledger keeps them at most
+  once), is `none`.
 - An abstention that also states a fact is `none`.
 - A document citation verifies when the document holds the section, whether or not this
   answer read it; the instructions ask for a document to be read again before it is
@@ -1077,7 +1078,7 @@ built.
 - `server/observability/budget.py`: the namespace cost cap the assistant's spend counts
   toward.
 - `server/assistant/app/citations.py` (`verify`) and `server/assistant/app/support.py`
-  (`support`), with the rule in `server/assistant/domain/support.py`: an answer's
+  (`answer_support`), with the rule in `server/assistant/domain/support.py`: an answer's
   checked citations and its support.
 - `server/assistant/app/service.py`: the service user and agent set up at boot;
   `server/assistant/store/service.py`: `loom.assistant_service`.

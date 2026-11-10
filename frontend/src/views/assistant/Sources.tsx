@@ -41,7 +41,7 @@ export function supportLabel(support: Support, citations: Citation[]): Label | n
         }
       : {
           text: "Couldn't confirm: it gives no sources",
-          why: "This answer read rows from Loom but cites none of them, so nothing it says could be checked.",
+          why: "This answer looked in Loom but gives no source for what it says, so nothing it says could be checked.",
           icon: "warning",
           tone: "text-warn",
         };

@@ -75,11 +75,12 @@ async def returned_keys(
 
 @dataclass(frozen=True)
 class RunCalls:
-    """What an answer's tool calls left: the ops whose calls found data, and whether any call
-    failed or was refused."""
+    """What an answer's tool calls left: the ops whose calls found data, the ops whose calls
+    ran (found or not), and whether any call failed or was refused."""
 
     returned: frozenset[str]
     failed: bool
+    ran: frozenset[str] = frozenset()
 
 
 async def run_calls(
@@ -95,11 +96,16 @@ async def run_calls(
         "AND args['out_found'] != 'false' AND args['out_found_n'] != '0' "
         "AND args['out_hits'] != '0' AND args['out_section_hits'] != '0' "
         "AND args['out_abstain'] != 'true') AS returned, "
-        "countIf(NOT success) > 0 AS failed "
+        "countIf(NOT success) > 0 AS failed, "
+        "groupUniqArrayIf(operation, success) AS ran "
         "FROM loom.agent_events "
         "WHERE org = {org:String} AND run_id = {run:String} AND subject = {subject:String} "
         "AND consumer = {consumer:String} AND ts > now() - INTERVAL 1 DAY",
         {"org": org, "run": run_id, "subject": subject, "consumer": ASSISTANT_CONSUMER},
     )
     row = rows[0] if rows else {}
-    return RunCalls(frozenset(str(o) for o in row.get("returned") or ()), bool(row.get("failed")))
+    return RunCalls(
+        frozenset(str(o) for o in row.get("returned") or ()),
+        bool(row.get("failed")),
+        frozenset(str(o) for o in row.get("ran") or ()),
+    )

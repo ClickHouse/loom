@@ -52,17 +52,19 @@ def support_of(
     failed: bool,
     citable: frozenset[str],
     no_data: frozenset[str],
+    ran: frozenset[str] = frozenset(),
 ) -> str:
     """The answer's support. `codes` are its citations' codes; `returned` the ops whose calls
     found data (None when its calls could not be read); `failed` whether a call failed;
-    `citable` the ops whose rows an answer can cite; `no_data` the ops that return no
-    namespace data.
+    `ran` the ops whose calls ran, found or not; `citable` the ops whose rows an answer can
+    cite; `no_data` the ops that return no namespace data.
 
-    - none: no text, or it cites nothing and is an abstention or found nothing;
+    - none: no text, or it cites nothing and is an abstention or made no citable call;
     - supported: a citation verified;
     - unsupported: a citation failed for a reason of its own, or it cites nothing although
-      a citable op's call found data;
-    - unchecked: otherwise (its checks could not say, or what it read has no citation form).
+      a citable op's call found data, or ran and found nothing (a claim nothing backs);
+    - unchecked: otherwise (its checks could not say, what it read has no citation form, or
+      a call failed).
     """
     if not text.strip():
         return NONE
@@ -81,4 +83,6 @@ def support_of(
         return UNSUPPORTED
     if found or failed:
         return UNCHECKED
+    if (ran - no_data) & citable:
+        return UNSUPPORTED
     return NONE

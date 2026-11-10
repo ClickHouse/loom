@@ -547,7 +547,7 @@ describe("AssistantChat", () => {
     expect(one).toHaveAccessibleDescription("Couldn't confirm: it gives no sources");
     expect(two).toHaveAccessibleDescription("Not checked: it gives no sources Loom can check");
     await userEvent.setup().click(one);
-    expect(await screen.findByText(/cites none of them/)).toBeInTheDocument();
+    expect(await screen.findByText(/gives no source for what it says/)).toBeInTheDocument();
   });
 
   it("asks nothing while blocked, and says why", async () => {

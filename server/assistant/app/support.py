@@ -34,8 +34,9 @@ async def answer_support(
     citation_codes = [c.code for c in checked]
     returned: frozenset[str] | None = frozenset()
     failed = False
+    ran: frozenset[str] = frozenset()
     if not citation_codes and text.strip() and not rule.is_abstention(text):
-        returned, failed = await _calls(org, run_id, subject)
+        returned, failed, ran = await _calls(org, run_id, subject)
     return rule.support_of(
         citation_codes,
         text=text,
@@ -43,6 +44,7 @@ async def answer_support(
         failed=failed,
         citable=ASSISTANT_CITABLE_OPS,
         no_data=ASSISTANT_NO_NAMESPACE_DATA_OPS,
+        ran=ran,
     )
 
 
@@ -51,11 +53,13 @@ async def _wait(seconds: float) -> None:
     await asyncio.sleep(seconds)
 
 
-async def _calls(org: str, run_id: str, subject: str) -> tuple[frozenset[str] | None, bool]:
-    """(the ops whose calls found data, whether a call failed); None when the run cannot be
-    read (no run id, a failed read)."""
+async def _calls(
+    org: str, run_id: str, subject: str
+) -> tuple[frozenset[str] | None, bool, frozenset[str]]:
+    """(the ops whose calls found data, whether a call failed, the ops whose calls ran); the
+    first is None when the run cannot be read (no run id, a failed read)."""
     if not run_id:
-        return None, False
+        return None, False, frozenset()
     try:
         async with asyncio.timeout(_CALLS_S):
             calls = await ledger.run_calls(org, run_id, subject)
@@ -65,8 +69,8 @@ async def _calls(org: str, run_id: str, subject: str) -> tuple[frozenset[str] | 
                 calls = await ledger.run_calls(org, run_id, subject)
     except TimeoutError:
         log.warning("reading an answer's tool calls ran past %s s", _CALLS_S)
-        return None, False
+        return None, False, frozenset()
     except Exception as e:  # noqa: BLE001 — a check that cannot run never fails an answer
         log.warning("reading an answer's tool calls failed: %s", e)
-        return None, False
-    return calls.returned, calls.failed
+        return None, False, frozenset()
+    return calls.returned, calls.failed, calls.ran

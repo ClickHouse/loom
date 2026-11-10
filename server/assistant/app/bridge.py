@@ -99,7 +99,7 @@ class Answer:
     error: str = ""
     # Each citation the answer wrote, checked (citations.verify), once it ended.
     citations: list[AssistantCitation] = field(default_factory=list)
-    # How far the answer rests on Loom (support.support), once it ended.
+    # How far the answer rests on Loom (support.answer_support), once it ended.
     support: str = UNCHECKED
 
 

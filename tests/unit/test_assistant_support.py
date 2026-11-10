@@ -142,7 +142,7 @@ def _support(
             False,
             "unchecked",
         ),
-        # An uncited fact after calls that found nothing.
+        # An uncited fact with no call at all (a restated earlier turn).
         ("Your database runs on port 5432.", [], frozenset(), False, "none"),
         # An abstention that also states a fact.
         (
@@ -158,6 +158,30 @@ def test_the_support_of_an_answer(
     text: str, codes: list[str], returned: frozenset[str] | None, failed: bool, expected: str
 ) -> None:
     assert _support(text, codes, returned, failed) == expected
+
+
+@pytest.mark.parametrize(
+    ("ran", "expected"),
+    [
+        # Searched, found nothing, and states a fact anyway: nothing backs it.
+        (frozenset({"memory.search", "knowledge.search"}), "unsupported"),
+        # Only Loom's own guide ran: no namespace data was asked for.
+        (frozenset({"mentor.guide"}), "none"),
+        # Only an uncitable op ran and found nothing.
+        (frozenset({"namespace.audit"}), "none"),
+    ],
+)
+def test_an_uncited_fact_after_calls_that_found_nothing(ran: frozenset[str], expected: str) -> None:
+    got = rule.support_of(
+        [],
+        text="Your database runs on port 5432.",
+        returned=frozenset(),
+        failed=False,
+        citable=CITABLE,
+        no_data=NO_DATA,
+        ran=ran,
+    )
+    assert got == expected
 
 
 def test_a_question_back_that_cites_each_match_is_supported() -> None:
@@ -308,6 +332,15 @@ def test_a_greeting_that_read_nothing_has_no_label(monkeypatch: pytest.MonkeyPat
     assert _answer([], "Hello! What would you like to know?") == "none"
 
 
+def test_an_uncited_claim_after_a_search_that_found_nothing_is_unsupported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    searched = ledger.RunCalls(frozenset(), False, frozenset({"memory.search"}))
+    asked = _calls(monkeypatch, searched, searched)
+    assert _answer([], "Your database runs on port 5432.") == "unsupported"
+    assert asked == ["r1", "r1"]
+
+
 def test_calls_that_cannot_be_read_leave_an_uncited_answer_unchecked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -392,15 +425,17 @@ def test_the_run_read_names_the_ops_that_found_data() -> None:
         _event("memory.bulk_get", {"out_found_n": "0"}),
         _event("search.query", {"out_section_hits": "0"}),
     )
-    assert calls == ledger.RunCalls(
-        frozenset({"memory.search", "namespace.inventory", "memory.get", "code.search"}), False
-    )
+    found = frozenset({"memory.search", "namespace.inventory", "memory.get", "code.search"})
+    assert calls.returned == found and calls.failed is False
+    # Every successful call ran, found or not.
+    nothing = {"knowledge.search", "knowledge.get", "memory.ask", "memory.bulk_get", "search.query"}
+    assert calls.ran == found | nothing
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
 def test_the_run_read_sees_a_refused_call_under_the_sentinel_namespace() -> None:
     calls = _run_calls(_event("memory.search", {}, success=0, namespace="-"))
-    assert calls == ledger.RunCalls(frozenset(), True)
+    assert calls == ledger.RunCalls(frozenset(), True, frozenset())
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
@@ -412,4 +447,4 @@ def test_the_run_read_reads_only_the_answers_own_calls() -> None:
         _event("memory.search", found, consumer="my-script"),
         _event("memory.search", found, org="other"),
     )
-    assert calls == ledger.RunCalls(frozenset(), False)
+    assert calls == ledger.RunCalls(frozenset(), False, frozenset())
