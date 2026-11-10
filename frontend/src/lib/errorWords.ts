@@ -242,10 +242,10 @@ function humanizeApiError(err: ApiError, bare: boolean, read: boolean): string {
   const lead = own ?? CATEGORY_SENTENCES[categoryOf(err)] ?? sentenceForStatus(err.status);
   let text: string;
   if (err.serverMessage && bare) {
-    // The caller's lead-in replaces a generic one; a code's sentence stays, since it
-    // carries the next step ("Your role doesn't allow this.").
-    // A dash, not a second colon, after the caller's "…:"; the server's words stay as written.
-    text = own ? `${own.replace(/[:.]$/, "")} — ${asSentence(err.serverMessage)}` : asSentence(err.serverMessage);
+    // The caller's lead-in replaces a generic one; a code's sentence stays, joined by a dash
+    // where it would end in a second colon.
+    const msg = asSentence(err.serverMessage);
+    text = !own ? msg : own.endsWith(":") ? `${own.slice(0, -1)} — ${msg}` : `${own} ${msg}`;
   } else if (err.serverMessage) text = joinSentence(lead, err.serverMessage);
   // With no message the code is all the server said: kept for support, never the sentence.
   // A generic lead-in says little, so the code goes with it; after a caller's own lead-in a

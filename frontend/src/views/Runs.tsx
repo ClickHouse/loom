@@ -1141,7 +1141,7 @@ export function Runs() {
               </Button>
             )}
             {!detailLoading && !detail && detailError && (
-              <div role="status" className="text-xs text-text-muted">
+              <div role="alert" className="text-xs text-text-muted">
                 Couldn't load the replay: {detailError}
               </div>
             )}

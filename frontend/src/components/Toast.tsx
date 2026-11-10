@@ -91,11 +91,9 @@ export function toast(msg: string, kind: ToastKind = "ok", opts: ToastOpts = {})
  *  failure carried one. It stays up long enough to read: 8 s plus 50 ms a character, at
  *  most 20 s, and hovering or focusing it holds it. */
 export function toastError(context: string, err: unknown, opts: { read?: boolean } = {}): void {
-  const rid = errorRequestId(err);
-  const detail = rid ? { detail: `request id ${rid}` } : {};
   // Said before the wording loads, so a chunk that cannot load never turns it into "failed".
   if (isPublicationPending(err)) {
-    toastPublicationPending(rid);
+    toastPublicationPending(err);
     return;
   }
   // The wording is a lazy chunk (the boot chunk's budget), loaded by the viewport soon
@@ -107,6 +105,8 @@ export function toastError(context: string, err: unknown, opts: { read?: boolean
     // The wording could not load (a deploy replaced the chunk, the network dropped): the
     // context alone still says what failed.
     .catch(() => {
+      const rid = errorRequestId(err);
+      const detail = rid ? { detail: `request id ${rid}` } : {};
       const warning = opts.read ? "" : writeWarning(err);
       const msg = warning ? `${context}: ${warning}` : `${context}.`;
       toast(msg, "error", { ...detail, durationMs: errorToastMs(msg) });
@@ -114,8 +114,9 @@ export function toastError(context: string, err: unknown, opts: { read?: boolean
 }
 
 /** A write that committed while only lists and search lag: not a failure, so no
- *  "<context>:" in front of it. */
-function toastPublicationPending(rid: string): void {
+ *  "<context>:" in front of it. A dialog shows it in place of its success toast, and closes. */
+export function toastPublicationPending(err: unknown): void {
+  const rid = errorRequestId(err);
   const detail = rid ? { detail: `request id ${rid}` } : {};
   toast(PUBLICATION_PENDING, "info", { ...detail, durationMs: errorToastMs(PUBLICATION_PENDING) });
 }
@@ -123,11 +124,11 @@ function toastPublicationPending(rid: string): void {
 /** An error toast whose caller built its own sentence (how much of a batch went through):
  *  the request id underneath and the reading time, as toastError gives every error toast. */
 export function toastErrorLine(msg: string, err: unknown): void {
-  const rid = errorRequestId(err);
   if (isPublicationPending(err)) {
-    toastPublicationPending(rid);
+    toastPublicationPending(err);
     return;
   }
+  const rid = errorRequestId(err);
   // An id the line already says (an internal error's) is not printed a second time.
   const id = rid && !msg.includes(rid) ? { detail: `request id ${rid}` } : {};
   toast(msg, "error", { ...id, durationMs: errorToastMs(msg) });

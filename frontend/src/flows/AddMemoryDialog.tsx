@@ -6,7 +6,7 @@ import { TextField } from "@clickhouse/click-ui/TextField";
 import { setMemory, type Identity } from "../api";
 import { sharedTagVocabulary } from "../lib/sharedReads";
 import { humanizeError } from "../lib/errorWords";
-import { toast, toastError } from "../components/Toast";
+import { toast, toastPublicationPending } from "../components/Toast";
 import { isPublicationPending } from "../lib/errors";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, fieldError } from "../components/ui";
@@ -85,22 +85,18 @@ export function AddMemoryDialog({ open, onOpenChange, identity, onAdded }: Props
         ttlSeconds: EXPIRY_OPTIONS[expiryIdx].ttlSeconds,
       });
       toast("Memory added", "ok");
-      onAdded();
-      reset();
-      onOpenChange(false);
     } catch (e) {
-      // Saved, with only search lagging: the dialog closes as on success, so nothing invites
-      // a second write, and the toast says the lists catch up shortly.
-      if (isPublicationPending(e)) {
-        toastError("Add memory", e);
-        onAdded();
-        reset();
-        onOpenChange(false);
+      if (!isPublicationPending(e)) {
+        setError(humanizeError(e));
+        setBusy(false);
         return;
       }
-      setError(humanizeError(e));
-      setBusy(false);
+      // Saved, with only search lagging: closed as on success, so nothing invites a second write.
+      toastPublicationPending(e);
     }
+    onAdded();
+    reset();
+    onOpenChange(false);
   };
 
   return (

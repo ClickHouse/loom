@@ -4,7 +4,8 @@ import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { updateKnowledgeMetadata, type Identity, type KnowledgeEntry } from "../api";
-import { toast, toastError } from "../components/Toast";
+import { toast, toastError, toastPublicationPending } from "../components/Toast";
+import { isPublicationPending } from "../lib/errors";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 
 interface Props {
@@ -63,13 +64,18 @@ export function EditDocumentMetadataDialog({ open, onOpenChange, identity, entry
       } else {
         toast("Saved", "ok");
       }
-      onSaved();
-      onOpenChange(false);
     } catch (e) {
-      toastError("Save failed", e);
+      if (!isPublicationPending(e)) {
+        toastError("Save failed", e);
+        return;
+      }
+      // Saved, with only search lagging: closed as on success, so nothing invites a second write.
+      toastPublicationPending(e);
     } finally {
       setBusy(false);
     }
+    onSaved();
+    onOpenChange(false);
   };
 
   const close = (v: boolean) => {

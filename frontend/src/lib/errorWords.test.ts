@@ -259,6 +259,14 @@ describe("humanizeError", () => {
       ).toBe("Your role doesn't allow this — acme is the only admin.");
     });
 
+    it("joins a code's full sentence to the server's words with a space, not a dash", () => {
+      expect(
+        humanizeError(new ApiError({ status: 403, code: "SELF_SIGNUP_DISABLED", message: "set by the operator" }), {
+          bare: true,
+        }),
+      ).toBe("Sign-up is off on this instance. Ask your operator. set by the operator.");
+    });
+
     it("keeps the category's words after a caller's lead-in for a code with no message", () => {
       expect(
         humanizeError(

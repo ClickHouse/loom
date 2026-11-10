@@ -2080,7 +2080,7 @@ export function HealthTab({ id }: { id: CodeId }) {
         {cov === undefined ? (
           <Loading layout="inline" label="Loading coverage" />
         ) : cov === null ? (
-          <div role="status" className="text-xs text-text-muted">
+          <div role="alert" className="text-xs text-text-muted">
             Couldn't load coverage: {why.cov}
           </div>
         ) : (
@@ -2196,7 +2196,7 @@ export function HealthTab({ id }: { id: CodeId }) {
           {recent === null ? (
             <Loading layout="inline" label="Loading recent commits" />
           ) : recent === "failed" ? (
-            <div role="status" className="text-xs text-text-muted">
+            <div role="alert" className="text-xs text-text-muted">
               Couldn't load the recent commits: {why.recent}
             </div>
           ) : recent.length === 0 ? (
@@ -2246,7 +2246,7 @@ export function HealthTab({ id }: { id: CodeId }) {
           </button>
           {errs === undefined && <Loading layout="inline" label="Loading the index errors" className="mt-2" />}
           {errs === null && (
-            <div role="status" className="mt-2 text-xs text-text-muted">
+            <div role="alert" className="mt-2 text-xs text-text-muted">
               Couldn't load the index errors: {why.errs}
             </div>
           )}

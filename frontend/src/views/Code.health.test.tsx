@@ -53,7 +53,7 @@ describe("HealthTab: failed reads", () => {
     render(<HealthTab id={{ org: "dev", namespace: "code-app" }} />);
     // Each line says why, not only that it failed.
     expect(await screen.findByText("Couldn't load coverage: boom")).toBeInTheDocument();
-    expect(screen.getByText("Couldn't load coverage: boom")).toHaveAttribute("role", "status");
+    expect(screen.getByText("Couldn't load coverage: boom")).toHaveAttribute("role", "alert");
     expect(screen.getByText("Couldn't load the index errors: boom")).toBeInTheDocument();
     expect(screen.getByText("Couldn't load the recent commits: boom")).toBeInTheDocument();
     expect(screen.queryByText("No commits recorded yet.")).toBeNull();
