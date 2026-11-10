@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
-import time
 from pathlib import Path
 from typing import Any
 
@@ -153,7 +152,7 @@ def test_an_empty_manifest_is_read_once_and_the_python_layout_kept(tmp_path, mon
     built = []
     real = pl.layout_from_texts
     monkeypatch.setattr(pl, "layout_from_texts", lambda *a: built.append(1) or real(*a))
-    monkeypatch.setitem(ingest_resolve._LIVE_PATHS_CACHE, ("o", "n"), (time.monotonic(), set()))
+    monkeypatch.setitem(ingest_resolve._LIVE_PATHS_CACHE, ("o", "n"), (0.0, set()))
     monkeypatch.setattr(ingest_resolve, "_PY_LAYOUT_CACHE", {})
     present = {"setup.cfg", "pyproject.toml", "a.py"}
     with ingest_resolve.git_text_source(git_dir, sha):

@@ -375,8 +375,9 @@ def doc_reference_edges(
             cands.sort(key=lambda c: c[1][::-1])
             by_bare[bare] = ([c[1][::-1] for c in cands], cands)
         keys, cands = by_bare[bare]
-        i, matches, rev = 0, len(cands), name[::-1]
+        i, matches = 0, len(cands)
         if "::" in name:
+            rev = name[::-1]
             i = bisect.bisect_left(keys, rev)
             matches = sum(k.startswith(rev) for k in keys[i : i + 2])
         if matches != 1:
