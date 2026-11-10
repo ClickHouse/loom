@@ -588,7 +588,7 @@ function TokenForm({
     : "Drag a row by its grip, or use its arrows, to change the order.";
   const listHint =
     selectedNs.length === 0
-      ? "Tick the namespaces this token reads. Nothing else, whatever you join later."
+      ? "Tick the namespaces this token reads; it reads nothing else, whatever you join later."
       : `${selectedNs.length} ticked, and nothing else, whatever you join later.${
           selectedNs.length > 1 ? ` Number 1 is searched first. ${reorderHint}` : ""
         }`;
