@@ -53,15 +53,20 @@ describe("inline error lines", () => {
   });
 });
 
-describe("a bare error line in a template", () => {
-  // The line closes with its own full stop (and may carry a retry tail), so text after it
-  // reads "…in 3 s.; 2 messages are left".
+describe("an error line in a template", () => {
+  // The words may close with a full stop and a retry tail, so text after them reads
+  // "…in 3 s.; 2 messages are left". Written inline or stored first, they end the template.
   it("ends the template", () => {
-    const calls = Object.entries(SOURCES).flatMap(([path, text]) =>
-      [...text.matchAll(/\$\{humanizeError\([^)]*bare: true[^)]*\)\}([^`])/g)].map(
-        (m) => `${path}:${text.slice(0, m.index).split("\n").length}`,
-      ),
-    );
+    // The wording module builds the line itself; the rule is for its callers.
+    const callers = Object.entries(SOURCES).filter(([path]) => !path.endsWith("/errorWords.ts"));
+    const calls = callers.flatMap(([path, text]) => {
+      const stored = [...text.matchAll(/const (\w+) = (?:humanizeError|errorLine)\(/g)].map((m) => m[1]);
+      const uses = [
+        ...text.matchAll(/\$\{(?:humanizeError|errorLine)\([^)]*\)\}([^`])/g),
+        ...stored.flatMap((name) => [...text.matchAll(new RegExp(`\\$\\{${name}\\}([^\`])`, "g"))]),
+      ];
+      return uses.map((m) => `${path}:${text.slice(0, m.index).split("\n").length}`);
+    });
     expect(calls).toEqual([]);
   });
 });

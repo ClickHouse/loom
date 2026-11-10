@@ -115,15 +115,15 @@ export function toastError(context: string, err: unknown, opts: { read?: boolean
 
 /** An error toast whose caller built its own sentence (how much of a batch went through):
  *  the request id underneath and the reading time, as toastError gives every error toast. */
-export function toastErrorLine(msg: string, err: unknown): void {
-  toastWithId(msg, "error", err);
+export function toastErrorLine(msg: string, err: unknown, opts: { key?: string } = {}): void {
+  toastWithId(msg, "error", err, opts.key);
 }
 
-function toastWithId(msg: string, kind: ToastKind, err: unknown): void {
+function toastWithId(msg: string, kind: ToastKind, err: unknown, key?: string): void {
   const rid = errorRequestId(err);
   // An id the line already says (an internal error's) is not printed a second time.
   const detail = rid && !msg.includes(rid) ? { detail: `request id ${rid}` } : {};
-  toast(msg, kind, { ...detail, durationMs: errorToastMs(msg) });
+  toast(msg, kind, { ...detail, key, durationMs: errorToastMs(msg) });
 }
 
 export function errorToastMs(msg: string): number {

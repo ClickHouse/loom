@@ -215,6 +215,8 @@ export function MembersDialog({
     const verb = decision === "approve" ? "Approved" : "Rejected";
     if (ok === targets.length) {
       toast(targets.length > 1 ? `${verb} ${subject} on ${ok} branches` : `${verb} ${subject}`, "ok");
+    } else if (ok === 0) {
+      toastError(`Couldn't ${decision} ${subject}`, firstError);
     } else {
       const msg = `${verb} ${subject} on ${ok} of ${targets.length} branches; the rest failed: ${humanizeError(firstError, { bare: true })}`;
       toastErrorLine(msg, firstError);

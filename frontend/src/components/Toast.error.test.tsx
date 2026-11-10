@@ -3,7 +3,7 @@
 import { act, cleanup, render, screen } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../lib/errors";
-import { ToastViewport, errorToastMs, toastError } from "./Toast";
+import { ToastViewport, errorToastMs, toastError, toastErrorLine } from "./Toast";
 
 afterEach(() => {
   cleanup();
@@ -72,6 +72,16 @@ describe("toastError", () => {
     // Information, not a failure: no alert, no danger icon.
     expect(document.querySelector("[data-toast-kind]")).toHaveAttribute("data-toast-kind", "info");
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("gives a caller's own line the request id, and one toast per key", async () => {
+    render(<ToastViewport />);
+    const err = (id: string) => new ApiError({ status: 503, message: "down", requestId: id });
+    act(() => toastErrorLine("Expand of beta failed: down.", err("req-1"), { key: "expand" }));
+    expect(await screen.findByText("request id req-1")).toBeInTheDocument();
+    act(() => toastErrorLine("Expand of gamma failed: down.", err("req-2"), { key: "expand" }));
+    expect(await screen.findByText("Expand of gamma failed: down.")).toBeInTheDocument();
+    expect(screen.queryByText("Expand of beta failed: down.")).toBeNull();
   });
 
   it("words a failed read as a read: no may-have-committed warning", async () => {

@@ -14,7 +14,7 @@ import {
 } from "../../api";
 import { BackLink } from "../../components/BackLink";
 import { MemoryInspector } from "../../components/MemoryInspector";
-import { toast } from "../../components/Toast";
+import { toast, toastErrorLine } from "../../components/Toast";
 import { Loading } from "../../components/ui";
 import { useAbortableEffect } from "../../lib/hooks";
 import { humanizeError } from "../../lib/errorWords";
@@ -499,9 +499,11 @@ export function Explorer() {
 
   // Expand in place: one hop under the node, the cap kept. The result lands where the
   // reader looks: a toast, the inspector line and the status line, from one derivation.
-  const announce = useCallback((n: ExpandNotice) => {
+  // A failure's toast carries its request id and reading time, as every error toast does.
+  const announce = useCallback((n: ExpandNotice, err?: unknown) => {
     setNotice(n);
-    toast(n.toast, n.tone, { key: "explorer-expand", durationMs: n.tone === "ok" ? EXPAND_TOAST_MS : undefined });
+    if (err !== undefined) toastErrorLine(n.toast, err, { key: "explorer-expand" });
+    else toast(n.toast, n.tone, { key: "explorer-expand", durationMs: n.tone === "ok" ? EXPAND_TOAST_MS : undefined });
   }, []);
   const expand = useCallback(
     (entity: string) => {
@@ -531,7 +533,7 @@ export function Explorer() {
           });
         })
         .catch((e) => {
-          if (!ctl.signal.aborted) announce(expandFailure(entity, humanizeError(e, { bare: true, read: true })));
+          if (!ctl.signal.aborted) announce(expandFailure(entity, humanizeError(e, { bare: true, read: true })), e);
         })
         .finally(() => {
           if (!ctl.signal.aborted) setExpanding(null);

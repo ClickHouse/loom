@@ -47,7 +47,7 @@ export function ThreadActions({
     const r = await deleteEveryAgent(identity, thread);
     if (r.error) {
       const why = humanizeError(r.error, { bare: true });
-      // The error's line ends the sentence: it closes with its own full stop.
+      // The error's words end the line: they may close with a full stop and a retry tail.
       const left = r.left ? ` (${r.left} messages are left)` : "";
       const msg = r.parts ? `Deleted part of "${name}"${left}, then failed: ${why}` : `Delete failed: ${why}`;
       toastErrorLine(msg, r.error);
