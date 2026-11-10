@@ -320,7 +320,7 @@ def test_reference_lines_of_a_statement_of_many_names_cost_linear_time(name: str
         assert {f.line for f in facets} == set(range(1, n + 1))
         return took
 
-    assert_linear(cost, 2_000, 8_000, floor=0.05, bound=2.0)
+    assert_linear(cost, 2_000, 8_000, floor=0.05)
 
 
 def test_a_quoted_name_after_an_escaped_quote_in_a_literal_is_found() -> None:
