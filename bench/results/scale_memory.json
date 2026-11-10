@@ -12,7 +12,8 @@
   },
   "concurrency": 5,
   "calls_per_op": 400,
-  "bulk_set_entries": 20
+  "bulk_set_entries": 20,
+  "rows": "a vector probe's \"rows\": 0 means its rows were not recorded (the later runs record namespace_rows and scope_rows)"
  },
  "runs": {
   "single_250k_postgres": {

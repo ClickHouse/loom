@@ -26,7 +26,7 @@ tables get one partition per month. Rows land under org names that start with
     PYTHONPATH=$PWD .venv/bin/python bench/scale_load.py load-ch --shape single --rows 1000000
     PYTHONPATH=$PWD .venv/bin/python bench/scale_load.py load-pg
     PYTHONPATH=$PWD .venv/bin/python bench/scale_load.py measure --base-url http://localhost:7790 \\
-        --shape single --out bench/results/scale/single-1m.json
+        --shape single --out bench/out/scale/single-1m.json
 """
 
 from __future__ import annotations
@@ -636,9 +636,12 @@ def vector_read(
         "AND fromUnixTimestamp64Micro({b:Int64})",
         parameters={"a": int(t0 * 1e6), "b": int(t1 * 1e6)},
     ).result_rows[0]
+    # The filter matches every leg that ranks `e.embedding` (the fact leg, the anchor pool,
+    # the key-match arm); one statement a search means only the fact leg ran.
     return {
         "search": res,
         "vector_statements": int(log[0]),
+        "only_the_fact_leg": int(log[0]) == reps,
         "vector_p50_ms": float(log[1] or 0),
         "vector_max_ms": float(log[2] or 0),
         "read_rows": int(log[3] or 0),

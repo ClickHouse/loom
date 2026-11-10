@@ -1072,17 +1072,17 @@ Under Postgres `memory.set` made 3.4 new parts a second per memory table at 250k
 **The vector leg** (the statement of `memory.search` that ranks the scope's vectors,
 codes-first), searched one call at a time:
 
-| Scope                                           |     Namespace rows | Parts | Read (MiB) | p50 (ms) |
-| ----------------------------------------------- | -----------------: | ----: | ---------: | -------: |
-| single, 250k                                    | 253,303 to 277,628 |    59 |        185 |      312 |
-| the same after `OPTIMIZE TABLE … FINAL`         |            277,628 |    14 |        165 |      160 |
-| single, 500k                                    |    527,628 or more |    69 |        283 |      300 |
-| zipf, the largest namespace, one agent and user |             15,166 |    54 |         52 |      117 |
-| zipf, the third namespace, one agent and user   |              6,285 |    53 |         43 |       69 |
+| Scope                                           |  Namespace rows | Parts | Read (MiB) | p50 (ms) |
+| ----------------------------------------------- | --------------: | ----: | ---------: | -------: |
+| single, 250k                                    | 277,628 or more |    59 |        185 |      312 |
+| the same after `OPTIMIZE TABLE … FINAL`         |         277,628 |    14 |        165 |      160 |
+| single, 500k                                    | 527,628 or more |    69 |        283 |      300 |
+| zipf, the largest namespace, one agent and user |          15,166 |    54 |         52 |      117 |
+| zipf, the third namespace, one agent and user   |           6,285 |    53 |         43 |       69 |
 
-In the single shape the scope is the namespace, and the leg reads about 0.56 to 0.77 KB
-per row of it (the 250k run recorded its rows before the measures and after the
-`OPTIMIZE`, not at the first search; the 500k rows are the load's). After the `OPTIMIZE`, `memory.search` p50 fell from 671 to 392 ms at 250k. In the zipf
+In the single shape the scope is the namespace, and the leg reads about 0.56 to 0.70 KB
+per row of it (the probes recorded no row count: the 250k rows are those after the
+`OPTIMIZE`, which only removes rows, and the 500k rows are the load's). After the `OPTIMIZE`, `memory.search` p50 fell from 671 to 392 ms at 250k. In the zipf
 shape the scope is one agent's and one user's rows, about 1/400 of the namespace's: a
 scope of a few dozen rows still reads tens of MiB, a granule of every part of its
 partitions.
@@ -1111,8 +1111,8 @@ a `count()` over 19,941 rows took 153 s and a `system.mutations` lookup 184 s.
 `VACUUM (ANALYZE)` took 0.49 s for `memory_current` and 0.56 s for `memory_revisions`.
 After the Postgres run's erasures (186,491 live heads), with 52,122 dead heads and
 120,482 dead revisions made by rewriting rows in place, it took 0.57 s for
-`memory_current` (275 MB of heap as loaded, so at least 0.5 GB/s) and 0.89 s for
-`memory_revisions` (969 MB as loaded, at least 1.1 GB/s), both tables in the page cache; a `COPY` of the largest org's rows of every memory table took 8.9 s
+`memory_current` (275 MB of heap as loaded, so at least 0.48 GB/s) and 0.89 s for
+`memory_revisions` (969 MB as loaded, at least 1.09 GB/s), both tables in the page cache; a `COPY` of the largest org's rows of every memory table took 8.9 s
 for 351 MB.
 
 **Several serving processes.** `memory.set` was sent open loop (each write at its time
@@ -1146,45 +1146,29 @@ reads:
 
 Reproduce, on a private ClickHouse and Postgres, with a server from source with
 background workers off, auth off and the fake embedder (`.env` for the ClickHouse
-authority, `.env.pg` naming `LOOM_STORAGE_AUTHORITY=postgres` and `LOOM_PG_DSN`). Load
-each shape into empty memory tables:
+authority, `.env.pg` naming `LOOM_STORAGE_AUTHORITY=postgres` and `LOOM_PG_DSN`). The
+artifact records each run's setup (shape, size, caps, setting values); the commands
+follow this pattern:
 
 ```bash
 B="env PYTHONPATH=$PWD .venv/bin/python bench/scale_load.py"
-$B load-ch --shape single --rows 250000          # or: --shape zipf --rows 200000 \
-                                                 #   --tenants 10000 --orgs 1000 --agents 4 --users 100
-$B --env .env.pg load-pg
-$B --env .env.pg authority --to postgres         # then start the Postgres-authority server
-$B --env .env.pg measure --base-url <server> --shape single --out pg.json
-# The bulk peer reads: three rounds, each a batched arm then a per-fact arm (the server
-# restarted with LOOM_MEMORY_BULK_PEER_READ=per_fact for the second).
-$B --env .env.pg measure --base-url <server> --shape single --ops memory.bulk_set,memory.set \
-   --calls 100 --vector-reps 1 --out round-1-batched.json
-$B --env .env.pg erase --base-url <server> --user <org>/<user> --org <org> --out erase.json  # zipf
-$B --env .env.pg pg --dead-fraction 0.2 --dump-org <org> --out pg-store.json                # zipf
-$B authority --to clickhouse                     # stop it; start the ClickHouse-authority server
-$B measure --base-url <server> --shape single --out ch.json
-$B --env .env.pg authority --to postgres         # stop it; start the Postgres-authority server
-$B --env .env.pg optimize --base-url <server> --shape single --out optimize.json
-# 500k, under the ClickHouse authority only: grow the single load by 250,000 keys.
-$B authority --to clickhouse                     # stop it; start the ClickHouse-authority server
-$B load-ch --shape single --offset 250000 --rows 250000
-$B measure --base-url <server> --shape single --out ch-500k.json
-$B optimize --base-url <server> --shape single --before-only --out vector-500k.json
-# The cost runs and the fleet: empty memory tables, ClickHouse capped at 4 GiB, Postgres
-# shared_buffers 256 MB.
-$B load-ch --shape single --rows 20000 --batch 20000 && $B --env .env.pg load-pg
-$B --env .env.pg authority --to postgres         # start the Postgres-authority server
-$B --env .env.pg measure --base-url <server> --shape single --calls 200 --vector-reps 10 --out cost-pg.json
-$B authority --to clickhouse                     # stop it; start the ClickHouse-authority server
-$B measure --base-url <server> --shape single --calls 200 --vector-reps 10 --out cost-ch.json
-$B --env .env.pg authority --to postgres         # stop it; start two Postgres-authority servers
-$B --env .env.pg fleet --base-url <server>,<server> --rate 15 --seconds 40 --out fleet-15.json
-$B --env .env.pg fleet --base-url <server>,<server> --rate 150 --seconds 40 --out fleet-150.json
+$B load-ch --shape single --rows 250000     # or --shape zipf --rows 200000 --tenants 10000 \
+                                            #   --orgs 1000 --agents 4 --users 100
+$B --env .env.pg load-pg                    # into empty Postgres tables
+$B --env .env.pg authority --to postgres    # start a server of that authority, then:
+$B --env .env.pg measure --base-url <server> --shape single --out <run>.json
+$B --env .env.pg pg --dead-fraction 0.2 --dump-org <org> --out <run>.json
+$B --env .env.pg erase --base-url <server> --user <org>/<user> --org <org> --out <run>.json
+$B --env .env.pg optimize --base-url <server> --shape single --out <run>.json
+$B --env .env.pg fleet --base-url <server>,<server> --rate 15 --seconds 40 --out <run>.json
+$B authority --to clickhouse                # and the same commands without --env .env.pg
 ```
 
 `authority --to` switches the recorded authority between runs on these private stores,
-which a deployment never does; `load-pg` loads into empty Postgres tables.
+which a deployment never does. `measure --ops` and `--calls` narrow a run (the bulk peer
+read rounds ran `--ops memory.bulk_set,memory.set --calls 100`, alternating the server's
+`LOOM_MEMORY_BULK_PEER_READ`), `pg` without `--dead-fraction` times a vacuum of the rows
+as loaded, and `load-ch --offset` grows a load (the 500k run grew the 250k one).
 
 ## Reference computations
 
