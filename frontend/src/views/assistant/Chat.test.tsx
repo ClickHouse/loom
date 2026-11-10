@@ -173,6 +173,23 @@ describe("AssistantChat", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(shown);
   });
 
+  it("says a refusal about the token as the token's, not as the person's role", async () => {
+    answers.push(
+      refusal(403, {
+        code: "AUTH_INSUFFICIENT",
+        message: "a token whose reads are narrower than its namespace cannot ask the assistant",
+        reason: "narrowed",
+      }),
+    );
+    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    await ask("Who owns billing?");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "This token can't do this: a token whose reads are narrower than its namespace cannot ask the assistant.",
+    );
+    expect(alert).not.toHaveTextContent(/role/);
+  });
+
   it("says a refusal with no lead of its own once, with one retry wait", async () => {
     answers.push(
       refusal(503, {

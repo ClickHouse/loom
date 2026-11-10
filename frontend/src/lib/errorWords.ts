@@ -219,9 +219,16 @@ export function humanizeError(err: unknown, opts: HumanizeOptions = {}): string 
  *  another tab took the token; a refusal of a token the call carried is `sessionEnded`. */
 const SESSION_GONE = /missing bearer token/;
 
+/** Refusals about the token itself, not the caller's role (the assistant's, in
+ *  `server/assistant/app/bridge.py`; docs/reference/errors.md). */
+const TOKEN_REASONS = new Set(["org_wide", "narrowed", "token_expires_soon"]);
+
 /** The code's own sentence, when it says more than its category or status. */
 function codeSentence(err: ApiError): string | undefined {
   const category = categoryOf(err);
+  const reason = err.detail.reason;
+  if (err.code === "AUTH_INSUFFICIENT" && typeof reason === "string" && TOKEN_REASONS.has(reason))
+    return "This token can't do this:";
   if (UNVERIFIED_CODES.has(err.code) && category === "dependency") return "Loom couldn't check your access just now:";
   return ERROR_CODE_PREFIXES[err.code];
 }
