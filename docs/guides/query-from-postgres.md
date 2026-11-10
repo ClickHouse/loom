@@ -30,11 +30,12 @@ It prints the user's password once.
 ## 2. Install the extension
 
 The extension is in the `ghcr.io/clickhouse/pg_clickhouse:<postgres major>-<version>`
-images and on [PGXN](https://pgxn.org/dist/pg_clickhouse/) to build into an existing Postgres
-(`pgxn install pg_clickhouse`). Three roles take part:
+images and on [PGXN](https://pgxn.org/dist/pg_clickhouse/), to build into a self-managed
+Postgres (`pgxn install pg_clickhouse`). A managed Postgres service must ship and allow it.
+Three roles take part:
 
-- a superuser (on a managed service, its admin role) for this step, since the extension is
-  not marked trusted;
+- a superuser for this step, since the extension is not marked trusted (on a managed service,
+  the role the provider lets create its allowed extensions);
 - an owner for steps 3 and 4: a role with `CREATEROLE`, `CREATE` on the database and `USAGE`
   on the foreign data wrapper, which creates the reader role and so may set its defaults;
 - the application's reader role (`app_reader` here) for step 5, which needs its user mapping
@@ -143,6 +144,9 @@ GROUP BY day ORDER BY day;
 - A statement past the SQL user's ceilings (`LOOM_CH_ANALYSIS_MAX_EXECUTION_S`,
   `_MAX_ROWS_TO_READ`, `_MAX_MEMORY_BYTES`) fails in ClickHouse rather than slowing down, and
   Postgres returns its error.
+- Every Postgres session that queries through the mappings logs in as the same SQL user, and
+  that user runs at most `LOOM_CH_ANALYSIS_MAX_CONCURRENT` statements at a time: size the
+  application's pool of reader sessions under it, or statements past it fail.
 
 ## Copies and erasure
 
