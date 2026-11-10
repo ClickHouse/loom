@@ -309,6 +309,7 @@ async def test_the_terminal_row_keeps_the_last_step_reason_and_the_verify_column
             verified_at=verified_at,
             failure_reason="external.delete_namespace: ErasureBackendError",
             steps_completed=["entity_graph.delete", "memory.tombstone"],
+            census=None,
         )
 
     async def fake_checkpoint(**kw):
@@ -345,6 +346,7 @@ async def test_the_terminal_row_keeps_the_last_step_reason_and_the_verify_column
         "residue_count": 41,
         "verified_at": verified_at,
         "residue": '{"loom.entity_edges": 41}',
+        "census": "",  # the saga's output carried none
     }
     assert audits[-1]["event_type"] == "erasure.abandoned"
     assert audits[-1]["subject"]["last_error"] == "external.delete_namespace: ErasureBackendError"
@@ -551,7 +553,13 @@ async def test_a_failed_saga_with_postgres_down_records_what_its_census_counted(
         monkeypatch, saga=_failing_external_step, census=lambda *_: dict(ch_residue)
     )
     assert out.status == "failed" and out.verified_at is None
-    kept = {"residue_count": 3, "verified_at": None, "residue": '{"loom.memory": 3}'}
+    # residue kept as evidence; no receipt, as the authority went uncounted
+    kept = {
+        "residue_count": 3,
+        "verified_at": None,
+        "residue": '{"loom.memory": 3}',
+        "census": "",
+    }
     assert checkpoints[-1]["extra"] == (kept if ch_residue else {})
 
 
@@ -563,11 +571,13 @@ def test_a_census_that_left_a_store_uncounted_keeps_the_residue_it_found() -> No
 
     uncounted = _ledger_row(attempts=5, residue_count=3, residue='{"loom.memory": 3}')
     kept = {"residue_count": 3, "residue": '{"loom.memory": 3}', "verified_at": None}
+    # A ledger row read without a census column carries none forward.
     assert w._ledger_verify(uncounted | {"verified_at": None}) == kept
     out = ErasureRequestOutput.model_construct(
         residue_count=3, residue={"loom.memory": 3}, verified_at=None
     )
-    assert h.verify_columns_from_output(out) == kept
+    # An uncounted store: no receipt.
+    assert h.verify_columns_from_output(out) == kept | {"census": ""}
     assert h.verify_columns_from_output(out.model_copy(update={"residue_count": 0})) == {}
 
 

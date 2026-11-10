@@ -379,3 +379,12 @@ async def test_a_ledger_row_that_no_longer_validates_is_counted_and_never_runs(m
     assert ran == [] and result.completed == 0
     assert [e["erasure_id"] for e in result.errors] == ["e10"]
     assert "namespace_list scope_value" in result.errors[0]["error"]
+
+
+async def test_a_resume_always_runs_the_census_again(monkeypatch) -> None:
+    """A run that stopped between its census and the terminal row left no census on the
+    ledger: a resume that skipped `verify.residue` would complete without one."""
+    done = {"memory.tombstone", "verify.residue"}
+    out, seen = await _drive(monkeypatch, previously_completed=done, residue=None)
+    assert seen["completed_at_entry"] == {"memory.tombstone"}
+    assert out.census == {} and out.verified_at is not None and out.purge is True

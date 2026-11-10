@@ -129,15 +129,15 @@ A namespace whose graph outlived its memories is listed by
 | `memory.clear` (`ADMIN`)                                                        | tombstones the memories of one `user_id` or `agent` in a namespace; `confirm_subject` must repeat the scope value                          | cleanup, test resets; reversible with `memory.restore` |
 | `erasure.request` with `scope_type`: `user_id`, `namespace` or `namespace_list` | a resumable saga across every Loom table that can hold the subject's content, then the configured external backends (Langfuse, ClickStack) | a person's right to erasure; retiring namespaces       |
 
-The saga checkpoints each step in `loom.erasure_requests` (`ReplacingMergeTree`, rows
-kept 90 days). After its steps it runs a residue census over every table the read paths
-touch; any row still in scope fails the saga, and the final row carries `residue_count`,
-`residue` and `verified_at`. A backend that cannot confirm deletion fails the saga
-closed; the `erasure_recovery` worker retries it idempotently until `max_attempts`, then
-leaves it `failed`. `purge: true` hard-deletes instead of tombstoning (for throwaway
-namespaces; no restore window). `external: false` skips the external backends and is
-accepted only for `namespace_list`. What erasure promises, and what it does not, is in
-[retention and erasure](../features/memory/retention-and-erasure.md).
+The saga checkpoints each step in `loom.erasure_requests` (`ReplacingMergeTree`, rows read
+for 89 days, dropped at 90). After its steps it runs a residue census over every table the
+read paths touch; any row still in scope fails the saga, and the final row carries
+`residue_count`, `residue`, `verified_at` and `census`. A backend that cannot confirm
+deletion fails the saga closed; the `erasure_recovery` worker retries it idempotently until
+`max_attempts`, then leaves it `failed`. `purge: true` hard-deletes instead of tombstoning
+(for throwaway namespaces; no restore window). `external: false` skips the external backends
+and is accepted only for `namespace_list`. What erasure promises, and what it does not, is
+in [retention and erasure](../features/memory/retention-and-erasure.md).
 
 ```sql
 SELECT id, scope_type, scope_value, status, current_step, attempts, failure_reason, residue_count
@@ -199,10 +199,10 @@ the retention gauges (`loom.retention.*`) only count candidates.
 Hot/warm tiering uses a ClickHouse storage policy: `LOOM_TIERING_<TABLE>_WARM_DAYS=W`
 plus `LOOM_TIERING_WARM_VOLUME_NAME`, the name of a volume in your `storage_policies`.
 
-A few operational tables carry their own fixed TTL because they are diagnostics, not
-memory: `loom.memory_drops` (30 days), `loom.worker_status` (30 days) and
-`loom.erasure_requests` (90 days). The [schema reference](../reference/schema.md) lists
-every table's TTL.
+A few operational tables carry their own fixed TTL because they are diagnostics, not memory:
+`loom.memory_drops` (30 days), `loom.worker_status` (30 days) and `loom.erasure_requests`
+(90 days; its reads stop at 89). The [schema reference](../reference/schema.md) lists every
+table's TTL.
 
 ## Compaction and OPTIMIZE
 

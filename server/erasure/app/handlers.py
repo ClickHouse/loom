@@ -35,6 +35,7 @@ from server.erasure.api.erasure import (
 )
 from server.erasure.app.saga import audit_namespace, begin_erasure, run_saga
 from server.erasure.domain.failure_reason import caller_audit_subject, shown_reason
+from server.erasure.domain.scopes import applied_purge
 from server.erasure.store import exports as erasure_exports
 from server.erasure.store import ledger as erasure_ledger
 from server.erasure.store.rows import RequestStatusRow
@@ -405,17 +406,22 @@ async def handle_erasure_status(input: ErasureStatusInput) -> ErasureStatusOutpu
         # A build from before the upgrade stored the driver's text; it is cut here.
         failure_reason=shown_reason(str(row["failure_reason"] or "")) or None,
         residue_count=int(row.get("residue_count") or 0),
-        residue=_parse_residue(row.get("residue")),
+        residue=_parse_counts(row.get("residue")) or {},
         verified_at=row.get("verified_at"),
+        census=_parse_counts(row.get("census")),
+        purge=applied_purge(
+            str(row["scope_type"]), str(row["scope_value"]), bool(row.get("purge"))
+        ),
     )
 
 
-def _parse_residue(raw: str | None) -> dict[str, int]:
+def _parse_counts(raw: str | None) -> dict[str, int] | None:
+    """A ledger column of per-table counts; None when it is empty or does not parse."""
     try:
-        data = json.loads(raw) if raw else {}
+        data = json.loads(raw) if raw else None
     except (TypeError, ValueError):
-        return {}
-    return {str(k): int(v) for k, v in data.items()} if isinstance(data, dict) else {}
+        return None
+    return {str(k): int(v) for k, v in data.items()} if isinstance(data, dict) else None
 
 
 async def _list_scope(org: str) -> tuple[str, dict[str, Any]] | None:

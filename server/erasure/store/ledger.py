@@ -16,6 +16,13 @@ from server.erasure.store.rows import (
     ResumeRow,
 )
 
+# The ledger rows a read may act on: the table's TTL drops a saga's rows part by part 90
+# days after `requested_at`, which every checkpoint of the saga repeats, so near the end an
+# older checkpoint can outlive the terminal row and read as the saga's state. The fences
+# (`unfinished_since`, `unfinished_reaching`) do not apply it: a stale unfinished row keeps
+# fencing, which fails closed.
+LIVE_LEDGER = "requested_at > now() - INTERVAL 89 DAY"
+
 
 async def list_stuck_in_progress(
     *,
@@ -35,7 +42,9 @@ async def list_stuck_in_progress(
         SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge,
                attempts, steps_completed, requested_at, failure_reason, residue
         FROM loom.erasure_requests FINAL
-        WHERE status IN ('in_progress', 'failed')
+        WHERE status IN ('in_progress', 'failed') AND """
+        + LIVE_LEDGER
+        + """
           AND last_checkpoint_at < now() - INTERVAL {st:UInt32} SECOND
           AND attempts < {ma:UInt16}
         ORDER BY requested_at
@@ -67,9 +76,11 @@ async def list_unabandoned_exhausted(
         """
         SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge,
                attempts, steps_completed, requested_at, failure_reason,
-               residue_count, residue, verified_at
+               residue_count, residue, verified_at, census
         FROM loom.erasure_requests FINAL
-        WHERE status IN ('in_progress', 'failed')
+        WHERE status IN ('in_progress', 'failed') AND """
+        + LIVE_LEDGER
+        + """
           AND last_checkpoint_at < now() - INTERVAL {st:UInt32} SECOND
           AND attempts >= {ma:UInt16}
           AND NOT startsWith(failure_reason, {pfx:String})
@@ -96,7 +107,7 @@ async def list_failed_requests(
     reads. The recovery worker stops at `max_attempts`; an
     operator does not."""
     ch = ch or _default_client()
-    where = "status = 'failed'"
+    where = "status = 'failed' AND " + LIVE_LEDGER
     params: dict[str, Any] = {}
     if org:
         where += " AND org = {org:String}"
@@ -105,7 +116,7 @@ async def list_failed_requests(
         f"""
         SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge,
                attempts, steps_completed, requested_at, failure_reason,
-               residue_count, residue, verified_at
+               residue_count, residue, verified_at, census
         FROM loom.erasure_requests FINAL
         WHERE {where}
         ORDER BY requested_at
@@ -126,7 +137,7 @@ async def list_completed_requests(
     for the orphan row links they left: a build before N's tables completed without
     erasing them."""
     ch = ch or _default_client()
-    where = "status = 'completed' AND verified_at >= {since:DateTime}"
+    where = "status = 'completed' AND verified_at >= {since:DateTime} AND " + LIVE_LEDGER
     params: dict[str, Any] = {"since": since}
     if org:
         where += " AND org = {org:String}"
@@ -135,7 +146,7 @@ async def list_completed_requests(
         f"""
         SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge,
                attempts, steps_completed, requested_at, failure_reason,
-               residue_count, residue, verified_at
+               residue_count, residue, verified_at, census
         FROM loom.erasure_requests FINAL
         WHERE {where}
         ORDER BY requested_at
@@ -158,9 +169,11 @@ async def fetch_request_status(
         """
         SELECT id, org, scope_type, scope_value, requester, status,
                current_step, failure_reason, requested_at, completed_at,
-               residue_count, verified_at, residue
+               residue_count, verified_at, residue, census, purge
         FROM loom.erasure_requests FINAL
-        WHERE id = {id:UUID}
+        WHERE id = {id:UUID} AND """
+        + LIVE_LEDGER
+        + """
         LIMIT 1
         """,
         params={"id": erasure_id},
@@ -193,7 +206,12 @@ async def list_requests(
     `status` and by `scope_where` (bare-column AND fragments over
     erasure_requests, bound by `scope_params`)."""
     ch = ch or _default_client()
-    where = "org = {org:String}" + (" AND status = {st:String}" if status else "") + scope_where
+    where = (
+        "org = {org:String} AND "
+        + LIVE_LEDGER
+        + (" AND status = {st:String}" if status else "")
+        + scope_where
+    )
     params: dict[str, Any] = {**scope_params, "org": org, "lim": int(limit)}
     if status:
         params["st"] = status

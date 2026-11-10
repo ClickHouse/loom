@@ -29,8 +29,6 @@ from server.erasure.api.erasure import (
     ErasureRequestInput,
     ErasureRequestOutput,
     _ErasureStepResult,
-    parse_external_flag,
-    parse_purge_flag,
 )
 from server.erasure.app import backends as erasure_backends
 from server.erasure.app.backends import ErasureBackendError, ExternalEraseBackend, StubBackend
@@ -41,10 +39,16 @@ from server.erasure.app.saga_steps import (
     _step_verify_residue,
     authority_steps,
 )
-from server.erasure.domain.scopes import parse_namespace_list
+from server.erasure.domain.scopes import (
+    applied_purge,
+    parse_external_flag,
+    parse_namespace_list,
+    parse_purge_flag,
+)
 from server.erasure.store import census as erasure_census
 from server.erasure.store import ledger as erasure_ledger
 from server.erasure.store import mutations as erasure_mutations
+from server.erasure.store.provider_copies import fold_census
 from server.erasure.store.rows import CheckpointRow, RequestRow, VerifyColumns, census_kept
 from server.memory.app import webhooks
 from server.memory.app.provenance import writer_actor
@@ -110,7 +114,8 @@ def request_row_template(
         "requester": input.requester,
         "actor": actor,
         "urgency": input.urgency,
-        "purge": bool(input.purge),
+        # The purge the saga applies: a single namespace's never purges, whatever was asked.
+        "purge": applied_purge(input.scope_type, input.scope_value, bool(input.purge)),
         "attempts": attempts,
         "requested_at": requested_at,
     }
@@ -266,7 +271,9 @@ async def run_saga(
     """
     await pg.verify_deployment()  # a resumed saga too: refused before any step writes
     steps: list[_ErasureStepResult] = []
-    completed = set(previously_completed)
+    # The census always runs again: a run that stopped between it and the terminal row
+    # left no census on the ledger, so a resume that skipped it would complete without one.
+    completed = set(previously_completed) - {"verify.residue"}
     # What the census tail counts if a step fails before `verify.residue`:
     # the saga's scope, and whether it purges.
     census_scope_type = "user_id" if input.scope_type == "user_id" else "namespace"
@@ -282,7 +289,7 @@ async def run_saga(
     # Filled by the verify step; read back for the terminal row.
     verify: dict[str, Any] = {}
     census_scope_value: str | Sequence[str] = input.scope_value
-    census_purge = False
+    census_purge = applied_purge(input.scope_type, input.scope_value, bool(input.purge))
     # The saga id names every mutation this run submits,
     # so a resumed step finds its own pending mutation instead of adding one.
     with erasure_mutations.saga_scope(erasure_id):
@@ -290,7 +297,6 @@ async def run_saga(
             if input.scope_type == "user_id":
                 # A user's erasure purges when asked (a GDPR deletion): the rows
                 # leave the parts, not just the readable set.
-                census_purge = bool(input.purge)
                 with erasure_mutations.purge_scope(census_purge):
                     steps = await _saga_user_id(
                         input.org,
@@ -314,7 +320,6 @@ async def run_saga(
                 # saga honours it) turns the tombstone steps into deletes.
                 names = parse_namespace_list(input.scope_value)
                 census_scope_value = names
-                census_purge = parse_purge_flag(input.scope_value, default=bool(input.purge))
                 with erasure_mutations.purge_scope(census_purge):
                     steps = await _saga_namespace(
                         input.org,
@@ -389,6 +394,8 @@ async def run_saga(
                 residue_count=int(verify.get("count") or 0),
                 residue={t: n for t, n in (verify.get("per_table") or {}).items() if n},
                 verified_at=verify.get("verified_at"),
+                census=_census(verify),
+                purge=census_purge,
                 failure_reason=reason[:512],
                 steps_completed=sorted(completed),
             )
@@ -424,6 +431,8 @@ async def run_saga(
             "scope_value": input.scope_value,
             "requester": input.requester,
             "steps": [s.model_dump() for s in steps],
+            # Counts only: a copy of the receipt that outlives the ledger row.
+            "census": _census(verify),
         },
         request_id=erasure_id,
     )
@@ -437,6 +446,8 @@ async def run_saga(
         residue_count=int(verify.get("count") or 0),
         residue={},
         verified_at=verify.get("verified_at"),
+        census=_census(verify),
+        purge=census_purge,
         steps_completed=sorted(completed),
     )
 
@@ -478,6 +489,7 @@ def verify_columns_from_output(out: ErasureRequestOutput | None) -> VerifyColumn
         "residue_count": out.residue_count,
         "verified_at": out.verified_at,
         "residue": json.dumps(out.residue, sort_keys=True),
+        "census": json.dumps(out.census, sort_keys=True) if out.census is not None else "",
     }
 
 
@@ -487,13 +499,23 @@ def _verify_columns(verify: dict[str, Any]) -> VerifyColumns:
     (`census_kept`)."""
     if not census_kept(verify.get("verified_at"), verify.get("count")):
         return {}
+    census = _census(verify)
     return {
         "residue_count": int(verify.get("count") or 0),
         "verified_at": verify.get("verified_at"),
         "residue": json.dumps(
             {t: n for t, n in (verify.get("per_table") or {}).items() if n}, sort_keys=True
         ),
+        "census": json.dumps(census, sort_keys=True) if census is not None else "",
     }
+
+
+def _census(verify: dict[str, Any]) -> dict[str, int] | None:
+    """Every count of a census that counted every store, the rebuild copies folded
+    into one key; None when a store went uncounted (`verified_at` unset)."""
+    if verify.get("verified_at") is None:
+        return None
+    return fold_census({str(t): int(n) for t, n in (verify.get("per_table") or {}).items()})
 
 
 async def _do_step(

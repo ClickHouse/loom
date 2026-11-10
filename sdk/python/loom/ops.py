@@ -9323,6 +9323,8 @@ class ErasureRequestOutput(TypedDict, total=False):
     residue_count: NotRequired[int]
     residue: NotRequired[dict[str, int]]
     verified_at: NotRequired[Optional[str]]
+    census: NotRequired[Optional[dict[str, int]]]
+    purge: NotRequired[bool]
     failure_reason: NotRequired[str]
     steps_completed: NotRequired[list[str]]
 
@@ -9356,6 +9358,8 @@ class ErasureStatusOutput(TypedDict, total=False):
     residue_count: NotRequired[int]
     residue: NotRequired[dict[str, int]]
     verified_at: NotRequired[Optional[str]]
+    census: NotRequired[Optional[dict[str, int]]]
+    purge: NotRequired[bool]
 
 
 class ExtractionPolicyClearInput(TypedDict, total=False):

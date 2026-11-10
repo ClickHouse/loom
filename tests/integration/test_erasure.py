@@ -11,6 +11,7 @@ Verifies:
 
 from __future__ import annotations
 
+import json
 import sys
 import uuid
 from pathlib import Path
@@ -371,3 +372,85 @@ async def test_namespace_erasure_tombstones_only_target(admin_agent, ch_client) 
     keeper_chunks = [r for r in rows if r[0] == ns_keeper]
     assert all(r[1] is not None for r in target_chunks)
     assert all(r[1] is None for r in keeper_chunks)
+
+
+# ============================================================
+# the receipt
+# ============================================================
+
+
+@pytest.mark.slow
+@pytest.mark.asyncio
+async def test_a_completed_erasure_carries_its_receipt(admin_agent, ch_client) -> None:
+    """Every substrate the census counted, each at zero, with the purge the saga applied;
+    the request's answer, the status and the audit row agree."""
+    target = f"rita-{uuid.uuid4().hex[:6]}"
+    await admin_agent.memory.set(
+        "diet", "rita is vegetarian", memory_type="preference", user_id=target
+    )
+
+    result = await admin_agent.erasure.request_user_id(target, requester="ops@example.com")
+    assert result["status"] == "completed"
+    census = result["census"]
+    assert census and set(census.values()) == {0}, census
+    assert {"loom.memory", "loom.memory_versions", "loom.conversations"} <= set(census)
+    assert result["purge"] is False
+
+    status = await admin_agent.erasure.status(result["erasure_id"])
+    assert status["census"] == census
+    assert status["purge"] is False
+    assert status["verified_at"] is not None and status["residue"] == {}
+    # The audit row keeps a copy of the counts that outlives the ledger row.
+    audited = ch_client.query(
+        """
+        SELECT JSONExtractRaw(subject, 'census') FROM loom.audit_log
+        WHERE request_id = {rid:String} AND event_type = 'erasure.completed'
+        """,
+        parameters={"rid": result["erasure_id"]},
+    ).result_rows
+    assert [json.loads(r[0]) for r in audited] == [census]
+
+
+@pytest.mark.asyncio
+async def test_a_ledger_row_past_89_days_is_not_served(admin_agent, ch_client) -> None:
+    """The TTL drops a saga's rows part by part at 90 days, so a read stops at 89: an
+    older checkpoint could otherwise outlive the terminal row and read as the state."""
+    # Hours since the request: just inside the read window, and just past it.
+    ids = {hours: str(uuid.uuid4()) for hours in (88 * 24, 89 * 24 + 1)}
+    for hours, erasure_id in ids.items():
+        ch_client.command(
+            "INSERT INTO loom.erasure_requests (id, org, scope_type, scope_value, requester,"
+            " status, requested_at, completed_at, version)"
+            " SELECT {id:UUID}, {org:String}, 'namespace', {ns:String}, 'ops@example.com',"
+            " 'completed', now() - INTERVAL {h:UInt32} HOUR, now() - INTERVAL {h:UInt32} HOUR, 1",
+            parameters={
+                "id": erasure_id,
+                "org": admin_agent.org,
+                "ns": f"rcpt-{uuid.uuid4().hex[:6]}",
+                "h": hours,
+            },
+        )
+    assert (await admin_agent.erasure.status(ids[88 * 24]))["status"] == "completed"
+    assert await admin_agent.erasure.status(ids[89 * 24 + 1]) is None
+
+
+@pytest.mark.slow
+@pytest.mark.asyncio
+async def test_a_single_namespace_erasure_says_it_did_not_purge(admin_agent) -> None:
+    """A single namespace's saga never purges, whatever was asked: the receipt says what ran."""
+    ns = f"rcpt-{uuid.uuid4().hex[:6]}"
+    result = await admin_agent.transport.post(
+        "/v1/erasure.request",
+        {
+            "org": admin_agent.org,
+            "scope_type": "namespace",
+            "scope_value": ns,
+            "requester": "ops@example.com",
+            "purge": True,
+        },
+        timeout_s=120.0,
+    )
+    assert result["status"] == "completed"
+    assert result["purge"] is False
+    status = await admin_agent.erasure.status(result["erasure_id"])
+    assert status["purge"] is False and status["census"] and set(status["census"].values()) == {0}

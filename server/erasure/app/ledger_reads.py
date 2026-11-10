@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from server.erasure.api.erasure import parse_purge_flag
+from server.erasure.domain.scopes import applied_purge
 from server.erasure.store import census, ledger, steps_pg
 
 LEDGER_CLOCK_MARGIN_S = 60  # not a setting: a bound on clock skew, answered conservatively
@@ -38,10 +38,5 @@ async def unfinished_reaching(
 
 
 def purges(row: dict[str, Any]) -> bool:
-    """Whether the saga of this ledger row deletes rather than tombstones, read as the saga
-    reads it: a user's from the column, a namespace list's from its scope, a namespace's never."""
-    if row["scope_type"] == "user_id":
-        return bool(row["purge"])
-    if row["scope_type"] == "namespace_list":
-        return parse_purge_flag(str(row["scope_value"]), default=bool(row["purge"]))
-    return False
+    """Whether the saga of this ledger row deletes rather than tombstones, as it runs."""
+    return applied_purge(str(row["scope_type"]), str(row["scope_value"]), bool(row["purge"]))

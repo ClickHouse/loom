@@ -519,6 +519,15 @@ schema. These rules keep that safe. The operator procedure is in
     between two jobs of a source created in one millisecond by the id's text, N-1 by its
     UUID, so the two builds may each run one of such a pair at once. No gate holds the
     rollout, and the mixed-version gate does not check this rule.
+41. **The erasure receipt** (`loom.erasure_requests.census`, migration
+    `091_erasure_census.sql`): N writes every count of a complete census with the verify
+    columns of a saga's terminal and failed rows, and the recovery worker's abandonment
+    checkpoint carries it forward; a resume writes in-progress rows without it until its
+    own census lands. N-1 neither writes nor reads it, so a row N-1 checkpointed reads `''`,
+    which N's `erasure.status` answers as no receipt (`census: null`). N also writes the
+    purge a saga applies to the `purge` column (false for a single namespace), which N-1
+    reads as before, since N-1 never purged a single namespace either. No gate holds the
+    rollout, and the mixed-version gate does not check this rule.
 
 ## What checks them
 
