@@ -43,8 +43,9 @@ _NOT_READS = {
     # Writes, each in its own transaction, and the ClickHouse projection; `take` commits
     # the token it returns.
     "pg_jobs": {"project", "insert", "adopt", "take", "save", "request_cancel", "expire"},
-    # Writes, each in its own transaction (a delete returns what it removed), and the
-    # check of what Postgres can store.
+    # Writes, each in its own transaction (an upsert returns the rows it wrote, a delete
+    # what it removed, `forget_published` also the snapshots later rows serve, which only
+    # keep rows from a ClickHouse delete), and the check of what Postgres can store.
     "pg_datasets": {"storable", "upsert", "approve", "forget", "forget_published"},
 }  # fmt: skip
 

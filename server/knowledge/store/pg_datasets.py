@@ -33,7 +33,7 @@ _WRITE = (
     " user_id = EXCLUDED.user_id, row = EXCLUDED.row"
 )
 # Over an older version only, as ReplacingMergeTree(version) decides.
-_UPSERT = f"{_WRITE} WHERE knowledge_datasets.version < EXCLUDED.version"
+_UPSERT = f"{_WRITE} WHERE knowledge_datasets.version < EXCLUDED.version RETURNING 1"
 # The approval: over the version of the row it read ($10), or no row, never a later one.
 _APPROVE = f"{_WRITE} WHERE knowledge_datasets.version <= $10 RETURNING 1"
 # The publishing job, held against an erasure's delete for the publish's transaction.
@@ -93,23 +93,29 @@ def storable(row: dict[str, Any]) -> bool:
     return _storable(*(str(row[k]) for k in keys))
 
 
+class _Moved(Exception):
+    """A refused approval, raised in its transaction so that it rolls back: a commit of
+    its locks would wait for the standby and could answer 503 for a refusal."""
+
+
 class JobErased(Exception):
     """The ingest job a publish writes for is gone: an erasure deleted it."""
 
 
 async def upsert(
     rows: Sequence[dict[str, Any]], *, job: tuple[str, str, str] | None = None
-) -> None:
-    """Commit each catalog row over an older version of its key (a newer one stays). Every
-    row is `storable`. `job` is the (org, namespace, ingestion_id) of the ingest publishing
-    them, held in `loom.knowledge_jobs`: its row is read in the same transaction, and
-    JobErased raised with nothing written when an erasure deleted it. An erasure deletes
-    jobs before catalog rows, so one committed first leaves no job, and one that comes
-    after waits for this transaction and then deletes what it wrote."""
+) -> list[dict[str, Any]]:
+    """Commit each catalog row over an older version of its key (a newer one stays) and
+    return the rows written, the only ones to project. Every row is `storable`. `job` is
+    the (org, namespace, ingestion_id) of the ingest publishing them, held in
+    `loom.knowledge_jobs`: its row is read in the same transaction, and JobErased raised
+    with nothing written when an erasure deleted it. An erasure deletes jobs before
+    catalog rows, so one committed first leaves no job, and one that comes after waits
+    for this transaction and then deletes what it wrote."""
     async with pg.transaction() as conn:
         if job is not None and not await conn.fetchval(_JOB, *job):
             raise JobErased(job[2])
-        await conn.executemany(_UPSERT, [_args(r) for r in rows])
+        return [r for r in rows if await conn.fetchval(_UPSERT, *_args(r)) is not None]
 
 
 async def at_version(
@@ -144,25 +150,31 @@ async def approve(new: dict[str, Any], *, read: int, doc_id: str) -> Literal["sw
     document commit shares and an erasure holds alone, the head held against a commit."""
     org, namespace, uri = new["org"], new["namespace"], new["source_uri"]
     reviewed = int(new["doc_version"])
-    async with pg.transaction() as conn:
-        await conn.execute(f"SET LOCAL lock_timeout = {int(settings.pg_commit_lock_timeout_ms)}")
-        await conn.execute(
-            f"SELECT pg_advisory_xact_lock_shared({pg.KNOWLEDGE_LOCK_KEY})", org, namespace
-        )
-        head = await conn.fetchrow(_HEAD, org, namespace, uri)
-        if head is not None and (
-            int(head["version"]) > reviewed
-            or (int(head["version"]) == reviewed and head["deleted"])
-        ):
-            return "moved"
-        # Read after the head's lock and the namespace's, which an erasure holds until it
-        # commits: one that ran since the read refuses the approval.
-        if await conn.fetchval(
-            ERASED, org, namespace, [doc_id], settings.pg_erasure_evidence_hours
-        ):
-            return "moved"
-        switched = await conn.fetchval(_APPROVE, *_args(new), int(read))
-    return "switched" if switched is not None else "moved"
+    try:
+        async with pg.transaction() as conn:
+            await conn.execute(
+                f"SET LOCAL lock_timeout = {int(settings.pg_commit_lock_timeout_ms)}"
+            )
+            await conn.execute(
+                f"SELECT pg_advisory_xact_lock_shared({pg.KNOWLEDGE_LOCK_KEY})", org, namespace
+            )
+            head = await conn.fetchrow(_HEAD, org, namespace, uri)
+            if head is not None and (
+                int(head["version"]) > reviewed
+                or (int(head["version"]) == reviewed and head["deleted"])
+            ):
+                raise _Moved
+            # Read after the head's lock and the namespace's, which an erasure holds until
+            # it commits: one that ran since the read refuses the approval.
+            if await conn.fetchval(
+                ERASED, org, namespace, [doc_id], settings.pg_erasure_evidence_hours
+            ):
+                raise _Moved
+            if await conn.fetchval(_APPROVE, *_args(new), int(read)) is None:
+                raise _Moved
+    except _Moved:
+        return "moved"
+    return "switched"
 
 
 async def forget(
@@ -174,14 +186,16 @@ async def forget(
     if not uris or not _storable(org, namespace):
         return set()
     which = "doc_version < $4" if before else "doc_version = $4"
-    gone = await pg.fetch(
-        "DELETE FROM loom.knowledge_datasets WHERE org = $1 AND namespace = $2"
-        f" AND source_uri = ANY($3::text[]) AND {which} RETURNING dataset_id",
-        org,
-        namespace,
-        uris,
-        int(before or only),
-    )
+    # In a transaction, so that a commit the standby's wait leaves unknown says so.
+    async with pg.transaction() as conn:
+        gone = await conn.fetch(
+            "DELETE FROM loom.knowledge_datasets WHERE org = $1 AND namespace = $2"
+            f" AND source_uri = ANY($3::text[]) AND {which} RETURNING dataset_id",
+            org,
+            namespace,
+            uris,
+            int(before or only),
+        )
     return {str(r["dataset_id"]) for r in gone}
 
 

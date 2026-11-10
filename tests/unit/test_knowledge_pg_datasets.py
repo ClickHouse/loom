@@ -1,10 +1,12 @@
 """The dataset catalog under the Postgres authority (`datasets_repo` with `pg_datasets`
 faked): a write commits to Postgres and then projects, a read takes Postgres's rows and
-those only ClickHouse holds, and a delete removes Postgres's rows first."""
+those only ClickHouse holds, a delete removes Postgres's rows first, and a refused
+approval rolls back."""
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from datetime import datetime
@@ -57,11 +59,12 @@ class _CH:
 
 @pytest.fixture
 def on_pg(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    held: dict[str, Any] = {"rows": [], "upserted": [], "jobs": []}
+    held: dict[str, Any] = {"rows": [], "upserted": [], "jobs": [], "newer": set()}
 
-    async def upsert(rows: list[dict[str, Any]], *, job: Any = None) -> None:
+    async def upsert(rows: list[dict[str, Any]], *, job: Any = None) -> list[dict[str, Any]]:
         held["upserted"].extend(rows)
         held["jobs"].append(job)
+        return [r for r in rows if r["dataset_id"] not in held["newer"]]
 
     async def at_version(*a: Any, **k: Any) -> list[dict[str, Any]]:
         return [dict(r) for r in held["rows"]]
@@ -81,6 +84,15 @@ def test_a_catalog_write_commits_to_postgres_then_projects(on_pg: dict[str, Any]
     rows = [_row("ds_a", 5)]
     asyncio.run(repo.insert_catalog(rows, ch=ch))  # type: ignore[arg-type]
     assert on_pg["upserted"] == rows and ch.inserted == rows
+
+
+def test_a_row_postgres_keeps_out_is_not_projected(on_pg: dict[str, Any]) -> None:
+    """A key Postgres holds at a newer version keeps the older row out of ClickHouse too."""
+    ch = _CH()
+    on_pg["newer"].add("ds_old")
+    rows = [_row("ds_a", 5), _row("ds_old", 6)]
+    asyncio.run(repo.insert_catalog(rows, ch=ch))  # type: ignore[arg-type]
+    assert on_pg["upserted"] == rows and ch.inserted == rows[:1]
 
 
 def test_a_projection_that_fails_leaves_the_commit_and_warns(
@@ -187,3 +199,71 @@ def test_a_catalog_row_round_trips_through_postgres_json_to_the_millisecond() ->
             row[c] is None or row[c].microsecond % 1000 == 0 for c in pg_datasets.TIME_COLUMNS
         )
     assert approved["approved_at"].microsecond == 678000 and pending["approved_at"] is None
+
+
+class _Conn:
+    """A Postgres connection answering the approval's head read and its writes."""
+
+    def __init__(self, head: dict[str, Any] | None, approved: bool = True) -> None:
+        self.head, self.approved = head, approved
+
+    async def execute(self, *a: Any) -> None:
+        return None
+
+    async def fetchrow(self, *a: Any) -> dict[str, Any] | None:
+        return self.head
+
+    async def fetchval(self, sql: str, *a: Any) -> Any:
+        if "INSERT" in sql:
+            return 1 if self.approved else None
+        return None  # no erasure evidence
+
+    async def fetch(self, *a: Any) -> list[dict[str, Any]]:
+        return [{"dataset_id": "ds_a"}]
+
+
+def _transactions(monkeypatch: pytest.MonkeyPatch, conn: _Conn) -> list[str]:
+    """Fake `pg.transaction`: each one's end, `commit` or `rollback`."""
+    ends: list[str] = []
+
+    @contextlib.asynccontextmanager
+    async def transaction() -> Any:
+        try:
+            yield conn
+        except BaseException:
+            ends.append("rollback")
+            raise
+        ends.append("commit")
+
+    monkeypatch.setattr(pg, "transaction", transaction)
+    return ends
+
+
+@pytest.mark.parametrize(
+    ("head", "approved"),
+    [({"version": 101, "deleted": False}, True), ({"version": 100, "deleted": True}, True),
+     (None, False)],
+)  # fmt: skip
+def test_a_refused_approval_rolls_back(
+    monkeypatch: pytest.MonkeyPatch, head: dict[str, Any] | None, approved: bool
+) -> None:
+    """A refusal commits nothing, so its locks never wait for the standby: it answers
+    `moved`, not a 503 whose outcome is unknown."""
+    ends = _transactions(monkeypatch, _Conn(head, approved))
+    new = {**_row("ds_a", 9), "doc_version": 100}
+    assert asyncio.run(pg_datasets.approve(new, read=9, doc_id="d")) == "moved"
+    assert ends == ["rollback"]
+
+
+def test_an_approval_over_the_reviewed_head_commits(monkeypatch: pytest.MonkeyPatch) -> None:
+    ends = _transactions(monkeypatch, _Conn({"version": 100, "deleted": False}))
+    new = {**_row("ds_a", 9), "doc_version": 100}
+    assert asyncio.run(pg_datasets.approve(new, read=9, doc_id="d")) == "switched"
+    assert ends == ["commit"]
+
+
+def test_a_forget_deletes_in_a_transaction(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A commit the standby's wait leaves unknown then answers `outcome_unknown`."""
+    ends = _transactions(monkeypatch, _Conn(None))
+    assert asyncio.run(pg_datasets.forget("o", "ns", ["repo://a.csv"], before=100)) == {"ds_a"}
+    assert ends == ["commit"]

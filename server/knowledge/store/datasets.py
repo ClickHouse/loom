@@ -145,14 +145,16 @@ async def insert_catalog(
     ch: _CHClient | None = None,
 ) -> None:
     """Write catalog rows: under the Postgres authority committed there, then projected.
-    `job` is the ingest publishing them, when Postgres holds it (`pg_datasets.upsert`)."""
+    `job` is the ingest publishing them, when Postgres holds it (`pg_datasets.upsert`).
+    A row Postgres kept out (its key holds a newer version) is not projected."""
     held: list[dict[str, Any]] = []
     rest: list[dict[str, Any]] = []
     for r in rows:
         (held if pg.enabled() and pg_datasets.storable(r) else rest).append(r)
     if held:
-        await pg_datasets.upsert(held, job=job)
-        await project(held, ch=ch)
+        written = await pg_datasets.upsert(held, job=job)
+        if written:
+            await project(written, ch=ch)
     if rest:  # under Postgres, a key it cannot store: ClickHouse alone, as without it
         ch = ch or _default_client()
         await ch.insert(DATASETS, rest, settings={"async_insert": 0})

@@ -106,12 +106,12 @@ async def test_a_catalog_row_lands_only_over_an_older_version(
 
     org = unique_org("pgds-upsert")
     first = _catalog(org, 100, name="sales\x00")  # text Postgres cannot store, kept
-    await pg_datasets.upsert([first])
+    assert await pg_datasets.upsert([first]) == [first]
     (read,) = await pg_datasets.at_version(org, "docs", _URI, 100)
     assert read == first
     later = {**first, "snapshot_id": 2, "version": int(first["version"]) + 5}
-    await pg_datasets.upsert([later])
-    await pg_datasets.upsert([first])  # an older version stays out
+    assert await pg_datasets.upsert([later]) == [later]
+    assert await pg_datasets.upsert([first]) == []  # an older version stays out
     (read,) = await pg_datasets.at_version(org, "docs", _URI, 100, dataset_id="ds_sales")
     assert read["snapshot_id"] == 2
 
