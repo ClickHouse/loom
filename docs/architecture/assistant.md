@@ -328,7 +328,7 @@ treat stored text as data that cannot grant a tool or approve a change. The agen
 streams the text of every model step as one answer's content, with nothing between steps
 ([streaming](../features/integrations/librechat.md#tool-errors-streaming-and-cancellation)),
 so neither the bridge nor the dashboard can tell a lead-in ("Let me search the
-memories.") from the answer it runs into; while no text has arrived the dashboard shows
+memories.") from the answer it runs into. While no text has arrived, the dashboard shows
 that the assistant is answering. Asked how a namespace should write, the agent
 recommends rather than only answers: key shape, one claim per key, a memory, a document
 or a record, pins and kinds, each recommendation naming its rows and citing the finding it

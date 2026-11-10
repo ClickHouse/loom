@@ -72,15 +72,15 @@ agent in the UI. It is not Loom authorization; the token on each call is.
   (`/api/agents/chat/stream/:streamId`). The agents API (`/api/agents/v1/chat/completions`)
   streams OpenAI-style chunks, but compresses the response when the client accepts
   compression, and a compressed stream arrives only when the answer is complete: a client
-  that needs incremental tokens sends `Accept-Encoding: identity`. It runs the MCP tools
-  inside the run and sends no `tool_calls` chunk for them: the stream holds content and
-  reasoning deltas only, the text of every model step as one answer with nothing between
-  steps.
+  that needs incremental tokens sends `Accept-Encoding: identity`. The agents API runs
+  the MCP tools inside the run and sends no `tool_calls` chunk for them: the stream holds
+  content and reasoning deltas only, the text of every model step as one answer with
+  nothing between steps.
 - **Cancellation.** In the UI path the generation runs server-side, apart from the
   browser connection: closing the tab does not stop it, and its tool calls still reach
   Loom. The stop button (`/api/agents/chat/abort`) stops it. On the agents API, closing
-  the connection stops the run: in one probe, disconnecting after the first token left no
-  Loom call in the next 20 s.
+  the connection stops the run: in one probe, with an agent whose first token came before
+  its tool calls, disconnecting after the first token left no Loom call in the next 20 s.
 
 ## What LibreChat stores
 
@@ -325,11 +325,7 @@ The same cases asked through Loom's chat route, each with the person's own token
 assistant's half of the default $1 cap (all 3 correct with the cap at $20); a mean of
 $0.027 and a maximum of $0.047 per answer, p95 9.4 s.
 
-In the deployed agent's table, the disconnect row is from an earlier agent definition,
-whose first streamed delta, a lead-in, came before its first tool call. The deployed
-definition asks for no text before the tool calls, so its first delta comes after them:
-a rerun of `run --cancel-probe` against it disconnects once they have run, and its 0
-does not show that a disconnect stops them.
+The deployed agent's table was measured with an earlier agent definition.
 
 A model's answers vary from run to run, so one run of 28 cases is a sample, not a
 bound. The invalid memory citations are two hash keys the answer shortened and one key
