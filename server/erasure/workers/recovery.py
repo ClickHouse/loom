@@ -229,6 +229,8 @@ def _ledger_verify(row: LedgerRow) -> VerifyColumns:
         out["residue_count"] = row["residue_count"]
     if "residue" in row:
         out["residue"] = row["residue"]
+    if "census" in row:
+        out["census"] = row["census"]
     out["verified_at"] = row.get("verified_at")
     return out
 

@@ -12,7 +12,6 @@ Scopes (`ScopeType`): `user_id` (one user across the org's namespaces),
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from typing import Literal
 
@@ -82,27 +81,6 @@ def _check_user_scope(scope_type: str, scope_value: str) -> None:
         raise ValueError(f"user_id scope_value {scope_value!r} names no user")
 
 
-def _scope_flag(scope_value: str, key: str, default: bool) -> bool:
-    """A flag as stored in a `namespace_list` scope_value object, so a resumed
-    saga (the recovery worker re-reads the ledger row) keeps the requester's
-    choice; `default` for a bare array or a missing key."""
-    try:
-        parsed = json.loads(scope_value or "")
-    except json.JSONDecodeError:
-        return default
-    if isinstance(parsed, dict) and key in parsed:
-        return bool(parsed[key])
-    return default
-
-
-def parse_external_flag(scope_value: str, default: bool = True) -> bool:
-    return _scope_flag(scope_value, "external", default)
-
-
-def parse_purge_flag(scope_value: str, default: bool = False) -> bool:
-    return _scope_flag(scope_value, "purge", default)
-
-
 class _ErasureStepResult(BaseModel):
     step: str
     rows_affected: int
@@ -133,6 +111,11 @@ class ErasureRequestOutput(BaseModel):
     # (the Postgres authority or the bucket, which the server log names); `residue` then
     # holds what it did count.
     verified_at: datetime | None = None
+    # The receipt: every count of this run's census, zeros included; `None` when no census
+    # counted every store (none ran, or one left a store uncounted).
+    census: dict[str, int] | None = None
+    # Whether the saga deletes rows (true) or tombstones them; a single namespace's never does.
+    purge: bool = False
     # Why a failed saga failed, `""` otherwise: `<step>: <error>` or a bare `<error>`
     # outside a step, where `<error>` is the exception's kind or a Loom error's
     # `<CODE>: <message>`, or `verify.residue: ErasureResidueError: residue after
@@ -186,6 +169,12 @@ class ErasureStatusOutput(BaseModel):
     # uncounted (the Postgres authority or the bucket, which the server log names);
     # `residue` then holds what it did count.
     verified_at: datetime | None = None
+    # The receipt: every count of the latest run's census, zeros included; `None` when the
+    # latest row holds no census that counted every store (a run in progress, none ran, one
+    # left a store uncounted, or a build that keeps no census wrote the row).
+    census: dict[str, int] | None = None
+    # Whether the saga deletes rows (true) or tombstones them; a single namespace's never does.
+    purge: bool = False
 
 
 # ============================================================

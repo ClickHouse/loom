@@ -80,6 +80,8 @@ GDPR Article 17 forgetting.
 | `residue_count` | `int` | Verified forgetting: live rows and bucket objects the post-erasure census still found in scope, per substrate; 0 / {} on a completed saga. |
 | `residue` | `dict[str, int]` | Rows still live per table after the saga, only tables with a non-zero count (the Postgres authority's under `pg:<table>`), and the bucket objects left, under the key `objects.document_originals`; `{}` on success. |
 | `verified_at` | `datetime \| None` | When the residue census ran (UTC); `None` if it never ran or left a store uncounted (the Postgres authority or the bucket, which the server log names); `residue` then holds what it did count. |
+| `census` | `dict[str, int] \| None` | The receipt: every count of this run's census, zeros included; `None` when no census counted every store (none ran, or one left a store uncounted). |
+| `purge` | `bool` | Whether the saga deletes rows (true) or tombstones them; a single namespace's never does. |
 | `failure_reason` | `str` | Why a failed saga failed, `""` otherwise: `<step>: <error>` or a bare `<error>` outside a step, where `<error>` is the exception's kind or a Loom error's `<CODE>: <message>`, or `verify.residue: ErasureResidueError: residue after erasure… |
 | `steps_completed` | `list[str]` | Names of the steps finished so far, sorted. |
 
@@ -109,5 +111,7 @@ Check the status of an in-flight erasure request (queued, running, completed, fa
 | `residue_count` | `int` | Verified forgetting. |
 | `residue` | `dict[str, int]` | Rows still live per table at the last census (the Postgres authority's under `pg:<table>`), and the bucket objects left, under the key `objects.document_originals`; `{}` when none. |
 | `verified_at` | `datetime \| None` | When the last residue census ran (UTC); `None` if it has not run or left a store uncounted (the Postgres authority or the bucket, which the server log names); `residue` then holds what it did count. |
+| `census` | `dict[str, int] \| None` | The receipt: every count of the latest run's census, zeros included; `None` when the latest row holds no census that counted every store (a run in progress, none ran, one left a store uncounted, or a build that keeps no census wrote the… |
+| `purge` | `bool` | Whether the saga deletes rows (true) or tombstones them; a single namespace's never does. |
 
 <!-- prettier-ignore-end -->

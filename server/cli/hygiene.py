@@ -509,21 +509,22 @@ def _utc_instant(text: str) -> datetime:
 
 def _re_verify_scope(row: Mapping[str, Any]) -> tuple[str, str | list[str], bool, bool]:
     """(census scope_type, census scope_value, purge, external) of a ledger row."""
-    from server.erasure.api.erasure import parse_external_flag, parse_purge_flag
-    from server.erasure.domain.scopes import parse_namespace_list
+    from server.erasure.domain.scopes import (
+        applied_purge,
+        parse_external_flag,
+        parse_namespace_list,
+    )
 
     scope_type = str(row["scope_type"])
     scope_value = str(row["scope_value"])
+    purge = applied_purge(scope_type, scope_value, bool(row.get("purge")))
     if scope_type == "namespace_list":
         return (
             "namespace",
             parse_namespace_list(scope_value),
-            parse_purge_flag(scope_value),
+            purge,
             parse_external_flag(scope_value),
         )
-    # A user saga keeps `purge` in its ledger column (a GDPR deletion); a single
-    # namespace's saga never purges.
-    purge = scope_type == "user_id" and bool(row.get("purge"))
     return ("user_id" if scope_type == "user_id" else "namespace", scope_value, purge, True)
 
 

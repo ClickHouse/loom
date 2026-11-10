@@ -12,7 +12,20 @@ from typing import Any
 
 from server.core.repo_base import _CHClient
 
-_COPY = re.compile(r"^_provider_rebuild_[0-9a-f]{32}_[a-z_]+_(source|target|publish|backup)$")
+_PREFIX = "_provider_rebuild_"
+_COPY = re.compile(rf"^{_PREFIX}[0-9a-f]{{32}}_[a-z_]+_(source|target|publish|backup)$")
+# The census key of every copy: copies are named per rebuild, so a receipt sums them under
+# one key that does not change from one rebuild to the next.
+REBUILD_COPIES = "provider_rebuild_copies"
+
+
+def fold_census(per_table: dict[str, int]) -> dict[str, int]:
+    """A complete census with every rebuild copy's count summed under one key, 0 when
+    there is none: a complete census always looked for them."""
+    copy_key = f"loom.{_PREFIX}"
+    out = {t: n for t, n in per_table.items() if not t.startswith(copy_key)}
+    out[REBUILD_COPIES] = sum(n for t, n in per_table.items() if t.startswith(copy_key))
+    return out
 
 
 async def copy_residue(
@@ -21,7 +34,7 @@ async def copy_residue(
     copies = await ch.query_all(
         "SELECT t.name AS table, groupArray(c.name) AS columns FROM system.tables AS t "
         "INNER JOIN system.columns AS c ON t.database = c.database AND t.name = c.table "
-        "WHERE t.database = currentDatabase() AND startsWith(t.name, '_provider_rebuild_') "
+        f"WHERE t.database = currentDatabase() AND startsWith(t.name, '{_PREFIX}') "
         "GROUP BY t.name"
     )
     residue = {}

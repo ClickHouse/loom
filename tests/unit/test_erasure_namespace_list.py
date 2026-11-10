@@ -10,8 +10,8 @@ from typing import Any
 
 import pytest
 
-from server.erasure.api.erasure import ErasureRequestInput, parse_purge_flag
-from server.erasure.domain.scopes import parse_namespace_list
+from server.erasure.api.erasure import ErasureRequestInput
+from server.erasure.domain.scopes import parse_namespace_list, parse_purge_flag
 from server.erasure.store import census as erasure_census
 from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store import steps_graph as graph_steps
@@ -370,7 +370,7 @@ def test_the_handler_keeps_a_purge_written_inside_scope_value() -> None:
 
 
 def test_external_false_is_only_allowed_for_a_namespace_list() -> None:
-    from server.erasure.api.erasure import parse_external_flag
+    from server.erasure.domain.scopes import parse_external_flag
 
     ErasureRequestInput(
         org="o",

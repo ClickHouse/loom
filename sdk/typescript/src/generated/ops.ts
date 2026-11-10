@@ -2785,6 +2785,8 @@ export interface ErasureRequestOutput {
   residue_count?: number;
   residue?: Record<string, number>;
   verified_at?: string | null;
+  census?: Record<string, number> | null;
+  purge?: boolean;
   failure_reason?: string;
   steps_completed?: string[];
 }
@@ -2808,6 +2810,8 @@ export interface ErasureStatusOutput {
   residue_count?: number;
   residue?: Record<string, number>;
   verified_at?: string | null;
+  census?: Record<string, number> | null;
+  purge?: boolean;
 }
 
 export interface ExtractionPolicyClearInput {

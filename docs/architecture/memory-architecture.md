@@ -1279,12 +1279,13 @@ writer's pending or processing job is copied with no identity (`agent`, `user_id
 `source_class` column) and no content, under sequential reads, so the job a writer still
 owns stays cancelled.
 
-The terminal row carries `residue_count`, `residue` (per table, and the object count) and
-`verified_at`. A resumed saga re-runs the owning step of any table the last census found
-rows in. `purge=true` hard-deletes: lightweight `DELETE FROM` on the tables in
-`LIGHTWEIGHT_PURGE_TABLES`, `ALTER TABLE … DELETE` on the rest, each mutation tagged and
-polled to completion. `tests/unit/test_every_table_is_classified.py` fails on a table in
-none of the three lists.
+The terminal row carries `residue_count`, `residue` (per table, and the object count),
+`verified_at` and `census` (every count, zeros included, when the census counted every
+store). A resumed saga re-runs the owning step of any table the last census found rows in,
+and always re-runs `verify.residue`. `purge=true` hard-deletes: lightweight `DELETE FROM` on
+the tables in `LIGHTWEIGHT_PURGE_TABLES`, `ALTER TABLE … DELETE` on the rest, each mutation
+tagged and polled to completion. `tests/unit/test_every_table_is_classified.py` fails on a
+table in none of the three lists.
 
 A user-scope step reaches a table with no `user_id` column through a predicate that holds
 a subquery: the user's memory keys, record ids or shared keys, or the graph keys and
