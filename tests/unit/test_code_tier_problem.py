@@ -721,7 +721,6 @@ def test_a_linked_or_changed_file_reads_refused_with_its_own_fix() -> None:
     for text in (
         "/w/delta.json is a symlink or a symlink loop; not read",
         "/r/co/package.json is not a regular file; not read",
-        "/w/delta.json changed while it was read",
     ):
         health = _failing_with(recorder.error_text(FileRefused(text)))
         assert health.kind == "file_refused", text
@@ -915,6 +914,18 @@ def test_each_real_refusal_gets_its_own_fix(tmp_path: Any, monkeypatch: pytest.M
     os.mkfifo(tmp_path / "fifo.json")
     assert fix(_refusal(lambda: uf.read_delta(tmp_path / "fifo.json"))).startswith(
         "The tier refused a file it reads"
+    )
+    # a writer still at the file: its size differs from the one stated when opened
+    real_fstat = os.fstat
+
+    def stale(fd: int) -> os.stat_result:
+        st = list(real_fstat(fd))
+        st[6] -= 1  # st_size
+        return os.stat_result(st)
+
+    monkeypatch.setattr(uf.os, "fstat", stale)
+    assert fix(_refusal(lambda: uf.read_delta(delta))).startswith(
+        "A file the tier reads changed while it was read"
     )
 
 

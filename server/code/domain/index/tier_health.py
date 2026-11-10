@@ -366,11 +366,16 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
             "package.json is read up to 1 MiB and a yarn.lock up to 64 MiB, caps no setting "
             "changes. The tier retries when the repository's file is smaller."
         )
+    if kind == "file_refused" and "changed while it was read" in text:
+        return (
+            "A file the tier reads changed while it was read: something was still writing "
+            "it. The tier retries next pass; nothing in the repository needs to change."
+        )
     if kind == "file_refused" and not _OVER_CAP.search(text):
         return (
-            "The tier refused a file it reads because it is a link, not a regular file, or "
-            "changed while it was read (the error names it and which): the repository's "
-            "file, or what its job wrote, is what to change. It recurs every pass until then."
+            "The tier refused a file it reads because it is a link or not a regular file "
+            "(the error names it and which): the repository's file, or what its job wrote, "
+            "is what to change. It recurs every pass until then."
         )
     if kind == "file_refused":
         return (
