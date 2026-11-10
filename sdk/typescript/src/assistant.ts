@@ -37,12 +37,18 @@ export interface AssistantCitation {
   ref: string;
 }
 
+/** How far an answer rests on what Loom holds: `supported`, `unsupported`, `unchecked` or
+ *  `none`, as docs/architecture/assistant.md#support defines them; a value this SDK does
+ *  not know, or none from an older server, reads as `unchecked`. */
+export type AssistantSupport = "supported" | "unsupported" | "unchecked" | "none";
+
 /** The whole answer; `runId` is the `run_id` of its ledger rows. */
 export interface AssistantAnswer {
   text: string;
   runId: string;
   model: string;
   citations: AssistantCitation[];
+  support: AssistantSupport;
   promptTokens: number;
   completionTokens: number;
 }
@@ -120,6 +126,7 @@ export function assistantChat(transport: Transport): AssistantChat {
         runId: "",
         model: "",
         citations: [],
+        support: "unchecked",
         promptTokens: 0,
         completionTokens: 0,
       };
@@ -225,6 +232,13 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+const SUPPORTS: readonly string[] = ["supported", "unsupported", "unchecked", "none"];
+
+/** The support the server sent; a value this SDK does not know, or none, reads as unchecked. */
+function supportOf(v: unknown): AssistantSupport {
+  return typeof v === "string" && SUPPORTS.includes(v) ? (v as AssistantSupport) : "unchecked";
+}
+
 /** Fold one chunk into `answer`; the text it adds. */
 function fold(event: Record<string, unknown>, answer: AssistantAnswer): string {
   if (event.object === "loom.citations") {
@@ -235,6 +249,7 @@ function fold(event: Record<string, unknown>, answer: AssistantAnswer): string {
       reason: String(c.reason ?? ""),
       ref: String(c.ref ?? ""),
     }));
+    answer.support = supportOf(event.support);
     return "";
   }
   answer.runId ||= String(event.id ?? "");

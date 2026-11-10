@@ -5,6 +5,7 @@
  */
 import { describe, expectTypeOf, it } from "vitest";
 import type { Agent, Body } from "./agent.js";
+import type { AssistantEvent, AssistantSupport } from "./assistant.js";
 import type { GroupClient, LoomClient, LoomClientOptions, OpInput, OpOutput } from "./client.js";
 import type { MemoryGetOutput, MemorySearchInput, MemorySearchOutput, OpName, OpSpec } from "./generated/ops.js";
 import type { CallResult, RetryOverride } from "./index.js";
@@ -87,5 +88,11 @@ describe("Agent", () => {
     expectTypeOf(agent.tools().definitions("openai")).toEqualTypeOf<OpenAIToolDefinition[]>();
     // @ts-expect-error not one of the six tools
     agent.tools({}, { only: ["loom_forget"] });
+  });
+});
+
+describe("assistant", () => {
+  it("an answer's support is AssistantSupport", () => {
+    expectTypeOf<Extract<AssistantEvent, { type: "answer" }>["answer"]["support"]>().toEqualTypeOf<AssistantSupport>();
   });
 });

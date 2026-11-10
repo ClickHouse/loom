@@ -151,6 +151,8 @@ def _case(case_id: str) -> dict:
         ("revoked-token", "The tool call failed: token is revoked.", True),
         ("revoked-token", "The token is revoked, but deploys freeze on Friday.", False),
         ("abstain-wifi", "The Wi-Fi password is not stored in Loom.", True),
+        ("abstain-wifi", "Nothing stored in Loom answers this.", True),
+        ("abstain-wifi", "**Nothing stored in Loom answers this.**", True),
         ("abstain-wifi", "The Wi-Fi password is hunter2.", False),
     ],
 )

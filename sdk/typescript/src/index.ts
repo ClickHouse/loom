@@ -16,6 +16,7 @@ export type {
   AssistantChat,
   AssistantCitation,
   AssistantEvent,
+  AssistantSupport,
   AssistantTurn,
 } from "./assistant.js";
 export { ASSISTANT_ROUTE } from "./assistant.js";

@@ -77,6 +77,10 @@ async function ask(question: string) {
   return user;
 }
 
+/** The stream's citations event, with the answer's support. */
+const citationsEvent = (citations: object[], support: string) =>
+  `data: ${JSON.stringify({ object: "loom.citations", id: "msg-1", choices: [], citations, support })}\n\n`;
+
 const lastAnswer = () => {
   // The conversation's own items: an answer's lists hold items too.
   const turns = screen.getByRole("list", { name: "Conversation" }).children;
@@ -431,7 +435,7 @@ describe("AssistantChat", () => {
     ];
     await act(async () => {
       s.text("Fridays [memory:billing/invoices@v3], per [doc:spec.pdf § Billing] and [code:server/__init__.py:12].");
-      s.raw(`data: ${JSON.stringify({ object: "loom.citations", id: "msg-1", choices: [], citations: cited })}\n\n`);
+      s.raw(citationsEvent(cited, "supported"));
       s.done();
     });
     const sources = await screen.findByRole("list", { name: "Sources" });
@@ -442,7 +446,10 @@ describe("AssistantChat", () => {
     expect(within(sources).getAllByRole("listitem")).toHaveLength(3);
     expect(within(sources).getByText(/code citations are not checked/)).toBeInTheDocument();
     expect(within(sources).queryByRole("button", { name: /code:/ })).toBeNull();
-    expect(screen.queryByText(/Unsupported/)).not.toBeInTheDocument();
+    // Two of its three sources were verified (code is never checked): the label counts them.
+    expect(screen.getByTestId("assistant-support")).toHaveTextContent(
+      "Checked against what Loom holds: 2 of 3 sources verified",
+    );
     const memory = within(sources).getByRole("button", { name: "memory:billing/invoices@v3" });
     await userEvent.setup().click(memory);
     expect(useStore.getState().inspectedMemoryKey).toBe("billing/invoices");
@@ -452,7 +459,7 @@ describe("AssistantChat", () => {
     expect(useStore.getState().pendingDocSourceUri).toBe("spec.pdf");
   });
 
-  it("marks an answer with no verified citation as unsupported", async () => {
+  it("marks an answer whose sources do not check out as unconfirmed", async () => {
     const s = sse();
     answers.push(() => s);
     const { container } = render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
@@ -475,15 +482,72 @@ describe("AssistantChat", () => {
     ];
     await act(async () => {
       s.text("Fridays [memory:billing/invoices@v2].");
-      s.raw(`data: ${JSON.stringify({ object: "loom.citations", id: "msg-1", choices: [], citations: cited })}\n\n`);
+      s.raw(citationsEvent(cited, "unsupported"));
       s.done();
     });
-    expect(await screen.findByText(/Unsupported: no citation/)).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't confirm: none of its sources were verified")).toBeInTheDocument();
     expect(screen.getByText(/the current version is 3/)).toBeInTheDocument();
     // A statement is named by its first line, so one query of an answer reads apart from another.
     expect(screen.getByText("SQL query: SELECT count() FROM loom.memory")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /memory:/ })).toBeNull();
     expect(await axeViolations(container)).toEqual([]);
+  });
+
+  it.each([
+    // A greeting or an abstention makes no claim: no label, no sources.
+    ["none", "Hello! What would you like to know?", null],
+    ["unsupported", "Deploys freeze on Fridays.", "Couldn't confirm: it gives no sources"],
+    ["unchecked", "This namespace holds 1,204 memories.", "Not checked: it gives no sources Loom can check"],
+    // A value this dashboard does not know reads as unchecked.
+    ["a-later-state", "Deploys freeze on Fridays.", "Not checked: it gives no sources Loom can check"],
+  ])("labels an uncited answer whose support is %s", async (support, text, label) => {
+    const s = sse();
+    answers.push(() => s);
+    const { container } = render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    await ask("Hi");
+    await act(async () => {
+      s.text(text);
+      s.raw(citationsEvent([], support));
+      s.done();
+    });
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The answer is complete."));
+    if (label === null) {
+      expect(screen.queryByTestId("assistant-sources")).toBeNull();
+      expect(screen.getByRole("status")).toHaveTextContent(/^The answer is complete\.$/);
+    } else {
+      expect(screen.getByTestId("assistant-support")).toHaveTextContent(label);
+      // The label is said with the end of the answer.
+      expect(screen.getByRole("status")).toHaveTextContent(`The answer is complete. ${label}.`);
+    }
+    expect(await axeViolations(container)).toEqual([]);
+  });
+
+  it("names each answer's Why button apart and ties it to its label", async () => {
+    const first = sse();
+    const second = sse();
+    answers.push(
+      () => first,
+      () => second,
+    );
+    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    await ask("One");
+    await act(async () => {
+      first.text("Fridays.");
+      first.raw(citationsEvent([], "unsupported"));
+      first.done();
+    });
+    await ask("Two");
+    await act(async () => {
+      second.text("Mondays.");
+      second.raw(citationsEvent([], "unchecked"));
+      second.done();
+    });
+    const one = await screen.findByRole("button", { name: "Why this label, answer 1" });
+    const two = screen.getByRole("button", { name: "Why this label, answer 2" });
+    expect(one).toHaveAccessibleDescription("Couldn't confirm: it gives no sources");
+    expect(two).toHaveAccessibleDescription("Not checked: it gives no sources Loom can check");
+    await userEvent.setup().click(one);
+    expect(await screen.findByText(/gives no source for what it says/)).toBeInTheDocument();
   });
 
   it("asks nothing while blocked, and says why", async () => {

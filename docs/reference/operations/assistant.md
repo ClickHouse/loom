@@ -27,5 +27,6 @@ Ask the Loom assistant one question about this namespace and get one cited answe
 | `run_id` | `str` | The answer's id: the run its tool calls are ledgered under (agent_events.run_id). |
 | `model` | `str` | The model that answered. |
 | `citations` | `list[AssistantCitation]` | Each citation in `answer`, checked when the answer ended. |
+| `support` | `str` | How far the answer rests on what Loom holds: supported, unsupported, unchecked or none (no claim, such as a greeting or an abstention); default unchecked. |
 
 <!-- prettier-ignore-end -->

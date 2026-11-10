@@ -21,6 +21,7 @@ from typing import Any
 import httpx
 
 from server.assistant.api.models import AssistantCitation
+from server.assistant.domain import support as rule
 from server.assistant.domain.citations import Citation, parse, section_path
 from server.assistant.store import ledger
 from server.memory.app import exposure_ledger
@@ -55,32 +56,45 @@ def set_app(app: Any) -> None:
     _app = app
 
 
-def _result(c: Citation, verified: bool, reason: str = "") -> AssistantCitation:
-    return AssistantCitation(kind=c.kind, text=c.text, verified=verified, reason=reason, ref=c.ref)
+@dataclass(frozen=True)
+class Checked:
+    """One citation as the answer gets it, and the code its check ended with (codes in
+    server/assistant/domain/support.py), which decides the answer's support."""
+
+    citation: AssistantCitation
+    code: str
+
+
+def _result(c: Citation, code: str, reason: str = "") -> Checked:
+    verified = code == rule.VERIFIED
+    return Checked(
+        AssistantCitation(kind=c.kind, text=c.text, verified=verified, reason=reason, ref=c.ref),
+        code,
+    )
 
 
 async def verify(
     answer_text: str, *, org: str, namespace: str, token: str, run_id: str, subject: str
-) -> list[AssistantCitation]:
+) -> list[Checked]:
     """Every citation in `answer_text`, each marked verified or not, with why not, and
     its `ref` (the memory key, document source or code path it names)."""
     found = parse(answer_text)
     cited, unchecked = found[:_MAX_CHECKED], found[_MAX_CHECKED:]
-    rest = [_result(c, False, "past the citations one answer checks") for c in unchecked]
+    rest = [_result(c, rule.PAST_CAP, "past the citations one answer checks") for c in unchecked]
     if not cited:
         return rest
-    out: dict[int, AssistantCitation] = {}
+    out: dict[int, Checked] = {}
     try:
         async with asyncio.timeout(_CHECKS_S):
             await _check_all(cited, out, org, namespace, token, run_id, subject)
     except TimeoutError:
         log.warning("an answer's citation checks ran past %s s", _CHECKS_S)
-    return [out.get(i) or _result(c, False, _NOT_RUN) for i, c in enumerate(cited)] + rest
+    return [out.get(i) or _result(c, rule.NOT_RUN, _NOT_RUN) for i, c in enumerate(cited)] + rest
 
 
 async def _check_all(
     cited: list[Citation],
-    out: dict[int, AssistantCitation],
+    out: dict[int, Checked],
     org: str,
     namespace: str,
     token: str,
@@ -96,7 +110,7 @@ async def _check_all(
     documents: dict[str, list[int]] = {}
     for i, c in enumerate(cited):
         if c.kind == "code":
-            out[i] = _result(c, False, "code citations are not checked")
+            out[i] = _result(c, rule.CODE, "code citations are not checked")
         elif c.kind == "doc":
             documents.setdefault(c.source_uri, []).append(i)
     gate = asyncio.Semaphore(_PARALLEL_READS)
@@ -183,16 +197,20 @@ async def _read(read: Awaitable[set[str]]) -> set[str] | None:
         return None
 
 
-def _from_ledger(c: Citation, seen: _Ledgered) -> AssistantCitation:
+def _from_ledger(c: Citation, seen: _Ledgered) -> Checked:
     if c.kind == "sql":
         if seen.digests is None:
-            return _result(c, False, _NOT_RUN)
-        ran = text_digest(c.sql) in seen.digests
-        return _result(c, ran, "" if ran else "no insights.query in this answer ran it")
+            return _result(c, rule.NOT_RUN, _NOT_RUN)
+        if text_digest(c.sql) in seen.digests:
+            return _result(c, rule.VERIFIED)
+        return _result(c, rule.SQL_NOT_RUN, "no insights.query in this answer ran it")
     if seen.keys is None:
-        return _result(c, False, _NOT_RUN)
-    read = c.key in seen.keys
-    return _result(c, read, "" if read else _UNREAD)
+        if not exposure_ledger.enabled():
+            return _result(c, rule.NOT_RECORDED, "this deployment does not record memory reads")
+        return _result(c, rule.NOT_RUN, _NOT_RUN)
+    if c.key in seen.keys:
+        return _result(c, rule.VERIFIED)
+    return _result(c, rule.UNREAD, _UNREAD)
 
 
 class _NotChecked(Exception):
@@ -228,14 +246,14 @@ async def _sections(
     return paths | {()}
 
 
-def _document(c: Citation, sections: set[tuple[str, ...]] | None) -> AssistantCitation:
+def _document(c: Citation, sections: set[tuple[str, ...]] | None) -> Checked:
     if sections is None:
-        return _result(c, False, _NOT_RUN)
+        return _result(c, rule.NOT_RUN, _NOT_RUN)
     if not sections:
-        return _result(c, False, "no live document of this source is readable")
+        return _result(c, rule.NO_DOCUMENT, "no live document of this source is readable")
     if c.section not in sections:
-        return _result(c, False, "the document has no such section")
-    return _result(c, True)
+        return _result(c, rule.NO_SECTION, "the document has no such section")
+    return _result(c, rule.VERIFIED)
 
 
-__all__ = ["RECORDING_READS", "set_app", "verify"]
+__all__ = ["RECORDING_READS", "Checked", "set_app", "verify"]

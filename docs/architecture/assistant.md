@@ -227,15 +227,62 @@ caller's own call, so a citation it makes verified misleads only the caller. The
 are written in the background and a tool call can land on another replica, so the bridge
 waits up to five seconds for them; a citation whose row has not arrived by then, or was
 dropped, comes back unverified. A check Loom refuses (a rate limit, an outage), a ledger
-that cannot be read, memory reads that are not recorded
-(`LOOM_MEMORY_EXPOSURE_LEDGER_ENABLED` off), an answer with no run id, a check past the
-ten seconds, or a document read whose token expired (an answer that ran to its limit
-leaves its checks a token near its end) leaves its citation unverified with the reason
-"the check could not run", and never fails the answer. Each citation comes back marked
+that cannot be read, an answer with no run id, a check past the ten seconds, or a
+document read whose token expired (an answer that ran to its limit leaves its checks a
+token near its end) leaves its citation unverified with the reason "the check could not
+run", and never fails the answer. With memory reads not recorded
+(`LOOM_MEMORY_EXPOSURE_LEDGER_ENABLED` off) a memory citation's reason is "this
+deployment does not record memory reads". Each citation comes back marked
 `verified` or not, with the reason and its `ref` (the memory key, document source or
 code path it names), in a last `loom.citations` event before the stream's `[DONE]` (and
-a `citations` field on a whole answer and on `assistant.ask`), and an answer with no
-verified citation is shown as unsupported, as an abstention is.
+a `citations` field on a whole answer and on `assistant.ask`), with the answer's
+[support](#support).
+
+### Support
+
+Each answer comes back with `support` (on the `loom.citations` event, the whole answer
+and `assistant.ask`), which says how far it rests on what Loom holds. The server decides
+it (`server/assistant/domain/support.py`), from the codes its citation checks ended with
+and, for an answer that cites nothing, from what its own tool calls found; the first
+that applies wins:
+
+| `support`     | When                                                                                                                                                                                                                                                                                                                                                     |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `none`        | The answer has no text; or it cites nothing and either says the abstention sentence the agent's instructions give ("Nothing stored in Loom answers this.", in any case or emphasis) or it made no call to an op whose rows it could cite and none of its calls found data or failed. A greeting, a capability reply and an abstention make no claim.     |
+| `supported`   | A citation verified.                                                                                                                                                                                                                                                                                                                                     |
+| `unsupported` | A citation failed for a reason of its own (its key was not returned to this answer, its document or section is not there, its statement did not run in this answer); or it cites nothing although a call of an op whose rows it could cite found data, or ran and found nothing while no other call found data or failed (a claim nothing backs).        |
+| `unchecked`   | Otherwise: its checks could not say (a read failed or ran past its bound, no run id, memory reads not recorded, code citations, past the 50 checked), or it cites nothing and what found data has no citation form (counts and findings: the ops in `ASSISTANT_UNCITABLE_OPS`, such as `namespace.summary` and `namespace.inventory`), or a call failed. |
+
+The ops whose rows an answer can cite, those whose output has no citation form, and
+those that return no namespace data (Loom's own guide and catalog) are sets in
+`server/operations/toolsets.py`, with the output list each op's ledger row counts as
+`out_hits` (or its `found` flag) to say whether it found anything. A test requires
+every op of the assistant toolset to be in exactly one set and to say how its row shows
+it found nothing. The answer's calls are read by its run, its caller's subject and the
+consumer `loom-assistant`, with no namespace filter: a code call is ledgered under the
+code namespace and a refused call under the sentinel. The rows land in the background,
+so an uncited answer's calls are read once more after the ledger's flush interval and
+the batched-insert wait, unless the first read already found a citable op's data; both
+reads together are bounded at three seconds, past which the answer is `unchecked`. A
+presence answer of `code.symbol` finds only where the symbol is present.
+
+The rule reads no wording beyond the abstention sentence, and accepts these residuals:
+
+- A greeting, capability reply or uncited question back after a citable call is
+  `unsupported` (`unchecked` when only ops with no citation form found data). The
+  instructions keep such calls rare: a greeting calls no tool, and a question back lists
+  each match with its citation.
+- An uncited fact with no call at all (a later turn restating an earlier one, or a
+  first answer from the model's own knowledge, which the instructions forbid), or after
+  calls whose rows land past the re-read or are dropped (the ledger keeps them at most
+  once), is `none`.
+- A "not found" answer from a lookup that misses (`memory_get`, `code_symbol`) is
+  `none` when it ends with the abstention sentence, as the instructions ask for every
+  read that finds nothing; worded otherwise, it is `unsupported`.
+- An abstention that also states a fact is `none`.
+- A document citation verifies when the document holds the section, whether or not this
+  answer read it; the instructions ask for a document to be read again before it is
+  cited on a later turn.
 
 **Rendering.** The answer is model output that stored text can steer, so the dashboard
 renders it as text with Markdown emphasis, lists, tables and code only: no HTML, no
@@ -244,8 +291,12 @@ dashboard's `img-src 'self' data: blob:` already stops a remote image that would
 rows away in its URL. Under a finished answer its Sources
 (`frontend/src/views/assistant/Sources.tsx`) list each citation as the server checked
 it: a verified memory opens in the memory drawer and a verified document in the
-Library, by the citation's `ref`; an unverified one shows why; and an answer with no
-verified citation is marked unsupported.
+Library, by the citation's `ref`; an unverified one shows why. A label above them
+says the answer's support in words, with a "Why this label" note: "Checked against what
+Loom holds" (with "n of m sources verified" when some were not), "Couldn't confirm: none
+of its sources were verified", "Couldn't confirm: it gives no sources", "Sources not checked"
+or "Not checked: it gives no sources Loom can check"; an answer whose support is `none`
+has no label. A value the dashboard does not know reads as `unchecked`.
 
 ## The agent definition
 
@@ -1031,6 +1082,9 @@ built.
   caller's and inherits its revocation.
 - `server/observability/budget.py`: the namespace cost cap the assistant's spend counts
   toward.
+- `server/assistant/app/citations.py` (`verify`) and `server/assistant/app/support.py`
+  (`answer_support`), with the rule in `server/assistant/domain/support.py`: an answer's
+  checked citations and its support.
 - `server/assistant/app/service.py`: the service user and agent set up at boot;
   `server/assistant/store/service.py`: `loom.assistant_service`.
 - `integrations/librechat/`: the agent definition (`agent.yaml`) and the qualification

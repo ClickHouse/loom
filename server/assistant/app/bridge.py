@@ -22,7 +22,8 @@ from typing import Any, NoReturn
 import httpx
 
 from server.assistant.api.models import MAX_HISTORY, MAX_MESSAGE_CHARS, AssistantCitation
-from server.assistant.app import citations, service
+from server.assistant.app import citations, service, support
+from server.assistant.domain.support import UNCHECKED
 from server.auth.authz import check_authorized
 from server.auth.delegation import delegate
 from server.auth.jwt import AuthInfo, new_jti
@@ -98,6 +99,8 @@ class Answer:
     error: str = ""
     # Each citation the answer wrote, checked (citations.verify), once it ended.
     citations: list[AssistantCitation] = field(default_factory=list)
+    # How far the answer rests on Loom (support.answer_support), once it ended.
+    support: str = UNCHECKED
 
 
 def admitted_messages(messages: Any) -> list[dict[str, str]]:
@@ -339,13 +342,18 @@ async def _checked(ticket: Ticket, answer: Answer) -> bytes:
     """The answer's citations, checked inside its slot (the checks are the answer's
     too), as the stream's `loom.citations` event; the slot is given back after."""
     try:
-        answer.citations = await citations.verify(
-            "".join(answer.text),
+        text = "".join(answer.text)
+        checked = await citations.verify(
+            text,
             org=ticket.org,
             namespace=ticket.namespace,
             token=ticket.token,
             run_id=answer.run_id,
             subject=ticket.subject,
+        )
+        answer.citations = [c.citation for c in checked]
+        answer.support = await support.answer_support(
+            checked, text, org=ticket.org, run_id=answer.run_id, subject=ticket.subject
         )
     finally:
         ticket.release()
@@ -355,6 +363,7 @@ async def _checked(ticket: Ticket, answer: Answer) -> bytes:
         # The usage chunk's shape: a client that guards for no choices skips it.
         "choices": [],
         "citations": [c.model_dump() for c in answer.citations],
+        "support": answer.support,
     }
     return f"data: {json.dumps(event)}\n\n".encode()
 

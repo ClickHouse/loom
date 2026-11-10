@@ -55,6 +55,8 @@ ABSTAIN_PATTERNS = (
     r"\bdoes ?n[o']t (contain|hold|have)\b",
     r"\bnothing (about|on|in)\b",
     r"\bno (matching|relevant)\b",
+    # The sentence the agent ends an abstention with (agent.yaml).
+    r"\bnothing stored in loom\b",
 )
 # How an answer says a document does not hold the fact: read for document cases only;
 # memory cases use ABSTAIN_PATTERNS alone.

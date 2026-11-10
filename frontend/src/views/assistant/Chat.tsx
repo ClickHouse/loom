@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
-import { type ChatMessage, type Citation, streamAssistantChat } from "../../api/assistantChat";
+import { type ChatMessage, type Citation, type Support, streamAssistantChat } from "../../api/assistantChat";
 import { Alert, Unavailable } from "../../components/ui";
 import { fieldError } from "../../components/ui/fieldError";
 import { ApiError } from "../../lib/errors";
 import { humanizeError } from "../../lib/format";
 import { AnswerText } from "./AnswerText";
-import { Sources } from "./Sources";
+import { Sources, supportLabel } from "./Sources";
 
 /**
  * The assistant's chat. The conversation lives in the tab's memory, kept under
@@ -28,6 +28,8 @@ interface Turn {
   /** The answer's citations as the server checked them; absent until the answer ends, or
    *  from a server that sends none. */
   citations?: Citation[];
+  /** How far the answer rests on Loom; absent until the answer ends. */
+  support?: Support;
 }
 
 // The lead-in for each refusal the chat route answers; the server's own words follow.
@@ -130,6 +132,8 @@ export function AssistantChat({
     setDraft("");
     setAnnounce("The assistant is answering.");
     let streamed = false;
+    // The label, said with the end of the answer.
+    let labelled = "";
     streamAssistantChat(
       namespace,
       messages,
@@ -138,11 +142,14 @@ export function AssistantChat({
           streamed = true;
           update(id, (t) => ({ answer: t.answer + text }));
         },
-        onCitations: (citations) => update(id, () => ({ citations })),
+        onCitations: (citations, support) => {
+          labelled = supportLabel(support, citations)?.text ?? "";
+          update(id, () => ({ citations, support }));
+        },
       },
       mine.signal,
     )
-      .then(() => finish(id, { state: "done" }, "The answer is complete."))
+      .then(() => finish(id, { state: "done" }, `The answer is complete.${labelled ? ` ${labelled}.` : ""}`))
       .catch((e: unknown) => {
         if (isAbort(e)) {
           finish(id, { state: "stopped" }, "The answer was stopped.");
@@ -209,7 +216,7 @@ export function AssistantChat({
     <div className="space-y-4">
       {turns.length > 0 && (
         <ol className="space-y-4" aria-label="Conversation">
-          {turns.map((t) => (
+          {turns.map((t, i) => (
             <li key={t.id} className="space-y-2">
               <div className="rounded-lg bg-surface-2 p-3">
                 <p className="section-label">You</p>
@@ -219,7 +226,9 @@ export function AssistantChat({
                 <p className="section-label">Assistant</p>
                 {t.answer && <AnswerText text={t.answer} />}
                 {t.state === "answering" && !t.answer && <p className="text-sm text-text-muted">Answering…</p>}
-                {t.state === "done" && t.citations && <Sources citations={t.citations} />}
+                {t.state === "done" && t.support && (
+                  <Sources citations={t.citations ?? []} support={t.support} answer={i + 1} />
+                )}
                 {t.state === "stopped" && <p className="text-xs text-text-muted mt-1">Stopped.</p>}
                 {t.error && (
                   <div className="mt-2">

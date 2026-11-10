@@ -8,7 +8,7 @@ is a new answer, with its own spend.
         if isinstance(event, AssistantText):
             print(event.text, end="")
         else:  # the AssistantAnswer, last
-            print([c.text for c in event.citations if c.verified])
+            print(event.support, [c.text for c in event.citations if c.verified])
 """
 
 from __future__ import annotations
@@ -52,7 +52,10 @@ class AssistantText:
 @dataclass(frozen=True)
 class AssistantAnswer:
     """The whole answer: its text, its id (the `run_id` of its ledger rows), the
-    model, its checked citations and its token usage."""
+    model, its checked citations, its token usage and how far it rests on what Loom
+    holds (`support`): `supported`, `unsupported`, `unchecked` or `none`, as
+    docs/architecture/assistant.md#support defines them; a value this SDK does not know,
+    or none from an older server, reads as `unchecked`."""
 
     text: str
     run_id: str
@@ -60,10 +63,11 @@ class AssistantAnswer:
     citations: tuple[AssistantCitation, ...] = ()
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    support: str = "unchecked"
 
     @property
     def verified(self) -> tuple[AssistantCitation, ...]:
-        """The citations Loom verified; none means the answer is unsupported."""
+        """The citations Loom verified."""
         return tuple(c for c in self.citations if c.verified)
 
 
@@ -75,6 +79,7 @@ class _Reading:
     citations: tuple[AssistantCitation, ...] = ()
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    support: str = "unchecked"
 
     def answer(self) -> AssistantAnswer:
         return AssistantAnswer(
@@ -84,6 +89,7 @@ class _Reading:
             self.citations,
             self.prompt_tokens,
             self.completion_tokens,
+            self.support,
         )
 
 
@@ -178,6 +184,7 @@ def _read(event: dict[str, Any], reading: _Reading) -> str:
     """Fold one chunk into `reading`; the text it adds."""
     if event.get("object") == "loom.citations":
         reading.citations = _citations(event.get("citations"))
+        reading.support = _support(event.get("support"))
         return ""
     reading.run_id = reading.run_id or str(event.get("id") or "")
     reading.model = reading.model or str(event.get("model") or "")
@@ -192,6 +199,15 @@ def _read(event: dict[str, Any], reading: _Reading) -> str:
             text += delta["content"]
     reading.text.append(text)
     return text
+
+
+_SUPPORTS = ("supported", "unsupported", "unchecked", "none")
+
+
+def _support(value: Any) -> str:
+    """The answer's support as the server sent it; an unknown or missing value is
+    `unchecked`."""
+    return value if isinstance(value, str) and value in _SUPPORTS else "unchecked"
 
 
 def _int(value: Any) -> int:

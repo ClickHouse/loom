@@ -22,4 +22,14 @@ describe("IconButton", () => {
     await screen.findByRole("tooltip");
     expect(button).not.toHaveAttribute("aria-describedby");
   });
+
+  it("keeps a caller's own description when it has no tooltip of its own", () => {
+    render(
+      <>
+        <span id="the-label">Couldn't confirm</span>
+        <IconButton icon="info-in-circle" label="Why this label" aria-describedby="the-label" />
+      </>,
+    );
+    expect(screen.getByRole("button", { name: "Why this label" })).toHaveAccessibleDescription("Couldn't confirm");
+  });
 });

@@ -88,7 +88,7 @@ def _verify(text: str, run_id: str = "r1") -> list[dict[str, Any]]:
             text, org="acme", namespace="ns", token="answer-token", run_id=run_id, subject="alice"
         )
     )
-    return [c.model_dump() for c in checked]
+    return [c.citation.model_dump() for c in checked]
 
 
 def test_each_citation_is_checked_against_what_the_answer_read(
@@ -180,7 +180,10 @@ def test_with_memory_reads_not_recorded_only_memory_citations_go_unchecked(
     text = f"[memory:{MEMORY_KEY}@v12]\n```sql\n{SQL}\n```\n"
     out = {c["kind"]: (c["verified"], c["reason"]) for c in _verify(text)}
     # The statements' ledger does not depend on the exposure ledger.
-    assert out == {"memory": (False, "the check could not run"), "sql": (True, "")}
+    assert out == {
+        "memory": (False, "this deployment does not record memory reads"),
+        "sql": (True, ""),
+    }
 
 
 def test_a_document_cited_at_two_sections_is_read_once(loom: list[dict[str, Any]]) -> None:

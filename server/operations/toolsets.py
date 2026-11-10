@@ -413,6 +413,62 @@ def is_assistant(toolset: str | None) -> bool:
     return toolset_parts(toolset) == (ASSISTANT_TOOLSET,)
 
 
+# How an assistant answer's tool calls bear on its label (server/assistant/domain/support.py):
+# a call to a CITABLE op returns rows the answer can cite and the citation check verifies; an
+# UNCITABLE op's output (counts, findings, history) has no citation form; a NO_NAMESPACE_DATA
+# op returns Loom's own guide or catalog, never the namespace's data. Every assistant op is in
+# exactly one (tests/unit/test_assistant_support.py).
+ASSISTANT_CITABLE_OPS: frozenset[str] = frozenset(
+    {
+        "memory.search",
+        "memory.ask",
+        "memory.get",
+        "memory.list",
+        "memory.inspect",
+        "knowledge.search",
+        "knowledge.get",
+        "knowledge.list",
+        "code.search",
+        "code.symbol",
+        "insights.query",
+    }
+)
+ASSISTANT_NO_NAMESPACE_DATA_OPS: frozenset[str] = frozenset({"mentor.guide", "insights.catalog"})
+ASSISTANT_UNCITABLE_OPS: frozenset[str] = (
+    MCP_ASSISTANT_OPS - ASSISTANT_CITABLE_OPS - ASSISTANT_NO_NAMESPACE_DATA_OPS
+)
+
+# Whether an assistant op's call found anything, as its ledger row records it (event_args):
+# the output lists whose summed length is `out_hits` (a dotted name reaches into a nested
+# object). An op left out reports a miss as `found: false` (`out_found`) or always returns
+# data; tests/unit/test_assistant_support.py holds every op to one of the three.
+ASSISTANT_FOUND_FIELD: dict[str, tuple[str, ...]] = {
+    "memory.search": ("results",),
+    "memory.ask": ("results",),
+    "memory.list": ("entries",),
+    # The subject's own and read rows (its counts come with them either way).
+    "memory.inspect": ("own.newest", "others.newest"),
+    "memory.history": ("rows",),
+    "memory.aggregate": ("rows",),
+    "facts.traverse": ("nodes",),
+    "knowledge.search": ("results",),
+    "knowledge.list": ("rows",),
+    "knowledge.inspect": ("listed",),
+    "code.search": ("results",),
+    # A fuzzy candidate is no find; a presence answer is.
+    "code.symbol": ("definitions", "presence"),
+    "insights.query": ("rows",),
+    "grants.list": ("rows",),
+    "namespace.audit": ("findings",),
+    "namespace.validate": ("findings",),
+    "namespace.tune": ("proposals",),
+    "namespace.guide_history": ("revisions",),
+    "namespace.list_categories": ("categories",),
+    "namespace.taxonomy": ("tags",),
+    "namespace.summary": ("type_counts",),
+}
+
+
 def assistant_ops() -> list[Operation]:
     """The ops the assistant toolset lists, in registry order: its fixed set of reads,
     whatever their maturity or the code tools flag. The agent definition names these."""

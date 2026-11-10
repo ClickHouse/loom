@@ -35,6 +35,7 @@ import re
 from typing import Any
 
 from server.auth.directory import DirectoryNotWired, directory
+from server.operations.toolsets import ASSISTANT_FOUND_FIELD
 
 # Fields that already live in dedicated columns on the row; never duplicated
 # into the map.
@@ -641,8 +642,8 @@ def _read_outcome_columns(result: dict[str, Any]) -> dict[str, str]:
     land as `success = 1`, so the ledger alone cannot show misses. `out_found` (true/false) rides a
     single-row read; `out_found_n` / `out_missing_n` ride a bulk read, so a
     found rate per operation per agent is one aggregate over the ledger;
-    `out_section_hits` rides a sectioned search. Counts only — the keys themselves stay
-    in the response."""
+    `out_section_hits` rides a sectioned search, and `out_hits` an assistant op's
+    found list (`_hits_column`). Counts only — the keys themselves stay in the response."""
     out: dict[str, str] = {}
     found = result.get("found")
     if isinstance(found, bool):
@@ -666,7 +667,42 @@ def _read_outcome_columns(result: dict[str, Any]) -> dict[str, str]:
     return out
 
 
-def project_result(result: Any) -> dict[str, str]:
+def _hits_column(op_name: str, result: dict[str, Any]) -> dict[str, str]:
+    """`out_hits`: how many rows an assistant op's call found, the summed length of the
+    output lists `ASSISTANT_FOUND_FIELD` names for it ("0" on an abstention). The
+    assistant's label reads it (server/assistant/app/support.py); other ops' rows carry
+    none."""
+    fields = ASSISTANT_FOUND_FIELD.get(op_name)
+    if not fields:
+        return {}
+    lists = [_at(result, f) for f in fields]
+    if not any(isinstance(found, list) for found in lists):
+        return {}
+    hits = sum(
+        _found_rows(f, found)
+        for f, found in zip(fields, lists, strict=True)
+        if isinstance(found, list)
+    )
+    return {RESULT_PREFIX + "hits": "0" if result.get("abstain") is True else str(hits)}
+
+
+def _at(result: dict[str, Any], path: str) -> Any:
+    """The value at a dotted `path` of `result` (`own.newest`), None past a missing step."""
+    value: Any = result
+    for step in path.split("."):
+        value = value.get(step) if isinstance(value, dict) else None
+    return value
+
+
+def _found_rows(field: str, rows: list[Any]) -> int:
+    """How many of `rows` are a find: in `code.symbol`'s presence answer (`presence`) only a
+    row whose verdict is "present" counts; every other list counts each row."""
+    if field != "presence":
+        return len(rows)
+    return sum(1 for row in rows if isinstance(row, dict) and row.get("verdict") == "present")
+
+
+def project_result(result: Any, *, op_name: str = "") -> dict[str, str]:
     """Identifier-class fields of a handler's RESULT, prefixed `out_`.
 
     Temporal policies correlate on what a prior call RETURNED
@@ -684,6 +720,7 @@ def project_result(result: Any) -> dict[str, str]:
         out: dict[str, str] = {}
         out.update(_retrieval_work_columns(result.get("retrieval_work")))
         out.update(_read_outcome_columns(result))
+        out.update(_hits_column(op_name, result))
         for key in sorted(result):
             if key in IDENTITY_KEYS or key not in IDENTIFIER_KEYS:
                 continue

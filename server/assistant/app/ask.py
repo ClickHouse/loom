@@ -19,5 +19,6 @@ async def handle_assistant_ask(inp: AssistantAskInput) -> AssistantAskOutput:
         answer="".join(answer.text),
         run_id=answer.run_id,
         citations=answer.citations,
+        support=answer.support,
         model=service.current_definition().model,
     )

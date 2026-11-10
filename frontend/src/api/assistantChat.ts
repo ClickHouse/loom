@@ -23,11 +23,22 @@ export interface Citation {
   ref: string;
 }
 
+/** How far an answer rests on what Loom holds (server/assistant/domain/support.py). */
+export type Support = "supported" | "unsupported" | "unchecked" | "none";
+
+const SUPPORTS: readonly string[] = ["supported", "unsupported", "unchecked", "none"];
+
+/** The support the server sent; a value this dashboard does not know, or none at all,
+ *  reads as unchecked. */
+export function supportOf(raw: unknown): Support {
+  return typeof raw === "string" && SUPPORTS.includes(raw) ? (raw as Support) : "unchecked";
+}
+
 export interface ChatHandlers {
   /** Each piece of the answer's text, in order. */
   onText: (text: string) => void;
-  /** The answer's citations, checked, once its text is complete. */
-  onCitations?: (citations: Citation[]) => void;
+  /** The answer's citations, checked, and its support, once its text is complete. */
+  onCitations?: (citations: Citation[], support: Support) => void;
 }
 
 function citationOf(raw: unknown): Citation | null {
@@ -67,7 +78,10 @@ function readEvent(data: string, on: ChatHandlers, requestId: string): boolean {
   if (chunk.error) throw streamError(chunk.error, requestId);
   if (chunk.object === "loom.citations") {
     const all = Array.isArray(chunk.citations) ? chunk.citations : [];
-    on.onCitations?.(all.map(citationOf).filter((c): c is Citation => c !== null));
+    on.onCitations?.(
+      all.map(citationOf).filter((c): c is Citation => c !== null),
+      supportOf(chunk.support),
+    );
     return false;
   }
   const choices = Array.isArray(chunk.choices) ? chunk.choices : [];

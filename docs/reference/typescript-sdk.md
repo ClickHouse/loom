@@ -166,7 +166,9 @@ const status = await loom.knowledge.ingestFile({
 the Loom assistant through `POST /v1/assistant/chat/completions` as the client's token
 and yields `{ type: "text", text }` for each piece of the answer, then one
 `{ type: "answer", answer }` with its `runId`, usage and the citations the server
-checked (`{ kind, text, verified, reason, ref }`). A refusal throws its typed error
+checked (`{ kind, text, verified, reason, ref }`), and its `support` (`AssistantSupport`:
+[support](../architecture/assistant.md#support); a value the SDK does not know, or none
+from an older server, reads as `"unchecked"`). A refusal throws its typed error
 before any text; an `error` event after the answer began throws the same way. An answer
 that began is never resent, nor one refused with a 429; a 401 with a token provider,
 which comes before the answer starts, is sent once more with a fresh token.

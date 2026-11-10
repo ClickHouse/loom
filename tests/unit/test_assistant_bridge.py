@@ -121,6 +121,9 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
     monkeypatch.setattr(bridge, "check_authorized", check_authorized)
     monkeypatch.setattr(bridge, "switched_off", switched_off)
     monkeypatch.setattr(bridge, "operation_over_share", over_cap)
+    # The answer's tool calls found nothing (a test may say otherwise).
+    monkeypatch.setattr(bridge.support.ledger, "run_calls", _found_nothing)
+    monkeypatch.setattr(bridge.support, "_wait", _no_wait)
     monkeypatch.setattr(bridge, "delegate", delegate)
     monkeypatch.setattr(bridge, "_running", {})
     monkeypatch.setattr(
@@ -158,6 +161,16 @@ def _org_slot(org: str) -> Any:
     return slots
 
 
+async def _no_wait(_seconds: float) -> None:
+    return None
+
+
+async def _found_nothing(*_: Any) -> Any:
+    from server.assistant.domain.support import RunCalls
+
+    return RunCalls(frozenset(), False, frozenset())
+
+
 def test_an_answer_runs_the_seeded_agent_with_its_own_token(world: _World) -> None:
     answer, chunks, (acc, run) = _answer(_caller(), QUESTION)
     body = world.librechat_body
@@ -176,6 +189,8 @@ def test_an_answer_runs_the_seeded_agent_with_its_own_token(world: _World) -> No
         "id": "chatcmpl-1",
         "choices": [],
         "citations": [],
+        # It cites nothing and its calls found nothing: it makes no claim.
+        "support": "none",
     }
 
 
@@ -1051,15 +1066,17 @@ def test_an_answers_checked_citations_reach_every_surface(
 ) -> None:
     from server.assistant.api.models import AssistantAskInput, AssistantCitation
     from server.assistant.app import ask
+    from server.assistant.app.citations import Checked
+    from server.assistant.domain.support import VERIFIED
 
     checked = [
         AssistantCitation(kind="memory", text="[memory:a/b/c@v3]", verified=True, ref="a/b/c")
     ]
     asked: list[str] = []
 
-    async def verify(text: str, **_kw: Any) -> list[AssistantCitation]:
+    async def verify(text: str, **_kw: Any) -> list[Checked]:
         asked.append(text)
-        return checked
+        return [Checked(c, VERIFIED) for c in checked]
 
     monkeypatch.setattr(bridge.citations, "verify", verify)
     wire = [c.model_dump() for c in checked]
@@ -1067,16 +1084,17 @@ def test_an_answers_checked_citations_reach_every_surface(
     # The stream's last event before [DONE].
     r = http.post(ROUTE, headers=HEADERS, json={"stream": True, "messages": QUESTION})
     events = [line for line in r.text.split("\n\n") if line]
-    assert json.loads(events[-2][6:])["citations"] == wire
+    last = json.loads(events[-2][6:])
+    assert (last["citations"], last["support"]) == (wire, "supported")
     # The whole answer.
     r = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
-    assert r.json()["citations"] == wire
+    assert (r.json()["citations"], r.json()["support"]) == (wire, "supported")
     # assistant.ask.
     monkeypatch.setattr(ask, "current_auth", lambda: _caller())
     out = asyncio.run(
         ask.handle_assistant_ask(AssistantAskInput(org=ORG, namespace=NS, question="q"))
     )
-    assert [c.model_dump() for c in out.citations] == wire
+    assert [c.model_dump() for c in out.citations] == wire and out.support == "supported"
     # Each checked the answer's own text.
     assert asked and all(text == "Seven memories." for text in asked)
 

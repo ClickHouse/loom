@@ -145,18 +145,21 @@ print(OPS["memory.search"].idempotent, OPS["memory.search"].role)
 
 ### The assistant
 
-`agent.assistant.stream(question, history=..., namespace=...)` asks the Loom
-assistant through `POST /v1/assistant/chat/completions` as the Agent's token, about
-the Agent's namespace unless `namespace` names another. It yields an
-`AssistantText` for each piece of the answer, then one `AssistantAnswer` (`text`,
-`run_id`, `model`, token usage, and the `citations` the server checked, each an
-`AssistantCitation` with `verified`, `reason` and `ref`; `.verified` holds the verified
-ones). `ask` returns the `AssistantAnswer` whole. A refusal raises its typed error
-before any text, and an `error` event after the answer began raises the same way.
-An answer that began is never resent, nor one refused with a 429; a stored login's
-401, which comes before the answer starts, is sent once more with a fresh token.
-`read_timeout_s` (300 s) bounds each read, as an answer is silent while a tool call
-runs. `SyncAgent` iterates `stream` blocking.
+`agent.assistant.stream(question, history=..., namespace=...)` asks the Loom assistant
+through `POST /v1/assistant/chat/completions` as the Agent's token, about the Agent's
+namespace unless `namespace` names another. It yields an `AssistantText` for each
+piece of the answer, then one `AssistantAnswer` (`text`, `run_id`, `model`, token
+usage, and the `citations` the server checked, each an `AssistantCitation` with
+`verified`, `reason` and `ref`; `.verified` holds the verified ones), and its
+`support` ([support](../architecture/assistant.md#support): `supported`,
+`unsupported`, `unchecked` or `none`; a value the SDK does not know, or none from an
+older server, reads as `unchecked`). `ask` returns the `AssistantAnswer` whole. The
+generated `client.assistant_ask` op method returns the server's output as it is. A
+refusal raises its typed error before any text, and an `error` event after the answer
+began raises the same way. An answer that began is never resent, nor one refused with
+a 429; a stored login's 401, which comes before the answer starts, is sent once more
+with a fresh token. `read_timeout_s` (300 s) bounds each read, as an answer is silent
+while a tool call runs. `SyncAgent` iterates `stream` blocking.
 
 ## Sessions and tools
 
