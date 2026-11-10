@@ -231,20 +231,48 @@ def test_count_labels_match_the_fixture():
     assert _case("tune-drafts")["baseline"]["equals"] == 0
 
 
+_PROBE = {
+    "id": "cancel-probe",
+    "kind": "cancel",
+    "ended_before_cut": False,
+    "error": "",
+    "loom_calls_before_disconnect": 0,
+    "loom_calls_after_disconnect": 0,
+}
+
+
 @pytest.mark.parametrize(
     ("row", "verdict"),
     [
-        ({"loom_calls_before_disconnect": 0}, "the disconnect stopped the run (0 Loom calls"),
+        ({}, "the disconnect stopped the run (0 Loom calls"),
         ({"loom_calls_after_disconnect": 1}, "the run went on after the disconnect"),
-        ({"loom_calls_before_disconnect": 2}, "inconclusive"),
-        ({"ended_before_cut": True}, "inconclusive"),
+        (
+            {"loom_calls_before_disconnect": 1, "loom_calls_after_disconnect": 1},
+            "the run went on after the disconnect",
+        ),
+        ({"loom_calls_before_disconnect": 2}, "inconclusive: its tool calls began"),
+        ({"ended_before_cut": True}, "inconclusive: the answer ended"),
+        (
+            {"ended_before_cut": True, "loom_calls_after_disconnect": 1},
+            "inconclusive: the answer ended",
+        ),
         ({"ended_before_cut": True, "error": "HTTP 403: no"}, "refused: HTTP 403: no"),
     ],
 )
-def test_the_cancel_probe_passes_only_when_no_call_came_before_or_after_the_cut(row, verdict):
-    q = _qualify()
-    line = q.report([{"id": "cancel-probe", "kind": "cancel", **row}], "m")
-    assert f"cancel probe: {verdict}" in line
+def test_the_cancel_probe_passes_only_when_no_call_began_before_or_after_the_cut(row, verdict):
+    assert f"cancel probe: {verdict}" in _qualify().report([{**_PROBE, **row}], "m")
+
+
+def test_a_cancel_row_without_its_counts_is_not_read_as_a_pass():
+    old = {
+        "id": "cancel-probe",
+        "kind": "cancel",
+        "ttft_s": 0.6,
+        "loom_calls": 1,
+        "loom_calls_after_disconnect": 0,
+    }
+    with pytest.raises(KeyError):
+        _qualify().report([old], "m")
 
 
 def _patched_client(monkeypatch, q, transport):
@@ -697,19 +725,20 @@ def test_seed_writes_each_documents_revision_after_its_first_write(monkeypatch):
     assert docs.index(next(b for b in docs if b["content"] == writes[-1])) > max(first.values())
 
 
-def test_the_cancel_probe_cuts_at_its_delay_and_counts_the_calls_on_each_side(monkeypatch):
+def test_the_cancel_probe_sorts_the_calls_by_when_they_began(monkeypatch):
+    # A call's row is stamped when it ends: one begun before the cut and ended after it
+    # counts before the cut, and one begun after it counts after.
     q = _qualify()
     seen = {}
 
     async def read_until(url, body, headers, cut_s):
         seen["cut_s"] = cut_s
+        seen["cut_at"] = q.time.time()
         return False, ""
 
-    windows = []
-
     def loom_calls(ch_url, subject, since, until):
-        windows.append((since, until))
-        return [{}] * (len(windows) - 1)  # none before the cut, one after
+        cut_ms = seen["cut_at"] * 1000
+        return [{"started_ms": cut_ms - 100}, {"started_ms": cut_ms + 5000}]
 
     monkeypatch.setattr(q, "read_until", read_until)
     monkeypatch.setattr(q, "loom_calls", loom_calls)
@@ -718,6 +747,5 @@ def test_the_cancel_probe_cuts_at_its_delay_and_counts_the_calls_on_each_side(mo
     args = type("A", (), {"cancel_after": 0.5, "cancel_wait": 0.0, "ch_url": "http://ch"})()
     row = q.cancel_probe(st, args)
     assert seen["cut_s"] == 0.5
-    assert windows[0][1] == windows[1][0]  # the two counts meet at the disconnect
-    assert row["loom_calls_before_disconnect"] == 0 and row["loom_calls_after_disconnect"] == 1
+    assert row["loom_calls_before_disconnect"] == 1 and row["loom_calls_after_disconnect"] == 1
     assert "the run went on after the disconnect" in q.probe_line(row)

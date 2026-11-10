@@ -440,7 +440,8 @@ def loom_calls(ch_url: str, subject: str, since: float, until: float) -> list[di
     """The MCP calls Loom ledgered for this person between two instants, in Loom's database
     (`QUALIFY_CH_DATABASE`, the server's `LOOM_CH_DATABASE`; `loom` by default)."""
     sql = (
-        "SELECT operation, success, error_code, consumer FROM {db:Identifier}.agent_events "
+        "SELECT operation, success, error_code, consumer, "
+        "toUnixTimestamp64Milli(ts) - latency_ms AS started_ms FROM {db:Identifier}.agent_events "
         "WHERE subject = {s:String} AND transport = 'mcp' "
         "AND ts >= fromUnixTimestamp64Milli({a:Int64}) "
         "AND ts <= fromUnixTimestamp64Milli({b:Int64}) "
@@ -887,8 +888,10 @@ def cancel_probe(st: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]
     ended, error = asyncio.run(read_until(url, body, headers, args.cancel_after))
     disconnected = time.time()
     time.sleep(args.cancel_wait)
-    before = loom_calls(args.ch_url, "alice", t0, disconnected)
-    after = loom_calls(args.ch_url, "alice", disconnected, time.time())
+    # a call's row is stamped when it ends: sort the calls by when they began
+    calls = loom_calls(args.ch_url, "alice", t0, time.time())
+    before = [c for c in calls if int(c["started_ms"]) < disconnected * 1000]
+    after = [c for c in calls if int(c["started_ms"]) >= disconnected * 1000]
     row = {
         "id": "cancel-probe",
         "kind": "cancel",
@@ -902,16 +905,19 @@ def cancel_probe(st: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]
 
 
 def probe_line(row: dict[str, Any]) -> str:
-    """The cancel probe's verdict. It shows that a disconnect stops the run only when no
-    Loom call came before the cut (so the tools were still to run) and none came after."""
-    before = row.get("loom_calls_before_disconnect", 0)
-    after = row.get("loom_calls_after_disconnect", 0)
-    if row.get("error"):
+    """The cancel probe's verdict, the calls sorted by when they began. A call begun after
+    the cut shows the run went on; the disconnect is shown to stop the run only when no
+    call began before the cut either (so the tools were still to run)."""
+    before = row["loom_calls_before_disconnect"]
+    after = row["loom_calls_after_disconnect"]
+    if row["error"]:
         verdict = f"refused: {row['error']}"
+    elif row["ended_before_cut"]:
+        verdict = "inconclusive: the answer ended before the cut"
     elif after:
         verdict = "the run went on after the disconnect"
-    elif row.get("ended_before_cut") or before:
-        verdict = "inconclusive: the answer ended or its tool calls began before the cut"
+    elif before:
+        verdict = "inconclusive: its tool calls began before the cut"
     else:
         verdict = "the disconnect stopped the run"
     return f"cancel probe: {verdict} ({before} Loom calls before the cut, {after} after)"
