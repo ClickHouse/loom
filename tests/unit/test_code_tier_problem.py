@@ -760,3 +760,23 @@ def test_the_anonymous_order_does_not_place_a_restricted_entry() -> None:
     assert a == b
     admin = message(snapshot(["code-a", "code-b", "code-c"]), "unrestricted")
     assert admin.index("o/code-a@") < admin.index("o/code-c@") < admin.index("a restricted entry's")
+
+
+def test_rows_that_tie_but_read_differently_are_not_left_in_entry_order() -> None:
+    no_token = _failing_with(NO_TOKEN)
+    locked = _failing_with(LOCKED)
+    assert no_token.failing_since == locked.failing_since  # a tie on tier, since, passes
+    orders = []
+    for middle in (no_token, locked):
+        recorder._FAILING = tuple(
+            recorder.FailingTier("o", ns, h, 0, f"o/{ns}", "main", ns == "code-b")
+            for ns, h in (
+                ("code-a", locked if middle is no_token else no_token),
+                ("code-b", middle),
+                ("code-c", locked if middle is no_token else no_token),
+            )
+        )
+        rows = recorder.problem_rows(T0 + timedelta(hours=3)) or ()
+        orders.append([r["reason"] for r in rows])
+    # sorted by what the lines say: the restricted one's place follows its reason only
+    assert all(order == sorted(order) for order in orders)

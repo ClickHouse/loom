@@ -211,7 +211,7 @@ def reset_for_tests() -> None:
 def problem_rows(now: datetime | None = None) -> tuple[dict[str, Any], ...] | None:
     """The failing tiers past the warn threshold, as the `code_tier_failing` health
     problem reads them (plain rows: the problem collector imports no code plane), errors
-    first, then by entry. None until this process first read the records."""
+    first, then by what each line says. None until this process first read the records."""
     from server.identity.app.namespace_classification import is_restricted_cached
     from server.settings import settings
 
@@ -258,6 +258,15 @@ def problem_rows(now: datetime | None = None) -> tuple[dict[str, Any], ...] | No
     return tuple(
         sorted(
             rows,
-            key=lambda r: (r["severity"] != "error", r["tier"], r["since"], -r["failed_passes"]),
+            # every field the line and its fix show: only lines that read the same tie
+            key=lambda r: (
+                r["severity"] != "error",
+                r["tier"],
+                r["since"],
+                -r["failed_passes"],
+                r["reason"],
+                r["lag_commits"],
+                r["fix"],
+            ),
         )
     )
