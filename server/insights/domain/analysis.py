@@ -604,23 +604,19 @@ def wrap_statement(sql: str, limit: int) -> str:
     return f"SELECT * FROM (\n{body}\n) LIMIT {int(limit) + 1}"
 
 
-_ERROR_NAME = re.compile(r"\(([A-Z][A-Z0-9_]*)\) \(version ")
-
 _PASSWORD_FIX = (
-    "Loom draws a password with a lower and an upper case letter, a digit and a symbol. "
-    "A loom.analysis_secrets row drawn before the server's password rules applied holds "
-    "one they refuse: while no loom_analyst user exists, delete that row "
-    "(`DELETE FROM loom.analysis_secrets WHERE id = 0`); the next probe draws a new pair. "
-    "Rules that ask for more than that refuse a new pair too."
+    "Loom draws a password with a lower and an upper case letter, a digit and a symbol; "
+    "a stored one that lacks any of them is refused. Drop the loom_analyst user if it "
+    "exists, then delete the analysis_secrets row in Loom's database (LOOM_CH_DATABASE): "
+    "the next probe draws a new pair. Rules that ask for more refuse a new pair too."
 )
 
 
-def refusal_cause(code: int, text: str) -> tuple[str, str]:
+def refusal_cause(code: int, name: str | None, text: str) -> tuple[str, str]:
     """(cause, fix) for a ClickHouse refusal: its code, its error name and, for a
-    known cause, what it means. Never the message, which can quote a policy;
-    '' is health's default fix."""
-    name = _ERROR_NAME.search(text)
-    shown = f"Code {code} ({name.group(1)})" if name else f"Code {code}"
+    known cause, what it means. Never the message `text`, which can quote a
+    policy; '' is health's default fix."""
+    shown = f"Code {code} ({name})" if name else f"Code {code}"
     if code == 36 and "Invalid password" in text:
         return f"{shown}: the password does not meet the server's password policy", _PASSWORD_FIX
     if code == 497:

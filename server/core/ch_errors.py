@@ -164,6 +164,16 @@ def error_line(e: BaseException, limit: int = 200) -> str:
     return _DRIVER_PREFIX.sub("", lines[0]).split(" (for url")[0][:limit]
 
 
+_ERROR_NAME = re.compile(r"\(([A-Z][A-Z0-9_]*)\) \(version ")
+
+
+def error_name(e: BaseException | str) -> str | None:
+    """The error name a ClickHouse server error carries before its version, as
+    `(BAD_ARGUMENTS) (version …)`, or None."""
+    m = _ERROR_NAME.search(str(e))
+    return m.group(1) if m else None
+
+
 def error_code(e: BaseException | str) -> int | None:
     """The ClickHouse server error code an exception (or its text) carries as
     `Code: <n>.`, or None."""
@@ -183,6 +193,7 @@ def is_replica_bound_error(e: BaseException) -> bool:
 __all__ = [
     "QUANTIZED_SETTING",
     "error_code",
+    "error_name",
     "is_connection_failure",
     "is_passing_state",
     "is_shared_memory_limit",

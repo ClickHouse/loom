@@ -29,6 +29,7 @@ from server.core.ch import query_tag_var, statement_timeout
 from server.core.ch_errors import (
     error_code,
     error_line,
+    error_name,
     is_connection_failure,
     is_passing_state,
     is_transient_network_error,
@@ -512,7 +513,7 @@ def _probe_failed(what: str, e: BaseException) -> None:
         if code is None:
             _set_problem(f"{what}: {error_kind(e)}", error_line(e))
         else:
-            cause, fix = boundary.refusal_cause(code, str(e))
+            cause, fix = boundary.refusal_cause(code, error_name(e), str(e))
             _set_problem(f"{what}: {cause}", error_line(e), fix)
         return
     kind = error_kind(e)

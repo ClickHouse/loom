@@ -1075,7 +1075,7 @@ _CLOUD_PASSWORD_REFUSAL = (
         (
             _CLOUD_PASSWORD_REFUSAL,
             "Code 36 (BAD_ARGUMENTS): the password does not meet the server's password policy",
-            "loom.analysis_secrets",
+            "Drop the loom_analyst user if it exists",
         ),
         (
             "Code: 497. DB::Exception: loom: Not enough privileges. (ACCESS_DENIED) (version 1)",

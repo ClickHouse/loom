@@ -823,7 +823,7 @@ def _analysis_problems(settings: Any, state: HealthState) -> list[Problem]:
             "warn",
             f"insights.query is unavailable: {state.analysis_error}",
             state.analysis_fix
-            or "Act on the cause above; the server log holds the detail. Where "
+            or "Act on the cause above; the server log names what it refers to. Where "
             "it names a write the analyst user needs, give LOOM_CH_USER access management (the "
             "bundled ClickHouse's loom user has it), which the next probe uses, or run "
             "`loom ch-setup` as a user that has it, or have an admin run the SQL "
