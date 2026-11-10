@@ -144,10 +144,11 @@ def _add_scip_full_parser(csub: Any) -> None:
         default="",
         help="Record the command's outcome as this compiler tier's health on the entry: "
         "exit 0 clears a failure, except that for go the modules its output names as not "
-        "built fail it; exit 3 (the window's base is gone) records nothing; any other exit "
-        "records a failure with the end of the output, a timeout when a SIGTERM to entry-lock "
-        "(the caller's time limit) stopped it. The command's output, stderr included, is "
-        "relayed to stdout.",
+        "built fail it (or, when only a dependency the host cannot fetch stopped them, are "
+        "noted as unavailable, not failed); exit 3 (the window's base is gone) records "
+        "nothing; any other exit records a failure with the end of the output, a timeout "
+        "when a SIGTERM to entry-lock (the caller's time limit) stopped it. The command's "
+        "output, stderr included, is relayed to stdout.",
     )
     p_run.add_argument("command", nargs=argparse.REMAINDER, help="-- <command> [args…]")
     p_run.set_defaults(func=_cmd_entry_lock)

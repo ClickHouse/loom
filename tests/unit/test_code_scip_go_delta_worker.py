@@ -443,21 +443,7 @@ async def test_a_module_that_fails_for_another_reason_still_fails_the_tier(
     await _one_pass(monkeypatch, tmp_path, state, log)
     record = tier_health.parse("go", state["tier_health:go"])
     assert record.failing and record.kind == "module" and "lib" in record.error
-
-
-@pytest.mark.asyncio
-async def test_a_delta_that_covers_other_modules_keeps_the_note(
-    monkeypatch, tmp_path: Path
-) -> None:
-    from server.code.domain.index import tier_health
-
-    t0 = datetime(2026, 1, 1, tzinfo=UTC)
-    note = tier_health.unavailable(None, "go", _PRIVATE.removeprefix("skip "), t0).to_json()
-    state = {"git_head": "c" * 40, "scip_commit_go": "b" * 40, "tier_health:go": note}
-    monkeypatch.setattr(w, "_changed_paths", AsyncMock(return_value=["other/x.go"]))
-    monkeypatch.setattr(w, "modules_for_window", lambda changed, dirs: ["other"])
-    await _one_pass(monkeypatch, tmp_path, state, "done other\n")
-    assert state["tier_health:go"] == note  # svc was not built: its note stands
+    assert "svc" in record.error  # the unreachable one is named too
 
 
 @pytest.mark.asyncio
@@ -471,6 +457,18 @@ async def test_the_entry_lock_path_notes_a_dependency_it_cannot_fetch(monkeypatc
     await code_scip._record_tier("org", "code-go", "go", 0, f"{_PRIVATE}\ndone lib\n".encode())
     record = tier_health.parse("go", state["tier_health:go"])
     assert record.state == "unavailable" and not record.failing
-    # a later clean run there cannot tell which modules it covered: the note stands
+    # a later run that builds without such a failure clears it
     await code_scip._record_tier("org", "code-go", "go", 0, b"done lib\n")
-    assert tier_health.parse("go", state["tier_health:go"]).state == "unavailable"
+    assert tier_health.parse("go", state["tier_health:go"]).state == "ok"
+
+
+@pytest.mark.asyncio
+async def test_the_same_unreachable_modules_in_any_order_are_noted_once(
+    monkeypatch, tmp_path: Path
+) -> None:
+    other = "skip lib: go mod download failed: If this is a private repository, see x"
+    state = {"git_head": "b" * 40, "scip_commit_go": ""}
+    await _one_pass(monkeypatch, tmp_path, state, f"{_PRIVATE}\n{other}\n")
+    state["scip_commit_go"] = ""
+    _, repo = await _one_pass(monkeypatch, tmp_path, state, f"{other}\n{_PRIVATE}\n")
+    assert "tier_health:go" not in repo.writes

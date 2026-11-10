@@ -160,14 +160,6 @@ def split_module_failures(lines: list[str]) -> tuple[list[str], list[str]]:
     return broken, unreachable
 
 
-_NOTED_MODULE = re.compile(r"(?:^|; )([^\s;:]+): go mod download failed")
-
-
-def noted_modules(health: TierHealth) -> set[str]:
-    """The modules an `unavailable` record names (as far as its kept text names them)."""
-    return set(_NOTED_MODULE.findall(health.error))
-
-
 def recovered(tier: str, now: datetime) -> TierHealth:
     return TierHealth(tier=tier, state="ok", last_ok_at=_iso(now))
 

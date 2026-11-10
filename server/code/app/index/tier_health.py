@@ -86,44 +86,22 @@ async def record(
     return new
 
 
-async def record_unavailable(
-    repo: CodeRepo, org: str, ns: str, tier: str, error: str
-) -> tier_health.TierHealth | None:
+async def note_unavailable(repo: CodeRepo, org: str, ns: str, tier: str, error: str) -> None:
     """Note that the tier's run left out what it cannot fetch on this host (`error`
     names it). Written, and logged, only when the note is new or says something else;
-    never fails the pass it describes."""
+    never fails the pass it describes. The next run that builds without such a
+    failure clears it (`record` with no error)."""
     key = tier_health.state_key(tier)
     try:
         prev = tier_health.parse(tier, await repo.get_state(org, ns, key))
         new = tier_health.unavailable(prev, tier, error, utc_now())
         if prev is not None and prev.state == new.state and prev.error == new.error:
-            return None
+            return
         await repo.set_state(org, ns, key, new.to_json(), detail=new.kind)
     except Exception as e:  # noqa: BLE001 — a health record never fails the pass it describes
         logger.warning("tier health %s/%s %s not recorded: %s", org, ns, tier, e)
-        return None
+        return
     logger.warning("tier %s of %s/%s: %s. %s", tier, org, ns, new.error, new.fix)
-    return new
-
-
-async def settle_unavailable(
-    repo: CodeRepo, org: str, ns: str, tier: str, unreachable: list[str], built: set[str] | None
-) -> bool:
-    """After a run whose other modules built: note the `unreachable` module lines, or,
-    with none, whether a standing note may be cleared. It clears only once the run built
-    every module the note names (`built`: the modules the run covered, None for all);
-    a run that covered others leaves it. True when the caller may record success."""
-    if unreachable:
-        await record_unavailable(repo, org, ns, tier, "; ".join(unreachable))
-        return False
-    try:
-        prev = tier_health.parse(tier, await repo.get_state(org, ns, tier_health.state_key(tier)))
-    except Exception as e:  # noqa: BLE001 — a health record never fails the pass it describes
-        logger.warning("tier health %s/%s %s not read: %s", org, ns, tier, e)
-        return False
-    if prev is None or prev.state != "unavailable" or built is None:
-        return True
-    return tier_health.noted_modules(prev) <= built
 
 
 async def forget(repo: CodeRepo, org: str, ns: str, tiers: tuple[str, ...]) -> None:

@@ -844,9 +844,11 @@ failure: the Go tier indexes the rest and records the tier `unavailable`, kind
 tier's user a git credential for that host; Go says the same of a path or version
 that is wrong or gone). The note is written once, counts no passes, is never a
 `code_tier_failing` problem and is not in `as_of.failing_tiers`, so an agent's code
-answer does not flag those modules. It stays until a run builds every module it names;
-a run that covers other modules, or one under `entry-lock --tier`, leaves it. A module
-that fails for any other reason still fails the tier.
+answer does not flag those modules. It reflects the last run that built modules: a pass
+that builds nothing leaves it, and the next run that builds without such a failure
+clears it, so it comes back when a module that still cannot fetch its dependency next
+changes. A module that fails for any other reason still fails the tier, and its record
+names the unreachable ones too.
 
 The record is read where each reader already looks:
 

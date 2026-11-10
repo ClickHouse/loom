@@ -19,7 +19,8 @@ module cache under `code_scip_go_modcache` makes the second build of a
 module cheap. A module whose `go mod download` fails (a `replace` onto a
 path the checkout lacks) is skipped by the runner and named in the pass
 outcome, never fatal to the pass; it fails the tier's health record (kind `module`)
-until a run builds again.
+until a run builds again. One that fails only for a dependency this host cannot
+fetch (a private repository) is noted instead (state `unavailable`), not failed.
 
 House rule: the SERVER never parses protobuf — scip-go and the
 conversion run in subprocesses; the worker consumes the JSON deltas.
@@ -58,7 +59,7 @@ from server.code.app.index.gitrepo import (
     nul_fields,
 )
 from server.code.app.index.sandbox import tool_mounts
-from server.code.app.index.tier_health import settle_unavailable
+from server.code.app.index.tier_health import note_unavailable
 from server.code.app.index.untrusted_files import read_delta
 from server.code.domain.index.tier_health import (
     module_failures,
@@ -280,13 +281,16 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResu
         len(paths),
     )
     # The rest is applied. A module whose dependency cannot be fetched from this host is
-    # noted once and does not fail the tier; one that would not build for another reason
-    # fails it. A standing note clears only once its modules are built.
+    # noted, not failed; one that would not build for another reason fails the tier
+    # (its record names both, the broken last, where the kept tail keeps them). A run
+    # that builds without either clears the record.
     broken, unreachable = split_module_failures(failed)
     if broken:
-        raise TierDegraded("; ".join(broken))
-    built = set(modules) if modules else None  # a full run covers every module
-    return await settle_unavailable(repo, cfg.org, cfg.namespace, PRODUCER, unreachable, built)
+        raise TierDegraded("; ".join(unreachable + broken))
+    if unreachable:
+        await note_unavailable(repo, cfg.org, cfg.namespace, PRODUCER, "; ".join(unreachable))
+        return False  # the note stands for this run: no success record clears it
+    return True
 
 
 def _bin_dirs() -> list[str]:
