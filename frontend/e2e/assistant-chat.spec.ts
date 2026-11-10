@@ -2,7 +2,7 @@ import { expect, test, type Page, type Request } from "@playwright/test";
 import { violations } from "./axe";
 import { installApi, NAMESPACE } from "./fixtures";
 
-// The Assistant page's chat against a fake chat route: the answer arrives as the
+// The assistant panel's chat, opened from the header's launcher, against a fake chat route: the answer arrives as the
 // server-sent chunks `POST /v1/assistant/chat/completions` streams (OpenAI's chunk shape,
 // ending at `data: [DONE]`), a refusal before the stream as Loom's error envelope. The
 // answer carries every Markdown form the chat draws, a table wider than a phone, HTML and
@@ -63,11 +63,29 @@ function streamed(text: string): string {
   return `${events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("")}data: [DONE]\n\n`;
 }
 
-async function openChat(page: Page) {
+/** A page with the panel open on an empty chat: readiness reports the assistant ready, and
+ *  the launcher (or `Ctrl+/`) opens it. */
+async function openChat(page: Page, by: "launcher" | "shortcut" = "launcher") {
   await installApi(page);
-  await page.goto("/assistant");
-  await expect(page.getByRole("heading", { level: 2, name: "Ask the assistant" })).toBeVisible();
+  await page.route("**/v1/health/ready", (r) =>
+    r.fulfill({ status: 200, json: { ready: true, checks: { assistant: { ok: true, required: false } } } }),
+  );
+  await page.goto("/memories");
+  await expect(page.locator("main h1").first()).toBeVisible();
+  await expect(launcher(page)).toBeVisible();
+  if (by === "launcher") await launcher(page).click();
+  // The shortcut's listener is wired once the shell has drawn: a press that lands before
+  // it is pressed again, only while the panel is still closed.
+  else
+    await expect(async () => {
+      if ((await launcher(page).getAttribute("aria-expanded")) !== "true") await page.keyboard.press("Control+/");
+      await expect(launcher(page)).toHaveAttribute("aria-expanded", "true", { timeout: 5_000 });
+    }).toPass({ timeout: 30_000 });
+  await expect(page.getByRole("textbox", { name: "Question" })).toBeFocused();
 }
+
+const launcher = (page: Page) => page.locator('[data-focus-key="assistant-launcher"]');
+const panel = (page: Page) => page.locator("[data-assistant-panel]");
 
 async function ask(page: Page, question: string) {
   await page.getByRole("textbox", { name: "Question" }).fill(question);
@@ -117,17 +135,14 @@ for (const width of [1400, 375]) {
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(overflow).toBeLessThanOrEqual(0);
       expect(await violations(page)).toEqual([]);
-      if (SCREENSHOT && width === 1400) {
-        await page.getByRole("heading", { level: 2, name: "Ask the assistant" }).scrollIntoViewIfNeeded();
-        await page.locator("section[aria-labelledby='assistant-chat']").screenshot({ path: SCREENSHOT });
-      }
+      if (SCREENSHOT && width === 1400) await panel(page).screenshot({ path: SCREENSHOT });
     });
   });
 }
 
 test("each turn sends the whole conversation", async ({ page }) => {
   const bodies: unknown[] = [];
-  await openChat(page);
+  await openChat(page, "shortcut");
   await page.route("**/v1/assistant/chat/completions", (r) => {
     bodies.push(r.request().postDataJSON());
     return r.fulfill({ status: 200, contentType: "text/event-stream", body: streamed(`Answer ${bodies.length}.`) });
@@ -209,11 +224,41 @@ test("an unavailable assistant is a plain state, not a crash", async ({ page }) 
     }),
   );
   await ask(page, "Who owns billing?");
-  await expect(page.getByTestId("assistant-chat-unavailable")).toContainText(
-    "The assistant is not available on this deployment.",
-  );
-  await expect(page.getByRole("textbox", { name: "Question" })).toHaveCount(0);
+  // A refusal that names no reason reads as not set up; a platform admin is sent to Health.
+  const why = panel(page).getByTestId("assistant-unavailable");
+  await expect(why).toHaveAttribute("data-reason", "not_configured");
+  await expect(why).toContainText("Set up the assistant: see Health");
+  await expect(page.getByRole("button", { name: "Ask", exact: true })).toHaveAttribute("aria-disabled", "true");
+  await expect(launcher(page)).toHaveAccessibleName("Assistant, unavailable");
   // The rest of the page still works.
-  await expect(page.getByRole("heading", { level: 2, name: "Overview" })).toBeVisible();
+  await expect(page.locator("main h1").first()).toBeVisible();
   expect(await violations(page)).toEqual([]);
 });
+
+for (const width of [360, 400]) {
+  test.describe(`phone ${width}, coarse pointer`, () => {
+    test.use({ viewport: { width, height: 800 }, hasTouch: true, isMobile: true });
+
+    test("the header's buttons fit one row with the launcher, a 44 px target", async ({ page }) => {
+      await installApi(page);
+      await page.goto("/memories");
+      await expect(page.locator("main h1").first()).toBeVisible();
+      await expect(launcher(page)).toBeVisible();
+      const fit = await page.evaluate(() => {
+        // The header's right cluster: the row of buttons the launcher sits in.
+        const cluster = document
+          .querySelector('[data-focus-key="assistant-launcher"]')
+          ?.closest("header > div") as HTMLElement;
+        const shown = Array.from(cluster.children).filter((c) => (c as HTMLElement).offsetWidth > 0);
+        return {
+          overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          rows: new Set(shown.map((c) => Math.round(c.getBoundingClientRect().top))).size,
+        };
+      });
+      expect(fit).toEqual({ overflow: 0, rows: 1 });
+      const box = await launcher(page).boundingBox();
+      expect(Math.round(box?.width ?? 0)).toBeGreaterThanOrEqual(44);
+      expect(Math.round(box?.height ?? 0)).toBeGreaterThanOrEqual(44);
+    });
+  });
+}

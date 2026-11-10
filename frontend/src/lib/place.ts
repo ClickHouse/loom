@@ -151,10 +151,30 @@ export function announce(message: string): void {
   }, 50);
 }
 
-/** A dialog that holds the focus (an editor a navigation opened) keeps it. */
+/** A dialog that holds the focus (an editor a navigation opened) keeps it, and so does the
+ *  open assistant panel beside the page (push mode), whose own citations and links
+ *  navigate: the person goes on in the panel. */
 function focusHeldByDialog(): boolean {
   const a = document.activeElement;
-  return a instanceof Element && !!a.closest('[role="dialog"], [role="alertdialog"]');
+  return (
+    a instanceof Element && !!a.closest('[role="dialog"], [role="alertdialog"], [data-assistant-panel][data-open]')
+  );
+}
+
+/** Whether a dialog may hand the focus back to `opener` when it closes: not when the opener
+ *  sits in an assistant panel that has closed meanwhile (a navigation closed it), where the
+ *  focus would land on nothing visible. */
+export function openerUsable(opener: Element | null | undefined): boolean {
+  if (!opener?.isConnected) return false;
+  const panel = opener.closest("[data-assistant-panel]");
+  return !panel || panel.hasAttribute("data-open");
+}
+
+/** The view's h1, focused as an arrival focuses it: where a dialog sends the focus when its
+ *  opener is gone. */
+export function focusViewHeading(): void {
+  const h1 = viewHeading();
+  if (h1) focusHeading(h1);
 }
 
 function focusHeading(h1: HTMLElement): void {
@@ -163,16 +183,39 @@ function focusHeading(h1: HTMLElement): void {
 }
 
 /** A new view: once its h1 is drawn, focus it (unless a dialog holds the focus) and say
- *  where the navigation went — `note`, or the h1's text. */
-export function arriveAt(note?: string | null): void {
+ *  where the navigation went — `note`, or the h1's text. With `focusKey`, the element of
+ *  that `data-focus-key` takes the focus instead, scrolled into view: the arrival waits for
+ *  it while the page marks it pending (`data-focus-pending="<key>"`, a read that decides
+ *  whether it shows), and falls back to the h1 once neither is there, or when the wait runs
+ *  out. Where the focus is held, the element is only scrolled into view. */
+export function arriveAt(note?: string | null, focusKey?: string | null): void {
   cancelPending?.();
-  cancelPending = untilDrawn(() => {
-    const h1 = viewHeading();
-    if (!h1) return false;
+  const toHeading = (h1: HTMLElement) => {
     if (!focusHeldByDialog()) focusHeading(h1);
     announce(note || h1.textContent || "");
-    return true;
-  });
+  };
+  cancelPending = untilDrawn(
+    () => {
+      const h1 = viewHeading();
+      if (!h1) return false;
+      if (focusKey) {
+        const target = keyedTarget(focusKey);
+        if (target) {
+          target.scrollIntoView({ block: "nearest" });
+          if (!focusHeldByDialog()) target.focus({ preventScroll: true });
+          announce(note || h1.textContent || "");
+          return true;
+        }
+        if (document.querySelector(`[data-focus-pending="${CSS.escape(focusKey)}"]`)) return false;
+      }
+      toHeading(h1);
+      return true;
+    },
+    () => {
+      const h1 = viewHeading();
+      if (h1) toHeading(h1);
+    },
+  );
 }
 
 /** Back or Forward onto `place`: scroll `<main>` back once the page is tall enough, then

@@ -3,16 +3,15 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { axeViolations } from "../../test/axe";
 import { useStore } from "../../lib/state";
-import { AssistantChat, conversation, MAX_MESSAGE_CHARS } from "./Chat";
+import { AssistantChat } from "./Chat";
+import { conversation, MAX_MESSAGE_CHARS, resetChat, useChat } from "./chatStore";
+import { useDock } from "../../lib/assistantDock";
 
 // The chat posts OpenAI's chat body to /v1/assistant/chat/completions and reads the
 // server-sent chunks the route streams (server/assistant/app/routes.py): `data: {chunk}`
 // events, an `error` event for a refusal after the stream began, and `data: [DONE]`.
 
 const enc = new TextEncoder();
-// A conversation is kept in the tab under its key: each test's chat has its own.
-let keys = 0;
-const key = () => `test-${++keys}`;
 
 /** A streamed answer the test feeds event by event; the request's abort errors it, as a
  *  browser's fetch does. */
@@ -47,6 +46,9 @@ let answers: Array<() => Response | ReturnType<typeof sse>> = [];
 beforeEach(() => {
   calls = [];
   answers = [];
+  // Each test starts on a new conversation with an empty field.
+  resetChat(null);
+  useDock.setState({ draft: "", working: false, unread: false, open: true });
   localStorage.setItem("loom_token_v1", "session-token");
   vi.stubGlobal(
     "fetch",
@@ -91,7 +93,12 @@ describe("AssistantChat", () => {
   it("streams the answer in as it arrives, with the session's token and the page's namespace", async () => {
     const s = sse();
     answers.push(() => s);
-    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    render(
+      <>
+        <AssistantChat namespace="team" blocked={null} />
+        <p id="loom-assistant-status" role="status" />
+      </>,
+    );
     await ask("What do we bill?");
 
     expect(calls).toHaveLength(1);
@@ -111,7 +118,10 @@ describe("AssistantChat", () => {
 
     await act(async () => s.done());
     await waitFor(() => expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument());
-    expect(screen.getByRole("status")).toHaveTextContent("The answer is complete.");
+    // Said in the assistant's own live region, which the shell renders.
+    await waitFor(() =>
+      expect(document.getElementById("loom-assistant-status")).toHaveTextContent("The answer is complete."),
+    );
   });
 
   it("sends the whole conversation each turn", async () => {
@@ -121,7 +131,7 @@ describe("AssistantChat", () => {
       () => first,
       () => second,
     );
-    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    render(<AssistantChat namespace="team" blocked={null} />);
     await ask("Who owns billing?");
     await act(async () => {
       first.text("Ada does.");
@@ -144,7 +154,7 @@ describe("AssistantChat", () => {
         retry_after_s: 3600,
       }),
     );
-    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    render(<AssistantChat namespace="team" blocked={null} />);
     await ask("Who owns billing?");
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(
@@ -161,14 +171,9 @@ describe("AssistantChat", () => {
   it.each([
     ["AUTH_INSUFFICIENT", 403, "Your role doesn't allow this: the caller cannot read 'team' in 'dev'."],
     ["OVERLOADED", 503, "Loom is busy right now: the caller cannot read 'team' in 'dev'."],
-    [
-      "MODEL_CALLS_DISABLED",
-      403,
-      "Model calls are off for this org; an org admin can turn them on in Admin › Guardrails unless a platform admin locked them: the caller cannot read 'team' in 'dev'.",
-    ],
   ])("shows a %s refusal in the chat", async (code, status, shown) => {
     answers.push(refusal(status, { code, message: "the caller cannot read 'team' in 'dev'" }));
-    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    render(<AssistantChat namespace="team" blocked={null} />);
     await ask("Who owns billing?");
     expect(await screen.findByRole("alert")).toHaveTextContent(shown);
   });
@@ -181,13 +186,14 @@ describe("AssistantChat", () => {
         reason: "narrowed",
       }),
     );
-    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    render(<AssistantChat namespace="team" blocked={null} />);
     await ask("Who owns billing?");
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(
-      "This token can't do this: a token whose reads are narrower than its namespace cannot ask the assistant.",
+    // The panel says why in its own words for the token (Dock.tsx): no alert about a role.
+    await waitFor(() =>
+      expect(useChat.getState().hint).toEqual({ kind: "narrowed", scope: "less than the namespace" }),
     );
-    expect(alert).not.toHaveTextContent(/role/);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByLabelText("Question")).toHaveValue("Who owns billing?");
   });
 
   it("says a refusal with no lead of its own once, with one retry wait", async () => {
@@ -200,7 +206,7 @@ describe("AssistantChat", () => {
         retry_after_s: 3,
       }),
     );
-    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    render(<AssistantChat namespace="team" blocked={null} />);
     await ask("Who owns billing?");
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Loom is busy: the model gateway is queueing calls. Try again in 3 s.");
@@ -216,7 +222,7 @@ describe("AssistantChat", () => {
         retryable: true,
       }),
     );
-    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    render(<AssistantChat namespace="team" blocked={null} />);
     await ask("Who owns billing?");
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Loom couldn't check your access just now: the grant store did not answer. Try again in a moment.",
@@ -232,7 +238,7 @@ describe("AssistantChat", () => {
         retryable: false,
       }),
     );
-    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    render(<AssistantChat namespace="team" blocked={null} />);
     await ask("Who owns billing?");
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Loom hit an internal error.");
@@ -242,7 +248,7 @@ describe("AssistantChat", () => {
   it("shows an error event after part of the answer, and keeps that part", async () => {
     const s = sse();
     answers.push(() => s);
-    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    render(<AssistantChat namespace="team" blocked={null} />);
     await ask("Who owns billing?");
     await act(async () => {
       s.text("Ada ");
@@ -261,7 +267,7 @@ describe("AssistantChat", () => {
   it("says so when the stream stops without its end", async () => {
     const s = sse();
     answers.push(() => s);
-    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    render(<AssistantChat namespace="team" blocked={null} />);
     await ask("Who owns billing?");
     await act(async () => {
       s.text("Ada");
@@ -276,7 +282,7 @@ describe("AssistantChat", () => {
   it("says the answer was cut off when the connection drops mid-answer", async () => {
     const s = sse();
     answers.push(() => s);
-    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    render(<AssistantChat namespace="team" blocked={null} />);
     await ask("Who owns billing?");
     await act(async () => {
       s.text("Ada");
@@ -290,8 +296,7 @@ describe("AssistantChat", () => {
   it("keeps the conversation when the chat goes away and comes back, as after opening a document", async () => {
     const s = sse();
     answers.push(() => s);
-    const k = key();
-    const { unmount } = render(<AssistantChat conversationKey={k} namespace="team" blocked={null} />);
+    const { unmount } = render(<AssistantChat namespace="team" blocked={null} />);
     await ask("Who owns billing?");
     await act(async () => {
       s.text("Ada.");
@@ -299,43 +304,37 @@ describe("AssistantChat", () => {
     });
     await screen.findByText("Ada.");
     unmount();
-    render(<AssistantChat conversationKey={k} namespace="team" blocked={null} />);
+    render(<AssistantChat namespace="team" blocked={null} />);
     expect(screen.getByText("Who owns billing?")).toBeInTheDocument();
     expect(screen.getByText("Ada.")).toBeInTheDocument();
     cleanup();
-    // Another key (another subject, namespace or scope) starts empty.
-    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    // Another person (or token scope) starts empty.
+    resetChat({ subject: "bob", org: "acme", scope: "-", user: "-" });
+    render(<AssistantChat namespace="team" blocked={null} />);
     expect(screen.queryByText("Who owns billing?")).not.toBeInTheDocument();
   });
 
-  it("shows an answer cut off by leaving the chat as stopped when it comes back", async () => {
+  it("keeps answering while the chat is away, and shows the whole answer when it comes back", async () => {
     const s = sse();
     answers.push(() => s);
-    const k = key();
-    const { unmount } = render(<AssistantChat conversationKey={k} namespace="team" blocked={null} />);
+    const { unmount } = render(<AssistantChat namespace="team" blocked={null} />);
     await ask("Who owns billing?");
     await act(async () => s.text("Ada"));
     await screen.findByText("Ada");
     unmount();
-    render(<AssistantChat conversationKey={k} namespace="team" blocked={null} />);
-    expect(screen.getByText("Ada")).toBeInTheDocument();
-    expect(screen.getByText("Stopped.")).toBeInTheDocument();
-    // Nothing is still answering: the next question can be asked.
-    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
-    answers.push(() => {
-      const next = sse();
-      queueMicrotask(() => {
-        next.text("Grace.");
-        next.done();
-      });
-      return next;
+    expect((calls[0].init.signal as AbortSignal).aborted).toBe(false);
+    await act(async () => {
+      s.text(" owns it.");
+      s.done();
     });
-    await ask("And payroll?");
-    expect(await screen.findByText("Grace.")).toBeInTheDocument();
+    render(<AssistantChat namespace="team" blocked={null} />);
+    expect(screen.getByText("Ada owns it.")).toBeInTheDocument();
+    expect(screen.queryByText("Stopped.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
   });
 
   it("asks nothing with a question longer than the route accepts, and says why", async () => {
-    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    render(<AssistantChat namespace="team" blocked={null} />);
     const user = userEvent.setup();
     const field = screen.getByLabelText("Question");
     await user.click(field);
@@ -353,7 +352,7 @@ describe("AssistantChat", () => {
       queueMicrotask(() => s.done());
       return s;
     });
-    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    render(<AssistantChat namespace="team" blocked={null} />);
     const user = userEvent.setup();
     const field = screen.getByLabelText("Question");
     await user.click(field);
@@ -366,10 +365,11 @@ describe("AssistantChat", () => {
 
   it("sends the newest messages the route accepts, each cut to its length", () => {
     const turns = Array.from({ length: 30 }, (_, i) => ({
-      id: i + 1,
+      id: `t${i + 1}`,
       question: `q${i}`,
       answer: i === 29 ? "x".repeat(25_000) : `a${i}`,
       state: "done" as const,
+      at: i,
     }));
     const messages = conversation(turns, "now");
     expect(messages).toHaveLength(51);
@@ -381,7 +381,7 @@ describe("AssistantChat", () => {
   it("Stop aborts the request and keeps what came in", async () => {
     const s = sse();
     answers.push(() => s);
-    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    render(<AssistantChat namespace="team" blocked={null} />);
     const user = await ask("Who owns billing?");
     await act(async () => s.text("Ada owns"));
     await waitFor(() => expect(lastAnswer()).toHaveTextContent("Ada owns"));
@@ -395,40 +395,27 @@ describe("AssistantChat", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("aborts the answer when the chat goes away", async () => {
-    const s = sse();
-    answers.push(() => s);
-    const view = render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
-    await ask("Who owns billing?");
-    view.unmount();
-    expect((calls[0].init.signal as AbortSignal).aborted).toBe(true);
-  });
-
-  it("shows ASSISTANT_UNAVAILABLE as the chat's state, not a crash, and offers a later try", async () => {
+  it("takes an ASSISTANT_UNAVAILABLE refusal out of the conversation and keeps the reason and the question", async () => {
     answers.push(
       refusal(503, {
         code: "ASSISTANT_UNAVAILABLE",
-        message: "the assistant is not set up on this replica yet: /v1/health names why",
+        message: "the assistant is not set up in this web process yet",
+        reason: "starting",
       }),
     );
-    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
-    const user = await ask("Who owns billing?");
-    const state = await screen.findByTestId("assistant-chat-unavailable");
-    expect(state).toHaveTextContent("The assistant is not available on this deployment.");
-    expect(state).toHaveTextContent("the assistant is not set up on this replica yet");
-    expect(screen.queryByLabelText("Question")).not.toBeInTheDocument();
+    render(<AssistantChat namespace="team" blocked={null} />);
+    await ask("Who owns billing?");
+    await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "starting" }));
+    expect(useChat.getState().refused).toBe("Who owns billing?");
     expect(screen.queryByRole("list", { name: "Conversation" })).not.toBeInTheDocument();
-    // The focused form went: the focus is on the state's own button, then back on the field.
-    expect(screen.getByRole("button", { name: "Try again" })).toHaveFocus();
-    await user.click(screen.getByRole("button", { name: "Try again" }));
     expect(screen.getByLabelText("Question")).toHaveValue("Who owns billing?");
-    expect(screen.getByLabelText("Question")).toHaveFocus();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("renders Markdown emphasis, lists, tables and code, and HTML only as text", async () => {
     const s = sse();
     answers.push(() => s);
-    const { container } = render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    const { container } = render(<AssistantChat namespace="team" blocked={null} />);
     await ask("Show me");
     const answer = [
       "**Billing** is *weekly* and `snake_case_key` stays.",
@@ -486,7 +473,7 @@ describe("AssistantChat", () => {
   it("shows the answer's citations as written, and the checked ones in its Sources", async () => {
     const s = sse();
     answers.push(() => s);
-    const { container } = render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    const { container } = render(<AssistantChat namespace="team" blocked={null} />);
     await ask("Cite it");
     const cited = [
       { kind: "memory", text: "[memory:billing/invoices@v3]", verified: true, reason: "", ref: "billing/invoices" },
@@ -528,7 +515,7 @@ describe("AssistantChat", () => {
   it("opens a verified help citation's page on the Help view at its section, and links nothing in the answer", async () => {
     const s = sse();
     answers.push(() => s);
-    const { container } = render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    const { container } = render(<AssistantChat namespace="team" blocked={null} />);
     await ask("How do I revoke a token?");
     const text = "[help:guides/tokens-and-grants.md § Tokens and grants > Revoke and rotate]";
     const cited = [
@@ -568,7 +555,7 @@ describe("AssistantChat", () => {
   it("names the op an answer may have invented in its label", async () => {
     const s = sse();
     answers.push(() => s);
-    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    render(<AssistantChat namespace="team" blocked={null} />);
     await ask("How do I pin a memory?");
     const cited = [{ kind: "memory", text: "[memory:a/b/c@v3]", verified: true, reason: "", ref: "a/b/c", anchor: "" }];
     await act(async () => {
@@ -586,7 +573,7 @@ describe("AssistantChat", () => {
   it("marks an answer whose sources do not check out as unconfirmed", async () => {
     const s = sse();
     answers.push(() => s);
-    const { container } = render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    const { container } = render(<AssistantChat namespace="team" blocked={null} />);
     await ask("Cite it");
     const cited = [
       {
@@ -627,7 +614,12 @@ describe("AssistantChat", () => {
   ])("labels an uncited answer whose support is %s", async (support, text, label) => {
     const s = sse();
     answers.push(() => s);
-    const { container } = render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    const { container } = render(
+      <>
+        <AssistantChat namespace="team" blocked={null} />
+        <p id="loom-assistant-status" role="status" />
+      </>,
+    );
     await ask("Hi");
     await act(async () => {
       s.text(text);
@@ -653,7 +645,7 @@ describe("AssistantChat", () => {
       () => first,
       () => second,
     );
-    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    render(<AssistantChat namespace="team" blocked={null} />);
     await ask("One");
     await act(async () => {
       first.text("Fridays.");
@@ -675,9 +667,7 @@ describe("AssistantChat", () => {
   });
 
   it("asks nothing while blocked, and says why", async () => {
-    render(
-      <AssistantChat conversationKey={key()} namespace="team" blocked="Your role on this namespace is not known." />,
-    );
+    render(<AssistantChat namespace="team" blocked="Your role on this namespace is not known." />);
     const user = userEvent.setup();
     await user.type(screen.getByLabelText("Question"), "Who?{Enter}");
     await user.click(screen.getByRole("button", { name: "Ask" }));
@@ -690,7 +680,7 @@ describe("AssistantChat", () => {
   it("Enter asks and Shift+Enter adds a line", async () => {
     const s = sse();
     answers.push(() => s);
-    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    render(<AssistantChat namespace="team" blocked={null} />);
     const user = userEvent.setup();
     await user.type(screen.getByLabelText("Question"), "line one{Shift>}{Enter}{/Shift}line two{Enter}");
     expect(calls[0].body.messages).toEqual([{ role: "user", content: "line one\nline two" }]);
@@ -699,7 +689,7 @@ describe("AssistantChat", () => {
   it("has no axe violations with a conversation, an answer streaming and a refusal shown", async () => {
     const s = sse();
     answers.push(refusal(503, { code: "OVERLOADED", message: "busy", retry_after_s: 5 }), () => s);
-    const { container } = render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    const { container } = render(<AssistantChat namespace="team" blocked={null} />);
     await ask("First?");
     await screen.findByRole("alert");
     await userEvent.setup().click(screen.getByRole("button", { name: "Ask" }));

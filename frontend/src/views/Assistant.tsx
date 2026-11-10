@@ -23,8 +23,8 @@ import { PageContainer } from "../layout/PageContainer";
 import { canCall } from "../lib/canCall";
 import { openGraphAt } from "../lib/graphLink";
 import { useNamespaceRoleRead } from "../lib/namespaceRole";
+import { assistantShortcut } from "../lib/platform";
 import { useStore } from "../lib/state";
-import { AssistantChat } from "./assistant/Chat";
 import { DocumentInspection } from "./assistant/DocumentInspection";
 import { Inspection } from "./assistant/Inspection";
 import { InventoryPopulations, InventoryScopeNote, InventorySections } from "./assistant/Inventory";
@@ -36,9 +36,9 @@ import { useScopedRead } from "./assistant/useScopedRead";
 /**
  * Assistant — what a namespace holds and who appears in it (namespace.inventory, read on
  * load), what one user, agent or session remembers (memory.inspect), what its documents are
- * (knowledge.inspect), drafts of changes to what creates them (namespace.tune), and a chat
- * with the assistant (`/v1/assistant/chat/completions`, `assistant/Chat.tsx`). Every read but
- * the chat is deterministic (no model); all are read-only, and a draft is never applied here.
+ * (knowledge.inspect) and drafts of changes to what creates them (namespace.tune). Every read
+ * is deterministic (no model) and read-only, and a draft is never applied here. The chat with
+ * the assistant is the panel the header's Assistant button opens (layout/AssistantPanel.tsx).
  */
 
 const SUBJECT_OPTIONS = (Object.keys(SUBJECT_COPY) as InspectSubject[]).map((value) => ({
@@ -54,8 +54,6 @@ export function Assistant() {
   // again with another scope (the page stays mounted) drops what the old one read.
   const tokenScope = tokenReadScope(storedToken());
   const scope = `${identity?.org}/${identity?.namespace}/${tokenScope?.readScope ?? "-"}/${tokenScope?.readUserId ?? "-"}`;
-  // The chat's conversation is the signed-in person's too: it remounts and is kept under one key.
-  const chatKey = `${whoami?.subject ?? "-"}/${scope}`;
   const inventory = useScopedRead<NamespaceInventory>(scope);
   const inspection = useScopedRead<MemoryInspection>(scope);
   const documents = useScopedRead<KnowledgeInspection>(scope);
@@ -73,16 +71,12 @@ export function Assistant() {
   // session or user id in the request, which this page does not send: the server refuses it.
   const incomplete =
     tokenScope?.readScope === "own_session" || (tokenScope?.readScope === "own_user" && !tokenScope.readUserId);
-  const gate = (
-    op: "namespace.inventory" | "knowledge.inspect" | "memory.inspect" | "namespace.tune" | "assistant.ask",
-  ) => {
+  const gate = (op: "namespace.inventory" | "knowledge.inspect" | "memory.inspect" | "namespace.tune") => {
     const scoped = op === "namespace.inventory" || op === "knowledge.inspect";
     if (roleLoading) return "Your role on this namespace is still loading.";
     if (!canCall(op, role, whoami)) return "Your role on this namespace is not known.";
     if (incomplete && scoped)
       return "Your token needs each request to name its user or session, which this page does not send.";
-    if (narrowed && op === "assistant.ask")
-      return "Your token is limited to one user or session; the assistant needs a token for the whole namespace.";
     if (narrowed && !scoped)
       return "Your token is limited to one user or session; inspecting memories and drafting need a token for the whole namespace.";
     return null;
@@ -91,7 +85,6 @@ export function Assistant() {
   const memoryGate = gate("memory.inspect");
   const documentsGate = gate("knowledge.inspect");
   const tuneGate = gate("namespace.tune");
-  const chatGate = gate("assistant.ask");
   const copy = SUBJECT_COPY[subject];
   const suggestions = inventory.data?.populations.find((p) => INSPECTED_AS[p.population] === subject)?.top ?? [];
   const suggest = suggestions.length > 0;
@@ -146,8 +139,9 @@ export function Assistant() {
         <ScopeBadge kind="namespace" value={identity.namespace} />
       </PageHeader>
       <p className="text-sm text-text-muted mb-4 max-w-[72ch]">
-        Ask the assistant about this namespace, see what it holds and what each user, agent or session remembers, then
-        draft improvements. Nothing on this page changes your data.
+        See what this namespace holds and what each user, agent or session remembers, then draft improvements. Nothing
+        on this page changes your data. The chat with the assistant is in its own panel: the Assistant button in the
+        header opens it ({assistantShortcut()}).
       </p>
 
       <Panel as="section" aria-labelledby="assistant-overview" className="mb-5">
@@ -191,16 +185,6 @@ export function Assistant() {
             )}
           </>
         )}
-      </Panel>
-
-      <Panel as="section" aria-labelledby="assistant-chat" className="mb-5">
-        <SectionHeading id="assistant-chat" level={2} label="Ask the assistant" />
-        <p className="text-sm text-text-muted mb-3 max-w-[72ch]">
-          Ask about what this namespace holds. The assistant reads with your access and calls a model, which counts
-          against this namespace's model budget. The conversation stays in this tab until it reloads: Loom stores none
-          of it.
-        </p>
-        <AssistantChat key={chatKey} conversationKey={chatKey} namespace={namespace} blocked={chatGate} />
       </Panel>
 
       <Panel as="section" aria-labelledby="assistant-inspect" className="mb-5">

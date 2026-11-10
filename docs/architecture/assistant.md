@@ -10,15 +10,15 @@ the parts.
 LibreChat is the assistant: it hosts the agent (its model, instructions and tools) and
 runs it headless beside Loom, reachable only from Loom. Loom supplies the agent's tools,
 which read under a token of the asker's own subject, and a read-only SQL op that
-ClickHouse itself holds to that token's org and namespaces. People chat on the
-dashboard's Assistant page; agents and scripts reach the same agent over HTTP, MCP and
-both SDKs, through Loom's origin and as themselves.
+ClickHouse itself holds to that token's org and namespaces. People chat in the
+dashboard's assistant panel, opened from the header of any page; agents and scripts reach
+the same agent over HTTP, MCP and both SDKs, through Loom's origin and as themselves.
 
 ## Surfaces
 
 ```mermaid
 flowchart LR
-    P["person, signed in"] --> D["dashboard<br/>Assistant page chat"]
+    P["person, signed in"] --> D["dashboard<br/>assistant panel"]
     A["agent or script"] --> S["SDK / HTTP / MCP"]
     D --> B["Loom assistant bridge"]
     S --> B
@@ -30,7 +30,7 @@ flowchart LR
 
 | Surface         | What the caller calls                                                                                                   |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Dashboard       | a chat on the Assistant page, streaming from `POST /v1/assistant/chat/completions` with the signed-in session           |
+| Dashboard       | the assistant panel, streaming from `POST /v1/assistant/chat/completions` with the signed-in session                    |
 | HTTP            | `POST /v1/assistant/chat/completions`: LibreChat's agents API request and response, OpenAI-compatible, streaming or not |
 | SDKs            | a thin `assistant` client in Python and TypeScript over that route, with streaming; it holds no agent logic             |
 | MCP             | the `loom_assistant_ask` tool (op `assistant.ask`), which forwards one question and returns the whole answer            |
@@ -63,8 +63,9 @@ ledger, the analysis boundary in the database, and the citation check.
 
 **Why a native chat, not LibreChat's UI in a frame.** A frame would put a second origin,
 a second sign-in and LibreChat's look inside the dashboard, and would need LibreChat's
-cookies to work in a third-party frame. A chat panel on the Assistant page uses Loom's
-session and components, and links verified citations into the memory and document views.
+cookies to work in a third-party frame. The dashboard's assistant panel uses Loom's
+session and components, and links verified citations into the memory and document views
+([the assistant panel](../features/dashboard.md#the-assistant-panel) has its rules).
 
 ## The bridge: each caller's own identity
 
@@ -193,8 +194,8 @@ Until the row has its key and agent id, the assistant answers `ASSISTANT_UNAVAIL
 **Conversations live with the caller.** LibreChat's agents API (the OpenAI-compatible
 `/api/agents/v1/chat/completions`) saves no messages: it runs the agent over the
 messages in the request and records only token counts in its `transactions` collection.
-A multi-turn chat is the caller's message list, which the dashboard keeps in the tab and
-an SDK caller sends each time, as with any OpenAI-compatible API. The agent's MCP
+A multi-turn chat is the caller's message list, which the dashboard keeps in the browser's
+storage and an SDK caller sends each time, as with any OpenAI-compatible API. The agent's MCP
 connection carries request-time headers, so LibreChat opens it for each answer and
 closes it after; each answer pays one MCP `initialize` and `tools/list`.
 
@@ -1062,17 +1063,17 @@ token.
 
 ## Stored data and erasure
 
-| Where                                       | What the assistant leaves                                                                            | How it is deleted                                       |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `loom.assistant_service`                    | one row: the service user's email and agent id, its sealed password and agents API key               | holds no memory content (a `NO_MEMORY_CONTENT` entry)   |
-| `loom.analysis_secrets`                     | one row: the analysis key and the analyst's password, sealed                                         | holds no memory content (a `NO_MEMORY_CONTENT` entry)   |
-| `loom.analysis_canary`                      | one constant row in a reserved scope, which the probe reads                                          | holds no memory content (a `NO_MEMORY_CONTENT` entry)   |
-| `loom.agent_events`                         | one row per bridge request and per tool call, under the answer's token                               | as every ledger row                                     |
-| LibreChat users, API keys, agents, sessions | the service user, its key, the agent definition and the sign-in sessions of each boot that signs in  | kept; no memory content                                 |
-| LibreChat `transactions`                    | token counts per answer and its message id, no content                                               | kept, a few hundred bytes per answer                    |
-| LibreChat logs                              | the service user's id and email and request ids, no message text, token or password                  | LibreChat's default: one file per day, kept 14 days     |
-| ClickHouse's `system.query_log`, server log | each analyst statement without its text; a refused one's error, which can quote an allowlisted value | the logs' TTL, none by default; erasure reaches neither |
-| the dashboard                               | the current chat, in the tab's memory                                                                | gone when the tab closes                                |
+| Where                                       | What the assistant leaves                                                                            | How it is deleted                                                                     |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `loom.assistant_service`                    | one row: the service user's email and agent id, its sealed password and agents API key               | holds no memory content (a `NO_MEMORY_CONTENT` entry)                                 |
+| `loom.analysis_secrets`                     | one row: the analysis key and the analyst's password, sealed                                         | holds no memory content (a `NO_MEMORY_CONTENT` entry)                                 |
+| `loom.analysis_canary`                      | one constant row in a reserved scope, which the probe reads                                          | holds no memory content (a `NO_MEMORY_CONTENT` entry)                                 |
+| `loom.agent_events`                         | one row per bridge request and per tool call, under the answer's token                               | as every ledger row                                                                   |
+| LibreChat users, API keys, agents, sessions | the service user, its key, the agent definition and the sign-in sessions of each boot that signs in  | kept; no memory content                                                               |
+| LibreChat `transactions`                    | token counts per answer and its message id, no content                                               | kept, a few hundred bytes per answer                                                  |
+| LibreChat logs                              | the service user's id and email and request ids, no message text, token or password                  | LibreChat's default: one file per day, kept 14 days                                   |
+| ClickHouse's `system.query_log`, server log | each analyst statement without its text; a refused one's error, which can quote an allowlisted value | the logs' TTL, none by default; erasure reaches neither                               |
+| the dashboard                               | the person's conversations, in the browser's local storage                                           | 30 days from last use; deleted at sign-out, by another person's sign-in, or by Delete |
 
 An error ClickHouse raises on a statement can quote the value it failed on: a
 `toUInt64(title)` refused on a title quotes the title. That value is one of the caller's
@@ -1170,9 +1171,10 @@ ClickHouse and are shared by every replica; the agent definition is written as
    refusals, the budget share, the per-process limit, the spend on the answer's ledger
    row, the answer's id on its tool calls' rows, the citation check and the SDKs'
    streaming clients. Built.
-5. The chat on the dashboard's Assistant page, on the signed-in session and the page's
-   namespace, with a Stop button that closes the request and each answer's checked
-   citations under it. Built.
+5. The dashboard's assistant panel, on the signed-in session and the header's namespace,
+   with a Stop button that closes the request, each answer's checked citations under it,
+   the reasons it cannot answer and the conversations kept in the browser
+   ([the assistant panel](../features/dashboard.md#the-assistant-panel)). Built.
 6. Loom's documentation in the image, `help.search` and `help.get` on the toolset
    ([Loom's documentation](#looms-documentation)). Built.
 

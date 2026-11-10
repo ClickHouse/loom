@@ -1,10 +1,7 @@
-import { useEffect, useId, useRef, useState } from "react";
-import { Button } from "@clickhouse/click-ui/Button";
-import { Icon } from "@clickhouse/click-ui/Icon";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Popover } from "@clickhouse/click-ui/Popover";
-import { Title } from "@clickhouse/click-ui/Title";
 import { IconButton } from "./IconButton";
-import { CountBadge } from "./PendingApprovalsBell";
+import { CountBadge } from "./CountBadge";
 import { taskCounts, type InboxCount } from "../api/tasks";
 import { useVisiblePoll } from "../lib/hooks";
 import { readSession, useAfterPaint, writeSession } from "../lib/afterPaint";
@@ -12,9 +9,9 @@ import { useStore } from "../lib/state";
 import { canCall } from "../lib/canCall";
 import { roleOnNamespace } from "../lib/namespaceRole";
 import { isMemoryNamespace } from "../lib/namespace";
-import { attentionByInbox, bellCount } from "../lib/taskBell";
-import { relativeTime } from "../lib/format";
+import { bellCount } from "../lib/taskBell";
 import { PopoverTrigger } from "./ui/Menu";
+const TaskInboxList = lazy(() => import("./TaskInboxList").then((m) => ({ default: m.TaskInboxList })));
 
 // A remembered badge answer is shown until the refresh replaces it — one poll interval.
 const SESSION_TTL_MS = 120_000;
@@ -28,12 +25,13 @@ const SESSION_TTL_MS = 120_000;
  * dropdown lists the inboxes with something waiting and opens the Tasks view on one.
  */
 export function TaskInboxBell() {
-  const headingId = useId();
   const identity = useStore((s) => s.identity);
   const whoami = useStore((s) => s.whoami);
   const myNamespaces = useStore((s) => s.myNamespaces);
   const [counts, setCounts] = useState<InboxCount[]>([]);
   const [open, setOpen] = useState(false);
+  // The list's chunk loads on the first open.
+  const [opened, setOpened] = useState(false);
 
   const ns = identity?.namespace ?? "";
   const roleHere = roleOnNamespace(whoami, myNamespaces, ns);
@@ -71,18 +69,17 @@ export function TaskInboxBell() {
   if (!identity || !mayRead) return null;
 
   const total = bellCount(counts);
-  const inboxes = attentionByInbox(counts);
-
-  const openInbox = (inbox: string) => {
-    setOpen(false);
-    // A new entry for Tasks on that inbox: the page being left keeps its URL and state.
-    useStore.getState().navigate("tasks", { query: { inbox } });
-  };
 
   const tip =
     total > 0 ? `${total} task${total === 1 ? "" : "s"} waiting for a person` : "No tasks waiting for a person";
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(v) => {
+        setOpen(v);
+        if (v) setOpened(true);
+      }}
+    >
       <span className="relative inline-flex">
         <PopoverTrigger>
           <IconButton
@@ -94,61 +91,11 @@ export function TaskInboxBell() {
         {/* Neutral: triage items and blocks on a person wait, they have not failed. */}
         {total > 0 && <CountBadge count={total} />}
       </span>
-      <Popover.Content
-        align="end"
-        aria-labelledby={headingId}
-        className="w-[min(400px,92vw)] max-h-[480px] overflow-y-auto"
-      >
-        <Title type="h2" size="sm" id={headingId} className="pb-2 border-b border-border">
-          Tasks waiting · {total}
-        </Title>
-        {inboxes.length === 0 && (
-          <div className="py-6 text-sm text-text-muted text-center">
-            Nothing waits for you.
-            <div className="text-xs text-text-muted mt-1.5">
-              Review items in triage and blocked tasks in the inboxes of <span className="font-mono">{ns}</span> show up
-              here.
-            </div>
-            <Button
-              type="secondary"
-              htmlType="button"
-              className="mt-3"
-              onClick={() => {
-                setOpen(false);
-                useStore.getState().setView("tasks");
-              }}
-            >
-              Open tasks
-            </Button>
-          </div>
-        )}
-        {inboxes.map((a) => (
-          <button
-            type="button"
-            key={a.inbox}
-            onClick={() => openInbox(a.inbox)}
-            className="text-left -mx-2 w-[calc(100%+1rem)] px-2 py-2.5 rounded-sm hover:bg-surface-2 flex items-start gap-3 transition-colors"
-          >
-            <Icon name="email" size="xs" aria-hidden="true" className="mt-1" />
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium font-mono break-all">{a.inbox}</div>
-              <div className="text-xs text-text-muted mt-0.5">
-                {[
-                  a.triage > 0 ? `${a.triage} in triage` : "",
-                  a.blockedHuman > 0 ? `${a.blockedHuman} blocked on a person` : "",
-                  a.blockedOther > 0 ? `${a.blockedOther} blocked on a sender or external event` : "",
-                  a.oldest ? `oldest ${relativeTime(a.oldest)}` : "",
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </div>
-            </div>
-            <span className="text-xs text-text-muted mt-1 shrink-0 inline-flex items-center gap-1">
-              Open <Icon name="arrow-right" size="xs" aria-hidden="true" />
-            </span>
-          </button>
-        ))}
-      </Popover.Content>
+      {opened && (
+        <Suspense fallback={null}>
+          <TaskInboxList counts={counts} namespace={ns} close={() => setOpen(false)} />
+        </Suspense>
+      )}
     </Popover>
   );
 }

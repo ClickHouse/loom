@@ -894,6 +894,12 @@ describe("Assistant: overview", () => {
     const { container } = render(<Assistant />);
     expect(screen.getByRole("heading", { level: 1, name: "Assistant" })).toBeInTheDocument();
     expect(screen.getByText(/Nothing on this page changes your data/)).toBeInTheDocument();
+    // The chat is the panel's: the page says where it went and holds no chat of its own.
+    expect(screen.getByText(/The chat with the assistant is in its own panel/)).toHaveTextContent(
+      "the Assistant button in the header opens it",
+    );
+    expect(screen.queryByRole("heading", { name: "Ask the assistant" })).toBeNull();
+    expect(screen.queryByLabelText("Question")).toBeNull();
     await screen.findByTestId("assistant-inventory");
     expect(namespaceInventory).toHaveBeenCalledTimes(1);
     expect(namespaceInventory).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, expect.anything());

@@ -34,6 +34,7 @@ import { useNamespaceRole } from "../../lib/namespaceRole";
 import { NamespaceHealthPanel } from "./NamespaceHealth";
 import { ProjectionFailuresPanel } from "./ProjectionFailures";
 import { RepairsPanel } from "./Repairs";
+import { AssistantHealthRow } from "./AssistantHealthRow";
 
 // Friendly label + blurb per worker; unknown workers fall through to
 // a default rendering (raw name + "background worker").
@@ -207,6 +208,7 @@ export function Health() {
           How Loom's workers, extraction and this namespace's memories are doing, and the repairs your role allows.
         </p>
       </div>
+      <AssistantHealthRow />
       <Tabs value={open} onValueChange={(v) => setTab(v as HealthTab)}>
         <Tabs.TriggersList className="mb-5" aria-label="Health">
           {seesWorkers && (

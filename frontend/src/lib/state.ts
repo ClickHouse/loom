@@ -155,6 +155,9 @@ export interface NavOptions {
   back?: string;
   focusKey?: string;
   note?: string;
+  /** The element the arrival focuses, by its `data-focus-key`, in place of the page's h1
+   *  (`arriveAt`); `focusKey` stays the one Back focuses. */
+  arriveFocus?: string;
 }
 
 /** The URL for `v`: the page's namespace, then with `query` exactly those keys, else only
@@ -184,14 +187,26 @@ function pushView(v: View, opts: NavOptions = {}, remember = true): void {
   // its state.
   if (!remember) return patchEntry({}, want + window.location.hash);
   const s = useStore.getState();
-  rememberPlace({ key: s.inspectedMemoryKey, agent: s.inspectedAgent, owner: s.inspectedOwner }, opts.focusKey);
+  // The phone's assistant sheet has an entry of its own over the page (its Back closes it):
+  // a navigation from it replaces that entry, so Back from the new page returns to the page
+  // under the sheet, which remembered its place when the sheet opened.
+  const replace = sheetEntry();
+  if (!replace)
+    rememberPlace({ key: s.inspectedMemoryKey, agent: s.inspectedAgent, owner: s.inspectedOwner }, opts.focusKey);
   // A navigation's entry is made in the current namespace.
   const namespace = s.identity?.namespace ?? null;
-  history.pushState(
-    { ...(opts.back ? { loomBack: opts.back } : {}), ...(namespace !== null ? { loomNamespace: namespace } : {}) },
-    "",
-    want,
-  );
+  const state = {
+    ...(opts.back ? { loomBack: opts.back } : {}),
+    ...(namespace !== null ? { loomNamespace: namespace } : {}),
+  };
+  if (replace) history.replaceState(state, "", want);
+  else history.pushState(state, "", want);
+}
+
+/** Whether the current history entry is the one the assistant's phone sheet pushed. */
+export function sheetEntry(): boolean {
+  const st: unknown = typeof history === "undefined" ? null : history.state;
+  return !!st && typeof st === "object" && (st as Record<string, unknown>).loomSheet === true;
 }
 
 function urlParam(key: string): string | null {
@@ -334,6 +349,8 @@ interface AppState {
   navSeq: number;
   /** What the latest navigation's arrival says, when not just the page's title. */
   navNote: string | null;
+  /** The element the latest navigation's arrival focuses (`NavOptions.arriveFocus`). */
+  arriveFocus: string | null;
   inspectedMemoryKey: string | null;
   // Writer-identity override for the inspected memory: when the list ran
   // with agent="*", the writer's agent may differ from identity.agent and
@@ -439,6 +456,7 @@ export const useStore = create<AppState>((set, get) => ({
   view: "memories",
   navSeq: 0,
   navNote: null,
+  arriveFocus: null,
   inspectedMemoryKey: null,
   inspectedAgent: "",
   inspectedOwner: null,
@@ -494,7 +512,13 @@ export const useStore = create<AppState>((set, get) => ({
     if (!opts.query && urlParam("memory") !== null) setViewParam("memory", null, { loomInspect: null });
     // Its tab too: a link to Memories means the list (the tabs set `section` themselves).
     if (!opts.query && view === "memories" && urlParam("section") !== null) setViewParam("section", null);
-    set((s) => ({ view, inspectedMemoryKey: null, navSeq: s.navSeq + 1, navNote: opts.note ?? null }));
+    set((s) => ({
+      view,
+      inspectedMemoryKey: null,
+      navSeq: s.navSeq + 1,
+      navNote: opts.note ?? null,
+      arriveFocus: opts.arriveFocus ?? null,
+    }));
   },
   bootView: (view) => {
     pushView(view, {}, false);
