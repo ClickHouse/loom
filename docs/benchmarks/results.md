@@ -991,7 +991,7 @@ PYTHONPATH=$PWD .venv/bin/python -m bench.docparse downstream text_layer=art/tex
 
 `bench/scale_load.py` loads synthetic memories straight into the stores and then runs
 the memory ops through one server built from source. Every key has 1 to 4 versions (2.4
-on average), `created_at` spreads over twelve monthly partitions, and each embedding row
+on average), `created_at` spreads over 360 days, 13 monthly partitions, and each embedding row
 carries two 3072-dimension vectors (the fake embedder's width, which every `Quantized`
 column is declared for). Two shapes:
 

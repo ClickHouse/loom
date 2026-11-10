@@ -78,7 +78,11 @@ class _Ch:
 
     def query(self, sql: str, parameters: dict[str, Any]) -> _Rows:
         assert parameters["op"] == "memory.set "
-        if parameters["flushes"] and self.flush_row and "'pg_batch.flush'" in sql:
+        if (
+            parameters["flushes"]
+            and self.flush_row
+            and "({flushes:Bool} AND startsWith(log_comment, 'pg_batch.flush'))" in sql
+        ):
             # the publication batch's statements in the window, counted with the op's
             return _Rows([a + b for a, b in zip(self.row, self.flush_row, strict=True)])
         return _Rows(self.row)

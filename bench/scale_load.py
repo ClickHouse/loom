@@ -20,8 +20,9 @@ Two shapes:
 
 Each key gets 1 to 4 versions (2.4 on average, the harness's choice);
 the head is the newest. `created_at` spreads over `--months` months, so the memory
-tables get one partition per month. Rows land under org names that start with
-`scale-`; point the harness only at a ClickHouse and a Postgres of your own.
+tables get a partition for each month the window touches (13 for 12 months). Rows land
+under org names that start with `scale-`; point the harness only at a ClickHouse and a
+Postgres of your own.
 
     PYTHONPATH=$PWD .venv/bin/python bench/scale_load.py load-ch --shape single --rows 1000000
     PYTHONPATH=$PWD .venv/bin/python bench/scale_load.py load-pg
@@ -580,7 +581,7 @@ def flush_logs(ch: Any, attempts: int = 10) -> None:
         try:
             ch.command("SYSTEM FLUSH LOGS")
             return
-        except Exception as e:
+        except Exception as e:  # waits out code 241 only; the rest re-raise
             if "Code: 241." not in str(e) or attempt == attempts - 1:
                 raise
             time.sleep(5)
@@ -773,7 +774,6 @@ def measure(args: argparse.Namespace) -> None:
         "shape": args.shape,
         "authority": health.get("storage_authority"),
         "build": health.get("build_commit"),
-        "bulk_peer_read": env.get("LOOM_MEMORY_BULK_PEER_READ", "batched"),
         "parts_before": parts(ch),
     }
     keys = sample_keys(ch, args.shape, 2000)

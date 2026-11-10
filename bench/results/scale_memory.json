@@ -5,7 +5,7 @@
   "postgres": "16, no standby, shared_buffers 2 GB",
   "embedder": "fake-ngram-3072 (two 3072-dimension BFloat16 vectors per embedding row)",
   "server": "one uvicorn process from source, background workers off",
-  "load": "bench/scale_load.py load-ch / load-pg; 2.4 versions per key; 12 monthly partitions",
+  "load": "bench/scale_load.py load-ch / load-pg; 2.4 versions per key; created_at over 360 days, 13 monthly partitions",
   "shapes": {
    "single": "one org, one namespace, one agent, user '-'",
    "zipf": "10,000 namespaces over 1,000 orgs, Zipf exponent 1, 4 agents and 100 users per namespace"

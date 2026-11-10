@@ -324,7 +324,8 @@ Latency, throughput and storage at scale.
   copies them into the Postgres authority's heads and revisions, in one namespace or
   Zipf-sized over many orgs, then measures the memory ops through a server under either
   authority, the parts and the vector leg's read, `OPTIMIZE`, erasure by user and by
-  org, and Postgres sizes, vacuum and a one-org dump. Free with the fake providers;
+  org, Postgres sizes, vacuum and a one-org dump, and `memory.set` at fixed rates over
+  several servers. Free with the fake providers;
   point it only at a private ClickHouse and Postgres
   ([results](../docs/benchmarks/results.md#memory-at-scale)).
 - **`ch_cost_by_op.py`** — ClickHouse cost per loom operation from
