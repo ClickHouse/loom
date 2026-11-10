@@ -1,7 +1,7 @@
 {
   "$schema": "https://context7.com/schema/context7.json",
   "projectTitle": "Loom",
-  "description": "A self-hosted server that gives AI agents shared long-term memory, document search and a code index on ClickHouse, reached over MCP, HTTP and the Python (clickhouse-loom) and TypeScript (@clickhouse/loom) SDKs.",
+  "description": "A self-hosted server, built on ClickHouse, that gives AI agents shared long-term memory, document search and a code index, reached over MCP, HTTP and the Python (clickhouse-loom) and TypeScript (@clickhouse/loom) SDKs.",
   "folders": ["docs", "examples", "sdk/python", "sdk/typescript", "integrations", "skills/loom"],
   "excludeFolders": [
     "docs/development",
