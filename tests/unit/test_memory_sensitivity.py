@@ -764,12 +764,13 @@ def test_has_email_finds_what_the_email_regex_finds() -> None:
     assert not has_email("x" * 65 + "@x.com")
 
 
-def _fastest(read: Callable[[str], object], text: str) -> float:
+def _fastest_seconds[T](read: Callable[[T], object], arg: T) -> float:
+    """The fastest of three reads in CPU time: another process holding the CPU does not count."""
     times = []
     for _ in range(3):
-        started = time.perf_counter()
-        read(text)
-        times.append(time.perf_counter() - started)
+        started = time.process_time()
+        read(arg)
+        times.append(time.process_time() - started)
     return min(times)
 
 
@@ -783,23 +784,13 @@ def _fastest(read: Callable[[str], object], text: str) -> float:
 def test_an_email_is_read_once_from_its_at(text: str) -> None:
     # A regex starting at every word boundary rescans up to 64 characters, and the domain
     # again, from each one: about a hundred times one pass over the text.
-    one_pass = _fastest(re.compile(r"[^\x00-\x7f]").search, text)
-    assert _fastest(has_email, text) < 20 * one_pass
+    one_pass = _fastest_seconds(re.compile(r"[^\x00-\x7f]").search, text)
+    assert _fastest_seconds(has_email, text) < 20 * one_pass
 
 
 def _read_escaped_quotes(n: int) -> None:
     # each escaped quote is a possible key start: a key reads at most 200 characters
     assert not reads_high('\\"' * n)
-
-
-def _fastest_seconds(read: Callable[[int], None], n: int) -> float:
-    """The fastest of three reads, so one stall on a busy runner does not count."""
-    times = []
-    for _ in range(3):
-        started = time.perf_counter()
-        read(n)
-        times.append(time.perf_counter() - started)
-    return min(times)
 
 
 @pytest.mark.parametrize(("read", "n"), [(_read_long_runs, 50_000), (_read_escaped_quotes, 5_000)])
