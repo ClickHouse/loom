@@ -812,7 +812,9 @@ def test_the_documented_one_liner_fails_on_a_failed_download(tmp_path: Path) -> 
     and then fails, as a download cut short does: the line exits with curl's code
     and the installer never runs."""
     (line,) = [
-        line for line in (ROOT / "README.md").read_text().splitlines() if "install.sh" in line
+        line
+        for line in (ROOT / "README.md").read_text().splitlines()
+        if line.startswith("curl ") and "install.sh" in line
     ]
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
