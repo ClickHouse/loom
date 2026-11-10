@@ -825,7 +825,8 @@ async def complete(
     if not seqs:
         return
     async with pg.transaction() as conn:
-        await _complete_in(conn, seqs, done, tokens)
+        searchable = await _complete_in(conn, seqs, done, tokens)
+    _record_lags(searchable)
 
 
 async def complete_each(landed: Sequence[tuple[tuple[str, str, int], int]]) -> None:
@@ -837,10 +838,12 @@ async def complete_each(landed: Sequence[tuple[tuple[str, str, int], int]]) -> N
         by_done.setdefault(done, []).append(seq)
     if not by_done:
         return
+    searchable: list[tuple[float, bool]] = []
     async with pg.transaction() as conn:
         await _lock_held(conn, _held_keys([seq for seq, _ in landed], COMMIT_TOKEN))
         for done, seqs in by_done.items():
-            await _complete_in(conn, seqs, done, COMMIT_TOKEN)
+            searchable += await _complete_in(conn, seqs, done, COMMIT_TOKEN)
+    _record_lags(searchable)
 
 
 async def hand_over(seqs: Sequence[tuple[str, str, int]]) -> None:
@@ -893,9 +896,11 @@ async def _complete_in(
     seqs: Sequence[tuple[str, str, int]],
     done: int,
     tokens: Sequence[int] | int,
-) -> None:
+) -> list[tuple[float, bool]]:
     """`complete` in the caller's transaction, the deliveries locked first (a lock the
-    transaction already holds is taken again at no cost)."""
+    transaction already holds is taken again at no cost). Returns, for each revision
+    whose last search target this cleared, its projection lag and whether it was
+    redelivered: the caller records them once the transaction commits."""
     keys = _held_keys(seqs, tokens)
     locked = await _lock_held(conn, keys)
     # Deleted when nothing is left, else updated: one dead row per delivery, not two.
@@ -914,12 +919,17 @@ async def _complete_in(
         *keys,
         done,
     )
+    searchable = []
     for r in locked:  # a revision whose last search target landed: searchable now
         owed = int(r["targets"])
         if owed & SEARCHED and not owed & ~done & SEARCHED:
-            pg_pipeline.record_projection_lag(
-                float(r["lag_ms"]), redelivered=int(r["lease_token"]) != COMMIT_TOKEN
-            )
+            searchable.append((float(r["lag_ms"]), int(r["lease_token"]) != COMMIT_TOKEN))
+    return searchable
+
+
+def _record_lags(searchable: Sequence[tuple[float, bool]]) -> None:
+    for lag_ms, redelivered in searchable:
+        pg_pipeline.record_projection_lag(lag_ms, redelivered=redelivered)
 
 
 @dataclass(frozen=True)

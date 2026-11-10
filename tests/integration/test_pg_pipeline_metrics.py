@@ -96,24 +96,36 @@ async def test_the_outbox_backlog_counts_due_and_parked_rows(org_call: Any) -> N
     org, _call = org_call
     ns, row_hash = f"pl-{uuid.uuid4().hex[:8]}", uuid.uuid4().hex
     try:
+        # Parked first: no claim takes a parked row, so its count is this row's alone.
         await pg.execute(
             "INSERT INTO loom.audit_outbox (org, namespace, row_hash, audit, due_at) "
-            "VALUES ($1, $2, $3, '{}'::jsonb, now() - interval '1 hour')",
+            "VALUES ($1, $2, $3, '{}'::jsonb, 'infinity')",
             org,
             ns,
             row_hash,
         )
-        async with pg.transaction() as conn:
-            # Held, so a running delivery worker's claim (SKIP LOCKED) passes it by.
-            await conn.execute("SELECT 1 FROM loom.audit_outbox WHERE org = $1 FOR UPDATE", org)
-            due = await pg_memory.outbox_backlog(1_000_000)
+        parked = (await pg_memory.outbox_backlog(1_000_000)).parked
+        for _ in range(5):  # a running delivery worker may claim it between the two
+            await pg.execute(
+                "UPDATE loom.audit_outbox SET due_at = now() - interval '1 hour' WHERE org = $1",
+                org,
+            )
+            async with pg.transaction() as conn:
+                # Held, so a worker's claim (SKIP LOCKED) passes it by while we read.
+                due_at_past = await conn.fetchval(
+                    "SELECT due_at < now() - interval '59 minutes' FROM loom.audit_outbox "
+                    "WHERE org = $1 FOR UPDATE",
+                    org,
+                )
+                due = await pg_memory.outbox_backlog(1_000_000)
+            if due_at_past:
+                break
+        assert due_at_past, "a delivery worker claimed the row five times running"
         assert due.pending >= 1
         assert due.oldest_age_s is not None and due.oldest_age_s >= 3600  # this row's age
-        await pg.execute("UPDATE loom.audit_outbox SET due_at = 'infinity' WHERE org = $1", org)
-        parked = (await pg_memory.outbox_backlog(1_000_000)).parked
+        assert parked - due.parked == 1
     finally:
         await pg.execute("DELETE FROM loom.audit_outbox WHERE org = $1", org)
-    assert parked - (await pg_memory.outbox_backlog(1_000_000)).parked == 1
 
 
 async def test_the_knowledge_backlog_counts_pending_and_parked_deliveries(org_call: Any) -> None:

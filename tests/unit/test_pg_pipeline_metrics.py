@@ -39,8 +39,11 @@ def test_a_backlog_reading_is_dropped_after_two_export_periods(
 
 
 def _fake_completion(
-    monkeypatch: pytest.MonkeyPatch, locked: list[dict[str, Any]]
+    monkeypatch: pytest.MonkeyPatch, locked: list[dict[str, Any]], *, commits: bool = True
 ) -> list[tuple[float, dict[str, str]]]:
+    from contextlib import asynccontextmanager
+
+    from server.core import pg
     from server.memory.store import pg_memory
 
     lag = _Instrument()
@@ -54,11 +57,17 @@ def _fake_completion(
         async def execute(self, sql: str, *args: Any) -> str:
             return "UPDATE 1"
 
-    asyncio.run(
-        pg_memory._complete_in(
-            _Conn(), [("o", "n", 1)], pg_memory.SEARCH_DOC, pg_memory.COMMIT_TOKEN
-        )
-    )
+    @asynccontextmanager
+    async def transaction() -> Any:
+        yield _Conn()
+        if not commits:
+            raise pg.PostgresUnavailableError("the commit failed")
+
+    monkeypatch.setattr(pg, "transaction", transaction)
+    try:
+        asyncio.run(pg_memory.complete([("o", "n", 1)], pg_memory.SEARCH_DOC))
+    except pg.PostgresUnavailableError:
+        assert not commits
     return lag.points
 
 
@@ -85,6 +94,15 @@ def test_projection_lag_is_recorded_when_the_last_search_target_lands(
         ],
     )
     assert points == [(40.0, {"path": "flush"}), (900.0, {"path": "redelivered"})]
+
+
+def test_projection_lag_is_not_recorded_for_a_completion_that_rolled_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.store import pg_memory
+
+    locked = [{"targets": pg_memory.SEARCH_DOC, "lease_token": 1, "lag_ms": 40.0}]
+    assert _fake_completion(monkeypatch, locked, commits=False) == []
 
 
 @pytest.mark.parametrize(
@@ -264,7 +282,7 @@ def test_a_backlog_read_that_fails_is_logged_and_not_raised(
 def test_an_mcp_failure_counts_under_the_code_it_answers(
     monkeypatch: pytest.MonkeyPatch, error: Exception, code: str
 ) -> None:
-    """As HTTP labels it: a refusal's, a named 5xx's, or INTERNAL_ERROR."""
+    """The code its answer carries: a refusal's, a named 5xx's, or INTERNAL_ERROR."""
     from server.observability import otel
     from server.transport import mcp_outcome
 

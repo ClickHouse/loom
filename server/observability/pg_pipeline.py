@@ -7,7 +7,8 @@
   (`outcome=deadline`: LOOM_PG_PROJECTION_WAIT_MS, or what a re-entrant pass has left):
   a search then answers 503, a report that may skip it reads on.
 - `loom.pg.projection_lag_ms`: from a revision's commit to its last search target
-  landing, measured on Postgres's clock as the delivery clears (`pg_memory._complete_in`),
+  landing, measured on Postgres's clock as the delivery clears and recorded once that commits
+  (`pg_memory.complete`),
   by path: the writer's own flush or a redelivery.
 - `loom.pg.backlog` {source, state} and `loom.pg.oldest_pending_age_s` {source}: one
   reading per delivery pass, taken first in the pass by the worker that owns the source,
