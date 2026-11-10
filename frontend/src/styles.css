@@ -1749,10 +1749,12 @@ textarea[aria-invalid="true"]:focus-visible {
     background: var(--color-accent);
   }
   /* Below xl the launcher is its icon: Click UI's padding and the gap before the label it
-     hides go, so it is 32 px like the header's other icon buttons. */
+     hides go, so it is 32 px like the header's other icon buttons (the frameless type is
+     only as tall as its icon, hence the height; a coarse pointer's min sizes still win). */
   @media (max-width: 1279.98px) {
     .assistant-launcher {
       width: 32px;
+      height: 32px;
       padding: 0;
       gap: 0;
     }
