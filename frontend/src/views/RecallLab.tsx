@@ -436,7 +436,7 @@ export function RecallLab() {
         const [r, failure] = await (kw?.entries.length
           ? search.then(
               (res) => [res, null] as const,
-              (e: unknown) => [null, humanizeError(e)] as const,
+              (e: unknown) => [null, humanizeError(e, { bare: true, read: true })] as const,
             )
           : search.then((res) => [res, null] as const));
         if (ac.signal.aborted) return;

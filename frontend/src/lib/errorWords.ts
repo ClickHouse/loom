@@ -227,9 +227,12 @@ function humanizeApiError(err: ApiError, bare: boolean, read: boolean): string {
   )
     return "Your session ended — sign in again.";
   if (err.code === "PUBLICATION_PENDING") return PUBLICATION_PENDING;
-  // The server's words for it carry only the request id, which a caller that has one shows
-  // beside the line (a toast's detail, ListState, errorLine): the line itself names none.
-  if (err.code === "INTERNAL_ERROR") return withTail(ERROR_CODE_PREFIXES.INTERNAL_ERROR, retryTail(err, read));
+  // The server's words for it carry only the request id: the line says it once, in words,
+  // wherever it is shown; a caller that also prints ids beside a line skips one it holds.
+  if (err.code === "INTERNAL_ERROR") {
+    const id = err.requestId ? ` Request id ${err.requestId}.` : "";
+    return withTail(`${ERROR_CODE_PREFIXES.INTERNAL_ERROR}${id}`, retryTail(err, read));
+  }
   const own = codeSentence(err);
   const lead = own ?? CATEGORY_SENTENCES[categoryOf(err)] ?? sentenceForStatus(err.status);
   let text: string;
@@ -255,5 +258,5 @@ function humanizeApiError(err: ApiError, bare: boolean, read: boolean): string {
 export function errorLine(err: unknown, opts: { read?: boolean } = {}): string {
   const rid = errorRequestId(err);
   const text = humanizeError(err, { bare: true, read: opts.read === true });
-  return rid ? `${/[.!?]$/.test(text) ? text : `${text}.`} Request id ${rid}.` : text;
+  return rid && !text.includes(rid) ? `${/[.!?]$/.test(text) ? text : `${text}.`} Request id ${rid}.` : text;
 }

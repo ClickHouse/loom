@@ -263,7 +263,7 @@ describe("humanizeError", () => {
       expect(humanizeError(new ApiError({ status: 418 }), { bare: true })).toBe("Loom answered with status 418.");
     });
 
-    it("names no request id in an internal error's line: the caller shows it beside the line", () => {
+    it("says an internal error's request id once, in the line, wherever it is shown", () => {
       const err = new ApiError({
         status: 500,
         code: "INTERNAL_ERROR",
@@ -271,12 +271,9 @@ describe("humanizeError", () => {
         requestId: "r9",
         detail: { category: "internal", retryable: false },
       });
-      expect(humanizeError(err, { read: true })).toBe(
-        "Loom hit an internal error. If it keeps happening, tell your operator.",
-      );
-      expect(errorLine(err, { read: true })).toBe(
-        "Loom hit an internal error. If it keeps happening, tell your operator. Request id r9.",
-      );
+      const line = "Loom hit an internal error. If it keeps happening, tell your operator. Request id r9.";
+      expect(humanizeError(err, { read: true })).toBe(line);
+      expect(errorLine(err, { read: true })).toBe(line);
     });
 
     it("tells a read what a 5xx leaves to do, with no write warning", () => {

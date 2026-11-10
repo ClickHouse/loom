@@ -119,7 +119,9 @@ export function toastError(context: string, err: unknown, opts: { read?: boolean
  *  the request id underneath and the reading time, as toastError gives every error toast. */
 export function toastErrorLine(msg: string, err: unknown): void {
   const rid = errorRequestId(err);
-  toast(msg, "error", { ...(rid ? { detail: `request id ${rid}` } : {}), durationMs: errorToastMs(msg) });
+  // An id the line already says (an internal error's) is not printed a second time.
+  const id = rid && !msg.includes(rid) ? { detail: `request id ${rid}` } : {};
+  toast(msg, "error", { ...id, durationMs: errorToastMs(msg) });
 }
 
 export function errorToastMs(msg: string): number {

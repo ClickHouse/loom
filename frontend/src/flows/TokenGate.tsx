@@ -406,7 +406,9 @@ function PasswordGate({ onLogin, reason = null }: TokenGateProps) {
             text={
               <>
                 {err}
-                {errRequestId && <div className="mt-1 font-mono">request id {errRequestId}</div>}
+                {errRequestId && !String(err).includes(errRequestId) && (
+                  <div className="mt-1 font-mono">request id {errRequestId}</div>
+                )}
               </>
             }
           />

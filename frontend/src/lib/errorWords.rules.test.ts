@@ -29,7 +29,7 @@ describe("error toasts", () => {
     const calls = Object.entries(SOURCES)
       .filter(([path]) => !path.endsWith("components/Toast.tsx"))
       .flatMap(([path, text]) =>
-        [...text.matchAll(/\btoast\(/g)]
+        [...text.matchAll(/\btoast(?:ErrorLine)?\(/g)]
           .filter((m) => {
             const call = callText(text, m.index);
             return /humanizeError\(/.test(call) && !/bare: true/.test(call);

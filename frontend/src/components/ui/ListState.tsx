@@ -58,7 +58,9 @@ export function ListState(props: ListStateProps) {
   if (props.kind === "filtered") return <FilteredState {...props} />;
   if (props.kind === "error") {
     const message = typeof props.error === "string" ? props.error : humanizeError(props.error, { read: true });
-    const rid = props.requestId ?? errorRequestId(props.error);
+    const id = props.requestId ?? errorRequestId(props.error);
+    // An id the message already says (an internal error's) is not printed a second time.
+    const rid = id && !message.includes(id) ? id : "";
     // An alert, so a failure that replaces a skeleton or answers a Retry is announced.
     return (
       <div role="alert">

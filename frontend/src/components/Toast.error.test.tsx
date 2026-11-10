@@ -109,3 +109,27 @@ describe("toastError", () => {
     expect(errorToastMs("y".repeat(10_000))).toBe(20_000);
   });
 });
+
+describe("an internal error's toast", () => {
+  it("says the request id once: in the line, with no second line under it", async () => {
+    render(<ToastViewport />);
+    act(() =>
+      toastError(
+        "Save failed",
+        new ApiError({
+          status: 500,
+          code: "INTERNAL_ERROR",
+          message: "internal error; request_id=r9",
+          requestId: "r9",
+          detail: { category: "internal", retryable: false },
+        }),
+      ),
+    );
+    expect(
+      await screen.findByText(
+        "Save failed: Loom hit an internal error. If it keeps happening, tell your operator. Request id r9. It may have been saved; check before trying again.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("request id r9")).toBeNull();
+  });
+});
