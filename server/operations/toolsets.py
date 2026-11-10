@@ -413,6 +413,75 @@ def is_assistant(toolset: str | None) -> bool:
     return toolset_parts(toolset) == (ASSISTANT_TOOLSET,)
 
 
+# How an assistant answer's tool calls bear on its label (server/assistant/domain/support.py):
+# a call to a CITABLE op returns rows the answer can cite and the citation check verifies; an
+# UNCITABLE op's output (counts, findings, history) has no citation form; a NO_NAMESPACE_DATA
+# op returns Loom's own guide or catalog, never the namespace's data. Every assistant op is in
+# exactly one (tests/unit/test_assistant_support.py).
+ASSISTANT_CITABLE_OPS: frozenset[str] = frozenset(
+    {
+        "memory.search",
+        "memory.ask",
+        "memory.get",
+        "memory.list",
+        "knowledge.search",
+        "knowledge.get",
+        "knowledge.list",
+        "code.search",
+        "code.symbol",
+        "insights.query",
+    }
+)
+ASSISTANT_NO_NAMESPACE_DATA_OPS: frozenset[str] = frozenset({"mentor.guide", "insights.catalog"})
+ASSISTANT_UNCITABLE_OPS: frozenset[str] = (
+    MCP_ASSISTANT_OPS - ASSISTANT_CITABLE_OPS - ASSISTANT_NO_NAMESPACE_DATA_OPS
+)
+
+# Whether an assistant op's call found anything, as its ledger row records it (event_args):
+# the output lists whose summed length is `out_hits`; an op whose miss is `found: false`
+# (`out_found`); or an op that always returns data, with why.
+ASSISTANT_FOUND_FIELD: dict[str, tuple[str, ...]] = {
+    "memory.search": ("results",),
+    "memory.ask": ("results",),
+    "memory.list": ("entries",),
+    "memory.history": ("rows",),
+    "memory.aggregate": ("rows",),
+    "facts.traverse": ("nodes",),
+    "knowledge.search": ("results",),
+    "knowledge.list": ("rows",),
+    "knowledge.inspect": ("listed",),
+    "code.search": ("results",),
+    # A fuzzy candidate is no find; a presence answer is.
+    "code.symbol": ("definitions", "presence"),
+    "insights.query": ("rows",),
+    "grants.list": ("rows",),
+    "namespace.audit": ("findings",),
+    "namespace.validate": ("findings",),
+    "namespace.tune": ("proposals",),
+    "namespace.guide_history": ("revisions",),
+    "namespace.list_categories": ("categories",),
+    "namespace.taxonomy": ("tags",),
+    "namespace.summary": ("type_counts",),
+}
+ASSISTANT_FOUND_BOOL_OPS: frozenset[str] = frozenset(
+    {
+        "memory.get",
+        "memory.provenance",
+        "knowledge.get",
+        "namespace.get",
+        "namespace.guide_get",
+        "facts.path",
+    }
+)
+ASSISTANT_ALWAYS_RETURNS: dict[str, str] = {
+    "namespace.inventory": "one section per plane, its counts zero or not",
+    "memory.inspect": "the subject's counts and settings, zero or not",
+    "mentor.brief": "the namespace's usage counts and hints, zero or not",
+    "mentor.guide": "Loom's own writing guide",
+    "insights.catalog": "the tables an analysis may read",
+}
+
+
 def assistant_ops() -> list[Operation]:
     """The ops the assistant toolset lists, in registry order: its fixed set of reads,
     whatever their maturity or the code tools flag. The agent definition names these."""

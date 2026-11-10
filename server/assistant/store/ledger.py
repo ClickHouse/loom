@@ -3,6 +3,8 @@ its memory reads (`loom.memory_exposures`)."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.domain.set_chunk_session import SESSION_PREFIX
 from server.observability.consumer import ASSISTANT_CONSUMER
@@ -69,3 +71,35 @@ async def returned_keys(
         },
     )
     return {str(r["cited"]) for r in rows if r.get("cited")}
+
+
+@dataclass(frozen=True)
+class RunCalls:
+    """What an answer's tool calls left: the ops whose calls found data, and whether any call
+    failed or was refused."""
+
+    returned: frozenset[str]
+    failed: bool
+
+
+async def run_calls(
+    org: str, run_id: str, subject: str, *, ch: _CHClient | None = None
+) -> RunCalls:
+    """The answer's own calls, by its run, the caller's subject and consumer `loom-assistant`.
+    No namespace filter: a code call is ledgered under the code namespace and a refused call
+    under the sentinel; the org keeps the read inside the tenant. A call found data unless its
+    row says it found nothing (a miss, an empty list, an abstention)."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        "SELECT groupUniqArrayIf(operation, success "
+        "AND args['out_found'] != 'false' AND args['out_found_n'] != '0' "
+        "AND args['out_hits'] != '0' AND args['out_section_hits'] != '0' "
+        "AND args['out_abstain'] != 'true') AS returned, "
+        "countIf(NOT success) > 0 AS failed "
+        "FROM loom.agent_events "
+        "WHERE org = {org:String} AND run_id = {run:String} AND subject = {subject:String} "
+        "AND consumer = {consumer:String} AND ts > now() - INTERVAL 1 DAY",
+        {"org": org, "run": run_id, "subject": subject, "consumer": ASSISTANT_CONSUMER},
+    )
+    row = rows[0] if rows else {}
+    return RunCalls(frozenset(str(o) for o in row.get("returned") or ()), bool(row.get("failed")))

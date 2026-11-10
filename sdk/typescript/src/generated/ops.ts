@@ -87,6 +87,7 @@ export interface AssistantAskOutput {
   run_id?: string;
   model?: string;
   citations?: AssistantCitation[];
+  support?: string;
 }
 
 export interface AuditListInput {

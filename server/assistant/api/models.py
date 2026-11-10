@@ -67,3 +67,8 @@ class AssistantAskOutput(BaseModel):
     model: str = ""
     # Each citation in `answer`, checked when the answer ended.
     citations: list[AssistantCitation] = Field(default_factory=list)
+    # How far the answer rests on what Loom holds: "supported" (a citation verified),
+    # "unsupported" (a citation failed, or it cites nothing although its calls found
+    # citable rows), "unchecked" (its checks could not say) or "none" (it makes no claim:
+    # no text, an abstention, or it cites nothing and found nothing). Default "unchecked".
+    support: str = "unchecked"

@@ -32,8 +32,8 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
         aria-label={label}
         {...rest}
         // A tooltip that only repeats the name would be read again as its description;
-        // a longer one keeps the description Radix ties to it.
-        {...(tooltip ? {} : { "aria-describedby": undefined })}
+        // a longer one keeps the description Radix ties to it, and a caller's own stays.
+        {...(tooltip ? {} : { "aria-describedby": rest["aria-describedby"] })}
       />
     </Tip>
   );

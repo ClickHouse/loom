@@ -5175,6 +5175,7 @@ class AssistantAskOutput(TypedDict, total=False):
     run_id: NotRequired[str]
     model: NotRequired[str]
     citations: NotRequired[list["AssistantCitation"]]
+    support: NotRequired[str]
 
 
 class AssistantCitation(TypedDict, total=False):

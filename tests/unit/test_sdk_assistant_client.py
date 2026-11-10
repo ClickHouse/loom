@@ -39,7 +39,7 @@ ANSWER = _sse(
     _chunk("Deploys freeze "),
     _chunk("on Fridays."),
     {"id": "chatcmpl-1", "choices": [], "usage": {"prompt_tokens": 9, "completion_tokens": 4}},
-    {"object": "loom.citations", "id": "chatcmpl-1", "citations": CITED},
+    {"object": "loom.citations", "id": "chatcmpl-1", "citations": CITED, "support": "supported"},
 )
 
 
@@ -75,6 +75,7 @@ def test_the_stream_yields_text_then_the_answer_with_its_citations() -> None:
     assert answer.text == "Deploys freeze on Fridays." and answer.run_id == "chatcmpl-1"
     assert (answer.model, answer.prompt_tokens, answer.completion_tokens) == ("m", 9, 4)
     assert answer.verified == (AssistantCitation("memory", "[memory:a/b/c@v3]", True, ref="a/b/c"),)
+    assert answer.support == "supported"
     (r,) = sent
     assert r.url.path == "/v1/assistant/chat/completions"
     assert r.headers["X-Loom-Namespace"] == "handbook"
@@ -84,6 +85,20 @@ def test_the_stream_yields_text_then_the_answer_with_its_citations() -> None:
         "stream": True,
         "messages": [*history, {"role": "user", "content": "When are deploys frozen?"}],
     }
+
+
+@pytest.mark.parametrize("support", ["a-later-state", None])
+def test_an_unknown_or_missing_support_reads_as_unchecked(support: Any) -> None:
+    event: dict[str, Any] = {"object": "loom.citations", "id": "chatcmpl-1", "citations": []}
+    if support is not None:
+        event["support"] = support
+    stream = _sse(_chunk("Seven."), event)
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=stream, headers={"content-type": "text/event-stream"})
+
+    answer = _collect(_agent(handler))[-1]
+    assert isinstance(answer, AssistantAnswer) and answer.support == "unchecked"
 
 
 def test_a_refusal_raises_its_typed_error_and_is_not_resent() -> None:

@@ -24,7 +24,7 @@ const ANSWER = sse(
   chunk("Deploys freeze "),
   chunk("on Fridays."),
   { id: "chatcmpl-1", choices: [], usage: { prompt_tokens: 9, completion_tokens: 4 } },
-  { object: "loom.citations", id: "chatcmpl-1", citations: CITED },
+  { object: "loom.citations", id: "chatcmpl-1", citations: CITED, support: "supported" },
 );
 
 /** A body delivered in pieces cut at `cuts`, so an event can span reads. */
@@ -82,6 +82,7 @@ describe("loom.assistant.stream", () => {
         runId: "chatcmpl-1",
         model: "m",
         citations: CITED,
+        support: "supported",
         promptTokens: 9,
         completionTokens: 4,
       },
@@ -96,6 +97,15 @@ describe("loom.assistant.stream", () => {
       stream: true,
       messages: [...history, { role: "user", content: "q" }],
     });
+  });
+
+  it("reads an unknown or missing support, as an older or newer server sends, as unchecked", async () => {
+    for (const support of ["a-later-state", undefined]) {
+      const stream = sse(chunk("Seven."), { object: "loom.citations", id: "chatcmpl-1", citations: [], support });
+      const { loom } = client(() => new Response(body(stream, [])));
+      const last = (await collect(loom)).at(-1);
+      expect(last?.type === "answer" && last.answer.support).toBe("unchecked");
+    }
   });
 
   it("throws a refusal's typed error and never resends it", async () => {

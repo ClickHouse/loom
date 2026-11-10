@@ -1,0 +1,58 @@
+"""An answer's support (server/assistant/domain/support.py), from its checked citations and,
+for an answer that cites nothing, what its own tool calls found (`ledger.run_calls`).
+
+The calls ran before the model wrote the text, but their ledger rows land in the background
+(and a call may land on another replica): the run is read once and, unless that read
+already decides the answer is unsupported, once more after the rows' usual delay.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+
+from server.assistant.app.citations import Checked
+from server.assistant.domain import support as rule
+from server.assistant.store import ledger
+from server.observability.events import FLUSH_INTERVAL_S
+from server.operations.toolsets import ASSISTANT_CITABLE_OPS, ASSISTANT_NO_NAMESPACE_DATA_OPS
+from server.settings import settings
+
+log = logging.getLogger(__name__)
+
+# Past the ledger's flush interval and the batched-insert wait, the slack of one insert.
+_INSERT_SLACK_S = 0.2  # not a setting: a fraction of one ClickHouse insert
+
+
+async def support(checked: list[Checked], text: str, *, org: str, run_id: str, subject: str) -> str:
+    """The answer's support: `supported`, `unsupported`, `unchecked` or `none`."""
+    citation_codes = [c.code for c in checked]
+    returned: frozenset[str] | None = frozenset()
+    failed = False
+    if not citation_codes and text.strip() and not rule.is_abstention(text):
+        returned, failed = await _calls(org, run_id, subject)
+    return rule.support_of(
+        citation_codes,
+        text=text,
+        returned=returned,
+        failed=failed,
+        citable=ASSISTANT_CITABLE_OPS,
+        no_data=ASSISTANT_NO_NAMESPACE_DATA_OPS,
+    )
+
+
+async def _calls(org: str, run_id: str, subject: str) -> tuple[frozenset[str] | None, bool]:
+    """(the ops whose calls found data, whether a call failed); None when the run cannot be
+    read (no run id, a failed read)."""
+    if not run_id:
+        return None, False
+    try:
+        calls = await ledger.run_calls(org, run_id, subject)
+        if not calls.returned & ASSISTANT_CITABLE_OPS:
+            delay = FLUSH_INTERVAL_S + settings.ch_batched_insert_wait_max_ms / 1000
+            await asyncio.sleep(delay + _INSERT_SLACK_S)
+            calls = await ledger.run_calls(org, run_id, subject)
+    except Exception as e:  # noqa: BLE001 — a check that cannot run never fails an answer
+        log.warning("reading an answer's tool calls failed: %s", e)
+        return None, False
+    return calls.returned, calls.failed

@@ -192,7 +192,7 @@ def emit_agent_event(
     # returned: the deferred consistency verdict is such a
     # row, and its `out_consistency` is the label every analysis groups by.
     if result is not None:
-        args.update(project_result(result))
+        args.update(project_result(result, op_name=op_name))
     # The request's own work bag — ClickHouse rows
     # and bytes from every statement's response summary, identifier
     # injection counts, legs skipped under schema skew, and the ask-side

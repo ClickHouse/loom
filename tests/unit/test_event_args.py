@@ -253,6 +253,23 @@ def test_a_sectioned_search_records_its_hits_across_sections() -> None:
     assert "out_section_hits" not in project_result({"results": [1, 2]})
 
 
+def test_an_assistant_op_records_how_many_rows_it_found() -> None:
+    from server.observability.event_args import project_result
+
+    hits = {"results": [{"memory_key": "a"}, {"memory_key": "b"}]}
+    assert project_result(hits, op_name="memory.search")["out_hits"] == "2"
+    assert project_result({"entries": []}, op_name="memory.list")["out_hits"] == "0"
+    # An abstention found nothing, whatever weak hits it keeps.
+    abstained = {"abstain": True, "results": [{"memory_key": "a"}]}
+    assert project_result(abstained, op_name="memory.ask")["out_hits"] == "0"
+    # Other ops, and a call with no op name, carry none.
+    assert "out_hits" not in project_result(hits, op_name="memory.bulk_get")
+    assert "out_hits" not in project_result(hits)
+    # A get's miss is its found flag, kept as it was.
+    miss = project_result({"found": False, "tags": []}, op_name="memory.get")
+    assert miss["out_found"] == "false" and "out_hits" not in miss
+
+
 def test_an_outcome_records_whether_its_label_landed() -> None:
     from server.memory.api.models_temporal import MemoryOutcomeOutput
     from server.observability.event_args import project_result
