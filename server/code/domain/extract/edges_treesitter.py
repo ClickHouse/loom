@@ -3050,7 +3050,7 @@ class _CallResolver:
 
     def _imported_package_dirs(self) -> set[str]:
         """The repository directories this file's imports place, read once per file."""
-        return self._once(("go dirs",), lambda: {d for d in self.go_packages.values() if d})
+        return self._once(("imported dirs",), lambda: {d for d in self.go_packages.values() if d})
 
     def _by_clause(
         self, candidates: list[tuple[str, str, str]], bare: str,

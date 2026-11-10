@@ -217,11 +217,11 @@ def _rust_parse(text: str) -> object:
 def _edges(
     path: str, table_size: int = 0, context: dict[str, object] | None = None, own: bool = False
 ) -> Callable[[str], object]:
-    """A file's call edges, against a name table of `table_size` definitions of `a` (with
-    `own`, the file's own definitions too, as a re-index reads them) and the ingest's
-    lane `context` (its present Python paths, as the file's includes). The
-    parse is kept per text, so the best of three times the edges alone; its deadline is
-    lifted in the walk's child process, where a loaded host would trip it."""
+    """A file's call edges, against a name table of `table_size` definitions of `a` and of a
+    class `Base` (with `own`, the file's own definitions too, as a re-index reads them)
+    and the ingest's lane `context` (its present Python paths, as the file's includes).
+    The parse is kept per text, so the best of three times the edges alone; its deadline
+    is lifted in the walk's child process, where a loaded host would trip it."""
     parsed: dict[str, object] = {}
 
     def walk(text: str) -> object:
