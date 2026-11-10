@@ -162,6 +162,10 @@ test.describe("a collection's path at 1400 px", () => {
     // The path and the select share one line.
     const select = page.getByRole("button", { name: "Show the documents of" });
     expect(Math.abs((await boxOf(path)).y - (await boxOf(select)).y)).toBeLessThan(16);
+    // Cut on screen, whole as the link's name.
+    await expect(
+      path.getByRole("link", { name: "Customer interviews from the third quarter's discovery round" }),
+    ).toBeVisible();
     const first = page.locator("main [data-doc-row]").first();
     await expect(first).toBeVisible();
     expect((await boxOf(first)).y).toBeLessThanOrEqual(300);

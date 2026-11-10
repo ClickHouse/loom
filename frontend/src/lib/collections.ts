@@ -1,5 +1,6 @@
 /**
- * What a collection is called on screen, and the name a title derives.
+ * What a collection is called on screen, the name a title derives, the order collections are
+ * listed in, and how many the Library reads.
  *
  * A collection's name (`col-…`) is its address: grants, search scope and audit key on it,
  * and it is never used again once deleted. People see its title, which may repeat; the

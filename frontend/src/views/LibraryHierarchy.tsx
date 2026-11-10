@@ -2,11 +2,19 @@
  * Where a collection sits, on the Library: the path to it from the top, on one line before the
  * select (the parent a link, the ones above it folded; on a phone, one button back to the
  * parent), and the collections inside the one shown, or the top-level ones on "My files" and
- * on a namespace. The tree is the server's
- * (`collection.list` gives each collection's parent); in the path, a parent the caller
- * cannot read is a dots button, never a link, and gives its address when tapped.
+ * on a namespace. The tree is the server's (`collection.list` gives each collection's
+ * parent); in the path, a parent the caller cannot read is a dots button, never a link, and
+ * gives its address when tapped.
  */
-import { type MouseEvent, type ReactNode, useMemo, useRef, useState } from "react";
+import {
+  type ComponentPropsWithoutRef,
+  forwardRef,
+  type MouseEvent,
+  type ReactNode,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
@@ -15,6 +23,8 @@ import type { CollectionEntry } from "../api";
 import { IconButton } from "../components/IconButton";
 import { PopoverTrigger } from "../components/ui/Menu";
 import { SectionHeading } from "../components/ui/SectionHeading";
+import { TextClamp, useClamped } from "../components/ui/TextClamp";
+import { Tip } from "../components/ui/Tooltip";
 import {
   COLLECTIONS_LISTED,
   collectionOrder,
@@ -80,18 +90,18 @@ export interface Home {
 }
 
 /** A link to a place in the Library: a plain click opens it here, a modified one (a new
- *  tab or window) is the browser's. */
-function PlaceLink({
-  collection,
-  onOpen,
-  children,
-}: {
-  collection: string | null;
-  onOpen: () => void;
-  children: ReactNode;
-}) {
+ *  tab or window) is the browser's. It takes a ref and other props, so a tooltip can wrap it. */
+const PlaceLink = forwardRef<
+  HTMLAnchorElement,
+  { collection: string | null; onOpen: () => void; children: ReactNode } & Omit<
+    ComponentPropsWithoutRef<"a">,
+    "href" | "onClick" | "children"
+  >
+>(function PlaceLink({ collection, onOpen, children, ...rest }, ref) {
   return (
     <Link
+      {...rest}
+      ref={ref}
       href={navigationHref("knowledge", collection ? { collection } : {})}
       onClick={(e: MouseEvent) => {
         if (isModifiedClick(e)) return;
@@ -101,6 +111,22 @@ function PlaceLink({
     >
       {children}
     </Link>
+  );
+});
+
+/** A path title cut to one line: when cut, its whole text is a tooltip on the link (a
+ *  keyboard focus opens it too); the whole text is the link's name either way. */
+function CutLink({ collection, onOpen, text }: { collection: string | null; onOpen: () => void; text: string }) {
+  const [el, setEl] = useState<HTMLSpanElement | null>(null);
+  const cut = useClamped(el, text);
+  return (
+    <Tip content={text} disabled={!cut}>
+      <PlaceLink collection={collection} onOpen={onOpen}>
+        <span ref={setEl} className="inline-block max-w-48 truncate align-bottom">
+          {text}
+        </span>
+      </PlaceLink>
+    </Tip>
   );
 }
 
@@ -186,20 +212,12 @@ export function CollectionPath({
   const folded = above.slice(0, -1);
   const parent = above.at(-1);
   const sep = <Icon name="chevron-right" size="xs" aria-hidden="true" className="text-text-muted" />;
-  // Cut to one line; the whole title is the link's name and its tooltip.
-  const cut = (text: string) => (
-    <span title={text} className="inline-block max-w-48 truncate align-bottom">
-      {text}
-    </span>
-  );
   return (
     <nav aria-label="Collection path" className="min-w-0 text-sm">
       <ol className="flex items-center gap-1">
         {home && (
           <li className="flex min-w-0 items-center gap-1">
-            <PlaceLink collection={home.collection} onOpen={home.open}>
-              {cut(home.label)}
-            </PlaceLink>
+            <CutLink collection={home.collection} onOpen={home.open} text={home.label} />
           </li>
         )}
         {folded.length > 0 && (
@@ -233,9 +251,11 @@ export function CollectionPath({
             {"hidden" in parent ? (
               <HiddenParent part={parent} truncated={truncated} />
             ) : (
-              <PlaceLink collection={parent.namespace} onOpen={() => onPick(parent.namespace)}>
-                {cut(distinctTitle(parent, repeated))}
-              </PlaceLink>
+              <CutLink
+                collection={parent.namespace}
+                onOpen={() => onPick(parent.namespace)}
+                text={distinctTitle(parent, repeated)}
+              />
             )}
           </li>
         )}
@@ -288,7 +308,7 @@ export function CollectionsInside({
               </PlaceLink>
               <span className="text-xs text-text-muted">{roleLabel(c.role)}</span>
             </div>
-            {c.description && <p className="truncate text-xs text-text-muted">{c.description}</p>}
+            {c.description && <TextClamp text={c.description} reach="tooltip" className="text-xs text-text-muted" />}
           </li>
         ))}
       </ul>
