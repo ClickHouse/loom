@@ -1019,7 +1019,7 @@ carry somewhat more per row, from parts with few rows:
 | ---------- | ------------------- | ----------------------------------------------- | ------: |
 | ClickHouse | `memory_embeddings` | 13,170 to 13,212 per row                        |  13,210 |
 | ClickHouse | `memory`            | 90 (single) to 163 (zipf) per head after merges |      92 |
-| ClickHouse | `memory_versions`   | 107 to 111 per version                          |     264 |
+| ClickHouse | `memory_versions`   | 107 to 110 per version                          |     264 |
 | Postgres   | `memory_current`    | 1,594 to 1,623 per head                         |   1,623 |
 | Postgres   | `memory_revisions`  | 2,149 to 2,150 per revision                     |   5,160 |
 
