@@ -749,107 +749,58 @@ def test_an_unreachable_docker_daemon_is_named_before_any_pull(
     assert not Path(installer_env["LOOM_INSTALL_DIR"]).exists()  # nor any file written
 
 
-# curl's own save flags: `-o FILE`, `--output FILE`, or `-O` / a short-flag group
-# ending in `o FILE` or holding `O`. A FILE of `-` or under /dev/ is a stream, not a save.
-_SAVES = re.compile(
-    r"\s(?:-[A-Za-z]*o|--output(?![\w-]))\s*(?!-(?![\w.])|/dev/)[\w.~/$\"'{}-]|\s-[A-Za-z]*O\b"
-)
-# Where a shell command ends and the next one, or a substitution, begins.
-_COMMAND_BREAK = re.compile(r"\\?\||&&|;|\$\(|<\(")
-# Installed dependencies, which hold other projects' install lines.
-_NOT_OURS = {"node_modules", ".venv", ".git"}
+# A curl that answers a 404 as `curl -f` does, after writing an installer that would
+# create ~/.loom to its `-o FILE`, or to stdout when it has none or `-o -`.
+_FAILING_CURL = """#!/bin/sh
+out=
+while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done
+installer='mkdir -p "$HOME/.loom"'
+if [ -z "$out" ] || [ "$out" = - ]; then echo "$installer"; else echo "$installer" >"$out"; fi
+echo 'curl: (22) The requested URL returned error: 404' >&2
+exit 22
+"""
+_CODE = re.compile(r"^```[a-z]*\n(.*?)^```|`([^`\n]+)`", re.MULTILINE | re.DOTALL)
 
 
-def _unsaved_download(line: str) -> bool:
-    """A line whose curl of `install.sh` does not save it to a file."""
-    curls = [part for part in _COMMAND_BREAK.split(line) if "curl" in part]
-    return "install.sh" in line and any(not _SAVES.search(part) for part in curls)
-
-
-def test_every_installer_download_is_saved_first() -> None:
-    """A downloaded installer handed straight to a shell (`curl … | sh`,
-    `sh -c "$(curl …)"`, `bash <(curl …)`) runs as an empty script and exits 0 when
-    the download fails; on every tracked line that names `install.sh`, each curl
-    command saves its download to a file first (the docs fetch with curl only)."""
-    own = Path(__file__).resolve().relative_to(ROOT).as_posix()  # holds the examples below
-    unsaved = []
+def _documented_installs() -> list[tuple[str, str]]:
+    """(page, command) for every command a tracked page shows that downloads
+    `install.sh`, a `\\` line break joined."""
+    found = []
     for name in tracked():
-        if name == own or _NOT_OURS & set(Path(name).parts):
+        if not name.endswith(".md"):
             continue
-        try:
-            text = (ROOT / name).read_text(encoding="utf-8")
-        except (UnicodeDecodeError, IsADirectoryError, FileNotFoundError):
-            continue  # a binary file, a submodule, a file deleted in the work tree
-        # A line ending in a backslash goes on in the next one.
-        if any(_unsaved_download(line) for line in re.sub(r"\\\n\s*", " ", text).splitlines()):
-            unsaved.append(name)
-    assert unsaved == []
+        for block, span in _CODE.findall((ROOT / name).read_text(encoding="utf-8")):
+            for line in re.sub(r"\\\n\s*", " ", block or span).splitlines():
+                command = line.strip().replace("\\|", "|")
+                if "curl" in command and "install.sh" in command:
+                    found.append((name, command))
+    return found
 
 
-@pytest.mark.parametrize(
-    "line",
-    [
-        "curl -fsSL https://x/install.sh | sh",
-        "curl -fsSL 'https://x/install.sh' | sudo -E bash",
-        'curl -fsSL "https://x/install.sh" | LOOM_SKIP_START=1 sh -s -- --bundled',
-        "`curl -fsSL …/install.sh \\| sh`",
-        'sh -c "$(curl -fsSL https://x/install.sh)"',
-        "bash <(curl -fsSL https://x/install.sh)",
-        "curl https://x/install.sh -o - | sh",
-        "curl https://x/install.sh -o -|sh",
-        "curl -fsSL https://x/install.sh | sh -o errexit",
-        "curl -fsSL https://x/install.sh -o /dev/stdout | sh",
-        "curl --output-dir /tmp https://x/install.sh | sh",
-    ],
-)
-def test_an_unsaved_download_is_flagged(line: str) -> None:
-    assert _unsaved_download(line)
+def test_the_pages_show_install_commands() -> None:
+    pages = {page for page, _ in _documented_installs()}
+    assert {"README.md", "docs/getting-started/quickstart.md"} <= pages
 
 
-@pytest.mark.parametrize(
-    "line",
-    [
-        "curl -fsSL https://x/install.sh -o loom-install.sh && sh loom-install.sh",
-        "curl -fL https://x/install.sh -o loom-install.sh",
-        "curl -fsSLO https://x/install.sh && sh install.sh",
-        "| `install.sh` | bash-compatible installer |",
-        "curl -fsSLo loom-install.sh https://x/install.sh && sh loom-install.sh",
-        "curl https://x/install.sh --output loom-install.sh && sh loom-install.sh",
-        'curl -fsSL "https://x/install.sh" -o ~/loom-agent-setup/loom-install.sh',
-    ],
-)
-def test_a_saved_download_passes(line: str) -> None:
-    assert not _unsaved_download(line)
-
-
-def test_the_documented_one_liner_fails_on_a_failed_download(tmp_path: Path) -> None:
-    """The README's command, with a curl that writes an installer to its `-o` path
-    and still fails: the line exits with curl's code and the installer never runs."""
-    (line,) = [
-        line
-        for line in (ROOT / "README.md").read_text().splitlines()
-        if line.startswith("curl ") and "install.sh" in line
-    ]
+@pytest.mark.parametrize(("page", "command"), _documented_installs())
+def test_a_documented_install_stops_on_a_failed_download(
+    page: str, command: str, tmp_path: Path
+) -> None:
+    """Piped into a shell, a download that fails runs what curl wrote and exits 0;
+    every install command a page shows exits with curl's error and runs nothing."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     curl = bin_dir / "curl"
-    # Writes a script that would create ~/.loom to its -o path, then fails.
-    curl.write_text(
-        "#!/bin/sh\n"
-        'while [ $# -gt 0 ]; do [ "$1" = -o ] && printf \'mkdir "$HOME/.loom"\\n\' >"$2"; shift; done\n'
-        "echo 'curl: (22) The requested URL returned error: 404' >&2\n"
-        "exit 22\n"
-    )
+    curl.write_text(_FAILING_CURL)
     curl.chmod(0o755)
+    (tmp_path / "loom-agent-setup").mkdir()  # agent setup's work directory
     result = subprocess.run(
-        ["sh", "-c", line],
+        ["sh", "-c", command],
         cwd=tmp_path,
         env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "HOME": str(tmp_path)},
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 22, result
+    assert result.returncode != 0, (page, command, result)
     assert "404" in result.stderr
-    # The fake wrote it: only `&&` kept it from running.
-    assert (tmp_path / "loom-install.sh").is_file()
-    assert not (tmp_path / ".loom").exists()
+    assert not (tmp_path / ".loom").exists(), (page, command)
