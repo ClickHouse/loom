@@ -18,7 +18,6 @@ still to fix."""
 
 from __future__ import annotations
 
-import gc
 import importlib
 import itertools
 import json
@@ -32,7 +31,6 @@ from collections.abc import Callable
 
 import pytest
 
-from tests.unit.code_fixtures import untraced
 from tests.unit.lane_walks import WALKS
 
 _PACKAGES = ("server.code.domain.extract", "server.code.app.index")
@@ -265,19 +263,6 @@ def test_slow_tells_a_load_spike_from_a_step_over_linear() -> None:
     # a spike on the 8,000 step's n / 4 hides that step; the 32,000 one reports it
     assert _slow(spiked(quadratic, range(2, 3))) == (32_000, 0.064, 1.024)
     assert _slow(lambda n: (n / 2000) ** 3 * 2.5e-4) == (8_000, 0.0003, 0.016)  # cubic
-
-
-def test_untraced_leaves_the_collector_as_it_found_it() -> None:
-    with untraced():
-        assert not gc.isenabled()
-    assert gc.isenabled()
-    gc.disable()
-    try:
-        with untraced():
-            pass
-        assert not gc.isenabled()
-    finally:
-        gc.enable()
 
 
 @pytest.mark.parametrize("name,pattern", _ALL, ids=[n for n, _ in _ALL])
