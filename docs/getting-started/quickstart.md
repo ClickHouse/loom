@@ -35,9 +35,9 @@ curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.s
 ```
 
 Run it from your home directory, or another directory only you can write to. A failed
-download stops with curl's error and a non-zero exit; a failed install leaves
-`loom-install.sh` there to run again. The installer downloads `loom-stack.tar.gz` from the
-latest GitHub Release, verifies its SHA-256, installs the Compose and ClickHouse
+download stops with curl's error and a non-zero exit; after a failed install, fix what it
+reports and run the whole command again. The installer downloads `loom-stack.tar.gz` from
+the latest GitHub Release, verifies its SHA-256, installs the Compose and ClickHouse
 configuration under `~/.loom`, pulls the matching `ghcr.io/clickhouse/loom:X.Y.Z` and
 `ghcr.io/clickhouse/loom-extractor:X.Y.Z` (the document extractor service) images, and
 waits for `http://localhost:7777/v1/health`. The server image contains the API, workers,

@@ -759,7 +759,7 @@ while [ $# -gt 0 ]; do
   case $1 in -o) out=$2 ;; http*|…*) url=$1 ;; esac
   shift
 done
-installer='mkdir -p "$HOME/.loom"'
+installer='mkdir -p "$HOME/.loom"; echo "$@" >"$HOME/.loom/args"; env | grep ^LOOM_ >"$HOME/.loom/env" || :'
 if [ -z "$out" ] || [ "$out" = - ]; then echo "$installer"; else echo "$installer" >"$out"; fi
 """
 _FAILING_CURL = (
@@ -844,3 +844,12 @@ def test_a_documented_install_runs_the_installer_and_cleans_up(
     assert result.returncode == 0, (page, example, result)
     assert (tmp_path / ".loom").exists(), (page, example)
     assert list(tmp_path.rglob("loom-install.sh")) == [], (page, example)
+    # Every installer flag and LOOM_* assignment the command gives reaches the
+    # installer, not curl: the docs' curl commands take short flags only.
+    command = example.splitlines()[-1]
+    args = (tmp_path / ".loom" / "args").read_text().split()
+    passed = (tmp_path / ".loom" / "env").read_text().splitlines()
+    for flag in re.findall(r"(?<!\S)--[a-z][\w-]*", command):
+        assert flag in args, (example, flag, args)
+    for assignment in re.findall(r"(?<!\S)LOOM_\w+=\S*", command):
+        assert assignment in passed, (example, assignment, passed)
