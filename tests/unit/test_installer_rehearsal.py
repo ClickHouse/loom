@@ -5,6 +5,7 @@ runs it against a published release. The rehearsal itself runs in docker-smoke
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import tarfile
@@ -223,10 +224,7 @@ def test_the_published_previous_release_is_installed_by_name(
     """By version: a copy from before releases stamped install.sh installs `latest`."""
     command, env = _previous_install(tmp_path, monkeypatch, None)
     url = f"{rehearsal.GITHUB_RELEASES}/download/v1.1.0/install.sh"
-    assert (
-        command[-1]
-        == f'curl -fsSL "{url}" -o loom-install.sh && sh loom-install.sh && rm loom-install.sh'
-    )
+    assert command[-1] == rehearsal.install_command(url)
     assert env["LOOM_VERSION"] == "1.1.0"
 
 
@@ -413,3 +411,27 @@ def test_a_bundle_that_names_no_release_is_refused(tmp_path: Path, named: str) -
         archive.add(tmp_path / "VERSION", arcname="loom-stack/VERSION")
     with pytest.raises(SystemExit, match=f"^the bundle names '{named}', not X.Y.Z or X.Y.Z-rc.N$"):
         rehearsal.bundle_version(tmp_path)
+
+
+def test_the_captured_command_reports_the_installers_refusal(tmp_path: Path) -> None:
+    """The downgrade check reads the installer's refusal, which it writes to
+    stderr, from stdout, and the exit code of the step that failed."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    curl = bin_dir / "curl"
+    curl.write_text(
+        "#!/bin/sh\n"
+        'while [ $# -gt 0 ]; do [ "$1" = -o ] && '
+        "printf 'echo refused: installs the older >&2; exit 1\\n' >\"$2\"; shift; done\n"
+    )
+    curl.chmod(0o755)
+    result = subprocess.run(
+        ["sh", "-c", rehearsal.captured_command("https://x/install.sh")],
+        cwd=tmp_path,
+        env={"PATH": f"{bin_dir}:{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+    )
+    assert "installs the older" in result.stdout
+    assert result.stdout.rstrip().endswith("exit 1")
+    assert (tmp_path / "loom-install.sh").exists()  # kept: the install failed

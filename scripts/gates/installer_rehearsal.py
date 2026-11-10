@@ -105,6 +105,11 @@ def install_command(url: str) -> str:
     return f'curl -fsSL "{url}" -o loom-install.sh && sh loom-install.sh && rm loom-install.sh'
 
 
+def captured_command(url: str) -> str:
+    """`install_command` with every step's stderr on stdout, then its exit code."""
+    return f'{{ {install_command(url)}; }} 2>&1; echo "exit $?"'
+
+
 def free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -530,6 +535,9 @@ class Rehearsal:
             remove_stack_on_exit(home, stacks)
         installed = installed_version(home, distro)
         check(installed == version, f"{distro}: installed {installed}, not {version}")
+        check(
+            not (home / "loom-install.sh").exists(), f"{distro}: the install left loom-install.sh"
+        )
         status = health(port)
         check(status["status"] == "ok", f"{distro}: health answered {status}")
         key = f"rehearsal/{distro}"
@@ -554,9 +562,7 @@ class Rehearsal:
         newer = next_release(version)
         version_file = home / ".loom" / "VERSION"
         version_file.write_text(f"{newer}\n")
-        output = self.container(
-            image, home, port, f'{install_command(installer)} 2>&1; echo "exit $?"'
-        )
+        output = self.container(image, home, port, captured_command(installer))
         check(
             "installs the older" in output and output.rstrip().endswith("exit 1"),
             f"{distro}: the one-liner did not refuse to replace {newer}",
