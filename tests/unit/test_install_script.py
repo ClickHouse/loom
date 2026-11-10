@@ -793,8 +793,8 @@ def _documented_installs() -> list[tuple[str, str]]:
 
 
 def _run_install(script: str, tmp_path: Path, curl_script: str) -> subprocess.CompletedProcess[str]:
-    """`script` under `sh -e`, stopping at the first failing line, in an empty home with
-    `curl_script` as curl."""
+    """`script` under `sh -e`, in an empty home with `curl_script` as curl: a failing
+    command stops it, and an `&&` chain that ends the example sets its exit status."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     curl = bin_dir / "curl"

@@ -34,17 +34,18 @@ Prerequisite: Docker Desktop or Docker Engine with Compose 2.20 or later.
 curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh
 ```
 
-Run it from a directory you can write to. A failed download stops with curl's error and a
-non-zero exit; a failed install leaves `loom-install.sh` there to run again. The installer
-downloads `loom-stack.tar.gz` from the latest GitHub Release, verifies its SHA-256,
-installs the Compose and ClickHouse configuration under `~/.loom`, pulls the matching
-`ghcr.io/clickhouse/loom:X.Y.Z` and `ghcr.io/clickhouse/loom-extractor:X.Y.Z` (the
-document extractor service) images, and waits for `http://localhost:7777/v1/health`. The
-server image contains the API, workers, migrations and the built React dashboard at the
-server root; no Python or Node installation is needed. Python, TypeScript and Go compiler
-indexers are included and enabled. A repository indexed with the TypeScript indexer gets
-its dependencies installed automatically. Both images support Linux `amd64` and `arm64`,
-including Docker Desktop on Apple Silicon.
+Run it from your home directory, or another directory only you can write to. A failed
+download stops with curl's error and a non-zero exit; a failed install leaves
+`loom-install.sh` there to run again. The installer downloads `loom-stack.tar.gz` from the
+latest GitHub Release, verifies its SHA-256, installs the Compose and ClickHouse
+configuration under `~/.loom`, pulls the matching `ghcr.io/clickhouse/loom:X.Y.Z` and
+`ghcr.io/clickhouse/loom-extractor:X.Y.Z` (the document extractor service) images, and
+waits for `http://localhost:7777/v1/health`. The server image contains the API, workers,
+migrations and the built React dashboard at the server root; no Python or Node
+installation is needed. Python, TypeScript and Go compiler indexers are included and
+enabled. A repository indexed with the TypeScript indexer gets its dependencies installed
+automatically. Both images support Linux `amd64` and `arm64`, including Docker Desktop on
+Apple Silicon.
 
 The stack runs its own ClickHouse container. To use a ClickHouse you already run, a
 self-managed server or a ClickHouse Cloud service (26.4 or later, with a Keeper), pass its
