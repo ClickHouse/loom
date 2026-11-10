@@ -302,11 +302,12 @@ namespace scope, pass `--param_ns='<namespace>'` and filter the first three on `
 `scope_value`'s `namespaces`; the `sql_v1_agent_events` statement is for a user scope only,
 since a namespace erasure keeps the namespace's request ledger rows. Each count is 0 after a
 completed erasure, with these differences from the census: the views leave out restricted
-namespaces, `sql_v1_memories` leaves out rejected and tombstoned rows (the history keeps
-tombstoned versions), and a summary consolidated from the user's memories carries another
-`user_id`, which the census counts and these queries do not. The request ledger count is a
-separate check outside the receipt: an erasure scrubs a user's request ledger rows to
-`<erased>` rather than deleting them, and the request ledger's view holds only its window
+namespaces, `sql_v1_memories` leaves out rejected and tombstoned rows and
+`sql_v1_memory_history` rejected versions (it keeps tombstoned ones), and a summary
+consolidated from the user's memories carries another `user_id`, which the census counts and
+these queries do not. The request ledger count is a separate check outside the receipt: an
+erasure scrubs a user's request ledger rows to `<erased>` rather than deleting them, and the
+request ledger's view holds only its window
 ([`sql_v1_agent_events`](../../reference/sql-surface.md#sql_v1_agent_events)), so it
 confirms the scrub only for rows inside it. Every other census key is Loom's count alone.
 
