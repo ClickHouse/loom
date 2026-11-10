@@ -2534,7 +2534,8 @@ settings:
   # conversation_search_excerpt_chars: 240
 
   # LLM-title untitled threads in namespaces with conversation_logging_enabled (the
-  # Sessions "Recording" toggle is the off-switch). Skipped with the fake LLM. [restart]
+  # Conversations page's Record conversations switch is the off-switch). Skipped with
+  # the fake LLM. [restart]
   # conversation_titler_enabled: true
 
   # Seconds between titler passes. [restart]

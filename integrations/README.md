@@ -32,7 +32,7 @@ ground, and an SDK or HTTP agent fetches the guide with the experimental `mentor
 The plugins and the transcript scripts write chat turns to the conversation
 plane (`conversation.append`), one thread per session, deduplicated by
 `msg_id`. A namespace stores them only when its conversation logging is on
-(`conversation.set_logging`, or the dashboard's Recording toggle). Stored turns are not mined
+(`conversation.set_logging`, or the **Record conversations** switch on the dashboard's Conversations page). Stored turns are not mined
 for memories; the plugins write memories through their own hooks.
 `LOOM_CAPTURE_CONVERSATIONS=false` turns capture off in the plugins and the
 Cursor hook.

@@ -2258,7 +2258,7 @@
         "conversation_titler_enabled": {
           "default": true,
           "type": "boolean",
-          "description": "LLM-title untitled threads in namespaces with conversation_logging_enabled (the Sessions \"Recording\" toggle is the off-switch). Skipped with the fake LLM."
+          "description": "LLM-title untitled threads in namespaces with conversation_logging_enabled (the Conversations page's Record conversations switch is the off-switch). Skipped with the fake LLM."
         },
         "conversation_titler_interval_seconds": {
           "default": 1800,
