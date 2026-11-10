@@ -435,3 +435,13 @@ def test_the_captured_command_reports_the_installers_refusal(tmp_path: Path) -> 
     assert "installs the older" in result.stdout
     assert result.stdout.rstrip().endswith("exit 1")
     assert (tmp_path / "loom-install.sh").exists()  # kept: the install failed
+
+
+def test_the_rehearsal_runs_the_command_the_readme_shows() -> None:
+    """`install_command` is the README's install line, its URL quoted."""
+    readme = (Path(__file__).resolve().parents[2] / "README.md").read_text()
+    (line,) = [
+        line for line in readme.splitlines() if line.startswith("curl ") and "install.sh" in line
+    ]
+    url = re.search(r"https://\S+/install\.sh", line)[0]
+    assert rehearsal.install_command(url) == line.replace(url, f'"{url}"')

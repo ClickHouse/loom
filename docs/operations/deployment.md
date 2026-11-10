@@ -43,7 +43,8 @@ Sizing (web replicas, uvicorn processes, the workers container) is in
 | Self-managed server         | `curl -fsSL …/install.sh -o loom-install.sh && sh loom-install.sh --clickhouse http://loom@ch.example.com:8123 && rm loom-install.sh` | `COMPOSE_PROFILES=` and `LOOM_CH_*` from the URL |
 | ClickHouse Cloud            | `curl -fsSL …/install.sh -o loom-install.sh && sh loom-install.sh --clickhouse https://loom@<host>:8443 && rm loom-install.sh`        | `COMPOSE_PROFILES=` and `LOOM_CH_*` from the URL |
 
-The same command with `--bundled` switches an install back to the bundled container.
+The same command with `--bundled` switches an install back to the bundled container. Run
+it from a directory only you can write to ([quickstart](../getting-started/quickstart.md#fast-path-released-image-no-clone)).
 
 - **A Keeper.** The server needs one. Without it `loom ch-setup` stops and prints how
   to add one; `--bundled` switches the install to the bundled ClickHouse instead.

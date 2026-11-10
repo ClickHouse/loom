@@ -72,7 +72,8 @@ For the default personal installation, with Docker installed:
 curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh
 ```
 
-The installer starts Loom and ClickHouse, applies migrations and prints the dashboard URL:
+Run it from your home directory, or another directory only you can write to. The
+installer starts Loom and ClickHouse, applies migrations and prints the dashboard URL:
 **http://localhost:7777/**. The image includes the server, workers, dashboard and
 Python, TypeScript and Go compiler indexers; TypeScript dependencies are prepared
 automatically. [Quickstart and pinned releases](./docs/getting-started/quickstart.md)
