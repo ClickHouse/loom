@@ -22,6 +22,7 @@ Outside the extractor stamp with the lane modules: neither `chunker.py` nor
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 
 from server.code.domain.extract.chunker import Chunk, _assign_ordinals, _split_oversized
@@ -313,29 +314,40 @@ def bind_sites(
     return edges
 
 
+# The directories a specifier is tried under, the file's own and its nearest ancestors,
+# before the repository root
+# not a setting: each adds a candidate per import; changing it changes the stored edges
+MAX_ANCESTOR_DIRS = 32
+
+
 def ancestor_candidates(from_path: str, spec: str) -> list[str]:
     """The repository paths a root-relative specifier may name when the
     lane's include root is unknown (protobuf's `-I` roots, a chart's
     template directory): the importing file's directory + spec, then each
-    ancestor directory + spec up to the repository root, then the bare
+    ancestor directory + spec, `MAX_ANCESTOR_DIRS` directories in all, then the bare
     spec — nearest first, duplicates dropped."""
     spec = spec.strip().lstrip("/")
     if not spec:
         return []
+    bases = (*ancestor_dirs(from_path), "")
+    return list(dict.fromkeys(f"{base}/{spec}" if base else spec for base in bases))
+
+
+@functools.lru_cache(maxsize=256)
+def ancestor_dirs(from_path: str) -> tuple[str, ...]:
+    """The file's directory and its ancestors, nearest first, `MAX_ANCESTOR_DIRS` of them
+    at most counting the file's own, the root left out; read once per file."""
     parts = from_path.split("/")[:-1]
-    out: list[str] = []
-    for depth in range(len(parts), -1, -1):
-        base = "/".join(parts[:depth])
-        cand = f"{base}/{spec}" if base else spec
-        if cand not in out:
-            out.append(cand)
-    return out
+    depths = range(len(parts), max(len(parts) - MAX_ANCESTOR_DIRS, 0), -1)
+    return tuple("/".join(parts[:depth]) for depth in depths)
 
 
 __all__ = [
+    "MAX_ANCESTOR_DIRS",
     "Site",
     "SiteRule",
     "ancestor_candidates",
+    "ancestor_dirs",
     "bind_sites",
     "enclosing_symbol",
     "span_chunks",

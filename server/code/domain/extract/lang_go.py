@@ -19,6 +19,7 @@ cross-module imports of a platform repository are file edges.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from functools import lru_cache
 from typing import Any
 
@@ -709,7 +710,7 @@ _GO_MOD_REPLACE_RE = re.compile(
 def go_module_index(texts: dict[str, str]) -> list[tuple[str, str]]:
     """{go.mod path: text} for the go.mod files read (the resolver passes the shallowest
     `GO_MODS_MAX`, each capped) → [(module path, module directory)], longest module path
-    first, so `go_module_for` picks the nearest module for an import path the way
+    first, so `go_modules` picks the nearest module for an import path the way
     `go build` does across a multi-module repository. A `replace` directive whose target
     is a relative directory (`=> ../lib`) maps the replaced path onto that directory too
     — the repository's own statement of where a module lives — unless a go.mod already
@@ -745,14 +746,30 @@ def _norm_join(base: str, rel: str) -> str | None:
     return "" if joined == "." else joined
 
 
-def go_module_for(spec: str, index: list[tuple[str, str]]) -> tuple[str, str]:
-    """(module path, module directory) of the indexed module an import path
-    belongs to — the longest module path that is the spec or a prefix of it
-    at a `/` boundary; ("", "") when the spec is outside every module."""
+def go_modules(index: list[tuple[str, str]]) -> Callable[[str], tuple[str, str]]:
+    """An import path -> (module path, module directory) of the indexed module it
+    belongs to: the longest module path that is the spec or a prefix of it at a `/`
+    boundary; ("", "") when the spec is outside every module. The module paths are read
+    into a tree of their `/` segments once, so a lookup walks the spec's segments instead
+    of every module of the index."""
+    root: dict[str | None, Any] = {}  # segment -> subtree; None -> the module ending here
     for module, directory in index:
-        if spec == module or spec.startswith(module + "/"):
-            return module, directory
-    return "", ""
+        node = root
+        for part in module.split("/"):
+            node = node.setdefault(part, {})
+        node[None] = (module, directory)
+    return lambda spec: _deepest_module(root, spec)
+
+
+def _deepest_module(root: dict[str | None, Any], spec: str) -> tuple[str, str]:
+    found: tuple[str, str] = ("", "")
+    node = root
+    for part in spec.split("/"):
+        if part not in node:
+            break
+        node = node[part]
+        found = node.get(None, found)
+    return found
 
 
 def go_resolve_imports_indexed(
@@ -763,8 +780,9 @@ def go_resolve_imports_indexed(
     name satisfied — the listing rung's input."""
     out: dict[str, None] = {}
     unresolved: list[tuple[str, str]] = []
+    module_of = go_modules(index)
     for spec in specs:
-        module, directory = go_module_for(spec, index)
+        module, directory = module_of(spec)
         if not module:
             continue
         cands = go_import_candidates(spec, module, directory)
@@ -782,8 +800,9 @@ def go_wanted_paths(specs: list[str], index: list[tuple[str, str]]) -> list[str]
     """Every candidate file the specs may name across the index; the one
     membership probe's input."""
     out: dict[str, None] = {}
+    module_of = go_modules(index)
     for spec in specs:
-        module, directory = go_module_for(spec, index)
+        module, directory = module_of(spec)
         if module:
             out.update(dict.fromkeys(go_import_candidates(spec, module, directory)))
     return list(out)
@@ -795,8 +814,9 @@ def go_package_context(pf: ParsedFile, index: list[tuple[str, str]]) -> dict[str
     (the standard library, a dependency) — the resolver's `go_packages`, computed once
     per file by the ingest and the corpus alike."""
     out: dict[str, str] = {}
+    module_of = go_modules(index)
     for alias, spec in go_import_aliases(pf).items():
-        module, directory = go_module_for(spec, index)
+        module, directory = module_of(spec)
         pkg_dir = go_package_dir(spec, module, directory) if module else ""
         out[alias] = go_dir_scope(pkg_dir) if module else ""
     return out
@@ -855,8 +875,8 @@ __all__ = [
     "go_import_aliases",
     "go_import_candidates",
     "go_imports",
-    "go_module_for",
     "go_module_index",
+    "go_modules",
     "go_module_path",
     "go_package_context",
     "go_package_dir",

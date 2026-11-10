@@ -228,3 +228,16 @@ def test_a_table_defined_in_two_stores_binds_by_the_islands_dialect(
     # without the dialects the shared name is ambiguous and binds nothing
     edges2 = island_edges(pf, statements, scopes, gate_name_table(table, SQL_LANG), rw_kinds=True)
     assert not any(e.to_qualified_name.endswith("::scores") for e in edges2)
+
+
+def test_a_long_callee_is_read_at_its_ends() -> None:
+    """A callee longer than 128 bytes gives its client cue from its first and last 64
+    bytes: a name at either end still reads, one in the middle does not."""
+    middle = ".a" * 100
+    src = (
+        f"x{middle}.queryClickhouse(`SELECT a FROM t`);\n"
+        f"queryClickhouse{middle}(`SELECT a FROM t`);\n"
+        f"x{middle}.queryClickhouse{middle}(`SELECT a FROM t`);\n"
+    ).encode()
+    islands = find_islands(parse_typescript("src/a.ts", src))
+    assert [i.dialect for i in islands] == ["clickhouse", "clickhouse", "sql"]

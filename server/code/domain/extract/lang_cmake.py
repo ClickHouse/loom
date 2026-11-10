@@ -549,13 +549,16 @@ def cmake_external_edges(
     `add_subdirectory`)."""
     by_name = {s.name: s for s in pf.symbols if s.kind == KIND_TARGET}
     out: list[Edge] = []
+    bound: dict[str, tuple[str, str] | None] = {}  # per name, read once: links repeat names
 
     def cand(name: str) -> tuple[str, str] | None:
         local = by_name.get(name)
         if local is not None:
             return local.id, local.qualified_name
-        c = [x for x in table.get(name, ()) if x[2] == KIND_TARGET]
-        return (c[0][0], c[0][1]) if len(c) == 1 else None
+        if name not in bound:
+            c = [x for x in table.get(name, ()) if x[2] == KIND_TARGET]
+            bound[name] = (c[0][0], c[0][1]) if len(c) == 1 else None
+        return bound[name]
 
     for tgt, dep, line in external:
         a, b = cand(tgt), cand(dep)

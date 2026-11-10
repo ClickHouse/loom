@@ -309,6 +309,7 @@ exclude = [
   "server/code/domain/extract/py_members.py",
   "server/code/domain/extract/py_receivers.py",
   "server/code/domain/extract/registration.py",
+  "server/code/domain/extract/spans.py",
   "server/code/domain/extract/tokenize.py",
   "server/code/domain/extract/treesitter.py",
   "server/code/domain/extract/ts_config.py",

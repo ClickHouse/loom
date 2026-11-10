@@ -150,12 +150,12 @@ def _text(unit: str, n: int, as_bytes: bool) -> str | bytes:
 
 
 def _cost(p: re.Pattern, text: str | bytes) -> float:
-    t0 = time.perf_counter()
+    t0 = time.process_time()  # CPU time: a loaded host stretches wall time, not this
     for _ in p.finditer(text):
         pass
     p.search(text)
     p.match(text)
-    return time.perf_counter() - t0
+    return time.process_time() - t0
 
 
 _ALL = _patterns()

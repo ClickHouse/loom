@@ -23,6 +23,7 @@ specific decisions, both load-bearing:
 
 from __future__ import annotations
 
+import bisect
 import functools
 import re
 from functools import lru_cache
@@ -37,6 +38,7 @@ from server.code.domain.extract.py_members import (
     module_bindings,
 )
 from server.code.domain.extract.py_receivers import type_name_of
+from server.code.domain.extract.spans import last_span_at
 from server.code.domain.extract.treesitter import ParsedFile, Symbol, node_text
 
 _MAX_DOC = 2000
@@ -202,6 +204,17 @@ def parse_python(path: str, source: bytes) -> ParsedFile:
                     pf.fixture_requests.append((qname, fx, line))
 
     includes: dict[str, None] = {}  # ordered, distinct
+    # The names defined under each scope so far, brought up to date at each class's end
+    # (a scan of every symbol per class is quadratic in a file of classes)
+    members: dict[str, set[str]] = {}
+    indexed = 0
+
+    def names_under(qname: str) -> set[str]:
+        nonlocal indexed
+        for s in pf.symbols[indexed:]:
+            members.setdefault(s.qualified_name.rsplit("::", 1)[0], set()).add(s.name)
+        indexed = len(pf.symbols)
+        return members.setdefault(qname, set())
 
     def walk(node: Any, scope: tuple[str, ...]) -> None:
         for child in node.named_children:
@@ -256,10 +269,10 @@ def parse_python(path: str, source: bytes) -> ParsedFile:
             if body is not None and name_node is not None:
                 walk(body, (*scope, node_text(name_node, source)))
             if qname and body is not None:
-                # the attributes the class body declares
-                taken = {s.name for s in pf.symbols if s.qualified_name.rsplit("::", 1)[0] == qname}
+                # the attributes the class body declares; `class_members` adds its own
+                # names to the set, as the index would on its next update
                 pf.symbols.extend(class_members(
-                    body, source, qname, path, taken, enum=is_enum_class(bases),
+                    body, source, qname, path, names_under(qname), enum=is_enum_class(bases),
                 ))
             return
         if t in {"import_statement", "import_from_statement"}:
@@ -285,19 +298,15 @@ def parse_python(path: str, source: bytes) -> ParsedFile:
     # request.getfixturevalue("x") — a string-literal fixture request from
     # anywhere in a body; the enclosing definition is the requestor.
     text = source.decode("utf-8", "replace")
-    fn_spans = sorted(
+    newlines = [m.start() for m in re.finditer("\n", text)]  # a line by bisection, per match
+    enclosing = last_span_at(sorted(
         ((s.start_line, s.end_line, s.qualified_name)
          for s in pf.symbols if s.kind in {"function", "fixture"}),
         key=lambda t: (t[0], -t[1]),
-    )
+    ))  # innermost wins: spans sort widest-first per start
     for m in _GETFIXTURE_RE.finditer(text):
-        line = text.count("\n", 0, m.start()) + 1
-        encl = ""
-        for s_ln, e_ln, q in fn_spans:
-            if s_ln <= line <= e_ln:
-                encl = q  # innermost wins: spans sort widest-first per start
-            elif s_ln > line:
-                break
+        line = bisect.bisect_left(newlines, m.start()) + 1
+        encl = enclosing(line)
         if encl:
             pf.fixture_requests.append((encl, m.group(1), line))
     return pf

@@ -272,7 +272,13 @@ def test_stage_partition_is_pinned() -> None:
     assert STAGES == ("chunk", "symbol", "edge", "guard")
     assert STAGE_MODULES == {
         "chunk": ("chunker.py", "context_text.py", "tokenize.py", "callee_outline.py"),
-        "symbol": ("treesitter.py", "lang_python.py", "py_members.py", "lang_bash.py"),
+        "symbol": (
+            "treesitter.py",
+            "lang_python.py",
+            "py_members.py",
+            "lang_bash.py",
+            "spans.py",
+        ),
         "edge": (
             "edges_treesitter.py",
             "crossref.py",
@@ -313,6 +319,7 @@ def test_stage_partition_is_pinned() -> None:
         "py_members.py",
         "py_receivers.py",
         "registration.py",
+        "spans.py",
         "tokenize.py",
         "treesitter.py",
         "ts_config.py",
@@ -324,6 +331,7 @@ def test_stage_partition_is_pinned() -> None:
         "lang_bash.py",
         "lang_python.py",
         "py_members.py",
+        "spans.py",
         "treesitter.py",  # members
     )
     assert stage_modules("edge") == (
@@ -337,6 +345,7 @@ def test_stage_partition_is_pinned() -> None:
         "py_members.py",
         "py_receivers.py",
         "registration.py",
+        "spans.py",
         "treesitter.py",
         "ts_config.py",
         "ts_receivers.py",
@@ -355,6 +364,7 @@ def test_stage_partition_is_pinned() -> None:
         "py_members.py",
         "py_receivers.py",
         "registration.py",
+        "spans.py",
         "treesitter.py",
         "ts_config.py",
         "ts_receivers.py",

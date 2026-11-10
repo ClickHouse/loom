@@ -9,7 +9,7 @@ import hashlib
 import logging
 import posixpath
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, cast
@@ -88,6 +88,9 @@ async def _py_roots_for(
 
 
 _MAX_INCLUDE_PROBES = 3000  # one bloom-filtered membership read per file
+# The package directories one Go file lists for imports no conventional file name satisfied
+# not a setting: each is a store read, and changing it changes the stored include edges
+_MAX_GO_LISTINGS = 256
 
 # (org, ns) -> (read at, live path set). The probing form — every candidate a file's
 # specifiers might name, one `IN` read of at most 500 of them — drops the imports of
@@ -124,21 +127,36 @@ async def _live_paths(repo: CodeRepo, org: str, ns: str, pf: ParsedFile) -> set[
     return hit[1]
 
 
+def _probes(wanted: Callable[[str], list[str]], specs: list[str]) -> list[str]:
+    """The first `_MAX_INCLUDE_PROBES` distinct candidates of the specifiers, in order, read
+    one specifier at a time and no further than the cut: a file's whole list can run to
+    hundreds of megabytes."""
+    out: dict[str, None] = {}
+    for spec in specs:
+        for path in wanted(spec):
+            out[path] = None
+            if len(out) >= _MAX_INCLUDE_PROBES:
+                return list(out)
+    return list(out)
+
+
 async def _present_for(
     repo: CodeRepo,
     org: str,
     ns: str,
     pf: ParsedFile,
-    wanted: list[str],
+    wanted: Callable[[str], list[str]],
+    specs: list[str],
 ) -> set[str]:
-    """The membership oracle for `wanted`: the live set or, without one, the probing
-    membership read."""
+    """The membership oracle for the specifiers' candidates (`wanted`): the live set or,
+    without one, the probing membership read; the candidates are built only for it."""
     live = await _live_paths(repo, org, ns, pf)
     if live is not None:
         return live
-    if not wanted:
+    probes = _probes(wanted, specs)
+    if not probes:
         return set()
-    return set(await repo.live_paths_present(org, ns, wanted[:_MAX_INCLUDE_PROBES]))
+    return set(await repo.live_paths_present(org, ns, probes))
 
 
 async def _resolve_lane_includes(repo: CodeRepo, org: str, ns: str, pf: ParsedFile) -> None:
@@ -169,11 +187,13 @@ async def _resolve_lane_includes(repo: CodeRepo, org: str, ns: str, pf: ParsedFi
         await _resolve_py_includes(repo, org, ns, pf)
         return
     if pf.lang in LANE_UNIT_LANGS:
-        # A proto import's root is protoc's `-I`, unknown here — the file's directory
-        # and every ancestor + the specifier are probed
+        # A proto import's root is protoc's `-I`, unknown here — the file's directory and
+        # its nearest ancestors (`MAX_ANCESTOR_DIRS` in all), then the root, + the specifier
         unit_lane = _lane_module(pf.lang)
         specs = list(pf.includes)
-        present = await _present_for(repo, org, ns, pf, unit_lane.wanted_paths(pf.path, specs))
+        present = await _present_for(
+            repo, org, ns, pf, lambda s: unit_lane.wanted_paths(pf.path, [s]), specs
+        )
         pf.includes = unit_lane.resolve_imports(pf.path, specs, present)
         return
     if pf.lang == "shell":
@@ -194,7 +214,9 @@ async def _resolve_lane_includes(repo: CodeRepo, org: str, ns: str, pf: ParsedFi
         from server.code.domain.extract import lang_rust as lane  # type: ignore[no-redef]
     else:
         return
-    present = await _present_for(repo, org, ns, pf, lane.wanted_paths(pf.path, pf.includes))
+    present = await _present_for(
+        repo, org, ns, pf, lambda s: lane.wanted_paths(pf.path, [s]), pf.includes
+    )
     if pf.lang in TS_LANGS:
         # The governing tsconfig's paths / baseUrl, exact, first; A workspace member's
         # real directory before the guesses
@@ -225,8 +247,10 @@ async def _resolve_py_includes(repo: CodeRepo, org: str, ns: str, pf: ParsedFile
     if live is not None:
         roots = await _py_roots_for(repo, org, ns, pf, live)
         present = live
-    else:  # the candidates are the probe's input only: with the live set they go unread
-        present = await _present_for(repo, org, ns, pf, py_lane.wanted_paths(pf.path, specs))
+    else:
+        present = await _present_for(
+            repo, org, ns, pf, lambda s: py_lane.wanted_paths(pf.path, [s]), specs
+        )
     pf.includes = [
         p for p in py_lane.resolve_imports(pf.path, specs, present, roots) if p != pf.path
     ]
@@ -260,8 +284,8 @@ async def _resolve_code_lane_imports(repo: CodeRepo, org: str, ns: str, pf: Pars
 
 async def _resolve_go_imports(repo: CodeRepo, org: str, ns: str, pf: ParsedFile) -> None:
     """Go import resolution for one file: the conventional file names of each in-module
-    import probed in one membership read, then one directory listing per import the
-    names missed."""
+    import probed in one membership read, then one directory listing per package the
+    names missed, up to `_MAX_GO_LISTINGS` of them."""
     from server.code.domain.extract.lang_go import (
         go_imports,
         go_package_file,
@@ -279,15 +303,20 @@ async def _resolve_go_imports(repo: CodeRepo, org: str, ns: str, pf: ParsedFile)
     wanted = go_wanted_paths(specs, index)[:_MAX_INCLUDE_PROBES]
     present = await repo.live_paths_present(org, ns, wanted) if wanted else set()
     resolved, unresolved = go_resolve_imports_indexed(specs, index, set(present))
+    found = dict.fromkeys(resolved)
     hit_dirs = {p.rsplit("/", 1)[0] for p in resolved}
+    listed: set[str] = set()
     for _spec, pkg_dir in unresolved:
-        if pkg_dir in hit_dirs:
+        if pkg_dir in hit_dirs or pkg_dir in listed:
             continue
+        if len(listed) >= _MAX_GO_LISTINGS:
+            break
+        listed.add(pkg_dir)
         file = go_package_file(await _go_package_listing(repo, org, ns, pkg_dir), pkg_dir)
-        if file and file not in resolved:
-            resolved.append(file)
+        if file:
+            found[file] = None
             hit_dirs.add(pkg_dir)
-    pf.includes = [p for p in resolved if p != pf.path]
+    pf.includes = [p for p in found if p != pf.path]
 
 
 _GO_LISTING_CACHE: TtlCache[tuple[str, str, str], list[str]] = TtlCache(
@@ -762,14 +791,13 @@ async def _barrel_targets_of(repo: CodeRepo, org: str, ns: str, path: str) -> tu
 
 async def _resolve_simple_lane_includes(repo: CodeRepo, org: str, ns: str, pf: ParsedFile) -> None:
     """An EXTENDS'd module, an included schema, an add_subdirectory, a doc's relative
-    link — the includer's directory first, then each ancestor (the C++ ladder), kept
-    when the namespace holds the file."""
-    wanted: dict[str, None] = {}
-    for inc in pf.includes:
-        wanted.update(dict.fromkeys(include_candidates(pf.path, inc)))
+    link — the includer's directory first, then its nearest ancestors (the C++ ladder,
+    `MAX_ANCESTOR_DIRS` directories in all), then the root, kept when the namespace holds
+    the file."""
+    wanted = _probes(lambda s: include_candidates(pf.path, s), pf.includes)
     present: set[str] = set()
     if wanted:
-        present = await repo.live_paths_present(org, ns, list(wanted)[:_MAX_INCLUDE_PROBES])
+        present = await repo.live_paths_present(org, ns, wanted)
     resolved: dict[str, None] = {}
     for inc in pf.includes:
         hit = next((c for c in include_candidates(pf.path, inc) if c in present), None)
