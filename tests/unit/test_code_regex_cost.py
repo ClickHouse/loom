@@ -193,8 +193,8 @@ def test_a_pattern_costs_linear_time(name: str, pattern: re.Pattern) -> None:
 # costs N**k, and one that searches on from each repeated keyword to a closer that never
 # comes costs N**2. The sizes grow 4 times a step and a run stops at the first step that
 # grows more than 8 times; a step that takes at most a sixty-fourth of the bound is
-# confirmed at 4 times its size first. A pattern of degree k then spends one run of up to
-# 4**k / 64 times the bound there per composite: 2 s for a cubic one, not hours.
+# confirmed at 4 times its size first: up to three runs of at most 2 s each for a cubic
+# pattern, and one run of up to 4**k / 64 times the bound for degree k over 3, not hours.
 _SIZES = (500, 2_000, 8_000, 32_000)
 _PREFIXES = ("a", "- a", "a:a", "a = a", "export default a", "'a", "# a")
 _SEPS = ("", " a", "a=", "a(", "a ", "#a ")  # after an opener: `*a=`, `@if(`, `{#if `
@@ -232,22 +232,23 @@ def _slow(cost: Callable[[int], float]) -> tuple[int, float, float] | None:
             # Timers jitter on a loaded host: the best of three runs of each counts.
             small = min(small, cost(n // 4), cost(n // 4))
             big = min(big, cost(n), cost(n))
-            if _over(small, big) and (big > _BOUND_S / 64 or _confirmed(cost, 4 * n, big)):
+            if _over(small, big) and (big > _BOUND_S / 64 or _confirmed(cost, 4 * n, small)):
                 return n, round(small, 4), round(big, 4)
         small = big
     return None
 
 
-def _confirmed(cost: Callable[[int], float], n: int, before: float) -> bool:
-    """Whether the time at n is over 8 times `before` in each of three runs: a load spike
-    does not grow 8 times again, a pattern over linear does. The first run over the bound
-    or not over 8 times settles it. `_slow` asks only for a step of at most a sixty-fourth
-    of the bound, so a cubic pattern's run here costs at most 2 s."""
+def _confirmed(cost: Callable[[int], float], n: int, small: float) -> bool:
+    """Whether each of three runs at n takes over 64 times `small`, the time at n / 16:
+    a linear cost grows 16 times there and a step over linear at least 96 times, and a
+    load spike on the runs at n / 4 does not count. The first run over the bound or not
+    over 64 times settles it. `_slow` asks only for a step of at most a sixty-fourth of
+    the bound, so each run of a cubic pattern here costs at most 2 s."""
     for _ in range(3):
         took = cost(n)
         if took > _BOUND_S:
             return True
-        if not _over(before, took):
+        if not (took > _FLOOR_S / 10 and took > _RATIO**2 * small):
             return False
     return True
 
@@ -274,6 +275,13 @@ def test_slow_tells_a_load_spike_from_a_step_over_linear() -> None:
     assert _slow(timed(runs)) == (32_000, 0.0008, 0.016) and runs == [1.0]  # over the bound
     assert _slow(lambda n: (n / 1000) ** 2 * 2.5e-4) == (8_000, 0.001, 0.016)
     assert _slow(lambda n: (n / 2000) ** 3 * 2.5e-4) == (8_000, 0.0003, 0.016)  # cubic
+    # a quadratic step whose three runs at 32,000 a spike makes 2.4 times as slow
+    spiked = iter([0.025] * 3)
+
+    def quadratic(n: int) -> float:
+        return next(spiked) if n == 32_000 else (n / 1000) ** 2 * 1e-5
+
+    assert _slow(quadratic) == (32_000, 0.0006, 0.025)
 
 
 @pytest.mark.parametrize("name,pattern", _ALL, ids=[n for n, _ in _ALL])
