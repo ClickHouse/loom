@@ -275,8 +275,8 @@ def test_a_cancel_row_without_its_counts_is_not_read_as_a_pass():
 
 
 def test_the_cancel_probe_sorts_the_calls_by_when_they_began(monkeypatch):
-    # A call's row is stamped when it ends: one begun before the cut and ended after it
-    # counts before the cut, and one begun after it counts after.
+    # The calls are sorted on `started_ms` (the ledger's `ts - latency_ms`) against the
+    # disconnect: one begun before the cut counts before it, one begun after counts after.
     q = _qualify()
     seen = {}
 
