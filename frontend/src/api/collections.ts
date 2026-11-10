@@ -3,6 +3,7 @@
 // still import from `api.ts`.
 import { post } from "../api";
 import type { GrantRole, RequestOpts } from "../api";
+import { COLLECTIONS_PAGE } from "../lib/collections";
 
 // ===== Collections =====
 
@@ -31,7 +32,7 @@ export async function listCollections(
   org: string,
   opts: { cursor?: string | null; limit?: number } & RequestOpts = {},
 ): Promise<CollectionListPage> {
-  const body: Record<string, unknown> = { org, limit: opts.limit ?? 500 };
+  const body: Record<string, unknown> = { org, limit: opts.limit ?? COLLECTIONS_PAGE };
   if (opts.cursor) body["cursor"] = opts.cursor;
   const r = await post<CollectionListPage>("/v1/collection.list", body, opts.signal);
   return { collections: r.collections ?? [], next_cursor: r.next_cursor ?? null };

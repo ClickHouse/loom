@@ -3,6 +3,7 @@
 import { repeatedTitles } from "../lib/collections";
 import { act, cleanup, fireEvent, render, screen, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
+import { PHONE_QUERY } from "../lib/useMedia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CollectionEntry } from "../api";
 import { useStore } from "../lib/state";
@@ -132,6 +133,7 @@ describe("LibraryCollections", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("names the namespace when no collection is shown, and passes axe", async () => {
@@ -211,6 +213,66 @@ describe("LibraryCollections", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("lists the collections inside afresh, six of them, when another collection is shown", () => {
+    const kids = (parent: string) =>
+      Array.from({ length: 10 }, (_, i) => entry(`${parent}-k${i}`, { parent, title: `${parent} kid ${i}` }));
+    const rows = [ROWS[1], entry("col-other"), ...kids("col-q3"), ...kids("col-other")];
+    const view = (current: CollectionEntry) => (
+      <LibraryCollections
+        org="acme"
+        namespace="team"
+        collections={read(rows)}
+        current={current}
+        onPick={() => undefined}
+      />
+    );
+    const { rerender } = render(view(rows[0]));
+    fireEvent.click(screen.getByRole("button", { name: "Show 4 more" }));
+    expect(screen.getAllByRole("link", { name: /^col-q3 kid / })).toHaveLength(10);
+    rerender(view(rows[1]));
+    expect(screen.getAllByRole("link", { name: /^col-other kid / })).toHaveLength(6);
+  });
+
+  it("lists no collections inside while a linked collection is still opening", () => {
+    const rows = [ROWS[1], entry("col-q3-k", { parent: "col-q3", title: "Kid" })];
+    render(
+      <LibraryCollections
+        org="acme"
+        namespace="team"
+        collections={read(rows)}
+        current={null}
+        opening="col-q3"
+        onPick={() => undefined}
+      />,
+    );
+    expect(screen.queryByRole("region", { name: /Collections/ })).toBeNull();
+  });
+
+  it("on a phone shows the path as one back button and leaves the collections inside to the select", () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query === PHONE_QUERY,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    const rows = [
+      ROWS[1],
+      entry("col-q3-k", { parent: "col-q3", title: "Kid" }),
+      entry("col-q3-k-1", { parent: "col-q3-k" }),
+    ];
+    render(
+      <LibraryCollections
+        org="acme"
+        namespace="team"
+        collections={read(rows)}
+        current={rows[2]}
+        onPick={() => undefined}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Back to Kid" })).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Collection path" })).toBeNull();
+    expect(screen.queryByRole("region", { name: /Collections/ })).toBeNull();
+  });
+
   it("gives the user's own collection no menu", () => {
     render(
       <LibraryCollections
@@ -239,6 +301,42 @@ describe("LibraryCollections", () => {
     expect(screen.getByText(/Couldn't load collections/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Load collections again" }));
     expect(collections.reload).toHaveBeenCalled();
+  });
+});
+
+describe("the path's place above the top", () => {
+  it("is the header's namespace, else My files, else none", () => {
+    const onPick = vi.fn();
+    const at = (namespace: string | null, rows: CollectionEntry[], current: CollectionEntry) =>
+      render(
+        <LibraryCollections
+          org="acme"
+          namespace={namespace}
+          collections={read(rows)}
+          current={current}
+          onPick={onPick}
+        />,
+      );
+    at("team", ROWS, ROWS[1]);
+    const namespaceLink = within(screen.getByRole("navigation", { name: "Collection path" })).getByRole("link", {
+      name: "Namespace team",
+    });
+    // Its address names no collection, so a new tab opens the namespace, not the one left.
+    expect(namespaceLink.getAttribute("href")).not.toMatch(/collection=/);
+    fireEvent.click(namespaceLink, { ctrlKey: true });
+    expect(onPick).not.toHaveBeenCalled();
+    fireEvent.click(namespaceLink);
+    expect(onPick).toHaveBeenLastCalledWith(null);
+    cleanup();
+    // The header's namespace is itself a collection: the user's own files are the place above.
+    at("col-q3", ROWS, ROWS[0]);
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Collection path" })).getByRole("link", { name: "My files" }),
+    );
+    expect(onPick).toHaveBeenLastCalledWith("col-me-1a2b");
+    cleanup();
+    at(null, [ROWS[1]], ROWS[1]);
+    expect(screen.queryByRole("navigation", { name: "Collection path" })).toBeNull();
   });
 });
 

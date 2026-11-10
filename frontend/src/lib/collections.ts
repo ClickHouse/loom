@@ -11,6 +11,28 @@ import { COLLECTION_PREFIX as PREFIX, PERSONAL_COLLECTION_PREFIX as PERSONAL_PRE
 
 const SLUG_LEN = 40;
 
+const ROLE_LABEL: Record<string, string> = { viewer: "Viewer", writer: "Writer", admin: "Admin" };
+
+/** How many collections the Library reads (`collection.list`), in pages of a size. */
+export const COLLECTIONS_PAGE = 500;
+export const COLLECTIONS_PAGES = 20;
+export const COLLECTIONS_LISTED = COLLECTIONS_PAGE * COLLECTIONS_PAGES;
+
+/** The person's role in a collection, in words. */
+export function roleLabel(role: string): string {
+  return ROLE_LABEL[role] ?? role;
+}
+
+/** The order collections are listed in: the user's own first, then by what is shown,
+ *  then by name. */
+export function collectionOrder(a: CollectionEntry, b: CollectionEntry): number {
+  return (
+    Number(b.personal) - Number(a.personal) ||
+    collectionTitle(a).localeCompare(collectionTitle(b)) ||
+    a.namespace.localeCompare(b.namespace)
+  );
+}
+
 /** A collection's title, "My files" for the user's own, else its name. */
 export function collectionTitle(c: Pick<CollectionEntry, "namespace" | "personal" | "title">): string {
   if (c.personal) return "My files";

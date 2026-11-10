@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { installApi } from "./fixtures";
+import { boxOf, installApi, MIN_TARGET_PX } from "./fixtures";
 
 // The Library's cards and rows: a phone-width card keeps its parts inside it, and the row's
 // More menu shows before a hover and on a touch screen.
@@ -68,4 +68,66 @@ test("a sort over a partly loaded library says it covers the loaded documents", 
   await page.getByLabel("Sort documents").first().click();
   await page.getByRole("dialog", { name: "Options" }).getByText("Title (A–Z)").click();
   await expect(bar).toContainText("The first 3, sorted");
+});
+
+// A collection deep in the tree, with collections inside it: on a phone the path is one
+// 44 px back button in the select's row, the select lists the collections inside, and the
+// first document still starts within the list pages' chrome budget (y ≤ 360 at 375 × 812).
+test.describe("a collection's path on a phone with a touch pointer", () => {
+  test.use({ viewport: { width: 375, height: 812 }, hasTouch: true, isMobile: true });
+
+  test("is one back button, and the first document starts within the budget", async ({ page }) => {
+    await installApi(page, { knowledgeRows: 4 });
+    const entry = (namespace: string, parent: string, title: string) => ({
+      namespace,
+      parent,
+      personal: false,
+      role: "writer",
+      description: "",
+      title,
+    });
+    const collections = [
+      entry("col-team", "", "Team handbook and onboarding"),
+      entry("col-q3", "col-team", "Quarter three planning"),
+      entry("col-interviews", "col-q3", "Customer interviews"),
+      entry("col-notes", "col-interviews", "Interview notes"),
+      ...Array.from({ length: 8 }, (_, i) => entry(`col-notes-${i}`, "col-notes", `Session ${i + 1} notes`)),
+    ];
+    await page.route("**/v1/collection.list", (r) => r.fulfill({ json: { collections, next_cursor: null } }));
+    await page.goto("/library?collection=col-notes");
+    const back = page.getByRole("button", { name: "Back to Customer interviews" });
+    await expect(back).toBeVisible();
+    const box = await boxOf(back);
+    expect(box.height).toBeGreaterThanOrEqual(MIN_TARGET_PX);
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(375);
+    await expect(page.getByRole("region", { name: /Collections/ })).toHaveCount(0);
+    const first = page.locator("main [data-doc-row]").first();
+    await expect(first).toBeVisible();
+    expect(await first.evaluate((el) => el.getBoundingClientRect().top)).toBeLessThanOrEqual(360);
+    await back.click();
+    await expect(page).toHaveURL(/collection=col-interviews/);
+  });
+
+  test("goes back to the namespace when the parent is one the person cannot read", async ({ page }) => {
+    await installApi(page, { knowledgeRows: 4 });
+    const collections = [
+      {
+        namespace: "col-shared",
+        parent: "col-hidden",
+        personal: false,
+        role: "viewer",
+        description: "",
+        title: "Shared",
+      },
+    ];
+    await page.route("**/v1/collection.list", (r) => r.fulfill({ json: { collections, next_cursor: null } }));
+    await page.goto("/library?collection=col-shared");
+    const back = page.getByRole("button", { name: /^Back to Namespace / });
+    await expect(back).toBeVisible();
+    const box = await boxOf(back);
+    expect(box.height).toBeGreaterThanOrEqual(MIN_TARGET_PX);
+    await back.tap();
+    await expect(page).not.toHaveURL(/collection=/);
+  });
 });
