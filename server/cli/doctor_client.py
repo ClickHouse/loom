@@ -392,7 +392,7 @@ def recording_check(
             name,
             WARN,
             f"conversation recording is off for {namespace!r} (the owner's Record conversations "
-            "switch in the dashboard): the hooks send no turns and none are kept. Turn it on "
+            "switch in the dashboard): the hooks stop sending turns and none are kept. Turn it on "
             "there if you want transcripts.",
         )
     return (name, PASS, f"conversation recording is on for {namespace!r}")

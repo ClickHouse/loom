@@ -405,8 +405,9 @@ with the token in it. Then:
    single-user session left in the file outranks the token, and without one the plugin
    writes to the token's first namespace other than `*`, or `coding`. Add back any
    `code_repo` or `agent` you had set.
-2. Leave `LOOM_API_KEY` and the plugin's `token` option empty or set to the new token: the
-   plugin reads both before that file
+2. Leave `LOOM_API_KEY` (step 3 may have exported one: `unset LOOM_API_KEY`) and the
+   plugin's `token` option empty, or set them to the new token: the plugin reads both
+   before that file
    ([configuration](../features/integrations/claude-code.md#configuration)).
 3. Remove a `claude mcp add` entry made without a token (`claude mcp remove loom -s user`)
    before running the dialog's command, which refuses a name that exists.
