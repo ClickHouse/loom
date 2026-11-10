@@ -611,7 +611,9 @@ for (const [width, touch] of [
 ] as const) {
   test.describe(`the token form's search order at ${width} px`, () => {
     test.use({ viewport: { width, height: 900 }, hasTouch: touch });
-    test("is axe-clean and leaves each name readable", async ({ page }) => {
+    test("is axe-clean, keeps names readable, and moves rows by grip or, on touch, by arrows only", async ({
+      page,
+    }) => {
       const row = (namespace: string, role: string) => ({
         namespace,
         role,
@@ -643,9 +645,9 @@ for (const [width, touch] of [
       if (touch) {
         // A touch screen starts no HTML drag: no grip offers one, and the hint names the arrows.
         await expect(order.locator("[draggable]")).toHaveCount(0);
-        await expect(page.getByText(/use a row's arrows to change the order/)).toBeVisible();
+        await expect(page.getByText(/Use a row's arrows to change the order/)).toBeVisible();
       } else {
-        await expect(page.getByText(/drag a row by its grip, or use its arrows, to change the order/)).toBeVisible();
+        await expect(page.getByText(/Drag a row by its grip, or use its arrows, to change the order/)).toBeVisible();
         // A real drag by the grip: the second row takes the first place.
         const rows = order.getByRole("listitem");
         await rows.nth(1).locator("[draggable]").dragTo(rows.nth(0));

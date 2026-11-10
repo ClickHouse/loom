@@ -335,6 +335,24 @@ describe("the token form", () => {
     expect(screen.getByRole("status")).toHaveTextContent("");
   });
 
+  it("only these on a touch screen: no grip to drag, and the hint names the arrows", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((q: string) => ({
+        matches: q === "(pointer: coarse)",
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-a" }, WAIT));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
+    const order = screen.getByRole("list", { name: "Search order" });
+    expect(order.querySelector("[draggable]")).toBeNull();
+    expect(screen.getByText(/Use a row's arrows to change the order/)).toBeInTheDocument();
+  });
+
   it("only these: a row dragged onto another takes its place", async () => {
     render(<Setup />);
     await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));

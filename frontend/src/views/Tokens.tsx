@@ -288,9 +288,7 @@ function SearchOrder({
               }}
               className={`flex flex-wrap items-center gap-2 px-2 py-1.5 text-sm ${over === i && dragging !== ns ? "bg-surface" : ""} ${dragging === ns ? "opacity-60" : ""}`}
             >
-              {/* Only the grip drags, so a press on the role or an arrow stays a press and the
-                  name can be selected. On a touch screen a long-press drag is not what a person expects: there the arrows
-                  are the way, and no grip promises otherwise. */}
+              {/* Only the grip drags, so a press on the role or an arrow stays a press and the name can be selected. */}
               {!touch && (
                 <span
                   className="cursor-grab text-text-muted"
@@ -722,7 +720,7 @@ function TokenForm({
           <p className="text-xs text-text-muted">
             {selectedNs.length === 0
               ? "Tick the namespaces this token reads. Nothing else, whatever you join later."
-              : `${selectedNs.length} ticked, and nothing else, whatever you join later. Number 1 is searched first: ${touch ? "use a row's arrows" : "drag a row by its grip, or use its arrows,"} to change the order.`}
+              : `${selectedNs.length} ticked, and nothing else, whatever you join later. Number 1 is searched first. ${touch ? "Use a row's arrows" : "Drag a row by its grip, or use its arrows,"} to change the order.`}
           </p>
         </fieldset>
       )}
