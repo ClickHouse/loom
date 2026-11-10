@@ -17,17 +17,7 @@ from server.cli.code_backfill import _record_manual_pass
 from server.cli.code_run import _identity, _note, _repo_cfg
 
 if TYPE_CHECKING:
-    from server.code.app.index.scip_delta import ScipDelta
-
-
-async def _read_delta(path: str) -> ScipDelta:
-    """The kept delta `--apply-delta` names, read and parsed as a worker reads one, under
-    the same caps. A missing, refused or unreadable file is the caller's input, not a
-    failure of the tier: it is read before anything is recorded."""
-    from server.code.app.index.scip_delta import parse_delta
-    from server.code.app.index.untrusted_files import read_delta
-
-    return parse_delta(await asyncio.to_thread(read_delta, Path(path)))
+    from server.code.app.index.delta_file import DeltaFile
 
 
 async def _scip_apply_only(
@@ -36,7 +26,7 @@ async def _scip_apply_only(
     org: str,
     ns: str,
     git_head: str,
-    delta: ScipDelta,
+    delta: DeltaFile,
 ) -> int:
     """`scip-full --apply-delta`: apply a delta the harness already produced
     (`--keep-delta`). The apply is idempotent — a re-run key-diffs against
@@ -52,7 +42,7 @@ async def _scip_apply_only(
             "applying the delta's commit",
             file=sys.stderr,
         )
-    print(f"applying {args.apply_delta} ({len(delta.files)} files)…")
+    print(f"applying {args.apply_delta} ({len(delta.paths)} files)…")
     stats = await apply_delta(repo, org, ns, delta)
     # scip-full runs scip-clang only, so its delta moves the C++ watermark, also
     # where clang is an extra tier beside the entry's own.
@@ -120,9 +110,13 @@ async def _scip_apply_recorded(
 ) -> int:
     """`--apply-delta`, recording the apply's outcome as the full run's tier."""
     from server.code.app.index import tier_health
+    from server.code.app.index.delta_file import open_delta
     from server.code.app.index.entry_lock import EntryLockLost
 
-    delta = await _read_delta(args.apply_delta)
+    # The kept delta, read as a worker reads one, under the same caps. A missing, refused
+    # or unreadable file is the caller's input, not a failure of the tier: it is read
+    # before anything is recorded.
+    delta = await asyncio.to_thread(open_delta, Path(args.apply_delta))
     try:
         rc = await _scip_apply_only(args, repo, org, ns, git_head, delta)
     except EntryLockLost:

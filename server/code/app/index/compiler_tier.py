@@ -31,6 +31,7 @@ from server.workers import pass_context
 from server.workers.status import log_pass_errors, record_pass
 
 if TYPE_CHECKING:
+    from server.code.app.index.delta_file import DeltaFile
     from server.code.domain.index.repos import RepoConfig
     from server.code.store.index import CodeRepo
 
@@ -305,14 +306,14 @@ async def compiler_target(repo: CodeRepo, cfg: RepoConfig) -> str:
     return head or watermark
 
 
-def gone_documents(live: set[str], delta: Any, producer: str) -> list[str]:
+def gone_documents(live: set[str], delta: DeltaFile, producer: str) -> list[str]:
     """The live compiler-tier paths of `producer`'s languages the full-run delta does
     not mention, joined with the paths it already marks deleted — sorted, so the apply
     is deterministic. Another tier's documents in the same namespace are never gone:
     a full TypeScript run must not retire the Python tier's rows."""
     from server.code.domain.index.compiler_tiers import owns_path
 
-    present = {f.path for f in delta.files}
+    present = set(delta.paths)
     mine = {p for p in live if owns_path(producer, p)}
     return sorted((mine - present) | set(delta.deleted_files))
 

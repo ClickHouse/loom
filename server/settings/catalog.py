@@ -1120,11 +1120,14 @@ class CodeSettings(BaseModel):
     # Seconds the C++ delta harness may run before it is killed.
     code_scip_delta_timeout_seconds: int = 3600
     # Largest compiler-tier delta file the server reads, in MiB; a larger one fails the
-    # entry's pass (sizing: code-index-operations.md).
+    # entry's pass. It bounds the pass's work and the path text kept (code-index-operations.md).
     code_scip_delta_file_max_mb: Annotated[int, LIVE] = Field(default=180, ge=1)
     # Most `{`, `[` and `,` bytes a compiler-tier delta may hold, counted before it is
     # parsed; more fails the entry's pass (sizing: code-index-operations.md).
     code_scip_delta_max_nodes: Annotated[int, LIVE] = Field(default=6_000_000, ge=1)
+    # Most `{`, `[` and `,` bytes one apply round of a compiler-tier delta parses: its
+    # memory bound; one value over it fails the pass (code-index-operations.md).
+    code_scip_delta_round_max_nodes: Annotated[int, LIVE] = Field(default=3_000_000, ge=1)
     # C++ full re-index: seeds an entry the delta has no watermark for, and
     # re-indexes each entry every `code_scip_full_every_hours` (heals deltas
     # that hit the TU cap). One entry per pass, under its entry lock.

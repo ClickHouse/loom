@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import shutil
 import sys
 import tempfile
@@ -15,12 +16,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from server.code.app.index import compiler_tier
+from server.code.app.index.delta_file import open_delta
 from server.code.app.index.entry_lock import check_held
 from server.code.app.index.gitrepo import git_config_env
 from server.code.app.index.sandbox import tool_mounts
-from server.code.app.index.scip_delta import ScipApplyStats, apply_delta, parse_delta
+from server.code.app.index.scip_delta import ScipApplyStats, apply_delta
 from server.code.app.index.tier_health import ToolOutputError
-from server.code.app.index.untrusted_files import read_delta
+from server.code.app.index.untrusted_files import FileRefused, open_regular
 from server.core.paths import SCIP_HARNESS_DIR
 from server.settings import settings
 
@@ -182,15 +184,38 @@ async def _index_and_apply(
         )
         if rc != 0:
             raise FullIndexFailed(rc, out)
-        raw = await asyncio.to_thread(read_delta, delta_path)
-        if keep_delta:
-            await asyncio.to_thread(Path(keep_delta).write_bytes, raw)
-        delta = parse_delta(raw)
-        del raw  # the bytes are not needed past the parse
-    stats = await apply_delta(repo, cfg.org, cfg.namespace, delta)
+        if keep_delta:  # kept as the harness wrote it, before it is parsed
+            await asyncio.to_thread(_keep, delta_path, keep_delta)
+        delta = await asyncio.to_thread(open_delta, delta_path)
+        # applied while the file is there: the rounds are read from it
+        stats = await apply_delta(repo, cfg.org, cfg.namespace, delta)
     check_held()
     await mark_done(repo, cfg.org, cfg.namespace, target)
     return stats, out
+
+
+def _keep(delta_path: Path, keep_delta: str) -> None:
+    """Copy the harness's delta, refused when it is a link, not a regular file or over
+    `code_scip_delta_file_max_mb`. The copy is written beside `keep_delta` and moved
+    onto it only once whole, so a failed copy leaves whatever was at that path. Only the
+    user that ran the command can read it (mode 0600): a delta holds the indexed
+    repository's paths and symbol names."""
+    fd, st = open_regular(delta_path, settings.code_scip_delta_file_max_mb * 1024 * 1024)
+    dest = Path(keep_delta)
+    with open(fd, "rb") as src:
+        tmp_fd, tmp_name = tempfile.mkstemp(dir=dest.parent, prefix=f".{dest.name}.")
+        try:
+            with open(tmp_fd, "wb") as dst:
+                left = st.st_size  # never past the size it was opened at
+                while left and (data := src.read(min(left, 1024 * 1024))):
+                    dst.write(data)
+                    left -= len(data)
+                if left or src.read(1):
+                    raise FileRefused(f"{delta_path} changed while it was read")
+            os.replace(tmp_name, dest)
+        except BaseException:
+            Path(tmp_name).unlink(missing_ok=True)
+            raise
 
 
 async def mark_done(repo: CodeRepo, org: str, ns: str, commit: str) -> None:

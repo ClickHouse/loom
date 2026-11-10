@@ -1583,7 +1583,7 @@
           "default": 180,
           "minimum": 1,
           "type": "integer",
-          "description": "Largest compiler-tier delta file the server reads, in MiB; a larger one fails the entry's pass (sizing: code-index-operations.md)."
+          "description": "Largest compiler-tier delta file the server reads, in MiB; a larger one fails the entry's pass. It bounds the pass's work and the path text kept (code-index-operations.md)."
         },
         "code_scip_delta_interval_seconds": {
           "default": 300,
@@ -1600,6 +1600,12 @@
           "default": 200,
           "type": "integer",
           "description": "Max translation units one delta indexes; past it only the changed `.cpp` files are indexed and the header fan-out heals on the next full run."
+        },
+        "code_scip_delta_round_max_nodes": {
+          "default": 3000000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Most `{`, `[` and `,` bytes one apply round of a compiler-tier delta parses: its memory bound; one value over it fails the pass (code-index-operations.md)."
         },
         "code_scip_delta_timeout_seconds": {
           "default": 3600,

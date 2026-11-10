@@ -40,11 +40,11 @@ from server.code.app.index.compiler_tier import (
     run_harness,
     run_tier,
 )
+from server.code.app.index.delta_file import open_delta
 from server.code.app.index.entry_lock import check_held
 from server.code.app.index.gitrepo import git_config_env
 from server.code.app.index.sandbox import tool_mounts
 from server.code.app.index.scip_full import work_dir
-from server.code.app.index.untrusted_files import read_delta
 from server.core.paths import SCIP_HARNESS_DIR
 from server.settings import settings
 
@@ -155,7 +155,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
             raise harness_failure(returncode, out[-2000:])
 
         try:
-            raw = await asyncio.to_thread(read_delta, delta_path)
+            delta = await asyncio.to_thread(open_delta, delta_path)
         except FileNotFoundError:
             # harness legitimately exits 0 with no delta when no C++ TU changed
             logger.info("code_scip_delta: %s no C++ changes in window", cfg.namespace)
@@ -163,12 +163,9 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
             await repo.set_state(cfg.org, cfg.namespace, WATERMARK, target)
             return
 
-        from server.code.app.index.scip_delta import apply_delta, parse_delta
+        from server.code.app.index.scip_delta import apply_delta
 
-        delta = parse_delta(raw)
-        del raw  # the bytes are not needed past the parse
-
-    stats = await apply_delta(repo, cfg.org, cfg.namespace, delta)
+        stats = await apply_delta(repo, cfg.org, cfg.namespace, delta)
     check_held()
     await repo.set_state(cfg.org, cfg.namespace, WATERMARK, target)
     result.deltas_applied += 1

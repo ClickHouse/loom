@@ -51,6 +51,7 @@ from server.code.app.index.compiler_tier import (
     run_harness,
     run_tier,
 )
+from server.code.app.index.delta_file import open_delta
 from server.code.app.index.gitrepo import (
     UNQUOTED_PATHS,
     auth_env,
@@ -60,7 +61,6 @@ from server.code.app.index.gitrepo import (
 )
 from server.code.app.index.sandbox import tool_mounts
 from server.code.app.index.tier_health import note_unavailable
-from server.code.app.index.untrusted_files import read_delta
 from server.code.domain.index.tier_health import (
     module_failures,
     split_module_failures,
@@ -254,17 +254,15 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResu
         log = await _run_harness(checkout, scip_commit or "--full", target, out_dir, modules, cfg)
         failed = module_failures(log)
         result.modules_skipped.extend(f"{cfg.namespace}: {line}" for line in failed)
-        from server.code.app.index.scip_delta import apply_delta, parse_delta
+        from server.code.app.index.scip_delta import apply_delta
 
         # One delta per module the harness ran over (a full run: every go.mod it lists)
         expected = modules or await _module_dirs(checkout)
         paths = await asyncio.to_thread(_deltas, out_dir, len(expected))
         for path in paths:
-            raw = await asyncio.to_thread(read_delta, path)
-            delta = parse_delta(raw)
-            del raw  # the bytes are not needed past the parse
+            delta = await asyncio.to_thread(open_delta, path)
             stats = await apply_delta(repo, cfg.org, cfg.namespace, delta)
-            del delta  # free this module's model before the next one is read
+            del delta  # free this module's paths before the next one is read
             result.modules_indexed += 1
             logger.info(
                 "code_scip_go_delta: %s module %s applied %s",

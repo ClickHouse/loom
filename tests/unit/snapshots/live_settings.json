@@ -55,6 +55,7 @@
  "code_review_brief_rationale_tokens",
  "code_scip_delta_file_max_mb",
  "code_scip_delta_max_nodes",
+ "code_scip_delta_round_max_nodes",
  "code_scip_full_retry_s",
  "code_status_building_counts_ttl_s",
  "code_status_ledger_passes_ttl_s",

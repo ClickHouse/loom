@@ -886,6 +886,7 @@ def test_each_real_refusal_gets_its_own_fix(tmp_path: Any, monkeypatch: pytest.M
     fix routing misses fails here."""
     import os
 
+    from server.code.app.index import delta_file
     from server.code.app.index import untrusted_files as uf
 
     def fix(text: str) -> str:
@@ -896,27 +897,39 @@ def test_each_real_refusal_gets_its_own_fix(tmp_path: Any, monkeypatch: pytest.M
     delta = tmp_path / "delta.json"
     delta.write_bytes(b'{"commit":"c","files":[' + b",".join([b'{"path":""}'] * 5) + b"]}")
     monkeypatch.setattr(settings, "code_scip_delta_max_nodes", 3)
-    assert fix(_refusal(lambda: uf.read_delta(delta))).startswith(
+    assert fix(_refusal(lambda: delta_file.open_delta(delta))).startswith(
         "The compiler tier's delta holds more"
     )
     monkeypatch.setattr(settings, "code_scip_delta_max_nodes", 10_000)
     monkeypatch.setattr(settings, "code_scip_delta_file_max_mb", 1)
     big = tmp_path / "big.json"
     big.write_bytes(b" " * (1024 * 1024 + 1))
-    assert fix(_refusal(lambda: uf.read_delta(big))).startswith(
+    assert fix(_refusal(lambda: delta_file.open_delta(big))).startswith(
         "The compiler tier's delta is larger"
     )
+    monkeypatch.setattr(settings, "code_scip_delta_file_max_mb", 64)
+    monkeypatch.setattr(settings, "code_scip_delta_round_max_nodes", 0)
+    assert fix(_refusal(lambda: delta_file.open_delta(delta))).startswith(
+        "One value of the compiler tier's delta (the error names its file entry) holds"
+    )
+    monkeypatch.setattr(settings, "code_scip_delta_round_max_nodes", 10_000)
+    monkeypatch.setattr(delta_file, "_MAX_CHARS", 8)
+    assert fix(_refusal(lambda: delta_file.open_delta(delta))).startswith(
+        "One value of the compiler tier's delta (the error names its file entry) is longer"
+    )
+    monkeypatch.undo()
+    monkeypatch.setattr(settings, "code_scip_delta_max_nodes", 10_000)
     manifest = tmp_path / "package.json"
     manifest.write_bytes(b" " * (uf.PACKAGE_JSON_MAX_BYTES + 1))
     assert fix(_refusal(lambda: uf.read_package_json(manifest))).startswith(
         "A file of the checkout"
     )
     (tmp_path / "link.json").symlink_to(delta)
-    assert fix(_refusal(lambda: uf.read_delta(tmp_path / "link.json"))).startswith(
+    assert fix(_refusal(lambda: delta_file.open_delta(tmp_path / "link.json"))).startswith(
         "The tier refused a file it reads"
     )
     os.mkfifo(tmp_path / "fifo.json")
-    assert fix(_refusal(lambda: uf.read_delta(tmp_path / "fifo.json"))).startswith(
+    assert fix(_refusal(lambda: delta_file.open_delta(tmp_path / "fifo.json"))).startswith(
         "The tier refused a file it reads"
     )
     # a writer still at the file: its size differs from the one stated when opened
@@ -928,7 +941,7 @@ def test_each_real_refusal_gets_its_own_fix(tmp_path: Any, monkeypatch: pytest.M
         return os.stat_result(st)
 
     monkeypatch.setattr(uf.os, "fstat", stale)
-    assert fix(_refusal(lambda: uf.read_delta(delta))).startswith(
+    assert fix(_refusal(lambda: delta_file.open_delta(delta))).startswith(
         "A file the tier reads changed while it was read"
     )
 

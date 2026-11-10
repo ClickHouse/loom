@@ -20,8 +20,9 @@ import pytest
 
 from server.code.app.index import scip_full, untrusted_files
 from server.code.app.index import typescript_dependencies as deps
-from server.code.app.index.scip_delta import ScipApplyStats, ScipDelta, parse_delta
-from server.code.app.index.untrusted_files import FileRefused, read_bounded, read_delta
+from server.code.app.index.delta_file import open_delta
+from server.code.app.index.scip_delta import ScipApplyStats
+from server.code.app.index.untrusted_files import FileRefused, read_bounded
 from server.code.domain.index.tier_health import STATE_PREFIX
 from server.code.workers import scip_delta, scip_go_delta, scip_py_delta, scip_ts_delta
 from server.settings import settings
@@ -104,11 +105,12 @@ def test_a_file_that_changed_after_fstat_is_refused(tmp_path: Path, monkeypatch,
 def test_the_delta_cap_is_its_setting(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(settings, "code_scip_delta_file_max_mb", 1)
     path = tmp_path / "delta.json"
-    path.write_bytes(b"x" * 1024 * 1024)
-    assert len(read_delta(path)) == 1024 * 1024
-    path.write_bytes(b"x" * (1024 * 1024 + 1))
-    with pytest.raises(FileRefused):
-        read_delta(path)
+    body = b'{"commit":"c","files":[],"x":"'
+    path.write_bytes(body + b"x" * (1024 * 1024 - len(body) - 2) + b'"}')
+    assert open_delta(path).commit == "c"
+    path.write_bytes(body + b"x" * (1024 * 1024 - len(body) - 1) + b'"}')
+    with pytest.raises(FileRefused, match="bytes; max 1048576"):
+        open_delta(path)
 
 
 def _minimal_files(n: int) -> bytes:
@@ -148,12 +150,12 @@ def test_a_delta_over_the_node_cap_is_refused(tmp_path: Path, monkeypatch) -> No
     monkeypatch.setattr(settings, "code_scip_delta_max_nodes", 10)
     path = tmp_path / "delta.json"
     path.write_bytes(_minimal_files(4))  # 2 * 4 + 2 values
-    assert read_delta(path) == _minimal_files(4)
+    assert open_delta(path).paths == [""] * 4
     path.write_bytes(_minimal_files(5))
     with pytest.raises(
         FileRefused, match="12 `{`/`\\[`/`,` bytes; max 10 .code_scip_delta_max_nodes"
     ):
-        read_delta(path)
+        open_delta(path)
 
 
 def test_a_realistic_delta_meets_both_caps_near_the_byte_cap(tmp_path: Path) -> None:
@@ -165,15 +167,16 @@ def test_a_realistic_delta_meets_both_caps_near_the_byte_cap(tmp_path: Path) -> 
     assert 0.95 * settings.code_scip_delta_max_nodes < counted <= settings.code_scip_delta_max_nodes
     path = tmp_path / "delta.json"
     path.write_text(json.dumps({"commit": "c", "files": [_realistic_file()] * 3}))
-    assert ScipDelta.model_validate_json(read_delta(path)).files[0].edges
+    assert next(open_delta(path).rounds(100, lambda p: True))[0].edges
 
 
-def test_an_invalid_delta_raises_a_short_error() -> None:
-    # pydantic names every bad item: 1,000,000 bad files print about 170 million characters
-    raw = b'{"commit":"c","files":[' + b",".join([b"0"] * 100_000) + b"]}"
+def test_an_invalid_delta_raises_a_short_error(tmp_path: Path) -> None:
+    # pydantic names every bad item: the error names the first bad entry, not all of them
+    path = tmp_path / "delta.json"
+    path.write_bytes(b'{"commit":"c","files":[' + b",".join([b"0"] * 100_000) + b"]}")
     with pytest.raises(ValueError) as caught:
-        parse_delta(raw)
-    assert str(caught.value) == "delta invalid: 100000 errors"
+        open_delta(path)
+    assert str(caught.value) == "delta invalid: file entry 0: 1 error(s)"
     assert caught.value.__cause__ is None and caught.value.__suppress_context__
 
 
@@ -382,7 +385,7 @@ async def test_the_python_tier_refuses_an_over_count_delta_before_parsing(
 
     monkeypatch.setattr(scip_py_delta, "_run_harness", harness)
     parse = Mock()
-    monkeypatch.setattr("server.code.app.index.scip_delta.ScipDelta.model_validate_json", parse)
+    monkeypatch.setattr("server.code.app.index.delta_file.pydantic_core.from_json", parse)
     res, apply, repo = await _run(scip_py_delta, _entry("python"), {"git_head": "b" * 40})
     _refused(res, apply, repo)
     assert "22 `{`/`[`/`,` bytes; max 10 (code_scip_delta_max_nodes)" in res.errors[0]
@@ -399,7 +402,9 @@ async def test_an_invalid_delta_fails_the_pass_with_a_short_error(monkeypatch, t
 
     monkeypatch.setattr(scip_py_delta, "_run_harness", harness)
     res, apply, repo = await _run(scip_py_delta, _entry("python"), {"git_head": "b" * 40})
-    assert res.errors == ["code-python: ValueError: delta invalid: 100000 errors"], res.errors
+    assert res.errors == ["code-python: ValueError: delta invalid: file entry 0: 1 error(s)"], (
+        res.errors
+    )
     apply.assert_not_awaited()
     _watermark_unmoved(repo)
 
@@ -608,6 +613,77 @@ async def test_the_full_index_reads_and_keeps_a_plain_delta(monkeypatch, tmp_pat
     assert json.loads(kept.read_text()) == _DELTA
 
 
+@pytest.mark.asyncio
+async def test_the_full_index_keeps_an_invalid_delta_for_inspection(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(scip_full, "move_checkout", AsyncMock())
+    monkeypatch.setattr(scip_full, "check_held", lambda: None)
+
+    async def harness(checkout, clang, delta_path, **kw):
+        delta_path.write_text('{"commit":"c","files":[0]}')
+        return 0, "ok"
+
+    monkeypatch.setattr(scip_full, "run_full_harness", harness)
+    kept = tmp_path / "kept.json"
+    with pytest.raises(ValueError, match="delta invalid"):
+        await scip_full._index_and_apply(
+            AsyncMock(), _entry("clang"), tmp_path, tmp_path, tmp_path, "b" * 40, 1, 1, str(kept)
+        )
+    assert kept.read_text() == '{"commit":"c","files":[0]}'
+
+
+def test_a_kept_copy_of_a_delta_that_grew_is_refused_and_removed(
+    monkeypatch, tmp_path: Path
+) -> None:
+    delta = tmp_path / "delta.json"
+    delta.write_text(json.dumps(_DELTA))
+    real = scip_full.open_regular
+
+    def grown(path: Path, max_bytes: int) -> Any:
+        opened = real(path, max_bytes)
+        with delta.open("a") as fh:
+            fh.write(" " * 10)  # a writer still at it after the open
+        return opened
+
+    monkeypatch.setattr(scip_full, "open_regular", grown)
+    kept = tmp_path / "kept.json"
+    with pytest.raises(FileRefused, match="changed while it was read"):
+        scip_full._keep(delta, str(kept))
+    assert not kept.exists()
+
+
+def test_a_failed_copy_over_a_writable_file_leaves_it_whole(monkeypatch, tmp_path: Path) -> None:
+    delta = tmp_path / "delta.json"
+    delta.write_text(json.dumps(_DELTA))
+    kept = tmp_path / "kept.json"
+    kept.write_text("the operator's own file")
+    real = scip_full.open_regular
+
+    def grown(path: Path, max_bytes: int) -> Any:
+        opened = real(path, max_bytes)
+        with delta.open("a") as fh:
+            fh.write(" " * 10)
+        return opened
+
+    monkeypatch.setattr(scip_full, "open_regular", grown)
+    with pytest.raises(FileRefused):
+        scip_full._keep(delta, str(kept))
+    assert kept.read_text() == "the operator's own file"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["delta.json", "kept.json"]
+
+
+def test_a_kept_copy_that_cannot_be_written_leaves_what_was_there(tmp_path: Path) -> None:
+    delta = tmp_path / "delta.json"
+    delta.write_text(json.dumps(_DELTA))
+    kept = tmp_path / "kept.json"
+    kept.write_text("the operator's own file")
+    refused = Mock(side_effect=PermissionError("nothing can be written beside it"))
+    with patch.object(scip_full.tempfile, "mkstemp", refused), pytest.raises(PermissionError):
+        scip_full._keep(delta, str(kept))
+    assert kept.read_text() == "the operator's own file"
+
+
 def test_the_go_delta_listing_stops_at_the_first_delta_too_many(tmp_path, monkeypatch) -> None:
     for name in ("a.json", "b.json", "c.json", ".json", "notes.txt"):
         (tmp_path / name).write_text("{}")
@@ -637,15 +713,42 @@ def test_the_go_delta_listing_stops_at_the_first_delta_too_many(tmp_path, monkey
     ]  # the root module's delta is `.json`; another file is no delta
 
 
-def test_apply_delta_reads_its_kept_delta_under_the_caps(tmp_path: Path) -> None:
-    from server.cli.code_scip import _read_delta
+def test_apply_delta_reads_its_kept_delta_under_the_caps(tmp_path: Path, monkeypatch) -> None:
+    import argparse
+
+    from server.cli import code_scip
+    from server.code.app.index import tier_health
+
+    recorded: list[Any] = []
+
+    async def record(*a: Any) -> None:
+        recorded.append(a)
+
+    async def apply_only(args: Any, repo: Any, org: str, ns: str, head: str, delta: Any) -> int:
+        return 0 if delta.commit == "c" else 1
+
+    monkeypatch.setattr(tier_health, "record", record)
+    monkeypatch.setattr(code_scip, "_scip_apply_only", apply_only)
+
+    def run(path: Path) -> int:
+        args = argparse.Namespace(apply_delta=str(path))
+        return asyncio.run(code_scip._scip_apply_recorded(args, object(), "o", "ns", "c"))
 
     kept = tmp_path / "delta.json"
     kept.write_text('{"commit": "c"}')
-    assert asyncio.run(_read_delta(str(kept))).commit == "c"
+    assert run(kept) == 0 and len(recorded) == 1  # the full run's tier: ok
     (tmp_path / "link.json").symlink_to(kept)
     with pytest.raises(FileRefused):
-        asyncio.run(_read_delta(str(tmp_path / "link.json")))
+        run(tmp_path / "link.json")
     kept.write_text('{"commit": "c", "files": [0]}')
-    with pytest.raises(ValueError, match="delta invalid: 1 errors"):
-        asyncio.run(_read_delta(str(kept)))
+    with pytest.raises(ValueError, match=r"delta invalid: file entry 0: 1 error\(s\)"):
+        run(kept)
+    assert len(recorded) == 1  # a refused or invalid input records nothing
+
+
+def test_a_kept_copy_is_readable_only_by_the_user_that_ran_the_command(tmp_path: Path) -> None:
+    delta = tmp_path / "delta.json"
+    delta.write_text(json.dumps(_DELTA))
+    kept = tmp_path / "kept.json"
+    scip_full._keep(delta, str(kept))
+    assert kept.read_text() == delta.read_text() and kept.stat().st_mode & 0o777 == 0o600
