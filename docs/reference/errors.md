@@ -228,6 +228,10 @@ Raised in `server/memory/app/update.py`.
 
 HTTP 503, raised as `server.core.errors.AnalysisUnavailableError`. `insights.query` cannot run on this replica: the probe each process runs on an interval found, or a statement's login met, the analyst ClickHouse user missing, wider than the allowlist, or refusing… Category `configuration`, retryable: no.
 
+#### `ASSISTANT_SELF_CALL`
+
+HTTP 403, raised as `server.core.errors.AssistantSelfCallError`. An assistant answer's own token, or a token delegated from one, asked the assistant: the assistant never calls itself (docs/architecture/assistant.md). Category `auth`, retryable: no.
+
 #### `ASSISTANT_UNAVAILABLE`
 
 HTTP 503, raised as `server.core.errors.AssistantUnavailableError`. The assistant cannot answer in this web process: no LibreChat is configured (`LOOM_ASSISTANT_LIBRECHAT_URL`), auth is off (an answer is delegated from its caller's token), or this process's setup… Category `configuration`, retryable: no.

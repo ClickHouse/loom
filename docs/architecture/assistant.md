@@ -1043,6 +1043,17 @@ built.
   key reads nothing without one.
 - LibreChat stores no question, answer or tool output.
 - The assistant writes no memory, document or grant.
+- The assistant never calls itself: calls between Loom and LibreChat go one way per hop,
+  and only the assistant ops (`assistant.ask` and `POST /v1/assistant/chat/completions`)
+  call LibreChat. Both refuse an answer's own token (consumer `loom-assistant`) and any
+  token delegated from one with `ASSISTANT_SELF_CALL` (403), ledgered as a refused
+  answer, on every transport and toolset: an answer token's id starts with
+  `assistant-answer-`, so a descendant is told by its parents. A model endpoint Loom
+  serves for LibreChat's model calls is never an assistant op and never calls the
+  assistant.
+- The headless LibreChat's configuration keeps LibreChat's own memory off
+  (`memory: disabled: true` in `deploy/librechat/assistant.librechat.yaml` and the Helm
+  copy), so what a person tells the assistant is not kept a second time outside Loom.
 
 ## Related
 
