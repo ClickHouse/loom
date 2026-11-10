@@ -472,3 +472,16 @@ async def test_the_same_unreachable_modules_in_any_order_are_noted_once(
     state["scip_commit_go"] = ""
     _, repo = await _one_pass(monkeypatch, tmp_path, state, f"{other}\n{_PRIVATE}\n")
     assert "tier_health:go" not in repo.writes
+
+
+@pytest.mark.asyncio
+async def test_a_window_with_no_go_change_keeps_the_note(monkeypatch, tmp_path: Path) -> None:
+    from server.code.domain.index import tier_health
+
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    note = tier_health.unavailable(None, "go", _PRIVATE.removeprefix("skip "), t0).to_json()
+    state = {"git_head": "c" * 40, "scip_commit_go": "b" * 40, "tier_health:go": note}
+    monkeypatch.setattr(w, "_changed_paths", AsyncMock(return_value=["README.md"]))
+    monkeypatch.setattr(w, "modules_for_window", lambda changed, dirs: [])
+    await _one_pass(monkeypatch, tmp_path, state, "")
+    assert state["tier_health:go"] == note and state["scip_commit_go"] == "c" * 40
