@@ -438,8 +438,8 @@ def render_llms_txt() -> str:
         "",
         "> Loom is a self-hosted MCP server that gives AI agents shared long-term memory, "
         "document search with citations and a code index. It keeps its data in ClickHouse, "
-        "with Postgres as an option for live memory, and serves it over MCP, HTTP and the "
-        "Python and TypeScript SDKs.",
+        "with Postgres as an option for live memory and knowledge state, and serves it over "
+        "MCP, HTTP and the Python and TypeScript SDKs.",
         "",
         "Start with docs/index.md (the map). A coding agent installing Loom: follow "
         "docs/getting-started/agent-setup.md; connecting to a running server: "

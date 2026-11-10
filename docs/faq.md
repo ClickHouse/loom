@@ -123,7 +123,8 @@ reproducible from committed files are stated. See [benchmarks](benchmarks/overvi
 
 Under the default ClickHouse authority, one ClickHouse database holds the rows, vectors,
 text index, graph, audit and erasure state, so nothing has to be kept in sync. The
-[Postgres memory authority](architecture/storage-authority.md) holds live memory in
-Postgres, and Loom keeps the two stores in step itself. Each write is checked against
-what is stored. The [overview](getting-started/overview.md) lists what each property
-costs and when Loom does not fit.
+[Postgres memory authority](architecture/storage-authority.md#why-two-stores) holds live
+memory and knowledge state in Postgres, and Loom keeps the two stores in step itself.
+Each write is checked against what is stored. The
+[overview](getting-started/overview.md) lists what each property costs and when Loom
+does not fit.

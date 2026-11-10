@@ -1,6 +1,6 @@
 # Loom
 
-> Loom is a self-hosted MCP server that gives AI agents shared long-term memory, document search with citations and a code index. It keeps its data in ClickHouse, with Postgres as an option for live memory, and serves it over MCP, HTTP and the Python and TypeScript SDKs.
+> Loom is a self-hosted MCP server that gives AI agents shared long-term memory, document search with citations and a code index. It keeps its data in ClickHouse, with Postgres as an option for live memory and knowledge state, and serves it over MCP, HTTP and the Python and TypeScript SDKs.
 
 Start with docs/index.md (the map). A coding agent installing Loom: follow docs/getting-started/agent-setup.md; connecting to a running server: docs/getting-started/connect-a-coding-agent.md. Whether Loom fits a use case: docs/getting-started/overview.md. Every operation's fields are in docs/reference/operations/.
 
@@ -11,7 +11,7 @@ Start with docs/index.md (the map). A coding agent installing Loom: follow docs/
 - [Evaluate Loom](docs/getting-started/evaluate.md): Evaluate the decision you need to make, not every harness in the repository.
 - [Your first agent](docs/getting-started/first-agent.md): This tutorial builds a small agent with the Python SDK.
 - [Configure models and API keys](docs/getting-started/models-and-keys.md): Your coding agent, Loom's internal LLM and Loom's embedding model are separate choices.
-- [Overview](docs/getting-started/overview.md): Loom is a server that stores memory, documents, conversations, an entity graph and a code index for AI agents, as rows in ClickHouse, with Postgres as an option for live memory.
+- [Overview](docs/getting-started/overview.md): Loom is a server that stores memory, documents, conversations, an entity graph and a code index for AI agents, as rows in ClickHouse, with Postgres as an option for live memory and knowledge state.
 - [Quickstart](docs/getting-started/quickstart.md): This page boots Loom on a laptop and saves a first memory over HTTP, Python and MCP.
 
 ## Operations
@@ -115,7 +115,7 @@ Start with docs/index.md (the map). A coding agent installing Loom: follow docs/
 ## Architecture
 
 - [Assistant design](docs/architecture/assistant.md): This page is the design of Loom's assistant, which answers questions about what a namespace holds and how it is used, with a citation for every claim.
-- [ClickHouse](docs/architecture/clickhouse.md): Durable Loom state lives in ClickHouse, in the `loom` and `loom_telemetry` databases.
+- [ClickHouse](docs/architecture/clickhouse.md): Under the default ClickHouse authority, durable Loom state lives in ClickHouse, in the `loom` and `loom_telemetry` databases.
 - [Code index architecture](docs/architecture/code-index-architecture.md): This page is the inside view of the code index: how files become chunks, symbols and edges, and how the two tiers stay current.
 - [Document extraction](docs/architecture/document-extraction.md): An uploaded original is parsed into one shape, the extraction artifact, by an extractor service: a separate process with its own dependencies, never the Loom server.
 - [Failure and recovery](docs/architecture/failure-and-recovery.md): The primary write and every access decision fail closed.

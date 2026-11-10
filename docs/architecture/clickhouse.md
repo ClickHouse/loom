@@ -1,8 +1,9 @@
 # ClickHouse
 
-Durable Loom state lives in ClickHouse, in the `loom` and `loom_telemetry` databases.
-The exceptions are what the [Postgres memory authority](storage-authority.md) holds in
-Postgres and the bytes of uploaded document originals a deployment keeps in an
+Under the default ClickHouse authority, durable Loom state lives in ClickHouse, in the
+`loom` and `loom_telemetry` databases. The exceptions are the live memory and knowledge
+state the [Postgres memory authority](storage-authority.md#why-two-stores) holds in
+Postgres, and the bytes of uploaded document originals a deployment keeps in an
 S3-compatible bucket (`LOOM_DOCUMENT_OBJECT_STORE=s3`). The canonical schema is
 [`schemas/schema.sql`](../../schemas/schema.sql), dumped from a server with every
 migration applied. The generated [schema reference](../reference/schema.md) lists every
