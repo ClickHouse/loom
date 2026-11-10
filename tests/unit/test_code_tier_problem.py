@@ -867,3 +867,52 @@ def test_the_records_fix_and_the_problems_fix_read_the_same_text() -> None:
     assert row["fix"] == tier_health.fix_for(health.kind, health.error, name_where=False)
     assert health.fix == tier_health.fix_for(health.kind, health.error)
     assert "private repository" not in health.fix  # both read the kept tail
+
+
+def _refusal(call: Any) -> str:
+    """The record's error for the FileRefused a real reader raises."""
+    from server.code.app.index.untrusted_files import FileRefused
+
+    with pytest.raises(FileRefused) as caught:
+        call()
+    return recorder.error_text(caught.value)
+
+
+def test_each_real_refusal_gets_its_own_fix(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fixes match the words `untrusted_files` writes: a rewording there that the
+    fix routing misses fails here."""
+    import os
+
+    from server.code.app.index import untrusted_files as uf
+
+    def fix(text: str) -> str:
+        health = _failing_with(text)
+        assert health.kind == "file_refused", text
+        return health.fix
+
+    delta = tmp_path / "delta.json"
+    delta.write_bytes(b'{"commit":"c","files":[' + b",".join([b'{"path":""}'] * 5) + b"]}")
+    monkeypatch.setattr(settings, "code_scip_delta_max_nodes", 3)
+    assert fix(_refusal(lambda: uf.read_delta(delta))).startswith(
+        "The compiler tier's delta holds more"
+    )
+    monkeypatch.setattr(settings, "code_scip_delta_max_nodes", 10_000)
+    monkeypatch.setattr(settings, "code_scip_delta_file_max_mb", 1)
+    big = tmp_path / "big.json"
+    big.write_bytes(b" " * (1024 * 1024 + 1))
+    assert fix(_refusal(lambda: uf.read_delta(big))).startswith(
+        "The compiler tier's delta is larger"
+    )
+    manifest = tmp_path / "package.json"
+    manifest.write_bytes(b" " * (uf.PACKAGE_JSON_MAX_BYTES + 1))
+    assert fix(_refusal(lambda: uf.read_package_json(manifest))).startswith(
+        "A file of the checkout"
+    )
+    (tmp_path / "link.json").symlink_to(delta)
+    assert fix(_refusal(lambda: uf.read_delta(tmp_path / "link.json"))).startswith(
+        "The tier refused a file it reads"
+    )
+    os.mkfifo(tmp_path / "fifo.json")
+    assert fix(_refusal(lambda: uf.read_delta(tmp_path / "fifo.json"))).startswith(
+        "The tier refused a file it reads"
+    )
