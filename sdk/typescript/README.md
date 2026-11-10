@@ -21,6 +21,8 @@ then run `npm install <clone>/sdk/typescript` in your project.
 Against a [single-user install](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/quickstart.md)
 on this machine (`http://localhost:7777`, `dev/local`, no token); for a team server, pass
 `baseUrl`, a credential and your org and namespace ([The credential](#the-credential)).
+Save it as an ES module (`quickstart.mjs`, or `.js` in a package with `"type": "module"`):
+it uses top-level `await`.
 
 ```ts
 import { Datapack } from "@clickhouse/loom";
