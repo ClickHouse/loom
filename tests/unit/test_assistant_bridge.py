@@ -1263,6 +1263,14 @@ def test_a_process_set_up_is_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     assert (check.ok, check.reason) == (True, "")
 
 
+def test_a_process_set_up_with_auth_off_is_not_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Set up all the same, but every question is refused, so a client must not offer it.
+    monkeypatch.setattr(service, "_ready", True)
+    monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: False)
+    check = service.readiness_check()
+    assert (check.ok, check.reason) == (False, "auth_off")
+
+
 def test_the_chat_route_with_auth_off_says_so(client: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     from server.assistant.app import routes
 

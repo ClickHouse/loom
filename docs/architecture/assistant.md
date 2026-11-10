@@ -111,7 +111,7 @@ steps:
    `token_expires_soon` (with `left_s`); a caller without `viewer` on the namespace
    carries none. Where an assistant is configured,
    `/v1/health/ready` reports an `assistant` check, never required (a deployment whose
-   assistant is down still serves the rest), whose reason is `starting` or `failing`; a
+   assistant is down still serves the rest), whose reason is `starting`, `failing` or `auth_off`; a
    missing check means none is configured.
 2. Delegate the answer's token from the caller's (`server/auth/delegation.py`
    `delegate`): `viewer` on the request's namespace alone, minted for the caller's own

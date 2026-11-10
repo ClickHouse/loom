@@ -81,7 +81,9 @@ def unready_reason() -> str:
 
 def readiness_check() -> readiness.CheckResult:
     """The `assistant` check of `/v1/health/ready`: ready once this process set the
-    service up."""
+    service up and auth is on (with auth off every question is refused)."""
+    if not settings.auth_actually_required():
+        return readiness.result(False, "auth_off")
     return readiness.result(_ready is True, unready_reason())
 
 
