@@ -925,8 +925,8 @@ The image serves plain HTTP. Put a TLS-terminating proxy or load balancer in fro
 - A non-loopback `LOOM_BIND_HOST` refuses to start without `LOOM_PUBLIC_BASE_URL`, and,
   unless `LOOM_ALLOW_INSECURE=1`, with auth off, `LOOM_MCP_AUTH_MODE=open` (every MCP tool
   would run with no principal), `LOOM_SELF_SIGNUP=open` (unless OIDC sign-in closes it)
-  without `LOOM_IDENTITY_PROVIDER=trust-network`, the dev JWT secret, or a key below the minimum size (an
-  HMAC `LOOM_JWT_SECRET` shorter than 32 bytes, or an RSA root,
+  without `LOOM_IDENTITY_PROVIDER=trust-network`, the dev JWT secret, or a key below the
+  minimum size (an HMAC `LOOM_JWT_SECRET` shorter than 32 bytes, or an RSA root,
   `LOOM_JWT_PUBLIC_KEYS_JSON` or inline end-user issuer key under 2048 bits; only the
   length is checked; a key fetched from `jwks_url` is not checked). With auth off, any
   request whose `Host` is not a loopback host or the public URL's host gets `421` (DNS
