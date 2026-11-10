@@ -1,7 +1,7 @@
 // The Library shows the header's namespace or one of the collections the caller reads: a
 // tree with each one's description, a menu that shares or deletes it, and New collection.
 import { repeatedTitles } from "../lib/collections";
-import { act, cleanup, fireEvent, render, screen, within } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { PHONE_QUERY } from "../lib/useMedia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -373,9 +373,14 @@ describe("the Library on a collection", () => {
       collections: [ROWS[1], ...kids("col-q3"), ...kids("col-q3-k0")],
       next_cursor: null,
     });
+    api.listKnowledge.mockResolvedValue({ rows: [{ source_uri: "a.md", title: "A", tags: [] }], next_cursor: null });
     history.replaceState(null, "", "/library?collection=col-q3");
-    render(<Documents />);
+    const { container } = render(<Documents />);
     const section = await screen.findByRole("region", { name: /Collections/ });
+    // After the documents: they start where the list rules want them.
+    await waitFor(() => expect(container.querySelector("[data-doc-row]")).not.toBeNull());
+    const row = container.querySelector("[data-doc-row]") as Element;
+    expect(row.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(within(section).getByRole("button", { name: "Show 4 more" }));
     expect(within(section).getAllByRole("link", { name: /^col-q3 kid / })).toHaveLength(10);
     fireEvent.click(within(section).getByRole("link", { name: "col-q3 kid 0" }));
@@ -583,6 +588,17 @@ describe("the Library on a collection", () => {
     await settle();
     expect(api.listCollections).toHaveBeenCalledTimes(2);
     expect(api.listKnowledge.mock.calls.at(-1)?.[0]).toMatchObject({ namespace: "team" });
+  });
+
+  it("on a code namespace lists the top-level collections under the empty page", async () => {
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    useStore.setState({
+      identity: { org: "acme", namespace: "code-repo", agent: "loom-ui" },
+      myNamespaces: [{ namespace: "code-repo", kind: "code" } as never],
+    });
+    render(<Documents />);
+    const section = await screen.findByRole("region", { name: /Collections/ });
+    expect(within(section).getAllByRole("link").length).toBeGreaterThan(0);
   });
 
   it("on a code namespace reads only a collection picked, and lists no namespace to pick", async () => {

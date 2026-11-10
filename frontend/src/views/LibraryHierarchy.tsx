@@ -1,7 +1,8 @@
 /**
- * Where a collection sits, on the Library: the path to it from the top (each ancestor a link;
- * on a phone, one button back to the parent), and the collections inside the one shown, or
- * the top-level ones on "My files" and on a namespace. The tree is the server's
+ * Where a collection sits, on the Library: the path to it from the top, on one line before the
+ * select (the parent a link, the ones above it folded; on a phone, one button back to the
+ * parent), and the collections inside the one shown, or the top-level ones on "My files" and
+ * on a namespace. The tree is the server's
  * (`collection.list` gives each collection's parent); in the path, a parent the caller
  * cannot read is a dots button, never a link, and gives its address when tapped.
  */
@@ -103,6 +104,13 @@ function PlaceLink({
   );
 }
 
+/** What a parent missing from the list is, by its address. */
+function hiddenText(part: HiddenPart, truncated: boolean): string {
+  return truncated
+    ? `${part.hidden}: not listed here, since the list stops at ${fmtInt(COLLECTIONS_LISTED)} collections.`
+    : `${part.hidden}: a collection you can't open. Its owner can share it with you.`;
+}
+
 /** An ancestor the caller cannot open: a dots button whose popover gives its address. A
  *  popover, not a tooltip: a tap on a phone opens it. `lead` starts the button's name. */
 function HiddenParent({ part, truncated, lead = "" }: { part: HiddenPart; truncated: boolean; lead?: string }) {
@@ -114,9 +122,7 @@ function HiddenParent({ part, truncated, lead = "" }: { part: HiddenPart; trunca
         <IconButton icon="dots-horizontal" size="xs" label={label} />
       </PopoverTrigger>
       <Popover.Content align="start" className="w-[min(320px,90vw)] text-sm">
-        {truncated
-          ? `${part.hidden}: not listed here, since the list stops at ${fmtInt(COLLECTIONS_LISTED)} collections.`
-          : `${part.hidden}: a collection you can't open. Its owner can share it with you.`}
+        {hiddenText(part, truncated)}
       </Popover.Content>
     </Popover>
   );
@@ -173,34 +179,64 @@ export function CollectionPath({
   const byName = useMemo(() => new Map(rows.map((c) => [c.namespace, c])), [rows]);
   const repeated = useMemo(() => repeatedTitles(rows), [rows]);
   const path = collectionPath(current, byName);
-  if (path.length < 2 && !home) return null;
-  const last = path.length - 1;
+  // The ancestors only: the select this path leads into names the current one.
+  const above = path.slice(0, -1);
+  if (above.length === 0 && !home) return null;
+  // One line beside the select: the parent kept, the ones above it folded into a popover.
+  const folded = above.slice(0, -1);
+  const parent = above.at(-1);
+  const sep = <Icon name="chevron-right" size="xs" aria-hidden="true" className="text-text-muted" />;
+  const title = (c: CollectionEntry) => (
+    <span className="inline-block max-w-48 truncate align-bottom">{distinctTitle(c, repeated)}</span>
+  );
   return (
-    <nav aria-label="Collection path" className="text-sm">
-      <ol className="flex flex-wrap items-center gap-1">
+    <nav aria-label="Collection path" className="min-w-0 text-sm">
+      <ol className="flex items-center gap-1">
         {home && (
-          <li className="flex items-center gap-1">
+          <li className="flex min-w-0 items-center gap-1">
             <PlaceLink collection={home.collection} onOpen={home.open}>
-              {home.label}
+              <span className="inline-block max-w-48 truncate align-bottom">{home.label}</span>
             </PlaceLink>
           </li>
         )}
-        {path.map((part, i) => (
-          <li key={"hidden" in part ? "hidden" : part.namespace} className="flex items-center gap-1">
-            {(i > 0 || home) && <Icon name="chevron-right" size="xs" aria-hidden="true" className="text-text-muted" />}
-            {"hidden" in part ? (
-              <HiddenParent part={part} truncated={truncated} />
-            ) : i === last ? (
-              <span aria-current="page" className="font-medium">
-                {distinctTitle(part, repeated)}
-              </span>
+        {folded.length > 0 && (
+          <li className="flex items-center gap-1">
+            {home && sep}
+            <Popover>
+              <PopoverTrigger>
+                <IconButton icon="dots-horizontal" size="xs" label={`${folded.length} more above`} />
+              </PopoverTrigger>
+              <Popover.Content align="start" className="w-[min(320px,90vw)] text-sm">
+                <ol className="space-y-1">
+                  {folded.map((part) => (
+                    <li key={"hidden" in part ? "hidden" : part.namespace}>
+                      {"hidden" in part ? (
+                        hiddenText(part, truncated)
+                      ) : (
+                        <PlaceLink collection={part.namespace} onOpen={() => onPick(part.namespace)}>
+                          {distinctTitle(part, repeated)}
+                        </PlaceLink>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              </Popover.Content>
+            </Popover>
+          </li>
+        )}
+        {parent && (
+          <li className="flex min-w-0 items-center gap-1">
+            {(home || folded.length > 0) && sep}
+            {"hidden" in parent ? (
+              <HiddenParent part={parent} truncated={truncated} />
             ) : (
-              <PlaceLink collection={part.namespace} onOpen={() => onPick(part.namespace)}>
-                {distinctTitle(part, repeated)}
+              <PlaceLink collection={parent.namespace} onOpen={() => onPick(parent.namespace)}>
+                {title(parent)}
               </PlaceLink>
             )}
           </li>
-        ))}
+        )}
+        <li aria-hidden="true">{sep}</li>
       </ol>
     </nav>
   );
@@ -210,10 +246,12 @@ export function CollectionsInside({
   rows,
   current,
   onPick,
+  className = "",
 }: {
   rows: CollectionEntry[];
   current: CollectionEntry | null;
   onPick: (collection: string) => void;
+  className?: string;
 }) {
   const [count, setCount] = useState(FIRST_INSIDE);
   const list = useRef<HTMLUListElement | null>(null);
@@ -236,7 +274,7 @@ export function CollectionsInside({
   // Links to other places, not rows of this list: a plain list, revealed a step at a time
   // (the select above finds any of them).
   return (
-    <section aria-labelledby={HEADING_ID} className="space-y-1">
+    <section aria-labelledby={HEADING_ID} className={`space-y-1 ${className}`}>
       {/* The page's first section under its h1. */}
       <SectionHeading id={HEADING_ID} level={2} label="Collections" count={inside.length} focusable />
       <ul ref={list} className="space-y-1">

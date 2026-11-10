@@ -62,12 +62,15 @@ describe("CollectionPath", () => {
     expect(screen.queryByRole("button", { name: "A collection you can't open" })).toBeNull();
   });
 
-  it("opens an ancestor, marks the current one, and gives one the caller cannot read no link", async () => {
+  it("keeps the parent and folds the ones above it, and gives one the caller cannot read no link", async () => {
     const onPick = vi.fn();
     const { container } = render(<CollectionPath current={ROWS[2]} rows={ROWS} onPick={onPick} />);
     const nav = screen.getByRole("navigation", { name: "Collection path" });
-    expect(within(nav).getByText("Interviews")).toHaveAttribute("aria-current", "page");
-    const team = within(nav).getByRole("link", { name: "Team" });
+    // The select this path leads into names the current one.
+    expect(within(nav).queryByText("Interviews")).toBeNull();
+    expect(within(nav).getByRole("link", { name: "Q3" })).toBeInTheDocument();
+    fireEvent.click(within(nav).getByRole("button", { name: "1 more above" }));
+    const team = await screen.findByRole("link", { name: "Team" });
     // A link to its address: a modified click (a new tab) is the browser's.
     expect(team.getAttribute("href")).toMatch(/collection=col-team/);
     fireEvent.click(team, { ctrlKey: true });
@@ -99,7 +102,7 @@ describe("CollectionPath", () => {
     const nav = screen.getByRole("navigation", { name: "Collection path" });
     fireEvent.click(within(nav).getByRole("link", { name: "My files" }));
     expect(open).toHaveBeenCalled();
-    expect(within(nav).getByText("Team")).toHaveAttribute("aria-current", "page");
+    expect(within(nav).queryByText("Team")).toBeNull();
     cleanup();
     render(<CollectionPath current={ROWS[0]} rows={ROWS} onPick={() => {}} />);
     expect(screen.queryByRole("navigation")).toBeNull();
