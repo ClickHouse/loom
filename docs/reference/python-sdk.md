@@ -16,9 +16,11 @@ Python 3.11 or later. The only runtime dependency is `httpx[http2]`.
 pip install clickhouse-loom
 ```
 
-Each server release publishes the SDK at the same version
-([supported versions](../operations/supported-versions.md)); `pip install ./sdk/python`
-installs it from a clone.
+The SDK's version is the server release's
+([supported versions](../operations/supported-versions.md)). A release not yet on PyPI
+installs from its assets
+([installing from a GitHub Release](../development/release-process.md#installing-from-a-github-release)),
+and `pip install ./sdk/python` from the root of a clone.
 
 The package ships `py.typed` and passes `mypy --strict`.
 

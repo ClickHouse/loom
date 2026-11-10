@@ -14,8 +14,11 @@ Node 20 or later (it uses the platform `fetch`). No runtime dependencies.
 npm install @clickhouse/loom
 ```
 
-Each server release publishes the SDK at the same version
-([supported versions](../operations/supported-versions.md)). From a clone, build it with
+The SDK's version is the server release's
+([supported versions](../operations/supported-versions.md)). A release not yet on npm
+installs from its assets
+([installing from a GitHub Release](../development/release-process.md#installing-from-a-github-release)).
+From the root of a clone, build it with
 `npm --prefix sdk/typescript ci && npm --prefix sdk/typescript run build`, then
 `npm install ./sdk/typescript`.
 

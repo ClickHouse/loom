@@ -6,7 +6,8 @@ Typed client for [Loom](https://github.com/ClickHouse/loom), the shared-producti
 npm install @clickhouse/loom
 ```
 
-Each server release publishes the SDK at the same version. From a clone, build it with
+The SDK's version is the server release's. A release not yet on npm installs from its
+assets ([installing from a GitHub Release](https://github.com/ClickHouse/loom/blob/main/docs/development/release-process.md#installing-from-a-github-release)). From the root of a clone, build it with
 `npm --prefix sdk/typescript ci && npm --prefix sdk/typescript run build`, then
 `npm install ./sdk/typescript`.
 

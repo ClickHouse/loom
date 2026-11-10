@@ -2,7 +2,7 @@
 
 Python SDK for [Loom](https://github.com/ClickHouse/loom) — the shared-production memory, knowledge, conflict, and observability data plane for AI agents, built on ClickHouse.
 
-This package contains the **client SDK only**. Loom is designed for shared production deployment: an operator runs the server (Docker image at `ghcr.io/clickhouse/loom`) against a real ClickHouse instance (Cloud or self-hosted OSS), then application developers like you use this SDK to talk to it.
+This package contains the **client SDK only**. The server runs as the Docker image `ghcr.io/clickhouse/loom` against ClickHouse: on your own machine as a single-user install, or as a team deployment an operator runs.
 
 ## Install
 
@@ -12,12 +12,13 @@ pip install clickhouse-loom
 
 Python 3.11+. Runtime deps: `httpx[http2]` (HTTP/2 via `h2`).
 
-Each server release publishes the SDK at the same version; `pip install ./sdk/python`
-installs it from a clone.
+The SDK's version is the server release's. A release not yet on PyPI installs from its
+assets ([installing from a GitHub Release](https://github.com/ClickHouse/loom/blob/main/docs/development/release-process.md#installing-from-a-github-release)), and `pip install ./sdk/python` from the
+root of a clone.
 
 ## Use
 
-Against a [personal install](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/quickstart.md)
+Against a [single-user install](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/quickstart.md)
 on this machine (`http://localhost:7777`, the `dev/local` namespace, no token):
 
 ```python

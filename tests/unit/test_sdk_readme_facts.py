@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from loom.sync import _CLIENT_ATTRS
 
-from tests.unit.test_doc_links import _anchors
+from tests.unit.test_doc_links import _anchors, _links
 
 SDK_ROOT = Path(__file__).resolve().parents[2] / "sdk" / "python"
 README = (SDK_ROOT / "README.md").read_text()
@@ -58,8 +58,7 @@ def test_the_package_readme_links_resolve_on_the_registry(sdk: str) -> None:
     """The README is the package's page on PyPI or npm, where a relative link has
     nothing to resolve against: every link is absolute, and one into this
     repository names a path that exists."""
-    readme = (SDK_ROOT.parent / sdk / "README.md").read_text()
-    targets = re.findall(r"\]\(([^)\s]+)\)", readme)
+    targets = _links(SDK_ROOT.parent / sdk / "README.md")
     assert [t for t in targets if not re.match(r"https?://|#", t)] == []
     repo = "https://github.com/ClickHouse/loom/"
     for target in targets:

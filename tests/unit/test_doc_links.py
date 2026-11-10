@@ -22,6 +22,7 @@ DOCS = sorted(
         *(ROOT / "integrations").glob("*/README.md"),
         ROOT / "integrations" / "README.md",
         ROOT / "sdk" / "python" / "README.md",
+        ROOT / "sdk" / "typescript" / "README.md",
         *(ROOT / p for p in tracked(".claude/skills") if p.endswith(".md")),
         *(ROOT / p for p in tracked(".claude/rules", ".claude/agents") if p.endswith(".md")),
     }
