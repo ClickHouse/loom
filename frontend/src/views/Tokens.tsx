@@ -217,6 +217,136 @@ export function TokensSection({
   );
 }
 
+/** The ticked namespaces as one ordered list: number 1 is searched first. Each row moves
+ *  by drag, or by its Move up and Move down buttons for keyboard and screen readers; its
+ *  role is at most the person's own. */
+function SearchOrder({
+  order,
+  label,
+  isRepo,
+  role,
+  grant,
+  onRole,
+  onMove,
+}: {
+  order: string[];
+  label: (ns: string) => string;
+  isRepo: (ns: string) => boolean;
+  role: (ns: string) => GrantRole;
+  grant: (ns: string) => GrantRole;
+  onRole: (ns: string, r: GrantRole) => void;
+  onMove: (ns: string, to: number) => void;
+}) {
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [over, setOver] = useState<number | null>(null);
+  // A move can disable the arrow that was pressed (the row reached an end): focus then
+  // goes to the row's other arrow, never to the page.
+  const arrows = useRef(new Map<string, HTMLButtonElement | null>());
+  const focusAfter = useRef<string | null>(null);
+  useEffect(() => {
+    const key = focusAfter.current;
+    focusAfter.current = null;
+    if (key) arrows.current.get(key)?.focus();
+  }, [order]);
+  const move = (ns: string, i: number, by: -1 | 1) => {
+    const to = i + by;
+    const atEnd = to === 0 || to === order.length - 1;
+    focusAfter.current = `${ns}:${atEnd ? (by === -1 ? "down" : "up") : by === -1 ? "up" : "down"}`;
+    onMove(ns, to);
+  };
+  return (
+    <div>
+      <div id="search-order-title" className="text-xs font-medium text-text-muted mb-1">
+        Search order
+      </div>
+      <ol
+        aria-labelledby="search-order-title"
+        className="rounded-md border border-border bg-surface-2 divide-y divide-border"
+      >
+        {order.map((ns, i) => {
+          const repo = isRepo(ns);
+          return (
+            // biome-ignore lint/a11y/noNoninteractiveElementInteractions: a draggable row; its Move up and Move down buttons are the keyboard path
+            <li
+              key={ns}
+              draggable
+              onDragStart={(e) => {
+                setDragging(ns);
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", ns);
+              }}
+              onDragOver={(e) => {
+                if (dragging === null) return;
+                e.preventDefault();
+                setOver(i);
+              }}
+              onDragLeave={() => setOver((o) => (o === i ? null : o))}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (dragging !== null) onMove(dragging, i);
+                setDragging(null);
+                setOver(null);
+              }}
+              onDragEnd={() => {
+                setDragging(null);
+                setOver(null);
+              }}
+              className={`flex items-center gap-2 px-2 py-1.5 text-sm ${over === i && dragging !== ns ? "bg-surface" : ""} ${dragging === ns ? "opacity-60" : ""}`}
+            >
+              <span className="cursor-grab text-text-muted" aria-hidden="true">
+                <Icon name="dots-vertical-double" size="sm" />
+              </span>
+              <span className="w-5 shrink-0 text-right tabular text-text-muted">{i + 1}</span>
+              <span className="font-mono flex-1 truncate">{label(ns)}</span>
+              {repo ? (
+                <span className="text-xs text-text-muted shrink-0">read-only</span>
+              ) : (
+                <Tip content={`At most your own role (${grant(ns)})`}>
+                  <div className="w-28 shrink-0">
+                    <Select
+                      triggerProps={{ "aria-label": `Role on ${ns}` }}
+                      value={role(ns)}
+                      onSelect={(r) => {
+                        if (isGrantRole(r)) onRole(ns, r);
+                      }}
+                    >
+                      {rolesUpTo(grant(ns)).map((r) => (
+                        <Select.Item key={r} value={r}>
+                          {ROLE_LABELS[r]}
+                        </Select.Item>
+                      ))}
+                    </Select>
+                  </div>
+                </Tip>
+              )}
+              <IconButton
+                ref={(el) => {
+                  arrows.current.set(`${ns}:up`, el);
+                }}
+                icon="arrow-up"
+                label={`Move ${label(ns)} up`}
+                tooltip="Move up"
+                disabled={i === 0}
+                onClick={() => move(ns, i, -1)}
+              />
+              <IconButton
+                ref={(el) => {
+                  arrows.current.set(`${ns}:down`, el);
+                }}
+                icon="arrow-down"
+                label={`Move ${label(ns)} down`}
+                tooltip="Move down"
+                disabled={i === order.length - 1}
+                onClick={() => move(ns, i, 1)}
+              />
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
 type RepoInfo = Record<string, { repo: string; branch: string; classification?: string }>;
 
 /** Repository and branch per code namespace, from code.repos. `code.repos` only when the
@@ -287,7 +417,7 @@ function TokenForm({
   const [loadFailed, setLoadFailed] = useState(false);
 
   // Once per identity; an answer for an org or namespace the page has left is dropped.
-  // The first answer ticks the page's namespace for "Only these" when nothing is ticked.
+  // Nothing is ticked for "Only these": the person picks every namespace, their own too.
   useAbortableEffect(
     async (_signal, live) => {
       let all: MyNamespaceEntry[];
@@ -300,13 +430,6 @@ function TokenForm({
       if (!live()) return;
       setLoadFailed(false);
       setRows(all);
-      const active = all.filter((r) => r.status !== "pending");
-      const seed = active.find((r) => r.namespace === identity.namespace && r.kind !== "code");
-      if (!seed) return;
-      setSelectedNs((prev) => (prev.length > 0 ? prev : [seed.namespace]));
-      setNsRole((prev) =>
-        Object.keys(prev).length > 0 ? prev : { [seed.namespace]: grantRoleOf(active, seed.namespace) },
-      );
     },
     [identity.org, identity.namespace],
   );
@@ -363,13 +486,17 @@ function TokenForm({
       setNsRole((m) => ({ ...m, [ns]: grantRoleOf(mine, ns) }));
     }
   };
-  const setPriority = (ns: string, pos: number) => {
-    setSelectedNs((prev) => {
-      const without = prev.filter((x) => x !== ns);
-      const idx = Math.max(0, Math.min(without.length, pos - 1));
-      without.splice(idx, 0, ns);
-      return without;
-    });
+  // The order the ticked namespaces are searched in: moved by drag, or by a row's arrows.
+  const label = nsLabeler(repoInfo);
+  const [moved, setMoved] = useState("");
+  const moveTo = (ns: string, to: number) => {
+    const from = selectedNs.indexOf(ns);
+    const at = Math.max(0, Math.min(selectedNs.length - 1, to));
+    if (from < 0 || from === at) return;
+    const next = selectedNs.filter((x) => x !== ns);
+    next.splice(at, 0, ns);
+    setSelectedNs(next);
+    setMoved(`${label(ns)} moved to ${at + 1} of ${next.length}`);
   };
 
   // A namespace of its own for a bot: register it (the server makes you its admin), then
@@ -475,56 +602,19 @@ function TokenForm({
         <fieldset className="space-y-3">
           <legend className="sr-only">Namespaces this token reads</legend>
           <div className="max-h-48 overflow-y-auto rounded-md border border-border bg-surface-2 divide-y divide-border">
-            {eligibleNs.map((n) => {
-              const pos = selectedNs.indexOf(n.namespace);
-              const isOn = pos >= 0;
-              const grant = grantRoleOf(mine, n.namespace);
-              return (
-                <div key={n.namespace} className="flex items-center gap-2 px-3 py-1.5 text-sm">
-                  <Checkbox
-                    checked={isOn}
-                    onCheckedChange={() => toggleNs(n.namespace)}
-                    aria-label={`Read ${n.namespace}`}
-                  />
-                  <Tip content="Search order (1 = searched first)">
-                    <div className="w-16 shrink-0">
-                      <Select
-                        triggerProps={{ "aria-label": `Search order for ${n.namespace}` }}
-                        value={isOn ? String(pos + 1) : ""}
-                        placeholder="–"
-                        disabled={!isOn}
-                        onSelect={(value) => setPriority(n.namespace, Number(value))}
-                      >
-                        {selectedNs.map((_, i) => (
-                          <Select.Item key={i} value={String(i + 1)}>
-                            {i + 1}
-                          </Select.Item>
-                        ))}
-                      </Select>
-                    </div>
-                  </Tip>
-                  <span className="font-mono flex-1 truncate">{n.namespace}</span>
-                  <Tip content={`At most your own role (${grant})`}>
-                    <div className="w-28 shrink-0">
-                      <Select
-                        triggerProps={{ "aria-label": `Role on ${n.namespace}` }}
-                        value={isOn ? (nsRole[n.namespace] ?? grant) : grant}
-                        disabled={!isOn}
-                        onSelect={(r) => {
-                          if (isGrantRole(r)) setNsRole((m) => ({ ...m, [n.namespace]: r }));
-                        }}
-                      >
-                        {rolesUpTo(grant).map((r) => (
-                          <Select.Item key={r} value={r}>
-                            {ROLE_LABELS[r]}
-                          </Select.Item>
-                        ))}
-                      </Select>
-                    </div>
-                  </Tip>
-                </div>
-              );
-            })}
+            {eligibleNs.map((n) => (
+              <div key={n.namespace} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+                <Checkbox
+                  checked={selectedNs.includes(n.namespace)}
+                  onCheckedChange={() => toggleNs(n.namespace)}
+                  aria-label={`Read ${n.namespace}`}
+                />
+                <span className="font-mono flex-1 truncate">{n.namespace}</span>
+                <span className="text-xs text-text-muted shrink-0">
+                  you: {ROLE_LABELS[grantRoleOf(mine, n.namespace)]}
+                </span>
+              </div>
+            ))}
           </div>
           {repoGroups.length > 0 && (
             <div>
@@ -572,6 +662,20 @@ function TokenForm({
               </div>
             </div>
           )}
+          {selectedNs.length > 0 && (
+            <SearchOrder
+              order={selectedNs}
+              label={label}
+              isRepo={(ns) => eligibleRepos.some((r) => r.namespace === ns)}
+              role={(ns) => nsRole[ns] ?? grantRoleOf(mine, ns)}
+              grant={(ns) => grantRoleOf(mine, ns)}
+              onRole={(ns, r) => setNsRole((m) => ({ ...m, [ns]: r }))}
+              onMove={moveTo}
+            />
+          )}
+          <p className="sr-only" role="status">
+            {moved}
+          </p>
           <div className="flex gap-2">
             <div className="min-w-0 flex-1">
               <TextField
@@ -593,7 +697,9 @@ function TokenForm({
             </Button>
           </div>
           <p className="text-xs text-text-muted">
-            {selectedNs.length} ticked, and nothing else, whatever you join later. Search order 1 is searched first.
+            {selectedNs.length === 0
+              ? "Tick the namespaces this token reads. Nothing else, whatever you join later."
+              : `${selectedNs.length} ticked, and nothing else, whatever you join later. Number 1 is searched first: drag a row, or use its arrows, to change the order.`}
           </p>
         </fieldset>
       )}
@@ -692,7 +798,9 @@ function createdScope(c: TokenCreated, writesAnywhere: boolean, label: (ns: stri
     ? `Reads everything you belong to, including namespaces you join later${
         c.restricted_namespaces.length ? `, plus ${c.restricted_namespaces.map(label).join(", ")}` : ""
       }.`
-    : `Reads only ${named.join(", ")}.`;
+    : named.length > 1
+      ? `Reads only these, searched in this order: ${named.map((n, i) => `${i + 1}. ${n}`).join(", ")}.`
+      : `Reads only ${named.join(", ")}.`;
   const roles = Object.values(c.ns_roles);
   // A `*` token writes only with a writing role of its own and a namespace its owner writes.
   const readOnly = c.reads_everything
