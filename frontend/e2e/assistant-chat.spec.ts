@@ -168,7 +168,9 @@ test("a refusal before the stream and an error event inside it are shown in the 
     });
   });
   await ask(page, "Who owns billing?");
-  await expect(page.getByRole("alert").filter({ hasText: "The assistant is busy" })).toContainText("Try again in 5 s.");
+  await expect(page.getByRole("alert").filter({ hasText: "Loom is busy right now" })).toContainText(
+    "Try again in 5 s.",
+  );
   // The refused question waits in the field.
   await expect(page.getByRole("textbox", { name: "Question" })).toHaveValue("Who owns billing?");
   await page.getByRole("button", { name: "Ask", exact: true }).click();
