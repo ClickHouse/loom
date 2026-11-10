@@ -3077,6 +3077,12 @@ class _CallResolver:
             return found[0][0], found[0][1], IMPORT_BOUND_CONFIDENCE
         return None
 
+    def _scope_heads(self, candidates: list[tuple[str, str, str]]) -> set[str]:
+        """The `<scope>::` heads of the candidates' qualified names."""
+        return self._of(candidates, ("heads",), lambda: {
+            q[1].partition("::")[0] + "::" for q in candidates if "::" in q[1]
+        })
+
     def _imported_package_dirs(self) -> set[str]:
         """The repository directories this file's imports place, read once per file."""
         return self._once(("imported dirs",), lambda: {d for d in self.go_packages.values() if d})
@@ -3151,11 +3157,10 @@ class _CallResolver:
             # (`clickhouse.Dynamic` for …/clickhouse-go/v2, whose path element
             # says clickhouse_go): the imported repository directory whose
             # clause is the alias, or nothing — never every package's Dynamic
-            clauses = {f"{d}.{alias}::" for d in self._imported_package_dirs()}
-            heads = self._of(candidates, ("heads",), lambda: {
-                q[1].partition("::")[0] + "::" for q in candidates if "::" in q[1]
-            })
-            matched = [c for c in clauses if c in heads]
+            matched = self._of(candidates, ("clause dirs of", alias), lambda: [
+                c for c in {f"{d}.{alias}::" for d in self._imported_package_dirs()}
+                if c in self._scope_heads(candidates)
+            ])
             if len(matched) != 1:
                 return None
             pkg_dir = matched[0]
