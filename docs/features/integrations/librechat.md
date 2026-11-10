@@ -325,10 +325,11 @@ The same cases asked through Loom's chat route, each with the person's own token
 assistant's half of the default $1 cap (all 3 correct with the cap at $20); a mean of
 $0.027 and a maximum of $0.047 per answer, p95 9.4 s.
 
-The disconnect row was measured with an agent definition whose first streamed delta, a
-lead-in, came before its first tool call. The deployed definition asks for no text before
-the tool calls, so on this path the probe's cut at the first delta follows them, and the
-row stands only as measured.
+In the deployed agent's table, the disconnect row is from an earlier agent definition,
+whose first streamed delta, a lead-in, came before its first tool call. The deployed
+definition asks for no text before the tool calls, so its first delta comes after them:
+a rerun of `run --cancel-probe` against it disconnects once they have run, and its 0
+does not show that a disconnect stops them.
 
 A model's answers vary from run to run, so one run of 28 cases is a sample, not a
 bound. The invalid memory citations are two hash keys the answer shortened and one key
