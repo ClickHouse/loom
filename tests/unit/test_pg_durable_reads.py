@@ -23,7 +23,7 @@ from tests.unit.clock_fake import ManualClock
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-# The functions of the two journal stores that write, claim, complete, sweep or only
+# The functions of the journal stores that write, claim, complete, sweep or only
 # encode: everything else is a read.
 _NOT_READS = {
     "pg_memory": {
@@ -39,7 +39,8 @@ _NOT_READS = {
         "complete_own", "drop_unbacked", "claim_due", "failed", "release", "drop_version",
         "sweep_erasure_evidence", "sweep_settled", "keep_text", "restore_text",
     },
-    # Writes, each in its own transaction; `take` commits the token it returns.
+    # Writes, each in its own transaction, and the ClickHouse projection; `take` commits
+    # the token it returns.
     "pg_jobs": {"project", "insert", "adopt", "take", "save", "request_cancel", "expire"},
 }  # fmt: skip
 
