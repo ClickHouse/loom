@@ -63,18 +63,25 @@ latest release, and a saved copy installs the same version every time it runs. O
 install, an older release's copy refuses to install, rather than start an older Loom and
 ClickHouse on newer data; to downgrade on purpose, follow
 [downgrading an installer install](../operations/upgrades.md#downgrading-an-installer-install).
-Pin a release, or inspect everything before starting:
+To pin a release, use its own URL:
 
 ```bash
 curl -fsSL https://github.com/ClickHouse/loom/releases/download/v1.2.3/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh
+```
 
+To inspect everything before starting, download the files and check them:
+
+```bash
 curl -fLO https://github.com/ClickHouse/loom/releases/latest/download/loom-stack.tar.gz
 curl -fLO https://github.com/ClickHouse/loom/releases/latest/download/loom-stack.tar.gz.sha256
 curl -fL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh
 sha256sum -c loom-stack.tar.gz.sha256
 tar -tzf loom-stack.tar.gz
+```
 
-# after reading what the checks and the listing print:
+Then, once what they print looks right, install from the checked bundle:
+
+```bash
 LOOM_INSTALL_BUNDLE="$PWD/loom-stack.tar.gz" \
   LOOM_INSTALL_CHECKSUM="$PWD/loom-stack.tar.gz.sha256" sh loom-install.sh
 ```

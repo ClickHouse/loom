@@ -774,22 +774,20 @@ _CODE = re.compile(r"^[ \t]*```[^\n]*\n(.*?)^[ \t]*```|`([^`\n]+)`", re.MULTILIN
 
 
 def _documented_installs() -> list[tuple[str, str]]:
-    """(page, example) for every example a tracked page shows that downloads
-    `install.sh`: its lines with each `\\` continuation joined and a `<placeholder>`
-    filled."""
+    """(page, example) for every code block or inline command a tracked page shows
+    that downloads `install.sh`, as a copy button pastes it: each `\\` continuation
+    joined and a `<placeholder>` filled."""
     found = []
     for name in tracked():
         if not name.endswith(".md"):
             continue
         for block, span in _CODE.findall((ROOT / name).read_text(encoding="utf-8")):
-            # A blank line separates examples a block shows side by side.
-            for example in re.split(r"\n\s*\n", re.sub(r"\\\n\s*", " ", block or span)):
-                lines = [
-                    re.sub(r"<[^>]*>", "x", line.strip().replace("\\|", "|"))
-                    for line in example.splitlines()
-                ]
-                if any("curl" in line and "install.sh" in line for line in lines):
-                    found.append((name, "\n".join(lines)))
+            lines = [
+                re.sub(r"<[^>]*>", "x", line.strip().replace("\\|", "|"))
+                for line in re.sub(r"\\\n\s*", " ", block or span).splitlines()
+            ]
+            if any("curl" in line and "install.sh" in line for line in lines):
+                found.append((name, "\n".join(lines)))
     return found
 
 
@@ -815,7 +813,8 @@ _RUN_STEP = re.compile(
     r"&&\s*(?P<env>(?:LOOM_\w+=\S*\s+)*)sh\s+\S*loom-install\.sh(?P<args>(?:\s+(?!&&)\S+)*)"
 )
 _INSTALLS = _documented_installs()
-# The inspect path downloads and checks a bundle; the reader installs from it after.
+# The inspect path's downloads and checks; the reader installs from the bundle in a
+# separate step, so for it the failing case checks only that `install.sh` is not piped.
 _INSPECT = "sha256sum -c"
 
 
