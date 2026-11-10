@@ -51,7 +51,8 @@ _BROWSER_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 S
 # The service user's LibreChat name: LibreChat wants at least three characters.
 _USER_NAME = "loom-assistant"
 
-# Whether this process has the service set up: None = not yet tried, False = a problem.
+# Whether this process has the service set up: None = not yet tried or being set up
+# again, False = the last try failed (`_problem` says why).
 _ready: bool | None = None
 _problem = ""
 # The agent id and agents API key answers run with, once a setup succeeded.
@@ -69,15 +70,11 @@ def assistant_state() -> tuple[bool | None, str]:
     return _ready, _problem
 
 
-# A problem the setup loop wrote while it sets the service up again, not a failed try.
-_SETTING_UP_AGAIN = "setting up the assistant again"
-
-
 def unready_reason() -> str:
     """Why this process cannot answer yet, in one word a client can branch on:
     "starting" before the first try or while the service is set up again, "failing"
     after a try that failed (the setup loop keeps retrying)."""
-    if _ready is None or _problem.startswith(_SETTING_UP_AGAIN):
+    if _ready is None:
         return "starting"
     return "failing"
 
@@ -100,7 +97,9 @@ def forget_answering(why: str) -> None:
     the row another replica may have written or repairs it."""
     global _answering, _ready, _problem
     _answering = None
-    _ready, _problem = False, f"{_SETTING_UP_AGAIN}: {why}"
+    # Not a failed try: the process is starting over, and `/v1/health` warns only if
+    # that try fails.
+    _ready, _problem = None, f"setting up the assistant again: {why}"
     if _loop is None or _loop.done():
         start_setup_loop()
 
@@ -358,5 +357,7 @@ __all__ = [
     "current_definition",
     "ensure_service",
     "opened",
+    "readiness_check",
     "start_setup_loop",
+    "unready_reason",
 ]

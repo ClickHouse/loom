@@ -247,6 +247,7 @@ def test_a_refusals_body_is_never_read(world: _World) -> None:
     [
         ({"librechat": ""}, AssistantUnavailableError, "not_configured"),
         ({"answering": None}, AssistantUnavailableError, "starting"),
+        ({"answering": None, "ready": False}, AssistantUnavailableError, "failing"),
         ({"auth": {"org": "*"}}, AuthInsufficientError, "org_wide"),
         ({"auth": {"read_scope": "own_user"}}, AuthInsufficientError, "narrowed"),
         # Pinned to one end user with no `read_scope`: narrowed all the same.
@@ -272,7 +273,8 @@ def test_what_the_bridge_refuses_before_calling_librechat(
         monkeypatch.setattr(settings, "assistant_librechat_url", change["librechat"])
     if "answering" in change:
         monkeypatch.setattr(service, "_answering", change["answering"])
-        monkeypatch.setattr(service, "_ready", None)  # before the first setup try
+        # None: before the first setup try; False: after a failed one.
+        monkeypatch.setattr(service, "_ready", change.get("ready"))
     world.denied = change.get("denied", False)
     world.switched_off = change.get("switched_off", False)
     world.over_cap = change.get("over_cap", False)
@@ -702,12 +704,14 @@ def test_a_forgotten_service_is_set_up_again(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(service, "_loop", None)
     monkeypatch.setattr(service, "start_setup_loop", lambda: started.append(True))
     # Restored after the test: forgetting marks the service as setting up again.
-    monkeypatch.setattr(service, "_ready", None)
+    monkeypatch.setattr(service, "_ready", True)
     monkeypatch.setattr(service, "_problem", "")
     service.forget_answering("LibreChat refused the stored key or agent (401)")
     assert service.answering() is None and started == [True]
+    # Starting over, not failing: `/v1/health` raises no warning for it.
     ready, problem = service.assistant_state()
-    assert ready is False and "401" in problem
+    assert ready is None and "401" in problem
+    assert service.unready_reason() == "starting"
 
 
 def test_a_request_past_the_ops_bounds_is_refused() -> None:
@@ -1240,7 +1244,6 @@ def test_a_short_lived_tokens_refusal_says_how_long_it_has_left(world: _World) -
     ("ready", "problem", "reason"),
     [
         (None, "", "starting"),
-        (False, "setting up the assistant again: LibreChat refused the stored key", "starting"),
         (False, "setting up the assistant in LibreChat failed: connection refused", "failing"),
     ],
 )
