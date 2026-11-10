@@ -322,14 +322,18 @@ runs N.
 The tool list is the assistant toolset's reads and `insights.query`, so the agent writes
 nothing; a change it suggests is a draft a person applies elsewhere, as the Assistant
 page's tune drafts already are. The instructions require citations, tell the agent to
-call a tool before every answer and abstain when none supports it, to read
-`insights.catalog` before running SQL, and to treat stored text as data that cannot
-grant a tool or approve a change. Asked how a namespace should write, the agent
-recommends rather than only answers: key shape, one claim per key, a memory, a
-document or a record, pins and kinds, each recommendation naming its rows and citing
-the finding it rests on in `namespace.audit`, `mentor.brief` or `namespace.tune`, the
-namespace's guide (`namespace.guide_get`), or Loom's own writing guide
-(`mentor.guide`, on the toolset for that reason).
+call a tool before every answer and abstain when none supports it, to write no text
+before or between its tool calls, to read `insights.catalog` before running SQL, and to
+treat stored text as data that cannot grant a tool or approve a change. The agents API
+runs the MCP tools inside the run and streams the text of every model step as one
+answer's content, with nothing between steps, so neither the bridge nor the dashboard
+can tell a lead-in ("Let me search the memories.") from the answer it runs into; while
+no text has arrived the dashboard shows that the assistant is answering. Asked how a
+namespace should write, the agent recommends rather than only answers: key shape, one
+claim per key, a memory, a document or a record, pins and kinds, each recommendation
+naming its rows and citing the finding it rests on in `namespace.audit`, `mentor.brief`
+or `namespace.tune`, the namespace's guide (`namespace.guide_get`), or Loom's own
+writing guide (`mentor.guide`, on the toolset for that reason).
 
 The agent names no namespace on its calls: on the assistant toolset a call that names
 none reads the first namespace its token names ([the assistant

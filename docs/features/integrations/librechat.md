@@ -76,8 +76,10 @@ agent in the UI. It is not Loom authorization; the token on each call is.
 - **Cancellation.** In the UI path the generation runs server-side, apart from the
   browser connection: closing the tab does not stop it, and its tool calls still reach
   Loom. The stop button (`/api/agents/chat/abort`) stops it. On the agents API, closing
-  the connection stops the run: in one probe, disconnecting after the first token left no
-  Loom call in the next 20 s.
+  the connection stops the run: in one probe, disconnecting mid-answer left no Loom call
+  in the next 20 s. The probe (`run --cancel-probe`) disconnects at the first streamed
+  delta, or after `--cancel-after` seconds (2) without one: the agent writes nothing
+  before its tool calls, so the wait runs out while they run.
 
 ## What LibreChat stores
 
@@ -133,8 +135,7 @@ orgs, mints a token per person, revokes one, and scores each answer:
 - **citation valid:** every memory key the answer names exists in the person's namespace,
   and a version written next to it is the row's current version.
 - **tool calls:** the `mcp` rows Loom ledgered under the person's subject during the answer.
-- **latency and time to first token:** end to end, and to the first streamed delta, which
-  is the model's one-line preamble before its first tool call, not the answer.
+- **latency and time to first token:** end to end, and to the first streamed delta.
 
 | Target (LibreChat path)                                 | Value         | Measured on v0.8.8, 14 cases, `claude-haiku-4-5-20251001`                 |
 | ------------------------------------------------------- | ------------- | ------------------------------------------------------------------------- |
@@ -143,7 +144,6 @@ orgs, mints a token per person, revokes one, and scores each answer:
 | Should-abstain cases that abstain                       | 100%          | 2 of 2, no false abstention                                               |
 | Cross-tenant and revoked cases refused, no leak         | 100%          | 2 of 2                                                                    |
 | End-to-end latency p95                                  | at most 10 s  | 6.8 s (p50 3.2 s)                                                         |
-| First streamed delta (preamble) p95                     | at most 2 s   | 0.6 s                                                                     |
 | Tool calls per question                                 | at most 3     | at most 3, 16 in all                                                      |
 | Model cost per answer, every prompt token at list price | at most $0.05 | mean $0.029; max $0.064 (`abstain-cfo`, three searches) misses the target |
 

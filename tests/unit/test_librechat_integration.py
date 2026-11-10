@@ -632,3 +632,56 @@ def test_seed_writes_each_documents_revision_after_its_first_write(monkeypatch):
     # Every document is written before any revision of one.
     first = {b["source_uri"]: i for i, b in reversed(list(enumerate(docs)))}
     assert docs.index(next(b for b in docs if b["content"] == writes[-1])) > max(first.values())
+
+
+class _SilentStream:
+    """A stream that sends one keep-alive line and then nothing within the read bound."""
+
+    status_code = 200
+
+    def __init__(self, timeout):
+        self.timeout = timeout
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def iter_lines(self):
+        import httpx
+
+        yield ": ping"
+        raise httpx.ReadTimeout("no chunk")
+
+
+def test_the_cancel_probe_disconnects_while_the_tool_calls_run(monkeypatch):
+    # The agent writes nothing before its tool calls, so the probe cannot wait for text.
+    q = _qualify()
+    seen = []
+
+    def stream(method, url, *, json, headers, timeout):
+        seen.append(timeout)
+        return _SilentStream(timeout)
+
+    monkeypatch.setattr(q.httpx, "stream", stream)
+    st = {"librechat": {"alice": {"agent_id": "a", "api_key": "k"}}, "librechat_url": "http://lc"}
+    got = q.ask_assistant(st, "alice", "q", cancel_after_s=2.0)
+    assert got["ttft_s"] is None and got["answer"] == "" and got["error"] == ""
+    assert seen[0].read == 2.0
+
+    def done(method, url, *, json, headers, timeout):
+        seen.append(timeout)
+        return _Done()
+
+    monkeypatch.setattr(q.httpx, "stream", done)
+    q.ask_assistant(st, "alice", "q")
+    assert seen[1].read == 180  # an answer that is not cancelled keeps the long bound
+
+
+class _Done(_SilentStream):
+    def __init__(self):
+        pass
+
+    def iter_lines(self):
+        yield "data: [DONE]"

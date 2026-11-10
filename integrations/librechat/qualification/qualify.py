@@ -368,8 +368,11 @@ def cmd_setup_bridge(args: argparse.Namespace) -> None:
 
 
 def ask_assistant(
-    st: dict[str, Any], person: str, question: str, *, cancel_after_first: bool = False
+    st: dict[str, Any], person: str, question: str, *, cancel_after_s: float | None = None
 ) -> dict[str, Any]:
+    """One answer, streamed. With `cancel_after_s` the client disconnects at the first
+    delta, or once that long passes with no chunk: the agent writes nothing before its
+    tool calls, so a disconnect that waited for text would come after them."""
     body: dict[str, Any] = {
         "stream": True,
         "stream_options": {"include_usage": True},
@@ -390,14 +393,22 @@ def ask_assistant(
     text: list[str] = []
     usage: dict[str, Any] = {}
     error = ""
+    timeout = httpx.Timeout(180, read=cancel_after_s or 180)
     # A compressed stream reaches the client only once the answer is complete.
     with httpx.stream(
-        "POST", url, json=body, headers={**auth, "Accept-Encoding": "identity"}, timeout=180
+        "POST", url, json=body, headers={**auth, "Accept-Encoding": "identity"}, timeout=timeout
     ) as r:
         if r.status_code != 200:
             error = f"HTTP {r.status_code}: {r.read().decode()[:300]}"
         else:
-            for line in r.iter_lines():
+            lines = r.iter_lines()
+            while True:
+                try:
+                    line = next(lines)
+                except StopIteration:
+                    break
+                except httpx.ReadTimeout:
+                    break  # the cancel probe's wait ran out: disconnect mid-answer
                 if not line.startswith("data: ") or line == "data: [DONE]":
                     continue
                 chunk = json.loads(line[6:])
@@ -413,7 +424,7 @@ def ask_assistant(
                         if first_text is None:
                             first_text = now
                         text.append(delta["content"])
-                if cancel_after_first and first_delta is not None:
+                if cancel_after_s is not None and first_delta is not None:
                     break
     return {
         "answer": "".join(text),
@@ -848,7 +859,10 @@ def cancel_probe(st: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]
     """Disconnect after the first streamed token and count the Loom calls that still arrive."""
     t0 = time.time()
     got = ask_assistant(
-        st, "alice", "List every memory in the namespace with its version.", cancel_after_first=True
+        st,
+        "alice",
+        "List every memory in the namespace with its version.",
+        cancel_after_s=args.cancel_after,
     )
     disconnected = time.time()
     time.sleep(args.cancel_wait)
@@ -1030,6 +1044,12 @@ def main() -> None:
     run.add_argument("--out", default=str(HERE / "results.json"))
     run.add_argument("--only", nargs="*", help="case ids to run")
     run.add_argument("--cancel-probe", action="store_true", help="also disconnect one answer early")
+    run.add_argument(
+        "--cancel-after",
+        type=float,
+        default=2.0,
+        help="the probe disconnects at the first delta or after this many seconds without one",
+    )
     run.add_argument("--cancel-wait", type=float, default=20.0)
     run.add_argument(
         "--native-only",
