@@ -5210,7 +5210,7 @@ class StorageSettings(BaseModel):
     # then reads on and names `projection` in `skipped`.
     pg_projection_wait_ms: int = Field(default=2000, ge=0)
     # The most deliveries one backlog reading counts per source (`loom.pg.backlog`, health's
-    # `postgres.backlog`); past it the reading says so (`capped`) and stops counting.
+    # `postgres.backlog`); past it the reading stops counting and says so (`capped`).
     pg_backlog_count_cap: int = Field(default=10000, ge=1)
     # Seconds a replica that does not hold the workers lease keeps its own backlog reading
     # for `GET /v1/health?include=postgres`; the lease holder's fresh one is used first.

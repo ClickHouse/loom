@@ -227,7 +227,7 @@ def test_the_backlog_gauges_export_only_on_the_lease_holder(
         assert len(gauges["loom.pg.backlog"](None)) == expected
 
 
-def test_a_backlog_read_that_fails_leaves_the_pass_publishing(
+def test_a_backlog_read_that_fails_is_logged_and_not_raised(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     from server.memory.store import pg_memory
@@ -269,3 +269,11 @@ def test_an_mcp_failure_counts_under_the_code_it_answers(
     )
     (call,) = [k for k in seen if k.get("success") is False]
     assert call["transport"] == "mcp" and call["error_code"] == code
+
+
+@pytest.mark.parametrize("counted, reported, capped", [(3, 3, False), (4, 4, False), (5, 4, True)])
+def test_a_backlog_is_capped_only_past_the_cap(counted: int, reported: int, capped: bool) -> None:
+    """The reads count up to `cap + 1`: exactly the cap is a full count, one more is not."""
+    row = {"pending": counted, "parked": 0, "oldest": 1.5}
+    b = pg_pipeline.backlog_from(row, 4)
+    assert (b.pending, b.capped, b.oldest_age_s) == (reported, capped, 1.5)

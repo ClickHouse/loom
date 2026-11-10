@@ -505,12 +505,9 @@ async def backlog(cap: int) -> pg_pipeline.Backlog:
         "  FROM (SELECT org, namespace, source_uri FROM loom.knowledge_deliveries "
         "    WHERE NOT settled AND lease_until < 'infinity' ORDER BY lease_until LIMIT $1) d "
         "  JOIN loom.knowledge_heads h USING (org, namespace, source_uri)) AS oldest",
-        cap,
+        cap + 1,  # one past the cap says the count stopped
     )
-    pending = int(row["pending"])
-    oldest = None if row["oldest"] is None else float(row["oldest"])
-    parked = int(row["parked"])
-    return pg_pipeline.Backlog(pending, parked, oldest, capped=max(pending, parked) >= cap)
+    return pg_pipeline.backlog_from(row, cap)
 
 
 async def parked_count() -> int:

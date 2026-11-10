@@ -3,8 +3,9 @@
 
 The queues are shared by every test in the job, so each case backdates its own row
 (the oldest age then reaches it whatever else is owed) and counts its parked row by
-the drop when it is removed (no worker touches a parked row); the rows it adds are
-removed."""
+the drop when it is removed (no worker touches a parked row). Taking a delivery over
+advances its `lease_token`, so the write's own flush, still in flight, cannot clear it;
+the rows it adds are removed."""
 
 from __future__ import annotations
 
@@ -59,7 +60,7 @@ async def test_the_memory_backlog_counts_pending_and_parked_deliveries(org_call:
             "INSERT INTO loom.memory_deliveries AS d (org, namespace, seq, targets, lease_until, "
             f"fenced_until) VALUES ($1, $2, $3, $4, {lease}, now()) "
             f"ON CONFLICT (org, namespace, seq) DO UPDATE SET targets = $4, lease_until = {lease}, "
-            "fenced_until = now()",
+            "fenced_until = now(), lease_token = d.lease_token + 1",
             org,
             ns,
             seq,
@@ -78,7 +79,7 @@ async def test_the_memory_backlog_counts_pending_and_parked_deliveries(org_call:
         due = await pg_memory.backlog(1_000_000)
         assert due.pending >= 1 and not due.capped
         assert due.oldest_age_s is not None and due.oldest_age_s >= 3600  # this row's age
-        assert (await pg_memory.backlog(1)).capped  # one counted reaches a cap of one
+        assert (await pg_memory.backlog(0)).capped  # anything owed passes a cap of zero
         await owe("'infinity'")
         parked = (await pg_memory.backlog(1_000_000)).parked
     finally:
@@ -127,7 +128,7 @@ async def test_the_knowledge_backlog_counts_pending_and_parked_deliveries(org_ca
             f"SELECT org, namespace, source_uri, version, user_id, row, 1, {lease}, now() "
             "FROM loom.knowledge_heads WHERE org = $1 AND namespace = $2 "
             "ON CONFLICT (org, namespace, source_uri, version) DO UPDATE SET settled = false, "
-            f"targets = 1, lease_until = {lease}",
+            f"targets = 1, lease_until = {lease}, lease_token = d.lease_token + 1",
             org,
             ns,
         )
@@ -143,7 +144,7 @@ async def test_the_knowledge_backlog_counts_pending_and_parked_deliveries(org_ca
         due = await pg_documents.backlog(1_000_000)
         assert due.pending >= 1
         assert due.oldest_age_s is not None and due.oldest_age_s >= 3600  # this row's age
-        assert (await pg_documents.backlog(1)).capped
+        assert (await pg_documents.backlog(0)).capped
         await owe("'infinity'")
         parked = (await pg_documents.backlog(1_000_000)).parked
     finally:

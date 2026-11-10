@@ -4993,8 +4993,8 @@ settings:
   # pg_projection_wait_ms: 2000
 
   # The most deliveries one backlog reading counts per source (`loom.pg.backlog`,
-  # health's `postgres.backlog`); past it the reading says so (`capped`) and stops
-  # counting. [restart]
+  # health's `postgres.backlog`); past it the reading stops counting and says so
+  # (`capped`). [restart]
   # pg_backlog_count_cap: 10000
 
   # Seconds a replica that does not hold the workers lease keeps its own backlog reading

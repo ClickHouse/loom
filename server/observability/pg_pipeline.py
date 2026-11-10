@@ -3,8 +3,9 @@
 
 - `loom.pg.search_wait_ms`: what a read paid at the barrier when ClickHouse was behind
   (`pg_validation.admit`), by op, outcome and traffic class: the user-visible time
-  from a write to its being searchable. It stops at LOOM_PG_PROJECTION_WAIT_MS
-  (`outcome=deadline`): a search then answers 503, a report that may skip it reads on.
+  from a write to its being searchable. It stops at the read's deadline
+  (`outcome=deadline`: LOOM_PG_PROJECTION_WAIT_MS, or what a re-entrant pass has left):
+  a search then answers 503, a report that may skip it reads on.
 - `loom.pg.projection_lag_ms`: from a revision's commit to its last search target
   landing, measured on Postgres's clock as the delivery clears (`pg_memory._complete_in`),
   by path: the writer's own flush or a redelivery.
@@ -12,8 +13,10 @@
   reading per delivery pass, taken first in the pass by the worker that owns the source,
   exported only by the process holding the workers lease, dropped once older than two
   export periods (`loom.pg.backlog_reading_age_s` says how old it is).
-- `loom.ch.inserts` and `loom.ch.insert_rows` {table}: every insert of memory rows, search
-  documents and audit rows, under either authority, which drive ClickHouse's part creation.
+- `loom.ch.inserts` and `loom.ch.insert_rows` {table}: the memory write path's inserts of
+  memory rows and search documents (`memory.store.inserts`) and the audit writers' rows
+  (`observability.audit`, `pg_publish`), under either authority: what drives ClickHouse's
+  part creation.
 
 Labels are closed enums; none names a namespace, a key or a user.
 """
@@ -39,12 +42,20 @@ SOURCES = ("memory", "audit_outbox", "knowledge")
 class Backlog:
     """One source's backlog: deliveries owed and not parked, parked ones, and the age of
     the oldest one owed (None for none). `capped`: the pending or the parked count
-    reached the reading's cap."""
+    passed the reading's cap and stopped at it."""
 
     pending: int
     parked: int
     oldest_age_s: float | None
     capped: bool = False
+
+
+def backlog_from(row: Any, cap: int) -> Backlog:
+    """A backlog from a read whose `pending` and `parked` counts were each limited to
+    `cap + 1` rows, so more than `cap` means the reading stopped counting."""
+    pending, parked = int(row["pending"]), int(row["parked"])
+    oldest = None if row["oldest"] is None else float(row["oldest"])
+    return Backlog(min(pending, cap), min(parked, cap), oldest, max(pending, parked) > cap)
 
 
 _readings: dict[str, tuple[Backlog, float]] = {}

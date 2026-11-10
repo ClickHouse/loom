@@ -1123,12 +1123,9 @@ async def backlog(cap: int) -> pg_pipeline.Backlog:
         f"    WHERE NOT settled AND lease_until < 'infinity' AND targets & {SEARCHED} <> 0 "
         "    ORDER BY lease_until LIMIT $1) d "
         "  JOIN loom.memory_revisions r USING (org, namespace, seq)) AS oldest",
-        cap,
+        cap + 1,  # one past the cap says the count stopped
     )
-    pending = int(row["pending"])
-    oldest = None if row["oldest"] is None else float(row["oldest"])
-    parked = int(row["parked"])
-    return pg_pipeline.Backlog(pending, parked, oldest, capped=max(pending, parked) >= cap)
+    return pg_pipeline.backlog_from(row, cap)
 
 
 async def outbox_backlog(cap: int) -> pg_pipeline.Backlog:
@@ -1141,12 +1138,9 @@ async def outbox_backlog(cap: int) -> pg_pipeline.Backlog:
         "  WHERE due_at = 'infinity' LIMIT $1) k) AS parked, "
         "(SELECT extract(epoch FROM clock_timestamp() - min(due_at)) FROM loom.audit_outbox "
         "  WHERE due_at <= now()) AS oldest",
-        cap,
+        cap + 1,  # one past the cap says the count stopped
     )
-    pending = int(row["pending"])
-    oldest = None if row["oldest"] is None else float(row["oldest"])
-    parked = int(row["parked"])
-    return pg_pipeline.Backlog(pending, parked, oldest, capped=max(pending, parked) >= cap)
+    return pg_pipeline.backlog_from(row, cap)
 
 
 async def parked_count() -> int:
