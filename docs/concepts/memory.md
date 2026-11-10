@@ -14,10 +14,10 @@ entries and erasure requests are all rows in ClickHouse, created by numbered mig
 the server applies on boot. Under the [Postgres memory
 authority](../architecture/storage-authority.md#why-two-stores), Postgres holds live
 memory and knowledge state, and ClickHouse keeps the vectors, search and history.
-Uploaded document originals are rows too (`loom.document_blobs`), unless the deployment
-keeps their bytes in an S3-compatible bucket. Outside ClickHouse, Postgres and that
-bucket, Loom keeps the code index's git mirrors, a cache of the remotes ClickHouse
-records, and the rate-limit buckets on a shared volume.
+Uploaded document originals are ClickHouse rows too (`loom.document_blobs`), unless the
+deployment keeps their bytes in an S3-compatible bucket. Outside ClickHouse, Postgres
+and that bucket, Loom keeps the code index's git mirrors, a cache of the remotes
+ClickHouse records, and the rate-limit buckets on a shared volume.
 
 - **The identity tuple leads the sort keys.** `loom.memory` is ordered by
   `(org, namespace, agent, user_id, session_id, memory_key)`, so scoping a read to a
