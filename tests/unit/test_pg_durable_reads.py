@@ -526,3 +526,21 @@ def test_the_usual_flush_reads_no_head_durably(monkeypatch: pytest.MonkeyPatch) 
     sent = asyncio.run(pg_batch._served_documents([entry]))
     assert reads == [False]
     assert list(sent[id(entry)].values()) == [doc]
+
+
+def test_a_retirement_stops_at_a_postgres_outage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One namespace's durable read waits out the outage; the next namespaces stay owed
+    rather than each waiting it out again."""
+    from server.memory.store import pg_publish
+
+    reads: list[str] = []
+
+    async def live_decision_writers(org, namespace, keys, *, durable=False):  # type: ignore[no-untyped-def]
+        reads.append(namespace)
+        raise pg.PostgresUnavailableError("the commit's answer was lost", outcome_unknown=True)
+
+    monkeypatch.setattr(pg_memory, "live_decision_writers", live_decision_writers)
+    owing = [pg_publish.OwedRecord({"memory_key": "k"}, ("o", ns, 1), 1) for ns in ("a", "b", "c")]
+    error = asyncio.run(pg_publish.retire_decision_records(owing, deadline=_a_lease(), ch=None))  # type: ignore[arg-type]
+    assert isinstance(error, pg.PostgresUnavailableError)
+    assert reads == ["a"]
