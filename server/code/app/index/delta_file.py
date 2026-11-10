@@ -118,10 +118,10 @@ class _Values:
             "(a fixed cap, not a setting)"
         )
 
-    def span(self) -> tuple[int, int, int]:
+    def span(self, *, entry: bool = False) -> tuple[int, int, int]:
         """Read past the next JSON value: where it starts and ends in the text and its
         counted bytes; refused when it holds more than the round's counted bytes or
-        characters."""
+        characters. Only a file entry can be that large; any other value is invalid."""
         self.peek()
         while True:
             start, text = self._at, self._text
@@ -141,6 +141,8 @@ class _Values:
                 raise ValueError("delta invalid: not JSON") from None
             nodes = _counted(text, start, end)
             if nodes > self._max_nodes or end - start > _MAX_CHARS:
+                if not entry:
+                    raise ValueError("delta invalid: a value outside `files` is over a round's cap")
                 raise self._refused(nodes)
             if not cut:
                 self._at = end
@@ -159,8 +161,8 @@ class _Values:
             raise ValueError("delta invalid: not JSON") from None
 
     def text(self) -> tuple[str, int]:
-        """The next JSON value's text and its counted bytes."""
-        start, end, nodes = self.span()
+        """The next file entry's text and its counted bytes."""
+        start, end, nodes = self.span(entry=True)
         return self._text[start:end], nodes
 
     def at_end(self) -> bool:

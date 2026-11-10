@@ -115,6 +115,21 @@ def test_one_value_over_the_round_budget_is_refused(tmp_path: Path, caps: None) 
         open_delta(path)
 
 
+@pytest.mark.parametrize("key", ["deleted_files", "commit", "notes"])
+def test_a_value_over_the_round_budget_outside_files_is_invalid(
+    tmp_path: Path, caps: None, key: str
+) -> None:
+    """Only a file entry can be too large for a round; a path, a header value or an
+    ignored key that large is not one the harness writes, so no cap's fix applies."""
+    path = tmp_path / "delta.json"
+    big = "," * (settings.code_scip_delta_round_max_nodes + 1)
+    body: dict[str, Any] = {"commit": "c" * 40, "files": []}
+    body[key] = [big] if key == "deleted_files" else big
+    path.write_text(json.dumps(body))
+    with pytest.raises(ValueError, match="delta invalid: a value outside `files`"):
+        open_delta(path)
+
+
 def test_the_whole_file_node_cap_still_holds(tmp_path: Path, caps: None, monkeypatch) -> None:
     monkeypatch.setattr(settings, "code_scip_delta_max_nodes", 10)
     path = tmp_path / "delta.json"

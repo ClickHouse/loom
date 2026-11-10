@@ -918,7 +918,6 @@ def test_each_real_refusal_gets_its_own_fix(tmp_path: Any, monkeypatch: pytest.M
         "One value of the compiler tier's delta (the error names its file entry) is longer"
     )
     monkeypatch.undo()
-    monkeypatch.setattr(settings, "code_scip_delta_max_nodes", 10_000)
     manifest = tmp_path / "package.json"
     manifest.write_bytes(b" " * (uf.PACKAGE_JSON_MAX_BYTES + 1))
     assert fix(_refusal(lambda: uf.read_package_json(manifest))).startswith(
