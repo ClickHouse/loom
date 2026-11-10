@@ -19,8 +19,8 @@ pip install clickhouse-loom
 The SDK's version is the server release's
 ([supported versions](../operations/supported-versions.md)). A release not yet on PyPI
 installs from its assets
-([installing from a GitHub Release](../development/release-process.md#installing-from-a-github-release)),
-and `pip install ./sdk/python` from the root of a clone.
+([installing from a GitHub Release](../development/release-process.md#installing-from-a-github-release)).
+From the root of a clone, `pip install ./sdk/python`.
 
 The package ships `py.typed` and passes `mypy --strict`.
 

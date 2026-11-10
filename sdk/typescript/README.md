@@ -18,9 +18,9 @@ Node ≥ 20 (uses the platform `fetch`). Zero runtime dependencies.
 ```ts
 import { Datapack } from "@clickhouse/loom";
 
+// the server and credential come from LOOM_BASE_URL and LOOM_API_KEY, else
+// http://localhost:7777 with no token (The credential, below)
 const pack = new Datapack("acme", "support", {
-  baseUrl: process.env.LOOM_BASE_URL!,
-  apiKey: process.env.LOOM_API_KEY!,
   consumer: "support-bot", // the label every ledger row carries
 });
 const bot = pack.agent("assistant");

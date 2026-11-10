@@ -13,8 +13,8 @@ pip install clickhouse-loom
 Python 3.11+. Runtime deps: `httpx[http2]` (HTTP/2 via `h2`).
 
 The SDK's version is the server release's. A release not yet on PyPI installs from its
-assets ([installing from a GitHub Release](https://github.com/ClickHouse/loom/blob/main/docs/development/release-process.md#installing-from-a-github-release)), and `pip install ./sdk/python` from the
-root of a clone.
+assets ([installing from a GitHub Release](https://github.com/ClickHouse/loom/blob/main/docs/development/release-process.md#installing-from-a-github-release)). From the root of a clone,
+`pip install ./sdk/python`.
 
 ## Use
 
@@ -32,8 +32,8 @@ async def main() -> None:
         await agent.memory.set("deploy_window", "Deploy Tue/Thu, never Friday")
         got = await agent.memory.get("deploy_window")  # by key
         hits = await agent.memory.search("when do we deploy")  # by meaning
-        if got is not None:
-            print(got["value"], [hit.memory_key for hit in hits])
+        print(got["value"] if got else "not found")
+        print([hit.memory_key for hit in hits])
 
 
 asyncio.run(main())
