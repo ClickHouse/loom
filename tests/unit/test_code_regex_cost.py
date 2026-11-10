@@ -10,10 +10,11 @@ and under an absolute bound. Composite texts, a prefix the pattern spells, a run
 or of one keyword with an opener, and a closing character, catch the patterns whose
 optional parts split one run every way or that search on from each keyword. A pattern
 only ever used with `fullmatch` is anchored with `\\A`, so the searches here cost what
-its use does. The lanes' own walks over a file (`lane_walks.py`) are timed at N and 4N
-with the cyclic collector off, each in a child process with a deadline. A class guard runs
-every registered lane parser over generated shapes the same way, in a child process with a
-deadline and a memory limit; `KNOWN_SLOW` lists the shapes still to fix."""
+its use does. The lanes' own walks over a file (`lane_walks.py`) are judged by their growth
+from N to 4N alone, with the cyclic collector off, each in a child process with a deadline.
+A class guard runs every registered lane parser over generated shapes with the collector
+off, in a child process with a deadline and a memory limit; `KNOWN_SLOW` lists the shapes
+still to fix."""
 
 from __future__ import annotations
 

@@ -64,9 +64,8 @@ def untraced() -> Iterator[None]:
     """This thread's tracer and the garbage collector off, so a coverage run times the
     code, not the tracer (about three times its cost), nor a full collection walking
     every earlier test's heap. Only this thread's tracer: other threads stay measured.
-    A collection's total cost grows linearly with what the code allocates, so leaving it
-    out hides no super-linear cost. Both come back as they were, so a nested use keeps
-    the collector off for its caller."""
+    The collector's total cost grows linearly with what the code allocates, so leaving
+    it out hides no super-linear cost. Both come back as they were."""
     previous = sys.gettrace()
     collecting = gc.isenabled()
     sys.settrace(None)

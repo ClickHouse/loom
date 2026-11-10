@@ -696,7 +696,7 @@ def registry_cost(lang: str) -> list[tuple[str, float, float, int, int]]:
     def cost(text: Callable[[int], str], n: int) -> tuple[float, int, str]:
         source = (head + text(n)).encode()
         parsed[:] = [0.0, 0]
-        with untraced():  # as in `walk_cost`
+        with untraced():
             t0 = time.process_time()  # CPU time, as in `walk_cost`
             pf = _extract(path, source)
             took = time.process_time() - t0 - parsed[0]
