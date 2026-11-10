@@ -227,7 +227,7 @@ def _slow(cost: Callable[[int], float]) -> tuple[int, float, float] | None:
 
     Each step times n / 4 and n back to back, so a load spike that lasts a few runs
     slows both alike; a step that looks over linear is timed twice more that way and
-    fails only if all three pairs are over. A pattern over linear is, in every pair. A
+    fails only if all three pairs are over. A pattern over linear is over in every pair. A
     spike on the n / 4 of any one pair can hide a step; nothing is carried, so the next
     step, or the next run, reports it."""
     for n in _SIZES[1:]:
@@ -257,7 +257,7 @@ def test_slow_tells_a_load_spike_from_a_step_over_linear() -> None:
         return (n / 1000) ** 2 * 1e-3
 
     assert _slow(quadratic) == (8_000, 0.004, 0.064)
-    # every pair slowed after the first pair's n / 4: still over linear
+    # every call after the 8,000 step's first n / 4 slowed: still over linear
     assert _slow(spiked(quadratic, range(3, 8))) == (8_000, 0.004, 0.64)
     # a spike on the 8,000 step's n / 4 hides that step; the 32,000 one reports it
     assert _slow(spiked(quadratic, range(2, 3))) == (32_000, 0.064, 1.024)

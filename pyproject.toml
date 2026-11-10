@@ -259,9 +259,8 @@ disallow_subclassing_any = false
 # tests run the server out-of-process so they don't contribute to in-process
 # coverage; treat this as a unit-coverage floor, not a total.
 source = ["server", "sdk/python/loom"]
-# The C tracer, which `sys.settrace(None)` pauses: the extraction tests' time bounds
-# (tests/unit/test_document_extraction.py `_cpu`) time the code with it off, through
-# `untraced` (tests/unit/code_fixtures.py).
+# The C tracer, which `sys.settrace(None)` pauses: `untraced` (tests/unit/code_fixtures.py)
+# times code with it off, for the extraction tests' time bounds and the lane timings.
 core = "ctrace"
 omit = ["*/tests/*", "*/__pycache__/*"]
 
