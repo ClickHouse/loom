@@ -27,7 +27,9 @@ _INSERT_SLACK_S = 0.2  # not a setting: a fraction of one ClickHouse insert
 _CALLS_S = 3.0  # not a setting: a fraction of the citation checks' bound
 
 
-async def support(checked: list[Checked], text: str, *, org: str, run_id: str, subject: str) -> str:
+async def answer_support(
+    checked: list[Checked], text: str, *, org: str, run_id: str, subject: str
+) -> str:
     """The answer's support: `supported`, `unsupported`, `unchecked` or `none`."""
     citation_codes = [c.code for c in checked]
     returned: frozenset[str] | None = frozenset()

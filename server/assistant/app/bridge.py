@@ -352,7 +352,7 @@ async def _checked(ticket: Ticket, answer: Answer) -> bytes:
             subject=ticket.subject,
         )
         answer.citations = [c.citation for c in checked]
-        answer.support = await support.support(
+        answer.support = await support.answer_support(
             checked, text, org=ticket.org, run_id=answer.run_id, subject=ticket.subject
         )
     finally:

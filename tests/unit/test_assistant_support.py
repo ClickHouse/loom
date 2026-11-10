@@ -273,7 +273,7 @@ def _calls(monkeypatch: pytest.MonkeyPatch, *reads: ledger.RunCalls | Exception)
 
 def _answer(checked: list[Checked], text: str, run_id: str = "r1") -> str:
     return asyncio.run(
-        app_support.support(checked, text, org="acme", run_id=run_id, subject="alice")
+        app_support.answer_support(checked, text, org="acme", run_id=run_id, subject="alice")
     )
 
 

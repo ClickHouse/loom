@@ -21,7 +21,7 @@ from typing import Any
 import httpx
 
 from server.assistant.api.models import AssistantCitation
-from server.assistant.domain import support as codes
+from server.assistant.domain import support as rule
 from server.assistant.domain.citations import Citation, parse, section_path
 from server.assistant.store import ledger
 from server.memory.app import exposure_ledger
@@ -66,7 +66,7 @@ class Checked:
 
 
 def _result(c: Citation, code: str, reason: str = "") -> Checked:
-    verified = code == codes.VERIFIED
+    verified = code == rule.VERIFIED
     return Checked(
         AssistantCitation(kind=c.kind, text=c.text, verified=verified, reason=reason, ref=c.ref),
         code,
@@ -80,7 +80,7 @@ async def verify(
     its `ref` (the memory key, document source or code path it names)."""
     found = parse(answer_text)
     cited, unchecked = found[:_MAX_CHECKED], found[_MAX_CHECKED:]
-    rest = [_result(c, codes.PAST_CAP, "past the citations one answer checks") for c in unchecked]
+    rest = [_result(c, rule.PAST_CAP, "past the citations one answer checks") for c in unchecked]
     if not cited:
         return rest
     out: dict[int, Checked] = {}
@@ -89,7 +89,7 @@ async def verify(
             await _check_all(cited, out, org, namespace, token, run_id, subject)
     except TimeoutError:
         log.warning("an answer's citation checks ran past %s s", _CHECKS_S)
-    return [out.get(i) or _result(c, codes.NOT_RUN, _NOT_RUN) for i, c in enumerate(cited)] + rest
+    return [out.get(i) or _result(c, rule.NOT_RUN, _NOT_RUN) for i, c in enumerate(cited)] + rest
 
 
 async def _check_all(
@@ -110,7 +110,7 @@ async def _check_all(
     documents: dict[str, list[int]] = {}
     for i, c in enumerate(cited):
         if c.kind == "code":
-            out[i] = _result(c, codes.CODE, "code citations are not checked")
+            out[i] = _result(c, rule.CODE, "code citations are not checked")
         elif c.kind == "doc":
             documents.setdefault(c.source_uri, []).append(i)
     gate = asyncio.Semaphore(_PARALLEL_READS)
@@ -200,17 +200,17 @@ async def _read(read: Awaitable[set[str]]) -> set[str] | None:
 def _from_ledger(c: Citation, seen: _Ledgered) -> Checked:
     if c.kind == "sql":
         if seen.digests is None:
-            return _result(c, codes.NOT_RUN, _NOT_RUN)
+            return _result(c, rule.NOT_RUN, _NOT_RUN)
         if text_digest(c.sql) in seen.digests:
-            return _result(c, codes.VERIFIED)
-        return _result(c, codes.SQL_NOT_RUN, "no insights.query in this answer ran it")
+            return _result(c, rule.VERIFIED)
+        return _result(c, rule.SQL_NOT_RUN, "no insights.query in this answer ran it")
     if seen.keys is None:
         if not exposure_ledger.enabled():
-            return _result(c, codes.NOT_RECORDED, "this deployment does not record memory reads")
-        return _result(c, codes.NOT_RUN, _NOT_RUN)
+            return _result(c, rule.NOT_RECORDED, "this deployment does not record memory reads")
+        return _result(c, rule.NOT_RUN, _NOT_RUN)
     if c.key in seen.keys:
-        return _result(c, codes.VERIFIED)
-    return _result(c, codes.UNREAD, _UNREAD)
+        return _result(c, rule.VERIFIED)
+    return _result(c, rule.UNREAD, _UNREAD)
 
 
 class _NotChecked(Exception):
@@ -248,12 +248,12 @@ async def _sections(
 
 def _document(c: Citation, sections: set[tuple[str, ...]] | None) -> Checked:
     if sections is None:
-        return _result(c, codes.NOT_RUN, _NOT_RUN)
+        return _result(c, rule.NOT_RUN, _NOT_RUN)
     if not sections:
-        return _result(c, codes.NO_DOCUMENT, "no live document of this source is readable")
+        return _result(c, rule.NO_DOCUMENT, "no live document of this source is readable")
     if c.section not in sections:
-        return _result(c, codes.NO_SECTION, "the document has no such section")
-    return _result(c, codes.VERIFIED)
+        return _result(c, rule.NO_SECTION, "the document has no such section")
+    return _result(c, rule.VERIFIED)
 
 
 __all__ = ["RECORDING_READS", "Checked", "set_app", "verify"]

@@ -46,7 +46,7 @@ export function supportLabel(support: Support, citations: Citation[]): Label | n
           tone: "text-warn",
         };
   }
-  // "unchecked", and any value this dashboard does not know yet.
+  // "unchecked".
   return citations.length > 0
     ? {
         text: "Sources not checked",
