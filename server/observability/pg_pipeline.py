@@ -6,14 +6,16 @@
   from a write to its being searchable. It stops at the read's deadline
   (`outcome=deadline`: LOOM_PG_PROJECTION_WAIT_MS, or what a re-entrant pass has left):
   the op answers 503 PROJECTION_BEHIND, a report that may skip the projection reads on.
-- `loom.pg.projection_lag_ms`: from a revision's commit transaction's start to its last
-  search target landing, on Postgres's clock as the delivery clears, recorded once that
-  commits (`pg_memory.complete`), by path: the writer's own flush or a redelivery.
+- `loom.pg.projection_lag_ms`: from a revision's commit transaction's start to its
+  delivery clearing its last search target (the document landed, or a redelivery settled
+  a revision no longer served unsent), on Postgres's clock, recorded once that commits
+  (`pg_memory.complete`), by path: the writer's own flush or a redelivery.
 - `loom.pg.backlog` {source, state} and `loom.pg.oldest_pending_age_s` {source}: one
   reading per delivery pass, taken first in the pass by the worker that owns the source
   and exported by the process that runs it (the workers child by default, else the lease
   holder): a process that runs no delivery pass has none, and a reading older than two
-  export periods is dropped (`loom.pg.backlog_reading_age_s` says how old each is).
+  export periods is dropped (`loom.pg.backlog_reading_age_s` says how old each is), so a
+  pass that runs longer than that leaves no point until the next one reads.
 - `loom.ch.inserts` and `loom.ch.insert_rows` {table}: the memory write path's inserts of
   memory rows and search documents (`memory.store.inserts`) and the audit writers' rows
   (`observability.audit`, `pg_publish`), under either authority. Memory rows and search
@@ -103,7 +105,7 @@ def record_search_wait(outcome: str, wait_ms: float) -> None:
 
 
 def record_projection_lag(lag_ms: float, *, redelivered: bool) -> None:
-    """A revision whose last search target landed. Never raises."""
+    """A revision whose delivery cleared its last search target. Never raises."""
     try:
         if _projection_lag is not None:
             _projection_lag.record(
@@ -138,8 +140,9 @@ def register(meter: Any) -> None:
     )
     _projection_lag = meter.create_histogram(
         name="loom.pg.projection_lag_ms",
-        description="From a revision's commit to its last search target landing in "
-        "ClickHouse, on Postgres's clock, by path (flush|redelivered)",
+        description="From a revision's commit to its delivery clearing its last search "
+        "target (landed, or settled unsent when no longer served), on Postgres's clock, "
+        "by path (flush|redelivered)",
         unit="ms",
     )
     _inserts = meter.create_counter(

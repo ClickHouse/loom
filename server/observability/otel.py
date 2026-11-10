@@ -454,7 +454,7 @@ def record_op(
             "success": "true" if success else "false",
         }
         if _request_counter is not None:
-            # The error code on the counter only: a closed set (a LoomServerError code),
+            # The error code on the counter only: a closed set, the codes Loom's errors carry,
             # which would multiply the duration histogram's series for no reader.
             _request_counter.add(1, attributes={**attrs, "loom.error_code": error_code})
         if _request_duration is not None:

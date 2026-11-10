@@ -922,7 +922,7 @@ async def _complete_in(
         done,
     )
     searchable = []
-    for r in locked:  # a revision whose last search target landed: searchable now
+    for r in locked:  # a revision whose last search target this cleared
         owed = int(r["targets"])
         if owed & SEARCHED and not owed & ~done & SEARCHED:
             searchable.append((float(r["lag_ms"]), int(r["lease_token"]) != COMMIT_TOKEN))
