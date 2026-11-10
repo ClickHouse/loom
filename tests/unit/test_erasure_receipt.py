@@ -71,6 +71,11 @@ def test_a_complete_census_is_kept_whole_and_an_incomplete_one_not() -> None:
     found = {"per_table": {"loom.memory": 2}, "count": 2, "verified_at": None}
     # A census that left a store uncounted keeps its residue as evidence, no receipt.
     assert saga._verify_columns(found)["census"] == ""
+    # A complete census that found rows fails the saga, and its receipt says where.
+    failed = {"per_table": {"loom.memory": 2, "loom.chunks": 0}, "count": 2, "verified_at": _AT}
+    columns = saga._verify_columns(failed)
+    assert json.loads(columns["census"]) == {"loom.memory": 2, "loom.chunks": 0}
+    assert json.loads(columns["residue"]) == {"loom.memory": 2}
 
 
 def test_the_recovery_worker_carries_the_census_it_read() -> None:
@@ -194,3 +199,15 @@ def test_the_re_verify_of_an_older_namespace_list_row_takes_the_purge_it_ran(
 
     row = {"scope_type": "namespace_list", "scope_value": '["a", "b"]', "purge": stored}
     assert hygiene._re_verify_scope(row) == ("namespace", ["a", "b"], applied, True)
+
+
+def test_the_read_window_ends_a_day_before_the_ledger_ttl() -> None:
+    """LIVE_LEDGER must stop reading before the TTL drops a saga's rows part by part."""
+    import re
+    from pathlib import Path
+
+    schema = (Path(__file__).resolve().parents[2] / "schemas" / "schema.sql").read_text()
+    table = schema[schema.index("CREATE TABLE IF NOT EXISTS loom.erasure_requests") :]
+    (ttl_days,) = re.findall(r"TTL requested_at \+ toIntervalDay\((\d+)\)", table.split(";")[0])
+    (window_days,) = re.findall(r"INTERVAL (\d+) DAY", ledger.LIVE_LEDGER)
+    assert int(window_days) == int(ttl_days) - 1

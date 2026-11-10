@@ -111,8 +111,8 @@ class ErasureRequestOutput(BaseModel):
     # (the Postgres authority or the bucket, which the server log names); `residue` then
     # holds what it did count.
     verified_at: datetime | None = None
-    # The receipt: every count of this run's census, zeros included; `None` when its census
-    # left a store uncounted.
+    # The receipt: every count of this run's census, zeros included; `None` when no census
+    # counted every store (none ran, or one left a store uncounted).
     census: dict[str, int] | None = None
     # Whether the saga deletes rows (true) or tombstones them; a single namespace's never does.
     purge: bool = False
@@ -169,9 +169,9 @@ class ErasureStatusOutput(BaseModel):
     # uncounted (the Postgres authority or the bucket, which the server log names);
     # `residue` then holds what it did count.
     verified_at: datetime | None = None
-    # The receipt: every count of the latest run's census, zeros included; `None` while a
-    # run is in progress, when its census left a store uncounted, or for a saga finished on
-    # a build that kept no census.
+    # The receipt: every count of the latest run's census, zeros included; `None` when the
+    # latest row holds no census that counted every store (a run in progress, none ran, one
+    # left a store uncounted, or a build that keeps no census wrote the row).
     census: dict[str, int] | None = None
     # Whether the saga deletes rows (true) or tombstones them; a single namespace's never does.
     purge: bool = False

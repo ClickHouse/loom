@@ -241,8 +241,9 @@ finished, and always counts again.
 ### The receipt
 
 `erasure.status` (and `erasure.request`'s answer) carries the receipt of the latest run's
-census, absent while a run is in progress, when its census left a store uncounted, or for a
-saga that finished on a build that kept no census:
+census. It is absent when the latest ledger row holds no census that counted every store: a
+run in progress, a run that failed before its census, a census that left a store
+uncounted, or a row written by a build that keeps no census:
 
 - `census`: every substrate the census counted and its count, zeros included. Keys are table
   names, `pg:<table>` for the Postgres authority, `objects.document_originals` for the
@@ -277,7 +278,8 @@ from `clickhouse-client` rather than through `pg_clickhouse`, whose pushed-down 
 Postgres statement log would keep as one more copy:
 
 ```bash
-clickhouse-client --param_org='<org>' --param_uid='<user_id>' --param_at='<verified_at>' \
+read -r uid  # the erased id, typed at the prompt so it stays out of the shell history
+clickhouse-client --param_org='<org>' --param_uid="$uid" --param_at='<verified_at>' \
   --multiquery --query "
 SELECT count() FROM loom.sql_v1_memories WHERE org = {org:String}
   AND user_id = {uid:String} AND created_at <= {at:DateTime64(6, 'UTC')};
