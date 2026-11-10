@@ -597,7 +597,7 @@ function TokenForm({
   const nothingListed = mine !== null && eligibleNs.length === 0 && eligibleRepos.length === 0;
   // Not before the memberships load: the form would describe a token it cannot know.
   const canCreate = rows !== null && (reach === "everything" || selectedNs.length > 0);
-  // What the ticked list means; how to reorder it sits under the list itself.
+  // What the ticked list means; how to reorder it is the list's own description (SearchOrder).
   const listHint =
     selectedNs.length === 0
       ? "Tick the namespaces this token reads; it reads nothing else, whatever you join later."
