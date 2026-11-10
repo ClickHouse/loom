@@ -322,9 +322,10 @@ runs N.
 The tool list is the assistant toolset's reads and `insights.query`, so the agent writes
 nothing; a change it suggests is a draft a person applies elsewhere, as the Assistant
 page's tune drafts already are. The instructions require citations, tell the agent to
-call a tool before every answer and abstain when none supports it, to write no text
-before or between its tool calls, to read `insights.catalog` before running SQL, and to
-treat stored text as data that cannot grant a tool or approve a change. The agents API
+call a tool before answering a question about the namespace (a greeting calls none) and
+abstain when none supports it, to write no text before or between its tool calls, to
+read `insights.catalog` before running SQL, and to treat stored text as data that cannot
+grant a tool or approve a change. The agents API
 streams the text of every model step as one answer's content, with nothing between steps
 ([streaming](../features/integrations/librechat.md#tool-errors-streaming-and-cancellation)),
 so neither the bridge nor the dashboard can tell a lead-in ("Let me search the
