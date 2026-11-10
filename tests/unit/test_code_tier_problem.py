@@ -366,6 +366,13 @@ def test_problem_rows_put_the_errors_first_and_never_order_by_entry() -> None:
         ("code-b", "error"),
         ("code-a", "warn"),
     ]
+    # two warn rows whose namespace order is the reverse of their content order
+    recorder._FAILING = (
+        recorder.FailingTier("o", "code-a", _failing(5), 5, "o/r", "main", False),
+        recorder.FailingTier("o", "code-z", _failing(6), 5, "o/r", "main", False),
+    )
+    rows = recorder.problem_rows(T0 + timedelta(hours=3)) or ()
+    assert [r["namespace"] for r in rows] == ["code-z", "code-a"]  # more passes first
 
 
 def test_the_doctor_grades_a_failing_tier_at_most_warn() -> None:
@@ -830,3 +837,8 @@ def test_the_checkout_file_fix_gives_the_caps_the_tier_reads_under() -> None:
     mib = 1024 * 1024
     assert f"package.json is read up to {untrusted_files.PACKAGE_JSON_MAX_BYTES // mib} MiB" in fix
     assert f"yarn.lock up to {untrusted_files.CHECKOUT_FILE_MAX_BYTES // mib} MiB" in fix
+
+
+def test_a_cmake_record_cut_before_cmakes_error_quotes_the_line_above_the_marker() -> None:
+    cut = "-- Configuring incomplete, errors occurred!\n>> cmake configure failed"
+    assert tier_health.error_line("cmake", cut) == "-- Configuring incomplete, errors occurred!"
