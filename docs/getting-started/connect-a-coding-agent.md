@@ -2,9 +2,10 @@
 
 This page connects Claude Code, Codex, Cursor or another MCP client to a running Loom
 server. Install the plugin (or wire the MCP entry), point it at the server, and work as
-usual. The next session starts with what the agent saved. Recording, which keeps the
-session's transcript, is off by default; the namespace's owner turns it on from the
-dashboard's Conversations page
+usual. The next session starts with what the agent saved. What the plugin sends to Loom is
+listed in [data handling](../features/integrations/claude-code.md#data-handling); the
+session's transcript is kept only while the namespace's **Record conversations** switch on
+the dashboard's Conversations page is on, which it is not by default
 ([recording](../features/conversations-and-sessions.md#recording-is-the-owners-choice)).
 To run a server yourself, start with the [quickstart](quickstart.md); to have your agent
 install a pinned release and prove it works, give it the latest release's
@@ -36,8 +37,9 @@ claude plugin install loom@loom \
 Both `--config` values are optional; without them Claude Code asks once. Start a new
 session. Loom's session primer arrives at the top, and from then on:
 
-- the hooks capture tool observations into Loom, and the conversation while the
-  namespace's Recording is on;
+- the hooks send what [data handling](../features/integrations/claude-code.md#data-handling)
+  lists, among it tool observations and the session's last turns for extraction, and the
+  transcript while **Record conversations** is on;
 - the `loom-memory`, `loom-code`, `loom-session` and other skills tell Claude when to save
   a fact, when to search, and how to use the code index;
 - `loom_search`, `loom_memory_set` and the code tools are available as MCP tools.
@@ -92,7 +94,7 @@ command writes.
 2. Tell the agent something durable, for example "our deploy window is Tuesday and
    Thursday only". In a new session, ask "when can we deploy?". The answer comes from Loom.
 3. Open the dashboard (`<server>/`). The saved fact is there, and the session's
-   conversation too while Recording is on; you can correct or delete either.
+   conversation too while **Record conversations** is on; you can correct or delete either.
 
 `loom doctor --client` adds the local wiring checks when you have the CLI.
 

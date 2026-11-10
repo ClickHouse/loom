@@ -399,7 +399,9 @@ With auth on, create a token in **Settings → Tokens** and choose **Claude Code
 with the token in it. Its `~/.loom/config.json` replaces any single-user identity a plugin
 session saved there; the plugin reads `LOOM_API_KEY` before that file
 ([configuration](../features/integrations/claude-code.md#configuration)), so a
-`LOOM_API_KEY` in Claude Code's environment must hold the new token or be unset.
+`LOOM_API_KEY` in Claude Code's environment must hold the new token or be unset. Remove a
+`claude mcp add` entry made without a token (`claude mcp remove loom -s user`) before
+running the dialog's command, which refuses a name that exists.
 
 `loom install --client <name>` writes the MCP entry for Claude Desktop, Claude Code,
 Codex, Cursor, VS Code, Cline, Windsurf and Zed; with no flag it wires every client it
