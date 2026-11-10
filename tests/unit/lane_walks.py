@@ -61,10 +61,21 @@ def _svelte(text: str) -> object:
 
 
 def _py_routes(text: str) -> object:
-    from server.code.domain.extract.lang_python import parse_python
-    from server.code.domain.extract.py_routes import py_facets
+    """The call-site route walks of the Python lane; the file's parse is not timed."""
+    from server.code.domain.extract import py_routes as pr
 
-    return py_facets(parse_python("a.py", text.encode()))
+    return pr._prefixes(text), pr._registrations(text, "a.py", pr._Collector())
+
+
+def _py_decorator(text: str) -> object:
+    from server.code.domain.extract import py_routes as pr
+
+    return pr._one_decorator(text, "f", 1, pr._Collector(), {})
+
+
+def _many_methods(opener: str) -> Callable[[int], str]:
+    """A path of n/2 characters, then a methods list of n/2 characters."""
+    return lambda n: opener + "a" * (n // 2) + "', methods=[" + _run("", "'a',")(n // 2) + "])"
 
 
 def _env(text: str) -> object:
@@ -181,13 +192,9 @@ WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("python-unclosed-add-url-rule", _py_routes, _run("", "a.add_url_rule('a'")),
     ("python-unclosed-route", _py_routes, _run("import starlette.routing\n", "Route('a'")),
     ("python-env-reads", _env, _run("", "os.environ['A']\n")),
-    (
-        "python-route-methods",
-        _py_routes,
-        lambda n: (
-            "x.add_url_rule('/" + "a" * (n // 2) + "', methods=[" + _run("", "'a',")(n // 2) + "])"
-        ),
-    ),
+    ("python-route-methods", _py_routes, _many_methods("x.add_url_rule('/")),
+    ("python-decorator-methods", _py_decorator, _many_methods("@app.route('/")),
+    ("starlette-route-methods", _py_routes, _many_methods("import starlette.routing\nRoute('/")),
 ]
 _WALK_N = 100_000
 
