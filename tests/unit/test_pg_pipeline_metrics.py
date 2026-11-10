@@ -174,17 +174,15 @@ def _readings_of(source_reads: list[str]) -> Any:
     return reading
 
 
-def test_health_reads_the_backlog_itself_off_the_lease_holder(
+def test_health_reads_the_backlog_itself_once_per_cache_period(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server import health
     from server.knowledge.store import pg_documents
     from server.memory.store import pg_memory
-    from server.observability import otel_probes
 
     reads: list[str] = []
     reading = _readings_of(reads)
-    monkeypatch.setattr(otel_probes, "census_reads_here", lambda: False)
     monkeypatch.setattr(pg_memory, "backlog", reading("memory"))
     monkeypatch.setattr(pg_memory, "outbox_backlog", reading("audit_outbox"))
     monkeypatch.setattr(pg_documents, "backlog", reading("knowledge"))
@@ -206,30 +204,12 @@ def test_health_reads_the_backlog_itself_off_the_lease_holder(
     assert len(reads) == 6
 
 
-def test_health_on_the_lease_holder_answers_its_fresh_readings_without_reading(
+def test_the_backlog_gauges_export_this_process_s_fresh_readings_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from server import health
-    from server.memory.store import pg_memory
-    from server.observability import otel_probes
-
-    async def never(cap: int) -> Any:
-        raise AssertionError("read the backlog although the lease holder's is fresh")
-
-    monkeypatch.setattr(otel_probes, "census_reads_here", lambda: True)
-    monkeypatch.setattr(pg_pipeline, "_readings", {})
-    for source in pg_pipeline.SOURCES:
-        pg_pipeline.set_backlog(source, pg_pipeline.Backlog(3, 0, 1.0))
-    monkeypatch.setattr(pg_memory, "backlog", never)
-    got = asyncio.run(health._backlog())
-    assert set(got) == set(pg_pipeline.SOURCES) and got["memory"]["pending"] == 3
-
-
-def test_the_backlog_gauges_export_only_on_the_lease_holder(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from server.observability import otel_probes
-
+    """The process that runs the delivery workers (by default the workers child, which
+    does not hold the lease) exports its readings; one that took none, or whose last is
+    older than two export periods, exports nothing."""
     gauges: dict[str, Any] = {}
 
     class _Meter:
@@ -245,12 +225,17 @@ def test_the_backlog_gauges_export_only_on_the_lease_holder(
     # `register` sets the module's instruments: put them back after.
     for name in ("_search_wait", "_projection_lag", "_inserts", "_insert_rows"):
         monkeypatch.setattr(pg_pipeline, name, None)
+    clock = ManualClock(t=1000.0)
+    monkeypatch.setattr(pg_pipeline, "time", clock)
+    monkeypatch.setattr(settings, "otel_metrics_export_interval_s", 60)
     monkeypatch.setattr(pg_pipeline, "_readings", {})
-    pg_pipeline.set_backlog("memory", pg_pipeline.Backlog(2, 1, 5.0))
     pg_pipeline.register(_Meter())
-    for here, expected in ((False, 0), (True, 2)):
-        monkeypatch.setattr(otel_probes, "census_reads_here", lambda here=here: here)
-        assert len(gauges["loom.pg.backlog"](None)) == expected
+    names = ("loom.pg.backlog", "loom.pg.oldest_pending_age_s", "loom.pg.backlog_reading_age_s")
+    assert [len(gauges[n](None)) for n in names] == [0, 0, 0]  # no reading taken here
+    pg_pipeline.set_backlog("memory", pg_pipeline.Backlog(2, 1, 5.0))
+    assert [len(gauges[n](None)) for n in names] == [2, 1, 1]
+    clock.advance(121)
+    assert [len(gauges[n](None)) for n in names] == [0, 0, 0]
 
 
 def test_a_backlog_read_that_fails_is_logged_and_not_raised(

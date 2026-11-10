@@ -5455,7 +5455,7 @@
           "default": 10.0,
           "minimum": 0,
           "type": "number",
-          "description": "Seconds a replica that does not hold the workers lease keeps its own backlog reading for `GET /v1/health?include=postgres`; the lease holder's fresh one is used first."
+          "description": "Seconds each process keeps its own backlog reading for `GET /v1/health?include=postgres`."
         },
         "pg_commit_lock_timeout_ms": {
           "default": 2000,

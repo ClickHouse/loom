@@ -4997,9 +4997,8 @@ settings:
   # (`capped`). [restart]
   # pg_backlog_count_cap: 10000
 
-  # Seconds a replica that does not hold the workers lease keeps its own backlog reading
-  # for `GET /v1/health?include=postgres`; the lease holder's fresh one is used first.
-  # [restart]
+  # Seconds each process keeps its own backlog reading for `GET
+  # /v1/health?include=postgres`. [restart]
   # pg_backlog_health_cache_seconds: 10.0
 
   # Seconds the writing request holds its revisions' delivery; past it, the delivery

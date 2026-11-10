@@ -10,9 +10,10 @@
   search target landing, on Postgres's clock as the delivery clears, recorded once that
   commits (`pg_memory.complete`), by path: the writer's own flush or a redelivery.
 - `loom.pg.backlog` {source, state} and `loom.pg.oldest_pending_age_s` {source}: one
-  reading per delivery pass, taken first in the pass by the worker that owns the source,
-  exported only by the process holding the workers lease, dropped once older than two
-  export periods (`loom.pg.backlog_reading_age_s` says how old it is).
+  reading per delivery pass, taken first in the pass by the worker that owns the source
+  and exported by the process that runs it (the workers child by default, else the lease
+  holder): a process that runs no delivery pass has none, and a reading older than two
+  export periods is dropped (`loom.pg.backlog_reading_age_s` says how old each is).
 - `loom.ch.inserts` and `loom.ch.insert_rows` {table}: the memory write path's inserts of
   memory rows and search documents (`memory.store.inserts`) and the audit writers' rows
   (`observability.audit`, `pg_publish`), under either authority. Memory rows and search
@@ -35,8 +36,6 @@ _search_wait: Any = None
 _projection_lag: Any = None
 _inserts: Any = None
 _insert_rows: Any = None
-
-SOURCES = ("memory", "audit_outbox", "knowledge")
 
 
 @dataclass(frozen=True)
@@ -80,12 +79,6 @@ def fresh_readings() -> dict[str, tuple[Backlog, float]]:
 def fresh_backlog() -> dict[str, Backlog]:
     """The readings younger than two export periods."""
     return {s: r for s, (r, _) in fresh_readings().items()}
-
-
-def _reading_ages() -> dict[str, float]:
-    now = time.monotonic()
-    with _lock:
-        return {s: now - at for s, (_, at) in _readings.items()}
 
 
 def record_search_wait(outcome: str, wait_ms: float) -> None:
@@ -160,13 +153,10 @@ def register(meter: Any) -> None:
         description="Rows in those inserts, by table",
         unit="1",
     )
-    from server.observability import otel_probes
 
     def _backlog(_options: Any) -> Any:
         from opentelemetry.metrics import Observation
 
-        if not otel_probes.census_reads_here():
-            return []
         out = []
         for source, r in fresh_backlog().items():
             out.append(Observation(r.pending, {"source": source, "state": "pending"}))
@@ -176,8 +166,6 @@ def register(meter: Any) -> None:
     def _oldest(_options: Any) -> Any:
         from opentelemetry.metrics import Observation
 
-        if not otel_probes.census_reads_here():
-            return []
         return [
             Observation(r.oldest_age_s, {"source": source})
             for source, r in fresh_backlog().items()
@@ -187,9 +175,7 @@ def register(meter: Any) -> None:
     def _ages(_options: Any) -> Any:
         from opentelemetry.metrics import Observation
 
-        if not otel_probes.census_reads_here():
-            return []
-        return [Observation(age, {"source": s}) for s, age in _reading_ages().items()]
+        return [Observation(age, {"source": s}) for s, (_, age) in fresh_readings().items()]
 
     meter.create_observable_gauge(
         name="loom.pg.backlog",

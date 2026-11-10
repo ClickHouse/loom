@@ -445,29 +445,26 @@ _backlog_cache: dict[str, Any] = {"at": None, "value": None}
 
 
 async def _backlog() -> dict[str, dict[str, Any]]:
-    """Each source's delivery backlog (`pg_pipeline`) with the reading's age: the workers
-    lease holder's last reading when fresh, else a reading of this process's own, kept
-    LOOM_PG_BACKLOG_HEALTH_CACHE_SECONDS. Its counts stop at LOOM_PG_BACKLOG_COUNT_CAP
-    (`capped`); the block's `parked_*` fields count in full."""
+    """Each source's delivery backlog (`pg_pipeline`) with the reading's age: this
+    process's own reading, kept LOOM_PG_BACKLOG_HEALTH_CACHE_SECONDS (the delivery
+    workers' readings live in the process that runs them, by default not this one).
+    Its counts stop at LOOM_PG_BACKLOG_COUNT_CAP (`capped`); the block's `parked_*`
+    fields count in full."""
     from server.knowledge.store import pg_documents
     from server.memory.store import pg_memory
-    from server.observability import pg_pipeline
-    from server.observability.otel_probes import census_reads_here
 
     now = time.monotonic()
-    readings = pg_pipeline.fresh_readings() if census_reads_here() else {}
-    if len(readings) < len(pg_pipeline.SOURCES):
-        at = _backlog_cache["at"]
-        if at is None or now - at >= settings.pg_backlog_health_cache_seconds:
-            cap = settings.pg_backlog_count_cap
-            _backlog_cache["value"] = {
-                "memory": await pg_memory.backlog(cap),
-                "audit_outbox": await pg_memory.outbox_backlog(cap),
-                "knowledge": await pg_documents.backlog(cap),
-            }
-            _backlog_cache["at"] = now
-        age = now - _backlog_cache["at"]
-        readings = {s: (r, age) for s, r in _backlog_cache["value"].items()}
+    at = _backlog_cache["at"]
+    if at is None or now - at >= settings.pg_backlog_health_cache_seconds:
+        cap = settings.pg_backlog_count_cap
+        _backlog_cache["value"] = {
+            "memory": await pg_memory.backlog(cap),
+            "audit_outbox": await pg_memory.outbox_backlog(cap),
+            "knowledge": await pg_documents.backlog(cap),
+        }
+        _backlog_cache["at"] = now
+    age = now - _backlog_cache["at"]
+    readings = {s: (r, age) for s, r in _backlog_cache["value"].items()}
     return {
         source: {
             "pending": r.pending,
