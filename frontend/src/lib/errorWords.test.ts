@@ -259,6 +259,15 @@ describe("humanizeError", () => {
       ).toBe("Your role doesn't allow this. acme is the only admin.");
     });
 
+    it("keeps the category's words after a caller's lead-in for a code with no message", () => {
+      expect(
+        humanizeError(
+          new ApiError({ status: 503, code: "SOME_NEW_CODE", detail: { category: "capacity", retryable: true } }),
+          { bare: true },
+        ),
+      ).toBe("Loom is busy (SOME_NEW_CODE). Try again in a moment.");
+    });
+
     it("names only the status after a caller's lead-in when nothing else was said", () => {
       expect(humanizeError(new ApiError({ status: 418 }), { bare: true })).toBe("Loom answered with status 418.");
     });

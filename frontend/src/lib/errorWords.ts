@@ -26,7 +26,7 @@ import { errorRequestId } from "./format";
  *  (it states the cause): a sentence ending in ":" introduces it; one ending in "."
  *  precedes it. No sentence says to try again: `retryTail` owns that, from the body and,
  *  for the codes the dashboard makes itself (SIGNED_IN_ELSEWHERE, ANSWER_UNREADABLE), from
- *  the code. */
+ *  the code; STREAM_ENDED, the third, takes the body's rules. */
 export const ERROR_CODE_PREFIXES: Record<string, string> = {
   AUTH_INVALID: "Sign-in rejected:",
   SIGNED_IN_ELSEWHERE: "You signed in afresh in another tab. Nothing was lost.",
@@ -53,6 +53,10 @@ export const ERROR_CODE_PREFIXES: Record<string, string> = {
   CODED_WIDTH_MISMATCH: "The embedding model's width doesn't match the vector tables — see Settings › Models & keys.",
   SELF_SIGNUP_DISABLED: "Sign-up is off on this instance. Ask your operator.",
   SCHEMA_PENDING: "Loom's database is not upgraded for this yet:",
+  ASSISTANT_UNAVAILABLE: "The assistant is not available:",
+  ASSISTANT_UPSTREAM_FAILED: "The assistant could not finish this answer:",
+  // Made by the dashboard (api/assistantChat.ts): the answer's stream stopped before its end.
+  STREAM_ENDED: "The answer was cut off:",
   INTERNAL_ERROR: "Loom hit an internal error. If it keeps happening, tell your operator.",
   EMAIL_IN_USE: "That email belongs to another account:",
   NAMESPACE_CLAIMED: "That name is already taken:",
@@ -114,10 +118,8 @@ function retryTail(err: ApiError, read: boolean): string {
   if (err.code === "SIGNED_IN_ELSEWHERE") return "It is safe to send it once more.";
   const category = categoryOf(err);
   const retryable = err.detail.retryable;
-  // A write that may have landed (lib/errors.ts mayHaveSaved) says so; it wins over a
-  // message that says to retry: the message was written for the error, the mark for this
-  // call. A read (a dry run too) gets no such warning; for an unreadable answer or a busy
-  // dependency it is told it can go again.
+  // A write the server marks unsafe to resend says so, even when its message says to retry;
+  // a read is told it can go again.
   if (mayHaveSaved(err)) {
     if (!read) return MAY_HAVE_SAVED;
     if (
@@ -245,9 +247,14 @@ function humanizeApiError(err: ApiError, bare: boolean, read: boolean): string {
     text = own ? `${own.replace(/:$/, ".")} ${asSentence(err.serverMessage)}` : err.serverMessage;
   } else if (err.serverMessage) text = joinSentence(lead, err.serverMessage);
   // With no message the code is all the server said: kept for support, never the sentence.
-  // A generic lead-in says little, so the code goes with it (or alone, after a caller's own
-  // lead-in); a code's own sentence already says it all.
-  else if (err.code && !own) text = bare ? `error code ${err.code}.` : `${lead.replace(/[:.]$/, "")} (${err.code}).`;
+  // A generic lead-in says little, so the code goes with it; after a caller's own lead-in a
+  // category's words still say what happened, a status's do not. A code's own sentence
+  // already says it all.
+  else if (err.code && !own)
+    text =
+      bare && !CATEGORY_SENTENCES[categoryOf(err)]
+        ? `error code ${err.code}.`
+        : `${lead.replace(/[:.]$/, "")} (${err.code}).`;
   // Nothing said and a status that means nothing: after a caller's own lead-in, only the
   // status is left to name ("Save failed: Loom answered with status 418.").
   else if (bare && !own && lead === UNKNOWN_STATUS) text = `Loom answered with status ${err.status}.`;

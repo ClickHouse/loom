@@ -148,7 +148,7 @@ describe("AssistantChat", () => {
     await ask("Who owns billing?");
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(
-      "The assistant cannot answer in this namespace right now: the assistant's share of 'team''s daily model cost cap is spent. Try again in 3600 s.",
+      "Too many requests. the assistant's share of 'team''s daily model cost cap is spent. Try again in 3600 s.",
     );
     expect(screen.getByLabelText("Question")).toHaveValue("Who owns billing?");
 
@@ -159,12 +159,12 @@ describe("AssistantChat", () => {
   });
 
   it.each([
-    ["AUTH_INSUFFICIENT", 403, "The assistant refused this request: the caller cannot read 'team' in 'dev'."],
-    ["OVERLOADED", 503, "The assistant is busy: the caller cannot read 'team' in 'dev'."],
+    ["AUTH_INSUFFICIENT", 403, "Your role doesn't allow this: the caller cannot read 'team' in 'dev'"],
+    ["OVERLOADED", 503, "Loom is busy right now. the caller cannot read 'team' in 'dev'."],
     [
       "MODEL_CALLS_DISABLED",
       403,
-      "Model calls are switched off for this organization: the caller cannot read 'team' in 'dev'.",
+      "Model calls are off for this org; an org admin can turn them on in Admin › Guardrails unless a platform admin locked them: the caller cannot read 'team' in 'dev'",
     ],
   ])("shows a %s refusal in the chat", async (code, status, shown) => {
     answers.push(refusal(status, { code, message: "the caller cannot read 'team' in 'dev'" }));
@@ -188,6 +188,22 @@ describe("AssistantChat", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Loom is busy: the model gateway is queueing calls. Try again in 3 s.");
     expect(alert.textContent?.match(/Try again/g)).toHaveLength(1);
+  });
+
+  it("says Loom could not check access, not that the assistant refused, when the grant read failed", async () => {
+    answers.push(
+      refusal(403, {
+        code: "AUTH_INSUFFICIENT",
+        message: "the grant store did not answer",
+        category: "dependency",
+        retryable: true,
+      }),
+    );
+    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    await ask("Who owns billing?");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Loom couldn't check your access just now. the grant store did not answer. Try again in a moment.",
+    );
   });
 
   it("words a server error before the stream as a read: nothing may have been saved", async () => {
@@ -218,7 +234,7 @@ describe("AssistantChat", () => {
       s.close();
     });
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "The assistant could not finish this answer: LibreChat ended the answer with an error.",
+      "The assistant could not finish this answer: LibreChat ended the answer with an error",
     );
     expect(lastAnswer()).toHaveTextContent("Ada");
     // An error inside the stream is the chat's, not the page's: the composer stays.
@@ -235,7 +251,7 @@ describe("AssistantChat", () => {
       s.close();
     });
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "The answer was cut off: the answer stopped before it was complete.",
+      "The answer was cut off: the answer stopped before it was complete",
     );
     expect(lastAnswer()).toHaveTextContent("Ada");
   });

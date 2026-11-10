@@ -32,28 +32,10 @@ interface Turn {
   support?: Support;
 }
 
-// The lead-in for each refusal the chat route answers; the server's own words follow.
-const REFUSAL_LEAD: Record<string, string> = {
-  RATE_LIMITED: "The assistant cannot answer in this namespace right now:",
-  OVERLOADED: "The assistant is busy:",
-  AUTH_INSUFFICIENT: "The assistant refused this request:",
-  MODEL_CALLS_DISABLED: "Model calls are switched off for this organization:",
-  ASSISTANT_UNAVAILABLE: "The assistant is not available:",
-  ASSISTANT_UPSTREAM_FAILED: "The assistant could not finish this answer:",
-  STREAM_ENDED: "The answer was cut off:",
-};
-
+// A refusal before the stream or an error event inside it, worded as every error is
+// (lib/errorWords.ts): an answer only reads, so nothing is left to check before asking again.
 function refusalText(e: unknown): string {
-  // An answer only reads (Loom stores none of it): nothing is left to check before asking again.
-  if (!(e instanceof ApiError)) return humanizeError(e, { read: true });
-  const lead = REFUSAL_LEAD[e.code];
-  // Any other code is worded whole by humanizeError, its retry advice included.
-  if (!lead) return humanizeError(e, { read: true });
-  const said = (e.serverMessage || e.code).replace(/\.$/, "");
-  const retry = e.detail.retry_after_s;
-  return typeof retry === "number" && retry > 0
-    ? `${lead} ${said}. Try again in ${Math.ceil(retry)} s.`
-    : `${lead} ${said}.`;
+  return humanizeError(e, { read: true });
 }
 
 const isAbort = (e: unknown) => e instanceof DOMException && e.name === "AbortError";
