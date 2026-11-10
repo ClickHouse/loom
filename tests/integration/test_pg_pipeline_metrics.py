@@ -3,9 +3,10 @@
 
 The queues are shared by every test in the job, so each case backdates its own row
 (the oldest age then reaches it whatever else is owed) and counts its parked row by
-the drop when it is removed (no worker touches a parked row). Taking a delivery over
-advances its `lease_token`, so the write's own flush, still in flight, cannot clear it;
-the rows it adds are removed."""
+the drop when it stops being parked (no worker touches a parked row). A memory or
+knowledge case takes its delivery over, advancing `lease_token`, so the write's own
+flush, still in flight, cannot clear it; the outbox case is due only inside a
+transaction it rolls back. The rows a case adds are removed."""
 
 from __future__ import annotations
 
@@ -89,14 +90,16 @@ async def test_the_memory_backlog_counts_pending_and_parked_deliveries(org_call:
     assert parked - (await pg_memory.backlog(1_000_000)).parked == 1
 
 
-async def test_the_outbox_backlog_counts_due_and_parked_rows(org_call: Any) -> None:
+async def test_the_outbox_backlog_counts_due_and_parked_rows(
+    org_call: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from server.core import pg
     from server.memory.store import pg_memory
 
     org, _call = org_call
     ns, row_hash = f"pl-{uuid.uuid4().hex[:8]}", uuid.uuid4().hex
     try:
-        # Parked first: no claim takes a parked row, so its count is this row's alone.
+        # Parked: no claim takes it, so the parked count moves by this row alone.
         await pg.execute(
             "INSERT INTO loom.audit_outbox (org, namespace, row_hash, audit, due_at) "
             "VALUES ($1, $2, $3, '{}'::jsonb, 'infinity')",
@@ -105,22 +108,16 @@ async def test_the_outbox_backlog_counts_due_and_parked_rows(org_call: Any) -> N
             row_hash,
         )
         parked = (await pg_memory.outbox_backlog(1_000_000)).parked
-        for _ in range(5):  # a running delivery worker may claim it between the two
-            await pg.execute(
+        # Due an hour ago only inside a transaction that is rolled back, the backlog read
+        # in it too: no running delivery worker ever sees the row due.
+        async with pg.rolled_back() as conn:
+            await conn.execute(
                 "UPDATE loom.audit_outbox SET due_at = now() - interval '1 hour' WHERE org = $1",
                 org,
             )
-            async with pg.transaction() as conn:
-                # Held, so a worker's claim (SKIP LOCKED) passes it by while we read.
-                due_at_past = await conn.fetchval(
-                    "SELECT due_at < now() - interval '59 minutes' FROM loom.audit_outbox "
-                    "WHERE org = $1 FOR UPDATE",
-                    org,
-                )
-                due = await pg_memory.outbox_backlog(1_000_000)
-            if due_at_past:
-                break
-        assert due_at_past, "a delivery worker claimed the row five times running"
+            monkeypatch.setattr(pg, "fetchrow", conn.fetchrow)
+            due = await pg_memory.outbox_backlog(1_000_000)
+            monkeypatch.undo()
         assert due.pending >= 1
         assert due.oldest_age_s is not None and due.oldest_age_s >= 3600  # this row's age
         assert parked - due.parked == 1
