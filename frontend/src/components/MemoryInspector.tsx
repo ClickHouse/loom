@@ -2345,8 +2345,8 @@ function EntitySummary({
   onInspect: (key: string) => void;
   onWalk: () => void;
 }) {
-  const [mentions, setMentions] = useState<{ keys: string[]; capped: boolean } | null | "failed">(null);
-  const [neighbours, setNeighbours] = useState<string[] | null | "failed">(null);
+  const [mentions, setMentions] = useState<{ keys: string[]; capped: boolean } | null | { failed: string }>(null);
+  const [neighbours, setNeighbours] = useState<string[] | null | { failed: string }>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   // The focus moves to the first link once the mentions are in, unless the person has
   // already moved it.
@@ -2365,16 +2365,16 @@ function EntitySummary({
           .map((row) => row.memory_key);
         setMentions({ keys, capped: rows.length >= MENTION_READ });
       })
-      .catch(() => {
+      .catch((e: unknown) => {
         // A failed read says so: "mentioned only in this memory" would be a claim.
-        if (live) setMentions("failed");
+        if (live) setMentions({ failed: humanizeError(e, { bare: true }) });
       });
     relatedFacts({ org: identity.org, namespace: identity.namespace }, want, { top_k: POPOVER_LIST })
       .then((r) => {
         if (live) setNeighbours((r.related || []).map((n) => n.entity).slice(0, POPOVER_LIST));
       })
-      .catch(() => {
-        if (live) setNeighbours("failed");
+      .catch((e: unknown) => {
+        if (live) setNeighbours({ failed: humanizeError(e, { bare: true }) });
       });
     return () => {
       live = false;
@@ -2382,7 +2382,7 @@ function EntitySummary({
   }, [entity, identity, readMentions]);
 
   // This memory mentions it too.
-  const total = mentions && mentions !== "failed" ? mentions.keys.length + 1 : 0;
+  const total = mentions && "keys" in mentions ? mentions.keys.length + 1 : 0;
   return (
     <div ref={rootRef} tabIndex={-1} className="space-y-3 text-sm" data-entity-summary="" data-testid="entity-popover">
       <div>
@@ -2392,8 +2392,8 @@ function EntitySummary({
       <section aria-label="Memories that mention it">
         {mentions === null ? (
           <Loading layout="inline" label="Loading memories" />
-        ) : mentions === "failed" ? (
-          <div className="text-xs text-text-muted">Couldn't load the memories that mention it.</div>
+        ) : "failed" in mentions ? (
+          <div className="text-xs text-text-muted">Couldn't load the memories that mention it: {mentions.failed}</div>
         ) : (
           <>
             <div className="text-xs text-text-muted mb-1">
@@ -2429,8 +2429,8 @@ function EntitySummary({
         <div className="text-xs text-text-muted mb-1">Neighbours</div>
         {neighbours === null ? (
           <Loading layout="inline" label="Loading neighbours" />
-        ) : neighbours === "failed" ? (
-          <div className="text-xs text-text-muted">Couldn't load neighbours.</div>
+        ) : "failed" in neighbours ? (
+          <div className="text-xs text-text-muted">Couldn't load neighbours: {neighbours.failed}</div>
         ) : neighbours.length === 0 ? (
           <div className="text-xs text-text-muted">None recorded</div>
         ) : (

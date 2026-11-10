@@ -36,7 +36,7 @@ import { MenuChoice, MenuChoiceGroup } from "../components/MenuChoice";
 import { MenuTrigger } from "../components/ui/Menu";
 import { RowSkeleton, TableSkeleton } from "../components/Skeleton";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { displayAgent, listTime, parseChTime, relativeTime, truncate } from "../lib/format";
+import { displayAgent, humanizeError, listTime, parseChTime, relativeTime, truncate } from "../lib/format";
 import { useRowNav } from "../lib/useRowNav";
 import { PageContainer } from "../layout/PageContainer";
 import { Modal } from "../components/ui/Modal";
@@ -571,6 +571,7 @@ export function Runs() {
   };
   const [detail, setDetail] = useState<RunGetResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
 
   // Every change of what the list holds starts again from its first page.
   const refilter =
@@ -672,13 +673,16 @@ export function Runs() {
     if (!open) return;
     let live = true;
     setDetail(null);
+    setDetailError("");
     setDetailLoading(true);
     getRun({ org: identity.org, namespace: identity.namespace }, open.run_id)
       .then((d) => {
         if (live) setDetail(d);
       })
-      .catch(() => {
-        if (live) setDetail(null);
+      .catch((e: unknown) => {
+        if (!live) return;
+        setDetail(null);
+        setDetailError(humanizeError(e, { bare: true }));
       })
       .finally(() => {
         if (live) setDetailLoading(false);
@@ -1135,7 +1139,9 @@ export function Runs() {
                 Recall history for this run
               </Button>
             )}
-            {!detailLoading && !detail && <div className="text-xs text-text-muted">Could not load the replay.</div>}
+            {!detailLoading && !detail && (
+              <div className="text-xs text-text-muted">Couldn't load the replay: {detailError}</div>
+            )}
           </Section>
           {replayed?.final_response && (
             <Section title="Final response">

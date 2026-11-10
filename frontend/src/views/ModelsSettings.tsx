@@ -1,3 +1,4 @@
+import { humanizeError } from "../lib/format";
 import { useEffect, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import {
@@ -77,11 +78,8 @@ export function ModelsSettings() {
           setStatus(next);
           setError("");
         }
-      } catch {
-        if (!controller.signal.aborted)
-          setError(
-            "Could not load model settings. Platform administrator access is required on authenticated servers.",
-          );
+      } catch (e) {
+        if (!controller.signal.aborted) setError(`Couldn't load model settings: ${humanizeError(e, { bare: true })}`);
       } finally {
         loading = false;
       }
@@ -132,8 +130,8 @@ export function ModelsSettings() {
                       await resetModelConfiguration(status.version);
                       setConfirmReset(false);
                       setReload((value) => value + 1);
-                    } catch {
-                      setError("Could not reset model settings. Refresh and try again.");
+                    } catch (e) {
+                      setError(`Couldn't reset model settings: ${humanizeError(e, { bare: true })}`);
                     } finally {
                       setResetting(false);
                     }
@@ -174,8 +172,8 @@ export function ModelsSettings() {
                     try {
                       await retryModelConfiguration(status.pending.config_id);
                       setReload((value) => value + 1);
-                    } catch {
-                      setError("Could not retry the rebuild. Refresh and try again.");
+                    } catch (e) {
+                      setError(`Couldn't retry the rebuild: ${humanizeError(e, { bare: true })}`);
                     } finally {
                       setRetrying(false);
                     }

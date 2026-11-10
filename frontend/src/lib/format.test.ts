@@ -44,121 +44,25 @@ describe("displaySubject", () => {
 });
 
 describe("humanizeError", () => {
-  it("names the unknown", () => {
-    expect(humanizeError(null)).toBe("Unknown error");
-    expect(humanizeError("")).toBe("Unknown error");
+  const api = (o: ConstructorParameters<typeof ApiError>[0]) => humanizeError(new ApiError(o));
+
+  it("reads a dashboard bug or an empty throw as the dashboard's fault, not its text", () => {
+    const fault = "Something went wrong in the dashboard. Reload the page.";
+    expect(humanizeError(null)).toBe(fault);
+    expect(humanizeError("")).toBe(fault);
+    expect(humanizeError(new TypeError("Cannot read properties of undefined (reading 'x')"))).toBe(fault);
+    expect(humanizeError(new DOMException("signal is aborted without reason", "AbortError"))).toBe(fault);
   });
 
   it("swaps a known code prefix for its sentence and keeps the detail", () => {
     expect(humanizeError(new Error("AUTH_INVALID: token expired"))).toBe("Sign-in rejected: token expired");
-    expect(humanizeError("VALIDATION: seed must not be empty")).toBe("Input rejected: seed must not be empty");
+    expect(humanizeError("NOT_FOUND")).toBe("Not found — it may have been deleted, or be somewhere you can't read.");
   });
 
-  // An ApiError maps by code, then status, then the server's message — and the raw
-  // response body never reaches the screen.
-  describe("ApiError", () => {
-    it("words the upload's refusals, for when the format list could not check the file first", () => {
-      expect(
-        humanizeError(
-          new ApiError({ status: 413, code: "PAYLOAD_TOO_LARGE", message: "the file is over 26214400 bytes" }),
-        ),
-      ).toBe("Too large: the file is over 26214400 bytes");
-      expect(
-        humanizeError(new ApiError({ status: 415, code: "UNSUPPORTED_FILE", message: ".doc files are not supported" })),
-      ).toBe("This file type is not read: .doc files are not supported");
-    });
-
-    it("maps the server code first", () => {
-      expect(
-        humanizeError(
-          new ApiError({ status: 403, code: "AUTH_INSUFFICIENT", message: "principal 'v' cannot access dev/x" }),
-        ),
-      ).toBe("You don't have permission for this on this namespace. principal 'v' cannot access dev/x");
-      expect(
-        humanizeError(new ApiError({ status: 401, code: "AUTH_INVALID", message: "Invalid email or password." })),
-      ).toBe("Sign-in rejected: Invalid email or password.");
-      // A refusal keeps its words unless it ended the session (the flag), and a call sent
-      // after another tab took the token reads as the ended session.
-      expect(
-        humanizeError(new ApiError({ status: 401, code: "AUTH_INVALID", message: "token jti 'j1' is revoked" })),
-      ).toBe("Sign-in rejected: token jti 'j1' is revoked");
-      expect(humanizeError(new ApiError({ status: 401, code: "AUTH_INVALID", message: "missing bearer token" }))).toBe(
-        "Your session ended — sign in again.",
-      );
-      // Any refusal that ended the session reads the same, whatever its words.
-      const ended = new ApiError({
-        status: 401,
-        code: "AUTH_INVALID",
-        message: "invalid token: Signature verification failed",
-      });
-      ended.sessionEnded = true;
-      expect(humanizeError(ended)).toBe("Your session ended — sign in again.");
-      // A call raced by the person's own sign-in in another tab: nothing to do but retry.
-      expect(humanizeError(new ApiError({ status: 401, code: "SIGNED_IN_ELSEWHERE" }))).toBe(
-        "Signed in elsewhere — retry.",
-      );
-      // With auth off, or behind a proxy, there is no session to sign in to.
-      for (const flag of ["__LOOM_AUTH_DISABLED", "__LOOM_PROXY_AUTH"] as const) {
-        window[flag] = true;
-        try {
-          expect(
-            humanizeError(new ApiError({ status: 401, code: "AUTH_INVALID", message: "missing bearer token" })),
-          ).toBe("Sign-in rejected: missing bearer token");
-        } finally {
-          delete window[flag];
-        }
-      }
-      expect(
-        humanizeError(
-          new ApiError({ status: 429, code: "RATE_LIMITED", message: "namespace 'x' exceeded memory.set rate limit" }),
-        ),
-      ).toBe("Slow down — too many requests recently. namespace 'x' exceeded memory.set rate limit");
-      expect(
-        humanizeError(new ApiError({ status: 422, code: "VALIDATION_FAILED", message: "namespace: field required" })),
-      ).toBe("Input rejected: namespace: field required");
-    });
-
-    it("falls back to the HTTP status for an unknown code", () => {
-      expect(humanizeError(new ApiError({ status: 403, code: "SOME_NEW_CODE", message: "nope" }))).toBe(
-        "You don't have permission for this. nope",
-      );
-      expect(humanizeError(new ApiError({ status: 404, message: "Not Found" }))).toBe("Couldn't find it. Not Found");
-      expect(humanizeError(new ApiError({ status: 500 }))).toBe("Loom hit a server error.");
-      expect(humanizeError(new ApiError({ status: 503, code: "", message: "" }))).toBe(
-        "Loom is unavailable right now — try again in a moment.",
-      );
-      expect(humanizeError(new ApiError({ status: 418 }))).toBe("Request failed (HTTP 418).");
-    });
-
-    it("names the code when the server sent one without a message", () => {
-      expect(humanizeError(new ApiError({ status: 409, code: "PINNED_CONFLICT", message: "" }))).toBe(
-        "Conflict — something changed underneath this request: PINNED_CONFLICT",
-      );
-    });
-
-    it("words a typed error from its code and message", () => {
-      const denied = new ApiError({
-        status: 403,
-        code: "AUTH_INSUFFICIENT",
-        message: "principal cannot access dev/x",
-      });
-      expect(humanizeError(denied)).toBe(
-        "You don't have permission for this on this namespace. principal cannot access dev/x",
-      );
-      expect(
-        humanizeError(new ApiError({ status: 401, code: "AUTH_INVALID", message: "Invalid email or password." })),
-      ).toBe("Sign-in rejected: Invalid email or password.");
-    });
-
-    it("exposes the request id for the support line", () => {
-      expect(errorRequestId(new ApiError({ status: 500, requestId: "req-1" }))).toBe("req-1");
-      expect(errorRequestId(new Error("boom"))).toBe("");
-      expect(errorRequestId(null)).toBe("");
-    });
-  });
-
-  it("returns the sentence alone when the code has no detail", () => {
-    expect(humanizeError("NOT_FOUND")).toBe("Couldn't find it.");
+  it("passes an unknown code and the dashboard's own words through unchanged", () => {
+    expect(humanizeError("SOMETHING_ELSE: detail")).toBe("SOMETHING_ELSE: detail");
+    expect(humanizeError("plain message")).toBe("plain message");
+    expect(humanizeError(new Error("Pick a file first"))).toBe("Pick a file first");
   });
 
   it("names a lost connection for the browser's bare network errors", () => {
@@ -170,10 +74,198 @@ describe("humanizeError", () => {
     expect(humanizeError("NetworkError when attempting to fetch resource.")).toBe(lost);
   });
 
-  it("passes an unknown code and plain text through unchanged", () => {
-    expect(humanizeError("SOMETHING_ELSE: detail")).toBe("SOMETHING_ELSE: detail");
-    expect(humanizeError("plain message")).toBe("plain message");
-    expect(humanizeError("inline-fetch failed (404)")).toBe("inline-fetch failed (404)");
+  describe("ApiError", () => {
+    // Each row: what the server answered, and the one line the person reads.
+    const rows: [string, ConstructorParameters<typeof ApiError>[0], string][] = [
+      [
+        "a precondition that is not an edit race names no race",
+        {
+          status: 409,
+          code: "PRECONDITION_FAILED",
+          message: "the upload expired; upload the file again",
+          detail: { category: "input", retryable: false },
+        },
+        "Couldn't do that: the upload expired; upload the file again",
+      ],
+      [
+        "a name clash is not 'input rejected'",
+        {
+          status: 409,
+          code: "PINNED_CONFLICT",
+          message: "key x is pinned",
+          detail: { category: "input", retryable: false },
+        },
+        "Couldn't do that: key x is pinned",
+      ],
+      [
+        "a missing row reads as not found",
+        {
+          status: 404,
+          code: "SOURCE_NOT_FOUND",
+          message: "no source s1",
+          detail: { category: "input", retryable: false },
+        },
+        "Not found: no source s1",
+      ],
+      [
+        "an operator's fix says retrying won't help",
+        {
+          status: 503,
+          code: "GATEWAY_REQUIRED",
+          message: "model calls need the inference gateway",
+          detail: { category: "configuration", retryable: false },
+        },
+        "This needs a change to Loom's setup: model calls need the inference gateway. An operator has to fix this; trying again won't help.",
+      ],
+      [
+        "a rate limit says how long to wait",
+        {
+          status: 429,
+          code: "RATE_LIMITED",
+          message: "namespace 'x' exceeded its rate limit",
+          detail: { category: "capacity", retryable: true, retry_after_s: 3 },
+        },
+        "Too many requests. namespace 'x' exceeded its rate limit. Try again in 3 s.",
+      ],
+      [
+        "the wait comes from the Retry-After header when the body has none",
+        {
+          status: 503,
+          code: "AUTH_UNAVAILABLE",
+          message: "the grant store did not answer",
+          detail: { category: "dependency", retryable: true },
+          retryAfter: 2,
+        },
+        "A service Loom relies on didn't answer: the grant store did not answer. Try again in 2 s.",
+      ],
+      [
+        "a refusal whose check could not run says so, not 'your role'",
+        {
+          status: 403,
+          code: "AUTH_INSUFFICIENT",
+          message: "grants could not be read",
+          detail: { category: "dependency", retryable: true },
+        },
+        "Loom couldn't check your access just now. grants could not be read. Try again in a moment.",
+      ],
+      [
+        "a real refusal names the role",
+        {
+          status: 403,
+          code: "AUTH_INSUFFICIENT",
+          message: "writer needed on dev/x",
+          detail: { category: "auth", retryable: false },
+        },
+        "Your role doesn't allow this: writer needed on dev/x",
+      ],
+      [
+        "an internal error takes no retry advice: a read failed the same way",
+        { status: 500, code: "INTERNAL_ERROR", message: "", detail: { category: "internal", retryable: false } },
+        "Loom hit an internal error. If it happens again, send the request id to your operator (INTERNAL_ERROR).",
+      ],
+      [
+        "a busy write that may have landed says to check first",
+        { status: 503, code: "OVERLOADED", message: "", detail: { category: "capacity", retryable: false } },
+        "Loom is busy right now (OVERLOADED). It may have been saved; check before trying again.",
+      ],
+      [
+        "no retry tail when the server already says it",
+        {
+          status: 503,
+          code: "EXTRACTION_QUEUE_UNAVAILABLE",
+          message: "resending can extract the messages twice",
+          detail: { category: "dependency", retryable: true },
+        },
+        "A service Loom relies on didn't answer: resending can extract the messages twice",
+      ],
+      [
+        "an upgrade says when it works again, and no tail",
+        {
+          status: 503,
+          code: "SCHEMA_PENDING",
+          message: "table x missing",
+          detail: { category: "configuration", retryable: false },
+        },
+        "Loom is being upgraded and this isn't ready yet. It works again once the upgrade finishes.",
+      ],
+      [
+        "a code with no message is kept in brackets, never as the sentence",
+        { status: 422, code: "BAD_SHA", message: "", detail: { category: "input", retryable: false } },
+        "Not accepted (BAD_SHA).",
+      ],
+      ["an unknown status names no cause", { status: 418 }, "Couldn't do that."],
+      ["a proxy's 503 with no body", { status: 503 }, "Loom didn't answer in time."],
+      [
+        "a FastAPI 422",
+        { status: 422, code: "VALIDATION_FAILED", message: "namespace: field required" },
+        "Not accepted: namespace: field required",
+      ],
+    ];
+    it.each(rows)("%s", (_name, given, line) => {
+      expect(api(given)).toBe(line);
+    });
+
+    it("leaves the lead-in to a caller that brings its own", () => {
+      const err = new ApiError({
+        status: 409,
+        code: "PRECONDITION_FAILED",
+        message: "the name col-x is taken in acme",
+      });
+      expect(humanizeError(err, { bare: true })).toBe("the name col-x is taken in acme");
+      expect(humanizeError(new ApiError({ status: 404 }), { bare: true })).toBe("Not found.");
+      // A code's own sentence carries the next step, so it stays.
+      expect(
+        humanizeError(new ApiError({ status: 403, code: "AUTH_INSUFFICIENT", message: "admin needed on t" }), {
+          bare: true,
+        }),
+      ).toBe("Your role doesn't allow this. admin needed on t");
+    });
+
+    it("leaves retry advice to the tail: no code sentence says to try again", () => {
+      for (const code of [
+        "OVERLOADED",
+        "BACKEND_TIMEOUT",
+        "BACKEND_UNAVAILABLE",
+        "RATE_LIMITED",
+        "SIGNED_IN_ELSEWHERE",
+      ]) {
+        expect(api({ status: 503, code })).not.toMatch(/retry|again|resend/i);
+      }
+    });
+
+    it("words the upload's refusals, for when the format list could not check the file first", () => {
+      expect(api({ status: 415, code: "UNSUPPORTED_FILE", message: ".doc files are not supported" })).toBe(
+        "Loom can't read this file type: .doc files are not supported",
+      );
+    });
+
+    it("says a session ended, except where there is no session to sign in to", () => {
+      expect(api({ status: 401, code: "AUTH_INVALID", message: "missing bearer token" })).toBe(
+        "Your session ended — sign in again.",
+      );
+      const ended = new ApiError({ status: 401, code: "AUTH_INVALID", message: "token jti 'j1' is revoked" });
+      ended.sessionEnded = true;
+      expect(humanizeError(ended)).toBe("Your session ended — sign in again.");
+      expect(api({ status: 401, code: "AUTH_INVALID", message: "token jti 'j1' is revoked" })).toBe(
+        "Sign-in rejected: token jti 'j1' is revoked",
+      );
+      for (const flag of ["__LOOM_AUTH_DISABLED", "__LOOM_PROXY_AUTH"] as const) {
+        window[flag] = true;
+        try {
+          expect(api({ status: 401, code: "AUTH_INVALID", message: "missing bearer token" })).toBe(
+            "Sign-in rejected: missing bearer token",
+          );
+        } finally {
+          delete window[flag];
+        }
+      }
+    });
+
+    it("exposes the request id for the support line", () => {
+      expect(errorRequestId(new ApiError({ status: 500, requestId: "req-1" }))).toBe("req-1");
+      expect(errorRequestId(new Error("boom"))).toBe("");
+      expect(errorRequestId(null)).toBe("");
+    });
   });
 });
 

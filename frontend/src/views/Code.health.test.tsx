@@ -51,9 +51,10 @@ describe("HealthTab: failed reads", () => {
     codeIndexErrors.mockRejectedValue(new Error("boom"));
     codeRecentCommits.mockRejectedValueOnce(new Error("boom"));
     render(<HealthTab id={{ org: "dev", namespace: "code-app" }} />);
-    expect(await screen.findByText("Couldn't load coverage.")).toBeInTheDocument();
-    expect(screen.getByText("Couldn't load the index errors.")).toBeInTheDocument();
-    expect(screen.getByText("Couldn't load the recent commits.")).toBeInTheDocument();
+    // Each line says why, not only that it failed.
+    expect(await screen.findByText("Couldn't load coverage: boom")).toBeInTheDocument();
+    expect(screen.getByText("Couldn't load the index errors: boom")).toBeInTheDocument();
+    expect(screen.getByText("Couldn't load the recent commits: boom")).toBeInTheDocument();
     expect(screen.queryByText("No commits recorded yet.")).toBeNull();
   });
 });
@@ -77,8 +78,8 @@ describe("HealthTab: a failed poll", () => {
       expect(screen.getByText(/generic profile/)).toBeInTheDocument();
       expect(screen.queryByText("Couldn't load index status")).toBeNull();
       // The sections read before keep their reads too.
-      expect(screen.queryByText("Couldn't load the index errors.")).toBeNull();
-      expect(screen.queryByText("Couldn't load the recent commits.")).toBeNull();
+      expect(screen.queryByText(/Couldn't load the index errors/)).toBeNull();
+      expect(screen.queryByText(/Couldn't load the recent commits/)).toBeNull();
     } finally {
       vi.useRealTimers();
     }

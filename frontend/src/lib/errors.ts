@@ -26,6 +26,9 @@ export class ApiError extends Error {
   /** The parsed `detail` object, for callers that need an extra field
    *  (`current_sha256`, `retry_after_s`, …). */
   readonly detail: Record<string, unknown>;
+  /** Seconds from the `Retry-After` header, 0 when absent: some refusals (an auth store
+   *  that did not answer, a request with this key still running) send no body field. */
+  readonly retryAfter: number;
   /** The server refused the stored token on this call, which ended the session (`api.ts`
    *  request): whatever the refusal's words, it reads as an ended session. */
   sessionEnded = false;
@@ -36,6 +39,7 @@ export class ApiError extends Error {
     message?: string;
     requestId?: string;
     detail?: Record<string, unknown>;
+    retryAfter?: number;
   }) {
     super(opts.message || `HTTP ${opts.status}`);
     this.name = "ApiError";
@@ -44,6 +48,7 @@ export class ApiError extends Error {
     this.requestId = opts.requestId ?? "";
     this.serverMessage = opts.message ?? "";
     this.detail = opts.detail ?? {};
+    this.retryAfter = opts.retryAfter ?? 0;
   }
 }
 
@@ -115,5 +120,6 @@ export async function apiErrorFromResponse(r: Response): Promise<ApiError> {
     message: parsed.message,
     requestId: r.headers.get("X-Request-Id") ?? "",
     detail: parsed.detail,
+    retryAfter: Number(r.headers.get("Retry-After")) || 0,
   });
 }

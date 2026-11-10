@@ -1868,6 +1868,8 @@ export function HealthTab({ id }: { id: CodeId }) {
   const [cov, setCov] = useState<CodeCoverage | null | undefined>(undefined);
   const [recent, setRecent] = useState<CodeRecentCommitRow[] | "failed" | null>(null);
   const [errs, setErrs] = useState<{ rows: CodeIndexErrorRow[]; total: number } | null | undefined>(undefined);
+  // Why each section's last read failed, said beside its "Couldn't load" line.
+  const [why, setWhy] = useState<{ cov?: string; recent?: string; errs?: string }>({});
   const [showErrs, setShowErrs] = useState(false);
   const [spend, setSpend] = useState<{ usd: number; ops: number } | null | undefined>(undefined);
 
@@ -1889,23 +1891,29 @@ export function HealthTab({ id }: { id: CodeId }) {
         .then((c) => {
           if (live()) setCov(c);
         })
-        .catch(() => {
-          if (live()) setCov((c) => c ?? null);
+        .catch((e: unknown) => {
+          if (!live()) return;
+          setCov((c) => c ?? null);
+          setWhy((w) => ({ ...w, cov: humanizeError(e, { bare: true }) }));
         });
       codeRecentCommits(id, 15, { signal })
         .then((r) => {
           if (live()) setRecent(r.rows);
         })
-        .catch(() => {
+        .catch((e: unknown) => {
           // Said as a failure: "no commits recorded yet" would be a claim.
-          if (live()) setRecent((r) => (Array.isArray(r) ? r : "failed"));
+          if (!live()) return;
+          setRecent((r) => (Array.isArray(r) ? r : "failed"));
+          setWhy((w) => ({ ...w, recent: humanizeError(e, { bare: true }) }));
         });
       codeIndexErrors(id, 100, { signal })
         .then((e) => {
           if (live()) setErrs(e);
         })
-        .catch(() => {
-          if (live()) setErrs((x) => x ?? null);
+        .catch((e: unknown) => {
+          if (!live()) return;
+          setErrs((x) => x ?? null);
+          setWhy((w) => ({ ...w, errs: humanizeError(e, { bare: true }) }));
         });
       listCostRollup(id, { days: 7, groupBy: ["operation"], signal })
         .then((r) => {
@@ -2071,7 +2079,7 @@ export function HealthTab({ id }: { id: CodeId }) {
         {cov === undefined ? (
           <Loading layout="inline" label="Loading coverage" />
         ) : cov === null ? (
-          <div className="text-xs text-text-muted">Couldn't load coverage.</div>
+          <div className="text-xs text-text-muted">Couldn't load coverage: {why.cov}</div>
         ) : (
           <div className="space-y-2">
             <Table
@@ -2185,7 +2193,7 @@ export function HealthTab({ id }: { id: CodeId }) {
           {recent === null ? (
             <Loading layout="inline" label="Loading recent commits" />
           ) : recent === "failed" ? (
-            <div className="text-xs text-text-muted">Couldn't load the recent commits.</div>
+            <div className="text-xs text-text-muted">Couldn't load the recent commits: {why.recent}</div>
           ) : recent.length === 0 ? (
             <div className="text-xs text-text-muted">No commits recorded yet.</div>
           ) : (
@@ -2232,7 +2240,9 @@ export function HealthTab({ id }: { id: CodeId }) {
             {errs ? <span className="tabular text-text-muted">({fmtInt(errs.total)})</span> : null}
           </button>
           {errs === undefined && <Loading layout="inline" label="Loading the index errors" className="mt-2" />}
-          {errs === null && <div className="mt-2 text-xs text-text-muted">Couldn't load the index errors.</div>}
+          {errs === null && (
+            <div className="mt-2 text-xs text-text-muted">Couldn't load the index errors: {why.errs}</div>
+          )}
           {errs && errs.total === 0 && (
             <div className="mt-2 text-xs text-text-muted">
               Every file under the indexed prefixes parsed and chunked.

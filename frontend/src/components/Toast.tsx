@@ -85,11 +85,18 @@ export function toast(msg: string, kind: ToastKind = "ok", opts: ToastOpts = {})
   _listeners.forEach((l) => l(item));
 }
 
-/** An error toast for a thrown value: `context: <humanized error>` with the
- *  request id underneath when the failure carried one. */
+/** An error toast for a thrown value: `context: <the server's words>` (the context is the
+ *  lead-in, so humanizeError's own is left out) with the request id underneath when the
+ *  failure carried one. It stays up long enough to read: 8 s plus 50 ms a character, at
+ *  most 20 s, and hovering or focusing it holds it. */
 export function toastError(context: string, err: unknown): void {
   const rid = errorRequestId(err);
-  toast(`${context}: ${humanizeError(err)}`, "error", rid ? { detail: `request id ${rid}` } : {});
+  const msg = `${context}: ${humanizeError(err, { bare: true })}`;
+  toast(msg, "error", { ...(rid ? { detail: `request id ${rid}` } : {}), durationMs: errorToastMs(msg) });
+}
+
+export function errorToastMs(msg: string): number {
+  return Math.min(DURATION_MS.error + 50 * msg.length, 20_000);
 }
 
 const MAX_STACK = 4;
