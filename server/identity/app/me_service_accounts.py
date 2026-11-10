@@ -26,9 +26,10 @@ from server.core.datetimes import naive_utc_now_seconds
 from server.core.errors import BackendUnavailableError
 from server.core.grant_sql import LIVE_GRANT
 from server.identity.app import me_callers, namespace_classification, token_grants
-from server.identity.app.caller_home import caller_org, default_namespace
+from server.identity.app.caller_home import caller_org, default_namespace, star_home
 from server.identity.app.restricted_access import note_restricted_grants
 from server.identity.app.token_clients import client_configs
+from server.identity.app.token_saves_to import asked_saves_to, saves_to_target
 from server.operations.base import GRANT_ROLES, Role, grant_rank
 from server.settings import settings
 
@@ -239,6 +240,7 @@ async def save_token(
                 # reads through its creator's live grants (server/auth/service_accounts.py).
                 "inherit_creator_grants": True,
                 "lineage": sorted(lineage),
+                "saves_to": delegated.saves_to,
             }
         ],
     )
@@ -317,6 +319,10 @@ async def me_service_accounts_create(
                           #   defaults to the top-level `role`, else the
                           #   caller's live grant on that namespace.
       role: str|null      # default role for bare entries (viewer|writer|admin)
+      saves_to: str|null  # a list token: where calls that name no namespace save,
+                          #   a memory namespace of the list it may write (422
+                          #   otherwise); null: the parent token's when it may
+                          #   write there, else the first such entry. Not with "*".
       ttl_days: int|null  # default and null: 90 days; 0: never expires
 
     Each namespace's role is delegated from the caller's token
@@ -342,6 +348,7 @@ async def me_service_accounts_create(
     requested_role = _requested_roles(payload)
     ttl_seconds = parse_ttl_days(payload.get("ttl_days"))
     everything = "*" in requested_role
+    asked = asked_saves_to(payload.get("saves_to"), everything=everything)
     # A restricted repository's bound tracker record is named beside it, read-only.
     named = [
         ns
@@ -364,6 +371,9 @@ async def me_service_accounts_create(
             is_service_account=True,
         )
         # Read before anything is saved, so a refusal or a failed read strands no token.
+        delegated = await saves_to_target(
+            org, delegated, asked, before_star=star_home(list(requested_role))
+        )
         restricted_roles = await token_grants.restricted_roles(
             org, subject, delegated, requested_role
         )
@@ -460,13 +470,13 @@ async def me_service_accounts_list(request: Request) -> dict[str, object]:
             s.created_at AS created_at, s.expires_at AS expires_at,
             s.revoked_at AS revoked_at, s.revoked_by AS revoked_by,
             s.kind AS kind, s.client AS client, s.ns_roles AS ns_roles,
-            lu.last_used AS last_used_at
+            s.saves_to AS saves_to, lu.last_used AS last_used_at
         -- Filter + FINAL in a subquery, THEN join: CH 26.5's analyzer can't
         -- resolve a WHERE on a FINAL table that is also a JOIN side.
         FROM (
             SELECT name, sa_subject, namespaces, roles, ttl_days, created_by,
                    created_at, expires_at, revoked_at, revoked_by, kind, client,
-                   ns_roles
+                   ns_roles, saves_to
             FROM loom.service_accounts FINAL
             WHERE org = {org:String}
               AND (
@@ -505,6 +515,9 @@ async def me_service_accounts_list(request: Request) -> dict[str, object]:
                 "kind": r.get("kind") or "service_account",
                 "client": r.get("client") or "",
                 "ns_roles": me_callers.parse_ns_roles(r.get("ns_roles")),
+                # Where a list token saves, as minted; "": a `*` token, one with no
+                # default target, or one minted before tokens recorded it.
+                "saves_to": r.get("saves_to") or "",
                 # Made by the caller under any spelling of theirs, not by another person
                 # whose token names a namespace the caller administers.
                 "yours": str(r["created_by"]).lower() in subs,
@@ -546,7 +559,8 @@ async def me_service_accounts_revoke(
             """
             SELECT sa_subject, namespaces, created_by, created_at,
                    expires_at, ttl_days, roles, kind, client,
-                   inherit_creator_grants, ns_roles, revoked_at, version, lineage
+                   inherit_creator_grants, ns_roles, revoked_at, version, lineage,
+                   saves_to
             FROM loom.service_accounts FINAL
             WHERE org = {org:String} AND name = {name:String}
             LIMIT 1

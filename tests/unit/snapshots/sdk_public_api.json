@@ -125,7 +125,8 @@
           "namespaces",
           "name",
           "role",
-          "ttl_days"
+          "ttl_days",
+          "saves_to"
         ],
         "revoke_token": [
           "name"

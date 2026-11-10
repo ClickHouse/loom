@@ -40,7 +40,7 @@ vi.mock("../api", async (importOriginal) => {
     registerNamespace: vi.fn(async () => ({ registered: true })),
   };
 });
-import { createToken, listCodeRepos, listMine } from "../api";
+import { createToken, listCodeRepos, listMine, listTokens } from "../api";
 
 const ORG = "dev";
 function row(namespace: string, over: Partial<MyNamespaceEntry> = {}): MyNamespaceEntry {
@@ -162,9 +162,11 @@ describe("the token form", () => {
     await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-c" }));
     await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
     await userEvent.click(screen.getByRole("checkbox", { name: "Read org/x branch main" }));
-    // The server picks from the saved pick, which the page cannot see: the form states the rule.
-    expect(screen.getByTestId("token-saves-listed")).toHaveTextContent(/The namespace you work in/);
-    expect((await create()).namespaces).toEqual([
+    // It saves to the first ticked namespace it writes, recorded in the token.
+    expect(savesTo()).toHaveTextContent(/^ns-a/);
+    const sent = await create();
+    expect(sent.saves_to).toBe("ns-a");
+    expect(sent.namespaces).toEqual([
       { namespace: "ns-a", role: "admin" },
       { namespace: "ns-c", role: "viewer" },
       { namespace: "ns-b", role: "writer" },
@@ -422,13 +424,147 @@ describe("the token form", () => {
     ]);
   });
 
+  it("only these: a collection at Writer is not where it saves, and the hint says so", async () => {
+    const mine = [...ROWS, row("col-team")];
+    vi.mocked(listMine).mockResolvedValue(mine);
+    useStore.setState({ myNamespaces: mine });
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Read col-team" }, WAIT));
+    expect(screen.getByTestId("token-saves-nowhere")).toHaveTextContent(
+      "Nowhere by default: a call names where it saves.",
+    );
+    expect(
+      screen.getByText(/^To give it a default, tick a memory namespace, not a collection, with Writer\.$/),
+    ).toBeInTheDocument();
+  });
+
+  it("the token list never names a collection as where a token saves now", async () => {
+    const mine = [row("team-y", { role: "viewer" }), row("col-team", { role: "writer" })];
+    vi.mocked(listMine).mockResolvedValue(mine);
+    useStore.setState({ myNamespaces: mine });
+    vi.mocked(listTokens).mockResolvedValue([
+      {
+        name: "bot",
+        sa_subject: "sa:bot",
+        namespaces: ["team-y", "col-team"],
+        roles: ["writer"],
+        ns_roles: { "team-y": "writer", "col-team": "writer" },
+        saves_to: "team-y",
+        yours: true,
+        ttl_days: 90,
+        created_by: "me",
+        created_at: null,
+        expires_at: null,
+        revoked_at: null,
+        revoked_by: "",
+      },
+    ]);
+    try {
+      render(<Setup />);
+      expect(
+        await screen.findByText(/saves nowhere by default now; can't write to team-y/, undefined, WAIT),
+      ).toBeInTheDocument();
+    } finally {
+      vi.mocked(listTokens).mockResolvedValue([]);
+    }
+  });
+
+  it("only these: a repository at Writer alone only reads, since a repository is always read", async () => {
+    const mine = ROWS.map((r) => (r.namespace === "code-x" ? { ...r, role: "writer" as const } : r));
+    vi.mocked(listMine).mockResolvedValue(mine);
+    useStore.setState({ myNamespaces: mine });
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Read org/x branch main" }, WAIT));
+    expect(screen.getByTestId("token-saves-nowhere")).toHaveTextContent("Nowhere: this token only reads.");
+  });
+
   it("only these with nothing writable says it saves nowhere", async () => {
     render(<Setup />);
     await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
     await screen.findByRole("checkbox", { name: "Read ns-a" }, WAIT);
     expect(screen.getByRole("button", { name: /Create token/ })).toBeDisabled();
     await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-c" }));
-    expect(screen.getByTestId("token-saves-nowhere")).toHaveTextContent("Nowhere: it only reads.");
+    expect(screen.getByTestId("token-saves-nowhere")).toHaveTextContent("Nowhere: this token only reads.");
+    expect(await create()).not.toHaveProperty("saves_to");
+  });
+
+  it("only these: where it saves is a ticked namespace it writes, in search order, and is sent", async () => {
+    const mine = [...ROWS, row("col-team"), row("bench-x", { kind: "bench" })];
+    vi.mocked(listMine).mockResolvedValue(mine);
+    useStore.setState({ myNamespaces: mine });
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    for (const ns of ["ns-c", "col-team", "bench-x", "ns-b", "ns-a"]) {
+      await userEvent.click(await screen.findByRole("checkbox", { name: `Read ${ns}` }, WAIT));
+    }
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read org/x branch main" }));
+    // The first it writes by default: ns-c is read-only, a collection, a bench corpus and a
+    // repository are never where memories go.
+    expect(savesTo()).toHaveTextContent(/^ns-b/);
+    const options = await openOptions(/Saves memories to/);
+    for (const ns of ["ns-c", "col-team", "bench-x", "org/x · main", "code-x"]) {
+      expect(within(options).queryByText(ns)).not.toBeInTheDocument();
+    }
+    const text = options.textContent ?? "";
+    expect(text.indexOf("ns-b")).toBeLessThan(text.indexOf("ns-a"));
+    await userEvent.click(within(options).getByText("ns-a"));
+    // A move does not move the pick.
+    await userEvent.click(screen.getByRole("button", { name: "Move ns-a up" }));
+    expect(savesTo()).toHaveTextContent(/^ns-a/);
+    expect((await create()).saves_to).toBe("ns-a");
+  });
+
+  it("only these: with no pick the target is the first in search order, and follows a move", async () => {
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-b" }, WAIT));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-a" }));
+    expect(savesTo()).toHaveTextContent(/^ns-b/);
+    await userEvent.click(screen.getByRole("button", { name: "Move ns-a up" }));
+    expect(savesTo()).toHaveTextContent(/^ns-a/);
+    // Nothing was picked, so nothing was taken away.
+    expect(screen.queryByText(/now: /)).toBeNull();
+    expect((await create()).saves_to).toBe("ns-a");
+  });
+
+  it("only these: a pick that a tick or a role takes away gives way to the first, and says why", async () => {
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-a" }, WAIT));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
+    await pickOption(/Saves memories to/, /^ns-b$/);
+    await pickOption(/^Role on ns-b$/, /^Viewer$/);
+    expect(savesTo()).toHaveTextContent(/^ns-a/);
+    expect(savesTo()).toHaveAccessibleDescription("Saves to ns-a now: it can no longer write to ns-b.");
+    // A move says where it saves itself: the note about the dropped pick goes.
+    await userEvent.click(screen.getByRole("button", { name: "Move ns-b up" }));
+    expect(screen.queryByText(/now: /)).toBeNull();
+    await pickOption(/^Role on ns-b$/, /^Writer$/);
+    await pickOption(/Saves memories to/, /^ns-b$/);
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
+    expect(savesTo()).toHaveAccessibleDescription("Saves to ns-a now: ns-b is no longer ticked.");
+    // The hint is read out when it changes.
+    expect(screen.getByText("Saves to ns-a now: ns-b is no longer ticked.")).toHaveAttribute("aria-live", "polite");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-a" }));
+    expect(screen.getByTestId("token-saves-nowhere")).toHaveTextContent("Nowhere: this token only reads.");
+    // ns-a was only the default, never picked: nothing was taken away, so no note.
+    expect(screen.queryByText(/now: /)).toBeNull();
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-a" }));
+    await pickOption(/Saves memories to/, /^ns-a$/);
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-a" }));
+    expect(screen.getByText("Saves nowhere now: ns-a is no longer ticked.")).toBeInTheDocument();
+  });
+
+  it("everything: a collection is never offered as where it saves", async () => {
+    const mine = [...ROWS, row("col-team")];
+    vi.mocked(listMine).mockResolvedValue(mine);
+    useStore.setState({ myNamespaces: mine });
+    render(<Setup />);
+    await waitFor(() => expect(savesTo()).toHaveTextContent(/^ns-a/), WAIT);
+    const options = await openOptions(/Saves memories to/);
+    expect(within(options).queryByText("col-team")).not.toBeInTheDocument();
   });
 
   it("the result names what the token reads and where it saves, as the server minted it", async () => {
@@ -507,11 +643,86 @@ describe("the token form", () => {
     useStore.setState({ myNamespaces: viewerRows });
     vi.mocked(createToken).mockResolvedValueOnce(created({ namespaces: ["*"], saves_to: "ns-a" }));
     render(<Setup />);
-    expect(await screen.findByTestId("token-saves-nowhere", undefined, WAIT)).toHaveTextContent("Nowhere");
+    const nowhere = await screen.findByTestId("token-saves-nowhere", undefined, WAIT);
+    expect(nowhere).toHaveTextContent("Nowhere: this token only reads.");
+    expect(nowhere).toHaveTextContent("You cannot write to any namespace.");
     expect((await create()).namespaces).toEqual(["*"]);
     expect(await screen.findByTestId("minted-token-scope", undefined, WAIT)).toHaveTextContent(
       "Read-only; calls that name no namespace read ns-a.",
     );
+  });
+
+  it("names a read default as read, not as where it saves, when the token writes only a collection", async () => {
+    // Viewer on ns-a, writer on a collection: no namespace a token saves to unasked.
+    const rows = [row("ns-a", { role: "viewer" }), row("col-team", { role: "writer" })];
+    vi.mocked(listMine).mockResolvedValue(rows);
+    useStore.setState({ myNamespaces: rows });
+    vi.mocked(createToken).mockResolvedValueOnce(created({ namespaces: ["*"], saves_to: "ns-a" }));
+    render(<Setup />);
+    const nowhere = await screen.findByTestId("token-saves-nowhere", undefined, WAIT);
+    expect(nowhere).toHaveTextContent("Nowhere by default.");
+    await create();
+    expect(await screen.findByTestId("minted-token-scope", undefined, WAIT)).toHaveTextContent(
+      "Nowhere by default; calls that name no namespace read ns-a.",
+    );
+  });
+
+  it("names a list token's read default as read when it writes only a collection", async () => {
+    const rows = [row("ns-c", { role: "viewer" }), row("col-team", { role: "writer" })];
+    vi.mocked(listMine).mockResolvedValue(rows);
+    useStore.setState({ myNamespaces: rows });
+    vi.mocked(createToken).mockResolvedValueOnce(
+      created({
+        namespaces: ["ns-c", "col-team"],
+        ns_roles: { "ns-c": "viewer", "col-team": "writer" },
+        roles: [],
+        reads_everything: false,
+        saves_to: "ns-c",
+      }),
+    );
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-c" }, WAIT));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read col-team" }));
+    expect(screen.getByTestId("token-saves-nowhere")).toHaveTextContent(
+      "Nowhere by default: a call names where it saves.",
+    );
+    expect(await create()).not.toHaveProperty("saves_to");
+    expect(await screen.findByTestId("minted-token-scope", undefined, WAIT)).toHaveTextContent(
+      "Nowhere by default; calls that name no namespace read ns-c.",
+    );
+  });
+
+  it("the token list says nothing it cannot know while your namespaces load", async () => {
+    useStore.setState({ myNamespaces: null });
+    vi.mocked(listMine).mockImplementation(() => new Promise(() => undefined));
+    vi.mocked(listTokens).mockResolvedValue([
+      {
+        name: "bot",
+        sa_subject: "sa:bot",
+        namespaces: ["ns-a"],
+        roles: ["writer"],
+        ns_roles: { "ns-a": "writer" },
+        saves_to: "ns-a",
+        yours: true,
+        ttl_days: 90,
+        created_by: "me",
+        created_at: null,
+        expires_at: null,
+        revoked_at: null,
+        revoked_by: "",
+      },
+    ]);
+    try {
+      render(<Setup />);
+      expect(
+        await screen.findByText(/reads only ns-a \(writer\) · saves to ns-a/, undefined, WAIT),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/read-only now/)).toBeNull();
+    } finally {
+      vi.mocked(listTokens).mockResolvedValue([]);
+      vi.mocked(listMine).mockResolvedValue(ROWS);
+    }
   });
 
   it("says when calls must name a namespace, and when it cannot say where it saves", async () => {

@@ -833,7 +833,10 @@ async def admin_token_mint(
     from server.core.datetimes import naive_utc_now_seconds
     from server.identity.app import me_service_accounts as tokens
     from server.identity.app import token_grants
+    from server.identity.app.caller_home import is_memory_home, minted_home, star_home
+    from server.identity.app.namespace_kinds import kind_map
     from server.identity.app.restricted_access import note_restricted_grants
+    from server.identity.app.token_saves_to import asked_saves_to, saves_to_target
 
     # Redundant with the router-level dependency; kept so the gate holds even
     # if this handler is ever mounted on another router.
@@ -860,6 +863,7 @@ async def admin_token_mint(
     for role in input.roles:
         delegable_role(role)
     requested: dict[str, str | None] = {ns: input.requested_role_for(ns) for ns in input.namespaces}
+    asked = asked_saves_to(input.saves_to, everything="*" in requested)
 
     jti = new_jti()
     async with service_account_change(input.org, name):
@@ -896,6 +900,9 @@ async def admin_token_mint(
             # Every namespace of the token; the grant below keeps only the restricted ones.
             flat_role = (delegated.roles or ["viewer"])[0]
             roles_on = delegated.ns_roles or dict.fromkeys(delegated.namespaces, flat_role)
+        delegated = await saves_to_target(
+            input.org, delegated, asked, before_star=star_home(input.namespaces)
+        )
         # Before the token is saved: a refusal (an unread code registry) strands nothing.
         is_code = await token_grants.code_namespace_predicate(input.org, list(roles_on))
         sa_subject = tokens.new_token_subject(input.org, name, creator)
@@ -914,6 +921,13 @@ async def admin_token_mint(
         await _audit_mint(info, input, delegated, sa_subject, jti)
     # Retired: the token's subject is its own, and it is always a service account.
     ignored = sorted({"subject", "is_service_account"} & set(body))
+    # The token's recorded target: a list token's saves_to, else its writable memory home
+    # before `*` (`caller_home.minted_home`), else "" (it only reads, or follows its
+    # owner's pick).
+    home = minted_home(delegated.as_auth(sa_subject))
+    if home and not (is_memory_home(await kind_map(input.org), home) and delegated.writes(home)):
+        home = ""
+    saves_to = delegated.saves_to or home
     return TokenMintOutput.model_validate(
         {
             "token": minted,
@@ -926,6 +940,7 @@ async def admin_token_mint(
             "ns_roles": delegated.ns_roles or None,
             "consumer": input.consumer,
             "ttl_seconds": delegated.ttl_seconds,
+            "saves_to": saves_to,
             "ignored_args": ignored,
         }
     )

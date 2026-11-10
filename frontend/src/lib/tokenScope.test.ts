@@ -74,10 +74,14 @@ describe("describeTokenScope", () => {
       "reads everything you belong to · saves to the namespace you pick in Loom",
     );
   });
-  it("a `*` token of someone who writes nowhere is read-only", () => {
+  it("a `*` token of someone who writes nowhere is read-only, and of one who writes only a collection saves nowhere by default", () => {
     expect(describeTokenScope({ namespaces: ["*"], roles: ["writer"] }, { writable: [] })).toBe(
       "reads everything you belong to · read-only",
     );
+    // A collection a call names is still written: not read-only.
+    expect(
+      describeTokenScope({ namespaces: ["*"], roles: ["writer"] }, { writable: [], writesAny: ["col-team"] }),
+    ).toBe("reads everything you belong to · saves nowhere by default");
   });
   it("a `*` token minted read-only says so", () => {
     expect(describeTokenScope({ namespaces: ["ns", "*"], roles: ["viewer"] })).toBe(
@@ -131,6 +135,51 @@ describe("describeTokenScope", () => {
         { label },
       ),
     ).toBe("reads only org/secret · main (viewer) · read-only");
+  });
+  it("a listed token names where its mint recorded it saves, and says when it can no longer write there", () => {
+    const t = { namespaces: ["docs", "mine"], roles: ["viewer", "writer"], saves_to: "mine" };
+    expect(describeTokenScope({ ...t, ns_roles: { docs: "viewer", mine: "writer" } })).toBe(
+      "reads only docs (viewer), mine (writer) · saves to mine",
+    );
+    // Its owner lost write there since the mint: the token writes through the owner's grants,
+    // so its calls land in the next namespace both may write, or nowhere.
+    const roles = { ns_roles: { docs: "writer", mine: "writer" } };
+    expect(describeTokenScope({ ...t, ...roles }, { writable: ["docs"] })).toBe(
+      "reads only docs, mine (writer) · saves to docs now; can't write to mine",
+    );
+    expect(describeTokenScope({ ...t, ns_roles: { docs: "viewer", mine: "writer" } }, { writable: ["docs"] })).toBe(
+      "reads only docs (viewer), mine (writer) · read-only now; can't write to mine",
+    );
+    // Its owner still writes a listed collection, which a call may name.
+    expect(
+      describeTokenScope(
+        {
+          ...t,
+          namespaces: ["docs", "mine", "col-team"],
+          ns_roles: { docs: "viewer", mine: "writer", "col-team": "writer" },
+        },
+        { writable: ["docs"], writesAny: ["docs", "col-team"] },
+      ),
+    ).toBe(
+      "reads only docs (viewer), mine (writer), col-team (writer) · saves nowhere by default now; can't write to mine",
+    );
+    expect(describeTokenScope({ ...t, ...roles }, { writable: ["mine"] })).toBe(
+      "reads only docs, mine (writer) · saves to mine",
+    );
+    // Minted before tokens recorded it: where it saves can follow its owner's pick, so the
+    // line names no namespace.
+    expect(
+      describeTokenScope({ namespaces: ["docs"], roles: ["writer"], ns_roles: { docs: "writer" } }, { yours: false }),
+    ).toBe("reads only docs (writer)");
+  });
+  it("a `*` token whose home is a collection follows its owner's pick: a collection is no token's home", () => {
+    // The page's writable list leaves collections out (Tokens.tsx useWritable), as the server does.
+    expect(describeTokenScope({ namespaces: ["col-team", "*"], roles: ["writer"] }, { writable: ["team"] })).toBe(
+      "reads everything you belong to · saves to the namespace you pick in Loom",
+    );
+    expect(describeTokenScope({ namespaces: ["col-team", "*"], roles: ["writer"] }, { yours: false })).toBe(
+      "reads everything its owner belongs to · saves to the namespace its owner picks in Loom",
+    );
   });
   it("a token with no claim reads nothing", () => {
     expect(describeTokenScope({ namespaces: [], roles: ["writer"] })).toBe("reads nothing");

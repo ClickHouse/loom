@@ -16,11 +16,16 @@ import pytest
 from fastapi import HTTPException
 
 from server.auth import authz, delegation
+from server.auth import jwt as jwt_mod
 from server.auth.jwt import AuthInfo, verify_token
 from server.core import grant_cache
+from server.core.principals import COLLECTION_PREFIX
 from server.identity.app import me_service_accounts as me
 from server.operations.base import Role, grant_rank
 from server.settings import settings
+
+# A collection: shared reading, never a token's target.
+COL = f"{COLLECTION_PREFIX}team"
 
 saved: list[dict[str, Any]] = []
 
@@ -430,6 +435,7 @@ async def test_the_saved_row_is_the_token_list_row(
         "client": "",
         "inherit_creator_grants": True,
         "lineage": ["alice"],  # the subject that made it
+        "saves_to": "",  # a `*` token: its record is the name before `*`
     }
 
 
@@ -456,6 +462,13 @@ _SHAPES = [
 
 
 @pytest.mark.asyncio
+async def test_the_saves_to_claim_round_trips_and_an_older_token_carries_none() -> None:
+    claimed = jwt_mod.mint_token("sa:x", "o", ["a", "b"], ["writer"], saves_to="b")
+    assert verify_token(claimed).saves_to == "b"
+    assert verify_token(jwt_mod.mint_token("sa:x", "o", ["a"], ["writer"])).saves_to == ""
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(("requested", "scoped"), _SHAPES)
 async def test_the_identity_saves_to_reads_is_the_one_the_token_verifies_as(
     monkeypatch: pytest.MonkeyPatch, grants: dict, requested: dict, scoped: bool
@@ -472,6 +485,8 @@ async def test_the_identity_saves_to_reads_is_the_one_the_token_verifies_as(
         ttl_seconds=3600,
         is_service_account=True,
     )
+    if scoped:  # a list token with its recorded target
+        delegated = dataclasses.replace(delegated, saves_to="a")
     verified = verify_token(delegated.mint("sa:cursor-ab12cd"))
     built = delegated.as_auth("sa:cursor-ab12cd")
     # Set at verification only: the token's id and its iat/exp.
@@ -492,3 +507,175 @@ async def test_the_answer_names_the_expiry_the_saved_row_holds(
     out = await _setup(monkeypatch, _caller(), {"ttl_days": 30})
     [row] = saved
     assert out["expires_at"] == row["expires_at"].isoformat()
+
+
+# ---- Where a list token saves: chosen at mint, signed into the token ----
+
+
+@pytest.fixture
+def listed(monkeypatch: pytest.MonkeyPatch, grants: dict) -> dict[str, Any]:
+    """alice writes `a`, `b` and the collection `COL`, reads `v`, and `code-x` is a
+    repository she writes. The owner's saved switcher pick is `state["saved"]`; the kinds
+    read fresh each time."""
+    from server.identity.app import caller_defaults, namespace_kinds
+
+    grants.update(
+        {
+            ("o", "b", "alice"): Role.WRITER,
+            ("o", "v", "alice"): Role.VIEWER,
+            ("o", "code-x", "alice"): Role.WRITER,
+            ("o", COL, "alice"): Role.WRITER,
+        }
+    )
+    state: dict[str, Any] = {"saved": "", "kinds": {"code-x": "code"}, "down": False}
+
+    async def _saved(org: str, subject: str, *, ch: Any = None) -> str:
+        return str(state["saved"])
+
+    async def _kinds(org: str, *, fail_closed: bool = False) -> dict[str, str]:
+        if state["down"]:
+            from server.core.errors import BackendUnavailableError
+
+            assert fail_closed  # the mint's check: never a target picked on a guess
+            raise BackendUnavailableError("kinds could not be read")
+        return dict(state["kinds"])
+
+    monkeypatch.setattr(caller_defaults, "saved_default", _saved)
+    monkeypatch.setattr(namespace_kinds, "kind_map", _kinds)
+    return state
+
+
+@pytest.mark.asyncio
+async def test_a_list_token_keeps_saving_where_it_was_minted_after_the_owner_picks_another(
+    monkeypatch: pytest.MonkeyPatch, listed: dict
+) -> None:
+    from server.identity.app.caller_home import default_namespace
+
+    body = {"name": "ci", "namespaces": ["a", "b"], "saves_to": "b"}
+    out = await _setup(monkeypatch, _caller(), body)
+    token = verify_token(out["token"])
+    assert token.saves_to == "b" and out["saves_to"] == "b" and saved[0]["saves_to"] == "b"
+    listed["saved"] = "a"  # the owner switches namespace on the dashboard
+    assert await default_namespace(token, "o") == "b"
+
+
+@pytest.mark.asyncio
+async def test_a_list_token_without_saves_to_saves_to_its_first_writable_memory_entry(
+    monkeypatch: pytest.MonkeyPatch, listed: dict
+) -> None:
+    body = {"namespaces": [{"namespace": "a", "role": "viewer"}, "code-x", COL, "b"]}
+    out = await _setup(monkeypatch, _caller(), body)
+    assert verify_token(out["token"]).saves_to == "b" and out["saves_to"] == "b"
+
+
+@pytest.mark.asyncio
+async def test_a_read_only_list_token_records_nowhere(
+    monkeypatch: pytest.MonkeyPatch, listed: dict
+) -> None:
+    out = await _setup(monkeypatch, _caller(), {"namespaces": ["a", "v"], "role": "viewer"})
+    assert verify_token(out["token"]).saves_to == "" and saved[0]["saves_to"] == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body", "named"),
+    [
+        ({"namespaces": ["a", "v"], "saves_to": "v"}, "'v'"),  # read-only there
+        ({"namespaces": ["a", "code-x"], "saves_to": "code-x"}, "'code-x'"),  # a repository
+        ({"namespaces": ["a", COL], "saves_to": COL}, f"'{COL}'"),  # shared
+        ({"namespaces": ["a"], "saves_to": "b"}, "'b'"),  # not in the list
+        ({"namespaces": [{"namespace": "a", "role": "viewer"}], "saves_to": "a"}, "'a'"),
+        ({"namespaces": ["a", "*"], "saves_to": "a"}, '"*"'),  # `*` keeps the name before it
+        ({"saves_to": "a"}, '"*"'),
+        ({"namespaces": ["a"], "saves_to": 7}, "namespace name"),
+    ],
+)
+async def test_a_saves_to_the_token_may_not_save_in_is_a_422_naming_it(
+    monkeypatch: pytest.MonkeyPatch, listed: dict, body: dict, named: str
+) -> None:
+    with pytest.raises(HTTPException) as err:
+        await _setup(monkeypatch, _caller(), body)
+    assert err.value.status_code == 422 and named in err.value.detail["message"]
+    assert not saved
+
+
+@pytest.mark.asyncio
+async def test_unreadable_kinds_refuse_the_list_mint_before_anything_is_saved(
+    monkeypatch: pytest.MonkeyPatch, listed: dict
+) -> None:
+    from server.core.errors import BackendUnavailableError
+
+    listed["down"] = True
+    with pytest.raises(BackendUnavailableError):
+        await _setup(monkeypatch, _caller(), {"namespaces": ["a", "b"]})
+    assert not saved
+
+
+def _list_parent(**kw: Any) -> AuthInfo:
+    """A delegated list token alice made that saves to `b`."""
+    return _caller(
+        subject="sa:laptop-ab12cd",
+        is_service_account=True,
+        creator="alice",
+        namespaces=("a", "b"),
+        roles=(),
+        ns_roles=(("a", "writer"), ("b", "writer")),
+        saves_to="b",
+        parent_subjects=(),
+        **kw,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_child_of_a_list_token_saves_where_its_parent_does(
+    monkeypatch: pytest.MonkeyPatch, listed: dict
+) -> None:
+    out = await _setup(monkeypatch, _list_parent(), {"namespaces": ["a", "b"]})
+    assert verify_token(out["token"]).saves_to == "b"
+    # A child that may not write there takes its own first writable entry.
+    saved.clear()
+    body = {"namespaces": ["a", {"namespace": "b", "role": "viewer"}]}
+    out = await _setup(monkeypatch, _list_parent(), body)
+    assert verify_token(out["token"]).saves_to == "a"
+
+
+@pytest.mark.asyncio
+async def test_star_under_a_list_parent_saves_to_the_name_before_star_else_the_parents(
+    monkeypatch: pytest.MonkeyPatch, listed: dict
+) -> None:
+    out = await _setup(monkeypatch, _list_parent(), {"namespaces": ["a", "*"]})
+    token = verify_token(out["token"])
+    assert "*" not in token.namespaces and token.saves_to == "a"
+    saved.clear()
+    out = await _setup(monkeypatch, _list_parent(), {"namespaces": "*"})
+    assert verify_token(out["token"]).saves_to == "b"
+
+
+@pytest.mark.asyncio
+async def test_a_star_token_records_no_saves_to(
+    monkeypatch: pytest.MonkeyPatch, listed: dict
+) -> None:
+    out = await _setup(monkeypatch, _caller(), {"namespaces": ["b", "*"]})
+    assert verify_token(out["token"]).saves_to == "" and out["saves_to"] == "b"
+
+
+@pytest.mark.asyncio
+async def test_a_collection_before_star_is_a_422(
+    monkeypatch: pytest.MonkeyPatch, listed: dict
+) -> None:
+    with pytest.raises(HTTPException) as err:
+        await _setup(monkeypatch, _caller(), {"namespaces": [COL, "*"]})
+    assert err.value.status_code == 422 and "collection" in err.value.detail["message"]
+    assert not saved
+
+
+@pytest.mark.asyncio
+async def test_a_star_child_never_inherits_a_parents_target(
+    monkeypatch: pytest.MonkeyPatch, listed: dict
+) -> None:
+    """A parent `_expand_wildcard` does not narrow (no creator, no ns_roles) keeps `*` in
+    its child: the child takes no target from it, since a `*` token records none."""
+    parent = _caller(namespaces=("a", "b"), saves_to="b")
+    out = await _setup(monkeypatch, parent, {"namespaces": ["b", "*"]})
+    token = verify_token(out["token"])
+    assert "*" in token.namespaces and token.saves_to == ""

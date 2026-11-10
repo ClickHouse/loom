@@ -187,8 +187,10 @@ routes serve the dashboard; they are not an integration surface.
   `LOOM_DEFAULT_NAMESPACE` only, never persists a different pick, and ignores a URL's
   `?namespace=`.
 - Choosing a namespace in the picker also saves it server-side as the person's default,
-  so MCP clients pick up the same namespace on their next call. A link's namespace is
-  never saved.
+  so a sign-in and a `*` token that names no namespace before `*` pick up the same
+  namespace on their next call; a list token saves where its mint recorded
+  ([tokens and grants](../guides/tokens-and-grants.md)). A link's namespace is never
+  saved.
 - A token whose namespaces claim is `*` reads namespaces the picker does not list; a link
   to one of those opens the page that says the account has no access.
 - The rail's links carry no namespace: one opened in a new tab shows the saved pick.
