@@ -65,7 +65,8 @@ _CALLERS = {
     "the worker's sends are its durable claims",
     "server/memory/app/blacklist_sweep.py": "tombstones through its own commit",
     "server/memory/app/bulk_set.py": "decides a write, which commits; a dedup against "
-    "an undelivered keeper answers the caller and sends nothing",
+    "an undelivered keeper answers the caller, and its usage event names a random id a "
+    "failover may lose, which no row then holds",
     "server/memory/app/conflicts.py": "refuses a write before its commit",
     "server/memory/app/curation.py": "scrubs delete; a row kept for a head a failover "
     "loses is residue the reconcile removes",
