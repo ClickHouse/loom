@@ -1013,13 +1013,13 @@ its setup and, where the server reported one, its build.
 **Bytes per key**, with the row shape these runs wrote (a commit's full `loom.memory` row
 as JSON in Postgres):
 
-| Store      | Table               | Bytes                       | Per key |
-| ---------- | ------------------- | --------------------------- | ------: |
-| ClickHouse | `memory_embeddings` | 13,210 per row              |  13,210 |
-| ClickHouse | `memory`            | 92 per head after merges    |      92 |
-| ClickHouse | `memory_versions`   | 110 per version             |     264 |
-| Postgres   | `memory_current`    | 1,594 to 1,634 per head     |   1,623 |
-| Postgres   | `memory_revisions`  | 2,149 to 2,151 per revision |   5,160 |
+| Store      | Table               | Bytes                                           | Per key |
+| ---------- | ------------------- | ----------------------------------------------- | ------: |
+| ClickHouse | `memory_embeddings` | 13,210 per row                                  |  13,210 |
+| ClickHouse | `memory`            | 92 (single) to 161 (zipf) per head after merges |      92 |
+| ClickHouse | `memory_versions`   | 107 to 110 per version                          |     264 |
+| Postgres   | `memory_current`    | 1,594 to 1,634 per head                         |   1,623 |
+| Postgres   | `memory_revisions`  | 2,149 to 2,151 per revision                     |   5,160 |
 
 **Cost per million memories**, at list prices
 ([ClickHouse Cloud pricing](https://clickhouse.com/pricing), AWS us-east-1). Storage: 13.6 GB in ClickHouse is $0.34 a month at $25.30 per TB-month; the 6.8 GB in
@@ -1104,7 +1104,8 @@ authority's run:
 | ClickHouse | one user               |    113 |     186 | 504 `BACKEND_TIMEOUT` (a write past 60 s)     |
 | ClickHouse | an org's 10 namespaces | 52,071 |     236 | failed: `memory.tombstone` read past its 30 s |
 
-During the ClickHouse runs the erasure's mutations of `memory_embeddings` held the server:
+The org erasures ran with `external: false` (Loom's own stores only); these stores have no
+external backend, so they ran the steps the user erasures did. During the ClickHouse runs the erasure's mutations of `memory_embeddings` held the server:
 a `count()` over 19,941 rows took 153 s and a `system.mutations` lookup 184 s.
 
 **Postgres** at zipf 200k (200,000 heads, 480,000 revisions as loaded):

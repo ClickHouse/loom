@@ -1796,7 +1796,7 @@
   "cost_20k_postgres": {
    "shape": "single",
    "authority": "postgres",
-   "build": "3672a724b",
+   "build": "not recorded (a pre-merge state of the bulk peer-read branch)",
    "parts_before": {
     "memory": {
      "parts": 13,
@@ -1996,7 +1996,7 @@
   "cost_20k_clickhouse": {
    "shape": "single",
    "authority": "clickhouse",
-   "build": "3672a724b",
+   "build": "not recorded (a pre-merge state of the bulk peer-read branch)",
    "parts_before": {
     "memory": {
      "parts": 15,

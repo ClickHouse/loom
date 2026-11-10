@@ -267,8 +267,8 @@ async def _load_pg(args: argparse.Namespace) -> None:
     ch = ch_client(env)
     own_stores(ch)
     scopes = ch.query(
-        "SELECT org, namespace, count() FROM loom.memory_versions "
-        "WHERE startsWith(org, 'scale-') GROUP BY org, namespace ORDER BY org, namespace"
+        "SELECT DISTINCT org, namespace FROM loom.memory_versions "
+        "WHERE startsWith(org, 'scale-') ORDER BY org, namespace"
     ).result_rows
     t0 = time.monotonic()
     done = 0
@@ -289,7 +289,7 @@ async def _load_pg(args: argparse.Namespace) -> None:
         "row",
         "audit",
     )
-    for org, namespace, _n in scopes:
+    for org, namespace in scopes:
         seq = 0
         batch: list[tuple[Any, ...]] = []
         head_seq: dict[tuple[str, str, str, str], int] = {}
@@ -694,10 +694,10 @@ def tenant_parts(ch: Any, org: str, ns: str) -> int:
     )
 
 
-def _pg_run(env: dict[str, str], fn: Any) -> Any:
+def _pg_run[T](env: dict[str, str], fn: Callable[[Any], Awaitable[T]]) -> T:
     import asyncpg
 
-    async def go() -> Any:
+    async def go() -> T:
         conn = await asyncpg.connect(pg_dsn(env))
         try:
             return await fn(conn)
@@ -728,8 +728,7 @@ def pg_sizes(env: dict[str, str]) -> dict[str, Any]:
             }
         return out
 
-    sizes: dict[str, Any] = _pg_run(env, go)
-    return sizes
+    return _pg_run(env, go)
 
 
 def pg_vacuum_s(env: dict[str, str], table: str) -> float:
@@ -738,8 +737,7 @@ def pg_vacuum_s(env: dict[str, str], table: str) -> float:
         await pg.execute(f"VACUUM (ANALYZE) loom.{table}")
         return round(time.monotonic() - t, 2)
 
-    seconds: float = _pg_run(env, go)
-    return seconds
+    return _pg_run(env, go)
 
 
 def pg_dump_org_s(env: dict[str, str], org: str) -> dict[str, float]:
@@ -762,8 +760,7 @@ def pg_dump_org_s(env: dict[str, str], org: str) -> dict[str, float]:
             )
         return {"seconds": round(time.monotonic() - t, 2), "bytes": total}
 
-    out: dict[str, float] = _pg_run(env, go)
-    return out
+    return _pg_run(env, go)
 
 
 def measure(args: argparse.Namespace) -> None:
@@ -1063,6 +1060,8 @@ def erase(args: argparse.Namespace) -> None:
                     "scope_value": json.dumps({"namespaces": nss, "purge": True}),
                     "requester": "scale-bench",
                     "purge": True,
+                    # Loom's own stores only: these private stores have no external
+                    # backend, so the org saga runs the steps the user saga does.
                     "external": False,
                 },
             )
@@ -1101,8 +1100,7 @@ def pg_dead_rows(env: dict[str, str], fraction: float) -> dict[str, dict[str, in
         )
         return {r["relname"]: {"dead": r["n_dead_tup"], "live": r["n_live_tup"]} for r in rows}
 
-    out: dict[str, dict[str, int]] = _pg_run(env, go)
-    return out
+    return _pg_run(env, go)
 
 
 def pg_ops(args: argparse.Namespace) -> None:
