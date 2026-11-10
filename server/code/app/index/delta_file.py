@@ -304,7 +304,7 @@ class DeltaFile:
                     continue
                 for index, _ in enumerate(_array(values)):
                     if index != current[at]:
-                        values.span()  # checked by the first read; not applied
+                        values.span(entry=True)  # checked by the first read; not applied
                         continue
                     entry = _entry(values.text()[0], index)
                     if entry.path != self.paths[index]:  # the entry the plan admitted

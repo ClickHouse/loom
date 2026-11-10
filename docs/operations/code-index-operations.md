@@ -350,9 +350,10 @@ memory the workers process has. The full index of such a tree takes about an hou
     KB, a few MiB of bookkeeping: raise both for it.
   - `LOOM_CODE_SCIP_DELTA_ROUND_MAX_NODES` (3,000,000) bounds one round's memory: the
     counted bytes one apply round parses. A round holds at most 100 files, and is
-    released before the next is parsed; one file entry alone may fill it, and a value
-    over it fails the pass, naming the entry (the deleted paths are read one at a
-    time, each its own value). A fixed cap of 64 million characters, not a setting,
+    released before the next is parsed; one file entry alone may fill it, and a file
+    entry over it fails the pass, naming the entry. Any other value that large (a
+    deleted path, a header value, an ignored key) reads `delta invalid`, since the
+    harness never writes one; the deleted paths are read one at a time. A fixed cap of 64 million characters, not a setting,
     bounds one value's and one round's text the same way; a real entry has about 32
     characters per counted byte, so for one it binds near 2,000,000 counted bytes.
     The largest file entry of a large C++ tree's full run holds about 600,000 counted
