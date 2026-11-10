@@ -371,7 +371,7 @@ async def run_saga(
                 current_step=len(completed),
                 failure_reason=reason,
                 completed_at=completed_at,
-                extra=_verify_columns(verify, census),
+                extra=_verify_columns(verify),
             )
             await audit.emit(
                 event_type="erasure.failed",
@@ -414,7 +414,7 @@ async def run_saga(
         steps_completed=sorted(completed),
         current_step=99,
         completed_at=completed_at,
-        extra=_verify_columns(verify, census),
+        extra=_verify_columns(verify),
     )
 
     await audit.emit(
@@ -490,7 +490,7 @@ def verify_columns_from_output(out: ErasureRequestOutput | None) -> VerifyColumn
     }
 
 
-def _verify_columns(verify: dict[str, Any], census: dict[str, int] | None) -> VerifyColumns:
+def _verify_columns(verify: dict[str, Any]) -> VerifyColumns:
     """erasure_requests columns from the verify holder; empty when no census ran (the
     census tail raised), or when it found nothing and left a store uncounted
     (`census_kept`)."""
@@ -502,7 +502,7 @@ def _verify_columns(verify: dict[str, Any], census: dict[str, int] | None) -> Ve
         "residue": json.dumps(
             {t: n for t, n in (verify.get("per_table") or {}).items() if n}, sort_keys=True
         ),
-        "census": _census_column(census),
+        "census": _census_column(_census(verify)),
     }
 
 

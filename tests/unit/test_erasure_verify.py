@@ -238,7 +238,7 @@ def test_verify_step_fails_closed_on_residue_and_fills_the_holder(monkeypatch) -
     assert ei.value.count == 4
     assert "memory_belief_sources" in str(ei.value) and "loom.memory'" not in str(ei.value)
     assert holder["count"] == 4 and holder["verified_at"] is not None
-    cols = h._verify_columns(holder, h._census(holder))
+    cols = h._verify_columns(holder)
     assert cols["residue_count"] == 4
     assert (
         '"loom.memory_belief_sources": 3' in cols["residue"]
@@ -253,10 +253,7 @@ def test_verify_step_passes_on_zero(monkeypatch) -> None:
     monkeypatch.setattr(erasure_census, "residue_census", _census)
     holder: dict[str, Any] = {}
     assert asyncio.run(saga_steps._step_verify_residue("o", "user_id", "alice", holder)) == 0
-    assert (
-        h._verify_columns(holder, h._census(holder))["residue_count"] == 0
-        and h._verify_columns({}, h._census({})) == {}
-    )
+    assert h._verify_columns(holder)["residue_count"] == 0 and h._verify_columns({}) == {}
 
 
 def test_every_saga_step_table_keeps_the_derived_substrates() -> None:

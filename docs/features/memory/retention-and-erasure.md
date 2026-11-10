@@ -241,9 +241,9 @@ finished, and always counts again.
 ### The receipt
 
 `erasure.status` (and `erasure.request`'s answer) carries the receipt of the latest run's
-census. It is absent when the latest ledger row holds no census that counted every store: a
-run in progress, a census that could not run or left a store uncounted, or a row written by
-a build that keeps no census:
+census. `census` is null when the latest ledger row holds no census that counted every
+store: a run in progress, a census that could not run or left a store uncounted, or a row
+written by a build that keeps no census. The receipt's fields:
 
 - `census`: every substrate the census counted and its count, zeros included. Keys are table
   names, `pg:<table>` for the Postgres authority, `objects.document_originals` for the
