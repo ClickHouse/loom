@@ -72,14 +72,17 @@ agent in the UI. It is not Loom authorization; the token on each call is.
   (`/api/agents/chat/stream/:streamId`). The agents API (`/api/agents/v1/chat/completions`)
   streams OpenAI-style chunks, but compresses the response when the client accepts
   compression, and a compressed stream arrives only when the answer is complete: a client
-  that needs incremental tokens sends `Accept-Encoding: identity`.
+  that needs incremental tokens sends `Accept-Encoding: identity`. It runs the MCP tools
+  inside the run and sends no `tool_calls` chunk for them: the stream holds content and
+  reasoning deltas only, the text of every model step as one answer with nothing between
+  steps.
 - **Cancellation.** In the UI path the generation runs server-side, apart from the
   browser connection: closing the tab does not stop it, and its tool calls still reach
   Loom. The stop button (`/api/agents/chat/abort`) stops it. On the agents API, closing
-  the connection stops the run: in one probe, disconnecting mid-answer left no Loom call
-  in the next 20 s. The probe (`run --cancel-probe`) disconnects at the first streamed
-  delta, or after `--cancel-after` seconds (2) without one: the agent writes nothing
-  before its tool calls, so the wait runs out while they run.
+  the connection stops the run: in one probe, disconnecting before the agent's first tool
+  call left no Loom call in the next 20 s. The harness's probe (`run --cancel-probe`)
+  disconnects at the first streamed delta, which follows the agent's tool calls since the
+  agent writes no text before them.
 
 ## What LibreChat stores
 
@@ -147,7 +150,9 @@ orgs, mints a token per person, revokes one, and scores each answer:
 | Tool calls per question                                 | at most 3     | at most 3, 16 in all                                                      |
 | Model cost per answer, every prompt token at list price | at most $0.05 | mean $0.029; max $0.064 (`abstain-cfo`, three searches) misses the target |
 
-The LibreChat numbers are from one run of the 14 memory, inventory, inspect, tune, refusal
+The LibreChat numbers were measured with agent definition version 2, whose answers began
+with a one-line lead-in before the first tool call. They are from one run of the 14
+memory, inventory, inspect, tune, refusal
 and abstention cases, scored against the current `cases.json` with `qualify.py rescore`;
 the direct-path numbers are from a later run of that path alone
 (`qualify.py run --native-only`) on a fresh seed. The document cases below were run
