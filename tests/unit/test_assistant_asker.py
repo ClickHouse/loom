@@ -31,7 +31,7 @@ def _caller(**kw: Any) -> AuthInfo:
 
 
 class _Directory:
-    def __init__(self, restricted: set[str] = set()) -> None:  # noqa: B006 — read only
+    def __init__(self, restricted: set[str]) -> None:
         self.restricted = restricted
 
     def is_restricted_cached(self, org: str, namespace: str) -> bool:
@@ -166,12 +166,8 @@ def test_the_role_is_the_real_gate_s_answer_from_the_grant_maps(
 
         return _Account(active=True, best_grant=Role.VIEWER)
 
-    async def aliases(org: str, subject: str, **_kw: Any) -> list[str]:
-        return [subject]
-
     monkeypatch.setattr(grant_cache, "grant_map", grant_map)
     monkeypatch.setattr("server.auth.delegation._creator_account", account)
-    monkeypatch.setattr("server.auth.aliases.subject_aliases", aliases)
     flat = _caller(subject="alice")
     assert _line(flat).endswith("whose role in this namespace is writer.")
     delegated = _caller(subject="sa:client", creator="bob", ns_roles=((NS, "writer"),))

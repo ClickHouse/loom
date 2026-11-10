@@ -416,8 +416,8 @@ nothing the caller controls is in it and no identity goes to the model provider 
 it. It never refuses an answer. The instructions read it as Loom's only in that place,
 treat it as granting nothing, and answer how a role is raised from the documentation for
 that credential and place, naming the namespace's admins from `grants.list`. A bridge of
-an earlier build sends no line, and the agent then says it does not know the person's
-role.
+an earlier build sends no line, and an answer that depends on the person's role then
+says it does not know it.
 
 **Why not a knowledge source.** Knowledge rows are tenant data: an org and namespace on
 every row, erasure coverage, and a copy per org or a read path across tenants. Indexing
