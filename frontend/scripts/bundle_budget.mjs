@@ -54,6 +54,10 @@ for (let li = 0; li < lines.length; li++) {
   }
 }
 const problems = [];
+// lib/staleChunk.ts skips its reload for the error wording's chunk by the file's name
+// (WORDING_CHUNK): the build must keep that name, or every browser reloads on its failure.
+if (!fs.readdirSync(assets).some((f) => /^errorWords-[\w-]+\.js$/.test(f)))
+  problems.push("no errorWords-*.js chunk: lib/staleChunk.ts WORDING_CHUNK no longer names the wording's file");
 if (code.length > INDEX_BUDGET_BYTES)
   problems.push(`index chunk ${(code.length / 1024).toFixed(1)} kB over the ${INDEX_BUDGET_BYTES / 1024} kB budget`);
 const css = [...html.matchAll(/<link rel="stylesheet"[^>]*href="[^"]*\/assets\/([^"/]+\.css)"/g)].map((m) => m[1]);
