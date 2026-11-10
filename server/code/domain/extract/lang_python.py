@@ -372,7 +372,8 @@ def import_specs(node: Any, source: bytes) -> list[str]:
                 (x for x in c.named_children if x.type == "dotted_name"), None
             )
             member = _dotted(name, source) if name is not None else ""
-        if member and _IDENT_RE.match(member) and len(module) + 1 + len(member) < _MAX_SPEC_CHARS:
+        dot = not module.endswith(".")  # `join_spec` adds one only after a name
+        if member and _IDENT_RE.match(member) and len(module) + dot + len(member) < _MAX_SPEC_CHARS:
             out.append(join_spec(module, member))
     return out
 
