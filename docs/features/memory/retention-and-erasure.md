@@ -292,16 +292,21 @@ SELECT count() FROM loom.sql_v1_agent_events WHERE org = {org:String}
 ```
 
 The `org` filter keeps a grant that covers more than one org (`--all`) to the erasure's org.
-For a namespace scope, pass `--param_ns='<namespace>'` and filter the first three on
-`namespace = {ns:String}` instead of `user_id`; the `sql_v1_agent_events` statement is for a
-user scope only, since a namespace erasure keeps the namespace's request ledger rows. Each
-count is 0 after a completed erasure, with these differences from the census: the views
-leave out restricted namespaces, `sql_v1_memories` leaves out rejected and tombstoned rows
-(the history keeps tombstoned versions), and a summary consolidated from the user's memories
-carries another `user_id`, which the census counts and these queries do not. The request
-ledger count is a separate check outside the receipt: an erasure scrubs a user's request
-ledger rows to `<erased>` rather than deleting them, and the request ledger's view reads its
-31-day window. Every other census key is Loom's count alone.
+Each statement still reads the grant's whole scope before it filters ([what a read
+costs](../../reference/sql-surface.md#what-a-read-costs)), so on a large org or an `--all`
+grant a statement can stop at the SQL user's caps (`LOOM_CH_ANALYSIS_MAX_ROWS_TO_READ`,
+`_MAX_EXECUTION_S`) with an error instead of a count; raise them for the check. For a
+namespace scope, pass `--param_ns='<namespace>'` and filter the first three on `namespace =
+{ns:String}` instead of `user_id`; for a `namespace_list`, run that once per name in its
+`scope_value`'s `namespaces`; the `sql_v1_agent_events` statement is for a user scope only,
+since a namespace erasure keeps the namespace's request ledger rows. Each count is 0 after a
+completed erasure, with these differences from the census: the views leave out restricted
+namespaces, `sql_v1_memories` leaves out rejected and tombstoned rows (the history keeps
+tombstoned versions), and a summary consolidated from the user's memories carries another
+`user_id`, which the census counts and these queries do not. The request ledger count is a
+separate check outside the receipt: an erasure scrubs a user's request ledger rows to
+`<erased>` rather than deleting them, and the request ledger's view reads its 31-day window.
+Every other census key is Loom's count alone.
 
 What the receipt does not cover:
 
