@@ -15,9 +15,10 @@ numbered migrations the server applies on boot. Under the
 [Postgres memory authority](../architecture/storage-authority.md), Postgres holds the
 current content and revisions of every memory key and the head of every knowledge
 document, and ClickHouse keeps the vectors, search and history. Uploaded document
-originals are rows too (`loom.document_blobs`), unless the deployment keeps their bytes in an S3-compatible
-bucket. Outside ClickHouse and that bucket, Loom keeps the code index's git mirrors, a
-cache of the remotes ClickHouse records, and the rate-limit buckets on a shared volume.
+originals are rows too (`loom.document_blobs`), unless the deployment keeps their bytes
+in an S3-compatible bucket. Outside those stores, Loom keeps the code index's git
+mirrors, a cache of the remotes ClickHouse records, and the rate-limit buckets on a
+shared volume.
 
 - **The identity tuple leads the sort keys.** `loom.memory` is ordered by
   `(org, namespace, agent, user_id, session_id, memory_key)`, so scoping a read to a

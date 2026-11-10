@@ -2,7 +2,7 @@
 
 > Loom is a self-hosted MCP server that gives AI agents shared long-term memory, document search with citations and a code index. It stores them in ClickHouse, with Postgres as an option for live memory, and serves them over MCP, HTTP and the Python and TypeScript SDKs.
 
-Start with docs/index.md (the map). To install Loom as a coding agent, follow docs/getting-started/agent-setup.md; to connect one to a running server, docs/getting-started/connect-a-coding-agent.md. Whether Loom fits a use case: docs/getting-started/overview.md. Every operation's fields are in docs/reference/operations/.
+Start with docs/index.md (the map). A coding agent installing Loom: follow docs/getting-started/agent-setup.md; connecting to a running server: docs/getting-started/connect-a-coding-agent.md. Whether Loom fits a use case: docs/getting-started/overview.md. Every operation's fields are in docs/reference/operations/.
 
 ## Getting started
 
@@ -127,7 +127,7 @@ Start with docs/index.md (the map). To install Loom as a coding agent, follow do
 - [Server layout](docs/architecture/server-layout.md): `server/` is organised by domain.
 - [Sharing knowledge](docs/architecture/sharing.md): A collection is a namespace that only grants open.
 - [Storage authority: Postgres for live memory, ClickHouse for search](docs/architecture/storage-authority.md): Loom runs with one of two memory authorities, chosen per deployment by `LOOM_STORAGE_AUTHORITY`.
-- [System overview](docs/architecture/system-overview.md): Loom is a Python server (a FastAPI application plus a supervisor of background workers) and ClickHouse, with Postgres as the memory authority when `LOOM_STORAGE_AUTHORITY` is `postgres` (storage authority).
+- [System overview](docs/architecture/system-overview.md): Loom is a Python server (a FastAPI application plus a supervisor of background workers) and ClickHouse.
 
 ## Benchmarks
 

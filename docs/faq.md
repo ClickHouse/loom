@@ -122,6 +122,7 @@ reproducible from committed files are stated. See [benchmarks](benchmarks/overvi
 ### How is Loom different from putting a vector database next to my app?
 
 One ClickHouse database holds the rows, vectors, text index, graph, audit and erasure
-state, so nothing has to be kept in sync, and each write is checked against what is
-stored. The [overview](getting-started/overview.md) lists what each property costs and
+state, so a search never joins two stores, and each write is checked against what is
+stored. Under the [Postgres memory authority](architecture/storage-authority.md), Postgres
+holds live memory and ClickHouse keeps the vectors and search. The [overview](getting-started/overview.md) lists what each property costs and
 when Loom does not fit.

@@ -1,13 +1,14 @@
 # System overview
 
 Loom is a Python server (a FastAPI application plus a supervisor of background workers)
-and ClickHouse, with Postgres as the memory authority when `LOOM_STORAGE_AUTHORITY` is
-`postgres` ([storage authority](storage-authority.md)). Loom is stateful: everything it
-knows is stored in those stores, including facts and their vectors, documents, conversations, the entity graph,
-the code index, tasks, audit, cost and erasure progress. The server processes keep no
-durable state of their own, so any number of them can serve the same database and a
-request can land on any of them. The few pieces of state kept
-outside ClickHouse are listed under [Deployment topology](#deployment-topology).
+and ClickHouse. Under `LOOM_STORAGE_AUTHORITY=postgres`, Postgres holds live memory and
+the head of every knowledge document ([storage authority](storage-authority.md)). Loom is
+stateful: everything it knows is stored there, including facts and their vectors,
+documents, conversations, the entity graph, the code index, tasks, audit, cost and
+erasure progress. The server processes keep no durable state of their own, so any number
+of them can serve the same stores and a request can land on any of them. The few pieces
+of state kept outside those stores are listed under
+[Deployment topology](#deployment-topology).
 
 The storage layout is in [ClickHouse](clickhouse.md).
 
@@ -342,10 +343,11 @@ flowchart LR
   keys, runtime overrides, sign-in attempt counts, graph write marks, the supervisor lease,
   erasure checkpoints, the blacklist version, the idempotency cache) and uploaded document
   originals live in ClickHouse, the bytes of those written with
-  `LOOM_DOCUMENT_OBJECT_STORE=s3` in an S3-compatible bucket instead. A new Loom with the
-  same ClickHouse, env config and `LOOM_JWT_SECRET`, and that bucket while rows name objects
-  in it, gets every feature back.
-- **State outside ClickHouse.** The code plane's git mirrors under `var/code_repos` (a
+  `LOOM_DOCUMENT_OBJECT_STORE=s3` in an S3-compatible bucket instead. Under the Postgres
+  authority, memory idempotency keys live in Postgres. A new Loom with the same ClickHouse
+  (and Postgres, under that authority), env config and `LOOM_JWT_SECRET`, and that bucket
+  while rows name objects in it, gets every feature back.
+- **State outside ClickHouse and Postgres.** The code plane's git mirrors under `var/code_repos` (a
   cache: a host without them re-clones) and the rate-limit buckets on the `loom-shared`
   volume, neither the system of record; and, while any catalog row names an object in it,
   `LOOM_DOCUMENT_S3_BUCKET`, holding the bytes of those originals.
@@ -373,6 +375,11 @@ Every plane (facts and vectors, BM25 and token indexes, the entity graph walked 
 and joins between memory and its telemetry without a sync job. Hybrid retrieval runs as
 SQL next to the data. A separate vector store would add a second consistency domain,
 dual writes and fusion across network hops.
+
+Under the Postgres memory authority, Postgres holds live memory heads and their revision
+journal, and a delivery worker brings each revision into ClickHouse, which keeps every
+vector, search leg, the history and the analytics. Search still runs in one engine; a
+backup then covers both stores ([storage authority](storage-authority.md#why-two-stores)).
 
 **Cost:** no transactional row updates. Mutable tables are `ReplacingMergeTree` read with
 `FINAL`, so every write path carries every column forward
