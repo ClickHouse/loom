@@ -53,7 +53,8 @@ use both.
 - You want SQL over what your agents know: facts, traces, costs and audit rows are
   ClickHouse tables.
 - You already run ClickHouse, or can. It is Loom's one required store;
-  [Postgres](../operations/postgres.md) is an option for live memory and knowledge state.
+  [Postgres](../operations/postgres.md) is an option for live memory and knowledge
+  state.
 - An abstain or a flagged conflict is better than a confident wrong answer.
 - You need history, provenance, audit or verifiable erasure.
 - Coding agents need an index of your repositories.

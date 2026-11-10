@@ -352,9 +352,10 @@ flowchart LR
   `LOOM_JWT_SECRET`, and that bucket while rows name objects in it, gets every feature
   back.
 - **State outside ClickHouse and Postgres.** The code plane's git mirrors under
-  `var/code_repos` (a cache: a host without them re-clones) and the rate-limit buckets on
-  the `loom-shared` volume, neither the system of record; and, while any catalog row
-  names an object in it, `LOOM_DOCUMENT_S3_BUCKET`, holding the bytes of those originals.
+  `var/code_repos` (a cache: a host without them re-clones) and the rate-limit buckets
+  on the `loom-shared` volume, neither the system of record; and, while any catalog row
+  names an object in it, `LOOM_DOCUMENT_S3_BUCKET`, holding the bytes of those
+  originals.
 - **Two containers, one image.** `dev/docker-compose.cloud.yml` runs `loom-server`
   (`LOOM_BACKGROUND_WORKERS=off`) and `loom-workers` (`auto`: it runs the workers while it
   holds the lease), so a long worker pass never shares an event loop with requests.
@@ -373,8 +374,8 @@ and on this page.
 ### One engine: ClickHouse
 
 Under the default ClickHouse authority, every plane (facts and vectors, BM25 and token
-indexes, the entity graph walked with `WITH RECURSIVE`, the code index, ledgers and cost)
-is a set of ClickHouse tables.
+indexes, the entity graph walked with `WITH RECURSIVE`, the code index, ledgers and
+cost) is a set of ClickHouse tables.
 
 **Why:** one backup, one access boundary, one query language for retrieval and analytics,
 and joins between memory and its telemetry without a sync job. Hybrid retrieval runs as
