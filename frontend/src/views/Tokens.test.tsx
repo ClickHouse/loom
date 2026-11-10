@@ -296,11 +296,11 @@ describe("the token form", () => {
     // At the top its Move up is gone; focus moves to its Move down, not to the page.
     expect(screen.getByRole("button", { name: "Move ns-c down" })).toHaveFocus();
     expect(screen.getByRole("status")).toHaveTextContent("ns-c moved to 1 of 3");
-    // And at the bottom its Move down is gone; focus moves to its Move up.
     const down = screen.getByRole("button", { name: "Move ns-c down" });
     await userEvent.click(down);
     // A row moved down is re-inserted: focus still lands back on the arrow pressed.
     expect(screen.getByRole("button", { name: "Move ns-c down" })).toHaveFocus();
+    // And at the bottom its Move down is gone; focus moves to its Move up.
     await userEvent.click(down);
     expect(order()).toEqual(["ns-a", "ns-b", "ns-c"]);
     expect(screen.getByRole("button", { name: "Move ns-c up" })).toHaveFocus();
@@ -404,8 +404,10 @@ describe("the token form", () => {
     fireEvent.dragStart(grip(now()[0]), { dataTransfer: data });
     fireEvent.dragOver(now()[2], { dataTransfer: data });
     fireEvent.drop(now()[2], { dataTransfer: data });
+    const before = now().map((li) => li.textContent?.match(/ns-[abc]/)?.[0]);
     fireEvent.dragStart(grip(now()[1]), { dataTransfer: data });
     fireEvent.drop(now()[1], { dataTransfer: data });
+    expect(now().map((li) => li.textContent?.match(/ns-[abc]/)?.[0])).toEqual(before);
     expect(now().map((li) => li.textContent?.match(/ns-[abc]/)?.[0])).toEqual(["ns-a", "ns-b", "ns-c"]);
     fireEvent.dragStart(grip(now()[2]), { dataTransfer: data });
     fireEvent.dragOver(now()[0], { dataTransfer: data });

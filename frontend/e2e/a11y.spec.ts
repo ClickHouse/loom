@@ -644,6 +644,9 @@ for (const [width, touch] of [
       if (touch) {
         // On a touch screen no grip shows, the hint names the arrows, and an arrow moves a row.
         await expect(order.locator("[draggable]")).toHaveCount(0);
+        // The arrows are the way here: each is a 44 px touch target.
+        const arrow = await boxOf(order.getByRole("button", { name: "Move team-research-notes down" }));
+        expect(Math.min(arrow.width, arrow.height)).toBeGreaterThanOrEqual(44);
         await expect(page.getByText(/Use a row's arrows to change the order/)).toBeVisible();
         await order.getByRole("button", { name: "Move team-research-notes down" }).tap();
         await expect(order.getByRole("listitem").nth(0)).toContainText("shared-handbook");
