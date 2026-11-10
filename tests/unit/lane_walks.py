@@ -9,6 +9,8 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 
+from tests.unit.code_fixtures import untraced
+
 
 def _markdown(text: str) -> object:
     from server.code.domain.extract.lang_markdown import markdown_chunks, parse_markdown
@@ -509,9 +511,10 @@ def walk_cost(name: str) -> tuple[float, float]:
 
     def cost(n: int) -> float:
         t = text(n)
-        t0 = time.process_time()  # CPU time: a loaded host stretches wall time, not this
-        walk(t)
-        return time.process_time() - t0
+        with untraced():  # a full collection costs in proportion to the heap, not to the text
+            t0 = time.process_time()  # CPU time: a loaded host stretches wall time, not this
+            walk(t)
+            return time.process_time() - t0
 
     return min(cost(_WALK_N) for _ in range(3)), min(cost(4 * _WALK_N) for _ in range(3))
 
@@ -693,9 +696,10 @@ def registry_cost(lang: str) -> list[tuple[str, float, float, int, int]]:
     def cost(text: Callable[[int], str], n: int) -> tuple[float, int, str]:
         source = (head + text(n)).encode()
         parsed[:] = [0.0, 0]
-        t0 = time.process_time()  # CPU time, as in `walk_cost`
-        pf = _extract(path, source)
-        took = time.process_time() - t0 - parsed[0]
+        with untraced():
+            t0 = time.process_time()  # CPU time, as in `walk_cost`
+            pf = _extract(path, source)
+            took = time.process_time() - t0 - parsed[0]
         return took, int(parsed[1]), str(getattr(pf, "lang", ""))
 
     cost(lambda n: "a\n", 1)  # the first file of a lane loads its grammar and imports

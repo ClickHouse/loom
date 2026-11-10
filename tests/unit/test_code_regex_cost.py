@@ -10,14 +10,16 @@ and under an absolute bound. Composite texts, a prefix the pattern spells, a run
 or of one keyword with an opener, and a closing character, catch the patterns whose
 optional parts split one run every way or that search on from each keyword. A pattern
 only ever used with `fullmatch` is anchored with `\\A`, so the searches here cost what
-its use does. The lanes' own walks over a file (`lane_walks.py`) are timed the same way, each in
-a child process with a deadline. A class guard runs every registered lane parser over
-generated shapes in a child process with a deadline and a memory limit; `KNOWN_SLOW` lists
-the shapes still to fix."""
+its use does. The lanes' own walks over a file (`lane_walks.py`) are judged by their growth
+from N to 4N alone, with the cyclic collector off, each in a child process with a deadline.
+A class guard runs every registered lane parser over generated shapes with the collector
+off, in a child process with a deadline and a memory limit; `KNOWN_SLOW` lists the shapes
+still to fix."""
 
 from __future__ import annotations
 
 import importlib
+import itertools
 import json
 import pathlib
 import pkgutil
@@ -214,19 +216,53 @@ def _composites(p: re.Pattern) -> list[tuple[str, str, str]]:
     return shapes + keyed + [(" ".join(words) + " a ", unit, "b") for unit in units]
 
 
+def _over(small: float, big: float) -> bool:
+    """Whether `big`, the time at 4 times `small`'s size, grows over linear: over the
+    bound, or over 10 ms and over 8 times `small`."""
+    return big > _BOUND_S or (big > _FLOOR_S / 10 and big > _RATIO * small)
+
+
 def _slow(cost: Callable[[int], float]) -> tuple[int, float, float] | None:
-    """(n, the time at n / 4, the time at n) where the text first grows over linear."""
-    small = cost(_SIZES[0])
+    """(n, the time at n / 4, the time at n) where the text first grows over linear, from
+    the pair that grew least.
+
+    Each step times n / 4 and n back to back, so a load spike that lasts a few runs
+    slows both alike; a step that looks over linear is timed twice more that way and
+    fails only if all three pairs are over. A spike on the n / 4 of any one pair can hide
+    a step; nothing is carried, so the next step, or the next run, reports it."""
     for n in _SIZES[1:]:
-        big = cost(n)
-        if big > _BOUND_S or (big > _FLOOR_S / 10 and big > _RATIO * small):
-            # Timers jitter on a loaded host: the best of three runs of each counts.
-            small = min(small, cost(n // 4), cost(n // 4))
-            big = min(big, cost(n), cost(n))
-            if big > _BOUND_S or (big > _FLOOR_S / 10 and big > _RATIO * small):
+        pairs = [(cost(n // 4), cost(n))]
+        if _over(*pairs[0]):
+            pairs += [(cost(n // 4), cost(n)) for _ in range(2)]
+            if all(_over(small, big) for small, big in pairs):
+                small, big = min(pairs, key=lambda p: p[1] / max(p[0], 1e-9))  # the mildest
                 return n, round(small, 4), round(big, 4)
-        small = big
     return None
+
+
+def test_slow_tells_a_load_spike_from_a_step_over_linear() -> None:
+    def linear(n: int) -> float:
+        return n * 1e-7
+
+    def spiked(base: Callable[[int], float], calls: range) -> Callable[[int], float]:
+        """`base`, with calls numbered `calls` (from 0) taking 10 times as long."""
+        count = itertools.count()
+        return lambda n: base(n) * (10 if next(count) in calls else 1)
+
+    assert _slow(linear) is None
+    # 500 is timed in the first pair: calls 0 and 1 are 500 and 2,000, and so on
+    assert _slow(spiked(linear, range(5, 8))) is None  # 32,000, 8,000, 32,000
+    assert _slow(spiked(linear, range(5, 6))) is None  # 32,000 alone, then two clean pairs
+
+    def quadratic(n: int) -> float:
+        return (n / 1000) ** 2 * 1e-3
+
+    assert _slow(quadratic) == (8_000, 0.004, 0.064)
+    # every call after the 8,000 step's first n / 4 slowed: still over linear
+    assert _slow(spiked(quadratic, range(3, 8))) == (8_000, 0.04, 0.64)
+    # a spike on the 8,000 step's n / 4 hides that step; the 32,000 one reports it
+    assert _slow(spiked(quadratic, range(2, 3))) == (32_000, 0.064, 1.024)
+    assert _slow(lambda n: (n / 2000) ** 3 * 2.5e-4) == (8_000, 0.0003, 0.016)  # cubic
 
 
 @pytest.mark.parametrize("name,pattern", _ALL, ids=[n for n, _ in _ALL])
@@ -247,8 +283,10 @@ def test_a_run_after_a_prefix_costs_linear_time(name: str, pattern: re.Pattern) 
 # The lanes' own walks over a file: a slice, a count from the top or a rescan per line,
 # heading or site is quadratic, and a backtracking match holds the GIL so a thread
 # timer cannot stop it. Each walk runs in a child process that dumps its stack and exits
-# when it overruns, so a regression fails here instead of hanging the suite.
-_WALK_BOUND_S = 5.0  # well above a linear walk at 4N, far below a quadratic one
+# when it overruns, so a regression fails here instead of hanging the suite. Only the
+# growth from N to 4N is judged, since a linear walk at 4N takes seconds on a slow
+# runner: a walk whose quadratic part at N is over half its linear part grows more
+# than 8 times, and a purely quadratic one grows 16 times or runs into the deadline.
 _WALK_DEADLINE_S = 60
 
 
@@ -271,7 +309,7 @@ def test_a_lane_walk_costs_linear_time(name: str) -> None:
     )
     assert done.returncode == 0, done.stderr[-4000:]
     small, big = json.loads(done.stdout)
-    assert big < _WALK_BOUND_S and (big < _FLOOR_S or big < _RATIO * small), (name, small, big)
+    assert big < _FLOOR_S or big < _RATIO * small, (name, small, big)
 
 
 # The class guard: every lane parser in the ingest's registry, over generated shapes (runs
