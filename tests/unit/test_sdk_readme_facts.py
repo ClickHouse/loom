@@ -60,6 +60,8 @@ def test_the_package_readme_links_resolve_on_the_registry(sdk: str) -> None:
     repository on `main` names a path, and an anchor, that exist."""
     targets = links(SDK_ROOT.parent / sdk / "README.md")
     assert [t for t in targets if not re.match(r"https?://|#", t)] == []
+    files = re.compile(r"https://github\.com/ClickHouse/loom/(?:blob|tree)/([^/]+)/")
+    assert {m[1] for t in targets if (m := files.match(t))} <= {"main"}
     in_repo = re.compile(r"https://github\.com/ClickHouse/loom/(?:blob|tree)/main/([^#]+)#?(.*)")
     for target in targets:
         if m := in_repo.fullmatch(target):

@@ -15,10 +15,13 @@ Node ≥ 20 (uses the platform `fetch`). Zero runtime dependencies.
 
 ## Quick start — an agent that remembers
 
+Against a single-user install on this machine (`http://localhost:7777`, `dev/local`, no
+token); for a team server, pass `baseUrl` and your org and namespace
+([The credential](#the-credential)).
+
 ```ts
 import { Datapack } from "@clickhouse/loom";
 
-// server and credential: see "The credential" below
 const pack = new Datapack("dev", "local", {
   consumer: "support-bot", // the label every ledger row carries
 });
