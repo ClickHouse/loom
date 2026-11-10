@@ -100,8 +100,9 @@ _SQL_KEYWORD_RE = re.compile(
     re.I,
 )
 _ANCESTOR_DEPTH = 8
-# not a setting: a client's name sits at the start or the end of a callee's text; a chain
-# of tagged templates makes each enclosing callee as long as the rest of the file
+# A client's name sits at the start or the end of a callee's text; a chain of tagged
+# templates makes each enclosing callee as long as the rest of the file
+# not a setting: changing it changes the stored island dialects
 _CALLEE_END_BYTES = 64
 VIA_TEMPLATE = "template"
 

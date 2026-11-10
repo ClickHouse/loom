@@ -316,7 +316,7 @@ def bind_sites(
 
 # The directories a specifier is tried under, the file's own and its nearest ancestors,
 # before the repository root
-# not a setting: each adds one candidate per import; a deep path multiplies them
+# not a setting: each adds a candidate per import; changing it changes the stored edges
 MAX_ANCESTOR_DIRS = 32
 
 
