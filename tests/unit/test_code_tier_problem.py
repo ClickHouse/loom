@@ -915,7 +915,7 @@ def test_each_real_refusal_gets_its_own_fix(tmp_path: Any, monkeypatch: pytest.M
     monkeypatch.setattr(settings, "code_scip_delta_round_max_nodes", 10_000)
     monkeypatch.setattr(delta_file, "_MAX_CHARS", 8)
     assert fix(_refusal(lambda: delta_file.open_delta(delta))).startswith(
-        "One value of the compiler tier's delta (the error names its file entry) is longer"
+        "One value of the compiler tier's delta (the error names its file entry and the cap)"
     )
     monkeypatch.undo()
     manifest = tmp_path / "package.json"

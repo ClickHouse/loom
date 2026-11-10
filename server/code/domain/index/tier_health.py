@@ -415,9 +415,9 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
         )
     if kind == "file_refused" and "(a fixed cap, not a setting)" in text:
         return (
-            "One value of the compiler tier's delta (the error names its file entry) is "
-            "longer than the 64 million characters a round may hold, a cap no setting "
-            "changes: the file it indexes is what to split. It recurs every pass until then."
+            "One value of the compiler tier's delta (the error names its file entry and "
+            "the cap) holds more characters than a round may, a cap no setting changes: "
+            "the file it indexes is what to split. It recurs every pass until then."
         )
     if kind == "file_refused" and _CHECKOUT_FILE.search(text):
         return (

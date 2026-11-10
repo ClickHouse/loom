@@ -47,10 +47,10 @@ _CHUNK = 1024 * 1024
 PATH_BYTES = 4096
 # Whitespace between JSON values, skipped at once
 _WS = re.compile(r"[ \t\r\n]*")
-# Most characters one value's text, and one round's, may hold: it bounds the read
-# buffer. A real file entry has about 32 characters per counted byte, so for one this
-# cap binds near 2,000,000 counted bytes, before the round budget's default; the
-# largest measured holds about 600,000.
+# Most characters one value's text, and one round's, may hold. A real file entry has
+# about 32 characters per counted byte, so for one this cap binds near 2,000,000
+# counted bytes, before the round budget's default; the largest measured holds about
+# 600,000.
 # not a setting: it bounds the read buffer, not the work; the round budget is the knob.
 _MAX_CHARS = 64_000_000
 _COUNTED = (b"{", b"[", b",")

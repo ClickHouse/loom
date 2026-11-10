@@ -353,21 +353,21 @@ memory the workers process has. The full index of such a tree takes about an hou
     released before the next is parsed; one file entry alone may fill it, and a file
     entry over it fails the pass, naming the entry. Any other value that large (a
     deleted path, a header value, an ignored key) reads `delta invalid`, since the
-    harness never writes one; the deleted paths are read one at a time. A fixed cap
-    of 64 million characters, not a setting, bounds one value's and one round's text
-    the same way; a real entry has about 32 characters per counted byte, so for one
-    it binds near 2,000,000 counted bytes. The largest file entry of a large C++
-    tree's full run holds about 600,000 counted bytes (some 100,000 edges), about a
-    fifth of the round budget and a third of the character cap. The densest round repository code can write (minimal symbols)
-    peaks at about 1.8 GiB resident while it is read at the default budget (measured
-    with `ru_maxrss`; about 330 B per counted byte of Python objects, the rest the
-    allocator's); a value's text near the character cap (up to 4 bytes a character)
-    may be held up to three times while the read buffer grows, so the worst round's
-    read is about 2.5 GiB, whatever the delta's size. Its apply holds that round's
-    rows on top (the live rows read for its paths and the new rows to insert), about
-    as much again for a round of new symbols, so size the worker for about twice the
-    read. A real file entry of a C++ delta has one counted byte per about 32 bytes: a
-    round is its 100 files long before it reaches the budget. To measure the read of
+    harness never writes one; the deleted paths are read one at a time. A fixed cap of
+    64 million characters, not a setting, bounds one value's and one round's text the
+    same way; a real entry has about 32 characters per counted byte, so for one it binds
+    near 2,000,000 counted bytes. The largest file entry of a large C++ tree's full run
+    holds about 600,000 counted bytes (some 100,000 edges), about a fifth of the round
+    budget and a third of the character cap. The densest round repository code can write
+    (minimal symbols) peaks at about 1.8 GiB resident while it is read at the default
+    budget (measured with `ru_maxrss`; about 330 B per counted byte of Python objects,
+    the rest the allocator's); a value's text near the character cap (up to 4 bytes a
+    character) may be held up to three times while the read buffer grows, so the worst
+    round's read is about 2.5 GiB, whatever the delta's size. Its apply holds that
+    round's rows on top (the live rows read for its paths and the new rows to insert),
+    about as much again for a round of new symbols, so size the worker for about twice
+    the read. A real file entry of a C++ delta has one counted byte per about 32 bytes:
+    a round is its 100 files long before it reaches the budget. To measure the read of
     the densest default round from a source checkout:
 
     ```bash

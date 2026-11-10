@@ -470,9 +470,9 @@ def test_a_file_rewritten_between_the_count_and_the_parse_is_refused(
     _write(path, 3)
     real = delta_file._Values.__init__
 
-    def rewrite_then_parse(self: Any, p: Path, fd: int, max_nodes: int, size: int) -> None:
+    def rewrite_then_parse(self: Any, p: Path, fd: int, round_nodes: int, size: int) -> None:
         os.utime(path, ns=(0, 0))  # changes ctime, whatever mtime is set to
-        real(self, p, fd, max_nodes, size)
+        real(self, p, fd, round_nodes, size)
 
     monkeypatch.setattr(delta_file._Values, "__init__", rewrite_then_parse)
     with pytest.raises(FileRefused, match="changed while it was read"):
@@ -554,11 +554,11 @@ def test_a_file_grown_between_the_count_and_the_parse_is_not_read_past_its_size(
     real = delta_file._Values.__init__
     read: list[int] = []
 
-    def grown(self: Any, p: Path, fd: int, max_nodes: int, size: int) -> None:
+    def grown(self: Any, p: Path, fd: int, round_nodes: int, size: int) -> None:
         with path.open("a") as fh:  # the writer goes on after the count
             fh.write(',{"path":"b"}]}')
         read.append(size)
-        real(self, p, fd, max_nodes, size)
+        real(self, p, fd, round_nodes, size)
 
     monkeypatch.setattr(delta_file._Values, "__init__", grown)
     with pytest.raises(ValueError, match="delta invalid"):
