@@ -399,6 +399,6 @@ def test_a_prefix_probe_with_no_answer_raises() -> None:
 def test_a_refusal_reads_as_its_code_name_and_known_cause(
     code: int, name: str | None, text: str, cause: str, own_fix: bool
 ) -> None:
-    shown, fix = boundary.refusal_cause(code, name, text)
+    shown, fix = boundary.error_cause(code, name, text)
     assert cause in shown and text not in shown
     assert bool(fix) is own_fix

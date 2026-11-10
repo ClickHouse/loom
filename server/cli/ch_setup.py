@@ -435,7 +435,7 @@ def _write_analyst() -> None:
     deployment whose server user cannot (one with access management writes it
     at boot)."""
     from server.cli._ch import run_connected
-    from server.insights.app.analysis import SetupRefused, rewrite, shown_refusal
+    from server.insights.app.analysis import SetupRefused, rewrite, shown_cause
 
     try:
         run_connected(lambda _ch: rewrite())
@@ -445,7 +445,7 @@ def _write_analyst() -> None:
             advice = ""  # a refusal Loom wrote names its own next step
         else:
             # The printed SQL carries the same password, so a cause with its own fix replaces it.
-            _, fix = shown_refusal(e)
+            _, fix = shown_cause(e)
             advice = (
                 f"; {fix}"
                 if fix

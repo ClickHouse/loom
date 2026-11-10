@@ -611,15 +611,15 @@ def wrap_statement(sql: str, limit: int) -> str:
 _PASSWORD_FIX = (
     "Loom draws a password with a lower and an upper case letter, a digit and a symbol; "
     f"a stored one that lacks any of them is refused. Run `DROP USER IF EXISTS {ANALYST_USER}`, "
-    "then `DELETE FROM loom.analysis_secrets WHERE id = 0` (loom is LOOM_CH_DATABASE): "
+    "then `DELETE FROM loom.analysis_secrets WHERE id = 0` (`loom` stands for LOOM_CH_DATABASE): "
     "the next setup draws a new pair (Loom's own where its server user has access "
     "management, else `loom ch-setup`). Rules that ask for more refuse a new pair too: on "
     "a self-managed server, relax its password_complexity rules."
 )
 
 
-def refusal_cause(code: int, name: str | None, text: str) -> tuple[str, str]:
-    """(cause, fix) for a ClickHouse refusal: its code, its error name and, for a
+def error_cause(code: int, name: str | None, text: str) -> tuple[str, str]:
+    """(cause, fix) for a ClickHouse error: its code, its error name and, for a
     known cause, what it means. Never the message `text`, which can quote a
     policy; '' is health's default fix."""
     shown = f"Code {code} ({name})" if name else f"Code {code}"

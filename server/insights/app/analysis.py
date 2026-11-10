@@ -107,7 +107,7 @@ _STATEMENT_CODES = frozenset(
 
 class SetupRefused(RuntimeError):
     """A refusal Loom wrote, safe to show as is; any other error shows as
-    `shown_refusal` words it."""
+    `shown_cause` words it."""
 
 
 _WRITE_LEASE = "analysis.entities"
@@ -504,7 +504,7 @@ def _probe_failed(what: str, e: BaseException) -> None:
         _set_problem(f"{what}: {e}")
         return
     if not _no_answer(e):
-        cause, fix = shown_refusal(e)
+        cause, fix = shown_cause(e)
         _set_problem(f"{what}: {cause}", error_line(e), fix)
         return
     kind = error_kind(e)
@@ -557,13 +557,13 @@ async def _canary_reads(secrets_: tuple[bytes, str]) -> bool:
         return False  # a refused login, a refused or capped read: the key is not in force
 
 
-def shown_refusal(e: BaseException) -> tuple[str, str]:
+def shown_cause(e: BaseException) -> tuple[str, str]:
     """(cause, fix) of an error in words `/v1/health` may show: ClickHouse's
-    code, error name and known cause (`refusal_cause`), or the error's kind."""
+    code, error name and known cause (`error_cause`), or the error's kind."""
     code = error_code(e)
     if code is None:
         return error_kind(e), ""
-    return boundary.refusal_cause(code, error_name(e), str(e))
+    return boundary.error_cause(code, error_name(e), str(e))
 
 
 def _set_problem(problem: str, detail: str = "", fix: str = "") -> None:
@@ -625,7 +625,7 @@ async def _probe() -> tuple[str, bool, str]:
             if _no_answer(e):
                 raise
             # A cap the count hit: no policy narrows the reserved scope to nothing.
-            cause, _ = shown_refusal(e)
+            cause, _ = shown_cause(e)
             return (
                 f"{t.name}'s count in the reserved scope failed with {cause}: "
                 f"{boundary.ANALYST_USER} may have no scope policy on it",
@@ -650,7 +650,7 @@ async def _probe() -> tuple[str, bool, str]:
                 continue
             if _no_answer(e):
                 raise  # no answer about the grant
-            cause, _ = shown_refusal(e)
+            cause, _ = shown_cause(e)
             return (
                 f"{boundary.ANALYST_USER} was not refused {shown}: {cause}",
                 False,
@@ -822,6 +822,6 @@ __all__ = [
     "handle_insights_catalog",
     "handle_insights_query",
     "provision",
-    "shown_refusal",
+    "shown_cause",
     "start_probe_loop",
 ]
