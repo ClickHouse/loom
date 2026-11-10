@@ -371,8 +371,9 @@ when that colour has no workers container does the rolled-forward one keep runni
 
 ## Moving a deployment
 
-A new Loom process pointed at the same ClickHouse (and Postgres, under that authority), or
-at a moved or restored one, gets back every feature. Carry these:
+A new Loom process pointed at the same ClickHouse (and Postgres, under
+`LOOM_STORAGE_AUTHORITY=postgres`), or at a moved or restored one, gets back every
+feature. Carry these:
 
 - ClickHouse: the same service, a copy with its Keeper state, or a `dev/backup_loom.py`
   dump restored into a ClickHouse that `loom migrate` prepared;
