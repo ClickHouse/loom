@@ -79,10 +79,8 @@ agent in the UI. It is not Loom authorization; the token on each call is.
 - **Cancellation.** In the UI path the generation runs server-side, apart from the
   browser connection: closing the tab does not stop it, and its tool calls still reach
   Loom. The stop button (`/api/agents/chat/abort`) stops it. On the agents API, closing
-  the connection stops the run: in one probe, disconnecting before the agent's first tool
-  call left no Loom call in the next 20 s. The harness's probe (`run --cancel-probe`)
-  disconnects at the first streamed delta, which follows the agent's tool calls since the
-  agent writes no text before them.
+  the connection stops the run: in one probe, disconnecting after the first token left no
+  Loom call in the next 20 s.
 
 ## What LibreChat stores
 
@@ -138,7 +136,8 @@ orgs, mints a token per person, revokes one, and scores each answer:
 - **citation valid:** every memory key the answer names exists in the person's namespace,
   and a version written next to it is the row's current version.
 - **tool calls:** the `mcp` rows Loom ledgered under the person's subject during the answer.
-- **latency and time to first token:** end to end, and to the first streamed delta.
+- **latency and time to first token:** end to end, and to the first streamed delta, which
+  is the model's one-line preamble before its first tool call, not the answer.
 
 | Target (LibreChat path)                                 | Value         | Measured on v0.8.8, 14 cases, `claude-haiku-4-5-20251001`                 |
 | ------------------------------------------------------- | ------------- | ------------------------------------------------------------------------- |
@@ -147,12 +146,11 @@ orgs, mints a token per person, revokes one, and scores each answer:
 | Should-abstain cases that abstain                       | 100%          | 2 of 2, no false abstention                                               |
 | Cross-tenant and revoked cases refused, no leak         | 100%          | 2 of 2                                                                    |
 | End-to-end latency p95                                  | at most 10 s  | 6.8 s (p50 3.2 s)                                                         |
+| First streamed delta (preamble) p95                     | at most 2 s   | 0.6 s                                                                     |
 | Tool calls per question                                 | at most 3     | at most 3, 16 in all                                                      |
 | Model cost per answer, every prompt token at list price | at most $0.05 | mean $0.029; max $0.064 (`abstain-cfo`, three searches) misses the target |
 
-The LibreChat numbers were measured with agent definition version 2, whose answers began
-with a one-line lead-in before the first tool call. They are from one run of the 14
-memory, inventory, inspect, tune, refusal
+The LibreChat numbers are from one run of the 14 memory, inventory, inspect, tune, refusal
 and abstention cases, scored against the current `cases.json` with `qualify.py rescore`;
 the direct-path numbers are from a later run of that path alone
 (`qualify.py run --native-only`) on a fresh seed. The document cases below were run
@@ -326,6 +324,11 @@ The same cases asked through Loom's chat route, each with the person's own token
 28 correct and the other 3 refused with `RATE_LIMITED` once the namespace had spent the
 assistant's half of the default $1 cap (all 3 correct with the cap at $20); a mean of
 $0.027 and a maximum of $0.047 per answer, p95 9.4 s.
+
+The disconnect row was measured with an agent definition whose first streamed delta, a
+lead-in, came before its first tool call. The deployed definition asks for no text before
+the tool calls, so on this path the probe's cut at the first delta follows them, and the
+row stands only as measured.
 
 A model's answers vary from run to run, so one run of 28 cases is a sample, not a
 bound. The invalid memory citations are two hash keys the answer shortened and one key

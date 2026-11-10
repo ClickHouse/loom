@@ -329,12 +329,12 @@ streams the text of every model step as one answer's content, with nothing betwe
 ([streaming](../features/integrations/librechat.md#tool-errors-streaming-and-cancellation)),
 so neither the bridge nor the dashboard can tell a lead-in ("Let me search the
 memories.") from the answer it runs into; while no text has arrived the dashboard shows
-that the assistant is answering. Asked how a
-namespace should write, the agent recommends rather than only answers: key shape, one
-claim per key, a memory, a document or a record, pins and kinds, each recommendation
-naming its rows and citing the finding it rests on in `namespace.audit`, `mentor.brief`
-or `namespace.tune`, the namespace's guide (`namespace.guide_get`), or Loom's own
-writing guide (`mentor.guide`, on the toolset for that reason).
+that the assistant is answering. Asked how a namespace should write, the agent
+recommends rather than only answers: key shape, one claim per key, a memory, a document
+or a record, pins and kinds, each recommendation naming its rows and citing the finding it
+rests on in `namespace.audit`, `mentor.brief` or `namespace.tune`, the namespace's guide
+(`namespace.guide_get`), or Loom's own writing guide (`mentor.guide`, on the toolset for
+that reason).
 
 The agent names no namespace on its calls: on the assistant toolset a call that names
 none reads the first namespace its token names ([the assistant
