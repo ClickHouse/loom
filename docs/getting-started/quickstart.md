@@ -367,7 +367,8 @@ asyncio.run(main())
 
 Where the SDK finds its server and credential is in
 [Python SDK → Credentials](../reference/python-sdk.md#credentials).
-The TypeScript SDK installs with `npm install @clickhouse/loom`.
+The TypeScript SDK installs with `npm install @clickhouse/loom`
+([from a clone](../reference/typescript-sdk.md#install)).
 
 The client surfaces are in the [Python SDK](../reference/python-sdk.md) and
 [TypeScript SDK](../reference/typescript-sdk.md) references.
