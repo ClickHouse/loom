@@ -90,6 +90,9 @@ spec:
               valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
             - name: LOOM_INSTANCE_LABEL
               value: k8s:{{ .name }}
+            {{- with include "loom.pgEnv" $ }}
+            {{- . | nindent 12 }}
+            {{- end }}
             - name: LOOM_SETTINGS_FILE
               value: /app/config/loom.yaml
             {{- with $.Values.extraEnv }}
@@ -108,6 +111,9 @@ spec:
             - name: settings-file
               mountPath: /app/config
               readOnly: true
+            {{- with include "loom.pgVolumeMount" $ }}
+            {{- . | nindent 12 }}
+            {{- end }}
             {{- with $.Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -121,6 +127,9 @@ spec:
         - name: settings-file
           configMap:
             name: {{ $name }}
+        {{- with include "loom.pgVolume" $ }}
+        {{- . | nindent 8 }}
+        {{- end }}
         {{- with $.Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

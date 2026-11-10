@@ -46,6 +46,8 @@ TypeScript SDKs, and the dashboard. This page lists every page in reading order.
   [Running N replicas](operations/replicas.md): identical Looms behind one URL ·
   [Postgres](operations/postgres.md): the Postgres memory authority ·
   [Kubernetes](operations/kubernetes.md): the Helm chart, with EKS and kind overlays ·
+  [ClickHouse Cloud and Managed Postgres](operations/clickhouse-cloud.md): the chart over
+  both managed services ·
   [Copying a namespace to another Loom](operations/okf-sync.md) ·
   [Exporting usage to a data warehouse](operations/analytics-export.md)
 

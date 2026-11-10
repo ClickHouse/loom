@@ -392,8 +392,10 @@ jobs:
           # The PrometheusRule's schema: the CRD catalog at a pinned commit.
           crd='https://raw.githubusercontent.com/datreeio/CRDs-catalog/c86448cbf1a840ca62d119259864863897c8748a/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
 
-          for overlay in values-eks.yaml values-kind.yaml; do
-            args=(-f "$chart/$overlay" --set secrets.jwtSecret="$secret")
+          # The Cloud overlay layers on the EKS one.
+          for overlays in values-eks.yaml values-kind.yaml "values-eks.yaml values-clickhouse-cloud.yaml"; do
+            args=(--set secrets.jwtSecret="$secret")
+            for overlay in $overlays; do args+=(-f "$chart/$overlay"); done
             helm lint --strict "$chart" "${args[@]}"
             helm lint --strict "$chart" "${args[@]}" "${all[@]}"
             helm template loom "$chart" "${args[@]}" | kubeconform -strict -summary -kubernetes-version 1.30.0
@@ -451,6 +453,9 @@ jobs:
       # What LibreChat and its MongoDB can be reached by and reach, read off the render.
       - name: assistant isolation
         run: python3 scripts/gates/helm_assistant_isolation.py
+      # The Postgres authority's DSN, password, CA mount and egress, and its refusals.
+      - name: postgres
+        run: python3 -m scripts.gates.helm_postgres
 
   agent-plugins:
     name: coding-agent plugins (node --test)

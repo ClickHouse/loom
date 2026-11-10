@@ -1,5 +1,6 @@
 # Loom on Kubernetes. Every pod is a full replica over one ClickHouse service:
-# docs/operations/kubernetes.md. Values-eks.yaml and values-kind.yaml layer on this.
+# docs/operations/kubernetes.md. Values-eks.yaml and values-kind.yaml layer on this, and
+# values-clickhouse-cloud.yaml on values-eks.yaml.
 
 image:
   repository: ghcr.io/clickhouse/loom
@@ -30,6 +31,39 @@ clickhouse:
   readerUser: ""
   # LOOM_CH_CLUSTER: the cluster clusterAllReplicas reads ("default" on Cloud).
   cluster: default
+
+# An external Postgres as the memory authority (docs/operations/postgres.md). With
+# `host` set the chart sets LOOM_STORAGE_AUTHORITY=postgres and connects over
+# verify-full; the authority is chosen at first boot, so start on an empty ClickHouse.
+postgres:
+  # The direct endpoint, never a transaction pooler. "" = the ClickHouse authority.
+  # Both Secrets are required with it, and the names it renders (LOOM_STORAGE_AUTHORITY,
+  # LOOM_PG_DSN, LOOM_PG_DURABILITY, LOOM_PG_POOL_MAX_SIZE, PGPASSWORD) are refused in env,
+  # extraEnv, secrets.extra and, as settings, settingsFile.
+  host: ""
+  # 1 to 65535.
+  port: 5432
+  database: loom
+  # A role that owns the database. The host, database and user go into the DSN as
+  # written: strings of letters, digits, '.', '_' and '-' only.
+  user: loom
+  # The Secret key holding the role's password, passed to the driver as PGPASSWORD.
+  # Keys take Kubernetes' Secret key characters: letters, digits, '.', '_' and '-', not
+  # '.' and not starting '..'.
+  passwordSecret:
+    name: ""
+    key: password
+  # The Secret key holding the PEM bundle of every root the service's CA publishes,
+  # mounted at /etc/loom/pg-ca.
+  caSecret:
+    name: ""
+    key: ca.crt
+  # LOOM_PG_DURABILITY: synchronous refuses to start when the server's
+  # synchronous_standby_names is empty; local accepts commits the primary alone holds.
+  durability: synchronous
+  # LOOM_PG_POOL_MAX_SIZE: connections per Loom process, at least LOOM_PG_POOL_MIN_SIZE
+  # (2 by default); a smaller pool fails at boot.
+  poolMaxSize: 20
 
 embedding:
   # Must match on every pod and cannot roll (see mustMatchChange below).
@@ -375,10 +409,11 @@ assistant:
 # Ingress to the Loom port from `ingressFrom` only. Egress to DNS, the
 # release's web pods, the extractor's pods (with extractor.enabled), the dev
 # ClickHouse (with devClickhouse.enabled), the EKS Pod Identity agent, and TCP
-# 443, the ClickHouse port and 6443 (with retireLostPods) anywhere except
-# `egressExcept` (providers, the IdP and git remotes have no fixed range). Off,
-# `guardMetadata` gives the Loom pods an egress-only policy that allows every pod
-# and every address but `egressExcept`.
+# 443, the ClickHouse port, postgres.port (with postgres.host) and 6443 (with
+# retireLostPods) anywhere except `egressExcept` (providers, the IdP and git remotes
+# have no fixed range); a ClickHouse or Postgres inside the cluster needs an
+# extraEgress rule. Off, `guardMetadata` gives the Loom pods an egress-only policy
+# that allows every pod and every address but `egressExcept`.
 networkPolicy:
   enabled: false
   # NetworkPolicy peers allowed to reach the pods (the ALB's subnets, the

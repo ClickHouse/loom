@@ -114,6 +114,9 @@ spec:
                 - name: {{ $k }}
                   value: {{ $v | toString | quote }}
                 {{- end }}
+                {{- with include "loom.pgEnv" $ }}
+                {{- . | nindent 16 }}
+                {{- end }}
                 - name: LOOM_SETTINGS_FILE
                   value: /app/config/loom.yaml
                 - name: LOOM_ANALYTICS_EXPORT_NAME_KEY
@@ -137,6 +140,9 @@ spec:
                 - name: settings-file
                   mountPath: /app/config
                   readOnly: true
+                {{- with include "loom.pgVolumeMount" $ }}
+                {{- . | nindent 16 }}
+                {{- end }}
                 {{- with $.Values.extraVolumeMounts }}
                 {{- toYaml . | nindent 16 }}
                 {{- end }}
@@ -150,6 +156,9 @@ spec:
             - name: settings-file
               configMap:
                 name: {{ include "loom.suffixed" (dict "root" $ "suffix" "settings") }}
+            {{- with include "loom.pgVolume" $ }}
+            {{- . | nindent 12 }}
+            {{- end }}
             {{- with $.Values.extraVolumes }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
