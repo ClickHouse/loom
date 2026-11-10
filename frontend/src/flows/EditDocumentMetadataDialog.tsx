@@ -4,9 +4,8 @@ import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { updateKnowledgeMetadata, type Identity, type KnowledgeEntry } from "../api";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { humanizeError } from "../lib/format";
 
 interface Props {
   open: boolean;
@@ -67,7 +66,7 @@ export function EditDocumentMetadataDialog({ open, onOpenChange, identity, entry
       onSaved();
       onOpenChange(false);
     } catch (e) {
-      toast(`Save failed: ${humanizeError(e)}`, "error");
+      toastError("Save failed", e);
     } finally {
       setBusy(false);
     }

@@ -9,6 +9,7 @@ import {
   errorRequestId,
   formatBytesShort,
   refreshDetail,
+  ERROR_CODE_PREFIXES,
   humanizeError,
   isServiceSubject,
   relativeTime,
@@ -51,7 +52,14 @@ describe("humanizeError", () => {
     expect(humanizeError(null)).toBe(fault);
     expect(humanizeError("")).toBe(fault);
     expect(humanizeError(new TypeError("Cannot read properties of undefined (reading 'x')"))).toBe(fault);
-    expect(humanizeError(new DOMException("signal is aborted without reason", "AbortError"))).toBe(fault);
+    expect(humanizeError(new DOMException("the operation is insecure", "SecurityError"))).toBe(fault);
+  });
+
+  it("reads a timed-out call as Loom not answering, and a cancelled one as cancelled", () => {
+    expect(humanizeError(new DOMException("signal timed out", "TimeoutError"))).toBe(
+      "Loom didn't answer in time. It may still finish; check before trying again.",
+    );
+    expect(humanizeError(new DOMException("signal is aborted without reason", "AbortError"))).toBe("Cancelled.");
   });
 
   it("swaps a known code prefix for its sentence and keeps the detail", () => {
@@ -69,6 +77,8 @@ describe("humanizeError", () => {
     const lost =
       "Lost connection to Loom mid-request. The work may still have committed on the server — re-check the list before retrying.";
     expect(humanizeError(new TypeError("Failed to fetch"))).toBe(lost);
+    // A read lost nothing: no "may still have committed".
+    expect(humanizeError(new TypeError("Failed to fetch"), { bare: true })).toBe("Lost connection to Loom.");
     expect(humanizeError("fetch failed")).toBe(lost);
     expect(humanizeError("Load failed")).toBe(lost);
     expect(humanizeError("NetworkError when attempting to fetch resource.")).toBe(lost);
@@ -115,7 +125,7 @@ describe("humanizeError", () => {
           message: "model calls need the inference gateway",
           detail: { category: "configuration", retryable: false },
         },
-        "This needs a change to Loom's setup: model calls need the inference gateway. An operator has to fix this; trying again won't help.",
+        "This needs a change to Loom's setup: model calls need the inference gateway. Trying again won't help until that's changed.",
       ],
       [
         "a rate limit says how long to wait",
@@ -161,7 +171,7 @@ describe("humanizeError", () => {
       [
         "an internal error takes no retry advice: a read failed the same way",
         { status: 500, code: "INTERNAL_ERROR", message: "", detail: { category: "internal", retryable: false } },
-        "Loom hit an internal error. If it happens again, send the request id to your operator (INTERNAL_ERROR).",
+        "Loom hit an internal error. If it keeps happening, send the request id to your operator (INTERNAL_ERROR).",
       ],
       [
         "a busy write that may have landed says to check first",
@@ -218,18 +228,23 @@ describe("humanizeError", () => {
         humanizeError(new ApiError({ status: 403, code: "AUTH_INSUFFICIENT", message: "admin needed on t" }), {
           bare: true,
         }),
-      ).toBe("Your role doesn't allow this. admin needed on t");
+      ).toBe("Your role doesn't allow this. Admin needed on t.");
+    });
+
+    it("keeps the retry tail when the server's words only contain the letters of 'again'", () => {
+      expect(
+        api({
+          status: 503,
+          code: "OVERLOADED",
+          message: "writes against it are queued",
+          detail: { category: "capacity", retryable: true },
+        }),
+      ).toBe("Loom is busy right now. writes against it are queued. Try again in a moment.");
     });
 
     it("leaves retry advice to the tail: no code sentence says to try again", () => {
-      for (const code of [
-        "OVERLOADED",
-        "BACKEND_TIMEOUT",
-        "BACKEND_UNAVAILABLE",
-        "RATE_LIMITED",
-        "SIGNED_IN_ELSEWHERE",
-      ]) {
-        expect(api({ status: 503, code })).not.toMatch(/retry|again|resend/i);
+      for (const [code, sentence] of Object.entries(ERROR_CODE_PREFIXES)) {
+        expect(sentence, code).not.toMatch(/retry|again|resend/i);
       }
     });
 

@@ -2,9 +2,8 @@ import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { gradeRun, type Identity, type RunRow } from "../api";
-import { humanizeError } from "../lib/format";
 import { useStore } from "../lib/state";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 
 const VERDICT: Record<string, string> = { pass: "held up", fail: "did not hold" };
 
@@ -30,7 +29,7 @@ export function RunGrade({ identity, run }: { identity: Pick<Identity, "org" | "
         toast(`Graded: ${VERDICT[g]}${decided}`, "ok");
       }
     } catch (e) {
-      toast(`Grade failed: ${humanizeError(e)}`, "error");
+      toastError("Grade failed", e);
     } finally {
       setBusy(false);
     }

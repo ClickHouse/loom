@@ -6,7 +6,7 @@ import { approveDataset, DATASET_TYPES, getDatasets, type Dataset, type DatasetT
 import { ApiError } from "../lib/errors";
 import { humanizeError } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, Loading, SectionHeading } from "../components/ui";
 
@@ -102,7 +102,7 @@ function DatasetCard({
       if (e instanceof ApiError && e.code === "PRECONDITION_FAILED") {
         toast(`${d.name} changed meanwhile; here it is as it is now`, "info");
         onChanged();
-      } else toast(`Approve failed: ${humanizeError(e)}`, "error");
+      } else toastError("Approve failed", e);
     } finally {
       setBusy(false);
     }

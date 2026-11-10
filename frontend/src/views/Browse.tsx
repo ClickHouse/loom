@@ -31,7 +31,7 @@ import { useRowNav } from "../lib/useRowNav";
 import { useFold } from "../lib/folds";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { humanizeError, isSystemKind, sentenceCase } from "../lib/format";
 import { ApiError } from "../lib/errors";
@@ -184,7 +184,7 @@ export function Browse() {
       }
       setJoinDialog(null);
     } catch (e) {
-      toast(`Join failed: ${humanizeError(e)}`, "error");
+      toastError("Join failed", e);
     } finally {
       setJoining(null);
     }
@@ -238,7 +238,7 @@ export function Browse() {
       toast(`Withdrew request on ${ns}`, "ok");
       load();
     } catch (e) {
-      toast(`Cancel failed: ${humanizeError(e)}`, "error");
+      toastError("Cancel failed", e);
     }
   };
   const leave = async (ns: string) => {
@@ -256,7 +256,7 @@ export function Browse() {
       toast(`Left ${ns}`, "ok");
       load();
     } catch (e) {
-      toast(`Leave failed: ${humanizeError(e)}`, "error");
+      toastError("Leave failed", e);
     }
   };
   // The rows call the latest render's handlers through one object that keeps its identity,

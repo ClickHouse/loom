@@ -29,7 +29,7 @@ import { Panel } from "../../components/ui/Panel";
 import { Skeleton, SkeletonCard } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
 import { ScopeBadge } from "../../components/ScopeBadge";
-import { toast } from "../../components/Toast";
+import { toast, toastError } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { humanizeError, sentenceCase } from "../../lib/format";
 import { AgentBadge } from "../../components/AgentBadge";
@@ -266,7 +266,7 @@ export function Policies() {
       toast("Rule deleted", "ok");
       setReads((n) => n + 1);
     } catch (e) {
-      toast(`Failed: ${humanizeError(e)}`, "error");
+      toastError("Failed", e);
     }
   };
 

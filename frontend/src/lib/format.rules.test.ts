@@ -18,3 +18,16 @@ describe("server times", () => {
     expect(calls).toEqual([]);
   });
 });
+
+describe("error toasts", () => {
+  // `toastError(context, e)` keeps one lead-in, the request id and the reading time; a
+  // hand-built "context: ${humanizeError(e)}" toast reads "Pin failed: Couldn't do that: …".
+  it("are raised with toastError, never as a context glued to humanizeError", () => {
+    const calls = Object.entries(SOURCES).flatMap(([path, text]) =>
+      [...text.matchAll(/toast\(`[^`]*:\s*\$\{humanizeError\(/g)].map(
+        (m) => `${path}:${text.slice(0, m.index).split("\n").length}`,
+      ),
+    );
+    expect(calls).toEqual([]);
+  });
+});

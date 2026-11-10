@@ -37,7 +37,7 @@ import { humanizeError } from "../lib/format";
 import { canCall } from "../lib/canCall";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { confirmAction } from "../components/ConfirmDialog";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { ListState } from "../components/ui/ListState";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, ListTime, Loading, Panel, SectionHeading } from "../components/ui";
@@ -115,7 +115,7 @@ function RecordSchemas({ canRegister, canDecide }: { canRegister: boolean; canDe
       toast(decision === "approve" ? `Approved ${name}` : `Rejected ${name}`, "ok");
       refresh();
     } catch (e) {
-      toast(`Failed: ${humanizeError(e)}`, "error");
+      toastError("Failed", e);
     } finally {
       setDeciding(null);
     }
@@ -330,7 +330,7 @@ function RecordsDialog({ schema, onClose }: { schema: RecordSchema; onClose: () 
       const r = await recordHistory(identity, c.prior_record_id, { signal: ctrl.signal });
       if (!ctrl.signal.aborted) setPrior({ key: c.memory_key, rows: r.rows });
     } catch (e) {
-      if (!ctrl.signal.aborted) toast(`Couldn't read the prior record: ${humanizeError(e)}`, "error");
+      if (!ctrl.signal.aborted) toastError("Couldn't read the prior record", e);
     } finally {
       if (!ctrl.signal.aborted) setOpening(false);
     }
@@ -477,7 +477,7 @@ function ProfileSchemaPanel({ canSet, canClear }: { canSet: boolean; canClear: b
       toast(clear ? "Profile schema removed" : "Profile schema saved", "ok");
       setDraft(null);
     } catch (e) {
-      toast(`Failed: ${humanizeError(e)}`, "error");
+      toastError("Failed", e);
     } finally {
       setBusy(false);
     }
@@ -551,7 +551,7 @@ function Ontology({ canRegister }: { canRegister: boolean }) {
       toast(`Accepted ${e.name}`, "ok");
       refresh();
     } catch (err) {
-      toast(`Failed: ${humanizeError(err)}`, "error");
+      toastError("Failed", err);
     } finally {
       setBusy(false);
     }
@@ -564,7 +564,7 @@ function Ontology({ canRegister }: { canRegister: boolean }) {
       setName("");
       refresh();
     } catch (err) {
-      toast(`Failed: ${humanizeError(err)}`, "error");
+      toastError("Failed", err);
     } finally {
       setBusy(false);
     }
@@ -652,7 +652,7 @@ function Categories({ canAdd }: { canAdd: boolean }) {
       setDescription("");
       refresh();
     } catch (e) {
-      toast(`Failed: ${humanizeError(e)}`, "error");
+      toastError("Failed", e);
     } finally {
       setBusy(false);
     }

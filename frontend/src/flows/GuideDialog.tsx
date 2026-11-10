@@ -10,7 +10,7 @@ import {
   type GuideRevision,
   type NamespaceGuide,
 } from "../api";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { Alert, Loading, Unavailable } from "../components/ui";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { humanizeError, relativeTime } from "../lib/format";
@@ -109,7 +109,7 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
       onSaved();
       onOpenChange(false);
     } catch (e) {
-      toast(`Save failed: ${humanizeError(e)}`, "error");
+      toastError("Save failed", e);
     } finally {
       setBusy(false);
     }

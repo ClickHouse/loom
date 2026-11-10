@@ -36,7 +36,7 @@ import { MenuChoice, MenuChoiceGroup } from "../components/MenuChoice";
 import { MenuTrigger } from "../components/ui/Menu";
 import { RowSkeleton, TableSkeleton } from "../components/Skeleton";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { displayAgent, humanizeError, listTime, parseChTime, relativeTime, truncate } from "../lib/format";
+import { displayAgent, listTime, parseChTime, relativeTime, truncate, errorLine } from "../lib/format";
 import { useRowNav } from "../lib/useRowNav";
 import { PageContainer } from "../layout/PageContainer";
 import { Modal } from "../components/ui/Modal";
@@ -682,7 +682,7 @@ export function Runs() {
       .catch((e: unknown) => {
         if (!live) return;
         setDetail(null);
-        setDetailError(humanizeError(e, { bare: true }));
+        setDetailError(errorLine(e));
       })
       .finally(() => {
         if (live) setDetailLoading(false);
@@ -1139,7 +1139,7 @@ export function Runs() {
                 Recall history for this run
               </Button>
             )}
-            {!detailLoading && !detail && (
+            {!detailLoading && !detail && detailError && (
               <div className="text-xs text-text-muted">Couldn't load the replay: {detailError}</div>
             )}
           </Section>

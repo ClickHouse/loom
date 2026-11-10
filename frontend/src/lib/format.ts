@@ -184,7 +184,7 @@ export function previewValue(v: unknown, max = 320): string {
  *  its category or status would. The server's own message rides along after the sentence
  *  (it states the cause): a sentence ending in ":" introduces it; one ending in "."
  *  precedes it. No sentence says to try again: `retryTail` owns that, from the body. */
-const ERROR_CODE_PREFIXES: Record<string, string> = {
+export const ERROR_CODE_PREFIXES: Record<string, string> = {
   AUTH_INVALID: "Sign-in rejected:",
   SIGNED_IN_ELSEWHERE: "Another tab signed in as someone else; reload this page.",
   AUTH_INSUFFICIENT: "Your role doesn't allow this:",
@@ -200,14 +200,14 @@ const ERROR_CODE_PREFIXES: Record<string, string> = {
   UNSUPPORTED_FILE: "Loom can't read this file type:",
   IDEMPOTENT_CONFLICT: "Already done — a request with this key was processed before.",
   BLACKLISTED: "Blocked by a privacy filter:",
-  BLOB_GONE: "The original file is no longer stored, so it can't be downloaded or read again.",
+  BLOB_GONE: "The original file is no longer stored, so it can't be downloaded or extracted.",
   RATE_LIMITED: "Too many requests.",
   OVERLOADED: "Loom is busy right now.",
   BACKEND_TIMEOUT: "Loom took too long to answer.",
   BACKEND_UNAVAILABLE: "Loom's database didn't answer.",
   CODED_WIDTH_MISMATCH: "The embedding model's width doesn't match the vector tables — see Settings › Models & keys.",
   SELF_SIGNUP_DISABLED: "Sign-up is off on this instance. Ask your operator.",
-  INTERNAL_ERROR: "Loom hit an internal error. If it happens again, send the request id to your operator.",
+  INTERNAL_ERROR: "Loom hit an internal error. If it keeps happening, send the request id to your operator.",
   EMAIL_IN_USE: "That email belongs to another account:",
   NAMESPACE_CLAIMED: "That name is already taken:",
   NAMESPACE_TAKEN: "That name is already taken:",
@@ -258,10 +258,10 @@ function sentenceForStatus(status: number): string {
 /** What to do next, from the body alone: whether resending can work and when. Silent when
  *  the server's own words already say it. */
 function retryTail(err: ApiError): string {
-  if (/\b(retry|again|resend)/i.test(err.serverMessage)) return "";
+  if (/\b(retry\w*|again|resend\w*)\b/i.test(err.serverMessage)) return "";
   const category = typeof err.detail.category === "string" ? err.detail.category : "";
   const retryable = err.detail.retryable;
-  if (category === "configuration") return "An operator has to fix this; trying again won't help.";
+  if (category === "configuration") return "Trying again won't help until that's changed.";
   if (retryable === true) {
     const wait = Number(err.detail.retry_after_s ?? err.retryAfter);
     return wait > 0 ? `Try again in ${Math.ceil(wait)} s.` : "Try again in a moment.";
@@ -279,6 +279,13 @@ function joinSentence(friendly: string, message: string): string {
   return `${friendly} ${msg}`;
 }
 
+/** A server message set after a full stop: capitalised and closed. */
+function asSentence(msg: string): string {
+  const t = msg.trim();
+  const closed = /[.!?]$/.test(t) ? t : `${t}.`;
+  return closed.charAt(0).toUpperCase() + closed.slice(1);
+}
+
 function withTail(text: string, tail: string): string {
   if (!tail) return text;
   return `${/[.!?]$/.test(text) ? text : `${text}.`} ${tail}`;
@@ -286,6 +293,9 @@ function withTail(text: string, tail: string): string {
 
 const LOST_CONNECTION =
   "Lost connection to Loom mid-request. The work may still have committed on the server — re-check the list before retrying.";
+/** The same, for a caller that read rather than wrote (`bare`): nothing can have committed. */
+const LOST_CONNECTION_READ = "Lost connection to Loom.";
+const TIMED_OUT = "Loom didn't answer in time. It may still finish; check before trying again.";
 
 /** Shown for anything thrown that is not a plain `Error`: the dashboard words its own
  *  refusals as plain Errors, while a TypeError, an AbortError or a library's own class
@@ -312,10 +322,13 @@ export function humanizeError(err: unknown, opts: HumanizeOptions = {}): string 
   // never reached the server" from "the server said no" — and warn that
   // the server may have committed the work even though we lost the response.
   if (/^(failed to fetch|fetch failed|load failed|networkerror)\b/i.test(raw)) {
-    return LOST_CONNECTION;
+    return opts.bare ? LOST_CONNECTION_READ : LOST_CONNECTION;
   }
   // A DOMException is not an Error in every engine, so the name is read off the object.
   const name = typeof err === "object" && "name" in err ? String(err.name) : "Error";
+  // Every call is bounded (`AbortSignal.timeout`, api.ts): a slow server, not a bug here.
+  if (name === "TimeoutError") return TIMED_OUT;
+  if (name === "AbortError") return "Cancelled.";
   if (!raw || name !== "Error") return DASHBOARD_FAULT;
   const m = /^([A-Z][A-Z_]+):?\s*(.*)$/s.exec(raw);
   if (!m) return raw;
@@ -358,12 +371,19 @@ function humanizeApiError(err: ApiError, bare: boolean): string {
     // The caller's lead-in replaces a generic one; a code's sentence stays, since it
     // carries the next step ("Your role doesn't allow this.").
     const own = codeSentence(err);
-    text = own ? `${own.replace(/:$/, ".")} ${err.serverMessage}` : err.serverMessage;
+    text = own ? `${own.replace(/:$/, ".")} ${asSentence(err.serverMessage)}` : err.serverMessage;
   } else if (err.serverMessage) text = joinSentence(lead, err.serverMessage);
   // With no message the code is all the server said: kept for support, never the sentence.
   else if (err.code) text = `${lead.replace(/[:.]$/, "")} (${err.code}).`;
   else text = joinSentence(lead, "");
   return withTail(text, retryTail(err));
+}
+
+/** An inline "Couldn't load …:" line's reason: the bare words and, when the failure
+ *  carried one, the request id, since the sentence may ask the reader to send it. */
+export function errorLine(err: unknown): string {
+  const rid = errorRequestId(err);
+  return rid ? `${humanizeError(err, { bare: true })} Request id ${rid}.` : humanizeError(err, { bare: true });
 }
 
 /** The request id to print under an error for support, or "" when the

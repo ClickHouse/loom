@@ -12,14 +12,14 @@ import { ListPager, usePageSize } from "../../components/ui/ListPager";
 import { hasOrgAdminClaim } from "../../lib/role";
 import { adminListUsers, claimRelease, type AdminUserRow, type AdminUsersResult } from "../../api";
 import { EmptyState } from "../../components/EmptyState";
-import { humanizeError, parseChTime } from "../../lib/format";
+import { parseChTime } from "../../lib/format";
 import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";
 import { ListToolbar } from "../../components/ui/ListToolbar";
 import { BusyButton } from "../../components/ui/BusyButton";
 import { PHONE_QUERY, useMedia } from "../../lib/useMedia";
 import { useAbortableEffect } from "../../lib/hooks";
-import { toast } from "../../components/Toast";
+import { toastError } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { PageContainer } from "../../layout/PageContainer";
 import { ScopeBadge } from "../../components/ScopeBadge";
@@ -314,7 +314,7 @@ function ClaimReleaseSection() {
       setNs("");
       setReason("");
     } catch (e) {
-      toast(`Release failed: ${humanizeError(e)}`, "error");
+      toastError("Release failed", e);
     } finally {
       setBusy(false);
     }

@@ -21,7 +21,7 @@ import { humanizeError } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { confirmAction } from "../components/ConfirmDialog";
 import { Skeleton } from "../components/Skeleton";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { ListTime, LoadingSkeleton } from "../components/ui";
 
 const RepoDocAddDialog = lazy(() => import("../flows/RepoDocDialogs").then((m) => ({ default: m.RepoDocAddDialog })));
@@ -111,7 +111,7 @@ export function RepoDocsList({
       toast(`Removed ${doc.title || doc.source_uri}`, "ok");
       setNonce((n) => n + 1);
     } catch (e) {
-      toast(`Couldn't remove it: ${humanizeError(e)}`, "error");
+      toastError("Couldn't remove it", e);
     } finally {
       setRemoving(null);
     }

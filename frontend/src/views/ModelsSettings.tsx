@@ -1,4 +1,3 @@
-import { humanizeError } from "../lib/format";
 import { useEffect, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import {
@@ -11,6 +10,7 @@ import {
 } from "../api/models";
 import { ModelsForm } from "./ModelsForm";
 import { Alert, Loading } from "../components/ui";
+import { errorLine } from "../lib/format";
 
 const PHASES: Record<string, string> = {
   drain: "Pausing agent requests",
@@ -79,7 +79,7 @@ export function ModelsSettings() {
           setError("");
         }
       } catch (e) {
-        if (!controller.signal.aborted) setError(`Couldn't load model settings: ${humanizeError(e, { bare: true })}`);
+        if (!controller.signal.aborted) setError(`Couldn't load model settings: ${errorLine(e)}`);
       } finally {
         loading = false;
       }
@@ -131,7 +131,7 @@ export function ModelsSettings() {
                       setConfirmReset(false);
                       setReload((value) => value + 1);
                     } catch (e) {
-                      setError(`Couldn't reset model settings: ${humanizeError(e, { bare: true })}`);
+                      setError(`Couldn't reset model settings: ${errorLine(e)}`);
                     } finally {
                       setResetting(false);
                     }
@@ -173,7 +173,7 @@ export function ModelsSettings() {
                       await retryModelConfiguration(status.pending.config_id);
                       setReload((value) => value + 1);
                     } catch (e) {
-                      setError(`Couldn't retry the rebuild: ${humanizeError(e, { bare: true })}`);
+                      setError(`Couldn't retry the rebuild: ${errorLine(e)}`);
                     } finally {
                       setRetrying(false);
                     }

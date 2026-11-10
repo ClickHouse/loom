@@ -21,9 +21,9 @@ import { ListState } from "../components/ui/ListState";
 import { ListTime } from "../components/ui/ListTime";
 import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { DraftSearch } from "../components/ui/DraftSearch";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { AgentBadge } from "../components/AgentBadge";
-import { displayAgent, truncate, humanizeError, sentenceCase } from "../lib/format";
+import { displayAgent, truncate, sentenceCase } from "../lib/format";
 import { useAbortableEffect, useKeyboard } from "../lib/hooks";
 import { useRowNav } from "../lib/useRowNav";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
@@ -339,7 +339,7 @@ export function Conversations() {
       toast(next ? "Conversation recording on" : "Recording off — new turns won't be stored", "ok");
     } catch (e) {
       if (gen === scopeGen.current) setLoggingEnabled(!next); // revert
-      toast(`Couldn't update: ${humanizeError(e)}`, "error");
+      toastError("Couldn't update", e);
     }
   };
 

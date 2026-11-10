@@ -55,7 +55,7 @@ import { navigationHref, useStore } from "../lib/state";
 import { graphSeedHref, isModifiedClick, openGraphAt } from "../lib/graphLink";
 import { AgentBadge } from "./AgentBadge";
 import { DiffView } from "./DiffView";
-import { keepOpenOnToasts, toast } from "./Toast";
+import { keepOpenOnToasts, toast, toastError } from "./Toast";
 import { IconButton } from "./IconButton";
 import { SkeletonText } from "./Skeleton";
 import { Chip, ExternalLink, Loading, LoadingSkeleton, Tip } from "./ui";
@@ -64,7 +64,7 @@ import { CHIP_OUTLINE_CLASS } from "./ui/Chip";
 import { confirmAction } from "./ConfirmDialog";
 import { CopyToNamespaceDialog } from "../flows/CopyToNamespaceDialog";
 import { ThreadReplayDialog, type ReplayThread } from "./ThreadReplayDialog";
-import { absoluteTime, relativeTime, formatValue, humanizeError, parseChTime, SENTINEL_AGENTS } from "../lib/format";
+import { absoluteTime, relativeTime, formatValue, parseChTime, SENTINEL_AGENTS, errorLine } from "../lib/format";
 import { detectEncodedValue } from "../lib/encoded";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
@@ -356,7 +356,7 @@ export function MemoryInspector({
       })
       .catch((e) => {
         if (!live) return;
-        toast(`Load failed: ${humanizeError(e)}`, "error");
+        toastError("Load failed", e);
         setLoading(false);
       });
     // Nothing else is read on open. The secondary sections read when opened (below);
@@ -521,7 +521,7 @@ export function MemoryInspector({
       onChanged();
     } catch (e) {
       setDetail((d) => (d ? { ...d, pinned: wasPinned } : d));
-      toast(`Pin failed: ${humanizeError(e)}`, "error");
+      toastError("Pin failed", e);
     }
   };
 
@@ -541,7 +541,7 @@ export function MemoryInspector({
       toast(live ? "Verification removed" : `Verified as ${r.verified_by}`, "ok");
       onChanged();
     } catch (e) {
-      toast(`Verify failed: ${humanizeError(e)}`, "error");
+      toastError("Verify failed", e);
     }
   };
 
@@ -563,7 +563,7 @@ export function MemoryInspector({
       }
       toast(outcome === "positive" ? "Recorded as helpful" : "Recorded as unhelpful", "ok");
     } catch (e) {
-      toast(`Couldn't record that: ${humanizeError(e)}`, "error");
+      toastError("Couldn't record that", e);
     }
   };
 
@@ -599,7 +599,7 @@ export function MemoryInspector({
         setRenaming(false);
       }
     } catch (e) {
-      if (showing()) toast(`Couldn't read the memory again: ${humanizeError(e)}`, "error");
+      if (showing()) toastError("Couldn't read the memory again", e);
     }
   };
 
@@ -613,7 +613,7 @@ export function MemoryInspector({
       }
       toast("Unlocked", "ok");
     } catch (e) {
-      toast(`Unlock failed: ${humanizeError(e)}`, "error");
+      toastError("Unlock failed", e);
       return;
     }
     await reread();
@@ -634,7 +634,7 @@ export function MemoryInspector({
       toast(`Shared as ${r.shared_memory_key}`, "ok");
       onChanged();
     } catch (e) {
-      toast(`Share failed: ${humanizeError(e)}`, "error");
+      toastError("Share failed", e);
     }
   };
 
@@ -651,7 +651,7 @@ export function MemoryInspector({
       toast(r.demoted ? "No longer shared" : "This memory was not shared", "ok");
       onChanged();
     } catch (e) {
-      toast(`Stop sharing failed: ${humanizeError(e)}`, "error");
+      toastError("Stop sharing failed", e);
     }
   };
 
@@ -702,7 +702,7 @@ export function MemoryInspector({
       onChanged();
     } catch (e) {
       setDetail((d) => (d ? { ...d, tags: prev } : d));
-      toast(`Tag update failed: ${humanizeError(e)}`, "error");
+      toastError("Tag update failed", e);
     }
   };
 
@@ -734,7 +734,7 @@ export function MemoryInspector({
       });
       toast(ttlSeconds === null ? "Expiry cleared — never expires" : "Expiry updated", "ok");
     } catch (e) {
-      toast(`Expiry update failed: ${humanizeError(e)}`, "error");
+      toastError("Expiry update failed", e);
       return;
     }
     await reread();
@@ -763,7 +763,7 @@ export function MemoryInspector({
       // A save that answers after another Edit leaves that editor open.
       if (formSession.current === session) setEditing(false);
     } catch (e) {
-      toast(`Save failed: ${humanizeError(e)}`, "error");
+      toastError("Save failed", e);
       return;
     }
     await reread();
@@ -832,11 +832,11 @@ export function MemoryInspector({
         const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
         if (!stale()) setDetail(fresh);
       } catch (e) {
-        if (!stale()) toast(`Reload failed: ${humanizeError(e)}`, "error");
+        if (!stale()) toastError("Reload failed", e);
       }
     } catch (e) {
-      if (stale()) toast(`Restore of ${memoryKey} failed: ${humanizeError(e)}`, "error");
-      else toast(`Restore failed: ${humanizeError(e)}`, "error");
+      if (stale()) toastError(`Restore of ${memoryKey} failed`, e);
+      else toastError("Restore failed", e);
     } finally {
       if (!stale()) setRestoring(false);
     }
@@ -863,7 +863,7 @@ export function MemoryInspector({
       onChanged();
       onClose();
     } catch (e) {
-      toast(`Delete failed: ${humanizeError(e)}`, "error");
+      toastError("Delete failed", e);
     }
   };
 
@@ -2066,7 +2066,7 @@ function RenameForm({
       if (dryRun) setPreview(r);
       else onRenamed(r);
     } catch (e) {
-      toast(`${dryRun ? "Preview" : "Rename"} failed: ${humanizeError(e)}`, "error");
+      toastError(`${dryRun ? "Preview" : "Rename"} failed`, e);
     } finally {
       setBusy(null);
     }
@@ -2367,14 +2367,14 @@ function EntitySummary({
       })
       .catch((e: unknown) => {
         // A failed read says so: "mentioned only in this memory" would be a claim.
-        if (live) setMentions({ failed: humanizeError(e, { bare: true }) });
+        if (live) setMentions({ failed: errorLine(e) });
       });
     relatedFacts({ org: identity.org, namespace: identity.namespace }, want, { top_k: POPOVER_LIST })
       .then((r) => {
         if (live) setNeighbours((r.related || []).map((n) => n.entity).slice(0, POPOVER_LIST));
       })
       .catch((e: unknown) => {
-        if (live) setNeighbours({ failed: humanizeError(e, { bare: true }) });
+        if (live) setNeighbours({ failed: errorLine(e) });
       });
     return () => {
       live = false;

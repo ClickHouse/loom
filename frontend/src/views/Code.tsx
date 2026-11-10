@@ -24,14 +24,14 @@ import { VerticalStepper } from "@clickhouse/click-ui/VerticalStepper";
 import { PageContainer } from "../layout/PageContainer";
 import { useStore, useIdentity } from "../lib/state";
 import { holdsAdminGrant } from "../lib/role";
-import { fmtInt, relativeTime, humanizeError, listTime, parseChTime, refreshDetail } from "../lib/format";
+import { fmtInt, relativeTime, humanizeError, listTime, parseChTime, refreshDetail, errorLine } from "../lib/format";
 import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { EmptyState } from "../components/EmptyState";
 import { IconButton } from "../components/IconButton";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { RowSkeleton, Skeleton, SkeletonCard } from "../components/Skeleton";
-import { type ToastKind, type ToastOpts, toast } from "../components/Toast";
+import { toast, toastError, type ToastKind, type ToastOpts } from "../components/Toast";
 import { ListPager, usePageSize } from "../components/ui/ListPager";
 import { ListState } from "../components/ui/ListState";
 import { ListToolbar } from "../components/ui/ListToolbar";
@@ -484,7 +484,7 @@ function RepositoriesHome({
       toast(...linkedToast(g.primary.repo, out));
       onChanged();
     } catch (e) {
-      toast(`Couldn't link the tracker: ${humanizeError(e)}`, "error");
+      toastError("Couldn't link the tracker", e);
     }
   };
   const refreshBranch = async (b: CodeRepoSummary) => {
@@ -497,7 +497,7 @@ function RepositoriesHome({
         "ok",
       );
     } catch (e) {
-      toast(`Refresh failed: ${humanizeError(e)}`, "error");
+      toastError("Refresh failed", e);
     }
   };
   const removeBranch = async (b: CodeRepoSummary) => {
@@ -546,7 +546,7 @@ function RepositoriesHome({
         await setCodeRepoAccess(b.org, b.namespace, classification, join_policy, opening ? b.namespace : "");
         done += 1;
       } catch (e) {
-        toast(`${b.namespace}: ${humanizeError(e)}`, "error");
+        toastError(`${b.namespace}`, e);
       }
     }
     if (done)
@@ -1894,7 +1894,7 @@ export function HealthTab({ id }: { id: CodeId }) {
         .catch((e: unknown) => {
           if (!live()) return;
           setCov((c) => c ?? null);
-          setWhy((w) => ({ ...w, cov: humanizeError(e, { bare: true }) }));
+          setWhy((w) => ({ ...w, cov: errorLine(e) }));
         });
       codeRecentCommits(id, 15, { signal })
         .then((r) => {
@@ -1904,7 +1904,7 @@ export function HealthTab({ id }: { id: CodeId }) {
           // Said as a failure: "no commits recorded yet" would be a claim.
           if (!live()) return;
           setRecent((r) => (Array.isArray(r) ? r : "failed"));
-          setWhy((w) => ({ ...w, recent: humanizeError(e, { bare: true }) }));
+          setWhy((w) => ({ ...w, recent: errorLine(e) }));
         });
       codeIndexErrors(id, 100, { signal })
         .then((e) => {
@@ -1913,7 +1913,7 @@ export function HealthTab({ id }: { id: CodeId }) {
         .catch((e: unknown) => {
           if (!live()) return;
           setErrs((x) => x ?? null);
-          setWhy((w) => ({ ...w, errs: humanizeError(e, { bare: true }) }));
+          setWhy((w) => ({ ...w, errs: errorLine(e) }));
         });
       listCostRollup(id, { days: 7, groupBy: ["operation"], signal })
         .then((r) => {
@@ -1943,7 +1943,7 @@ export function HealthTab({ id }: { id: CodeId }) {
       toast(r.already_running ? "An ingest pass is already running" : "Ingest pass triggered", "ok");
       setTimeout(load, 2500);
     } catch (e) {
-      toast(`Refresh failed: ${humanizeError(e)}`, "error");
+      toastError("Refresh failed", e);
     } finally {
       setRefreshing(false);
     }
@@ -2526,7 +2526,7 @@ function ExploreTab({ id }: { id: CodeId }) {
       ]);
       setSym({ name, defs: s.definitions, callers: callers.edges, callees: callees.edges, ambiguous: s.ambiguous });
     } catch (e) {
-      toast(`Symbol lookup failed: ${humanizeError(e)}`, "error");
+      toastError("Symbol lookup failed", e);
     } finally {
       setSymBusy(false);
     }
@@ -2537,7 +2537,7 @@ function ExploreTab({ id }: { id: CodeId }) {
     try {
       setMap((await codeMap(id, { token_budget: 1500 })).map);
     } catch (e) {
-      toast(`Map failed: ${humanizeError(e)}`, "error");
+      toastError("Map failed", e);
     } finally {
       setMapBusy(false);
     }
@@ -2790,7 +2790,7 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
       const p = await codeContextPack(id, pr, 6000);
       setPack({ pr, text: p.context, tokens: p.tokens_used, source: p.source });
     } catch (e) {
-      toast(`Pack load failed: ${humanizeError(e)}`, "error");
+      toastError("Pack load failed", e);
       // Fold the row back rather than leave it loading.
       setOpen((o) => (o === pr ? null : o));
     }
@@ -3068,7 +3068,7 @@ export function AccessTab({
       toast(`${id.namespace} is now ${RULE_META[next].label.toLowerCase()}`, "ok");
       load();
     } catch (err) {
-      toast(`Couldn't change the rule: ${humanizeError(err)}`, "error");
+      toastError("Couldn't change the rule", err);
     } finally {
       setBusy(null);
     }
@@ -3122,7 +3122,7 @@ export function AccessTab({
       setSubject("");
       load();
     } catch (err) {
-      toast(`Couldn't add: ${humanizeError(err)}`, "error");
+      toastError("Couldn't add", err);
     } finally {
       setBusy(null);
     }
@@ -3143,7 +3143,7 @@ export function AccessTab({
       toast(`Removed ${g.subject}`, "ok");
       load();
     } catch (err) {
-      toast(`Couldn't remove: ${humanizeError(err)}`, "error");
+      toastError("Couldn't remove", err);
     }
   };
 

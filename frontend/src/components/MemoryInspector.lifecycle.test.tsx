@@ -76,7 +76,7 @@ vi.mock("../api/memoryLifecycle", () => ({
 import * as api from "../api";
 import * as lc from "../api/memoryLifecycle";
 import { confirmAction } from "./ConfirmDialog";
-import { toast } from "./Toast";
+import { toast, toastError } from "./Toast";
 
 const grant = (role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
   namespace: "team",
@@ -245,7 +245,12 @@ describe("MemoryInspector lifecycle actions", () => {
     vi.mocked(lc.shareMemory).mockRejectedValueOnce(new Error("a shared memory already holds this key"));
     await open("admin");
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Share with every agent" }));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith(expect.stringMatching(/^Share failed: /), "error"));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        "Share failed",
+        expect.objectContaining({ message: "a shared memory already holds this key" }),
+      ),
+    );
   });
 
   it("names the lock holder and when it lapses in the lock's tip", async () => {

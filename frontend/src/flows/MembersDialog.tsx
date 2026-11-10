@@ -14,7 +14,7 @@ import {
 } from "../api";
 import { useStore } from "../lib/state";
 import { holdsAdminGrant } from "../lib/role";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
 import { Modal, ModalFooter } from "../components/ui/Modal";
@@ -163,7 +163,7 @@ export function MembersDialog({
       toast(`${subject} → ${role}`, "ok");
       load();
     } catch (e) {
-      toast(`Update failed: ${humanizeError(e)}`, "error");
+      toastError("Update failed", e);
     } finally {
       setBusy(null);
     }
@@ -186,7 +186,7 @@ export function MembersDialog({
       toast(`Removed ${subject}`, "ok");
       load();
     } catch (e) {
-      toast(`Remove failed: ${humanizeError(e)}`, "error");
+      toastError("Remove failed", e);
     } finally {
       setBusy(null);
     }
@@ -341,7 +341,7 @@ export function MembersDialog({
                             toast(`Withdrew ${r.requested_role} request`, "ok");
                             load();
                           } catch (e) {
-                            toast(`Cancel failed: ${humanizeError(e)}`, "error");
+                            toastError("Cancel failed", e);
                           } finally {
                             setBusy(null);
                           }

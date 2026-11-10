@@ -44,7 +44,7 @@ vi.mock("../api", async (importOriginal) => {
   };
 });
 import { getMemory, restoreMemory } from "../api";
-import { toast } from "./Toast";
+import { toast, toastError } from "./Toast";
 
 const person: WhoAmI = {
   authenticated: true,
@@ -207,7 +207,12 @@ describe("MemoryInspector restore of a superseded row", () => {
     seed("writer");
     const { fail } = await restoreThenMove(() => {});
     fail(new Error("network down"));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("Restore of user_city failed: network down", "error"));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        "Restore of user_city failed",
+        expect.objectContaining({ message: "network down" }),
+      ),
+    );
     expect(screen.getByText("works at Acme")).toBeTruthy();
   });
 
@@ -252,9 +257,11 @@ describe("MemoryInspector restore of a superseded row", () => {
     vi.mocked(getMemory).mockRejectedValue(new Error("network down"));
     await userEvent.click(await screen.findByRole("button", { name: "Restore" }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Restored", "ok"));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("Reload failed: network down", "error"));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("Reload failed", expect.objectContaining({ message: "network down" })),
+    );
     expect(onChanged).toHaveBeenCalled();
-    expect(toast).not.toHaveBeenCalledWith(expect.stringContaining("Restore failed"), "error");
+    expect(toastError).not.toHaveBeenCalledWith(expect.stringContaining("Restore failed"), expect.anything());
   });
 
   it("re-reads the row and the list when the restore finds nothing, so Restore is not offered again", async () => {

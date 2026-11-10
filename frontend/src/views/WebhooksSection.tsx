@@ -20,7 +20,7 @@ import { useIdentity } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
 import { humanizeError } from "../lib/format";
 import { confirmAction } from "../components/ConfirmDialog";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { RowMenu } from "../components/ui/RowMenu";
 import { ListState } from "../components/ui/ListState";
 import { Modal, ModalFooter } from "../components/ui/Modal";
@@ -63,7 +63,7 @@ export function WebhooksSection() {
       setHooks((hs) => hs && hs.filter((x) => x.webhook_id !== h.webhook_id));
       refresh();
     } catch (e) {
-      toast(`Remove failed: ${humanizeError(e)}`, "error");
+      toastError("Remove failed", e);
     } finally {
       setRemoving((ids) => {
         const left = new Set(ids);
