@@ -112,11 +112,10 @@ steps:
    (`LOOM_ASSISTANT_ANSWER_TTL_S`, default ten minutes). Delegation applies every rule a
    minted child follows: the creator's live grant, the end user, the ancestor subjects
    and their issue times, the chain depth limit, and the caller's token id among the
-   child's `parents`. The bridge
-   also asks for the caller's sign-in session among the `parents` (`delegate`'s
-   `ends_with_session`), so a dashboard or `loom login` caller's answer token ends at
-   sign-out, as a third-party client's already does. The token is not listed in
-   `loom.service_accounts`: it lives for one answer.
+   child's `parents`. The bridge also asks for the caller's sign-in session among the
+   `parents` (`delegate`'s `ends_with_session`), so a dashboard or `loom login` caller's
+   answer token ends at sign-out, as a third-party client's already does. The token is
+   not listed in `loom.service_accounts`: it lives for one answer.
 3. Call LibreChat's agents API with Loom's service key, the seeded agent's id in place
    of any `model` the caller names, the answer token as `parent_message_id`, and the
    text of the caller's `user` and `assistant` messages (no `system` message, which
@@ -1051,12 +1050,11 @@ built.
   and only the assistant's two entry points (the `assistant.ask` op and
   `POST /v1/assistant/chat/completions`) ask LibreChat for an answer; boot setup
   (`server/assistant/app/service.py`) only registers the service user, its key and the
-  agent. Both entry points refuse an answer's own
-  token (consumer `loom-assistant`) and any token delegated from one with
-  `ASSISTANT_SELF_CALL` (403), ledgered as a refused answer, on every transport and
-  toolset: an answer token's id starts with `assistant-answer-`, so a descendant is told
-  by its parents. No model endpoint Loom serves for LibreChat's model calls may be an
-  assistant op or call the assistant.
+  agent. Both entry points refuse an answer's own token (consumer `loom-assistant`) and
+  any token delegated from one with `ASSISTANT_SELF_CALL` (403), ledgered as a refused
+  answer, on every transport and toolset: an answer token's id starts with
+  `assistant-answer-`, so a descendant is told by its parents. No model endpoint Loom
+  serves for LibreChat's model calls may be an assistant op or call the assistant.
 - The headless LibreChat's configuration keeps LibreChat's own memory off
   (`memory: disabled: true` in `deploy/librechat/assistant.librechat.yaml` and the Helm
   copy), so what a person tells the assistant is not kept a second time outside Loom.
