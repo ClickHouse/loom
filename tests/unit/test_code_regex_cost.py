@@ -316,12 +316,15 @@ def test_a_registered_lane_costs_linear_time(lang: str) -> None:
     )
     assert done.returncode == 0, done.stderr[-4000:]
     known = KNOWN_SLOW.get(lang, ())
-    slow, over = {}, {}
-    for shape, small, big, parses_small, parses_big in json.loads(done.stdout):
+    slow, linear, reparsed = {}, set(), {}
+    for shape, small, big, parsed_small, parsed_big in json.loads(done.stdout):
         if big > _BOUND_S or (big > _FLOOR_S / 2 and big > _RATIO * small):
             slow[shape] = (round(small, 3), round(big, 3))
-        if parses_big > 4 * parses_small + 2:
-            over[shape] = (round(small, 3), round(big, 3), parses_small, parses_big)
+        if big < _FLOOR_S / 2 and big < 4 * small:
+            linear.add(shape)
+        if parsed_big > 6 * parsed_small + 1000:  # a 4N file is 4 times the bytes
+            reparsed[shape] = (parsed_small, parsed_big)
     new = {shape: t for shape, t in slow.items() if shape not in known}
-    assert not new and not over, f"{lang}: (N s, 4N s) per shape {new}, {over}"
-    assert set(known) <= set(slow), f"{lang}: {sorted(set(known) - set(slow))} within budget"
+    assert not new and not reparsed, f"{lang}: (N s, 4N s) {new}; (N bytes, 4N bytes) {reparsed}"
+    fixed = sorted(set(known) & linear)  # clearly linear now, not a timer's doubt
+    assert not fixed, f"{lang}: {fixed} run in linear time; drop them from KNOWN_SLOW"

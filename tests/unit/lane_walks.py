@@ -428,9 +428,11 @@ _REPEATED = (
 _OPENERS = ("(", "{", "[", "<a>", "<!--", "/*", "{{", '"""', "${", "{%", "`", "'", '"')
 
 
-def _fan_out(entry: str, use: str, head: str = "", mid: str = "\n") -> Callable[[int], str]:
+def _fan_out(
+    entry: str, use: str, head: str = "", mid: str = "\n", tail: str = ""
+) -> Callable[[int], str]:
     """n/2 characters of entries, then n/2 of uses."""
-    return lambda n: head + _run("", entry)(n // 2) + mid + _run("", use)(n // 2)
+    return lambda n: head + _run("", entry)(n // 2) + mid + _run("", use)(n // 2) + tail
 
 
 SHAPES: list[tuple[str, Callable[[int], str]]] = [
@@ -439,7 +441,7 @@ SHAPES: list[tuple[str, Callable[[int], str]]] = [
     *((f"unclosed {o!r}", _run("", o)) for o in _OPENERS),
     *((f"unclosed {o!r} words", _run("", o + "a ")) for o in _OPENERS),
     ("fan-out list", _fan_out("a,", "a ")),
-    ("fan-out variable", _fan_out("a.c ", "${S} ", "set(S ", ")\n")),
+    ("fan-out variable", _fan_out("a.c ", "${S} ", "set(S ", ")\nadd_library(t ", ")\n")),
     ("fan-out members", _fan_out("a,", "m.a\n", "from m import ")),
     ("fan-out definitions", _fan_out("def a(): pass\n", "a()\n")),
 ]
@@ -475,6 +477,8 @@ def _extract(path: str, source: bytes) -> object:
     from server.code.domain.extract.lang_prisma import prisma_edges
 
     pf, err = parse_for_ingest(path, source)
+    if err.startswith("parse: MemoryError"):
+        raise MemoryError(err)  # the parse reports it as a failed file
     if pf is None:
         return err
     repo = _Names()
@@ -507,44 +511,48 @@ _REGISTRY_N = 5_000
 
 
 def registry_cost(lang: str) -> list[tuple[str, float, float, int, int]]:
-    """(shape, the time at N, the time at 4N, the tree-sitter parses at N and at 4N) per
-    shape for one lane, the best of three when the first pair looks over linear. The
-    parses' time is not counted, since each has its own CPU deadline (`bounded_parse`);
-    their number is returned, so a walk that parses once per block is still seen."""
+    """(shape, the time at N, the time at 4N, the bytes tree-sitter parsed at N and at 4N)
+    per shape the lane reads as its own (a manifest shape can read as a template), the
+    best of three for a listed shape or one that looks over linear. The parses' time is
+    not counted, since each has its own CPU deadline (`bounded_parse`); the bytes they
+    read are returned, so a walk that parses the file again per block is still seen."""
     from server.code.domain.extract import bounded_parse
 
-    path, head, _lang = SAMPLES[lang]
+    path, head, as_lang = SAMPLES[lang]
     real = bounded_parse.parse
-    in_parse = [0.0, 0]
+    parsed = [0.0, 0]
 
-    def timed(*args: object) -> object:
+    def timed(parser: object, source: bytes) -> object:
         t0 = time.perf_counter()
         try:
-            return real(*args)
+            return real(parser, source)
         finally:
-            in_parse[0] += time.perf_counter() - t0
-            in_parse[1] += 1
+            parsed[0] += time.perf_counter() - t0
+            parsed[1] += len(source)
 
     bounded_parse.parse = timed  # type: ignore[assignment]
 
-    def cost(text: Callable[[int], str], n: int) -> tuple[float, int]:
+    def cost(text: Callable[[int], str], n: int) -> tuple[float, int, str]:
         source = (head + text(n)).encode()
-        in_parse[:] = [0.0, 0]
+        parsed[:] = [0.0, 0]
         t0 = time.perf_counter()
-        _extract(path, source)
-        return time.perf_counter() - t0 - in_parse[0], int(in_parse[1])
+        pf = _extract(path, source)
+        took = time.perf_counter() - t0 - parsed[0]
+        return took, int(parsed[1]), str(getattr(pf, "lang", ""))
 
     out = []
     for name, text in SHAPES:
-        small, ps = cost(text, _REGISTRY_N)
-        if small > 1.0:  # already over any linear budget: 4N would only spend the deadline
-            out.append((name, small, float("inf"), ps, ps))
+        small, bs, read_as = cost(text, _REGISTRY_N)
+        if read_as != as_lang:
             continue
-        big, pb = cost(text, 4 * _REGISTRY_N)
-        if big > 0.02 and big > 8 * small:
+        if small > 1.0:  # already over any linear budget: 4N would only spend the deadline
+            out.append((name, small, float("inf"), bs, bs))
+            continue
+        big, bb, _ = cost(text, 4 * _REGISTRY_N)
+        if name in KNOWN_SLOW.get(lang, ()) or (big > 0.02 and big > 8 * small):
             small = min(small, cost(text, _REGISTRY_N)[0], cost(text, _REGISTRY_N)[0])
             big = min(big, cost(text, 4 * _REGISTRY_N)[0], cost(text, 4 * _REGISTRY_N)[0])
-        out.append((name, small, big, ps, pb))
+        out.append((name, small, big, bs, bb))
     return out
 
 

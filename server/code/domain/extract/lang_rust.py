@@ -258,35 +258,42 @@ class _Walker:
         self._body(node, (*scope, type_name))
 
 
-def _use_paths(arg: Any, source: bytes) -> list[str]:
-    """The module paths a `use` argument names, one per leaf: `a::{b, c::D}`
-    → `a::b`, `a::c::D`; `a::*` → `a`; `a as b` → `a`."""
+def _use_paths(arg: Any, source: bytes, above: str = "") -> list[str]:
+    """The module paths a `use` argument names, one per leaf, distinct: `a::{b, c::D}`
+    → `a::b`, `a::c::D`; `a::*` → `a`; `a as b` → `a`. `above` is the path of the lists
+    around the argument, joined once per leaf (rebuilt at every level, a path is a copy
+    per level); a joined path of `_MAX_USE_CHARS` or more is dropped."""
+
+    def leaf(p: str) -> list[str]:
+        if not above:
+            return [p]
+        return [f"{above}::{p}"] if len(above) + 2 + len(p) < _MAX_USE_CHARS else []
+
     t = arg.type
-    if t == "scoped_use_list":
-        path = arg.child_by_field_name("path")
-        prefix = node_text(path, source) if path is not None else ""
-        lst = arg.child_by_field_name("list")
+    if t in {"scoped_use_list", "use_list"}:
+        inner = above
+        if t == "scoped_use_list":
+            path = arg.child_by_field_name("path")
+            prefix = node_text(path, source) if path is not None else ""
+            inner = f"{above}::{prefix}" if above and prefix else (above or prefix)
+            if len(inner) >= _MAX_USE_CHARS:
+                return []
+            lst = arg.child_by_field_name("list")
+            items = lst.named_children if lst is not None else []
+        else:
+            items = arg.named_children
         found: dict[str, None] = {}
-        for item in lst.named_children if lst is not None else []:
-            for p in _use_paths(item, source):
-                if not prefix:
-                    found[p] = None
-                elif len(prefix) + 2 + len(p) < _MAX_USE_CHARS:
-                    found[f"{prefix}::{p}"] = None
+        for item in items:
+            found.update(dict.fromkeys(_use_paths(item, source, inner)))
         return list(found)
-    if t == "use_list":
-        out = []
-        for item in arg.named_children:
-            out.extend(_use_paths(item, source))
-        return out
     if t == "use_as_clause":
         path = arg.child_by_field_name("path")
-        return _use_paths(path, source) if path is not None else []
+        return _use_paths(path, source, above) if path is not None else []
     if t == "use_wildcard":
-        inner = arg.named_children[0] if arg.named_children else None
-        return [node_text(inner, source)] if inner is not None else []
+        inner_node = arg.named_children[0] if arg.named_children else None
+        return leaf(node_text(inner_node, source)) if inner_node is not None else []
     if t in {"scoped_identifier", "identifier", "crate", "self", "super"}:
-        return [node_text(arg, source)]
+        return leaf(node_text(arg, source))
     return []
 
 

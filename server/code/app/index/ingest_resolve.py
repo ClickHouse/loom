@@ -403,8 +403,8 @@ def git_text_source(git_dir: str, sha: str) -> Iterator[None]:
 # The sibling files whose "" is a verdict, by path and cap and by where it came from:
 # (git_dir, sha) for the mirror's at a pass's commit (a file over the cap, or empty there),
 # (org, namespace) for the indexed chunks' (over the cap), which a pass also reaches when
-# the mirror fails. An empty read is not cached, so without this every import that needs
-# the file would read it again; a file over one cap may be within a larger one.
+# the mirror fails. The text cache keeps no empty read, so without this every import that
+# needs the file would read it again; a file over one cap may be within a larger one.
 _EMPTY_VERDICTS: TtlCache[tuple[str, str, str, int], bool] = TtlCache(
     lambda: settings.code_ingest_sibling_text_ttl_s,
     maxsize=65_536,  # a verdict is a few bytes; the barrels of one pass do not evict a manifest's
