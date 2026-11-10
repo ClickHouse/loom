@@ -112,6 +112,89 @@ def _cmake(text: str) -> object:
     return commands(text)
 
 
+def _cmake_units(text: str) -> object:
+    from server.code.domain.extract.lang_cmake import cmake_units
+
+    return cmake_units("CMakeLists.txt", text)
+
+
+def _variable_uses(n: int) -> str:
+    """A variable of n/8 sources, used n/10 times by one target."""
+    return "set(S " + "a.c " * (n // 8) + ")\nadd_library(t " + "${S} " * (n // 10) + ")\n"
+
+
+def _entry_point_files(text: str) -> object:
+    """A layout from one setup.py, then the entry points of one Python file per 4,000
+    characters of it."""
+    from server.code.domain.extract.py_layouts import layout_from_texts, module_entry_facets
+    from server.code.domain.extract.treesitter import ParsedFile
+
+    layout = layout_from_texts({"setup.py": text}, [])
+    return [
+        module_entry_facets(ParsedFile(path=f"r0/m{i}.py", lang="python", source=b""), layout)
+        for i in range(len(text) // 4000)
+    ]
+
+
+def _entry_points(n: int) -> str:
+    roots = "".join(f"find_packages('r{i}')\n" for i in range(64))
+    return roots + '"console_scripts":[' + _numbered('"a{0}=m{0}:f",')(n) + "]"
+
+
+def _doc_references(text: str) -> object:
+    """A file's backticked mentions against one definition of the name per 100 characters."""
+    from server.code.domain.extract.lang_markdown import (
+        doc_reference_edges,
+        doc_reference_sites,
+        parse_markdown,
+    )
+
+    pf = parse_markdown("a.md", text.encode())
+    table = {"abc": [(f"s{i}", f"m{i}::abc", "function") for i in range(len(text) // 100)]}
+    return doc_reference_edges(pf, doc_reference_sites(pf), table)
+
+
+def _pr_body(text: str) -> object:
+    from server.code.domain.pr_lexemes import strip_pr_template
+
+    return strip_pr_template(text)
+
+
+def _lane_includes(text: str) -> object:
+    import asyncio
+
+    from server.code.app.index.ingest_resolve import _resolve_simple_lane_includes
+    from server.code.domain.extract.lang_markdown import parse_markdown
+
+    class Repo:
+        async def live_paths_present(self, org: str, ns: str, paths: list[str]) -> set[str]:
+            return set(paths)
+
+    pf = parse_markdown("a/b/c/d/e/f/g/a.md", text.encode())
+    return asyncio.run(_resolve_simple_lane_includes(Repo(), "o", "n", pf))  # type: ignore[arg-type]
+
+
+def _wanted(lane: str) -> Callable[[str], object]:
+    """The import probe of one lane over a file's specifiers, one per line."""
+
+    def walk(text: str) -> object:
+        from server.code.domain.extract import lang_go, lang_proto, lang_python, lang_rust
+        from server.code.domain.extract import lang_typescript_imports as lang_ts
+
+        specs = text.split()
+        if lane == "python":
+            return lang_python.wanted_paths("a/b/c.py", specs, ("r0", "r1"))
+        if lane == "typescript":
+            return lang_ts.wanted_paths("a/b/c.ts", specs)
+        if lane == "rust":
+            return lang_rust.wanted_paths("src/a/b.rs", specs)
+        if lane == "go":
+            return lang_go.go_wanted_paths(specs, [("m", "")])
+        return lang_proto.wanted_paths("a/b/c.proto", specs)
+
+    return walk
+
+
 def _run(pre: str, unit: str, end: str = "") -> Callable[[int], str]:
     return lambda n: pre + (unit * (n // len(unit) + 1))[:n] + end
 
@@ -177,6 +260,19 @@ WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("dbt-raw-blocks", _dbt, _run("", "{% raw %}a{% endraw %}")),
     ("dbt-unclosed-tags", _dbt, _run("{{ config(", "tags=[", ") }}")),
     ("cmake-rows", _cmake, _run("", "a\n")),
+    ("cmake-variable-uses", _cmake_units, _variable_uses),
+    ("cmake-unclosed-functions", _cmake_units, _run("", "function(f)\n")),
+    ("python-entry-point-files", _entry_point_files, _entry_points),
+    ("setup-cfg-name-spaces", _py_layout("setup.cfg"), _run("[options]\na", " ", "b\n")),
+    ("markdown-ambiguous-references", _doc_references, _run("# a\n", "`abc`\n")),
+    ("pr-body-unclosed-comments", _pr_body, _run("", "<!--")),
+    ("markdown-lane-includes", _lane_includes, _numbered("[a](x{}.md)\n")),
+    ("python-imports", _wanted("python"), _numbered("m{}\n")),
+    ("typescript-imports", _wanted("typescript"), _numbered("./m{}\n")),
+    ("rust-uses", _wanted("rust"), _numbered("crate::m{}\n")),
+    ("rust-long-use", _wanted("rust"), _run("", "a::")),
+    ("go-imports", _wanted("go"), _numbered("m/p{}\n")),
+    ("proto-imports", _wanted("proto"), _numbered("p{}.proto\n")),
     ("python-route-rows", _py_routes, _run("", "app.add_url_rule('a')\n")),
     ("python-unclosed-include-router", _py_routes, _run("", "a.include_router(a,")),
     (

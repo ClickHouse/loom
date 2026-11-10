@@ -37,6 +37,7 @@ extractor stamp with the other lane modules.
 
 from __future__ import annotations
 
+import bisect
 import hashlib
 import posixpath
 import re
@@ -361,18 +362,27 @@ def doc_reference_edges(
     by_q = {s.qualified_name: s for s in pf.symbols}
     out: list[Edge] = []
     seen: set[tuple[str, str]] = set()
+    # per bare name, its code-kind candidates sorted by reversed qualified name: the ones a
+    # qualified mention is a suffix of are one run, found by bisection, not a scan per site
+    by_bare: dict[str, tuple[list[str], list[tuple[str, str, str]]]] = {}
     for from_q, name, line in sites:
         a = by_q.get(from_q)
         if a is None or (from_q, name) in seen:
             continue
         bare = name.rsplit("::", 1)[-1]
-        cands = [c for c in table.get(bare, ()) if c[2] in _CODE_KINDS]
+        if bare not in by_bare:
+            cands = [c for c in table.get(bare, ()) if c[2] in _CODE_KINDS]
+            cands.sort(key=lambda c: c[1][::-1])
+            by_bare[bare] = ([c[1][::-1] for c in cands], cands)
+        keys, cands = by_bare[bare]
+        i, matches = 0, len(cands)
         if "::" in name:
-            cands = [c for c in cands if c[1].endswith(name)]
-        if len(cands) != 1:
+            i = bisect.bisect_left(keys, name[::-1])
+            matches = sum(k.startswith(name[::-1]) for k in keys[i : i + 2])
+        if matches != 1:
             continue
         seen.add((from_q, name))
-        sid, qname, _k = cands[0]
+        sid, qname, _k = cands[i]
         out.append(Edge(EDGE_READS, a.id, sid, a.qualified_name, qname, pf.path, line, 0.7))
     return out
 

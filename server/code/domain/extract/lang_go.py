@@ -761,7 +761,7 @@ def go_resolve_imports_indexed(
     """`go_resolve_imports` across a module index. Returns the resolved files and the
     (spec, package directory) pairs of the in-repository imports no conventional file
     name satisfied — the listing rung's input."""
-    out: list[str] = []
+    out: dict[str, None] = {}  # ordered and deduplicated: a list's `in` per hit is quadratic
     unresolved: list[tuple[str, str]] = []
     for spec in specs:
         module, directory = go_module_for(spec, index)
@@ -770,24 +770,23 @@ def go_resolve_imports_indexed(
         cands = go_import_candidates(spec, module, directory)
         hit = next((c for c in cands if c in present), None)
         if hit:
-            if hit not in out:
-                out.append(hit)
+            out[hit] = None
             continue
         pkg_dir = go_package_dir(spec, module, directory)
         if pkg_dir:
             unresolved.append((spec, pkg_dir))
-    return out, unresolved
+    return list(out), unresolved
 
 
 def go_wanted_paths(specs: list[str], index: list[tuple[str, str]]) -> list[str]:
     """Every candidate file the specs may name across the index; the one
     membership probe's input."""
-    out: list[str] = []
+    out: dict[str, None] = {}  # ordered and deduplicated: a list's `in` per path is quadratic
     for spec in specs:
         module, directory = go_module_for(spec, index)
         if module:
-            out.extend(c for c in go_import_candidates(spec, module, directory) if c not in out)
-    return out
+            out.update(dict.fromkeys(go_import_candidates(spec, module, directory)))
+    return list(out)
 
 
 def go_package_context(pf: ParsedFile, index: list[tuple[str, str]]) -> dict[str, str]:

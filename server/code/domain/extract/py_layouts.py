@@ -24,6 +24,7 @@ package.json and tsconfig for TypeScript; the lane corpus and
 from __future__ import annotations
 
 import configparser
+import functools
 import posixpath
 import re
 from collections.abc import Iterable
@@ -98,6 +99,15 @@ class Layout:
                 continue
             out.append(r)
         return tuple(out)
+
+    @functools.cached_property
+    def entry_points_by_stem(self) -> dict[str, list[tuple[int, EntryPoint]]]:
+        """(index, entry point) by its module's path stem (`a.b` -> `a/b`): a file finds
+        the entry points it serves by its own stems, not by every entry point's candidates."""
+        out: dict[str, list[tuple[int, EntryPoint]]] = {}
+        for i, ep in enumerate(self.entry_points):
+            out.setdefault(ep.module.strip().replace(".", "/"), []).append((i, ep))
+        return out
 
 
 def is_vendored(path: str) -> bool:
@@ -178,10 +188,24 @@ def _pyproject_roots(base: str, data: dict[str, Any]) -> list[str]:
     return out
 
 
+def _squeezed_names(text: str) -> str:
+    """Each line with the whitespace runs before its first `=` / `:` cut to one space, its
+    indent kept: configparser's option pattern rescans such a run from every character
+    before it, inside one regex call that holds the GIL. What is read here is unchanged: no
+    section or option name read holds a space, nor a `package_dir` name."""
+    out: list[str] = []
+    for line in text.split("\n"):
+        cut = min((i for i in (line.find("="), line.find(":")) if i >= 0), default=len(line))
+        name = line[:cut].lstrip()
+        indent = line[: cut - len(name)]
+        out.append(indent + " ".join(name.split()) + line[cut:])
+    return "\n".join(out)
+
+
 def _ini(text: str) -> configparser.RawConfigParser | None:
     cp = configparser.RawConfigParser(strict=False, allow_no_value=True)
     try:
-        cp.read_string(text)
+        cp.read_string(_squeezed_names(text))
     except (configparser.Error, ValueError):
         return None
     return cp
@@ -428,14 +452,25 @@ def module_entry_facets(pf: ParsedFile, layout: Layout | None, *, ordinal: int =
     attribute is not a module-level definition (0.8)."""
     if layout is None or not layout.entry_points or not pf.path.endswith(".py"):
         return []
-    from server.code.domain.extract.lang_python import import_candidates, module_scope
+    from server.code.domain.extract.lang_python import _module_files, _roots_for, module_scope
 
     scope = module_scope(pf.path)
     by_name = {s.qualified_name: s for s in pf.symbols}
+    # the entry points whose `import_candidates("", module, layout.roots)` hold this path:
+    # under each root it tries, the path is one of `_module_files` of a stem
+    hits: dict[int, EntryPoint] = {}
+    for root in _roots_for("", layout.roots):
+        prefix = f"{root}/" if root else ""
+        if not pf.path.startswith(prefix):
+            continue
+        rest = pf.path[len(prefix):]
+        for suffix in _module_files(""):
+            if rest.endswith(suffix):
+                hits.update(layout.entry_points_by_stem.get(rest[: -len(suffix)], ()))
     out: list[Facet] = []
     seen: set[str] = set()
-    for ep in layout.entry_points:
-        if ep.name in seen or pf.path not in import_candidates("", ep.module, roots=layout.roots):
+    for _i, ep in sorted(hits.items()):
+        if ep.name in seen:
             continue
         seen.add(ep.name)
         sym = by_name.get(f"{scope}::{ep.attr}") if ep.attr else None

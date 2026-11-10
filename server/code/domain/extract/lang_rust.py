@@ -337,33 +337,35 @@ def use_candidates(from_path: str, use_path: str) -> list[str]:
             base = here
         else:
             base = from_path[:-3]
-        out: list[str] = []
-        for b in (base, root):
-            for n in range(len(segs), 0, -1):
-                out.extend(c for c in _module_files(posixpath.join(b, *segs[:n])) if c not in out)
-        return out[:_MAX_CANDIDATES_PER_USE]
-    out = []
-    for n in range(len(rest), 0, -1):
-        out.extend(c for c in _module_files(posixpath.join(base, *rest[:n])) if c not in out)
-    return out[:_MAX_CANDIDATES_PER_USE]
+        rest = segs
+    bases = (base,) if head in {"crate", "self", "super"} else (base, root)
+    # up to the cap only: every stem of a long path joined and deduplicated by a list's
+    # `in` is cubic in its segments
+    out: dict[str, None] = {}
+    for b in bases:
+        for n in range(len(rest), 0, -1):
+            out.update(dict.fromkeys(_module_files(posixpath.join(b, *rest[:n]))))
+            if len(out) >= _MAX_CANDIDATES_PER_USE:
+                return list(out)[:_MAX_CANDIDATES_PER_USE]
+    return list(out)
 
 
 def resolve_uses(from_path: str, uses: list[str], present: set[str]) -> list[str]:
     """The indexed module files the `use` / `mod` paths name (one per path,
     the deepest that exists). Pure; `present` is the oracle."""
-    out: list[str] = []
+    out: dict[str, None] = {}  # ordered and deduplicated: a list's `in` per hit is quadratic
     for u in uses:
         hit = next((c for c in use_candidates(from_path, u) if c in present), None)
-        if hit and hit != from_path and hit not in out:
-            out.append(hit)
-    return out
+        if hit and hit != from_path:
+            out[hit] = None
+    return list(out)
 
 
 def wanted_paths(from_path: str, uses: list[str]) -> list[str]:
-    out: list[str] = []
+    out: dict[str, None] = {}
     for u in uses:
-        out.extend(c for c in use_candidates(from_path, u) if c not in out)
-    return out
+        out.update(dict.fromkeys(use_candidates(from_path, u)))
+    return list(out)
 
 
 __all__ = [

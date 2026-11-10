@@ -507,7 +507,7 @@ def _roots_for(from_path: str, extra: tuple[str, ...] | list[str] = ()) -> list[
     root, and every `src/` beneath those (the src layout; a monorepo's
     `packages/x/src/x`); then the roots the checkout's manifests declare
     (`py_layouts.Layout.roots_for`). Distinct, in order."""
-    out: list[str] = []
+    out: dict[str, None] = {}  # ordered and deduplicated: a list's `in` per root is quadratic
     d = from_path.rsplit("/", 1)[0] if "/" in from_path else ""
     dirs: list[str] = []
     while True:
@@ -516,13 +516,9 @@ def _roots_for(from_path: str, extra: tuple[str, ...] | list[str] = ()) -> list[
             break
         d = d.rsplit("/", 1)[0] if "/" in d else ""
     for d in dirs:
-        for root in (d, f"{d}/src" if d else "src"):
-            if root not in out:
-                out.append(root)
-    for root in extra:
-        if root not in out:
-            out.append(root)
-    return out
+        out.update(dict.fromkeys((d, f"{d}/src" if d else "src")))
+    out.update(dict.fromkeys(extra))
+    return list(out)
 
 
 def _module_files(stem: str) -> tuple[str, ...]:
@@ -545,7 +541,6 @@ def import_candidates(
     spec = spec.strip()
     if not spec:
         return []
-    out: list[str] = []
     level = len(spec) - len(spec.lstrip("."))
     rel = spec[level:].replace(".", "/")
     if level:
@@ -559,24 +554,22 @@ def import_candidates(
             cands = [f"{stem}/__init__.py" if stem else "__init__.py",
                      f"{stem}/__init__.pyi" if stem else "__init__.pyi"]
         return [c for c in cands if c != from_path]
+    out: dict[str, None] = {}  # ordered and deduplicated: a list's `in` per path is quadratic
     for root in _roots_for(from_path, roots):
         stem = f"{root}/{rel}" if root else rel
-        for c in _module_files(stem):
-            if c not in out and c != from_path:
-                out.append(c)
-    return out
+        out.update(dict.fromkeys(_module_files(stem)))
+    out.pop(from_path, None)
+    return list(out)
 
 
 def wanted_paths(
     from_path: str, specs: list[str], roots: tuple[str, ...] | list[str] = (),
 ) -> list[str]:
     """Every candidate path of every specifier (the ingest's presence probe)."""
-    out: list[str] = []
+    out: dict[str, None] = {}
     for spec in specs:
-        for c in import_candidates(from_path, spec, roots):
-            if c not in out:
-                out.append(c)
-    return out
+        out.update(dict.fromkeys(import_candidates(from_path, spec, roots)))
+    return list(out)
 
 
 def resolve_import_map(
@@ -655,11 +648,7 @@ def resolve_imports(
 ) -> list[str]:
     """The indexed paths the specifiers name, in import order, one per
     specifier that a present path satisfies (`ingest._resolve_lane_includes`)."""
-    out: list[str] = []
-    for path in resolve_import_map(from_path, specs, present, roots).values():
-        if path not in out:
-            out.append(path)
-    return out
+    return list(dict.fromkeys(resolve_import_map(from_path, specs, present, roots).values()))
 
 
 def external_names(

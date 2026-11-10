@@ -118,3 +118,15 @@ def test_chunks_cover_the_file() -> None:
 def test_a_line_break_before_the_parenthesis_counts_for_later_commands() -> None:
     cmds = commands("set\n(A b)\nadd_library(x a.cpp)\n")
     assert [(c.name, c.start_line) for c in cmds] == [("set", 1), ("add_library", 3)]
+
+
+def test_a_files_source_facets_stop_at_the_cap() -> None:
+    text = "set(S " + " ".join(f"s{i}.c" for i in range(400)) + ")\n"
+    text += "".join(f"add_library(t{i} ${{S}})\n" for i in range(30))
+    assert len(cmake_units("CMakeLists.txt", text).facets) == 10_000
+
+
+def test_a_function_ends_at_the_first_end_on_a_later_line() -> None:
+    text = "function(a) endfunction()\nfunction(b)\nmacro(c)\nendmacro()\nendfunction()\n"
+    ends = {s.name: s.end_line for s in cmake_units("CMakeLists.txt", text).symbols}
+    assert ends == {"a": 5, "b": 5, "c": 4}
