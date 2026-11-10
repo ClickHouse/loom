@@ -109,9 +109,10 @@ steps:
    subject with consumer `loom-assistant` and an id starting with `assistant-answer-`
    (so a token delegated from it is told by its `parents`), as a service-account token
    when the caller's is one, and expiring when an answer may run no longer
-   (`LOOM_ASSISTANT_ANSWER_TTL_S`, default ten minutes). Delegation applies every rule a minted child follows: the
-   creator's live grant, the end user, the ancestor subjects and their issue times, the
-   chain depth limit, and the caller's token id among the child's `parents`. The bridge
+   (`LOOM_ASSISTANT_ANSWER_TTL_S`, default ten minutes). Delegation applies every rule a
+   minted child follows: the creator's live grant, the end user, the ancestor subjects
+   and their issue times, the chain depth limit, and the caller's token id among the
+   child's `parents`. The bridge
    also asks for the caller's sign-in session among the `parents` (`delegate`'s
    `ends_with_session`), so a dashboard or `loom login` caller's answer token ends at
    sign-out, as a third-party client's already does. The token is not listed in
@@ -1048,7 +1049,9 @@ built.
 - The assistant writes no memory, document or grant.
 - The assistant never calls itself: calls between Loom and LibreChat go one way per hop,
   and only the assistant's two entry points (the `assistant.ask` op and
-  `POST /v1/assistant/chat/completions`) call LibreChat. Both refuse an answer's own
+  `POST /v1/assistant/chat/completions`) ask LibreChat for an answer; boot setup
+  (`server/assistant/app/service.py`) only registers the service user, its key and the
+  agent. Both entry points refuse an answer's own
   token (consumer `loom-assistant`) and any token delegated from one with
   `ASSISTANT_SELF_CALL` (403), ledgered as a refused answer, on every transport and
   toolset: an answer token's id starts with `assistant-answer-`, so a descendant is told
