@@ -14,8 +14,8 @@ the extension reads, Loom never writes through it, and Loom's own database needs
 extension. Use a separate database, or a separate service, from the one Loom's
 `LOOM_PG_DSN` names.
 
-`pg_clickhouse` 0.11.0 on Postgres 16 and 18 is the tested combination
-(`tests/integration/test_pg_clickhouse_live_ch.py`).
+CI tests the release `LOOM_PGCH_VERSION` names in `.github/workflows/ci.yml` on Postgres 16
+and 18 (`tests/integration/test_pg_clickhouse_live_ch.py`).
 
 ## 1. Make a SQL user for the tenant
 
@@ -30,16 +30,29 @@ It prints the user's password once.
 ## 2. Install the extension
 
 The extension is in the `ghcr.io/clickhouse/pg_clickhouse:<postgres major>-<version>`
-images, such as `ghcr.io/clickhouse/pg_clickhouse:16-0.11.0`, and on
-[PGXN](https://pgxn.org/dist/pg_clickhouse/) to build into an existing Postgres
-(`pgxn install pg_clickhouse`). Steps 2 to 4 run as the database's owner, or another role
-that may create extensions, foreign servers and schemas; step 5 runs as the application's
-reader role (`app_reader` here), which needs nothing but the grants at the end of step 4.
+images and on [PGXN](https://pgxn.org/dist/pg_clickhouse/) to build into an existing Postgres
+(`pgxn install pg_clickhouse`). Three roles take part:
+
+- a superuser (on a managed service, its admin role) for this step, since the extension is
+  not marked trusted;
+- an owner for steps 3 and 4: a role with `CREATEROLE`, `CREATE` on the database and `USAGE`
+  on the foreign data wrapper, which creates the reader role and so may set its defaults;
+- the application's reader role (`app_reader` here) for step 5, which needs its user mapping
+  from step 3 and the grants at the end of step 4.
+
+As the superuser:
+
+```sql
+CREATE EXTENSION pg_clickhouse;
+CREATE ROLE app_owner LOGIN CREATEROLE PASSWORD '<password>';
+GRANT CREATE ON DATABASE app TO app_owner;
+GRANT USAGE ON FOREIGN DATA WRAPPER clickhouse_fdw TO app_owner;
+```
 
 As the owner:
 
 ```sql
-CREATE EXTENSION pg_clickhouse;
+CREATE ROLE app_reader LOGIN PASSWORD '<password>';
 ```
 
 ## 3. Point it at the ClickHouse service
@@ -139,6 +152,6 @@ a materialized view, a dump) is the org's own data and outside Loom's erasure.
 
 ## Revoking
 
-`loom sql-access revoke --user acme_bi` stops every query through the user mapping at
-once: the next one fails to log in. Drop the user mapping and the foreign server
-afterwards.
+`loom sql-access revoke --user acme_bi` stops every query through the user mappings at
+once: the next one fails to log in. Then, as the owner, `DROP SERVER loom_ch CASCADE` drops
+both user mappings and the imported foreign tables.

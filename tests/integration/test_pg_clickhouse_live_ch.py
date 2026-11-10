@@ -68,10 +68,14 @@ async def test_an_orgs_postgres_joins_its_tenants_memories(ch: Any, pg: Any) -> 
     raw.insert("loom.memory", rows, column_names=_MEMORY)
     tag = uuid.uuid4().hex[:8]
     user, server, schema = f"it_pgch_{tag}", f"loom_ch_{tag}", f"loom_{tag}"
+    owner, owner_password = f"app_owner_{tag}", uuid.uuid4().hex
     reader, reader_password = f"app_reader_{tag}", uuid.uuid4().hex
+    dsn = os.environ["LOOM_PGCH_DSN"]
     granted = await sql_access.grant(user, Scope(org, ("ns",)), login_check=_login_check, ch=ch)
     assert granted.password
+    own = app = None
     try:
+        # Step 2, as a superuser: the extension is not trusted.
         await pg.execute("CREATE EXTENSION IF NOT EXISTS pg_clickhouse")
         if version := os.environ.get("LOOM_PGCH_VERSION"):
             # The extension carries its major and minor release; the image tag adds the patch.
@@ -79,35 +83,39 @@ async def test_an_orgs_postgres_joins_its_tenants_memories(ch: Any, pg: Any) -> 
                 "SELECT extversion FROM pg_extension WHERE extname = 'pg_clickhouse'"
             )
             assert version.startswith(f"{installed}."), (version, installed)
-        await pg.execute(
+        # The owner the guide's steps 3 and 4 run as: no superuser, the grants it names.
+        database = await pg.fetchval("SELECT current_database()")
+        await pg.execute(f"CREATE ROLE {owner} LOGIN CREATEROLE PASSWORD '{owner_password}'")
+        await pg.execute(f'GRANT CREATE ON DATABASE "{database}" TO {owner}')
+        await pg.execute(f"GRANT USAGE ON FOREIGN DATA WRAPPER clickhouse_fdw TO {owner}")
+        own = await asyncpg.connect(dsn, user=owner, password=owner_password)
+        await own.execute(f"CREATE ROLE {reader} LOGIN PASSWORD '{reader_password}'")
+        await own.execute(
             f"CREATE SERVER {server} FOREIGN DATA WRAPPER clickhouse_fdw OPTIONS "
             f"(driver 'http', host '{settings.ch_host}', port '{settings.ch_port}', "
             f"dbname '{settings.ch_database}')"
         )
-        # The guide's setup, as the owner: a reader role with its own mapping, the
-        # session settings on the role, and grants on the imported schema alone.
-        await pg.execute(f"CREATE ROLE {reader} LOGIN PASSWORD '{reader_password}'")
         for role in ("CURRENT_USER", reader):
-            await pg.execute(
+            await own.execute(
                 f"CREATE USER MAPPING FOR {role} SERVER {server} "
                 f"OPTIONS (user '{user}', password '{granted.password}')"
             )
-        await pg.execute(f"ALTER ROLE {reader} SET pg_clickhouse.session_settings = '{_SESSION}'")
-        await pg.execute(f"CREATE SCHEMA {schema}")
-        await pg.execute(
+        await own.execute(f"ALTER ROLE {reader} SET pg_clickhouse.session_settings = '{_SESSION}'")
+        await own.execute(f"CREATE SCHEMA {schema}")
+        await own.execute(
             f"IMPORT FOREIGN SCHEMA {settings.ch_database} LIMIT TO ({', '.join(VIEWS)}) "
             f"FROM SERVER {server} INTO {schema}"
         )
-        await pg.execute(f"CREATE TABLE {schema}.accounts (loom_user_id text, email text)")
-        await pg.execute(
+        await own.execute(f"CREATE TABLE {schema}.accounts (loom_user_id text, email text)")
+        await own.execute(
             f"INSERT INTO {schema}.accounts VALUES ('alice', 'alice@example.com'), "
             "('bob', 'bob@example.com')"
         )
-        await pg.execute(f"GRANT USAGE ON SCHEMA {schema} TO {reader}")
-        await pg.execute(f"GRANT SELECT ON ALL TABLES IN SCHEMA {schema} TO {reader}")
-        app = await asyncpg.connect(
-            os.environ["LOOM_PGCH_DSN"], user=reader, password=reader_password
-        )
+        await own.execute(f"GRANT USAGE ON SCHEMA {schema} TO {reader}")
+        await own.execute(f"GRANT SELECT ON ALL TABLES IN SCHEMA {schema} TO {reader}")
+
+        # Step 5, as the reader.
+        app = await asyncpg.connect(dsn, user=reader, password=reader_password)
         joined = await app.fetch(
             f"SELECT c.email, m.org, m.memory_key, m.value, m.value_withheld, "
             f"m.content_sha256 IS NULL AS hash_withheld "
@@ -133,10 +141,15 @@ async def test_an_orgs_postgres_joins_its_tenants_memories(ch: Any, pg: Any) -> 
         await sql_access.revoke(user, ch=ch)
         with pytest.raises(Exception, match="(?i)authentication|password"):
             await app.fetch(f"SELECT count(*) FROM {schema}.sql_v1_memories")
-        await app.close()
     finally:
+        for conn in (app, own):
+            if conn is not None:
+                await conn.close()
         await sql_access.revoke(user, ch=ch)
         await pg.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
         await pg.execute(f"DROP SERVER IF EXISTS {server} CASCADE")
-        await pg.execute(f"DROP ROLE IF EXISTS {reader}")
+        for role in (reader, owner):
+            if await pg.fetchval("SELECT count(*) FROM pg_roles WHERE rolname = $1", role):
+                await pg.execute(f"DROP OWNED BY {role} CASCADE")
+                await pg.execute(f"DROP ROLE {role}")
         raw.close()
