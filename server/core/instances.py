@@ -203,7 +203,7 @@ async def tick(ch: Any, *, leader: bool) -> None:
         await beat(ch)
         live = await read_live(ch)
     except Exception as e:  # noqa: BLE001 — a missed beat must not stop the loop
-        log.warning("instance heartbeat failed: %s", e)
+        log.warning("instance heartbeat failed: %s: %s", type(e).__name__, e)
     if live is not None:  # the beat reached ClickHouse
         try:
             await _on_beat(ch)

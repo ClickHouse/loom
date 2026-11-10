@@ -254,7 +254,7 @@ def test_a_failing_beat_read_is_logged_once_and_the_beat_goes_on(
     checked: list[bool] = []
 
     async def fails(_ch: Any) -> None:
-        raise RuntimeError("Code: 999. Keeper unavailable")
+        raise TimeoutError()
 
     async def quiet(*_: Any, **__: Any) -> Any:
         return []
@@ -269,7 +269,8 @@ def test_a_failing_beat_read_is_logged_once_and_the_beat_goes_on(
     with caplog.at_level("WARNING"):
         asyncio.run(instances.tick(object(), leader=False))
     assert checked == [True]
-    assert sum("beat read failed" in r.getMessage() for r in caplog.records) == 1
+    (failed,) = [r.getMessage() for r in caplog.records if "beat read failed" in r.getMessage()]
+    assert "TimeoutError" in failed
 
 
 def test_a_beat_that_missed_clickhouse_runs_no_beat_read(monkeypatch: pytest.MonkeyPatch) -> None:
