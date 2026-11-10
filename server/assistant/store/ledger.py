@@ -3,8 +3,7 @@ its memory reads (`loom.memory_exposures`)."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
+from server.assistant.domain.support import RunCalls
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.domain.set_chunk_session import SESSION_PREFIX
 from server.observability.consumer import ASSISTANT_CONSUMER
@@ -71,16 +70,6 @@ async def returned_keys(
         },
     )
     return {str(r["cited"]) for r in rows if r.get("cited")}
-
-
-@dataclass(frozen=True)
-class RunCalls:
-    """What an answer's tool calls left: the ops whose calls found data, the ops whose calls
-    ran (found or not), and whether any call failed or was refused."""
-
-    returned: frozenset[str]
-    failed: bool
-    ran: frozenset[str]
 
 
 async def run_calls(

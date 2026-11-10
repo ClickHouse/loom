@@ -30,17 +30,9 @@ def _support(
     returned: frozenset[str] | None = frozenset(),
     failed: bool = False,
 ) -> str:
-    # Every op that found data ran.
-    ran = returned or frozenset()
-    return rule.support_of(
-        codes or [],
-        text=text,
-        returned=returned,
-        failed=failed,
-        ran=ran,
-        citable=CITABLE,
-        no_data=NO_DATA,
-    )
+    # Every op that found data ran; None: the calls could not be read.
+    calls = None if returned is None else rule.RunCalls(returned, failed, returned)
+    return rule.support_of(codes or [], text=text, calls=calls, citable=CITABLE, no_data=NO_DATA)
 
 
 @pytest.mark.parametrize(
@@ -183,11 +175,9 @@ def test_an_uncited_fact_after_calls_that_found_nothing(ran: frozenset[str], exp
     got = rule.support_of(
         [],
         text="Your database runs on port 5432.",
-        returned=frozenset(),
-        failed=False,
+        calls=rule.RunCalls(frozenset(), False, ran),
         citable=CITABLE,
         no_data=NO_DATA,
-        ran=ran,
     )
     assert got == expected
 
@@ -207,9 +197,7 @@ def test_an_empty_search_beside_other_data_or_a_failure_is_unchecked(
     got = rule.support_of(
         [],
         text="This namespace holds 1,204 memories.",
-        returned=returned,
-        failed=failed,
-        ran=returned | {"memory.search"},
+        calls=rule.RunCalls(returned, failed, returned | {"memory.search"}),
         citable=CITABLE,
         no_data=NO_DATA,
     )
@@ -222,9 +210,7 @@ def test_a_lookup_that_missed_is_none_with_the_sentence_and_unsupported_without(
         return rule.support_of(
             [],
             text=text,
-            returned=frozenset(),
-            failed=False,
-            ran=frozenset({op}),
+            calls=rule.RunCalls(frozenset(), False, frozenset({op})),
             citable=CITABLE,
             no_data=NO_DATA,
         )
@@ -327,12 +313,12 @@ def _checked(code: str) -> Checked:
     return Checked(citation, code)
 
 
-def _calls(monkeypatch: pytest.MonkeyPatch, *reads: ledger.RunCalls | Exception) -> list[str]:
+def _calls(monkeypatch: pytest.MonkeyPatch, *reads: rule.RunCalls | Exception) -> list[str]:
     """The run read answers `reads` in turn; returns the run ids it was asked for."""
     asked: list[str] = []
     answers = list(reads)
 
-    async def run_calls(org: str, run_id: str, subject: str) -> ledger.RunCalls:
+    async def run_calls(org: str, run_id: str, subject: str) -> rule.RunCalls:
         asked.append(run_id)
         answer = answers.pop(0)
         if isinstance(answer, Exception):
@@ -365,10 +351,8 @@ def test_an_uncited_answer_reads_its_calls_again_until_a_citable_op_found_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The summary's row is in; the search's lands late: the second read decides.
-    first = ledger.RunCalls(
-        frozenset({"namespace.summary"}), False, frozenset({"namespace.summary"})
-    )
-    second = ledger.RunCalls(
+    first = rule.RunCalls(frozenset({"namespace.summary"}), False, frozenset({"namespace.summary"}))
+    second = rule.RunCalls(
         frozenset({"namespace.summary", "memory.search"}),
         False,
         frozenset({"namespace.summary", "memory.search"}),
@@ -381,14 +365,14 @@ def test_an_uncited_answer_reads_its_calls_again_until_a_citable_op_found_data(
 def test_a_first_read_that_decides_is_not_read_again(monkeypatch: pytest.MonkeyPatch) -> None:
     asked = _calls(
         monkeypatch,
-        ledger.RunCalls(frozenset({"memory.search"}), False, frozenset({"memory.search"})),
+        rule.RunCalls(frozenset({"memory.search"}), False, frozenset({"memory.search"})),
     )
     assert _answer([], "Deploys freeze on Fridays.") == "unsupported"
     assert asked == ["r1"]
 
 
 def test_a_greeting_that_read_nothing_has_no_label(monkeypatch: pytest.MonkeyPatch) -> None:
-    empty = ledger.RunCalls(frozenset(), False, frozenset())
+    empty = rule.RunCalls(frozenset(), False, frozenset())
     _calls(monkeypatch, empty, empty)
     assert _answer([], "Hello! What would you like to know?") == "none"
 
@@ -396,7 +380,7 @@ def test_a_greeting_that_read_nothing_has_no_label(monkeypatch: pytest.MonkeyPat
 def test_an_uncited_claim_after_a_search_that_found_nothing_is_unsupported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    searched = ledger.RunCalls(frozenset(), False, frozenset({"memory.search"}))
+    searched = rule.RunCalls(frozenset(), False, frozenset({"memory.search"}))
     asked = _calls(monkeypatch, searched, searched)
     assert _answer([], "Your database runs on port 5432.") == "unsupported"
     assert asked == ["r1", "r1"]
@@ -415,7 +399,7 @@ def test_calls_that_cannot_be_read_leave_an_uncited_answer_unchecked(
 def test_a_run_read_that_hangs_leaves_an_uncited_answer_unchecked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def hang(*_: Any) -> ledger.RunCalls:
+    async def hang(*_: Any) -> rule.RunCalls:
         await asyncio.Event().wait()
         raise AssertionError("unreachable")
 
@@ -429,10 +413,10 @@ def test_a_second_read_that_hangs_after_uncitable_data_leaves_the_answer_uncheck
 ) -> None:
     reads: list[int] = []
 
-    async def first_then_hang(*_: Any) -> ledger.RunCalls:
+    async def first_then_hang(*_: Any) -> rule.RunCalls:
         reads.append(1)
         if len(reads) == 1:
-            return ledger.RunCalls(
+            return rule.RunCalls(
                 frozenset({"namespace.summary"}), False, frozenset({"namespace.summary"})
             )
         await asyncio.Event().wait()
@@ -468,7 +452,7 @@ def _event(operation: str, args: dict[str, str], **kw: Any) -> str:
     )
 
 
-def _run_calls(*rows: str) -> ledger.RunCalls:
+def _run_calls(*rows: str) -> rule.RunCalls:
     ch = LocalCH(ddl("agent_events"), *rows)
     return asyncio.run(ledger.run_calls("acme", "r1", "alice", ch=ch))  # type: ignore[arg-type]
 
@@ -498,7 +482,7 @@ def test_the_run_read_names_the_ops_that_found_data() -> None:
 @pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
 def test_the_run_read_sees_a_refused_call_under_the_sentinel_namespace() -> None:
     calls = _run_calls(_event("memory.search", {}, success=0, namespace="-"))
-    assert calls == ledger.RunCalls(frozenset(), True, frozenset())
+    assert calls == rule.RunCalls(frozenset(), True, frozenset())
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
@@ -510,4 +494,4 @@ def test_the_run_read_reads_only_the_answers_own_calls() -> None:
         _event("memory.search", found, consumer="my-script"),
         _event("memory.search", found, org="other"),
     )
-    assert calls == ledger.RunCalls(frozenset(), False, frozenset())
+    assert calls == rule.RunCalls(frozenset(), False, frozenset())

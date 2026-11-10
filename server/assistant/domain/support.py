@@ -6,6 +6,7 @@ docs/architecture/assistant.md#support."""
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 # Why one citation ended as it did (never on the wire; the wire carries the display reason).
 VERIFIED = "verified"
@@ -44,20 +45,28 @@ def is_abstention(text: str) -> bool:
     return ABSTENTION in plain
 
 
+@dataclass(frozen=True)
+class RunCalls:
+    """What an answer's tool calls left: the ops whose calls found data, the ops whose calls
+    ran (found or not), and whether any call failed or was refused."""
+
+    returned: frozenset[str]
+    failed: bool
+    ran: frozenset[str]
+
+
 def support_of(
     codes: list[str],
     *,
     text: str,
-    returned: frozenset[str] | None,
-    failed: bool,
-    ran: frozenset[str],
+    calls: RunCalls | None,
     citable: frozenset[str],
     no_data: frozenset[str],
 ) -> str:
-    """The answer's support. `codes` are its citations' codes; `returned` the ops whose calls
-    found data (None when its calls could not be read); `failed` whether a call failed;
-    `ran` the ops whose calls ran, found or not; `citable` the ops whose rows an answer can
-    cite; `no_data` the ops that return no namespace data.
+    """The answer's support. `codes` are its citations' codes; `calls` what its tool calls
+    left (None when they could not be read; never read for a cited, empty or abstaining
+    answer); `citable` the ops whose rows an answer can cite; `no_data` the ops that return
+    no namespace data.
 
     - none: no text; or it cites nothing and is an abstention, or its calls were read and
       none was citable, found data or failed;
@@ -78,13 +87,13 @@ def support_of(
         return UNCHECKED
     if is_abstention(text):
         return NONE
-    if returned is None:
+    if calls is None:
         return UNCHECKED
-    found = returned - no_data
+    found = calls.returned - no_data
     if found & citable:
         return UNSUPPORTED
-    if found or failed:
+    if found or calls.failed:
         return UNCHECKED
-    if (ran - no_data) & citable:
+    if (calls.ran - no_data) & citable:
         return UNSUPPORTED
     return NONE

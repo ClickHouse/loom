@@ -166,7 +166,7 @@ async def _no_wait(_seconds: float) -> None:
 
 
 async def _found_nothing(*_: Any) -> Any:
-    from server.assistant.store.ledger import RunCalls
+    from server.assistant.domain.support import RunCalls
 
     return RunCalls(frozenset(), False, frozenset())
 
