@@ -1,4 +1,4 @@
-"""The line the bridge puts ahead of a question: the caller's kind of credential, the role
+"""The line the bridge puts after a question: the caller's kind of credential, the role
 the gate gives it in the namespace and the kind of namespace, in fixed words."""
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from server.assistant.app import bridge
+from server.auth import fail_closed
 from server.auth.jwt import AuthInfo
 from server.operations.base import Role
 
@@ -40,15 +41,21 @@ class _Directory:
 def _gate(
     monkeypatch: pytest.MonkeyPatch, highest: Role | None, *, unverified: bool = False
 ) -> None:
-    """A gate that admits up to `highest`; past it a refusal, marked unverified on request."""
+    """A gate that admits up to `highest`; past it a refusal, after a failed read when
+    `unverified`."""
 
-    async def check_authorized(auth: Any, role: Role, org: str, ns: str) -> None:
-        if highest is None or role > highest:
-            e = PermissionError("refused")
-            e.unverified = unverified  # type: ignore[attr-defined]
-            raise e
+    class Gate:
+        def __init__(self, auth: Any, org: str) -> None:
+            pass
 
-    monkeypatch.setattr(bridge, "check_authorized", check_authorized)
+        async def admits(self, ns: str, role: Role) -> bool:
+            if highest is not None and role <= highest:
+                return True
+            if unverified:
+                fail_closed.note_unreadable()
+            return False
+
+    monkeypatch.setattr(bridge, "CachedGate", Gate)
 
 
 def _line(auth: AuthInfo, namespace: str = NS) -> str:
@@ -66,8 +73,8 @@ def _wired(monkeypatch: pytest.MonkeyPatch) -> None:
         ({"session_id": "s-1", "first_party": True}, "a sign-in session"),
         # A child of a session names it among its parents, never as its own.
         ({"session_id": "s-1", "first_party": False}, "a token"),
-        ({"creator": "bob", "ns_roles": ((NS, Role.WRITER),)}, "a delegated token"),
-        ({"ns_roles": ((NS, Role.WRITER),)}, "a scoped token"),
+        ({"creator": "bob", "ns_roles": ((NS, "writer"),)}, "a delegated token"),
+        ({"ns_roles": ((NS, "writer"),)}, "a scoped token"),
         ({}, "a token"),
     ],
 )
@@ -96,10 +103,14 @@ def test_a_refusal_for_a_failed_read_or_a_failing_check_gives_unknown(
     _gate(monkeypatch, Role.VIEWER, unverified=True)
     assert _line(_caller()).endswith("whose role in this namespace is unknown.")
 
-    async def broken(*_a: Any) -> None:
-        raise RuntimeError("the grant table is down")
+    class Broken:
+        def __init__(self, *_a: Any) -> None:
+            pass
 
-    monkeypatch.setattr(bridge, "check_authorized", broken)
+        async def admits(self, *_a: Any) -> bool:
+            raise RuntimeError("the grant table is down")
+
+    monkeypatch.setattr(bridge, "CachedGate", Broken)
     assert _line(_caller()).endswith("whose role in this namespace is unknown.")
 
 
@@ -134,4 +145,37 @@ def test_the_line_closes_the_question_and_leaves_earlier_turns_alone() -> None:
     sent = bridge._with_asker(messages, "Loom: the line.")
     assert sent[:2] == messages[:2]
     assert sent[2] == {"role": "user", "content": "How do I share this?\n\nLoom: the line."}
-    assert bridge._with_asker(messages, "") == messages
+
+
+def test_the_role_is_the_real_gate_s_answer_from_the_grant_maps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The real gate, with only the grant read faked: a flat viewer token whose subject
+    # holds a writer grant reads back writer; a token delegated by a creator who holds
+    # viewer there reads back viewer, whatever its own claim says.
+    from server.core import grant_cache
+    from server.operations.base import grant_rank
+
+    grants = {"alice": {NS: grant_rank("writer")}, "bob": {NS: grant_rank("viewer")}}
+
+    async def grant_map(org: str, subject: str) -> grant_cache.GrantMap:
+        return grant_cache.GrantMap(ranks=grants.get(subject, {}), held=(subject,))
+
+    async def account(org: str, creator: str) -> Any:
+        from server.auth.delegation import _Account
+
+        return _Account(active=True, best_grant=Role.VIEWER)
+
+    async def aliases(org: str, subject: str, **_kw: Any) -> list[str]:
+        return [subject]
+
+    monkeypatch.setattr(grant_cache, "grant_map", grant_map)
+    monkeypatch.setattr("server.auth.delegation._creator_account", account)
+    monkeypatch.setattr("server.auth.aliases.subject_aliases", aliases)
+    flat = _caller(subject="alice")
+    assert _line(flat).endswith("whose role in this namespace is writer.")
+    delegated = _caller(subject="sa:client", creator="bob", ns_roles=((NS, "writer"),))
+    assert _line(delegated) == (
+        "Loom, for how-to answers only: this question comes with a delegated token, "
+        "whose role in this namespace is viewer."
+    )

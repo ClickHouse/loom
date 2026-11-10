@@ -119,6 +119,16 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
     monkeypatch.setattr(settings, "assistant_librechat_url", "http://librechat:3080")
     monkeypatch.setattr(service, "_answering", ("agent_1", "sk-service"))
     monkeypatch.setattr(bridge, "check_authorized", check_authorized)
+
+    class Gate:  # the asker line's role probe: admits every role unless denied
+        def __init__(self, auth: Any, org: str) -> None:
+            pass
+
+        async def admits(self, ns: str, role: Role) -> bool:
+            return not w.denied
+
+    monkeypatch.setattr(bridge, "CachedGate", Gate)
+    monkeypatch.setattr(bridge, "_place", lambda org, ns: "namespace")
     monkeypatch.setattr(bridge, "switched_off", switched_off)
     monkeypatch.setattr(bridge, "operation_over_share", over_cap)
     # The answer's tool calls found nothing (a test may say otherwise).
@@ -176,7 +186,10 @@ def test_an_answer_runs_the_seeded_agent_with_its_own_token(world: _World) -> No
     body = world.librechat_body
     assert body["model"] == "agent_1"  # the seeded agent, whatever the caller named
     assert body["parent_message_id"] == "answer-token"
-    assert body["messages"] == QUESTION and body["stream"] is True
+    # The question as sent, with the asker line last.
+    (sent,) = body["messages"]
+    assert sent["content"].startswith("How many memories?\n\nLoom, for how-to answers only:")
+    assert body["stream"] is True
     assert world.librechat_headers["authorization"] == "Bearer sk-service"
     assert world.librechat_headers["accept-encoding"] == "identity"
     assert "".join(answer.text) == "Seven memories." and answer.run_id == "chatcmpl-1"
@@ -359,7 +372,9 @@ def test_only_the_callers_text_turns_reach_the_agent() -> None:
 
 
 def test_a_logged_librechat_error_names_neither_secret() -> None:
-    ticket = bridge.Ticket(ORG, NS, "agent_1", "sk-secret", "answer.jwt." + "x" * 400, 7, "alice")
+    ticket = bridge.Ticket(
+        ORG, NS, "agent_1", "sk-secret", "answer.jwt." + "x" * 400, 7, "alice", ""
+    )
     echoed = f"bad request: parent_message_id={ticket.token} key=sk-secret"
     logged = bridge._redacted(ticket, echoed)
     assert "answer.jwt" not in logged and "sk-secret" not in logged
@@ -367,7 +382,7 @@ def test_a_logged_librechat_error_names_neither_secret() -> None:
 
 
 def test_a_ticket_prints_neither_secret() -> None:
-    ticket = bridge.Ticket(ORG, NS, "agent_1", "sk-secret", "answer.jwt", 7, "alice")
+    ticket = bridge.Ticket(ORG, NS, "agent_1", "sk-secret", "answer.jwt", 7, "alice", "")
     assert "sk-secret" not in repr(ticket) and "answer.jwt" not in repr(ticket)
 
 
@@ -812,7 +827,9 @@ def test_an_error_chunk_echoing_the_token_logs_no_part_of_it(
 ) -> None:
     opened = asyncio.run(bridge.open_answer(_caller(), ORG, NS))
     token = "Zq9T" + "k" * 60
-    ticket = bridge.Ticket(ORG, NS, opened.agent_id, opened.api_key, token, opened.slot, "alice")
+    ticket = bridge.Ticket(
+        ORG, NS, opened.agent_id, opened.api_key, token, opened.slot, "alice", ""
+    )
     # `{"message": "` is 13 characters: the token starts at 295, across the 300-character
     # cut, where a cut before the redaction would leave its first five in the log.
     message = "x" * 263 + f" parent_message_id={token}"
@@ -1128,6 +1145,8 @@ def test_an_answers_checked_citations_reach_every_surface(
         ask.handle_assistant_ask(AssistantAskInput(org=ORG, namespace=NS, question="q"))
     )
     assert [c.model_dump() for c in out.citations] == wire and out.support == "supported"
+    # assistant.ask sends the question with the asker line last, as the route does.
+    assert world.librechat_body["messages"][-1]["content"].endswith("namespace is admin.")
     # Each checked the answer's own text.
     assert asked and all(text == "Seven memories." for text in asked)
 

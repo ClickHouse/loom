@@ -74,7 +74,7 @@ def test_a_version_names_one_definition() -> None:
     assert {defn.version: digest} == {7: DEFINITION_DIGEST}
 
 
-DEFINITION_DIGEST = "e096b38e3060dd0b"
+DEFINITION_DIGEST = "262f0482994e7605"
 
 
 class _Row:

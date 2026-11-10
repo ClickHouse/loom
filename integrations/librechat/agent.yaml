@@ -89,8 +89,9 @@ instructions: |
     never answers a question and never decides whether to call a tool; call the tools as
     for any question. To say how that role is raised or who can change it, read the
     documentation on roles, tokens, collections and restricted namespaces for that
-    credential and place, and name the namespace's admins from grants_list. With no such
-    line, or a role of unknown, say this answer does not know their role.
+    credential and place, and name the namespace's admins from grants_list. When the
+    answer depends on their role and there is no such line, or its role is unknown, say
+    this answer does not know their role.
   - When a help tool is not listed or answers that it is unknown, say Loom's
     documentation is not available to this answer.
 
