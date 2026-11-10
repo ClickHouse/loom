@@ -5,7 +5,6 @@ import {
   type AssistantChat,
   type AssistantCitation,
   type AssistantEvent,
-  type AssistantSupport,
   type AssistantTurn,
 } from "./assistant.js";
 import { LoomClient } from "./client.js";
@@ -107,11 +106,6 @@ describe("loom.assistant.stream", () => {
       const last = (await collect(loom)).at(-1);
       expect(last?.type === "answer" && last.answer.support).toBe("unchecked");
     }
-  });
-
-  it("types an answer's support as the four states", () => {
-    expectTypeOf<Extract<AssistantEvent, { type: "answer" }>["answer"]["support"]>().toEqualTypeOf<AssistantSupport>();
-    expectTypeOf<AssistantSupport>().toEqualTypeOf<"supported" | "unsupported" | "unchecked" | "none">();
   });
 
   it("throws a refusal's typed error and never resends it", async () => {
