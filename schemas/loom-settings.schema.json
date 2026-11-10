@@ -39,7 +39,7 @@
         "allow_insecure": {
           "default": false,
           "type": "boolean",
-          "description": "True lets a non-loopback bind start with auth off, MCP open mode, the dev signing secret or a weak root, gateway or end-user key. Only for a port others cannot reach."
+          "description": "True lets a non-loopback bind start with auth off, MCP open mode, open self-signup outside trust-network, the dev signing secret or a weak root, gateway or end-user key. Only for a port others cannot reach."
         },
         "anthropic_base_url": {
           "default": "https://api.anthropic.com",
@@ -169,7 +169,7 @@
         "bind_host": {
           "default": "127.0.0.1",
           "type": "string",
-          "description": "The address Loom is reachable on: `loom serve` and `make server` bind it; in a container (which listens on all its interfaces) it is the address the port is published on. Anything but loopback turns on the startup checks: public_base_url set, and no auth-off, MCP open mode, dev secret or weak root, gateway or end-user key."
+          "description": "The address Loom is reachable on: `loom serve` and `make server` bind it; in a container (which listens on all its interfaces) it is the address the port is published on. Anything but loopback turns on the startup checks in the deployment guide's \"Proxy and TLS\" section."
         },
         "blacklist_cache_ttl_seconds": {
           "default": 300,
@@ -5852,7 +5852,7 @@
             "open"
           ],
           "type": "string",
-          "description": "Browser self-signup: \"off\" (endpoint 404s) or \"open\" (/v1/auth/self-signup mints JWTs scoped to the requested namespace)."
+          "description": "Browser self-signup: \"off\" (endpoint 404s) or \"open\" (/v1/auth/self-signup mints JWTs scoped to the requested namespace). A non-loopback bind refuses \"open\" unless identity_provider is \"trust-network\", allow_insecure is set, or oauth_login_provider is \"oidc\" (which closes sign-up)."
         },
         "self_signup_org": {
           "default": "dev",

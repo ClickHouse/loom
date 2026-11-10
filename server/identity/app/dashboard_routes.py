@@ -154,7 +154,7 @@ async def _page(request: Request) -> Response:
     # With SSO on, the sign-in screen is one button to the identity provider:
     # password sign-in and self-signup are both refused server-side.
     sso = settings.oauth_login_provider == "oidc"
-    signup_open = settings.self_signup == "open" and not sso
+    signup_open = settings.self_signup_served()
     nonce = secrets.token_urlsafe(16)
     boot_snippet = (
         f'<script nonce="{nonce}">'

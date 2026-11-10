@@ -92,12 +92,15 @@ def require_safe_bind(
     dev_secret: bool,
     allow_insecure: bool,
     mcp_open: bool,
+    open_signup_without_trust_network: bool,
     weak_keys: list[str],
 ) -> None:
     """Refuse to start on a non-loopback LOOM_BIND_HOST without
     LOOM_PUBLIC_BASE_URL (generated URLs would otherwise echo a request's Host),
     or, unless LOOM_ALLOW_INSECURE=1, with auth off, MCP open (`mcp_open`: every
-    tool runs with no principal), the dev signing secret, or a weak key
+    tool runs with no principal), self-signup open without
+    LOOM_IDENTITY_PROVIDER=trust-network (`open_signup_without_trust_network`:
+    anyone who reaches the port gets a writer token), the dev signing secret, or a weak key
     (`weak_keys`: the root secret, gateway or end-user keys below the minimum key size
     of RFC 7518, an HMAC secret under 32 bytes or an RSA key under 2048 bits).
     A loopback bind is not checked."""
@@ -125,6 +128,13 @@ def require_safe_bind(
             f"refusing to start: {where} and LOOM_MCP_AUTH_MODE=open runs every MCP tool "
             "with no principal, whatever auth the HTTP API requires. Set it to required, "
             "bind 127.0.0.1, or set LOOM_ALLOW_INSECURE=1 if the port is not actually reachable."
+        )
+    if open_signup_without_trust_network:
+        raise InsecureBindRefused(
+            f"refusing to start: {where} and LOOM_SELF_SIGNUP=open gives anyone who reaches "
+            "it a writer token. Set LOOM_IDENTITY_PROVIDER=trust-network if everyone who can "
+            "reach the port may have an account, turn self-signup off, bind 127.0.0.1, or set "
+            "LOOM_ALLOW_INSECURE=1 if the port is not actually reachable."
         )
     if dev_secret:
         raise InsecureBindRefused(

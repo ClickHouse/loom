@@ -757,7 +757,9 @@ settings:
   # workload_exchanges_per_agent: 300
 
   # Browser self-signup: "off" (endpoint 404s) or "open" (/v1/auth/self-signup mints
-  # JWTs scoped to the requested namespace). [restart]
+  # JWTs scoped to the requested namespace). A non-loopback bind refuses "open" unless
+  # identity_provider is "trust-network", allow_insecure is set, or oauth_login_provider
+  # is "oidc" (which closes sign-up). [restart]
   # self_signup: "off"
 
   # Default org for self-signed tokens. [restart]
@@ -4749,9 +4751,8 @@ settings:
 
   # The address Loom is reachable on: `loom serve` and `make server` bind it; in a
   # container (which listens on all its interfaces) it is the address the port is
-  # published on. Anything but loopback turns on the startup checks: public_base_url
-  # set, and no auth-off, MCP open mode, dev secret or weak root, gateway or end-user
-  # key. [restart]
+  # published on. Anything but loopback turns on the startup checks in the deployment
+  # guide's "Proxy and TLS" section. [restart]
   # bind_host: "127.0.0.1"
 
   # Comma-separated peer addresses or CIDRs whose X-Forwarded-For/Proto headers uvicorn
@@ -4760,9 +4761,9 @@ settings:
   # sign-in and sign-up limits. [restart]
   # trusted_proxies: "127.0.0.1"
 
-  # True lets a non-loopback bind start with auth off, MCP open mode, the dev signing
-  # secret or a weak root, gateway or end-user key. Only for a port others cannot reach.
-  # [restart]
+  # True lets a non-loopback bind start with auth off, MCP open mode, open self-signup
+  # outside trust-network, the dev signing secret or a weak root, gateway or end-user
+  # key. Only for a port others cannot reach. [restart]
   # allow_insecure: false
 
   # --- outbound HTTP ---

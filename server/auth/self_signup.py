@@ -154,7 +154,7 @@ def _signup_gate() -> None:
                 "message": "this deployment uses SSO; sign in via your identity provider",
             },
         )
-    if settings.self_signup != "open":
+    if not settings.self_signup_served():
         raise HTTPException(
             status_code=404,
             detail={

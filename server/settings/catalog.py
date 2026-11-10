@@ -388,6 +388,8 @@ class AuthSettings(BaseModel):
 
     # Browser self-signup: "off" (endpoint 404s) or "open"
     # (/v1/auth/self-signup mints JWTs scoped to the requested namespace).
+    # A non-loopback bind refuses "open" unless identity_provider is "trust-network",
+    # allow_insecure is set, or oauth_login_provider is "oidc" (which closes sign-up).
     self_signup: Literal["off", "open"] = "off"
     # Default org for self-signed tokens.
     self_signup_org: str = "dev"
@@ -454,6 +456,15 @@ class AuthSettings(BaseModel):
             if shared:
                 raise ValueError(f"end-user issuers {a!r} and {b!r} both sign for {shared[0]}")
         return self
+
+    def self_signup_served(self) -> bool:
+        """Whether the sign-up gate lets self-signup and agent sign-up through:
+        "open", and sign-in not delegated to OIDC (which closes them)."""
+        return self.self_signup == "open" and self.oauth_login_provider != "oidc"
+
+    def signup_open_without_trust_network(self) -> bool:
+        """Self-signup is served but identity_provider does not name trust-network."""
+        return self.self_signup_served() and self.identity_provider != "trust-network"
 
     def auth_actually_required(self) -> bool:
         """Whether the HTTP transport should require a bearer.
@@ -4997,17 +5008,16 @@ class RuntimeSettings(BaseModel):
     # The address Loom is reachable on: `loom serve` and `make server` bind
     # it; in a container (which listens on all its interfaces) it is the
     # address the port is published on. Anything but loopback turns on the
-    # startup checks: public_base_url set, and no auth-off, MCP open mode, dev
-    # secret or weak root, gateway or end-user key.
+    # startup checks in the deployment guide's "Proxy and TLS" section.
     bind_host: str = "127.0.0.1"
     # Comma-separated peer addresses or CIDRs whose X-Forwarded-For/Proto
     # headers uvicorn applies; any other peer's are ignored. "*" trusts all.
     # Required behind a load balancer: at the default every client counts as the
     # balancer's address for the sign-in and sign-up limits.
     trusted_proxies: str = "127.0.0.1"
-    # True lets a non-loopback bind start with auth off, MCP open mode, the dev
-    # signing secret or a weak root, gateway or end-user key. Only for a port others
-    # cannot reach.
+    # True lets a non-loopback bind start with auth off, MCP open mode, open self-signup
+    # outside trust-network, the dev signing secret or a weak root, gateway or end-user
+    # key. Only for a port others cannot reach.
     allow_insecure: bool = False
 
     def workers_mode(self) -> str:

@@ -91,7 +91,7 @@ default is `off`) are not listed here.
 
 | Setting | Meaning |
 | --- | --- |
-| `LOOM_ALLOW_INSECURE` | True lets a non-loopback bind start with auth off, MCP open mode, the dev signing secret or a weak root, gateway or end-user key. |
+| `LOOM_ALLOW_INSECURE` | True lets a non-loopback bind start with auth off, MCP open mode, open self-signup outside trust-network, the dev signing secret or a weak root, gateway or end-user key. |
 | `LOOM_CH_LOG_COMMENT_STATEMENT_DIGEST` | Append `sql:<shape12> <first 200 chars>` of each statement to its `log_comment` ("<op> <request_id>"), so query_log rows group by shape. |
 | `LOOM_CODE_COVERAGE_IMPORT_ENABLED` | Import per-test line coverage from an instrumented CI run into the test map (`method='coverage'`) and the per-file executed lines (`code_coverage_files`). |
 | `LOOM_CODE_EMBED_RECOVERY_ENABLED` | Embedding recovery for code_chunks/code_summaries stubs (dim=0). |

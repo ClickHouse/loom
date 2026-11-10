@@ -213,9 +213,9 @@ USER loom
 
 # LOOM_BIND_HOST is the address the port is published on, which the startup
 # checks read; LOOM_LISTEN_HOST is the one the container listens on, all its
-# interfaces. 0.0.0.0 = reachable by others, so it needs LOOM_PUBLIC_BASE_URL,
-# auth and a real signing secret. A compose stack that publishes on loopback
-# passes its LOOM_BIND_HOST through.
+# interfaces. 0.0.0.0 = reachable by others, so it needs the safeguards in
+# docs/operations/deployment.md ("Proxy and TLS"). A compose stack that
+# publishes on loopback passes its LOOM_BIND_HOST through.
 # PYTHONPATH: the `loom` command imports the same /app tree as the server,
 # not the copy in the venv, which ships without schemas/.
 ENV PYTHONUNBUFFERED=1 \
