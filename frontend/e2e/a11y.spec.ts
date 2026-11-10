@@ -635,6 +635,10 @@ for (const [width, touch] of [
       expect(await violations(page)).toEqual([]);
       const name = order.getByText("team-research-notes", { exact: true });
       expect((await name.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(140);
+      // The arrows stay inside the list, wrapped under the name where the row is narrow.
+      const list = await order.boundingBox();
+      const down = await order.getByRole("button", { name: "Move team-research-notes down" }).boundingBox();
+      expect((down?.x ?? 0) + (down?.width ?? 0)).toBeLessThanOrEqual((list?.x ?? 0) + (list?.width ?? 0));
     });
   });
 }

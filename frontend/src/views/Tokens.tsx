@@ -251,7 +251,9 @@ function SearchOrder({
   const move = (ns: string, i: number, by: -1 | 1) => {
     const to = i + by;
     const atEnd = to === 0 || to === order.length - 1;
-    focusAfter.current = `${ns}:${atEnd ? (by === -1 ? "down" : "up") : by === -1 ? "up" : "down"}`;
+    const pressed = by === -1 ? "up" : "down";
+    const other = by === -1 ? "down" : "up";
+    focusAfter.current = `${ns}:${atEnd ? other : pressed}`;
     onMove(ns, to);
   };
   return (
@@ -302,7 +304,7 @@ function SearchOrder({
               {repo ? (
                 <span className="text-xs text-text-muted shrink-0">read-only</span>
               ) : (
-                <Tip content={`At most your own role (${grant(ns)})`}>
+                <Tip content={`At most your own role (${ROLE_LABELS[grant(ns)]})`}>
                   <div className="w-28 shrink-0">
                     <Select
                       triggerProps={{ "aria-label": `Role on ${ns}` }}
@@ -415,7 +417,7 @@ function TokenForm({
   const [addingNs, setAddingNs] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
 
-  // Once per identity; an answer for an org or namespace the page has left is dropped.
+  // Once per org; an answer for an org the page has left is dropped.
   useAbortableEffect(
     async (_signal, live) => {
       let all: MyNamespaceEntry[];
@@ -429,7 +431,7 @@ function TokenForm({
       setLoadFailed(false);
       setRows(all);
     },
-    [identity.org, identity.namespace],
+    [identity.org],
   );
 
   const eligibleNs = useMemo(() => (mine ?? []).filter((n) => n.kind !== "code"), [mine]);
@@ -609,7 +611,7 @@ function TokenForm({
                 />
                 <span className="font-mono flex-1 truncate">{n.namespace}</span>
                 <span className="text-xs text-text-muted shrink-0">
-                  you: {ROLE_LABELS[grantRoleOf(mine, n.namespace)]}
+                  Your role: {ROLE_LABELS[grantRoleOf(mine, n.namespace)]}
                 </span>
               </div>
             ))}

@@ -270,6 +270,15 @@ describe("the token form", () => {
     // At the top its Move up is gone; focus moves to its Move down, not to the page.
     expect(screen.getByRole("button", { name: "Move ns-c down" })).toHaveFocus();
     expect(screen.getByRole("status")).toHaveTextContent("ns-c moved to 1 of 3");
+    // And at the bottom its Move down is gone; focus moves to its Move up.
+    const down = screen.getByRole("button", { name: "Move ns-c down" });
+    await userEvent.click(down);
+    await userEvent.click(down);
+    expect(order()).toEqual(["ns-a", "ns-b", "ns-c"]);
+    expect(screen.getByRole("button", { name: "Move ns-c up" })).toHaveFocus();
+    expect(screen.getByRole("status")).toHaveTextContent("ns-c moved to 3 of 3");
+    await userEvent.click(screen.getByRole("button", { name: "Move ns-c up" }));
+    await userEvent.click(screen.getByRole("button", { name: "Move ns-c up" }));
     expect((await create()).namespaces.map((n) => (typeof n === "string" ? n : n.namespace))).toEqual([
       "ns-c",
       "ns-a",
@@ -319,6 +328,17 @@ describe("the token form", () => {
       .getAllByRole("listitem")
       .map((li) => li.textContent?.match(/ns-[abc]/)?.[0]);
     expect(order).toEqual(["ns-c", "ns-a", "ns-b"]);
+    // Downward too, and a drop on its own place changes nothing.
+    const now = () => within(screen.getByRole("list", { name: "Search order" })).getAllByRole("listitem");
+    fireEvent.dragStart(now()[0], { dataTransfer: data });
+    fireEvent.dragOver(now()[2], { dataTransfer: data });
+    fireEvent.drop(now()[2], { dataTransfer: data });
+    fireEvent.dragStart(now()[1], { dataTransfer: data });
+    fireEvent.drop(now()[1], { dataTransfer: data });
+    expect(now().map((li) => li.textContent?.match(/ns-[abc]/)?.[0])).toEqual(["ns-a", "ns-b", "ns-c"]);
+    fireEvent.dragStart(now()[2], { dataTransfer: data });
+    fireEvent.dragOver(now()[0], { dataTransfer: data });
+    fireEvent.drop(now()[0], { dataTransfer: data });
     expect((await create()).namespaces.map((n) => (typeof n === "string" ? n : n.namespace))).toEqual([
       "ns-c",
       "ns-a",
