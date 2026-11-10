@@ -230,7 +230,9 @@ function humanizeApiError(err: ApiError, bare: boolean, read: boolean): string {
   // The server's words for it carry only the request id: the line says it once, in words,
   // wherever it is shown; a caller that also prints ids beside a line skips one it holds.
   if (err.code === "INTERNAL_ERROR") {
-    const id = err.requestId ? ` Request id ${err.requestId}.` : "";
+    // The header's id, else the one the server's words carry ("…; request_id=<id>").
+    const rid = err.requestId || /request_id=([\w-]+)/.exec(err.serverMessage)?.[1] || "";
+    const id = rid ? ` Request id ${rid}.` : "";
     return withTail(`${ERROR_CODE_PREFIXES.INTERNAL_ERROR}${id}`, retryTail(err, read));
   }
   const own = codeSentence(err);

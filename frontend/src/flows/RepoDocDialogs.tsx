@@ -305,7 +305,7 @@ export function RepoDocViewer({
           );
       })
       .catch((e) => {
-        if (live) setState({ kind: "error", message: humanizeError(e) });
+        if (live) setState({ kind: "error", message: humanizeError(e, { read: true }) });
       });
     return () => {
       live = false;

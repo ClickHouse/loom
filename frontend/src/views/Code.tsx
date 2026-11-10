@@ -170,7 +170,7 @@ export function CodeView() {
           setError(null);
         })
         .catch((e) => {
-          if (live()) setError(humanizeError(e));
+          if (live()) setError(humanizeError(e, { read: true }));
         });
     },
     [identity.org],
@@ -2511,7 +2511,7 @@ function ExploreTab({ id }: { id: CodeId }) {
     try {
       setRes(await codeSearch(id, query.trim(), { top_k: 10, path_prefix: prefix.trim() }));
     } catch (e) {
-      setError(humanizeError(e));
+      setError(humanizeError(e, { read: true }));
     } finally {
       setBusy(false);
     }
@@ -3025,7 +3025,7 @@ export function AccessTab({
           }
         })
         .catch((e) => {
-          if (live()) setError(humanizeError(e));
+          if (live()) setError(humanizeError(e, { read: true }));
         });
     },
     // `id` is a fresh object each parent render; its two fields are the identity.

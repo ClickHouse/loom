@@ -42,6 +42,18 @@ describe("ListState", () => {
     expect(screen.getByRole("status")).toHaveTextContent("No runs match failed");
   });
 
+  it("error: an internal error says its request id once, in the message", () => {
+    const err = new ApiError({
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: "internal error; request_id=r9",
+      requestId: "r9",
+      detail: { category: "internal", retryable: false },
+    });
+    render(<ListState kind="error" things="documents" error={err} onRetry={() => {}} />);
+    expect(screen.getByRole("alert").textContent?.match(/r9/g)).toHaveLength(1);
+  });
+
   it("error: what failed, the humanized message, the request id and a secondary Retry", () => {
     const onRetry = vi.fn();
     const err = new ApiError({ status: 503, code: "BACKEND_UNAVAILABLE", message: "ch down", requestId: "req-123" });

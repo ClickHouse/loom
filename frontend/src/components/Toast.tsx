@@ -8,11 +8,10 @@ import { errorRequestId } from "../lib/format";
 /**
  * Transient notifications.
  *
- * Each toast owns its timer: success and info leave after 3.5 s, an error
- * after 8 s plus 50 ms a character, at most 20 s (`errorToastMs`) — an error is
- * read, not glanced at. Hovering or focusing a
- * toast pauses its clock so the message can be read or copied; a close
- * button dismisses it early. The stack is capped at four — a burst of
+ * Each toast owns its timer: success and info leave after 3.5 s, an error after
+ * 8 s plus 50 ms a character, at most 20 s (`errorToastMs`) — an error is read,
+ * not glanced at. Hovering or focusing a toast pauses its clock so the message
+ * can be read or copied; a close button dismisses it early. The stack is capped at four — a burst of
  * failures drops the oldest rather than covering the page.
  *
  * A toast raised with a `key` replaces the one still showing under the same

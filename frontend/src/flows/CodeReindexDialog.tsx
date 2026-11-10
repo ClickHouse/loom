@@ -34,7 +34,7 @@ export function CodeReindexDialog({
         // The watermark itself: moving it there changes nothing.
         if (live()) setCommits(r.rows.filter((c) => c.commit !== branch.git_head));
       } catch (e) {
-        if (live()) setError(humanizeError(e));
+        if (live()) setError(humanizeError(e, { read: true }));
       }
     },
     [branch.org, branch.namespace],

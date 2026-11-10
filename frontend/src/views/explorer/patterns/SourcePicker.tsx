@@ -64,7 +64,7 @@ export function SourcePicker({
       } catch (e) {
         if (!live()) return;
         if (isOpAbsent(e)) setAbsent(true);
-        else setError(humanizeError(e));
+        else setError(humanizeError(e, { read: true }));
         setSources([]);
       }
     },

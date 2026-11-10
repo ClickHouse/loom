@@ -153,7 +153,7 @@ describe("humanizeError", () => {
           message: "internal error; request_id=abc",
           detail: { category: "internal", retryable: false },
         },
-        "Loom hit an internal error. If it keeps happening, tell your operator. It may have been saved; check before trying again.",
+        "Loom hit an internal error. If it keeps happening, tell your operator. Request id abc. It may have been saved; check before trying again.",
       ],
       [
         "a busy write that may have landed says to check first",
@@ -274,6 +274,18 @@ describe("humanizeError", () => {
       const line = "Loom hit an internal error. If it keeps happening, tell your operator. Request id r9.";
       expect(humanizeError(err, { read: true })).toBe(line);
       expect(errorLine(err, { read: true })).toBe(line);
+    });
+
+    it("takes an internal error's id from the server's words when the header is missing", () => {
+      const err = new ApiError({
+        status: 500,
+        code: "INTERNAL_ERROR",
+        message: "internal error; request_id=r7",
+        detail: { category: "internal", retryable: false },
+      });
+      expect(humanizeError(err, { read: true })).toBe(
+        "Loom hit an internal error. If it keeps happening, tell your operator. Request id r7.",
+      );
     });
 
     it("tells a read what a 5xx leaves to do, with no write warning", () => {
