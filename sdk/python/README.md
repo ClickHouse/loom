@@ -2,57 +2,52 @@
 
 Python SDK for [Loom](https://github.com/ClickHouse/loom) — the shared-production memory, knowledge, conflict, and observability data plane for AI agents, built on ClickHouse.
 
-This package contains the **client SDK only**. Loom is designed for shared production deployment: an operator runs the server (Docker image at `ghcr.io/clickhouse/loom`) against a real ClickHouse instance (Cloud or self-hosted OSS), then application developers like you use this SDK to talk to it.
+This package contains the **client SDK only**. The server runs as the Docker image `ghcr.io/clickhouse/loom` against ClickHouse: on your own machine as a single-user install, or as a team deployment an operator runs.
 
 ## Install
 
-Not on PyPI yet, so install from source — pure Python, no build step — or from
-the wheel attached to a GitHub Release
-([docs/development/release-process.md](https://github.com/ClickHouse/loom/blob/main/docs/development/release-process.md#installing-from-a-github-release)):
-
 ```bash
-pip install ./sdk/python                     # from a clone of ClickHouse/loom
-# without a clone (needs the same GitHub access as `git clone`):
-pip install "clickhouse-loom @ git+https://github.com/ClickHouse/loom#subdirectory=sdk/python"
+pip install clickhouse-loom
 ```
-
-<!-- restore `pip install clickhouse-loom` when release.yml publishes -->
 
 Python 3.11+. Runtime deps: `httpx[http2]` (HTTP/2 via `h2`).
 
+The SDK's version is the server release's; which servers it works with is in
+[supported versions](https://github.com/ClickHouse/loom/blob/main/docs/operations/supported-versions.md).
+A release not yet on PyPI installs from its assets
+([installing from a GitHub Release](https://github.com/ClickHouse/loom/blob/main/docs/development/release-process.md#installing-from-a-github-release)).
+From the root of a clone, `pip install ./sdk/python`.
+
 ## Use
 
-You'll need:
-
-- A `base_url` pointing at your team's Loom deployment.
-- A credential. Either sign in once with `python -m loom login --server <url>` (or `loom.login(url)` in a notebook), approving on any browser with your password or SSO; every `Agent` you point at that server (`base_url=` or `LOOM_BASE_URL`) then uses that session and refreshes it. Or use a JWT your operator mints (`POST /v1/admin/token.mint`, `loom mint-token`), passed as `api_key=` or `LOOM_API_KEY` — the right choice for CI and services.
+Against a [single-user install](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/quickstart.md)
+on this machine (`http://localhost:7777`, the `dev/local` namespace, no token):
 
 ```python
-from loom import Datapack
-import os
+import asyncio
 
-dp = Datapack(
-    org="clickhouse",
-    namespace="eng-tooling",
-    base_url=os.environ["LOOM_BASE_URL"],  # e.g. https://loom.example.com
-    api_key=os.environ["LOOM_API_KEY"],  # JWT from your operator
-)
+from loom import Agent
 
-agent = dp.agent("claude-desktop")
 
-# Save a memory
-await agent.memory.set(
-    memory_key="deploy_window",
-    value="Deploy Tue/Thu, never Friday",
-    memory_type="preference",
-)
+async def main() -> None:
+    async with Agent(org="dev", namespace="local", agent="my-agent") as agent:
+        await agent.memory.set("deploy_window", "Deploy Tue/Thu, never Friday")
+        got = await agent.memory.get("deploy_window")  # by key
+        hits = await agent.memory.search("when do we deploy")  # by meaning
+        print(got["value"] if got else "not found")
+        print([hit.memory_key for hit in hits])
 
-# Recall by key
-got = await agent.memory.get(memory_key="deploy_window")
 
-# Or semantic search
-hits = await agent.memory.search("when do we deploy")
+asyncio.run(main())
 ```
+
+For a team server, pass `base_url=` (or set `LOOM_BASE_URL`) and a credential, with
+your account's org and namespace. Either sign in once with
+`python -m loom login --server <url>` (or `loom.login(url)` in a notebook), approving on
+any browser with your password or SSO, and every `Agent` pointed at that server uses that
+session and refreshes it; or pass a token from **Settings → Tokens**, or one your
+operator mints, as `api_key=` or `LOOM_API_KEY`. A token is the right choice for CI and
+services.
 
 The `Agent` exposes 28 client modules: `client`, `account`, `deployment`, `assistant`, `memory`, `working_memory`, `knowledge`, `conversations`, `profile`, `context`, `facts`, `learnings`, `conflicts`, `blacklist`, `grants`, `erasure`, `cost`, `audit`, `namespaces`, `procedure`, `run`, `tasks`, `policy`, `decision`, `calibration`, `briefs`, `code`, `tracker`. Each of the named ones is the hand-written layer over a wire-op group on the Loom server (`account`, `deployment` and `assistant` cover the routes outside the op registry: service accounts, MCP setup, model settings, worker health, the assistant's streamed chat); `client` holds every served op as a generated method (below).
 
@@ -78,7 +73,7 @@ assert p["ok"], (p["missing_ops"], p["missing_fields"])
 print(OPS["memory.search"].idempotent, OPS["memory.search"].role)
 ```
 
-`agent.memory.search(...)` and `agent.knowledge.search(...)` also accept `**extra`, so a field the server shipped this week rides the body without an SDK release. Errors are typed by the server's `detail.code`, and by HTTP status when a body carries none: `NotFound`, `ValidationError`, `AuthInvalid`, `AuthInsufficient`, `PreconditionFailed`, `RateLimited`, `BackendUnavailable` — every one carries `.request_id` (the `X-Request-Id` the server echoed), `.status`, and the server's `.category` and `.retryable`, the SDK's own when the body names none ([the error envelope](../../docs/reference/errors.md#the-error-envelope-over-http)).
+`agent.memory.search(...)` and `agent.knowledge.search(...)` also accept `**extra`, so a field the server shipped this week rides the body without an SDK release. Errors are typed by the server's `detail.code`, and by HTTP status when a body carries none: `NotFound`, `ValidationError`, `AuthInvalid`, `AuthInsufficient`, `PreconditionFailed`, `RateLimited`, `BackendUnavailable` — every one carries `.request_id` (the `X-Request-Id` the server echoed), `.status`, and the server's `.category` and `.retryable`, the SDK's own when the body names none ([the error envelope](https://github.com/ClickHouse/loom/blob/main/docs/reference/errors.md#the-error-envelope-over-http)).
 
 `await agent.capabilities()` pairs `ops.capabilities` with what the bearer token itself says (`roles` / `ns_roles`, decoded, not verified) so an integration does not poll ops its token cannot call: `caps.can_call("conflicts.list")` is `True` / `False` when known and `None` when the SDK cannot tell — then make the call; `await agent.can_call(op)` answers for the Agent's namespace; `caps.callable()` lists every served op the token may call. Cached 60 s.
 
@@ -177,7 +172,7 @@ The SDK logs through the stdlib logger `loom` (a `NullHandler` by default; your 
 
 ## Examples
 
-[`examples/agent_memory.py`](./examples/agent_memory.py) — probe → remember ×3 → recall → ask with citations → outcome → typed errors, with its actual run in [`examples/README.md`](./examples/README.md). The TypeScript SDK ships the same example.
+[`examples/agent_memory.py`](https://github.com/ClickHouse/loom/blob/main/sdk/python/examples/agent_memory.py) — probe → remember ×3 → recall → ask with citations → outcome → typed errors, with its actual run in [`examples/README.md`](https://github.com/ClickHouse/loom/blob/main/sdk/python/examples/README.md). The TypeScript SDK ships the same example.
 
 ## License
 

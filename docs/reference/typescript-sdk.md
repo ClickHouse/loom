@@ -8,14 +8,19 @@ registry. It behaves like the [Python SDK](./python-sdk.md): identity binding, a
 
 ## Install
 
-Node 20 or later (it uses the platform `fetch`). No runtime dependencies. The package is not
-published to a package index and `dist/` is not committed, so build it from a clone:
+Node 20 or later (it uses the platform `fetch`). No runtime dependencies.
 
 ```bash
-git clone https://github.com/ClickHouse/loom
-npm --prefix loom/sdk/typescript ci && npm --prefix loom/sdk/typescript run build
-npm install ./loom/sdk/typescript          # or: npm pack in that directory, then install the .tgz
+npm install @clickhouse/loom
 ```
+
+The SDK's version is the server release's
+([supported versions](../operations/supported-versions.md)). A release not yet on npm
+installs from its assets
+([installing from a GitHub Release](../development/release-process.md#installing-from-a-github-release)).
+For a clone at `<clone>`, build it with
+`npm --prefix <clone>/sdk/typescript ci && npm --prefix <clone>/sdk/typescript run build`,
+then run `npm install <clone>/sdk/typescript` in your project.
 
 The package ships ESM and CommonJS builds with their own declaration files and
 imports no Node built-in when it loads; signing in loads `node:fs` and the

@@ -2,28 +2,32 @@
 
 Typed client for [Loom](https://github.com/ClickHouse/loom), the shared-production agent memory, knowledge, conflict and observability plane on ClickHouse. Every wire operation the server declares is a typed method here; the types are generated from the server's operation registry, so what the deployment serves is what the SDK types.
 
-Not on npm yet (`release.yml` is manual and has never published), so build it
-from a clone of the repo and install the built package — `dist/` is not
-committed and `npm install github:…#path:` is not supported by current npm:
-
 ```bash
-git clone https://github.com/ClickHouse/loom
-npm --prefix loom/sdk/typescript ci && npm --prefix loom/sdk/typescript run build
-npm install ./loom/sdk/typescript          # or: npm pack in that dir, then install the .tgz
+npm install @clickhouse/loom
 ```
-
-<!-- restore `npm install @clickhouse/loom` when release.yml publishes -->
 
 Node ≥ 20 (uses the platform `fetch`). Zero runtime dependencies.
 
+The SDK's version is the server release's; which servers it works with is in
+[supported versions](https://github.com/ClickHouse/loom/blob/main/docs/operations/supported-versions.md).
+A release not yet on npm installs from its assets
+([installing from a GitHub Release](https://github.com/ClickHouse/loom/blob/main/docs/development/release-process.md#installing-from-a-github-release)).
+For a clone at `<clone>`, build it with
+`npm --prefix <clone>/sdk/typescript ci && npm --prefix <clone>/sdk/typescript run build`,
+then run `npm install <clone>/sdk/typescript` in your project.
+
 ## Quick start — an agent that remembers
+
+Against a [single-user install](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/quickstart.md)
+on this machine (`http://localhost:7777`, `dev/local`, no token); for a team server, pass
+`baseUrl`, a credential and your org and namespace ([The credential](#the-credential)).
+Save it as an ES module (`quickstart.mjs`, or `.js` in a package with `"type": "module"`):
+it uses top-level `await`.
 
 ```ts
 import { Datapack } from "@clickhouse/loom";
 
-const pack = new Datapack("acme", "support", {
-  baseUrl: process.env.LOOM_BASE_URL!,
-  apiKey: process.env.LOOM_API_KEY!,
+const pack = new Datapack("dev", "local", {
   consumer: "support-bot", // the label every ledger row carries
 });
 const bot = pack.agent("assistant");
@@ -87,7 +91,7 @@ const status = await loom.knowledge.ingestFile({
 
 ## Errors
 
-Every failure is a `LoomError` with `status`, `code` (the server's `detail.code`), `message`, `requestId` (echoed by the server, findable in its ledger), the raw `detail`, and the server's `category` and `retryable`, the SDK's own when the body names none ([the error envelope](../../docs/reference/errors.md#the-error-envelope-over-http)). Subclasses mirror the Python SDK:
+Every failure is a `LoomError` with `status`, `code` (the server's `detail.code`), `message`, `requestId` (echoed by the server, findable in its ledger), the raw `detail`, and the server's `category` and `retryable`, the SDK's own when the body names none ([the error envelope](https://github.com/ClickHouse/loom/blob/main/docs/reference/errors.md#the-error-envelope-over-http)). Subclasses mirror the Python SDK:
 
 | class                                      | when                                                                                                                                                                                                                                                 |
 | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -337,7 +341,7 @@ for (const call of completion.choices[0].message.tool_calls ?? []) {
 // Anthropic: tools.definitions("anthropic"); anything that takes JSON schema: tools.definitions()
 ```
 
-`execute()` returns the string the model reads (compact JSON, or a line it can act on: "no parked text under blob_key=…"), validates required arguments with messages a model can correct, and truncates past `maxResultChars`. [`examples/session-resume`](./examples/session-resume/) is the two-process run with a real `gpt-4o-mini` tool-use turn.
+`execute()` returns the string the model reads (compact JSON, or a line it can act on: "no parked text under blob_key=…"), validates required arguments with messages a model can correct, and truncates past `maxResultChars`. [`examples/session-resume`](https://github.com/ClickHouse/loom/tree/main/sdk/typescript/examples/session-resume/) is the two-process run with a real `gpt-4o-mini` tool-use turn.
 
 ## Probe before you rely
 
@@ -394,7 +398,7 @@ No dependency on the Strands package: the `MemoryStore` shape (`name`, `writable
 
 ## Examples
 
-[`examples/`](./examples/) holds runnable, self-contained scripts whose READMEs show the actual run: start with [agent-memory](./examples/agent-memory/) (probe → remember → recall → ask with citations → outcome; typed errors), then [session-resume](./examples/session-resume/) (a session resumed in a new process, a parked tool result, a real model calling loom's tools).
+[`examples/`](https://github.com/ClickHouse/loom/tree/main/sdk/typescript/examples/) holds runnable, self-contained scripts whose READMEs show the actual run: start with [agent-memory](https://github.com/ClickHouse/loom/tree/main/sdk/typescript/examples/agent-memory/) (probe → remember → recall → ask with citations → outcome; typed errors), then [session-resume](https://github.com/ClickHouse/loom/tree/main/sdk/typescript/examples/session-resume/) (a session resumed in a new process, a parked tool result, a real model calling loom's tools).
 
 ## Development
 

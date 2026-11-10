@@ -340,11 +340,12 @@ each one from the browser. Shapes are in the [HTTP API reference](../reference/h
 
 ## 5. First memory from Python
 
-The SDK package is `clickhouse-loom`. From the clone:
-
 ```bash
-pip install ./sdk/python
+pip install clickhouse-loom    # or, from a clone: pip install ./sdk/python
 ```
+
+A release not yet on PyPI installs from its assets
+([installing from a GitHub Release](../development/release-process.md#installing-from-a-github-release)).
 
 ```python
 import asyncio
@@ -367,15 +368,10 @@ async def main():
 asyncio.run(main())
 ```
 
-The SDK reads its credential from `api_key=`, then `LOOM_API_KEY`, then `~/.loom/token`.
-Without a clone, install it with
-`pip install "clickhouse-loom @ git+https://github.com/ClickHouse/loom#subdirectory=sdk/python"`.
-The TypeScript SDK (`@clickhouse/loom`) builds from the clone:
-
-```bash
-npm --prefix sdk/typescript ci && npm --prefix sdk/typescript run build
-npm install ./sdk/typescript
-```
+Where the SDK finds its server and credential is in
+[Python SDK → Credentials](../reference/python-sdk.md#credentials).
+The TypeScript SDK installs with `npm install @clickhouse/loom`
+([from a clone](../reference/typescript-sdk.md#install)).
 
 The client surfaces are in the [Python SDK](../reference/python-sdk.md) and
 [TypeScript SDK](../reference/typescript-sdk.md) references.
