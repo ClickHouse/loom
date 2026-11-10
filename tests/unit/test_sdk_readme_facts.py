@@ -12,7 +12,8 @@ from loom.sync import _CLIENT_ATTRS
 
 from tests.unit.markdown_links import anchors, links
 
-SDK_ROOT = Path(__file__).resolve().parents[2] / "sdk" / "python"
+ROOT = Path(__file__).resolve().parents[2]
+SDK_ROOT = ROOT / "sdk" / "python"
 README = (SDK_ROOT / "README.md").read_text()
 PROJECT = tomllib.loads((SDK_ROOT / "pyproject.toml").read_text())["project"]
 
@@ -64,7 +65,7 @@ def test_the_package_readme_links_resolve_on_the_registry(sdk: str) -> None:
     for target in targets:
         if m := in_repo.fullmatch(target):
             ref, path, anchor = m.groups()
-            dest = SDK_ROOT.parents[1] / path
+            dest = ROOT / path
             assert ref == "main" and dest.exists(), target
             if anchor and dest.suffix == ".md":
                 assert anchor.lower() in anchors(dest), target
