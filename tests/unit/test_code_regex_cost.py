@@ -18,6 +18,7 @@ still to fix."""
 
 from __future__ import annotations
 
+import gc
 import importlib
 import itertools
 import json
@@ -296,6 +297,21 @@ faulthandler.dump_traceback_later({_WALK_DEADLINE_S}, exit=True)
 from tests.unit.lane_walks import walk_cost
 print(json.dumps(walk_cost(sys.argv[1])))
 """
+
+
+def test_untraced_leaves_the_collector_as_it_found_it() -> None:
+    from tests.unit.code_fixtures import untraced
+
+    with untraced():
+        assert not gc.isenabled()
+    assert gc.isenabled()
+    gc.disable()
+    try:
+        with untraced():
+            pass
+        assert not gc.isenabled()
+    finally:
+        gc.enable()
 
 
 @pytest.mark.parametrize("name", [w[0] for w in WALKS])
