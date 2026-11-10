@@ -3,11 +3,10 @@
 # GitHub Release.
 #
 #   curl -fsSL …/install.sh -o loom-install.sh && sh loom-install.sh
-#   sh loom-install.sh --clickhouse https://loom@host:8443
-#   sh loom-install.sh --bundled                 # back to its own ClickHouse
+#   … && sh loom-install.sh --clickhouse https://loom@host:8443
+#   … && sh loom-install.sh --bundled            # back to its own ClickHouse
 #
-# Saved first, so a failed download stops with curl's error and exit code. A
-# saved copy installs its own release (below).
+# Saved first, so a failed download stops with curl's error and exit code.
 #
 # --clickhouse (or LOOM_CH_URL) points Loom at a self-managed server or a
 # ClickHouse Cloud service instead; --bundled switches an install back (and wins

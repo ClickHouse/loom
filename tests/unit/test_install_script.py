@@ -749,9 +749,9 @@ def test_an_unreachable_docker_daemon_is_named_before_any_pull(
 
 
 # After `install.sh`, a pipe into a shell (`sh`, `bash`, `/bin/sh`, through `sudo`).
-_PIPE_TO_SHELL = re.compile(r"\|\s*(?:\S+\s+)*?(?:\S*/)?(?:ba|da|z)?sh\b")
-# A download run as `sh -c "$(curl …)"`.
-_SHELL_OF_DOWNLOAD = re.compile(r"sh\s+-c\s+[\"']?\$\(")
+_PIPE_TO_SHELL = re.compile(r"\|\s*(?:\S+\s+)*?(?:\S*/)?(?:ba|da|k|z)?sh\b")
+# A download run as `sh -c "$(curl …)"` or `sh <(curl …)`.
+_SHELL_OF_DOWNLOAD = re.compile(r"sh\s+(?:-c\s+[\"']?\$\(|<\()")
 
 
 def _runs_a_download(line: str) -> bool:
@@ -790,6 +790,8 @@ def test_no_tracked_file_pipes_the_installer_into_sh() -> None:
         'curl -fsSL "https://x/install.sh" | LOOM_SKIP_START=1 sh',
         "`curl -fsSL …/install.sh \\| sh`",
         'sh -c "$(curl -fsSL https://x/install.sh)"',
+        "bash <(curl -fsSL https://x/install.sh)",
+        "curl -fsSL https://x/install.sh | ksh",
     ],
 )
 def test_the_guard_flags_a_piped_install(line: str) -> None:

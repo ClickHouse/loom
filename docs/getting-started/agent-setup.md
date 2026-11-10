@@ -50,10 +50,11 @@ This copy names no release, so its commands do not run as they are. Follow the
 curl -fsSL "https://github.com/ClickHouse/loom/releases/download/v<version>/install.sh" -o loom-install.sh && sh loom-install.sh
 ```
 
-The installer verifies the bundle's SHA-256, installs under `~/.loom`, starts the stack
-and waits for the server's `/v1/health`. If it fails, the report is its `install`
-line alone; do not go on. The [quickstart](quickstart.md#1-boot-the-stack) says what the
-installer does in full.
+The command leaves `loom-install.sh` in the current directory; delete it afterwards. The
+installer verifies the bundle's SHA-256, installs under `~/.loom`, starts the stack and
+waits for the server's `/v1/health`. If it fails, the report is its `install` line alone;
+do not go on. The [quickstart](quickstart.md#1-boot-the-stack) says what the installer
+does in full.
 
 ## 2. Install the plugin
 
