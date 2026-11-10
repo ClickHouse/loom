@@ -19,6 +19,7 @@ still to fix."""
 from __future__ import annotations
 
 import importlib
+import itertools
 import json
 import pathlib
 import pkgutil
@@ -227,8 +228,8 @@ def _slow(cost: Callable[[int], float]) -> tuple[int, float, float] | None:
     Each step times n / 4 and n back to back, so a load spike that lasts a few runs
     slows both alike; a step that looks over linear is timed twice more that way and
     fails only if all three pairs are over. A pattern over linear is, in every pair. A
-    spike on the first pair's n / 4 alone can hide a step in one run; a pattern over
-    linear is over on every run, so the next one reports it."""
+    spike on the n / 4 of any one pair can hide a step; nothing is carried, so the next
+    step, or the next run, reports it."""
     for n in _SIZES[1:]:
         pairs = [(cost(n // 4), cost(n))]
         if _over(*pairs[0]):
@@ -244,7 +245,7 @@ def test_slow_tells_a_load_spike_from_a_step_over_linear() -> None:
 
     def spiked(base: Callable[[int], float], calls: range) -> Callable[[int], float]:
         """`base`, with calls numbered `calls` (from 0) taking 10 times as long."""
-        count = iter(range(1_000))
+        count = itertools.count()
         return lambda n: base(n) * (10 if next(count) in calls else 1)
 
     assert _slow(linear) is None
@@ -256,7 +257,10 @@ def test_slow_tells_a_load_spike_from_a_step_over_linear() -> None:
         return (n / 1000) ** 2 * 1e-3
 
     assert _slow(quadratic) == (8_000, 0.004, 0.064)
-    assert _slow(spiked(quadratic, range(3, 9))) == (8_000, 0.004, 0.64)  # spiked pairs
+    # every pair slowed after the first pair's n / 4: still over linear
+    assert _slow(spiked(quadratic, range(3, 8))) == (8_000, 0.004, 0.64)
+    # a spike on the 8,000 step's n / 4 hides that step; the 32,000 one reports it
+    assert _slow(spiked(quadratic, range(2, 3))) == (32_000, 0.064, 1.024)
     assert _slow(lambda n: (n / 2000) ** 3 * 2.5e-4) == (8_000, 0.0003, 0.016)  # cubic
 
 
