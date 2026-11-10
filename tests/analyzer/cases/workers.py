@@ -369,7 +369,7 @@ async def _decision_records(ch: RecordingCH, c: dict[str, Any]) -> None:
     try:
         for live in ([("k1", "a", "-", "-")], []):
 
-            async def _writers(*_: Any, live: list[Any] = live) -> list[Any]:
+            async def _writers(*_: Any, live: list[Any] = live, **__: Any) -> list[Any]:
                 return live
 
             pg_memory.live_decision_writers = _writers  # type: ignore[assignment]
