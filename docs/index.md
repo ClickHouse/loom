@@ -91,7 +91,8 @@ client sees one the server no longer reads.
 [Optimize a namespace](guides/optimize-namespace.md) ·
 [Investigation-agent memory](guides/investigation-agent-memory.md) ·
 [Extraction pipelines](guides/extraction-pipeline.md) ·
-[Performance tuning](guides/performance-tuning.md) · [Debugging](guides/debugging.md)
+[Performance tuning](guides/performance-tuning.md) · [Debugging](guides/debugging.md) ·
+[Query Loom from Postgres](guides/query-from-postgres.md)
 
 ## Features
 

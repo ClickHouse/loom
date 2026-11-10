@@ -12,6 +12,7 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
+import asyncpg
 import pytest
 
 from server.cli.sql_access import _login_check
@@ -23,8 +24,20 @@ from tests.integration._resources import ch_client_from_env, unique_org
 
 pytestmark = pytest.mark.asyncio
 
-_MEMORY = ["org", "namespace", "agent", "user_id", "session_id", "memory_key", "memory_type"]
-_MEMORY += ["value", "version", "sensitivity"]
+_MEMORY = [
+    "org",
+    "namespace",
+    "agent",
+    "user_id",
+    "session_id",
+    "memory_key",
+    "memory_type",
+    "value",
+    "version",
+    "sensitivity",
+]
+# The session settings the guide sets on the reader role: the four a SQL user may change.
+_SESSION = "join_use_nulls 1, group_by_use_nulls 1, final 1, transform_null_in 0"
 
 
 @pytest.fixture
@@ -38,8 +51,6 @@ async def ch() -> AsyncIterator[Any]:
 @pytest.fixture
 async def pg() -> AsyncIterator[Any]:
     dsn = os.environ.get("LOOM_PGCH_DSN") or pytest.skip("LOOM_PGCH_DSN is not set")
-    import asyncpg
-
     conn = await asyncpg.connect(dsn)
     yield conn
     await conn.close()
@@ -57,6 +68,7 @@ async def test_an_orgs_postgres_joins_its_tenants_memories(ch: Any, pg: Any) -> 
     raw.insert("loom.memory", rows, column_names=_MEMORY)
     tag = uuid.uuid4().hex[:8]
     user, server, schema = f"it_pgch_{tag}", f"loom_ch_{tag}", f"loom_{tag}"
+    reader, reader_password = f"app_reader_{tag}", uuid.uuid4().hex
     granted = await sql_access.grant(user, Scope(org, ("ns",)), login_check=_login_check, ch=ch)
     assert granted.password
     try:
@@ -72,10 +84,15 @@ async def test_an_orgs_postgres_joins_its_tenants_memories(ch: Any, pg: Any) -> 
             f"(driver 'http', host '{settings.ch_host}', port '{settings.ch_port}', "
             f"dbname '{settings.ch_database}')"
         )
-        await pg.execute(
-            f"CREATE USER MAPPING FOR CURRENT_USER SERVER {server} "
-            f"OPTIONS (user '{user}', password '{granted.password}')"
-        )
+        # The guide's setup, as the owner: a reader role with its own mapping, the
+        # session settings on the role, and grants on the imported schema alone.
+        await pg.execute(f"CREATE ROLE {reader} LOGIN PASSWORD '{reader_password}'")
+        for role in ("CURRENT_USER", reader):
+            await pg.execute(
+                f"CREATE USER MAPPING FOR {role} SERVER {server} "
+                f"OPTIONS (user '{user}', password '{granted.password}')"
+            )
+        await pg.execute(f"ALTER ROLE {reader} SET pg_clickhouse.session_settings = '{_SESSION}'")
         await pg.execute(f"CREATE SCHEMA {schema}")
         await pg.execute(
             f"IMPORT FOREIGN SCHEMA {settings.ch_database} LIMIT TO ({', '.join(VIEWS)}) "
@@ -86,7 +103,12 @@ async def test_an_orgs_postgres_joins_its_tenants_memories(ch: Any, pg: Any) -> 
             f"INSERT INTO {schema}.accounts VALUES ('alice', 'alice@example.com'), "
             "('bob', 'bob@example.com')"
         )
-        joined = await pg.fetch(
+        await pg.execute(f"GRANT USAGE ON SCHEMA {schema} TO {reader}")
+        await pg.execute(f"GRANT SELECT ON ALL TABLES IN SCHEMA {schema} TO {reader}")
+        app = await asyncpg.connect(
+            os.environ["LOOM_PGCH_DSN"], user=reader, password=reader_password
+        )
+        joined = await app.fetch(
             f"SELECT c.email, m.org, m.memory_key, m.value, m.value_withheld, "
             f"m.content_sha256 IS NULL AS hash_withheld "
             f"FROM {schema}.accounts AS c JOIN {schema}.sql_v1_memories AS m "
@@ -97,26 +119,24 @@ async def test_an_orgs_postgres_joins_its_tenants_memories(ch: Any, pg: Any) -> 
             ("alice@example.com", org, "plan", "alice is on the team plan", "", False),
             ("bob@example.com", org, "plan", "bob is on the free plan", "", False),
         ]
-        usage = await pg.fetchval(f"SELECT count(*) FROM {schema}.sql_v1_usage_daily")
+        usage = await app.fetchval(f"SELECT count(*) FROM {schema}.sql_v1_usage_daily")
         assert usage == 0
+        # The role's setting reached the session the reader logged in with.
+        assert await app.fetchval("SHOW pg_clickhouse.session_settings") == _SESSION
 
-        # The guide's session settings are the four the SQL user may change; any other
-        # is refused by the SQL user's profile, whatever Postgres sends.
-        await pg.execute(
-            "SET pg_clickhouse.session_settings = "
-            "'join_use_nulls 1, group_by_use_nulls 1, final 1, transform_null_in 0'"
-        )
-        assert await pg.fetchval(f"SELECT count(*) FROM {schema}.sql_v1_memories") == 3
-        await pg.execute("SET pg_clickhouse.session_settings = 'max_threads 2'")
+        # Any other setting is refused by the SQL user's profile, whatever Postgres sends.
+        await app.execute("SET pg_clickhouse.session_settings = 'max_threads 2'")
         with pytest.raises(Exception, match="READONLY|readonly mode"):
-            await pg.fetchval(f"SELECT count(*) FROM {schema}.sql_v1_memories")
-        await pg.execute("RESET pg_clickhouse.session_settings")
+            await app.fetchval(f"SELECT count(*) FROM {schema}.sql_v1_memories")
+        await app.execute("RESET pg_clickhouse.session_settings")
 
         await sql_access.revoke(user, ch=ch)
         with pytest.raises(Exception, match="(?i)authentication|password"):
-            await pg.fetch(f"SELECT count(*) FROM {schema}.sql_v1_memories")
+            await app.fetch(f"SELECT count(*) FROM {schema}.sql_v1_memories")
+        await app.close()
     finally:
         await sql_access.revoke(user, ch=ch)
         await pg.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
         await pg.execute(f"DROP SERVER IF EXISTS {server} CASCADE")
+        await pg.execute(f"DROP ROLE IF EXISTS {reader}")
         raw.close()

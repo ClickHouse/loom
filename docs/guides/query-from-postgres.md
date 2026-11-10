@@ -32,7 +32,11 @@ It prints the user's password once.
 The extension is in the `ghcr.io/clickhouse/pg_clickhouse:<postgres major>-<version>`
 images, such as `ghcr.io/clickhouse/pg_clickhouse:16-0.11.0`, and on
 [PGXN](https://pgxn.org/dist/pg_clickhouse/) to build into an existing Postgres
-(`pgxn install pg_clickhouse`). Then, as a Postgres user that may create extensions:
+(`pgxn install pg_clickhouse`). Steps 2 to 4 run as the database's owner, or another role
+that may create extensions, foreign servers and schemas; step 5 runs as the application's
+reader role (`app_reader` here), which needs nothing but the grants at the end of step 4.
+
+As the owner:
 
 ```sql
 CREATE EXTENSION pg_clickhouse;
@@ -44,14 +48,18 @@ CREATE EXTENSION pg_clickhouse;
 CREATE SERVER loom_ch FOREIGN DATA WRAPPER clickhouse_fdw
   OPTIONS (driver 'http', host 'abc123.us-east-1.aws.clickhouse.cloud', dbname 'loom');
 
+-- The import in step 4 connects as the role that runs it; the queries in step 5 as theirs.
+CREATE USER MAPPING FOR CURRENT_USER SERVER loom_ch
+  OPTIONS (user 'acme_bi', password '<password from step 1>');
 CREATE USER MAPPING FOR app_reader SERVER loom_ch
   OPTIONS (user 'acme_bi', password '<password from step 1>');
 ```
 
 - `dbname` is Loom's database (`LOOM_CH_DATABASE`, `loom` by default).
-- On a ClickHouse Cloud host the extension uses TLS and port 8443 by itself, as its
-  documentation says; the test here runs plain HTTP against a local server. On a
-  self-managed server, set `port` and `secure 'on'` to match the server's TLS port.
+- On a ClickHouse Cloud host the extension's `secure 'auto'` default turns TLS on and the
+  `http` driver's port defaults to 8443, as its documentation says; the test here runs plain
+  HTTP against a local server. On a self-managed server, set `port` and `secure 'on'` to
+  match the server's TLS port.
 - Map only the Postgres roles that may read the tenant's data: the user mapping holds the
   ClickHouse password, and every query through the server runs as that SQL user.
 
@@ -78,9 +86,18 @@ IMPORT FOREIGN SCHEMA loom
 ```
 
 The first `loom` is the ClickHouse database and the second the Postgres schema. Name the
-views with `LIMIT TO`: the SQL user can describe only the views, and an import without it
-asks for every table of the database. Import again after a Loom upgrade to pick up any
-columns a `v1` view gained.
+views with `LIMIT TO`, so the import pins the `v1` set and a later `sql_v2_*` view does not
+arrive unasked. Then let the reader role read them:
+
+```sql
+GRANT USAGE ON SCHEMA loom TO app_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA loom TO app_reader;
+```
+
+A `v1` view may gain columns in a Loom upgrade. A foreign table keeps the columns it was
+imported with, so to pick up new ones drop the schema (and any Postgres view built on its
+tables) and run the import and the grants again:
+`DROP SCHEMA loom CASCADE; CREATE SCHEMA loom;`.
 
 ## 5. Query and join
 
@@ -95,7 +112,7 @@ ORDER BY m.updated_at DESC;
 -- Model spend per day for the last month
 SELECT day, sum(upstream_cost_usd) AS spend
 FROM loom.sql_v1_usage_daily
-WHERE day >= current_date - 30
+WHERE day >= (now() AT TIME ZONE 'UTC')::date - 30
 GROUP BY day ORDER BY day;
 ```
 
@@ -108,7 +125,7 @@ GROUP BY day ORDER BY day;
   pushed-down filters leave, so filter each view as narrowly as the query allows: by
   namespace, by time, by a literal list of ids.
 - A pushed-down filter narrows what ClickHouse sends to Postgres, not what it reads: each
-  view reads the grant's whole scope, and the ledger views their 31-day window
+  view reads the grant's whole scope, and the ledger views about their 31-day window
   ([what a read costs](../reference/sql-surface.md#what-a-read-costs)).
 - A statement past the SQL user's ceilings (`LOOM_CH_ANALYSIS_MAX_EXECUTION_S`,
   `_MAX_ROWS_TO_READ`, `_MAX_MEMORY_BYTES`) fails in ClickHouse rather than slowing down, and
