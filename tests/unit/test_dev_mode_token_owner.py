@@ -168,9 +168,48 @@ def _mint_default_token(client: TestClient, headers: dict[str, str]) -> str:
 def test_a_token_minted_by_token_mint_is_listed_and_revoked(
     client: TestClient, headers: dict[str, str]
 ) -> None:
-    _token_mint(client, headers, "default")
-    assert _listed(client, headers)["ci-bot"]["created_by"] == "dev"
+    _token_mint(client, headers, settings.self_signup_org)
+    assert _listed(client, headers)["ci-bot"]["created_by"] == "you"
     _revoke_and_check(client, headers, "ci-bot")
+
+
+@pytest.mark.parametrize("headers", NO_CALLER)
+def test_the_single_user_mints_on_the_namespace_it_administers(
+    client: TestClient, headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Tokens page's default, the default namespace first and then `*`: the
+    single user holds the bootstrap's admin grant there, as `you` in
+    `self_signup_org`, and that grant is the one the mint reads."""
+    from server.auth import authz
+
+    org = settings.self_signup_org
+    ns = settings.default_namespace
+
+    async def _bootstrap_grant(o: str, n: str, subject: str) -> Role | None:
+        return Role.ADMIN if (o, n, subject) == (org, ns, "you") else None
+
+    monkeypatch.setattr(authz, "grant_role_for", _bootstrap_grant)
+    body = {"name": "laptop", "namespaces": [ns, "*"], "ttl_days": 90}
+    r = client.post("/v1/me/service_accounts.create", json=body, headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["org"] == org
+    assert r.json()["namespaces"] == [ns, "*"]
+    assert _listed(client, headers)["laptop"]["created_by"] == "you"
+
+
+def test_a_token_the_old_owner_made_is_listed_and_revoked_by_name(client: TestClient) -> None:
+    """A token saved under the previous auth-off owner, `dev` in `default`, is off
+    the Tokens list and reached by naming that subject and org."""
+    old = {"subject": "dev", "org": "default"}
+    r = client.post("/v1/me/service_accounts.create", json={"name": "old", **old})
+    assert r.status_code == 200, r.text
+    assert "old" not in _listed(client, {})
+    rows = client.get("/v1/me/service_accounts", params=old).json()["rows"]
+    assert [(row["name"], row["created_by"]) for row in rows] == [("old", "dev")]
+    r = client.post("/v1/me/service_accounts.revoke", json={"name": "old", **old})
+    assert r.status_code == 200, r.text
+    rows = client.get("/v1/me/service_accounts", params=old).json()["rows"]
+    assert rows[0]["revoked_at"] is not None
 
 
 @pytest.mark.parametrize("headers", NO_CALLER)
@@ -330,7 +369,7 @@ def test_the_retired_subject_does_not_name_the_owner(client: TestClient) -> None
     assert r.status_code == 200, r.text
     assert "subject" in r.json()["ignored_args"]
     rows = client.get("/v1/me/service_accounts", params={"org": "acme"}).json()["rows"]
-    assert [(row["name"], row["created_by"]) for row in rows] == [("ci-bot", "dev")]
+    assert [(row["name"], row["created_by"]) for row in rows] == [("ci-bot", "you")]
 
 
 def test_auth_on_still_delegates_from_the_bearer(

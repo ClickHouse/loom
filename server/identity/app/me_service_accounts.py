@@ -16,6 +16,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
 
+from server.auth.default_namespace import auth_off_subject
 from server.auth.delegation import Delegated, ceiling_role, delegate
 from server.auth.jwt import AuthInfo
 from server.auth.public_url import public_base_url
@@ -267,13 +268,16 @@ def dev_bearer(request: Request) -> AuthInfo | None:
 
 def dev_caller(request: Request, params: Mapping[str, object]) -> tuple[str, str]:
     """(subject, org) of the caller in dev mode (auth off): a valid bearer's,
-    else the request's `subject` and `org`, else "dev" in "default". Every
-    route that saves, lists or revokes a token reads it, so a token minted
-    with auth off is in the list it is revoked from."""
+    else the request's `subject` and `org`, else the single user in
+    `self_signup_org`, who holds the default namespace's admin grant
+    (`server.auth.default_namespace`). Every route that saves, lists or revokes
+    a token reads it, so a token minted with auth off is in the list it is
+    revoked from."""
     info = dev_bearer(request)
     if info is not None:
         return info.subject, info.org
-    return str(params.get("subject") or "dev"), str(params.get("org") or "default")
+    subject = params.get("subject") or auth_off_subject()
+    return str(subject), str(params.get("org") or settings.self_signup_org)
 
 
 def dev_parent(request: Request, payload: dict[str, object]) -> AuthInfo:
