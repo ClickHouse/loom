@@ -411,6 +411,7 @@ async def run_saga(
         )
     await webhooks.announce_erasure(input.org, erased_namespaces, erasure_id)
     completed_at = datetime.now(UTC).replace(tzinfo=None)
+    census = _census(verify)
     await checkpoint(
         row=row,
         status="completed",
@@ -432,7 +433,7 @@ async def run_saga(
             "requester": input.requester,
             "steps": [s.model_dump() for s in steps],
             # Counts only: a copy of the receipt that outlives the ledger row.
-            "census": _census(verify),
+            "census": census,
         },
         request_id=erasure_id,
     )
@@ -446,7 +447,7 @@ async def run_saga(
         residue_count=int(verify.get("count") or 0),
         residue={},
         verified_at=verify.get("verified_at"),
-        census=_census(verify),
+        census=census,
         purge=census_purge,
         steps_completed=sorted(completed),
     )
@@ -489,7 +490,7 @@ def verify_columns_from_output(out: ErasureRequestOutput | None) -> VerifyColumn
         "residue_count": out.residue_count,
         "verified_at": out.verified_at,
         "residue": json.dumps(out.residue, sort_keys=True),
-        "census": json.dumps(out.census, sort_keys=True) if out.census is not None else "",
+        "census": _census_column(out.census),
     }
 
 
@@ -499,15 +500,19 @@ def _verify_columns(verify: dict[str, Any]) -> VerifyColumns:
     (`census_kept`)."""
     if not census_kept(verify.get("verified_at"), verify.get("count")):
         return {}
-    census = _census(verify)
     return {
         "residue_count": int(verify.get("count") or 0),
         "verified_at": verify.get("verified_at"),
         "residue": json.dumps(
             {t: n for t, n in (verify.get("per_table") or {}).items() if n}, sort_keys=True
         ),
-        "census": json.dumps(census, sort_keys=True) if census is not None else "",
+        "census": _census_column(_census(verify)),
     }
+
+
+def _census_column(census: dict[str, int] | None) -> str:
+    """The ledger's `census` text: '' for no receipt."""
+    return json.dumps(census, sort_keys=True) if census is not None else ""
 
 
 def _census(verify: dict[str, Any]) -> dict[str, int] | None:
