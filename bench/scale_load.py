@@ -9,7 +9,11 @@ and `loom.memory_revisions`, streamed from ClickHouse in the shape
 `server.memory.store.pg_memory.encode_row` writes. `measure` then drives the real ops
 through a running server and reads what the stores report: parts, part-log rates,
 the vector read's bytes against its part count, table and index sizes. `erase` times a
-user erasure and an org erasure; `pg` times a vacuum and a `COPY` of one org's rows.
+user erasure and an org erasure; `pg` times a vacuum and a `COPY` of one org's rows;
+`optimize` merges the memory tables and reads the vector leg before and after; `fleet`
+sends `memory.set` open loop at a fixed rate over several servers; `authority` rewrites
+the recorded storage authority (`loom.storage_authority`, `loom.authority`), so it is only
+for stores of the harness's own.
 
 Two shapes:
 

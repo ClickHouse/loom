@@ -1015,7 +1015,7 @@ as JSON in Postgres):
 
 | Store      | Table               | Bytes                                           | Per key |
 | ---------- | ------------------- | ----------------------------------------------- | ------: |
-| ClickHouse | `memory_embeddings` | 13,210 per row                                  |  13,210 |
+| ClickHouse | `memory_embeddings` | 13,170 to 13,210 per row                        |  13,210 |
 | ClickHouse | `memory`            | 92 (single) to 161 (zipf) per head after merges |      92 |
 | ClickHouse | `memory_versions`   | 107 to 110 per version                          |     264 |
 | Postgres   | `memory_current`    | 1,594 to 1,634 per head                         |   1,623 |
@@ -1076,7 +1076,7 @@ codes-first), searched one call at a time:
 | ----------------------------------------------- | --------------: | ----: | ---------: | -------: |
 | single, 250k                                    | 277,628 or more |    59 |        185 |      312 |
 | the same after `OPTIMIZE TABLE … FINAL`         |         277,628 |    14 |        165 |      160 |
-| single, 500k                                    | 527,628 or more |    69 |        283 |      300 |
+| single, 500k                                    | 527,628 or more |    69 |        283 |      301 |
 | zipf, the largest namespace, one agent and user |          15,166 |    54 |         52 |      117 |
 | zipf, the third namespace, one agent and user   |           6,285 |    53 |         43 |       69 |
 
