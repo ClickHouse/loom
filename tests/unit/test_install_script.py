@@ -751,8 +751,8 @@ def test_an_unreachable_docker_daemon_is_named_before_any_pull(
 
 # Fake curls: the working one serves a file from $SERVES when it holds one by that name,
 # else writes an installer creating ~/.loom, to its -o/-O file or to stdout. The failing
-# one does the same, then answers a 404 for install.sh (the file written anyway: a copy an
-# earlier attempt left).
+# one does the same, then answers a 404 for install.sh: the file written anyway stands for a
+# copy an earlier attempt left, the text on stdout for what a piped download printed.
 _WORKING_CURL = """#!/bin/sh
 out=
 url=
@@ -779,6 +779,11 @@ exit 22
 _CODE = re.compile(r"^[ \t]*```[^\n]*\n(.*?)^[ \t]*```|`([^`\n]+)`", re.MULTILINE | re.DOTALL)
 
 
+def _joined(text: str) -> str:
+    """`text` with each `\\` line continuation joined."""
+    return re.sub(r"\\\n\s*", " ", text)
+
+
 def _documented_installs() -> list[tuple[str, str]]:
     """(page, example) for every code block or inline command a tracked page shows
     that downloads `install.sh`, as a copy button pastes it: each `\\` continuation
@@ -790,7 +795,7 @@ def _documented_installs() -> list[tuple[str, str]]:
         for block, span in _CODE.findall((ROOT / name).read_text(encoding="utf-8")):
             lines = [
                 re.sub(r"<[^>]*>", "x", line.strip().replace("\\|", "|"))
-                for line in re.sub(r"\\\n\s*", " ", block or span).splitlines()
+                for line in _joined(block or span).splitlines()
             ]
             if any("curl" in line and "install.sh" in line for line in lines):
                 found.append((name, "\n".join(lines)))
@@ -834,10 +839,10 @@ def _inspect_then_install() -> tuple[str, str]:
     same page, as a reader runs them once the checks look right."""
     ((page, checks),) = [(p, e) for p, e in _INSTALLS if _INSPECT in e]
     text = (ROOT / page).read_text(encoding="utf-8")
-    after = text[text.index("sha256sum -c") :]
+    after = text[text.index(_INSPECT) :]
     install = re.search(r"^```[^\n]*\n(.*?)^```", after[after.index("```") + 3 :], re.M | re.S)
     assert install, page
-    return page, checks + "\n" + re.sub(r"\\\n\s*", " ", install[1]).strip()
+    return page, checks + "\n" + _joined(install[1]).strip()
 
 
 def test_the_pages_show_install_commands() -> None:
