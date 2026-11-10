@@ -309,3 +309,10 @@ def test_a_router_prefix_is_cut_however_it_grows() -> None:
     declared = "r = APIRouter(prefix='/" + "a" * 1000 + "')\n"
     assert len(_prefixes(repeated)["r"]) == 400
     assert len(_prefixes(declared)["r"]) == 400
+
+
+def test_a_call_holding_its_own_opener_is_read_from_the_inner_one() -> None:
+    # The arguments stop at the next same call, so a search cannot run on to the file's end.
+    src = b'import starlette.routing\nroutes = [Route("/a",  # was Route("/old"\n  methods=["POST"])]\n'
+    facets = py_facets(parse_python("svc/app.py", src))
+    assert [f.name for f in facets if f.kind == "http_route"] == ["POST /old"]
