@@ -748,8 +748,9 @@ def test_an_unreachable_docker_daemon_is_named_before_any_pull(
     assert not Path(installer_env["LOOM_INSTALL_DIR"]).exists()  # nor any file written
 
 
-# After `install.sh`, a pipe into a shell (`sh`, `bash`, `/bin/sh`, through `sudo`).
-_PIPE_TO_SHELL = re.compile(r"\|\s*(?:\S+\s+)*?(?:\S*/)?(?:ba|da|k|z)?sh\b")
+# After `install.sh`, a pipe into a shell (`sh`, `bash`, `/bin/sh`, through `sudo`),
+# within that one pipeline stage.
+_PIPE_TO_SHELL = re.compile(r"\|\s*(?:[^\s|;&]+\s+)*?(?:\S*/)?(?:ba|da|k|z)?sh\b")
 # A download run as `sh -c "$(curl …)"` or `sh <(curl …)`.
 _SHELL_OF_DOWNLOAD = re.compile(r"sh\s+(?:-c\s+[\"']?\$\(|<\()")
 
@@ -803,12 +804,15 @@ def test_the_guard_passes_the_saved_install() -> None:
         "curl -fsSL https://x/install.sh -o loom-install.sh && sh loom-install.sh"
     )
     assert not _runs_a_download("sha256sum install.sh | sha256sum -c")
+    assert not _runs_a_download(
+        "curl -fLO https://x/install.sh && sha256sum install.sh | grep -q abc && sh install.sh"
+    )
 
 
 def test_the_documented_one_liner_fails_on_a_failed_download(tmp_path: Path) -> None:
-    """The README's command, with a curl that writes an installer and then answers
-    a 404 as `curl -f` does: the line exits with curl's code and the installer
-    never runs."""
+    """The README's command, with a curl that writes an installer to its `-o` path
+    and then fails, as a download cut short does: the line exits with curl's code
+    and the installer never runs."""
     (line,) = [
         line for line in (ROOT / "README.md").read_text().splitlines() if "install.sh" in line
     ]
@@ -832,5 +836,7 @@ def test_the_documented_one_liner_fails_on_a_failed_download(tmp_path: Path) -> 
     )
     assert result.returncode == 22, result
     assert "404" in result.stderr
-    assert (tmp_path / "loom-install.sh").is_file()
+    assert (
+        tmp_path / "loom-install.sh"
+    ).is_file()  # the fake wrote it: only `&&` kept it from running
     assert not (tmp_path / ".loom").exists()
