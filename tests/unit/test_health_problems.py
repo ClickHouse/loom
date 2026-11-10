@@ -692,7 +692,19 @@ def test_a_full_sign_in_table_is_reported(monkeypatch: pytest.MonkeyPatch) -> No
 def test_an_assistant_still_being_set_up_raises_no_warning(monkeypatch: pytest.MonkeyPatch) -> None:
     """Starting, or set up again after LibreChat refused the stored key, ends on its own:
     only a failed setup try is a problem."""
+    from server.assistant.app import service
+
     s = _settings(monkeypatch)
     assert "assistant_service_failing" not in _codes(collect_problems(s, HealthState(env={})))
+    # The state a key LibreChat no longer takes leaves behind.
+    monkeypatch.setattr(service, "_ready", True)
+    monkeypatch.setattr(service, "_problem", "")
+    monkeypatch.setattr(service, "_answering", ("agent_1", "sk-old"))
+    monkeypatch.setattr(service, "_loop", None)
+    monkeypatch.setattr(service, "start_setup_loop", lambda: None)
+    service.forget_answering()
+    ok, error = service.assistant_state()
+    again = HealthState(env={}, assistant_ok=ok, assistant_error=error)
+    assert "assistant_service_failing" not in _codes(collect_problems(s, again))
     failed = HealthState(env={}, assistant_ok=False, assistant_error="connection refused")
     assert "assistant_service_failing" in _codes(collect_problems(s, failed))

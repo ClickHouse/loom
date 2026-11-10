@@ -1239,18 +1239,11 @@ def test_a_short_lived_tokens_refusal_says_how_long_it_has_left(world: _World) -
     assert detail["reason"] == "token_expires_soon" and 0 <= detail["left_s"] <= 30
 
 
-@pytest.mark.parametrize(
-    ("ready", "problem", "reason"),
-    [
-        (None, "", "starting"),
-        (False, "setting up the assistant in LibreChat failed: connection refused", "failing"),
-    ],
-)
+@pytest.mark.parametrize(("ready", "reason"), [(None, "starting"), (False, "failing")])
 def test_a_process_not_set_up_says_whether_it_is_starting_or_failing(
-    monkeypatch: pytest.MonkeyPatch, ready: bool | None, problem: str, reason: str
+    monkeypatch: pytest.MonkeyPatch, ready: bool | None, reason: str
 ) -> None:
     monkeypatch.setattr(service, "_ready", ready)
-    monkeypatch.setattr(service, "_problem", problem)
     assert service.unready_reason() == reason
     check = service.readiness_check()
     assert (check.ok, check.reason) == (False, reason)
