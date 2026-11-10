@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { invalidateShared, shared } from "./sharedReads";
+import { setPageOwner, setToken } from "../api";
 
 afterEach(() => {
   invalidateShared();
@@ -63,6 +64,33 @@ describe("sharedHealth", () => {
       expect(inits).toHaveLength(2);
       for (const init of inits) expect(init?.signal).toBeInstanceOf(AbortSignal);
     } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("sends the page owner's token, and no other person's", async () => {
+    const { sharedHealth } = await import("./sharedReads");
+    const part = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
+    const token = (sub: string) => `${part({ alg: "HS256" })}.${part({ sub, org: "o" })}.sig`;
+    const sent: (string | null)[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        sent.push(new Headers(init?.headers).get("Authorization"));
+        return new Response(JSON.stringify({ status: "ok" }), { status: 200 });
+      }),
+    );
+    setPageOwner({ authenticated: true, subject: "alice", org: "o" });
+    try {
+      setToken(token("alice"));
+      await sharedHealth();
+      invalidateShared();
+      setToken(token("bob"));
+      await sharedHealth();
+      expect(sent).toEqual([`Bearer ${token("alice")}`, null]);
+    } finally {
+      setPageOwner(null);
+      localStorage.clear();
       vi.unstubAllGlobals();
     }
   });

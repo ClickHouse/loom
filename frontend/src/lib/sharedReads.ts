@@ -22,6 +22,9 @@ import {
   getBudgetStatus,
   type BudgetStatus,
   boundedSignal,
+  authHeader,
+  ownsToken,
+  storedToken,
 } from "../api";
 import { hasAutoResolved } from "../api/audit";
 import { isRecord } from "./guards";
@@ -80,7 +83,10 @@ export function sharedHealth(): Promise<Record<string, unknown> | null> {
   return shared("health", 60_000, async () => {
     // A stalled server times out like any other request: the rejection is not
     // cached and every consumer catches it.
-    const r = await fetch("/v1/health", { signal: boundedSignal() });
+    // Send the page owner's token, if the stored one is theirs, so a platform admin's
+    // answer names each failing code-index entry.
+    const headers = ownsToken(storedToken()) ? authHeader() : {};
+    const r = await fetch("/v1/health", { headers, signal: boundedSignal() });
     // `ok` is absent on some hand-rolled responses (tests); only an explicit
     // failure status is a miss.
     if (typeof r.ok === "boolean" && !r.ok) return null;

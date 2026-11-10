@@ -42,10 +42,13 @@ def state_key(tier: str) -> str:
 @dataclass(frozen=True)
 class TierHealth:
     """One tier's last outcome for one entry. `failing_since` and the counters
-    describe the current run of failures; all are empty once the tier is ok."""
+    describe the current run of failures (for an `unavailable` note, `failing_since`
+    is when it was first noted); all are empty once the tier is ok."""
 
     tier: str
-    state: str = "ok"  # ok | failing
+    # ok | failing | unavailable (a dependency the tier cannot fetch on this host:
+    # noted, not failing; the next run that builds without one clears it)
+    state: str = "ok"
     kind: str = ""
     error: str = ""
     fix: str = ""
@@ -98,19 +101,64 @@ def failed(prev: TierHealth | None, tier: str, error: str, now: datetime) -> Tie
     """The record after a failed pass: the run of failures goes on from `prev`."""
     text = redact(error)
     kind = classify(text)
+    kept = text[-ERROR_CHARS:]
     at = _iso(now)
     ongoing = prev if prev is not None and prev.failing else None
     return TierHealth(
         tier=tier,
         state="failing",
         kind=kind,
-        error=text[-ERROR_CHARS:],
+        error=kept,
+        # from the whole output: the cause (an ssh refusal, a private module) and the
+        # host it names may sit before the kept tail, which the health problem reads
         fix=fix_for(kind, text),
         failing_since=(ongoing.failing_since if ongoing else "") or at,
         last_failed_at=at,
         failed_passes=(ongoing.failed_passes if ongoing else 0) + 1,
         last_ok_at=prev.last_ok_at if prev else "",
     )
+
+
+def unavailable(prev: TierHealth | None, tier: str, error: str, now: datetime) -> TierHealth:
+    """The record when the run finished but left out what it cannot fetch on this host
+    (a Go module whose dependencies are private): a note, not a failure, that keeps
+    no count of passes."""
+    text = redact(error)
+    at = _iso(now)
+    ongoing = prev if prev is not None and prev.state == "unavailable" else None
+    return TierHealth(
+        tier=tier,
+        state="unavailable",
+        kind="dependency_unavailable",
+        error=text[-ERROR_CHARS:],
+        fix=fix_for("dependency_unavailable", text),
+        failing_since=(ongoing.failing_since if ongoing else "") or at,
+        last_failed_at=at,
+        last_ok_at=prev.last_ok_at if prev else "",
+    )
+
+
+# Go's words for a module it could not fetch for want of access: a private repository
+# (or its proxy's refusal of one), not a module that is broken
+_DEPENDENCY_UNAVAILABLE = re.compile(
+    r"if this is a private repository|terminal prompts disabled|could not read username"
+    r"|: 410 gone",
+    re.IGNORECASE,
+)
+
+
+def dependency_unavailable(line: str) -> bool:
+    """Whether a module's failure line says a dependency cannot be fetched from here."""
+    return bool(_DEPENDENCY_UNAVAILABLE.search(line))
+
+
+def split_module_failures(lines: list[str]) -> tuple[list[str], list[str]]:
+    """The module failure lines that fail the tier, and those whose dependency cannot be
+    fetched from here; each sorted, so the same failures read the same every run (the
+    harness runs modules in parallel)."""
+    broken = sorted(line for line in lines if not dependency_unavailable(line))
+    unreachable = sorted(line for line in lines if dependency_unavailable(line))
+    return broken, unreachable
 
 
 def recovered(tier: str, now: datetime) -> TierHealth:
@@ -167,11 +215,18 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("module", _MODULE_FAILED),
     # a relative submodule URL: the tier refuses the file transport it resolves to
     ("submodule_url", re.compile(r"transport 'file' not allowed", re.IGNORECASE)),
+    # a file the server refused to read (`untrusted_files`): over its cap, a link, not a
+    # regular file, or changed while read
+    ("file_refused", re.compile(r"^FileRefused: ", re.MULTILINE)),
     # A full disk also cuts a transfer short ("the remote end hung up"): before network.
     ("disk", re.compile(r"no space left on device|disk quota exceeded", re.IGNORECASE)),
     # the C/C++ harness's CMake configure failed: CMake's own last lines come before
     # its line, and can read as any later kind
     ("cmake", re.compile(r"^>> cmake configure failed$", re.MULTILINE)),
+    # Another git process holds a lock file in the entry's checkout (often index.lock).
+    # After cmake: a configure step's own git fetch that hits a lock is the build's,
+    # not the checkout's. No later kind's pattern matches git's lock message.
+    ("git_lock", re.compile(r"unable to create '[^'\n]*\.lock': file exists", re.IGNORECASE)),
     (
         "credential",
         re.compile(
@@ -289,6 +344,11 @@ def _where(text: str) -> str:
     return ", ".join(parts)
 
 
+# The checkout's own files the TypeScript tier reads under a fixed cap (`untrusted_files`).
+_CHECKOUT_FILE = re.compile(r"/(?:package\.json|yarn\.lock) is \d+ bytes")
+_OVER_CAP = re.compile(r" is \d+ bytes; max \d+")
+
+
 def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
     """The one fix for a failure of `kind`, naming what the error names; with
     `name_where=False` the same fix without the host, repository or submodule."""
@@ -331,6 +391,46 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
         )
     if kind == "disk":
         return "The disk is full: free space under the code-index work directory."
+    if kind == "dependency_unavailable":
+        return (
+            "Go modules the error names require a module this host cannot fetch (a private "
+            "repository, often this repository's own through a vanity import path): they "
+            "are left out of the compiler tier and the rest is indexed. To index them, set "
+            "LOOM_CODE_SCIP_GO_PRIVATE to that module path and give the tier's user a git "
+            "credential for its host (a credential helper or ~/.netrc in its HOME). Go "
+            "says the same of a required module path or version that is wrong or gone: "
+            "check the path first if the module is not private."
+        )
+    if kind == "file_refused" and "(code_scip_delta_max_nodes)" in text:
+        return (
+            "The compiler tier's delta holds more JSON values than its cap: raise "
+            "LOOM_CODE_SCIP_DELTA_MAX_NODES with LOOM_CODE_SCIP_DELTA_FILE_MAX_MB, within "
+            "the memory the sizing in code-index-operations.md gives."
+        )
+    if kind == "file_refused" and _CHECKOUT_FILE.search(text):
+        return (
+            "A file of the checkout is larger than the tier reads (the error names it): a "
+            "package.json is read up to 1 MiB and a yarn.lock up to 64 MiB, caps no setting "
+            "changes. The tier retries when the repository's file is smaller."
+        )
+    if kind == "file_refused" and "changed while it was read" in text:
+        return (
+            "A file the tier reads changed while it was read: something was still writing "
+            "it. The tier retries next pass; nothing in the repository needs to change."
+        )
+    if kind == "file_refused" and not _OVER_CAP.search(text):
+        return (
+            "The tier refused a file it reads because it is a link or not a regular file "
+            "(the error names it and which): the repository's file, or what its job wrote, "
+            "is what to change. It recurs every pass until then."
+        )
+    if kind == "file_refused":
+        return (
+            "The compiler tier's delta is larger than its cap (the error gives both in "
+            "bytes): raise LOOM_CODE_SCIP_DELTA_FILE_MAX_MB (MiB) with "
+            "LOOM_CODE_SCIP_DELTA_MAX_NODES, within the memory the sizing in "
+            "code-index-operations.md gives."
+        )
     if kind == "module":
         return (
             "A Go module did not build: the error names it and why. The rest of the "
@@ -349,9 +449,76 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
             "created under the code repos root: share the root through "
             "LOOM_CODE_REPOS_SHARED_GID and give the group write access to what is there."
         )
+    if kind == "git_lock":
+        return (
+            "Another git process holds a lock file in the checkout or mirror the error "
+            "names (often index.lock): let it finish, or delete the lock once no git "
+            "process runs there. Start no shell or agent session inside a checkout under "
+            "the code repos root: a `git status` there takes the same lock."
+        )
     if kind == "harness":
         return "The indexer failed: the error holds the tail of its output."
-    return "See the error; the tier retries every pass."
+    return (
+        "The error matches no known cause: read it in code.index_status or on the "
+        "repository page and fix what it names. The tier retries every pass."
+    )
+
+
+# What each kind says in one phrase, where a status line names the failure.
+REASONS: dict[str, str] = {
+    "credential": "no credential",
+    "pin_missing": "pinned commit gone",
+    "submodule_url": "relative submodule URL",
+    "egress": "egress refused",
+    "network": "host unreachable",
+    "timeout": "timed out",
+    "disk": "disk full",
+    "git_lock": "git lock held",
+    "file_refused": "file refused",
+    "permission": "permission denied",
+    "cmake": "build configure failed",
+    "harness": "indexer failed",
+    "module": "module failed to build",
+    "dependency_unavailable": "dependency unavailable",
+    "unknown": "unclassified error",
+}
+# How much of an error's line a status line shows.
+ERROR_LINE_CHARS = 200
+
+
+def reason(kind: str) -> str:
+    """The phrase for a failure of `kind`; a kind a later build adds reads as itself."""
+    return REASONS.get(kind or "unknown", kind)
+
+
+def error_line(kind: str, error: str) -> str:
+    """The line of a (redacted) recorded error that says why, its last
+    `ERROR_LINE_CHARS` kept: the line the kind's pattern matched (for `cmake`, CMake's
+    own error line), else the last line, where git's `fatal:` and the exception sit (also
+    for `harness`, whose marker leads the record)."""
+    lines = [s.strip() for s in error.splitlines() if s.strip()]
+    patterns = [pattern for k, pattern in _KINDS if k == kind]
+    at = next((i for i, s in enumerate(lines) if any(p.search(s) for p in patterns)), None)
+    if at is not None and kind == "cmake":
+        # CMake's own error: `CMake Error: <what>` says it on its line; after `CMake
+        # Error at …:` the next line does, unless it is the call stack's heading; the
+        # line above the marker when CMake printed none
+        error_at = next((i for i in range(at) if lines[i].startswith("CMake Error")), None)
+        if error_at is None:
+            at = max(at - 1, 0)
+        elif (
+            lines[error_at].endswith(":")
+            and error_at + 1 < at
+            and not lines[error_at + 1].startswith("Call Stack")
+        ):
+            at = error_at + 1
+        else:
+            at = error_at
+    elif kind == "harness":
+        at = None  # its marker leads the record; the tool's own output, cause last, follows
+    line = lines[-1 if at is None else at] if lines else ""
+    # a long line keeps its end, where a tool's message puts the cause
+    return line if len(line) <= ERROR_LINE_CHARS else "…" + line[-(ERROR_LINE_CHARS - 1) :]
 
 
 def severity(

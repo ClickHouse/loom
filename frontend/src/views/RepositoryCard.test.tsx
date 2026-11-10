@@ -1032,4 +1032,22 @@ describe("RepositoryCard: a failing tier", () => {
     mount([branch({ tier_health: [{ ...failing, state: "ok" }] })], []);
     expect(screen.queryByTestId("repo-tier-failures")).toBeNull();
   });
+
+  it("lists a dependency the tier cannot fetch with its fix, without making the branch failing", () => {
+    const note = {
+      ...failing,
+      tier: "go",
+      state: "unavailable" as const,
+      kind: "dependency_unavailable",
+      fix: "Go modules the error names require a module this host cannot fetch.",
+      failed_passes: 0,
+      lag_commits: -1,
+    };
+    const b = branch({ tier_health: [note] });
+    expect(branchHealth(b).state).not.toBe("warning");
+    mount([b], []);
+    const list = screen.getByTestId("repo-tier-failures");
+    expect(list).toHaveTextContent("master: dependency unavailable, since 5h ago");
+    expect(list).toHaveTextContent("Fix: Go modules the error names require a module this host cannot fetch.");
+  });
 });

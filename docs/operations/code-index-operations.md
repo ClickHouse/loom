@@ -837,16 +837,38 @@ failed passes in a row. The next pass that succeeds clears it. A tier run from c
 records the same way when it runs under `loom code entry-lock --tier <tier>`;
 `loom code scip-delta` and `scip-full` record by themselves.
 
+A Go module whose dependencies this host cannot fetch (Go reports a private repository,
+often the repository's own modules through a vanity import path) is not a failure: the
+Go tier indexes the rest and records the tier `unavailable`, kind
+`dependency_unavailable`, with the fix (set `LOOM_CODE_SCIP_GO_PRIVATE` and give the
+tier's user a git credential for that host; Go says the same of a path or version that
+is wrong or gone). The note is written once, counts no passes, is never a
+`code_tier_failing` problem and is not in `as_of.failing_tiers`, so an agent's code
+answer does not flag those modules. It reflects the last run that built modules: a pass
+that builds nothing leaves it, and the next run that builds without such a failure
+clears it, so it comes back when a module that still cannot fetch its dependency next
+changes. Under `entry-lock --tier go`, which sees only its command's exit and output, a
+clean exit with no such failure clears it. A module that fails for any other reason
+still fails the tier, and its record names the unreachable ones too.
+
 The record is read where each reader already looks:
 
 - an agent's code answers carry it in `as_of.failing_tiers`
   ([freshness](../features/code-index/freshness.md#the-as_of-block));
 - `code.index_status` and `code.repos` return it in `tier_health`, and the dashboard's
-  repository card shows the failing tier, since when, how far behind and the fix;
+  repository card shows the failing tier, since when, how far behind and the fix, and
+  any `unavailable` tier with its fix;
 - once a tier has failed `LOOM_CODE_TIER_FAILING_WARN_PASSES` passes in a row or for
   `LOOM_CODE_TIER_FAILING_WARN_HOURS`, it is the `code_tier_failing` problem in
   `/v1/health`, the dashboard banner and `loom doctor`
-  ([monitoring](./monitoring.md#v1health));
+  ([monitoring](./monitoring.md#v1health)): a line per failing entry and tier, up to
+  five, with its reason, and each distinct fix once. `loom doctor`, which reads with the
+  deployment's own credentials, also names each entry it lists, up to five, as
+  repository@branch (org/namespace) with the error line that says why; `code.repos`
+  names the rest. A platform admin's token reads the same for every entry that is not
+  [restricted](../architecture/security.md#restricted-namespaces); a restricted one reads
+  as "a restricted entry", as does one whose classification cannot be read. Any other
+  caller reads no entry, since `/v1/health` answers without a token;
 - for push alerting, the `loom.code.tier_failing` and `loom.code.tier_lag_commits`
   gauges carry each tier the `code_tier_failing` problem reports
   ([telemetry](../features/observability/telemetry.md)), with an alert in
@@ -855,7 +877,8 @@ The record is read where each reader already looks:
 
 The kinds (`_KINDS`) and their fixes (`fix_for`) are in
 [`server/code/domain/index/tier_health.py`](../../server/code/domain/index/tier_health.py).
-A failure with kind `unknown` carries the end of the output to read.
+A failure that matches no kind reads "unclassified error" and carries the end of
+the output to read.
 
 ## Failure model
 

@@ -6,6 +6,7 @@ harness over those only, an unbuildable module is named, not fatal."""
 from __future__ import annotations
 
 import json
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -352,3 +353,135 @@ async def test_a_harness_that_failed_outright_is_a_harness_failure_not_a_module(
     text = f"RuntimeError: {err.value}"
     assert "go mod download failed" not in text
     assert tier_health.classify(text) == "harness"
+
+
+_PRIVATE = (
+    "skip svc: go mod download failed: If this is a private repository, see "
+    "https://go.dev/doc/faq#git_https for additional information."
+)
+
+
+def _stateful_repo(state: dict[str, str]) -> AsyncMock:
+    repo = AsyncMock()
+
+    async def get_state(org, ns, key):
+        return state.get(key, "")
+
+    async def set_state(org, ns, key, value, detail=""):
+        state[key] = value
+        writes.append(key)
+
+    writes: list[str] = []
+    repo.get_state.side_effect = get_state
+    repo.set_state.side_effect = set_state
+    repo.writes = writes
+    return repo
+
+
+async def _one_pass(monkeypatch, tmp_path: Path, state: dict[str, str], log: str) -> Any:
+    _host(monkeypatch, Path(tempfile.mkdtemp(dir=tmp_path)))  # each pass its own host dirs
+
+    async def fake_harness(co, base, head, out_dir, modules, cfg):
+        return log
+
+    monkeypatch.setattr(w, "git", AsyncMock())
+    monkeypatch.setattr(w, "_run_harness", fake_harness)
+    monkeypatch.setattr(w, "_module_dirs", AsyncMock(return_value=["svc"]))
+    repo = _stateful_repo(state)
+    p1, p2 = _patched(repo, [_Cfg()])
+    with p1, p2:
+        res = await w.run_pass()
+    return res, repo
+
+
+@pytest.mark.asyncio
+async def test_a_module_whose_dependency_cannot_be_fetched_is_recorded_once_not_failing(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from server.code.domain.index import tier_health
+
+    state = {"git_head": "b" * 40, "scip_commit_go": ""}
+    res, repo = await _one_pass(monkeypatch, tmp_path, state, f"{_PRIVATE}\n")
+    record = tier_health.parse("go", state["tier_health:go"])
+    assert record is not None and record.state == "unavailable" and not record.failing
+    assert record.kind == "dependency_unavailable" and "LOOM_CODE_SCIP_GO_PRIVATE" in record.fix
+    assert not res.errors
+    # the same again: nothing more is written (shown once), and it never counts passes
+    state["scip_commit_go"] = ""
+    _, repo = await _one_pass(monkeypatch, tmp_path, state, f"{_PRIVATE}\n")
+    assert "tier_health:go" not in repo.writes
+    assert tier_health.parse("go", state["tier_health:go"]).failed_passes == 0
+
+
+@pytest.mark.asyncio
+async def test_an_unavailable_dependency_is_kept_by_a_pass_that_builds_nothing_and_cleared_by_one_that_builds(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from server.code.domain.index import tier_health
+
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    note = tier_health.unavailable(None, "go", _PRIVATE, t0).to_json()
+    state = {"git_head": "b" * 40, "scip_commit_go": "b" * 40, "tier_health:go": note}
+    repo = _stateful_repo(state)
+    p1, p2 = _patched(repo, [_Cfg()])
+    with p1, p2:
+        await w.run_pass()  # current: nothing to build
+    assert state["tier_health:go"] == note
+    state["scip_commit_go"] = ""
+    await _one_pass(monkeypatch, tmp_path, state, "done svc\n")
+    assert tier_health.parse("go", state["tier_health:go"]).state == "ok"
+
+
+@pytest.mark.asyncio
+async def test_a_module_that_fails_for_another_reason_still_fails_the_tier(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from server.code.domain.index import tier_health
+
+    state = {"git_head": "b" * 40, "scip_commit_go": ""}
+    log = f"{_PRIVATE}\nskip lib: go mod download failed: no matching versions\n"
+    await _one_pass(monkeypatch, tmp_path, state, log)
+    record = tier_health.parse("go", state["tier_health:go"])
+    assert record.failing and record.kind == "module" and "lib" in record.error
+    assert "svc" in record.error  # the unreachable one is named too
+
+
+@pytest.mark.asyncio
+async def test_the_entry_lock_path_notes_a_dependency_it_cannot_fetch(monkeypatch) -> None:
+    from server.cli import code_scip
+    from server.code.domain.index import tier_health
+
+    state: dict[str, str] = {}
+    repo = _stateful_repo(state)
+    monkeypatch.setattr("server.code.store.index.CodeRepo", lambda ch=None: repo)
+    await code_scip._record_tier("org", "code-go", "go", 0, f"{_PRIVATE}\ndone lib\n".encode())
+    record = tier_health.parse("go", state["tier_health:go"])
+    assert record.state == "unavailable" and not record.failing
+    # a later clean exit clears it
+    await code_scip._record_tier("org", "code-go", "go", 0, b"done lib\n")
+    assert tier_health.parse("go", state["tier_health:go"]).state == "ok"
+
+
+@pytest.mark.asyncio
+async def test_the_same_unreachable_modules_in_any_order_are_noted_once(
+    monkeypatch, tmp_path: Path
+) -> None:
+    other = "skip lib: go mod download failed: If this is a private repository, see x"
+    state = {"git_head": "b" * 40, "scip_commit_go": ""}
+    await _one_pass(monkeypatch, tmp_path, state, f"{_PRIVATE}\n{other}\n")
+    state["scip_commit_go"] = ""
+    _, repo = await _one_pass(monkeypatch, tmp_path, state, f"{other}\n{_PRIVATE}\n")
+    assert "tier_health:go" not in repo.writes
+
+
+@pytest.mark.asyncio
+async def test_a_window_with_no_go_change_keeps_the_note(monkeypatch, tmp_path: Path) -> None:
+    from server.code.domain.index import tier_health
+
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    note = tier_health.unavailable(None, "go", _PRIVATE.removeprefix("skip "), t0).to_json()
+    state = {"git_head": "c" * 40, "scip_commit_go": "b" * 40, "tier_health:go": note}
+    monkeypatch.setattr(w, "_changed_paths", AsyncMock(return_value=["README.md"]))
+    monkeypatch.setattr(w, "modules_for_window", lambda changed, dirs: [])
+    await _one_pass(monkeypatch, tmp_path, state, "")
+    assert state["tier_health:go"] == note and state["scip_commit_go"] == "c" * 40

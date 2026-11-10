@@ -20,6 +20,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from server.code.app.index.gitrepo import GitError
+from server.code.app.index.untrusted_files import FileRefused
 from server.code.domain.index import tier_health
 from server.core.datetimes import utc_now
 from server.core.errors import caller_text
@@ -39,9 +40,12 @@ class ToolOutputError(RuntimeError):
 
 def error_text(error: BaseException | str) -> str:
     """The record's error, which `code.index_status` shows a viewer: a tool's or git's
-    output whole (redacted later), a file error with the file it names, any other
-    exception's kind, since its text can carry a statement or the server's address."""
-    if isinstance(error, ToolOutputError | GitError) or (
+    output whole (redacted later), a refused file's own words (its sizes and cap), a
+    file error with the file it names, any other exception's kind, since its text can
+    carry a statement or the server's address. A file's path is absolute: it shows the
+    entry's reader where under the code repos root or the work directory the tier read,
+    as git's own errors do."""
+    if isinstance(error, ToolOutputError | GitError | FileRefused) or (
         isinstance(error, OSError) and error.filename is not None
     ):
         return f"{type(error).__name__}: {error}"
@@ -59,7 +63,7 @@ async def record(
     try:
         prev = tier_health.parse(tier, await repo.get_state(org, ns, key))
         if error is None:
-            if prev is None or not prev.failing:
+            if prev is None or prev.state == "ok":
                 return None
             new = tier_health.recovered(tier, utc_now())
         else:
@@ -82,6 +86,24 @@ async def record(
     return new
 
 
+async def note_unavailable(repo: CodeRepo, org: str, ns: str, tier: str, error: str) -> None:
+    """Note that the tier's run left out what it cannot fetch on this host (`error`
+    names it). Written, and logged, only when the note is new or says something else;
+    never fails the pass it describes. The next run that builds without such a
+    failure clears it (`record` with no error)."""
+    key = tier_health.state_key(tier)
+    try:
+        prev = tier_health.parse(tier, await repo.get_state(org, ns, key))
+        new = tier_health.unavailable(prev, tier, error, utc_now())
+        if prev is not None and prev.state == new.state and prev.error == new.error:
+            return
+        await repo.set_state(org, ns, key, new.to_json(), detail=new.kind)
+    except Exception as e:  # noqa: BLE001 — a health record never fails the pass it describes
+        logger.warning("tier health %s/%s %s not recorded: %s", org, ns, tier, e)
+        return
+    logger.warning("tier %s of %s/%s: %s. %s", tier, org, ns, new.error, new.fix)
+
+
 async def forget(repo: CodeRepo, org: str, ns: str, tiers: tuple[str, ...]) -> None:
     """Drop the records of `tiers` on an entry that no longer runs them. One state read
     per tier; a write only where a record is left."""
@@ -102,6 +124,11 @@ class FailingTier:
     namespace: str
     health: tier_health.TierHealth
     lag_commits: int
+    repo: str  # owner/name
+    branch: str
+    # restricted by its repository entry or directory row, or unreadable: no admin
+    # role reads which entry it is
+    restricted: bool
 
 
 # The failing tiers of every entry, as this process last read them: the health probe
@@ -112,8 +139,9 @@ _FAILING: tuple[FailingTier, ...] | None = None
 async def refresh_failing(ch: Any | None = None) -> None:
     """Re-read the tier-health records of every configured entry and, for the failing
     ones, how far behind the entry's last published status counted each
-    (`_published_lag`). Two small reads; called on the code_repos refresh timer. A
-    record of an entry no longer configured (removed from the config, or retired), or
+    (`_published_lag`) and whether the entry is restricted. Two small reads, and the
+    classification once per org a cache period; called on the code_repos refresh timer.
+    A record of an entry no longer configured (removed from the config, or retired), or
     kept while code intelligence is off, is not a problem: nothing runs it. Until the
     registry is first read, which entries are configured is unknown, and the snapshot
     stays as it was. Never raises: a failed read keeps the last snapshot."""
@@ -131,7 +159,7 @@ async def refresh_failing(ch: Any | None = None) -> None:
         return  # which entries are configured is unknown: the snapshot stays as it was
     try:
         store = CodeRepo(ch)
-        configured = {(c.org, c.namespace) for c in configured_repos()}
+        configured = {(c.org, c.namespace): c for c in configured_repos()}
         failing: list[tuple[str, str, tier_health.TierHealth]] = []
         for row in await store.state_rows_with_prefix(tier_health.STATE_PREFIX):
             org, ns = str(row["org"]), str(row["namespace"])
@@ -142,18 +170,34 @@ async def refresh_failing(ch: Any | None = None) -> None:
             if health is not None and health.failing:
                 failing.append((org, ns, health))
         states = await store.all_state_many(sorted({(o, n) for o, n, _ in failing}))
-        out = [
-            FailingTier(
-                org,
-                ns,
-                health,
-                _published_lag(states.get((org, ns)) or {}, health.tier),
+        out = []
+        for org, ns, health in failing:
+            cfg = configured[(org, ns)]
+            out.append(
+                FailingTier(
+                    org,
+                    ns,
+                    health,
+                    _published_lag(states.get((org, ns)) or {}, health.tier),
+                    cfg.repo,
+                    cfg.git_branch,
+                    await _restricted(org, ns),
+                )
             )
-            for org, ns, health in failing
-        ]
         _FAILING = tuple(sorted(out, key=lambda f: (f.org, f.namespace, f.health.tier)))
     except Exception as e:  # noqa: BLE001 — the health signal keeps its last reading
         logger.warning("tier health: failing tiers not re-read: %s", e)
+
+
+async def _restricted(org: str, ns: str) -> bool:
+    """Whether the entry is restricted; True when its classification cannot be read."""
+    from server.auth.directory import ClassificationUnavailable
+    from server.identity.app.namespace_classification import is_restricted
+
+    try:
+        return await is_restricted(org, ns)
+    except ClassificationUnavailable:
+        return True
 
 
 def _published_lag(state: IndexState, tier: str) -> int:
@@ -185,7 +229,8 @@ def reset_for_tests() -> None:
 def problem_rows(now: datetime | None = None) -> tuple[dict[str, Any], ...] | None:
     """The failing tiers past the warn threshold, as the `code_tier_failing` health
     problem reads them (plain rows: the problem collector imports no code plane), errors
-    first, then by entry. None until this process first read the records."""
+    first, then by what each line says. None until this process first read the records."""
+    from server.identity.app.namespace_classification import is_restricted_cached
     from server.settings import settings
 
     snap = _FAILING
@@ -212,9 +257,34 @@ def problem_rows(now: datetime | None = None) -> tuple[dict[str, Any], ...] | No
                     "since": f.health.failing_since,
                     "failed_passes": f.health.failed_passes,
                     "lag_commits": f.lag_commits,
+                    "reason": tier_health.reason(f.health.kind),
+                    # read again here: a restriction made since the snapshot holds now,
+                    # and a snapshot kept through failed refreshes cannot hold it open
+                    "restricted": f.restricted or is_restricted_cached(f.org, f.namespace),
+                    # only a reader who may see the entry reads repo, branch and error
+                    "repo": f.repo,
+                    "branch": f.branch,
+                    "error": tier_health.error_line(f.health.kind, f.health.error),
                     # the kind's fix without the repository it names: the problem is public
                     "fix": tier_health.fix_for(f.health.kind, f.health.error, name_where=False),
                     "severity": level,
                 }
             )
-    return tuple(sorted(rows, key=lambda r: (r["severity"] != "error", r["org"], r["namespace"])))
+    # errors first, then by what the line itself says, never by which entry it is: the
+    # anonymous answer lists the rows in this order, and an order by entry would place
+    # a restricted entry among the ones a platform admin sees named
+    return tuple(
+        sorted(
+            rows,
+            # every field the line and its fix show: only lines that read the same tie
+            key=lambda r: (
+                r["severity"] != "error",
+                r["tier"],
+                r["since"],
+                -r["failed_passes"],
+                r["reason"],
+                r["lag_commits"],
+                r["fix"],
+            ),
+        )
+    )
