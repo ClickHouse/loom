@@ -148,6 +148,13 @@ async def reconcile(
         "the restored ledger shows them ended"
     )
     print(f"  redactions to run again: {len(redactions)}")
+    if store == "clickhouse":
+        # A dataset's rows live in ClickHouse alone too, and only an ingest builds them.
+        for s in await knowledge_reconcile.dataset_sources_lost(after):
+            print(
+                f"  to ingest again (its datasets may miss rows): org {s['org']}, "
+                f"namespace {s['namespace']}, source_uri {s['source_uri']}"
+            )
     if not apply:
         return 0
     from server.code.app.index import repo_registry

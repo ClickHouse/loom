@@ -193,3 +193,43 @@ def test_the_erasure_idle_limit_covers_every_attempt_of_one_read(
     monkeypatch.setattr(settings, "ch_replica_bound_retries", retries)
     monkeypatch.setattr(pg, "idle_timeout_ms", lambda: str(pool_ms))
     assert steps_pg._evidence_idle_ms() == expected
+
+
+def test_the_knowledge_erasure_deletes_the_scope_s_dataset_catalog_rows_last(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The catalog rows go after the jobs, in the same transaction, and count toward what
+    the step removed."""
+    deleted: list[str] = []
+
+    class _Conn:
+        async def execute(self, sql: str, *args: Any) -> None:
+            return None
+
+        async def fetch(self, sql: str, *args: Any) -> list[Any]:
+            return []
+
+        async def fetchval(self, sql: str, *args: Any) -> int | None:
+            for table in ("loom.knowledge_jobs", "loom.knowledge_datasets"):
+                if f"DELETE FROM {table}" in sql:
+                    deleted.append(table)
+                    return 2 if table.endswith("datasets") else 1
+            return 0 if "count(*)" in sql else None
+
+        @contextlib.asynccontextmanager
+        async def transaction(self) -> Any:
+            yield
+
+    @contextlib.asynccontextmanager
+    async def dedicated() -> Any:
+        yield _Conn()
+
+    async def evidence(*a: Any, **k: Any) -> Any:
+        for page in ():
+            yield page
+
+    monkeypatch.setattr(pg, "dedicated", dedicated)
+    monkeypatch.setattr(steps_pg, "documents_in_clickhouse", evidence)
+    monkeypatch.setattr(steps_pg, "_evidence_idle_ms", lambda: 1)
+    removed, _ = asyncio.run(steps_pg._erase_knowledge_once("o", ["a"], None))
+    assert deleted == ["loom.knowledge_jobs", "loom.knowledge_datasets"] and removed == 3

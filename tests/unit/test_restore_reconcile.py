@@ -28,7 +28,8 @@ async def _zero_knowledge(*a: Any, **k: Any) -> int:
 
 @pytest.fixture(autouse=True)
 def _restored_reads(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No knowledge source held and no restored ClickHouse row, unless a case says so."""
+    """No knowledge source held or dataset lost and no restored ClickHouse row, unless a
+    case says so."""
     from server.erasure.store import ledger
 
     async def none(*a: Any, **k: Any) -> Any:
@@ -37,8 +38,12 @@ def _restored_reads(monkeypatch: pytest.MonkeyPatch) -> None:
     async def no_sources() -> list[Any]:
         return []
 
+    async def no_lost(after: datetime) -> list[Any]:
+        return []
+
     monkeypatch.setattr(ledger, "trusted_row", none)
     monkeypatch.setattr(knowledge_reconcile, "held_sources", no_sources)
+    monkeypatch.setattr(knowledge_reconcile, "dataset_sources_lost", no_lost)
 
 
 @pytest.fixture(autouse=True)
@@ -224,8 +229,14 @@ def test_a_clickhouse_restore_holds_then_erases_then_publishes_then_redacts(
     ]
 
 
-def test_a_dry_run_writes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_dry_run_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """It still names the sources to ingest again: the operator finds their files first."""
     from server.memory.app import restore_reconcile
+
+    async def lost(after: datetime) -> list[dict[str, Any]]:
+        return [{"org": "o", "namespace": "docs", "source_uri": "kb://sales.xlsx"}]
 
     async def none(*a: Any) -> list[Any]:
         return []
@@ -238,8 +249,10 @@ def test_a_dry_run_writes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(restore_reconcile, "redactions_lost_by", none)
     monkeypatch.setattr(restore_reconcile, "hold", forbidden)
     monkeypatch.setattr(replay, "replay", forbidden)
+    monkeypatch.setattr(knowledge_reconcile, "dataset_sources_lost", lost)
     rc = asyncio.run(cli_restore.reconcile("clickhouse", _now(), apply=False, live=True, ch=_CH()))
     assert rc == 0
+    assert "to ingest again (its datasets may miss rows): org o" in capsys.readouterr().out
 
 
 def test_the_ledger_row_is_written_before_the_clickhouse_checkpoint(
@@ -892,9 +905,21 @@ def test_a_clickhouse_restore_names_each_knowledge_namespace_to_rechunk(
     monkeypatch.setattr(knowledge_reconcile, "hold", _zero_knowledge)
     monkeypatch.setattr(knowledge_reconcile, "publish_held", _zero_knowledge)
     monkeypatch.setattr(knowledge_reconcile, "held_sources", sources)
-    rc = asyncio.run(cli_restore.reconcile("clickhouse", _now(), apply=True, live=True, ch=_CH()))
+    since: list[datetime] = []
+
+    async def lost(after: datetime) -> list[dict[str, Any]]:
+        since.append(after)
+        return [{"org": "o", "namespace": "docs", "source_uri": "kb://sales.xlsx"}]
+
+    monkeypatch.setattr(knowledge_reconcile, "dataset_sources_lost", lost)
+    point = _now()
+    rc = asyncio.run(cli_restore.reconcile("clickhouse", point, apply=True, live=True, ch=_CH()))
     assert rc == 0
     out = capsys.readouterr().out
+    # A dataset whose catalog row was written after the point may miss rows until an ingest.
+    assert since == [point - cli_restore.margin()]
+    assert "to ingest again (its datasets may miss rows): org o, namespace docs" in out
+    assert "source_uri kb://sales.xlsx" in out
     # A few sources one by one; a namespace with many, whole, saying so.
     assert "loom rechunk --org o --namespace docs --source-uri kb://a --apply" in out
     # Quoted for the shell the operator pastes it into.

@@ -12,20 +12,30 @@ Snapshots nothing serves any more go by lightweight DELETE: a later publish
 deletes the source's older ones, an approval the snapshot it replaced, a
 knowledge.delete those of the versions it retired. A request does not wait for
 them.
+
+Under the Postgres authority the catalog's authority is loom.knowledge_datasets
+(`pg_datasets`): a catalog row commits there first and is then inserted here, best
+effort; a read takes Postgres's rows, and those only ClickHouse holds (a build that
+predates that table wrote them), the newer version of a dataset winning.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
+from server.core import pg
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
 from server.core.rmt_carry import register
 from server.knowledge.domain.datasets import SLOT_COLUMNS
+from server.knowledge.store import pg_datasets
+
+log = logging.getLogger(__name__)
 
 DATASETS = "loom.datasets"
 ROWS = "loom.dataset_rows"
@@ -107,6 +117,12 @@ def dataset_row(existing: dict[str, Any] | None = None, /, **fields: Any) -> dic
     missing = [c for c in DATASET_COLUMNS if c not in row]
     if missing:
         raise ValueError(f"dataset_row: missing {missing}")
+    # To the millisecond, as the DateTime64(3) columns keep them: a row read from
+    # Postgres (`pg_datasets`) compares equal to its ClickHouse copy.
+    for column in pg_datasets.TIME_COLUMNS:
+        at = row[column]
+        if isinstance(at, datetime):
+            row[column] = at.replace(microsecond=at.microsecond // 1000 * 1000)
     return {c: row[c] for c in DATASET_COLUMNS}
 
 
@@ -122,9 +138,40 @@ def slot_row(catalog: dict[str, Any], values: dict[str, Any], now: datetime) -> 
     return row
 
 
-async def insert_catalog(rows: list[dict[str, Any]], *, ch: _CHClient | None = None) -> None:
+async def insert_catalog(
+    rows: list[dict[str, Any]],
+    *,
+    job: tuple[str, str, str] | None = None,
+    ch: _CHClient | None = None,
+) -> None:
+    """Write catalog rows: under the Postgres authority committed there, then projected.
+    `job` is the ingest publishing them, when Postgres holds it (`pg_datasets.upsert`).
+    A row Postgres kept out (its key holds a newer version) is not projected."""
+    held: list[dict[str, Any]] = []
+    rest: list[dict[str, Any]] = []
+    for r in rows:
+        (held if pg.enabled() and pg_datasets.storable(r) else rest).append(r)
+    if held:
+        written = await pg_datasets.upsert(held, job=job)
+        if written:
+            await project(written, ch=ch)
+    if rest:  # under Postgres, a key it cannot store: ClickHouse alone, as without it
+        ch = ch or _default_client()
+        await ch.insert(DATASETS, rest, settings={"async_insert": 0})
+
+
+async def project(rows: list[dict[str, Any]], *, ch: _CHClient | None = None) -> bool:
+    """Committed catalog rows into loom.datasets, best effort: Postgres is the answer.
+    Whether they landed."""
     ch = ch or _default_client()
-    await ch.insert(DATASETS, rows, settings={"async_insert": 0})
+    try:
+        await ch.insert(DATASETS, rows, settings={"async_insert": 0})
+    except Exception as e:  # noqa: BLE001 — the rows are committed; the next write repairs it
+        log.warning(
+            "loom.datasets: %d committed rows not projected: %s", len(rows), type(e).__name__
+        )
+        return False
+    return True
 
 
 async def insert_rows(rows: list[dict[str, Any]], *, ch: _CHClient | None = None) -> None:
@@ -155,6 +202,26 @@ async def at_version(
     """The source's datasets published with document version `doc_version`
     (one of them with `dataset_id`), in the artifact's table order."""
     ch = ch or _default_client()
+    if not pg.enabled():
+        return await _at_version_ch(org, namespace, source_uri, doc_version, dataset_id, ch)
+    held = await pg_datasets.at_version(
+        org, namespace, source_uri, doc_version, dataset_id=dataset_id
+    )
+    # Not sequentially consistent: a row an older build wrote that this replica has not
+    # caught up with yet is served on its next read, and an approval over it still
+    # outranks it (its version is past the one read).
+    projected = await _at_version_ch(org, namespace, source_uri, doc_version, dataset_id, ch)
+    newest = {str(r["dataset_id"]): r for r in held}
+    for r in projected:
+        mine = newest.get(str(r["dataset_id"]))
+        if mine is None or int(r["version"]) > int(mine["version"]):
+            newest[str(r["dataset_id"])] = r
+    return sorted(newest.values(), key=lambda r: (int(r["position"]), str(r["dataset_id"])))
+
+
+async def _at_version_ch(
+    org: str, namespace: str, source_uri: str, doc_version: int, dataset_id: str, ch: _CHClient
+) -> list[dict[str, Any]]:
     one = " AND dataset_id = {ds:String}" if dataset_id else ""
     return await ch.query_all(
         f"{_SELECT} WHERE org = {{org:String}} AND namespace = {{ns:String}}"
@@ -249,8 +316,15 @@ async def forget(
     dataset costs one catalog read."""
     if bool(before) == bool(only):
         raise ValueError("forget: give before or only")
+    # Under the Postgres authority its catalog first, so the datasets it named are deleted
+    # even where no projection landed.
+    named = (
+        await pg_datasets.forget(org, namespace, source_uris, before=before, only=only)
+        if pg.enabled()
+        else set()
+    )
     ch = ch or _default_client()
-    ids = await _ids(org, namespace, source_uris, ch)
+    ids = sorted(set(await _ids(org, namespace, source_uris, ch)) | named)
     if not ids:
         return
     params: dict[str, Any] = {"org": org, "ns": namespace, "ids": ids, "uris": list(source_uris)}
@@ -286,9 +360,16 @@ async def forget_published(
     has with an edit; a delete of the source settles both."""
     if not through:  # no source has a document row: no catalog read
         return
+    # Under the Postgres authority its catalog rows go first, and the snapshots its later
+    # rows serve stay with them.
+    named, held = (
+        await pg_datasets.forget_published(org, namespace, through)
+        if pg.enabled()
+        else (set(), set())
+    )
     ch = ch or _default_client()
     uris = sorted(through)
-    ids = await _ids(org, namespace, uris, ch)
+    ids = sorted(set(await _ids(org, namespace, uris, ch)) | named)
     if not ids:
         return
     params: dict[str, Any] = {
@@ -304,7 +385,7 @@ async def forget_published(
         f"SELECT DISTINCT snapshot_id FROM {DATASETS} WHERE {scope} AND NOT ({upto}) LIMIT 100000",
         params=params,
     )
-    params["keep"] = [int(r["snapshot_id"]) for r in kept]
+    params["keep"] = sorted({int(r["snapshot_id"]) for r in kept} | set(held))
     await ch.execute(
         f"DELETE FROM {ROWS} WHERE {scope} AND dataset_id IN {{ids:Array(String)}} AND {upto}"
         " AND snapshot_id NOT IN {keep:Array(UInt64)}",

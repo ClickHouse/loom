@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from server.knowledge.store import pg_documents
+from server.knowledge.store import pg_datasets, pg_documents
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +48,14 @@ async def held_sources() -> list[dict[str, Any]]:
     again, but their chunks lived in ClickHouse alone, so those written after the point
     are gone until the source is re-chunked (`loom rechunk`)."""
     return await pg_documents.held_sources()
+
+
+async def dataset_sources_lost(after: datetime) -> list[dict[str, Any]]:
+    """The sources (org, namespace, source_uri) whose Postgres catalog rows were written
+    after `after`: a dataset's rows live in ClickHouse alone, so after a ClickHouse
+    restore to before then some may be missing until the source's file is uploaded and
+    ingested again."""
+    return await pg_datasets.sources_written_since(int(after.timestamp() * 1e9))
 
 
 async def publish_held(*, batch: int = 200, passes: int = 1000) -> int:

@@ -528,6 +528,29 @@ schema. These rules keep that safe. The operator procedure is in
     purge a saga applies to the `purge` column (false for a single namespace), which N-1
     reads as before, since N-1 never purged a single namespace either. No gate holds the
     rollout, and the mixed-version gate does not check this rule.
+42. **The knowledge dataset catalog** (`loom.knowledge_datasets`, Postgres migration
+    `007_knowledge_datasets.sql`): under the Postgres authority N commits each catalog
+    row there and projects it into `loom.datasets`, best effort, so N-1 may read a
+    catalog row a version behind until N's next write of it; N-1 writes `loom.datasets`
+    alone. Every read of the catalog by N (`datasets_repo.at_version`:
+    `knowledge.dataset_get`, `knowledge.query`, an approval's reads, a publish's and a
+    metadata edit's carry, and a publish's check that no approval landed) takes
+    Postgres's rows and those only ClickHouse holds, the newer version of a dataset
+    winning, so N serves and queries what N-1 published or approved. N's approval
+    commits in the transaction that holds the source's head, over the version of the
+    catalog row it read: Postgres's, or a newer one N-1 wrote to ClickHouse, which the
+    approval then commits to Postgres. N-1's approval writes ClickHouse alone, and N
+    reads it as the newer version once the replica it reads has caught up: until then N
+    serves Postgres's older row, whose replaced snapshot N-1 may already have deleted,
+    so the dataset reads empty, and an approval by N in that window outranks N-1's. Both
+    builds take the source's claim for an approval and a publish, so an approval and a
+    publish of one source never overlap, whichever builds run them. N-1's deletes
+    (`knowledge.delete`, a later publish's retirement) and its erasure remove
+    `loom.datasets` rows alone and leave N's catalog rows in Postgres until that source
+    is next published or deleted by N: ask such a delete again with N, which removes
+    them; once N-1 stops serving, run such an erasure again with N ([upgrade
+    procedure](../operations/upgrades.md#upgrade-procedure), step 12). No gate holds the
+    rollout, and the mixed-version gate does not check this rule.
 
 ## What checks them
 

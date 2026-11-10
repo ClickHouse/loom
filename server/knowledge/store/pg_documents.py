@@ -132,7 +132,7 @@ _LOCK_HEADS = (
 # A row keeps the `doc_id` of the document its writer read (`build_document_row`), and a
 # write carrying columns of a live one names it (`built_from`): one an erasure removed
 # since, at any version, is refused. Evidence expires by age; the sweep only reclaims it.
-_ERASED = (
+ERASED = (
     "SELECT EXISTS (SELECT 1 FROM loom.erased_documents WHERE org = $1 AND namespace = $2 "
     "AND doc_id = ANY($3::text[]) AND erased_at > now() - make_interval(hours => $4))"
 )
@@ -205,7 +205,7 @@ async def commit(
         }
         # Read after the heads' locks, which an erasure holds until it commits.
         if await conn.fetchval(
-            _ERASED,
+            ERASED,
             org,
             namespace,
             [*(str(r["doc_id"]) for r, _ in encoded), *built_from],
