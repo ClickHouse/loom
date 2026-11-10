@@ -170,13 +170,13 @@ async def authorize(auth: AuthInfo, org: str, namespace: str) -> None:
             reason="narrowed",
         )
     if auth.expires_at is not None and not (auth.session_id and auth.first_party):
-        left = auth.expires_at - int(time.time())
+        left = max(auth.expires_at - int(time.time()), 0)
         if left < int(settings.assistant_answer_ttl_s):
             raise AuthInsufficientError(
-                f"the token expires in {max(left, 0)} s, sooner than an answer may run "
+                f"the token expires in {left} s, sooner than an answer may run "
                 f"({int(settings.assistant_answer_ttl_s)} s)",
                 reason="token_expires_soon",
-                left_s=max(left, 0),
+                left_s=left,
             )
     try:
         await check_authorized(auth, Role.VIEWER, org, namespace)
@@ -193,7 +193,8 @@ async def _afford(org: str, namespace: str) -> tuple[str, str]:
     answering = service.answering()
     if answering is None:
         raise AssistantUnavailableError(
-            "the assistant is not set up in this web process yet: /v1/health names a failed try",
+            "the assistant is not set up in this web process yet: /v1/health/ready's "
+            "assistant check says whether it is starting or failing",
             reason=service.unready_reason(),
         )
     if await switched_off(org):

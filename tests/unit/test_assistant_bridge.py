@@ -1273,3 +1273,15 @@ def test_the_chat_route_with_auth_off_says_so(client: Any, monkeypatch: pytest.M
         "ASSISTANT_UNAVAILABLE",
         "auth_off",
     )
+
+
+def test_assistant_ask_with_auth_off_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.assistant.api.models import AssistantAskInput
+    from server.assistant.app import ask
+
+    monkeypatch.setattr(ask, "current_auth", lambda: None)
+    with pytest.raises(AssistantUnavailableError) as refused:
+        asyncio.run(
+            ask.handle_assistant_ask(AssistantAskInput(org=ORG, namespace=NS, question="q"))
+        )
+    assert refused.value.to_detail()["reason"] == "auth_off"

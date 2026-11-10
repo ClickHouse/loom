@@ -108,7 +108,8 @@ steps:
    `not_configured` (no LibreChat), `auth_off`, `starting` (this process has not set the
    service up yet, or is setting it up again) or `failing` (its last try failed; the setup
    loop retries), and `AUTH_INSUFFICIENT` names `org_wide`, `narrowed` or
-   `token_expires_soon` (with `left_s`). Where an assistant is configured,
+   `token_expires_soon` (with `left_s`); a caller without `viewer` on the namespace
+   carries none. Where an assistant is configured,
    `/v1/health/ready` reports an `assistant` check, never required (a deployment whose
    assistant is down still serves the rest), whose reason is `starting` or `failing`; a
    missing check means none is configured.

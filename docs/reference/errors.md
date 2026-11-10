@@ -153,6 +153,9 @@ and the SDKs never resend an answer the server classes `configuration`.
 own while the web process's setup is still running or retrying (each web process sets
 the assistant up on its own, and `/v1/health` reports the process that answers it); no
 LibreChat, auth off, or a setup problem whose fix `/v1/health` names needs an operator.
+Its `detail.reason` says which: `starting` ends on its own; `failing` is retried by the
+process but its fix is named in `/v1/health`; `not_configured` and `auth_off` need an
+operator ([the assistant's refusals](../architecture/assistant.md#the-bridge-each-callers-own-identity)).
 
 The SDKs' default policy is under [Python SDK](./python-sdk.md#retries-and-logging) and
 [TypeScript SDK](./typescript-sdk.md#retries-pacing-and-logging); the codes they never
