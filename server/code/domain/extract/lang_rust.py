@@ -150,7 +150,7 @@ class _Walker:
     pf: ParsedFile
     source: bytes
     mod: str
-    uses: list[str] = field(default_factory=list)
+    uses: dict[str, None] = field(default_factory=dict)  # ordered, distinct
     _impls: dict[str, int] = field(default_factory=dict)
 
     def _add(
@@ -216,7 +216,7 @@ class _Walker:
         elif t == "use_declaration":
             arg = node.child_by_field_name("argument")
             if arg is not None:
-                self.uses.extend(_use_paths(arg, self.source))
+                self.uses.update(dict.fromkeys(_use_paths(arg, self.source)))
         elif t in {"foreign_mod_item", "extern_block"}:
             self._body(node, scope)
 
@@ -230,7 +230,7 @@ class _Walker:
     def _module(self, node: Any, scope: tuple[str, ...], name: str, doc: str) -> None:
         body = node.child_by_field_name("body")
         if body is None:
-            self.uses.append(f"mod {name}")  # `mod foo;` names a sibling file
+            self.uses[f"mod {name}"] = None  # `mod foo;` names a sibling file
             return
         self._add(scope, name, "module", "", node, doc)
         self.walk(body, (*scope, name))
@@ -266,12 +266,14 @@ def _use_paths(arg: Any, source: bytes) -> list[str]:
         path = arg.child_by_field_name("path")
         prefix = node_text(path, source) if path is not None else ""
         lst = arg.child_by_field_name("list")
-        out: list[str] = []
+        found: dict[str, None] = {}
         for item in lst.named_children if lst is not None else []:
             for p in _use_paths(item, source):
-                if len(prefix) + len(p) < _MAX_USE_CHARS:
-                    out.append(f"{prefix}::{p}" if prefix else p)
-        return out
+                if not prefix:
+                    found[p] = None
+                elif len(prefix) + 2 + len(p) < _MAX_USE_CHARS:
+                    found[f"{prefix}::{p}"] = None
+        return list(found)
     if t == "use_list":
         out = []
         for item in arg.named_children:
@@ -293,7 +295,7 @@ def parse_rust(path: str, source: bytes) -> ParsedFile:
     pf = ParsedFile(path=path, lang=LANG_RUST, tree=tree, source=source)
     w = _Walker(pf=pf, source=source, mod=module_scope_rust(path))
     w.walk(tree.root_node, ())
-    pf.includes = list(dict.fromkeys(w.uses))
+    pf.includes = list(w.uses)
     return pf
 
 

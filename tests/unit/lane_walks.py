@@ -370,34 +370,34 @@ def walk_cost(name: str) -> tuple[float, float]:
     return min(cost(_WALK_N) for _ in range(3)), min(cost(4 * _WALK_N) for _ in range(3))
 
 
-# The class guard: every registered lane parser (`ingest_parse._PARSERS`) over generated
-# shapes, so a walk added without a cost walk of its own is timed too. (path, header) per
-# lane; the header makes a content-detected lane (a manifest, a template, a TLC config)
-# read as that lane.
-SAMPLES: dict[str, tuple[str, str]] = {
-    "cpp": ("a.cpp", ""),
-    "python": ("a.py", ""),
-    "shell": ("a.sh", ""),
-    "typescript": ("a.ts", ""),
-    "javascript": ("a.js", ""),
-    "rust": ("src/a.rs", ""),
-    "prisma": ("a.prisma", ""),
-    "go": ("a.go", "package a\n"),
-    "java": ("A.java", ""),
-    "vue": ("a.vue", ""),
-    "svelte": ("a.svelte", ""),
-    "astro": ("a.astro", ""),
-    "angular_template": ("a.component.html", ""),
-    "proto": ("a.proto", ""),
-    "gotemplate": ("chart/templates/a.yaml", "{{ .Values.a }}\n"),
-    "hcl": ("a.tf", ""),
-    "k8s": ("a.yaml", "apiVersion: v1\nkind: ConfigMap\n"),
-    "jsonnet": ("a.jsonnet", ""),
-    "tla": ("a.tla", "---- MODULE a ----\n"),
-    "tla_config": ("a.cfg", "INIT Init\n"),
-    "flatbuffers": ("a.fbs", ""),
-    "cmake": ("CMakeLists.txt", ""),
-    "doc": ("a.md", ""),
+# The class guard: every lane parser in the ingest's registry (`ingest_parse._PARSERS`)
+# over generated shapes, so a walk added without a cost walk of its own is timed too.
+# (path, header, the language the parse reports) per lane; the header makes a
+# content-detected lane (a manifest, a template, a TLC config) read as that lane.
+SAMPLES: dict[str, tuple[str, str, str]] = {
+    "cpp": ("a.cpp", "", "cpp"),
+    "python": ("a.py", "", "python"),
+    "shell": ("a.sh", "", "shell"),
+    "typescript": ("a.ts", "", "typescript"),
+    "javascript": ("a.js", "", "javascript"),
+    "rust": ("src/a.rs", "", "rust"),
+    "prisma": ("a.prisma", "", "prisma"),
+    "go": ("a.go", "package a\n", "go"),
+    "java": ("A.java", "", "java"),
+    "vue": ("a.vue", "", "javascript"),
+    "svelte": ("a.svelte", "", "javascript"),
+    "astro": ("a.astro", "", "typescript"),
+    "angular_template": ("a.component.html", "", "typescript"),
+    "proto": ("a.proto", "", "proto"),
+    "gotemplate": ("chart/templates/a.yaml", "{{ .Values.a }}\n", "gotemplate"),
+    "hcl": ("a.tf", "", "hcl"),
+    "k8s": ("a.yaml", "apiVersion: v1\nkind: ConfigMap\n", "k8s"),
+    "jsonnet": ("a.jsonnet", "", "jsonnet"),
+    "tla": ("a.tla", "---- MODULE a ----\n", "tla"),
+    "tla_config": ("a.cfg", "INIT Init\n", "tla_config"),
+    "flatbuffers": ("a.fbs", "", "flatbuffers"),
+    "cmake": ("CMakeLists.txt", "", "cmake"),
+    "doc": ("a.md", "", "doc"),
 }
 
 _CHARS = " \t\na({[<\"'`#/*\\$:-=|.,;"
@@ -445,40 +445,77 @@ SHAPES: list[tuple[str, Callable[[int], str]]] = [
 ]
 
 
+class _Names:
+    """A name table that holds two definitions of every name asked for."""
+
+    async def name_candidates(
+        self, org: str, ns: str, names: list[str]
+    ) -> dict[str, list[tuple[str, str, str]]]:
+        return {
+            n: [(f"{n}1", f"a::{n}", "function"), (f"{n}2", f"b::{n}", "function")] for n in names
+        }
+
+
 def _extract(path: str, source: bytes) -> object:
     """What the ingest derives from one file without the store: the parse, its chunks
-    and facets, its local edges. A walk that raises costs what it ran."""
+    and facets, its call edges, and a tree-less lane's own edges against a name table,
+    under the recursion limit the edge stage retries with. A walk that raises costs what
+    it ran; running out of memory fails."""
+    import asyncio
+    import sys
+
+    from server.code.app.index import ingest_edges
     from server.code.app.index.ingest_chunks import _chunks_for
-    from server.code.app.index.ingest_parse import parse_for_ingest
+    from server.code.app.index.ingest_parse import (
+        _LANE_INCLUDE_LANGS,
+        LANE_UNIT_LANGS,
+        parse_for_ingest,
+    )
     from server.code.domain.extract.edges_treesitter import extract_edges_and_misses
+    from server.code.domain.extract.lang_prisma import prisma_edges
 
     pf, err = parse_for_ingest(path, source)
     if pf is None:
         return err
-    for step in (
+    repo = _Names()
+    steps = [
         lambda: _chunks_for(pf, path, source, 6000),
         lambda: extract_edges_and_misses(pf, {}, None),
-    ):
-        try:
-            step()
-        except Exception:  # noqa: BLE001 — the guard times walks; a crash is another test's
-            pass
+    ]
+    if pf.lang in _LANE_INCLUDE_LANGS:
+        steps.append(lambda: asyncio.run(ingest_edges._simple_lane_edges(repo, "o", "n", pf)))  # type: ignore[arg-type]
+    if pf.lang in LANE_UNIT_LANGS:
+        steps.append(lambda: asyncio.run(ingest_edges._lane_site_edges(repo, "o", "n", pf)))  # type: ignore[arg-type]
+    if pf.lang == "prisma":
+        steps.append(lambda: prisma_edges(pf))
+    before = sys.getrecursionlimit()
+    sys.setrecursionlimit(ingest_edges._DEEP_RECURSION_LIMIT)
+    try:
+        for step in steps:
+            try:
+                step()
+            except MemoryError:
+                raise
+            except Exception:  # noqa: BLE001 — the guard times walks; a crash is another test's
+                pass
+    finally:
+        sys.setrecursionlimit(before)
     return pf
 
 
-_REGISTRY_N = 2_500
+_REGISTRY_N = 5_000
 
 
-def registry_cost(lang: str) -> list[tuple[str, float, float]]:
-    """(shape, the time at N, the time at 4N) per shape for one lane, the best of three
-    when the first pair looks over linear. The tree-sitter parse is not counted: its
-    error recovery has its own CPU deadline (`bounded_parse`); the walks after it have
-    none."""
+def registry_cost(lang: str) -> list[tuple[str, float, float, int, int]]:
+    """(shape, the time at N, the time at 4N, the tree-sitter parses at N and at 4N) per
+    shape for one lane, the best of three when the first pair looks over linear. The
+    parses' time is not counted, since each has its own CPU deadline (`bounded_parse`);
+    their number is returned, so a walk that parses once per block is still seen."""
     from server.code.domain.extract import bounded_parse
 
-    path, head = SAMPLES[lang]
+    path, head, _lang = SAMPLES[lang]
     real = bounded_parse.parse
-    in_parse = [0.0]
+    in_parse = [0.0, 0]
 
     def timed(*args: object) -> object:
         t0 = time.perf_counter()
@@ -486,42 +523,44 @@ def registry_cost(lang: str) -> list[tuple[str, float, float]]:
             return real(*args)
         finally:
             in_parse[0] += time.perf_counter() - t0
+            in_parse[1] += 1
 
     bounded_parse.parse = timed  # type: ignore[assignment]
 
-    def cost(text: Callable[[int], str], n: int) -> float:
+    def cost(text: Callable[[int], str], n: int) -> tuple[float, int]:
         source = (head + text(n)).encode()
-        in_parse[0] = 0.0
+        in_parse[:] = [0.0, 0]
         t0 = time.perf_counter()
         _extract(path, source)
-        return time.perf_counter() - t0 - in_parse[0]
+        return time.perf_counter() - t0 - in_parse[0], int(in_parse[1])
 
     out = []
     for name, text in SHAPES:
-        small, big = cost(text, _REGISTRY_N), cost(text, 4 * _REGISTRY_N)
+        small, ps = cost(text, _REGISTRY_N)
+        if small > 1.0:  # already over any linear budget: 4N would only spend the deadline
+            out.append((name, small, float("inf"), ps, ps))
+            continue
+        big, pb = cost(text, 4 * _REGISTRY_N)
         if big > 0.02 and big > 8 * small:
-            small = min(small, cost(text, _REGISTRY_N), cost(text, _REGISTRY_N))
-            big = min(big, cost(text, 4 * _REGISTRY_N), cost(text, 4 * _REGISTRY_N))
-        out.append((name, small, big))
+            small = min(small, cost(text, _REGISTRY_N)[0], cost(text, _REGISTRY_N)[0])
+            big = min(big, cost(text, 4 * _REGISTRY_N)[0], cost(text, 4 * _REGISTRY_N)[0])
+        out.append((name, small, big, ps, pb))
     return out
 
 
-# lane -> (its ledger row, the shapes still over linear there). An entry is work to do,
-# not an exemption: the guard fails once none of its shapes is slow, so it is removed.
-KNOWN_SLOW: dict[str, tuple[str, tuple[str, ...]]] = {
-    # edges_treesitter resolve: `_py_is_method` over every same-named definition per call
-    "python": ("CODE-RX24", ("fan-out definitions",)),
-    # lang_rust._doc_above walks back over every earlier item per item
+# lane -> the shapes still over linear there, each a follow-up fix. The guard fails once
+# a listed shape runs within budget, so the entry goes with its fix.
+_TEMPLATE_LITERALS = ("run '`'", "names '`abc`\\n'", "unclosed '`'", "unclosed '`' words")
+KNOWN_SLOW: dict[str, tuple[str, ...]] = {
+    "typescript": _TEMPLATE_LITERALS,
+    "javascript": _TEMPLATE_LITERALS,
     "rust": (
-        "CODE-RX23",
-        (
-            "run '|'",
-            "names 'a(\\n'",
-            "unclosed '<!--'",
-            "unclosed '${'",
-            "unclosed '{%'",
-            "unclosed '(' words",
-            "unclosed '[' words",
-        ),
+        "run '|'",
+        "names 'a(\\n'",
+        "unclosed '<!--'",
+        "unclosed '${'",
+        "unclosed '{%'",
+        "unclosed '(' words",
+        "unclosed '[' words",
     ),
 }

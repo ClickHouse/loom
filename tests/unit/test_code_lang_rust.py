@@ -173,7 +173,7 @@ def test_ingest_resolves_a_use_to_the_file_the_namespace_holds() -> None:
     assert pf.includes == ["src/util.rs"]
 
 
-def test_a_leaf_under_a_prefix_longer_than_a_path_is_dropped() -> None:
-    long = "::".join(["a"] * 200)
-    pf = parse_rust("src/lib.rs", f"use {long}::{{b, c}};\nuse m::{{d}};\n".encode())
-    assert pf.includes == ["m::d"]
+def test_a_leaf_is_joined_while_its_path_stays_under_256_characters() -> None:
+    fits, over = "a" * 249, "b" * 250
+    pf = parse_rust("src/lib.rs", f"use {fits}::{{cccc}};\nuse {over}::{{cccc}};\n".encode())
+    assert pf.includes == [f"{fits}::cccc"]

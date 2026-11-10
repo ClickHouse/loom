@@ -201,6 +201,8 @@ def parse_python(path: str, source: bytes) -> ParsedFile:
                 for fx in _STR_ARG_RE.findall(m.group(1)):
                     pf.fixture_requests.append((qname, fx, line))
 
+    includes: dict[str, None] = {}  # ordered, distinct
+
     def walk(node: Any, scope: tuple[str, ...]) -> None:
         for child in node.named_children:
             t = child.type
@@ -264,7 +266,7 @@ def parse_python(path: str, source: bytes) -> ParsedFile:
             # every module an import names is a specifier the
             # ingest resolves against the live paths (`a.b`, `.m`, `..pkg.mod`);
             # `from m import x` also names the submodule `m.x` when x is one
-            pf.includes.extend(import_specs(child, source))
+            includes.update(dict.fromkeys(s for s in import_specs(child, source) if s))
             return
         if t in _MODULE_GUARDS:
             # module-level guards (if __name__ == ..., try / except ImportError)
@@ -273,7 +275,7 @@ def parse_python(path: str, source: bytes) -> ParsedFile:
             return
 
     walk(tree.root_node, ())
-    pf.includes = list(dict.fromkeys(s for s in pf.includes if s))
+    pf.includes = list(includes)
     # the module's constants, type aliases and `__all__`
     # join the defs and classes; a declaration beside its implementation folds
     taken = {s.name for s in pf.symbols if s.qualified_name.count("::") == 1}
@@ -369,7 +371,7 @@ def import_specs(node: Any, source: bytes) -> list[str]:
                 (x for x in c.named_children if x.type == "dotted_name"), None
             )
             member = _dotted(name, source) if name is not None else ""
-        if member and _IDENT_RE.match(member) and len(module) + len(member) < _MAX_SPEC_CHARS:
+        if member and _IDENT_RE.match(member) and len(module) + 1 + len(member) < _MAX_SPEC_CHARS:
             out.append(join_spec(module, member))
     return out
 

@@ -318,7 +318,7 @@ def test_a_call_holding_its_own_opener_is_read_from_the_inner_one() -> None:
     assert [f.name for f in facets if f.kind == "http_route"] == ["POST /old"]
 
 
-def test_a_member_of_a_module_longer_than_a_spec_is_not_joined() -> None:
-    long = ".".join(["a"] * 200)
-    pf = parse_python("x.py", f"from {long} import b, c\nfrom m import d\n".encode())
-    assert pf.includes == [long, "m", "m.d"]
+def test_a_member_is_joined_while_the_spec_stays_under_256_characters() -> None:
+    fits, over = "a" * 250, "b" * 251
+    pf = parse_python("x.py", f"from {fits} import cccc\nfrom {over} import cccc\n".encode())
+    assert pf.includes == [fits, f"{fits}.cccc", over]
