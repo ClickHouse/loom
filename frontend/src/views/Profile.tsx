@@ -18,9 +18,9 @@ import {
 } from "../api";
 import { useStore, useIdentity } from "../lib/state";
 import { RowSkeleton } from "../components/Skeleton";
-import { fmtInt, humanizeError, parseChTime, relativeTime } from "../lib/format";
+import { fmtInt, parseChTime, relativeTime } from "../lib/format";
 import { useVisiblePoll } from "../lib/hooks";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
 import { PageContainer } from "../layout/PageContainer";
@@ -100,7 +100,7 @@ export function Profile() {
       selection.clear();
       refresh();
     } catch (e) {
-      toast(humanizeError(e), "error");
+      toastError("Couldn't delete the sections", e);
     } finally {
       setBulkBusy(false);
     }
@@ -783,7 +783,7 @@ function SectionEditor({
       toast(isNew ? "Section created" : "Section saved", "ok");
       onSaved();
     } catch (e) {
-      toast(humanizeError(e), "error");
+      toastError(isNew ? "Couldn't create the section" : "Couldn't save the section", e);
     } finally {
       setSaving(false);
     }
@@ -858,6 +858,6 @@ async function onDelete(identity: Identity, label: string, refresh: () => void) 
     toast("Section deleted", "ok");
     refresh();
   } catch (e) {
-    toast(humanizeError(e), "error");
+    toastError("Couldn't delete the section", e);
   }
 }

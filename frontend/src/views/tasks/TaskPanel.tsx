@@ -39,7 +39,7 @@ import {
   type PosterRecord,
   type TaskAction,
 } from "../../lib/tasks";
-import { humanizeError } from "../../lib/format";
+import { humanizeError } from "../../lib/errorWords";
 import { IconButton } from "../../components/IconButton";
 import { Alert, ExternalLink, Loading, Stat, Tip } from "../../components/ui";
 import { ListTime } from "../../components/ui/ListTime";
@@ -358,7 +358,7 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
       })
       .catch((e) => {
         if (live) {
-          setError(humanizeError(e));
+          setError(humanizeError(e, { read: true }));
           setEvents([]);
         }
       });

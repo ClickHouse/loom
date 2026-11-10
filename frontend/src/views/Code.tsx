@@ -24,14 +24,15 @@ import { VerticalStepper } from "@clickhouse/click-ui/VerticalStepper";
 import { PageContainer } from "../layout/PageContainer";
 import { useStore, useIdentity } from "../lib/state";
 import { holdsAdminGrant } from "../lib/role";
-import { fmtInt, relativeTime, humanizeError, listTime, parseChTime, refreshDetail } from "../lib/format";
+import { fmtInt, relativeTime, listTime, parseChTime, refreshDetail } from "../lib/format";
+import { humanizeError, errorLine } from "../lib/errorWords";
 import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { EmptyState } from "../components/EmptyState";
 import { IconButton } from "../components/IconButton";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { RowSkeleton, Skeleton, SkeletonCard } from "../components/Skeleton";
-import { type ToastKind, type ToastOpts, toast } from "../components/Toast";
+import { toast, toastError, type ToastKind, type ToastOpts } from "../components/Toast";
 import { ListPager, usePageSize } from "../components/ui/ListPager";
 import { ListState } from "../components/ui/ListState";
 import { ListToolbar } from "../components/ui/ListToolbar";
@@ -169,7 +170,7 @@ export function CodeView() {
           setError(null);
         })
         .catch((e) => {
-          if (live()) setError(humanizeError(e));
+          if (live()) setError(humanizeError(e, { read: true }));
         });
     },
     [identity.org],
@@ -484,7 +485,7 @@ function RepositoriesHome({
       toast(...linkedToast(g.primary.repo, out));
       onChanged();
     } catch (e) {
-      toast(`Couldn't link the tracker: ${humanizeError(e)}`, "error");
+      toastError("Couldn't link the tracker", e);
     }
   };
   const refreshBranch = async (b: CodeRepoSummary) => {
@@ -497,7 +498,7 @@ function RepositoriesHome({
         "ok",
       );
     } catch (e) {
-      toast(`Refresh failed: ${humanizeError(e)}`, "error");
+      toastError("Refresh failed", e);
     }
   };
   const removeBranch = async (b: CodeRepoSummary) => {
@@ -515,7 +516,7 @@ function RepositoriesHome({
       toast(`Retired ${out.repo} @ ${out.branch} · its rows are purging in the background`, "ok");
       onChanged();
     } catch (e) {
-      toast(humanizeError(e), "error");
+      toastError(`Couldn't retire ${b.namespace}`, e);
     }
   };
   /** The links a repository holds now, primary first. */
@@ -546,7 +547,7 @@ function RepositoriesHome({
         await setCodeRepoAccess(b.org, b.namespace, classification, join_policy, opening ? b.namespace : "");
         done += 1;
       } catch (e) {
-        toast(`${b.namespace}: ${humanizeError(e)}`, "error");
+        toastError(`Couldn't change access on ${b.namespace}`, e);
       }
     }
     if (done)
@@ -1868,6 +1869,9 @@ export function HealthTab({ id }: { id: CodeId }) {
   const [cov, setCov] = useState<CodeCoverage | null | undefined>(undefined);
   const [recent, setRecent] = useState<CodeRecentCommitRow[] | "failed" | null>(null);
   const [errs, setErrs] = useState<{ rows: CodeIndexErrorRow[]; total: number } | null | undefined>(undefined);
+  // Why each section's first read failed, said beside its "Couldn't load" line; kept while it
+  // keeps failing, so its alert is not said again.
+  const [why, setWhy] = useState<{ cov?: string; recent?: string; errs?: string }>({});
   const [showErrs, setShowErrs] = useState(false);
   const [spend, setSpend] = useState<{ usd: number; ops: number } | null | undefined>(undefined);
 
@@ -1884,28 +1888,35 @@ export function HealthTab({ id }: { id: CodeId }) {
           if (live()) setError(e);
         });
       // A failed poll after a good read keeps that read, as the status above does; only a
-      // section with nothing read yet says its read failed.
+      // section with nothing read yet says its read failed. The first failure's line stands,
+      // so a lasting outage does not re-announce its alert each minute with a new request id.
       codeCoverage(id, { signal })
         .then((c) => {
           if (live()) setCov(c);
         })
-        .catch(() => {
-          if (live()) setCov((c) => c ?? null);
+        .catch((e: unknown) => {
+          if (!live()) return;
+          setCov((c) => c ?? null);
+          setWhy((w) => ({ ...w, cov: w.cov || errorLine(e, { read: true }) }));
         });
       codeRecentCommits(id, 15, { signal })
         .then((r) => {
           if (live()) setRecent(r.rows);
         })
-        .catch(() => {
+        .catch((e: unknown) => {
           // Said as a failure: "no commits recorded yet" would be a claim.
-          if (live()) setRecent((r) => (Array.isArray(r) ? r : "failed"));
+          if (!live()) return;
+          setRecent((r) => (Array.isArray(r) ? r : "failed"));
+          setWhy((w) => ({ ...w, recent: w.recent || errorLine(e, { read: true }) }));
         });
       codeIndexErrors(id, 100, { signal })
         .then((e) => {
           if (live()) setErrs(e);
         })
-        .catch(() => {
-          if (live()) setErrs((x) => x ?? null);
+        .catch((e: unknown) => {
+          if (!live()) return;
+          setErrs((x) => x ?? null);
+          setWhy((w) => ({ ...w, errs: w.errs || errorLine(e, { read: true }) }));
         });
       listCostRollup(id, { days: 7, groupBy: ["operation"], signal })
         .then((r) => {
@@ -1935,7 +1946,7 @@ export function HealthTab({ id }: { id: CodeId }) {
       toast(r.already_running ? "An ingest pass is already running" : "Ingest pass triggered", "ok");
       setTimeout(load, 2500);
     } catch (e) {
-      toast(`Refresh failed: ${humanizeError(e)}`, "error");
+      toastError("Refresh failed", e);
     } finally {
       setRefreshing(false);
     }
@@ -1965,7 +1976,7 @@ export function HealthTab({ id }: { id: CodeId }) {
     <div className="space-y-6">
       {!!error && (
         <div className="text-xs text-text-muted" role="status">
-          {`Couldn't refresh the index status (${humanizeError(error)}); showing the last read.`}
+          {`Showing the last read; couldn't refresh the index status: ${humanizeError(error, { bare: true, read: true })}`}
         </div>
       )}
       <div className="text-xs text-text-muted">
@@ -2071,7 +2082,9 @@ export function HealthTab({ id }: { id: CodeId }) {
         {cov === undefined ? (
           <Loading layout="inline" label="Loading coverage" />
         ) : cov === null ? (
-          <div className="text-xs text-text-muted">Couldn't load coverage.</div>
+          <div role="alert" className="text-xs text-text-muted">
+            Couldn't load coverage: {why.cov}
+          </div>
         ) : (
           <div className="space-y-2">
             <Table
@@ -2185,7 +2198,9 @@ export function HealthTab({ id }: { id: CodeId }) {
           {recent === null ? (
             <Loading layout="inline" label="Loading recent commits" />
           ) : recent === "failed" ? (
-            <div className="text-xs text-text-muted">Couldn't load the recent commits.</div>
+            <div role="alert" className="text-xs text-text-muted">
+              Couldn't load the recent commits: {why.recent}
+            </div>
           ) : recent.length === 0 ? (
             <div className="text-xs text-text-muted">No commits recorded yet.</div>
           ) : (
@@ -2232,7 +2247,11 @@ export function HealthTab({ id }: { id: CodeId }) {
             {errs ? <span className="tabular text-text-muted">({fmtInt(errs.total)})</span> : null}
           </button>
           {errs === undefined && <Loading layout="inline" label="Loading the index errors" className="mt-2" />}
-          {errs === null && <div className="mt-2 text-xs text-text-muted">Couldn't load the index errors.</div>}
+          {errs === null && (
+            <div role="alert" className="mt-2 text-xs text-text-muted">
+              Couldn't load the index errors: {why.errs}
+            </div>
+          )}
           {errs && errs.total === 0 && (
             <div className="mt-2 text-xs text-text-muted">
               Every file under the indexed prefixes parsed and chunked.
@@ -2500,7 +2519,7 @@ function ExploreTab({ id }: { id: CodeId }) {
     try {
       setRes(await codeSearch(id, query.trim(), { top_k: 10, path_prefix: prefix.trim() }));
     } catch (e) {
-      setError(humanizeError(e));
+      setError(humanizeError(e, { read: true }));
     } finally {
       setBusy(false);
     }
@@ -2516,7 +2535,7 @@ function ExploreTab({ id }: { id: CodeId }) {
       ]);
       setSym({ name, defs: s.definitions, callers: callers.edges, callees: callees.edges, ambiguous: s.ambiguous });
     } catch (e) {
-      toast(`Symbol lookup failed: ${humanizeError(e)}`, "error");
+      toastError("Symbol lookup failed", e, { read: true });
     } finally {
       setSymBusy(false);
     }
@@ -2527,7 +2546,7 @@ function ExploreTab({ id }: { id: CodeId }) {
     try {
       setMap((await codeMap(id, { token_budget: 1500 })).map);
     } catch (e) {
-      toast(`Map failed: ${humanizeError(e)}`, "error");
+      toastError("Map failed", e, { read: true });
     } finally {
       setMapBusy(false);
     }
@@ -2780,7 +2799,7 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
       const p = await codeContextPack(id, pr, 6000);
       setPack({ pr, text: p.context, tokens: p.tokens_used, source: p.source });
     } catch (e) {
-      toast(`Pack load failed: ${humanizeError(e)}`, "error");
+      toastError("Pack load failed", e, { read: true });
       // Fold the row back rather than leave it loading.
       setOpen((o) => (o === pr ? null : o));
     }
@@ -3014,7 +3033,7 @@ export function AccessTab({
           }
         })
         .catch((e) => {
-          if (live()) setError(humanizeError(e));
+          if (live()) setError(humanizeError(e, { read: true }));
         });
     },
     // `id` is a fresh object each parent render; its two fields are the identity.
@@ -3058,7 +3077,7 @@ export function AccessTab({
       toast(`${id.namespace} is now ${RULE_META[next].label.toLowerCase()}`, "ok");
       load();
     } catch (err) {
-      toast(`Couldn't change the rule: ${humanizeError(err)}`, "error");
+      toastError("Couldn't change the rule", err);
     } finally {
       setBusy(null);
     }
@@ -3079,7 +3098,7 @@ export function AccessTab({
       );
       load();
     } catch (err) {
-      toast(humanizeError(err), "error");
+      toastError(`Couldn't decide ${g.subject}'s request`, err);
     } finally {
       setBusy(null);
     }
@@ -3112,7 +3131,7 @@ export function AccessTab({
       setSubject("");
       load();
     } catch (err) {
-      toast(`Couldn't add: ${humanizeError(err)}`, "error");
+      toastError("Couldn't add", err);
     } finally {
       setBusy(null);
     }
@@ -3133,7 +3152,7 @@ export function AccessTab({
       toast(`Removed ${g.subject}`, "ok");
       load();
     } catch (err) {
-      toast(`Couldn't remove: ${humanizeError(err)}`, "error");
+      toastError("Couldn't remove", err);
     }
   };
 
@@ -3546,7 +3565,7 @@ export function AccessTab({
                   );
                   onRetired?.();
                 } catch (err) {
-                  toast(humanizeError(err), "error");
+                  toastError("Couldn't retire the repository", err);
                 } finally {
                   setBusy(null);
                 }

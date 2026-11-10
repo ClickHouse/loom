@@ -18,7 +18,8 @@ import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { addKnowledge, downloadKnowledge, getKnowledge, textDownloadName, type KnowledgeEntry } from "../api";
-import { humanizeError, relativeTime } from "../lib/format";
+import { relativeTime } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { toast, toastError } from "../components/Toast";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { Loading } from "../components/ui/Loading";
@@ -304,7 +305,7 @@ export function RepoDocViewer({
           );
       })
       .catch((e) => {
-        if (live) setState({ kind: "error", message: humanizeError(e) });
+        if (live) setState({ kind: "error", message: humanizeError(e, { read: true }) });
       });
     return () => {
       live = false;
@@ -319,7 +320,7 @@ export function RepoDocViewer({
         doc.original_filename || textDownloadName(doc.source_uri),
       );
     } catch (e) {
-      toastError("Download failed", e);
+      toastError("Download failed", e, { read: true });
     } finally {
       setDownloading(false);
     }

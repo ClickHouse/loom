@@ -148,7 +148,7 @@ describe("AssistantChat", () => {
     await ask("Who owns billing?");
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(
-      "The assistant cannot answer in this namespace right now: the assistant's share of 'team''s daily model cost cap is spent. Try again in 3600 s.",
+      "Over a limit for now: the assistant's share of 'team''s daily model cost cap is spent. Try again in 3600 s.",
     );
     expect(screen.getByLabelText("Question")).toHaveValue("Who owns billing?");
 
@@ -159,18 +159,84 @@ describe("AssistantChat", () => {
   });
 
   it.each([
-    ["AUTH_INSUFFICIENT", 403, "The assistant refused this request: the caller cannot read 'team' in 'dev'."],
-    ["OVERLOADED", 503, "The assistant is busy: the caller cannot read 'team' in 'dev'."],
+    ["AUTH_INSUFFICIENT", 403, "Your role doesn't allow this: the caller cannot read 'team' in 'dev'."],
+    ["OVERLOADED", 503, "Loom is busy right now: the caller cannot read 'team' in 'dev'."],
     [
       "MODEL_CALLS_DISABLED",
       403,
-      "Model calls are switched off for this organization: the caller cannot read 'team' in 'dev'.",
+      "Model calls are off for this org; an org admin can turn them on in Admin › Guardrails unless a platform admin locked them: the caller cannot read 'team' in 'dev'.",
     ],
   ])("shows a %s refusal in the chat", async (code, status, shown) => {
     answers.push(refusal(status, { code, message: "the caller cannot read 'team' in 'dev'" }));
     render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
     await ask("Who owns billing?");
     expect(await screen.findByRole("alert")).toHaveTextContent(shown);
+  });
+
+  it("says a refusal about the token as the token's, not as the person's role", async () => {
+    answers.push(
+      refusal(403, {
+        code: "AUTH_INSUFFICIENT",
+        message: "a token whose reads are narrower than its namespace cannot ask the assistant",
+        reason: "narrowed",
+      }),
+    );
+    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    await ask("Who owns billing?");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "This token can't do this: a token whose reads are narrower than its namespace cannot ask the assistant.",
+    );
+    expect(alert).not.toHaveTextContent(/role/);
+  });
+
+  it("says a refusal with no lead of its own once, with one retry wait", async () => {
+    answers.push(
+      refusal(503, {
+        code: "MODEL_CALL_DEFERRED",
+        message: "the model gateway is queueing calls",
+        category: "capacity",
+        retryable: true,
+        retry_after_s: 3,
+      }),
+    );
+    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    await ask("Who owns billing?");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Loom is busy: the model gateway is queueing calls. Try again in 3 s.");
+    expect(alert.textContent?.match(/Try again/g)).toHaveLength(1);
+  });
+
+  it("says Loom could not check access, not that the assistant refused, when the grant read failed", async () => {
+    answers.push(
+      refusal(403, {
+        code: "AUTH_INSUFFICIENT",
+        message: "the grant store did not answer",
+        category: "dependency",
+        retryable: true,
+      }),
+    );
+    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    await ask("Who owns billing?");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Loom couldn't check your access just now: the grant store did not answer. Try again in a moment.",
+    );
+  });
+
+  it("words a server error before the stream as a read: nothing may have been saved", async () => {
+    answers.push(
+      refusal(500, {
+        code: "INTERNAL_ERROR",
+        message: "internal error; request_id=r5",
+        category: "internal",
+        retryable: false,
+      }),
+    );
+    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    await ask("Who owns billing?");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Loom hit an internal error.");
+    expect(alert).not.toHaveTextContent(/may have been saved/);
   });
 
   it("shows an error event after part of the answer, and keeps that part", async () => {

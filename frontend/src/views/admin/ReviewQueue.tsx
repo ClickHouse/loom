@@ -42,9 +42,9 @@ import { ListTime } from "../../components/ui/ListTime";
 import { ListToolbar } from "../../components/ui/ListToolbar";
 import { BusyButton } from "../../components/ui/BusyButton";
 import { ScopeBadge } from "../../components/ScopeBadge";
-import { toast } from "../../components/Toast";
+import { toast, toastError } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
-import { formatValue, truncate, humanizeError, SENSITIVE_READ_BY_KEY } from "../../lib/format";
+import { formatValue, truncate, SENSITIVE_READ_BY_KEY } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { useNamespaceRole } from "../../lib/namespaceRole";
 import { canCall } from "../../lib/canCall";
@@ -407,7 +407,7 @@ function ConflictsPanel() {
       });
       setNext(r.next_before_version);
     } catch (e) {
-      toast(`Couldn't load more conflicts: ${humanizeError(e)}`, "error");
+      toastError("Couldn't load more conflicts", e, { read: true });
     } finally {
       readsOut.current.delete(goneHere);
       if (visit.current === myVisit) setLoadingMore(false);
@@ -496,7 +496,7 @@ function ConflictsPanel() {
       if (!sameVisit) return;
       setReason("");
     } catch (e) {
-      toast(`Failed: ${humanizeError(e)}`, "error");
+      toastError("Couldn't resolve the conflict", e);
     } finally {
       if (visit.current === myVisit) setBusy(false);
     }
@@ -610,7 +610,7 @@ function RevisionHint({ memoryId }: { memoryId: string }) {
       // The link that had focus is gone; the answer takes it.
       region.current?.focus();
     } catch (e) {
-      toast(`Couldn't read a suggestion: ${humanizeError(e)}`, "error");
+      toastError("Couldn't read a suggestion", e, { read: true });
     } finally {
       setBusy(false);
     }
@@ -798,7 +798,7 @@ function LearningsPanel({
       toast(decision === "promote" ? "Promoted" : "Rejected", "ok");
       setReload((n) => n + 1);
     } catch (e) {
-      toast(`Failed: ${humanizeError(e)}`, "error");
+      toastError("Failed", e);
     }
   };
 
@@ -1044,7 +1044,7 @@ function AutoResolvedPanel() {
       setRows((rs) => [...(rs ?? []), ...page.rows]);
       setCursor(page.next_cursor);
     } catch (e) {
-      if (mounted.current) toast(`Failed: ${humanizeError(e)}`, "error");
+      if (mounted.current) toastError("Couldn't load more", e, { read: true });
     } finally {
       loadingRef.current = false;
       if (mounted.current) setLoadingMore(false);
@@ -1077,7 +1077,7 @@ function AutoResolvedPanel() {
       setAnnouncement((prev) => (prev === said ? `${said}\u00a0` : said));
       if (out.restored) toast("Restored", "ok");
     } catch (e) {
-      if (mounted.current) toast(`Failed: ${humanizeError(e)}`, "error");
+      if (mounted.current) toastError("Failed", e);
     } finally {
       setBusyFor(k, false);
     }
@@ -1255,7 +1255,7 @@ function AllowlistPanel({ initial, onSeedUsed }: { initial?: AllowlistRow[] | nu
       toast("Removed", "ok");
       setReload((n) => n + 1);
     } catch (e) {
-      toast(`Failed: ${humanizeError(e)}`, "error");
+      toastError("Failed", e);
     }
   };
 

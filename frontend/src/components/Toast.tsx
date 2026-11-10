@@ -2,16 +2,18 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { IconButton } from "./IconButton";
-import { errorRequestId, humanizeError } from "../lib/format";
+import { isPublicationPending, PUBLICATION_PENDING, writeWarning } from "../lib/errors";
+import { errorRequestId } from "../lib/format";
 
 /**
  * Transient notifications.
  *
- * Each toast owns its timer: success and info leave after 3.5 s, errors
- * after 8 s — an error is read, not glanced at. Hovering or focusing a
- * toast pauses its clock so the message can be read or copied; a close
- * button dismisses it early. The stack is capped at four — a burst of
- * failures drops the oldest rather than covering the page.
+ * Each toast owns its timer: success and info leave after 3.5 s, an error after
+ * 8 s plus 50 ms a character, at most 20 s (`errorToastMs`) — an error is read,
+ * not glanced at. So is a committed write's info line, which gets the error's
+ * time. Hovering or focusing a toast pauses its clock so the message can be
+ * read or copied; a close button dismisses it early. The stack is capped
+ * at four — a burst of failures drops the oldest rather than covering the page.
  *
  * A toast raised with a `key` replaces the one still showing under the same
  * key (a second expand's result stands alone, it does not stack under the first), and
@@ -85,14 +87,51 @@ export function toast(msg: string, kind: ToastKind = "ok", opts: ToastOpts = {})
   _listeners.forEach((l) => l(item));
 }
 
-/** An error toast for a thrown value: `context: <humanized error>` with the
- *  request id underneath when the failure carried one. */
-export function toastError(context: string, err: unknown): void {
+/** An error toast for a thrown value: `context: <the server's words>` (the context is the
+ *  lead-in, so humanizeError's own is left out) with the request id underneath when the
+ *  failure carried one. It stays up long enough to read: 8 s plus 50 ms a character, at
+ *  most 20 s, and hovering or focusing it holds it. */
+export function toastError(context: string, err: unknown, opts: { read?: boolean } = {}): void {
+  // A write that committed while only lists and search lag: not a failure, so no
+  // "<context>:" in front of it. Said before the wording loads, so a chunk that cannot load
+  // never turns it into "failed".
+  if (isPublicationPending(err)) {
+    toastWithId(PUBLICATION_PENDING, "info", err);
+    return;
+  }
+  // The wording is a lazy chunk (the boot chunk's budget), loaded by the viewport soon
+  // after paint; this import then resolves at once.
+  import("../lib/errorWords")
+    .then(({ humanizeError }) =>
+      toastErrorLine(`${context}: ${humanizeError(err, { bare: true, read: opts.read })}`, err),
+    )
+    // The wording could not load (a deploy replaced the chunk, the network dropped): the
+    // context alone still says what failed.
+    .catch(() => {
+      const warning = opts.read ? "" : writeWarning(err);
+      toastWithId(warning ? `${context}: ${warning}` : `${context}.`, "error", err);
+    });
+}
+
+/** An error toast whose caller built its own sentence (how much of a batch went through):
+ *  the request id underneath and the reading time, as toastError gives every error toast. */
+export function toastErrorLine(msg: string, err: unknown, opts: { key?: string } = {}): void {
+  toastWithId(msg, "error", err, opts.key);
+}
+
+function toastWithId(msg: string, kind: ToastKind, err: unknown, key?: string): void {
   const rid = errorRequestId(err);
-  toast(`${context}: ${humanizeError(err)}`, "error", rid ? { detail: `request id ${rid}` } : {});
+  // An id the line already says (an internal error's) is not printed a second time.
+  const detail = rid && !msg.includes(rid) ? { detail: `request id ${rid}` } : {};
+  toast(msg, kind, { ...detail, key, durationMs: errorToastMs(msg) });
+}
+
+export function errorToastMs(msg: string): number {
+  return Math.min(DURATION_MS.error + 50 * msg.length, 20_000);
 }
 
 const MAX_STACK = 4;
+const WORDING_WARM_MS = 1500;
 const DURATION_MS: Record<ToastKind, number> = { ok: 3500, info: 3500, error: 8000 };
 
 const KIND_ICON: Record<ToastKind, { name: IconName; color: string }> = {
@@ -115,6 +154,16 @@ export function keepOpenOnToasts(e: Event): boolean {
  *  silences it. */
 export function ToastViewport({ pinned = null }: { pinned?: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
+
+  // Load the error wording soon after the shell paints, so an error toast never fetches it:
+  // in a tab opened before a redeploy that fetch would miss, and the toast would fall back
+  // to its context alone.
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      import("../lib/errorWords").catch(() => {});
+    }, WORDING_WARM_MS);
+    return () => window.clearTimeout(t);
+  }, []);
 
   const dismiss = useCallback((id: number) => {
     setItems((prev) => prev.filter((x) => x.id !== id));

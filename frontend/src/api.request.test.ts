@@ -92,6 +92,15 @@ describe("listTokens", () => {
   });
 });
 
+describe("an ok answer that is not JSON", () => {
+  it("is an ApiError that says so, not the parser's words", async () => {
+    stubFetch(200, "<html><body>Bad gateway page</body></html>", { "X-Request-Id": "req-html" });
+    const err = await rejection(post("/v1/memory.list", {}));
+    expect(err.code).toBe("ANSWER_UNREADABLE");
+    expect(err.requestId).toBe("req-html");
+  });
+});
+
 /** A token whose claims name `sub` in org o (boot.ts reads them; the signature is not). */
 function jwtFor(sub: string, iat = 1): string {
   const part = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");

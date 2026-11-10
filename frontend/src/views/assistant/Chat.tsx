@@ -5,7 +5,7 @@ import { type ChatMessage, type Citation, type Support, streamAssistantChat } fr
 import { Alert, Unavailable } from "../../components/ui";
 import { fieldError } from "../../components/ui/fieldError";
 import { ApiError } from "../../lib/errors";
-import { humanizeError } from "../../lib/format";
+import { humanizeError } from "../../lib/errorWords";
 import { AnswerText } from "./AnswerText";
 import { Sources, supportLabel } from "./Sources";
 
@@ -30,26 +30,6 @@ interface Turn {
   citations?: Citation[];
   /** How far the answer rests on Loom; absent until the answer ends. */
   support?: Support;
-}
-
-// The lead-in for each refusal the chat route answers; the server's own words follow.
-const REFUSAL_LEAD: Record<string, string> = {
-  RATE_LIMITED: "The assistant cannot answer in this namespace right now:",
-  OVERLOADED: "The assistant is busy:",
-  AUTH_INSUFFICIENT: "The assistant refused this request:",
-  MODEL_CALLS_DISABLED: "Model calls are switched off for this organization:",
-  ASSISTANT_UNAVAILABLE: "The assistant is not available:",
-  ASSISTANT_UPSTREAM_FAILED: "The assistant could not finish this answer:",
-  STREAM_ENDED: "The answer was cut off:",
-};
-
-function refusalText(e: unknown): string {
-  if (!(e instanceof ApiError)) return humanizeError(e);
-  const lead = REFUSAL_LEAD[e.code];
-  const said = (e.serverMessage || e.code).replace(/\.$/, "");
-  const text = lead ? `${lead} ${said}.` : humanizeError(e);
-  const retry = e.detail.retry_after_s;
-  return typeof retry === "number" && retry > 0 ? `${text} Try again in ${Math.ceil(retry)} s.` : text;
 }
 
 const isAbort = (e: unknown) => e instanceof DOMException && e.name === "AbortError";
@@ -169,7 +149,9 @@ export function AssistantChat({
         }
         // A refused question was never answered: it waits in the field to be asked again.
         if (before) setDraft((d) => d || question);
-        finish(id, { state: before ? "refused" : "failed", error: refusalText(e) }, "");
+        // Worded as every error is (lib/errorWords.ts): an answer only reads, so nothing is
+        // left to check before asking again.
+        finish(id, { state: before ? "refused" : "failed", error: humanizeError(e, { read: true }) }, "");
       })
       .finally(() => {
         if (controller.current === mine) controller.current = null;

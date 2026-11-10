@@ -2,12 +2,18 @@ import { cleanup, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api";
+import { ApiError } from "../lib/errors";
 import { confirmAction } from "../components/ConfirmDialog";
-import { toast } from "../components/Toast";
+import { toast, toastErrorLine } from "../components/Toast";
 import { ThreadActions } from "./ThreadActions";
 
 vi.mock("../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
-vi.mock("../components/Toast", () => ({ toast: vi.fn(), toastError: vi.fn(), ToastViewport: () => null }));
+vi.mock("../components/Toast", () => ({
+  toast: vi.fn(),
+  toastError: vi.fn(),
+  toastErrorLine: vi.fn(),
+  ToastViewport: () => null,
+}));
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
@@ -115,7 +121,10 @@ describe("ThreadActions", () => {
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     await waitFor(() =>
-      expect(toast).toHaveBeenCalledWith('Deleted part of "Deploy plan", then failed: down', "error"),
+      expect(toastErrorLine).toHaveBeenCalledWith(
+        'Deleted part of "Deploy plan", then failed: down',
+        expect.any(Error),
+      ),
     );
   });
 
@@ -154,9 +163,32 @@ describe("ThreadActions", () => {
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     await waitFor(() =>
-      expect(toast).toHaveBeenCalledWith(
-        'Deleted part of "Deploy plan", then failed: down; 2 messages are left',
-        "error",
+      expect(toastErrorLine).toHaveBeenCalledWith(
+        'Deleted part of "Deploy plan" (2 messages are left), then failed: down',
+        expect.any(Error),
+      ),
+    );
+  });
+
+  it("ends the partial delete's line with the server's closed sentence", async () => {
+    vi.mocked(api.getConversationThread).mockResolvedValueOnce({ found: true, msg_count: 2, agent: "codex" } as never);
+    vi.mocked(api.deleteThread)
+      .mockResolvedValueOnce({ total: 1 })
+      .mockRejectedValueOnce(
+        new ApiError({
+          status: 503,
+          code: "OVERLOADED",
+          message: "overloaded",
+          detail: { retryable: true, retry_after_s: 3 },
+        }),
+      );
+    render(<ThreadActions identity={identity} thread={thread} canRename={false} canDelete onChanged={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    await waitFor(() =>
+      expect(toastErrorLine).toHaveBeenCalledWith(
+        'Deleted part of "Deploy plan" (2 messages are left), then failed: Loom is busy right now — overloaded. Try again in 3 s.',
+        expect.any(ApiError),
       ),
     );
   });

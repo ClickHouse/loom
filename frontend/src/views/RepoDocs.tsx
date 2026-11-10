@@ -17,11 +17,11 @@ import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
 import { deleteKnowledge, knowledgeReads, listKnowledge, type KnowledgeEntry } from "../api";
 import { ApiError } from "../lib/errors";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
 import { confirmAction } from "../components/ConfirmDialog";
 import { Skeleton } from "../components/Skeleton";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { ListTime, LoadingSkeleton } from "../components/ui";
 
 const RepoDocAddDialog = lazy(() => import("../flows/RepoDocDialogs").then((m) => ({ default: m.RepoDocAddDialog })));
@@ -78,7 +78,7 @@ export function RepoDocsList({
       } catch (e) {
         if (!live()) return;
         if (e instanceof ApiError && (e.status === 403 || e.status === 401)) setState({ kind: "refused" });
-        else setState({ kind: "error", message: humanizeError(e) });
+        else setState({ kind: "error", message: humanizeError(e, { read: true }) });
         return;
       }
       if (rows.length === 0) {
@@ -111,7 +111,7 @@ export function RepoDocsList({
       toast(`Removed ${doc.title || doc.source_uri}`, "ok");
       setNonce((n) => n + 1);
     } catch (e) {
-      toast(`Couldn't remove it: ${humanizeError(e)}`, "error");
+      toastError("Couldn't remove it", e);
     } finally {
       setRemoving(null);
     }

@@ -578,7 +578,7 @@ export default function App() {
         const note = sessionEndedNote();
         if (!storedToken() && (link?.token || linkRefused || (note && !signedOut() && sent)))
           useStore.getState().setGateReason(link?.token || linkRefused ? "refused" : note);
-        toastError("Auth bootstrap failed", e);
+        toastError("Auth bootstrap failed", e, { read: true });
         setAuthed(false);
       }
     })();

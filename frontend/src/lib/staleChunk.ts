@@ -11,6 +11,8 @@
 // is not a stale tab, so it falls through to the error boundary.
 
 const KEY = "loom_stale_chunk_reload_at";
+/** The error wording's module (lib/errorWords.ts), whose chunk the build names after it. */
+export const WORDING_CHUNK = "errorWords";
 /** A reload this recent means the chunk is missing from the current build too. */
 export const STALE_CHUNK_RETRY_WINDOW_MS = 30_000;
 
@@ -20,6 +22,10 @@ export function installStaleChunkReload(
   now: () => number = Date.now,
 ): void {
   win.addEventListener("vite:preloadError", (event: Event) => {
+    // The error wording's chunk has its own fallback (Toast.tsx toastError): a reload for it
+    // would lose the page, and the fallback toast with it. Known only where the browser's
+    // message names the file (Chrome, Firefox); Safari's does not, and reloads as before.
+    if (preloadErrorText(event).includes(WORDING_CHUNK)) return;
     let last = 0;
     try {
       last = Number(storage?.getItem(KEY) ?? 0) || 0;
@@ -43,4 +49,10 @@ function safeSessionStorage(): Storage | null {
   } catch {
     return null;
   }
+}
+
+/** The failed import's own words, which name the chunk's file. */
+function preloadErrorText(event: Event): string {
+  const payload = (event as Event & { payload?: unknown }).payload;
+  return payload instanceof Error ? payload.message : String(payload ?? "");
 }

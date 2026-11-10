@@ -31,9 +31,11 @@ import { useRowNav } from "../lib/useRowNav";
 import { useFold } from "../lib/folds";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
-import { humanizeError, isSystemKind, sentenceCase } from "../lib/format";
+import { isSystemKind, sentenceCase } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
+import { ApiError } from "../lib/errors";
 import { useAbortableEffect } from "../lib/hooks";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
@@ -183,7 +185,7 @@ export function Browse() {
       }
       setJoinDialog(null);
     } catch (e) {
-      toast(`Join failed: ${humanizeError(e)}`, "error");
+      toastError("Join failed", e);
     } finally {
       setJoining(null);
     }
@@ -237,7 +239,7 @@ export function Browse() {
       toast(`Withdrew request on ${ns}`, "ok");
       load();
     } catch (e) {
-      toast(`Cancel failed: ${humanizeError(e)}`, "error");
+      toastError("Cancel failed", e);
     }
   };
   const leave = async (ns: string) => {
@@ -255,7 +257,7 @@ export function Browse() {
       toast(`Left ${ns}`, "ok");
       load();
     } catch (e) {
-      toast(`Leave failed: ${humanizeError(e)}`, "error");
+      toastError("Leave failed", e);
     }
   };
   // The rows call the latest render's handlers through one object that keeps its identity,
@@ -879,10 +881,8 @@ function RequestAccessCard({
       }
       onSuccess();
     } catch (e) {
-      const raw = e instanceof Error ? e.message : String(e);
-      // post() throws "STATUS: <body>" — detect 404 to swap the
-      // raw JSON detail for a copy that tells the user what to do.
-      if (/^404[:\s]/.test(raw) || /RESOURCE_NOT_FOUND|does not exist/i.test(raw)) {
+      // A missing namespace gets a line that says what to do instead of the server's words.
+      if (e instanceof ApiError && (e.status === 404 || /does not exist/i.test(e.serverMessage))) {
         setError(
           `No namespace named "${typedName}" in ${org}. Check the spelling, or ask whoever shared it with you to confirm the exact name.`,
         );

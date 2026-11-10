@@ -364,7 +364,7 @@ export function Documents() {
       setRows((prev) => [...(prev || []), ...(r.rows || [])]);
       setNextCursor(r.next_cursor ?? null);
     } catch (e) {
-      if (scopeRef.current === scope) toastError("Load more failed", e);
+      if (scopeRef.current === scope) toastError("Load more failed", e, { read: true });
     } finally {
       // Always: a load for a scope the list has left must not leave the button spinning.
       setLoadingMore(false);
@@ -467,7 +467,7 @@ export function Documents() {
         r.original_filename || textDownloadName(r.source_uri),
       );
     } catch (e) {
-      toastError("Download failed", e);
+      toastError("Download failed", e, { read: true });
     }
   };
 
@@ -493,7 +493,7 @@ export function Documents() {
     const opened = ++openSeq.current;
     try {
       const docPromise = getKnowledge({ org: identity.org, namespace: identity.namespace }, r.source_uri).catch((e) => {
-        if (opened === openSeq.current) toastError("Open failed", e);
+        if (opened === openSeq.current) toastError("Open failed", e, { read: true });
         return null;
       });
       const blobPromise = r.has_blob
@@ -530,7 +530,7 @@ export function Documents() {
         else onMissing();
       })
       .catch((e) => {
-        if (!ac.signal.aborted) toastError("Open failed", e);
+        if (!ac.signal.aborted) toastError("Open failed", e, { read: true });
       });
   };
   // The deep-link effect, the rows and the passage panel call the latest render's handlers

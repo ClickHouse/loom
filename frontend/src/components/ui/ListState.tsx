@@ -1,7 +1,8 @@
 import { Button } from "@clickhouse/click-ui/Button";
 import type { IconName } from "@clickhouse/click-ui/Icon";
 import { useEffect, useState, type ReactNode } from "react";
-import { errorRequestId, humanizeError } from "../../lib/format";
+import { errorRequestId } from "../../lib/format";
+import { humanizeError } from "../../lib/errorWords";
 import { EmptyState } from "../EmptyState";
 
 /** Nothing exists yet: the big state, with its one action. */
@@ -56,8 +57,10 @@ export type ListStateProps = ListEmptyProps | ListFilteredProps | ListErrorProps
 export function ListState(props: ListStateProps) {
   if (props.kind === "filtered") return <FilteredState {...props} />;
   if (props.kind === "error") {
-    const message = typeof props.error === "string" ? props.error : humanizeError(props.error);
-    const rid = props.requestId ?? errorRequestId(props.error);
+    const message = typeof props.error === "string" ? props.error : humanizeError(props.error, { read: true });
+    const id = props.requestId ?? errorRequestId(props.error);
+    // An id the message already says (an internal error's) is not printed a second time.
+    const rid = id && !message.includes(id) ? id : "";
     // An alert, so a failure that replaces a skeleton or answers a Retry is announced.
     return (
       <div role="alert">

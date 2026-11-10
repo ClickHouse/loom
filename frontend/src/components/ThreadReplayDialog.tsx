@@ -15,8 +15,8 @@ import { Chip, ExternalLink, ListTime, Loading, SectionHeading } from "./ui";
 import { Modal } from "./ui/Modal";
 import { BusyButton } from "./ui/BusyButton";
 import { ListState } from "./ui/ListState";
-import { toast } from "./Toast";
-import { displayAgent, humanizeError } from "../lib/format";
+import { toastError } from "./Toast";
+import { displayAgent } from "../lib/format";
 import { AgentBadge } from "./AgentBadge";
 import { CopyButton } from "./CopyButton";
 import { SessionBriefPanel } from "./SessionBriefPanel";
@@ -297,7 +297,7 @@ export function ThreadReplayDialog({
       if (!next) focusTurn.current = r.rows.length > 0 ? turnId(r.rows[0]) : "";
     } catch (e) {
       if (signal.aborted) return;
-      toast(`Load more failed: ${humanizeError(e)}`, "error");
+      toastError("Load more failed", e, { read: true });
     } finally {
       if (!signal.aborted) setLoadingMore(false);
     }

@@ -11,7 +11,7 @@ import { toast, toastError } from "../components/Toast";
 import { CreateCollectionDialog, parentChoices } from "../flows/CreateCollectionDialog";
 import { MoveCollectionDialog } from "../flows/MoveCollectionDialog";
 import { MembersDialog } from "../flows/MembersDialog";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
 import { useStore } from "../lib/state";
 
@@ -287,7 +287,7 @@ export function LibraryCollections({
       {/* The namespace's documents still show: a note, not a second alert beside the list's. */}
       {!!error && (
         <p className="flex flex-wrap items-center gap-2 text-xs text-danger">
-          <span>Couldn't load collections: {humanizeError(error)}</span>
+          <span>Couldn't load collections: {humanizeError(error, { bare: true, read: true })}</span>
           <Button type="empty" htmlType="button" onClick={() => reload()}>
             Load collections again
           </Button>

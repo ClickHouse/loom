@@ -16,9 +16,9 @@ import {
 } from "../api";
 import { useStore, useIdentity } from "../lib/state";
 import { Skeleton } from "../components/Skeleton";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
-import { relativeTime, humanizeError, parseChTime } from "../lib/format";
+import { relativeTime, parseChTime } from "../lib/format";
 import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { canCallCodeRepos } from "../lib/canCall";
 import { Alert, ListTime, LoadingSkeleton, Tip } from "../components/ui";
@@ -178,7 +178,7 @@ export function TokensSection({
       toast("Revoked", "ok");
       reloadTokens();
     } catch (e) {
-      toast(`Failed: ${humanizeError(e)}`, "error");
+      toastError("Failed", e);
     }
   };
 
@@ -557,7 +557,7 @@ function TokenForm({
       setNewNs("");
       toast(`Created ${ns}; you are its admin`, "ok");
     } catch (e) {
-      toast(`Failed to create namespace: ${humanizeError(e)}`, "error");
+      toastError("Failed to create namespace", e);
     } finally {
       setAddingNs(false);
     }
@@ -588,7 +588,7 @@ function TokenForm({
       onCreated(await createToken({ name: name.trim() || undefined, namespaces, ttl_days: ttl }));
       setName("");
     } catch (e) {
-      toast(`Failed: ${humanizeError(e)}`, "error");
+      toastError("Failed", e);
     } finally {
       setBusy(false);
     }

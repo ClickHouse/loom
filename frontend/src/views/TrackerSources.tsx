@@ -22,7 +22,7 @@ import { Icon } from "@clickhouse/click-ui/Icon";
 import { useStore } from "../lib/state";
 import { patchEntry } from "../lib/place";
 import { useAbortableEffect } from "../lib/hooks";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { forgetSavedNamespace, getSavedNamespace, listTrackerSources, listMine, setSavedNamespace } from "../api";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { joinTarget, withdrawTarget, leaveTarget, type JoinTarget } from "../lib/joinActions";
@@ -93,7 +93,7 @@ export function useTrackerSources(org: string): {
       } catch (e) {
         if (!live()) return;
         if (isOpAbsent(e)) setStatus({ kind: "absent" });
-        else setStatus({ kind: "error", message: humanizeError(e) });
+        else setStatus({ kind: "error", message: humanizeError(e, { read: true }) });
       }
     },
     [org, may, nonce],

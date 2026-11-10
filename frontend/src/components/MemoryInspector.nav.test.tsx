@@ -219,8 +219,9 @@ describe("an entity on a memory opens in place", () => {
     await open();
     await userEvent.click(chip("rate limiting"));
     const pop = await screen.findByRole("dialog", { name: "Entity rate limiting" });
-    expect(await within(pop).findByText("Couldn't load the memories that mention it.")).toBeInTheDocument();
-    expect(await within(pop).findByText("Couldn't load neighbours.")).toBeInTheDocument();
+    // Each line says why, not only that it failed.
+    expect(await within(pop).findByText("Couldn't load the memories that mention it: down")).toBeInTheDocument();
+    expect(await within(pop).findByText("Couldn't load neighbours: down")).toBeInTheDocument();
     expect(within(pop).queryByText("Mentioned only in this memory")).toBeNull();
     expect(within(pop).queryByText("None recorded")).toBeNull();
   });

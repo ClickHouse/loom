@@ -5,10 +5,10 @@ import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { addKnowledge, cancelIngestion, type Identity, type IngestCancelResult } from "../api";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { TabTrigger } from "../components/ui/TabTrigger";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { FollowLost, fileVerdict, type IngestPhase, ingestFile, ingestStep } from "../lib/fileIngest";
 import { AllowPartial, IngestProgress, PickedFile, readableFormats, useKnowledgeFormats } from "./FileIngest";
 
@@ -223,7 +223,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
       toast(stopped(sourceUri.trim(), r), "info");
     } catch (e) {
       // The follow is stopped and the cancel may or may not have landed.
-      toast(`Stop failed (${humanizeError(e)}); ${sourceUri.trim()} may still be extracting`, "error");
+      toastError(`Stop failed (${sourceUri.trim()} may still be extracting)`, e);
     } finally {
       setStopping(false);
       reset();

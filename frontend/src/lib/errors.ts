@@ -26,6 +26,9 @@ export class ApiError extends Error {
   /** The parsed `detail` object, for callers that need an extra field
    *  (`current_sha256`, `retry_after_s`, …). */
   readonly detail: Record<string, unknown>;
+  /** Seconds from the `Retry-After` header, 0 when absent: some refusals (an auth store
+   *  that did not answer, a request with this key still running) send no body field. */
+  readonly retryAfter: number;
   /** The server refused the stored token on this call, which ended the session (`api.ts`
    *  request): whatever the refusal's words, it reads as an ended session. */
   sessionEnded = false;
@@ -36,6 +39,7 @@ export class ApiError extends Error {
     message?: string;
     requestId?: string;
     detail?: Record<string, unknown>;
+    retryAfter?: number;
   }) {
     super(opts.message || `HTTP ${opts.status}`);
     this.name = "ApiError";
@@ -44,6 +48,7 @@ export class ApiError extends Error {
     this.requestId = opts.requestId ?? "";
     this.serverMessage = opts.message ?? "";
     this.detail = opts.detail ?? {};
+    this.retryAfter = opts.retryAfter ?? 0;
   }
 }
 
@@ -115,5 +120,56 @@ export async function apiErrorFromResponse(r: Response): Promise<ApiError> {
     message: parsed.message,
     requestId: r.headers.get("X-Request-Id") ?? "",
     detail: parsed.detail,
+    retryAfter: Number(r.headers.get("Retry-After")) || 0,
   });
+}
+
+/** The line for a write that committed while only Loom's search copy of it lags
+ *  (`PUBLICATION_PENDING`, `server/core/pg_lease.py`). It names no verb (a delete answers it
+ *  too); the page may still show the old state, so it says what to do about that, and
+ *  nothing else: the server's words name its tables. Here, not in errorWords, so the toast
+ *  says it without the lazy wording chunk. */
+export const PUBLICATION_PENDING =
+  "Done, but lists and search have not caught up yet, so this page may still show the old state. Don't send it once more; reload in a moment to see the result.";
+
+/** A write that committed with only its search copy pending (`toastError` words it as done). */
+export function isPublicationPending(err: unknown): boolean {
+  return err instanceof ApiError && err.code === "PUBLICATION_PENDING";
+}
+
+/** The line for a call whose connection dropped before its answer came: a write may still
+ *  have committed. Here, not in errorWords, so the toast keeps it without the lazy chunk. */
+export const LOST_CONNECTION =
+  "Lost connection to Loom mid-request. The work may still have committed on the server — re-check the list before retrying.";
+
+/** The browsers' own words for a call that never got its answer ("Failed to fetch",
+ *  "Load failed", "NetworkError when attempting…", Chrome's "network error" on a cut body). */
+export function isLostConnection(text: string): boolean {
+  return /^(failed to fetch|fetch failed|load failed|networkerror|network error)\b/i.test(text);
+}
+
+/** The tail for a write a failure may have left behind. */
+export const MAY_HAVE_SAVED = "It may have been saved; check before trying again.";
+
+/** The line for a call the dashboard stopped waiting for: a write may still finish. */
+export const TIMED_OUT = "Loom didn't answer in time. It may still finish; check before trying again.";
+
+/** What a write's toast keeps when the wording cannot load: the one sentence that stops a
+ *  second write, for the failures that may have left the first one behind. */
+export function writeWarning(err: unknown): string {
+  const name = typeof err === "object" && err !== null && "name" in err ? String(err.name) : "";
+  const raw = err instanceof Error ? err.message : String(err);
+  if (isLostConnection(raw)) return LOST_CONNECTION;
+  if (name === "TimeoutError") return TIMED_OUT;
+  if (err instanceof ApiError && mayHaveSaved(err)) return MAY_HAVE_SAVED;
+  return "";
+}
+
+/** Whether a failed write may have landed: an ok answer whose body could not be read, or a
+ *  5xx not marked retryable (`handler_failure_detail`; a handler that raised partway, a
+ *  proxy's 502 or 504), unless the refusal was over the deployment's setup, which comes
+ *  before anything is written. One rule for the line and for the toast's fallback. */
+export function mayHaveSaved(err: ApiError): boolean {
+  if (err.detail.category === "configuration") return false;
+  return err.code === "ANSWER_UNREADABLE" || (err.status >= 500 && err.detail.retryable !== true);
 }

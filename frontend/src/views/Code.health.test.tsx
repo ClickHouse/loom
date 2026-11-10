@@ -4,6 +4,7 @@
  */
 import { act, cleanup, render, screen, waitFor } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "../lib/errors";
 import { HealthTab } from "./Code";
 
 const ST = {
@@ -51,9 +52,11 @@ describe("HealthTab: failed reads", () => {
     codeIndexErrors.mockRejectedValue(new Error("boom"));
     codeRecentCommits.mockRejectedValueOnce(new Error("boom"));
     render(<HealthTab id={{ org: "dev", namespace: "code-app" }} />);
-    expect(await screen.findByText("Couldn't load coverage.")).toBeInTheDocument();
-    expect(screen.getByText("Couldn't load the index errors.")).toBeInTheDocument();
-    expect(screen.getByText("Couldn't load the recent commits.")).toBeInTheDocument();
+    // Each line says why, not only that it failed.
+    expect(await screen.findByText("Couldn't load coverage: boom")).toBeInTheDocument();
+    expect(screen.getByText("Couldn't load coverage: boom")).toHaveAttribute("role", "alert");
+    expect(screen.getByText("Couldn't load the index errors: boom")).toBeInTheDocument();
+    expect(screen.getByText("Couldn't load the recent commits: boom")).toBeInTheDocument();
     expect(screen.queryByText("No commits recorded yet.")).toBeNull();
   });
 });
@@ -73,12 +76,34 @@ describe("HealthTab: a failed poll", () => {
       await act(async () => {
         vi.advanceTimersByTime(60_000);
       });
-      await waitFor(() => expect(screen.getByText(/Couldn't refresh the index status/)).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText(/couldn't refresh the index status/)).toBeInTheDocument());
       expect(screen.getByText(/generic profile/)).toBeInTheDocument();
       expect(screen.queryByText("Couldn't load index status")).toBeNull();
       // The sections read before keep their reads too.
-      expect(screen.queryByText("Couldn't load the index errors.")).toBeNull();
-      expect(screen.queryByText("Couldn't load the recent commits.")).toBeNull();
+      expect(screen.queryByText(/Couldn't load the index errors/)).toBeNull();
+      expect(screen.queryByText(/Couldn't load the recent commits/)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the first failure's line while a section keeps failing, so its alert is not said again", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const down = (id: string) =>
+        new ApiError({ status: 503, message: "the index store did not answer", requestId: id });
+      codeCoverage.mockRejectedValueOnce(down("req-1")).mockRejectedValueOnce(down("req-2"));
+      codeIndexErrors.mockResolvedValue({ rows: [], total: 0 });
+      codeRecentCommits.mockResolvedValue({ rows: [] });
+      render(<HealthTab id={{ org: "dev", namespace: "code-app" }} />);
+      const line = await screen.findByText(/^Couldn't load coverage: .*req-1/);
+      const reads = codeCoverage.mock.calls.length;
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      await waitFor(() => expect(codeCoverage.mock.calls.length).toBeGreaterThan(reads));
+      expect(line).toHaveTextContent(/req-1/);
+      expect(screen.queryByText(/req-2/)).toBeNull();
     } finally {
       vi.useRealTimers();
     }

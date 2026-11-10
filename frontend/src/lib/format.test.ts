@@ -1,15 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError } from "./errors";
 import {
   _formatterCacheSize,
   absoluteTime,
   dayLabel,
   daysLeftToRestore,
   displaySubject,
-  errorRequestId,
   formatBytesShort,
   refreshDetail,
-  humanizeError,
   isServiceSubject,
   relativeTime,
   restoreText,
@@ -40,140 +37,6 @@ describe("displaySubject", () => {
   it("falls back to `Service account` when no client name is left", () => {
     expect(displaySubject("sa:")).toBe("Service account");
     expect(displaySubject("sa:-abcdef")).toBe("Service account");
-  });
-});
-
-describe("humanizeError", () => {
-  it("names the unknown", () => {
-    expect(humanizeError(null)).toBe("Unknown error");
-    expect(humanizeError("")).toBe("Unknown error");
-  });
-
-  it("swaps a known code prefix for its sentence and keeps the detail", () => {
-    expect(humanizeError(new Error("AUTH_INVALID: token expired"))).toBe("Sign-in rejected: token expired");
-    expect(humanizeError("VALIDATION: seed must not be empty")).toBe("Input rejected: seed must not be empty");
-  });
-
-  // An ApiError maps by code, then status, then the server's message — and the raw
-  // response body never reaches the screen.
-  describe("ApiError", () => {
-    it("words the upload's refusals, for when the format list could not check the file first", () => {
-      expect(
-        humanizeError(
-          new ApiError({ status: 413, code: "PAYLOAD_TOO_LARGE", message: "the file is over 26214400 bytes" }),
-        ),
-      ).toBe("Too large: the file is over 26214400 bytes");
-      expect(
-        humanizeError(new ApiError({ status: 415, code: "UNSUPPORTED_FILE", message: ".doc files are not supported" })),
-      ).toBe("This file type is not read: .doc files are not supported");
-    });
-
-    it("maps the server code first", () => {
-      expect(
-        humanizeError(
-          new ApiError({ status: 403, code: "AUTH_INSUFFICIENT", message: "principal 'v' cannot access dev/x" }),
-        ),
-      ).toBe("You don't have permission for this on this namespace. principal 'v' cannot access dev/x");
-      expect(
-        humanizeError(new ApiError({ status: 401, code: "AUTH_INVALID", message: "Invalid email or password." })),
-      ).toBe("Sign-in rejected: Invalid email or password.");
-      // A refusal keeps its words unless it ended the session (the flag), and a call sent
-      // after another tab took the token reads as the ended session.
-      expect(
-        humanizeError(new ApiError({ status: 401, code: "AUTH_INVALID", message: "token jti 'j1' is revoked" })),
-      ).toBe("Sign-in rejected: token jti 'j1' is revoked");
-      expect(humanizeError(new ApiError({ status: 401, code: "AUTH_INVALID", message: "missing bearer token" }))).toBe(
-        "Your session ended — sign in again.",
-      );
-      // Any refusal that ended the session reads the same, whatever its words.
-      const ended = new ApiError({
-        status: 401,
-        code: "AUTH_INVALID",
-        message: "invalid token: Signature verification failed",
-      });
-      ended.sessionEnded = true;
-      expect(humanizeError(ended)).toBe("Your session ended — sign in again.");
-      // A call raced by the person's own sign-in in another tab: nothing to do but retry.
-      expect(humanizeError(new ApiError({ status: 401, code: "SIGNED_IN_ELSEWHERE" }))).toBe(
-        "Signed in elsewhere — retry.",
-      );
-      // With auth off, or behind a proxy, there is no session to sign in to.
-      for (const flag of ["__LOOM_AUTH_DISABLED", "__LOOM_PROXY_AUTH"] as const) {
-        window[flag] = true;
-        try {
-          expect(
-            humanizeError(new ApiError({ status: 401, code: "AUTH_INVALID", message: "missing bearer token" })),
-          ).toBe("Sign-in rejected: missing bearer token");
-        } finally {
-          delete window[flag];
-        }
-      }
-      expect(
-        humanizeError(
-          new ApiError({ status: 429, code: "RATE_LIMITED", message: "namespace 'x' exceeded memory.set rate limit" }),
-        ),
-      ).toBe("Slow down — too many requests recently. namespace 'x' exceeded memory.set rate limit");
-      expect(
-        humanizeError(new ApiError({ status: 422, code: "VALIDATION_FAILED", message: "namespace: field required" })),
-      ).toBe("Input rejected: namespace: field required");
-    });
-
-    it("falls back to the HTTP status for an unknown code", () => {
-      expect(humanizeError(new ApiError({ status: 403, code: "SOME_NEW_CODE", message: "nope" }))).toBe(
-        "You don't have permission for this. nope",
-      );
-      expect(humanizeError(new ApiError({ status: 404, message: "Not Found" }))).toBe("Couldn't find it. Not Found");
-      expect(humanizeError(new ApiError({ status: 500 }))).toBe("Loom hit a server error.");
-      expect(humanizeError(new ApiError({ status: 503, code: "", message: "" }))).toBe(
-        "Loom is unavailable right now — try again in a moment.",
-      );
-      expect(humanizeError(new ApiError({ status: 418 }))).toBe("Request failed (HTTP 418).");
-    });
-
-    it("names the code when the server sent one without a message", () => {
-      expect(humanizeError(new ApiError({ status: 409, code: "PINNED_CONFLICT", message: "" }))).toBe(
-        "Conflict — something changed underneath this request: PINNED_CONFLICT",
-      );
-    });
-
-    it("words a typed error from its code and message", () => {
-      const denied = new ApiError({
-        status: 403,
-        code: "AUTH_INSUFFICIENT",
-        message: "principal cannot access dev/x",
-      });
-      expect(humanizeError(denied)).toBe(
-        "You don't have permission for this on this namespace. principal cannot access dev/x",
-      );
-      expect(
-        humanizeError(new ApiError({ status: 401, code: "AUTH_INVALID", message: "Invalid email or password." })),
-      ).toBe("Sign-in rejected: Invalid email or password.");
-    });
-
-    it("exposes the request id for the support line", () => {
-      expect(errorRequestId(new ApiError({ status: 500, requestId: "req-1" }))).toBe("req-1");
-      expect(errorRequestId(new Error("boom"))).toBe("");
-      expect(errorRequestId(null)).toBe("");
-    });
-  });
-
-  it("returns the sentence alone when the code has no detail", () => {
-    expect(humanizeError("NOT_FOUND")).toBe("Couldn't find it.");
-  });
-
-  it("names a lost connection for the browser's bare network errors", () => {
-    const lost =
-      "Lost connection to Loom mid-request. The work may still have committed on the server — re-check the list before retrying.";
-    expect(humanizeError(new TypeError("Failed to fetch"))).toBe(lost);
-    expect(humanizeError("fetch failed")).toBe(lost);
-    expect(humanizeError("Load failed")).toBe(lost);
-    expect(humanizeError("NetworkError when attempting to fetch resource.")).toBe(lost);
-  });
-
-  it("passes an unknown code and plain text through unchanged", () => {
-    expect(humanizeError("SOMETHING_ELSE: detail")).toBe("SOMETHING_ELSE: detail");
-    expect(humanizeError("plain message")).toBe("plain message");
-    expect(humanizeError("inline-fetch failed (404)")).toBe("inline-fetch failed (404)");
   });
 });
 

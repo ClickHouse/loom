@@ -6,6 +6,8 @@ import { render, screen, fireEvent, waitFor } from "../test/rtl";
 import { MembersDialog } from "./MembersDialog";
 import { useStore } from "../lib/state";
 import * as api from "../api";
+import { ApiError } from "../lib/errors";
+import { ToastViewport } from "../components/Toast";
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
@@ -117,5 +119,46 @@ describe("MembersDialog approves a requester on every waiting branch at once", (
       ["reader-a", "viewer"],
       ["reader-b", "viewer"],
     ]);
+  });
+
+  it("says a refusal of every branch as one failure", async () => {
+    const refused = () =>
+      new ApiError({ status: 403, code: "AUTH_INSUFFICIENT", message: "admin needed", detail: { category: "auth" } });
+    vi.mocked(api.approveGrant).mockRejectedValueOnce(refused());
+    render(
+      <>
+        <ToastViewport />
+        <MembersDialog open onOpenChange={noop} org="clickhouse" namespace="code-example-private" kind="code" />
+      </>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^Approve as reader$/ }));
+    expect(
+      await screen.findByText("Couldn't approve reporter-private: Your role doesn't allow this — admin needed."),
+    ).toBeInTheDocument();
+  });
+
+  it("says how far a fan-out got before it failed", async () => {
+    vi.mocked(api.approveGrant)
+      .mockResolvedValueOnce({} as never)
+      .mockRejectedValueOnce(new ApiError({ status: 403, code: "AUTH_INSUFFICIENT", message: "admin needed" }));
+    render(
+      <>
+        <ToastViewport />
+        <MembersDialog
+          open
+          onOpenChange={noop}
+          org="clickhouse"
+          namespace="code-example-private-26-5"
+          kind="code"
+          pendingElsewhere={elsewhere}
+        />
+      </>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Approve as reader on 3 branches/ }));
+    expect(
+      await screen.findByText(
+        "Approved reporter-private on 2 of 3 branches; the rest failed: Your role doesn't allow this — admin needed.",
+      ),
+    ).toBeInTheDocument();
   });
 });

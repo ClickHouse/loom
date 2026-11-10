@@ -16,7 +16,6 @@ import {
   type SettingRow,
 } from "../../api";
 import { EmptyState } from "../../components/EmptyState";
-import { humanizeError } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { ListPager, usePageSize } from "../../components/ui/ListPager";
 import { ListState } from "../../components/ui/ListState";
@@ -24,7 +23,7 @@ import { ListTime } from "../../components/ui/ListTime";
 import { ListToolbar } from "../../components/ui/ListToolbar";
 import { BusyButton } from "../../components/ui/BusyButton";
 import { TableSkeleton } from "../../components/Skeleton";
-import { toast } from "../../components/Toast";
+import { toast, toastError } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { PageContainer } from "../../layout/PageContainer";
 import { PageHeader, SectionHeading } from "../../components/ui";
@@ -257,7 +256,7 @@ function SettingsTable({ rows, onChanged }: { rows: SettingRow[]; onChanged: () 
       close(row.name, true);
       onChanged();
     } catch (e) {
-      toast(`${row.name} not changed: ${humanizeError(e)}`, "error");
+      toastError(`${row.name} not changed`, e);
     } finally {
       setBusy(false);
     }
@@ -276,7 +275,7 @@ function SettingsTable({ rows, onChanged }: { rows: SettingRow[]; onChanged: () 
       setFocusNext({ id: controlId("change", row.name), after: rows });
       onChanged();
     } catch (e) {
-      toast(`${row.name} not reset: ${humanizeError(e)}`, "error");
+      toastError(`${row.name} not reset`, e);
     }
   };
 

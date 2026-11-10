@@ -14,13 +14,13 @@ import {
 } from "../api";
 import { useStore } from "../lib/state";
 import { holdsAdminGrant } from "../lib/role";
-import { toast } from "../components/Toast";
+import { toast, toastError, toastErrorLine } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { fieldError, ListTime, Loading, Tip } from "../components/ui";
 import { ListState } from "../components/ui/ListState";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { oneOf } from "../lib/oneOf";
 
 interface Props {
@@ -163,7 +163,7 @@ export function MembersDialog({
       toast(`${subject} → ${role}`, "ok");
       load();
     } catch (e) {
-      toast(`Update failed: ${humanizeError(e)}`, "error");
+      toastError("Update failed", e);
     } finally {
       setBusy(null);
     }
@@ -186,7 +186,7 @@ export function MembersDialog({
       toast(`Removed ${subject}`, "ok");
       load();
     } catch (e) {
-      toast(`Remove failed: ${humanizeError(e)}`, "error");
+      toastError("Remove failed", e);
     } finally {
       setBusy(null);
     }
@@ -215,8 +215,11 @@ export function MembersDialog({
     const verb = decision === "approve" ? "Approved" : "Rejected";
     if (ok === targets.length) {
       toast(targets.length > 1 ? `${verb} ${subject} on ${ok} branches` : `${verb} ${subject}`, "ok");
+    } else if (ok === 0) {
+      toastError(`Couldn't ${decision} ${subject}`, firstError);
     } else {
-      toast(`${verb} ${subject} on ${ok} of ${targets.length} branches — ${humanizeError(firstError)}`, "error");
+      const msg = `${verb} ${subject} on ${ok} of ${targets.length} branches; the rest failed: ${humanizeError(firstError, { bare: true })}`;
+      toastErrorLine(msg, firstError);
     }
     setBusy(null);
     load();
@@ -341,7 +344,7 @@ export function MembersDialog({
                             toast(`Withdrew ${r.requested_role} request`, "ok");
                             load();
                           } catch (e) {
-                            toast(`Cancel failed: ${humanizeError(e)}`, "error");
+                            toastError("Cancel failed", e);
                           } finally {
                             setBusy(null);
                           }

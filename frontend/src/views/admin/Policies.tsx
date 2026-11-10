@@ -29,9 +29,10 @@ import { Panel } from "../../components/ui/Panel";
 import { Skeleton, SkeletonCard } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
 import { ScopeBadge } from "../../components/ScopeBadge";
-import { toast } from "../../components/Toast";
+import { toast, toastError } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
-import { humanizeError, sentenceCase } from "../../lib/format";
+import { sentenceCase } from "../../lib/format";
+import { humanizeError } from "../../lib/errorWords";
 import { AgentBadge } from "../../components/AgentBadge";
 import { useAbortableEffect } from "../../lib/hooks";
 import { PageContainer } from "../../layout/PageContainer";
@@ -197,7 +198,7 @@ function parseJsonObject(text: string, what: string): Record<string, unknown> {
   try {
     v = JSON.parse(text);
   } catch (e) {
-    throw new Error(`${what} is not valid JSON: ${humanizeError(e)}`);
+    throw new Error(`${what} is not valid JSON: ${humanizeError(e, { bare: true })}`);
   }
   if (!isRecord(v)) throw new Error(`${what} must be a JSON object`);
   return v;
@@ -266,7 +267,7 @@ export function Policies() {
       toast("Rule deleted", "ok");
       setReads((n) => n + 1);
     } catch (e) {
-      toast(`Failed: ${humanizeError(e)}`, "error");
+      toastError("Failed", e);
     }
   };
 

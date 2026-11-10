@@ -7,8 +7,7 @@ import { useIdentity, useStore } from "../../lib/state";
 import { useNamespaceRole } from "../../lib/namespaceRole";
 import { canCall } from "../../lib/canCall";
 import { useAbortableEffect } from "../../lib/hooks";
-import { humanizeError } from "../../lib/format";
-import { toast } from "../../components/Toast";
+import { toast, toastError } from "../../components/Toast";
 import { AgentBadge } from "../../components/AgentBadge";
 import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";
@@ -72,7 +71,7 @@ export function ProposalsPanel() {
         toast("Accepted; it contradicts another fact, so it waits in Conflicts", "ok");
       else toast(decision === "accept" ? "Accepted" : "Rejected", "ok");
     } catch (e) {
-      toast(`Decision failed: ${humanizeError(e)}`, "error");
+      toastError("Decision failed", e);
     } finally {
       setBusy(false);
     }

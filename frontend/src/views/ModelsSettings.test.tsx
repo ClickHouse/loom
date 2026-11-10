@@ -10,6 +10,7 @@ import {
   type ModelStatus,
 } from "../api/models";
 import { ModelsSettings } from "./ModelsSettings";
+import { ApiError } from "../lib/errors";
 
 vi.mock("../api/models", async (original) => ({
   ...(await original<typeof import("../api/models")>()),
@@ -116,5 +117,52 @@ describe("Saving", () => {
     render(<ModelsSettings />);
     fireEvent.click(await screen.findByRole("button", { name: "Test & apply" }));
     await screen.findByText("Saved. Loom is using the new configuration.");
+  });
+});
+
+describe("Failed reads and writes", () => {
+  it("says why the settings could not load instead of blaming the role", async () => {
+    vi.mocked(getModelStatus).mockRejectedValue(
+      new ApiError({
+        status: 503,
+        code: "BACKEND_UNAVAILABLE",
+        message: "ClickHouse did not answer",
+        detail: { category: "dependency", retryable: true },
+      }),
+    );
+    render(<ModelsSettings />);
+    expect(
+      await screen.findByText("Couldn't load model settings: ClickHouse did not answer. Try again in a moment."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Platform administrator access is required/)).toBeNull();
+  });
+
+  it("says why a reset was refused", async () => {
+    vi.mocked(resetModelConfiguration).mockRejectedValue(
+      new ApiError({
+        status: 503,
+        code: "MODEL_CHANGE_IN_PROGRESS",
+        message: "another model change is being applied",
+        detail: { category: "capacity", retryable: true, retry_after_s: 5 },
+      }),
+    );
+    render(<ModelsSettings />);
+    fireEvent.click(await screen.findByRole("button", { name: "Use environment configuration" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm environment configuration" }));
+    expect(
+      await screen.findByText(
+        "Couldn't reset model settings: another model change is being applied. Try again in 5 s.",
+      ),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("A reset whose connection dropped", () => {
+  it("keeps the warning that the reset may have gone through", async () => {
+    vi.mocked(resetModelConfiguration).mockRejectedValue(new TypeError("Failed to fetch"));
+    render(<ModelsSettings />);
+    fireEvent.click(await screen.findByRole("button", { name: "Use environment configuration" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm environment configuration" }));
+    expect(await screen.findByText(/Couldn't reset model settings: .*may still have committed/)).toBeInTheDocument();
   });
 });

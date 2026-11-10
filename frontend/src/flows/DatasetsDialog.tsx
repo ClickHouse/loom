@@ -4,9 +4,9 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { approveDataset, DATASET_TYPES, getDatasets, type Dataset, type DatasetType, type Identity } from "../api";
 import { ApiError } from "../lib/errors";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, Loading, SectionHeading } from "../components/ui";
 
@@ -46,7 +46,7 @@ export function DatasetsDialog({
   );
   return (
     <Modal open onOpenChange={(v) => !v && onClose()} title="Tables" className="w-full max-w-[720px]">
-      {!!error && <Alert role="alert" state="danger" text={humanizeError(error)} />}
+      {!!error && <Alert role="alert" state="danger" text={humanizeError(error, { read: true })} />}
       {!error && read === null && <Loading label="Loading the tables" />}
       {read && !read.found && <p className="text-sm text-text-muted">This document is no longer here.</p>}
       {read?.found && read.datasets.length === 0 && (
@@ -102,7 +102,7 @@ function DatasetCard({
       if (e instanceof ApiError && e.code === "PRECONDITION_FAILED") {
         toast(`${d.name} changed meanwhile; here it is as it is now`, "info");
         onChanged();
-      } else toast(`Approve failed: ${humanizeError(e)}`, "error");
+      } else toastError("Approve failed", e);
     } finally {
       setBusy(false);
     }

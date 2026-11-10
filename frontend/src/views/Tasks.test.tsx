@@ -952,7 +952,7 @@ describe("Tasks page", () => {
       await act(async () => {
         vi.advanceTimersByTime(60_000);
       });
-      await waitFor(() => expect(screen.getByText(/Couldn't refresh the tasks/)).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText(/couldn't refresh the tasks/)).toBeInTheDocument());
       expect(screen.getByRole("row", { name: "Task urgent" })).toBeInTheDocument();
       expect(screen.queryByText("Couldn't load tasks")).toBeNull();
     } finally {

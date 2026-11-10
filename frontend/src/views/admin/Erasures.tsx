@@ -20,7 +20,8 @@ import { hasAdminClaim, hasOrgAdminClaim, hasWriterClaim } from "../../lib/role"
 import { useNamespaceRole } from "../../lib/namespaceRole";
 import { useAbortableEffect } from "../../lib/hooks";
 import { ApiError } from "../../lib/errors";
-import { humanizeError, listTime } from "../../lib/format";
+import { listTime } from "../../lib/format";
+import { humanizeError } from "../../lib/errorWords";
 import { NameBadge } from "../../components/AgentBadge";
 import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";
@@ -357,7 +358,7 @@ function ErasureDetails({ erasureId, onClose }: { erasureId: string; onClose: ()
   const residue = Object.entries(status?.residue ?? {}).filter(([, n]) => n > 0);
   return (
     <Modal open onOpenChange={(v) => !v && onClose()} title="Erasure details" className="w-full max-w-[560px]">
-      {!!error && <Alert role="alert" state="danger" text={humanizeError(error)} />}
+      {!!error && <Alert role="alert" state="danger" text={humanizeError(error, { read: true })} />}
       {!error && status === null && <Loading label="Loading erasure" />}
       {status && !status.found && <Alert state="warning" text="This erasure is no longer recorded." />}
       {status?.found && (

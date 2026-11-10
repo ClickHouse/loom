@@ -13,9 +13,8 @@ import {
 } from "../api";
 import { useStore } from "../lib/state";
 import { canUpdateNamespace, isNamespaceAdmin } from "../lib/role";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
-import { humanizeError } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { oneOf } from "../lib/oneOf";
 import { Modal } from "../components/ui/Modal";
@@ -110,7 +109,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
         setDescDirty(false);
       }
     } catch (e) {
-      toast(`Save failed: ${humanizeError(e)}`, "error");
+      toastError("Save failed", e);
     } finally {
       setSaving(false);
     }
@@ -149,7 +148,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
         toast(`Namespace already inactive or not found`, "info");
       }
     } catch (e) {
-      toast(`Delete failed: ${humanizeError(e)}`, "error");
+      toastError("Delete failed", e);
     } finally {
       setSaving(false);
     }

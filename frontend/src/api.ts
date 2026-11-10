@@ -190,7 +190,7 @@ export async function whoami(asToken?: string): Promise<WhoAmI> {
   // Behind a proxy a refusal is the proxy's own 401 or 403: signed out, as before.
   if (PROXY_MODE && (r.status === 401 || r.status === 403)) return { authenticated: false };
   if (!r.ok) throw await apiErrorFromResponse(r);
-  return r.json();
+  return readJson(r);
 }
 
 export interface MemoryListEntry {
@@ -385,8 +385,23 @@ async function send(
   return r;
 }
 
+/** An ok answer's JSON body. A body that is not JSON (a proxy's page in place of Loom's
+ *  answer) is an ApiError that says so, not the parser's words: the dashboard passes a
+ *  SyntaxError through only for text the person typed or a file they picked. */
+async function readJson<T>(r: Response): Promise<T> {
+  try {
+    return (await r.json()) as T;
+  } catch (e) {
+    // Only the parser's refusal is a body that is not JSON; anything else (a cut body, an
+    // abort) keeps its own name. A DOMException is not an Error in every engine.
+    if (typeof e !== "object" || e === null || !("name" in e) || e.name !== "SyntaxError") throw e;
+    // The status was ok, so a write may well have committed: errorWords says so to a writer.
+    throw new ApiError({ status: r.status, code: "ANSWER_UNREADABLE", requestId: r.headers.get("X-Request-Id") ?? "" });
+  }
+}
+
 export async function post<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
-  return (await request("POST", path, body, signal)).json();
+  return readJson(await request("POST", path, body, signal));
 }
 
 /** POST JSON and answer the ok Response unread, for a body that streams (the assistant's
@@ -405,12 +420,12 @@ export async function postStreaming(
 /** POST a file's bytes as the body (`/v1/knowledge.upload?...`), parsed as JSON. Pass a
  *  `signal` for a large file: without one the call is bounded like any other. */
 export async function postFile<T>(path: string, file: Blob, signal?: AbortSignal): Promise<T> {
-  return (await request("POST", path, file, signal)).json();
+  return readJson(await request("POST", path, file, signal));
 }
 
 /** A GET read on the shared request path, parsed as JSON. */
 export async function getJson<T>(path: string, opts: RequestOpts = {}): Promise<T> {
-  return (await request("GET", path, undefined, opts.signal)).json();
+  return readJson(await request("GET", path, undefined, opts.signal));
 }
 
 /** A GET whose body is not JSON (a download): the ok Response, for the caller to read. */
@@ -1151,7 +1166,7 @@ export async function loginWithPassword(identifier: string, password: string): P
     signal: boundedSignal(),
   });
   if (!r.ok) throw await apiErrorFromResponse(r);
-  return r.json();
+  return readJson(r);
 }
 
 // Admin claim-release: revoke the grants on a namespace whose owner lost their token and
@@ -1185,7 +1200,7 @@ export async function selfSignup(
   });
   if (r.status === 404) return null; // self-signup disabled
   if (!r.ok) throw await apiErrorFromResponse(r);
-  return r.json();
+  return readJson(r);
 }
 
 export interface MyNamespaceEntry {

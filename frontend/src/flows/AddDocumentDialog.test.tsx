@@ -20,8 +20,9 @@ vi.mock("../api", async (importOriginal) => ({
 vi.mock("../components/Toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../components/Toast")>()),
   toast: vi.fn(),
+  toastError: vi.fn(),
 }));
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import {
   type KnowledgeUpload,
   addKnowledge,
@@ -265,9 +266,9 @@ describe("AddDocumentDialog", () => {
     await user.click(within(dialog).getByRole("button", { name: "Upload" }));
     await user.click(await within(dialog).findByRole("button", { name: "Stop ingestion" }));
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
-    expect(vi.mocked(toast).mock.calls.at(-1)).toEqual([
-      "Stop failed (down); spec.pdf may still be extracting",
-      "error",
+    expect(vi.mocked(toastError).mock.calls.at(-1)).toEqual([
+      "Stop failed (spec.pdf may still be extracting)",
+      expect.objectContaining({ message: "down" }),
     ]);
     expect(onAdded).not.toHaveBeenCalled();
   });

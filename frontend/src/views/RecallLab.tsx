@@ -15,7 +15,8 @@ import { ScopeBadge } from "../components/ScopeBadge";
 import { Chip, ListTime, Loading, PageHeader, TabTrigger, TipTarget } from "../components/ui";
 import { ListState } from "../components/ui/ListState";
 import { ListToolbar } from "../components/ui/ListToolbar";
-import { humanizeError, displayAgent, previewValue, SENSITIVE_LABEL } from "../lib/format";
+import { displayAgent, previewValue, SENSITIVE_LABEL } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
 import { signed, termText, whyTerms } from "../lib/whyNote";
 
@@ -435,7 +436,7 @@ export function RecallLab() {
         const [r, failure] = await (kw?.entries.length
           ? search.then(
               (res) => [res, null] as const,
-              (e: unknown) => [null, humanizeError(e)] as const,
+              (e: unknown) => [null, humanizeError(e, { bare: true, read: true })] as const,
             )
           : search.then((res) => [res, null] as const));
         if (ac.signal.aborted) return;

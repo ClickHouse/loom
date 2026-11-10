@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
 import { deleteBrief, listBriefs, type BriefSummary } from "../api/briefs";
 import { canCall } from "../lib/canCall";
-import { humanizeError } from "../lib/format";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { useStore } from "../lib/state";
 import { confirmAction } from "./ConfirmDialog";
 import { IconButton } from "./IconButton";
-import { toast } from "./Toast";
+import { toastError } from "./Toast";
 import { useFold } from "../lib/folds";
 import { Panel, SectionHeading } from "./ui";
 import { SessionBriefPanel } from "./SessionBriefPanel";
@@ -36,7 +35,7 @@ export function SessionBriefsSection({ org, namespace }: { org: string; namespac
       await deleteBrief({ org, namespace }, b.brief_key);
       setBriefs((all) => all.filter((x) => x.brief_key !== b.brief_key));
     } catch (e) {
-      toast(`Couldn't forget the brief: ${humanizeError(e)}`, "error");
+      toastError("Couldn't forget the brief", e);
     }
   };
   useEffect(() => {

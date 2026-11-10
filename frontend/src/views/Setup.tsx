@@ -15,8 +15,7 @@ import {
 import { useStore, useIdentity } from "../lib/state";
 import { shouldShowGettingStarted } from "../lib/onboarding";
 import { GettingStarted, useOnboarding } from "../components/GettingStarted";
-import { toast } from "../components/Toast";
-import { humanizeError } from "../lib/format";
+import { toast, toastError } from "../components/Toast";
 import { PrivacyFilters, type PrivacyFilterStarter } from "./admin/Blacklist";
 import { canCall } from "../lib/canCall";
 import { PageContainer } from "../layout/PageContainer";
@@ -356,7 +355,7 @@ function ImportCuratedPanel() {
       const tone = r.rejected > 0 ? "error" : r.written > 0 ? "ok" : "info";
       toast(`Import: ${r.written} written · ${r.merged} merged · ${r.rejected} rejected · ${r.skipped} skipped`, tone);
     } catch (e) {
-      toast(`Import failed: ${humanizeError(e)}`, "error");
+      toastError("Import failed", e);
     } finally {
       setSubmitting(false);
     }

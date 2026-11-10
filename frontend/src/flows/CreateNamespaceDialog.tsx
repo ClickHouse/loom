@@ -8,7 +8,7 @@ import { toast } from "../components/Toast";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, fieldError } from "../components/ui";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { NAMESPACE_NAME } from "../lib/namespace";
 
 interface Props {

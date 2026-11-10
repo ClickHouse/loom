@@ -9,7 +9,7 @@ import type { BlacklistRow, MyNamespaceEntry, WhoAmI } from "../../api";
 import { useStore } from "../../lib/state";
 import { resetNamespaceRoleCache } from "../../lib/namespaceRole";
 import { confirmAction } from "../../components/ConfirmDialog";
-import { toast } from "../../components/Toast";
+import { toast, toastError } from "../../components/Toast";
 import { Blacklist, PrivacyFilters } from "./Blacklist";
 
 vi.mock("../../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
@@ -71,7 +71,12 @@ describe("PrivacyFilters sweep", () => {
       .mockResolvedValueOnce({ matched: 5000, tombstoned: 5000, truncated: true, error: "" });
     render(<PrivacyFilters />);
     await sweepOf("secret-p1");
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("Sweep failed: the pattern no longer compiles", "error"));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        "Sweep failed",
+        expect.objectContaining({ message: "the pattern no longer compiles" }),
+      ),
+    );
     await sweepOf("secret-p1");
     await waitFor(() => expect(toast).toHaveBeenCalledWith("No stored memory in team matches this pattern", "info"));
     await sweepOf("secret-p1");

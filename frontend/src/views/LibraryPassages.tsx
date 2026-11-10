@@ -10,7 +10,8 @@ import { type Identity, type KnowledgeHit, searchKnowledge } from "../api";
 import { Alert } from "../components/ui/Alert";
 import { BusyButton } from "../components/ui/BusyButton";
 import { ListRow } from "../components/ui/ListRow";
-import { humanizeError, truncate } from "../lib/format";
+import { truncate } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { citation } from "../lib/locator";
 import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { useRowNav } from "../lib/useRowNav";
@@ -119,7 +120,7 @@ export function LibraryPassages({
       }
     } catch (e) {
       // The hits it would have replaced stay (a failed Show more, say).
-      if (!ctrl.signal.aborted) setError(humanizeError(e));
+      if (!ctrl.signal.aborted) setError(humanizeError(e, { read: true }));
     } finally {
       if (!ctrl.signal.aborted) setBusy(false);
     }

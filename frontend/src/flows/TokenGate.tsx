@@ -10,7 +10,8 @@ import { TabTrigger } from "../components/ui/TabTrigger";
 import { selfSignup, setToken, loginWithPassword } from "../api";
 import { SIGN_IN_FROM, markSignInStarted, type TokenClaims } from "../lib/boot";
 import { goToSso } from "../lib/navigation";
-import { errorRequestId, humanizeError } from "../lib/format";
+import { errorRequestId } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import type { GateReason } from "../lib/state";
 import { Alert } from "../components/ui";
 
@@ -237,7 +238,8 @@ function PasswordGate({ onLogin, reason = null }: TokenGateProps) {
       setToken(r.token);
       onLogin();
     } catch (e) {
-      setErr(humanizeError(e));
+      // A sign-in leaves nothing behind to check: trying again is the next step.
+      setErr(humanizeError(e, { read: true }));
       setErrRequestId(errorRequestId(e));
     } finally {
       setBusy(false);
@@ -405,7 +407,9 @@ function PasswordGate({ onLogin, reason = null }: TokenGateProps) {
             text={
               <>
                 {err}
-                {errRequestId && <div className="mt-1 font-mono">request id {errRequestId}</div>}
+                {errRequestId && !String(err).includes(errRequestId) && (
+                  <div className="mt-1 font-mono">request id {errRequestId}</div>
+                )}
               </>
             }
           />

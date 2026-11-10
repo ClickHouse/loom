@@ -2,9 +2,9 @@ import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { createThreadRow, deleteThread, getConversationThread, renameThread, type Identity } from "../api";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { confirmAction } from "../components/ConfirmDialog";
-import { toast } from "../components/Toast";
+import { toast, toastErrorLine } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { RowMenu, type RowMenuItem } from "../components/ui/RowMenu";
 import { Alert } from "../components/ui";
@@ -46,9 +46,11 @@ export function ThreadActions({
     if (!ok) return;
     const r = await deleteEveryAgent(identity, thread);
     if (r.error) {
-      const why = humanizeError(r.error);
-      const rest = r.left ? `; ${r.left} messages are left` : "";
-      toast(r.parts ? `Deleted part of "${name}", then failed: ${why}${rest}` : `Delete failed: ${why}`, "error");
+      const why = humanizeError(r.error, { bare: true });
+      // The error's words end the line: they may close with a full stop and a retry tail.
+      const left = r.left ? ` (${r.left} messages are left)` : "";
+      const msg = r.parts ? `Deleted part of "${name}"${left}, then failed: ${why}` : `Delete failed: ${why}`;
+      toastErrorLine(msg, r.error);
     } else if (r.left) toast(`Deleted part of "${name}"; ${r.left} messages are left`, "info");
     else toast(`Deleted "${name}"`, "ok");
     onChanged();

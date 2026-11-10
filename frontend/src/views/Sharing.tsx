@@ -12,7 +12,8 @@ import { useStore, useIdentity } from "../lib/state";
 import { canCallCodeRepos } from "../lib/canCall";
 import { Skeleton } from "../components/Skeleton";
 import { EmptyState } from "../components/EmptyState";
-import { displayAgent, humanizeError, SENTINEL_AGENTS } from "../lib/format";
+import { displayAgent, SENTINEL_AGENTS } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { LoadingSkeleton, PageHeader, Stat, TipTarget } from "../components/ui";
@@ -80,7 +81,7 @@ export function Sharing() {
           if (live()) setData(d);
         })
         .catch((e) => {
-          if (live()) setError(humanizeError(e));
+          if (live()) setError(humanizeError(e, { bare: true, read: true }));
         });
     },
     [identity.org, identity.namespace],

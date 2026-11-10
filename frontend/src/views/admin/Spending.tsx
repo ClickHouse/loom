@@ -24,10 +24,10 @@ import { ListState } from "../../components/ui/ListState";
 import { ListToolbar } from "../../components/ui/ListToolbar";
 import { PHONE_QUERY, useMedia } from "../../lib/useMedia";
 import { ScopeBadge } from "../../components/ScopeBadge";
-import { toast } from "../../components/Toast";
+import { toast, toastError } from "../../components/Toast";
 import { IconButton } from "../../components/IconButton";
 import { Tip } from "../../components/ui/Tooltip";
-import { displayAgent, humanizeError, SENTINEL_AGENTS } from "../../lib/format";
+import { displayAgent, SENTINEL_AGENTS } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { PageContainer } from "../../layout/PageContainer";
 import { AgentSpend } from "./AgentSpend";
@@ -531,7 +531,7 @@ function BudgetCapEditor({
       setEditing(false);
       onSaved();
     } catch (e) {
-      toast(`Couldn't save cap: ${humanizeError(e)}`, "error");
+      toastError("Couldn't save cap", e);
     } finally {
       setBusy(false);
     }

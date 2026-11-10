@@ -22,7 +22,7 @@ import {
   rotateKnowledgeSource,
   syncKnowledgeSourceNow,
 } from "../api/knowledgeSources";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
 import {
   credentialLabel,

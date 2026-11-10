@@ -199,6 +199,18 @@ describe("Runs page", () => {
     expect(within(dialog).queryByText(/inferred from a connection/)).toBeNull();
   });
 
+  it("a replay that could not load says why", async () => {
+    listRuns.mockResolvedValue([row()]);
+    getRun.mockRejectedValue(new Error("the run store did not answer"));
+    render(<Runs />);
+    fireEvent.click(await screen.findByText("Show runs with no memory activity"));
+    fireEvent.click(await screen.findByRole("button", { name: "ISSUE_TRIAGE issue_114194" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      await within(dialog).findByText("Couldn't load the replay: the run store did not answer"),
+    ).toBeInTheDocument();
+  });
+
   it("a recalled key opens the memory and the replay links to Recall history for the run", async () => {
     listRuns.mockResolvedValue([full]);
     getRun.mockResolvedValue(detail({ recalled: 2, recalled_keys: ["fact_a", "fact_c"], turns: 3, cost_usd: 0.0123 }));

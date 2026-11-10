@@ -11,8 +11,8 @@ import { RowMenu } from "../../components/ui/RowMenu";
 import { useStore, useIdentity } from "../../lib/state";
 import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
-import { toast } from "../../components/Toast";
-import { humanizeError, parseChTime, relativeTime } from "../../lib/format";
+import { toast, toastError } from "../../components/Toast";
+import { parseChTime, relativeTime } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { canCall } from "../../lib/canCall";
 import { useNamespaceRole } from "../../lib/namespaceRole";
@@ -134,7 +134,7 @@ export function PrivacyFilters({
       toast("Pattern added", "ok");
       reload();
     } catch (e) {
-      toast(`Failed: ${humanizeError(e)}`, "error");
+      toastError("Failed", e);
     }
   };
 
@@ -143,7 +143,7 @@ export function PrivacyFilters({
       await removeBlacklist({ org: identity.org }, pattern_id);
       reload();
     } catch (e) {
-      toast(`Failed: ${humanizeError(e)}`, "error");
+      toastError("Failed", e);
     }
   };
 
@@ -174,7 +174,7 @@ export function PrivacyFilters({
       const noun = s.matched === 1 ? "memory" : "memories";
       toast(`Deleted ${s.tombstoned} of ${s.matched} matching ${noun} in ${where}${more}`, "ok");
     } catch (e) {
-      toast(`Sweep failed: ${humanizeError(e)}`, "error");
+      toastError("Sweep failed", e);
     } finally {
       setSweeping(null);
     }

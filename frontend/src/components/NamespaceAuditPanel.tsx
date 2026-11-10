@@ -12,10 +12,10 @@ import {
 import { useStore } from "../lib/state";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { Loading, Panel, SectionHeading } from "./ui";
 import { useFold } from "../lib/folds";
-import { toast } from "./Toast";
+import { toastError } from "./Toast";
 import { IconButton } from "./IconButton";
 import { KeyButton } from "./ui/KeyButton";
 
@@ -143,9 +143,8 @@ export function NamespaceAuditPanel({ identity }: { identity: Identity }) {
       setOpen(new Set());
     } catch (e) {
       if (scopeRef.current !== started) return;
-      const text = humanizeError(e);
-      setError(text);
-      toast(`Audit failed: ${text}`, "error");
+      setError(humanizeError(e, { bare: true, read: true }));
+      toastError("Audit failed", e, { read: true });
     } finally {
       setRunning(false);
     }

@@ -24,7 +24,7 @@ import { setViewParam, useStore, useIdentity } from "../lib/state";
 import { canCall } from "../lib/canCall";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { useVisiblePoll } from "../lib/hooks";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import {
   ACTION_LABEL,
   DIALOG_ACTIONS,
@@ -837,7 +837,7 @@ export function Tasks() {
               )}
               {refreshError !== null && rowsError === null && (
                 <div className="mb-2 text-xs text-text-muted" role="status">
-                  {`Couldn't refresh the tasks (${humanizeError(refreshError)}); showing the last read.`}
+                  {`Showing the last read; couldn't refresh the tasks: ${humanizeError(refreshError, { bare: true, read: true })}`}
                 </div>
               )}
               {emptyInbox && (

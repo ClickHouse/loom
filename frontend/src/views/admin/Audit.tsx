@@ -287,7 +287,7 @@ export function Audit() {
       setRows((prev) => [...(prev ?? []), ...(r.rows || [])]);
       setOlder(r.next_cursor ?? null);
     } catch (e) {
-      if (gen === scopeGen.current) toastError("Loading older events failed", e);
+      if (gen === scopeGen.current) toastError("Loading older events failed", e, { read: true });
     } finally {
       if (gen === scopeGen.current) setLoadingOlder(false);
     }

@@ -9,7 +9,8 @@ import {
   type SearchHit,
 } from "../api";
 import { CARD_VALUE_CHARS } from "../components/MemoryCard";
-import { errorRequestId, humanizeError } from "../lib/format";
+import { errorRequestId } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { KEYWORD_PAGE, keywordThenRanked } from "../lib/memoriesSearch";
 
@@ -494,7 +495,7 @@ export function useMemoryListRead({
             setRefreshing(false);
             // Say so inline — an empty list that is really a failed read looked like "no
             // memories yet".
-            setLoadError({ text: humanizeError(e), requestId: errorRequestId(e) });
+            setLoadError({ text: humanizeError(e, { read: true }), requestId: errorRequestId(e) });
             setEntries([]);
           }
         }
