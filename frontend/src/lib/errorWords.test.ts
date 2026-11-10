@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "./errors";
-import { ERROR_CODE_PREFIXES, errorLine, humanizeError } from "./errorWords";
+import { CONDITIONAL_SENTENCES, ERROR_CODE_PREFIXES, errorLine, humanizeError } from "./errorWords";
 import { errorRequestId } from "./format";
 
 // What the dashboard says for a failure (lib/errorWords.ts): one line that says what
@@ -371,6 +371,16 @@ describe("humanizeError", () => {
       );
     });
 
+    it("says a refusal about the token as the token's, and a role refusal as the role's", () => {
+      const refused = (reason?: string) =>
+        new ApiError({ status: 403, code: "AUTH_INSUFFICIENT", message: "m", detail: reason ? { reason } : {} });
+      for (const reason of ["org_wide", "narrowed", "token_expires_soon"])
+        expect(humanizeError(refused(reason)), reason).toBe("This token can't do this: m.");
+      expect(humanizeError(refused("narrowed"), { bare: true })).toBe("This token can't do this — m.");
+      expect(humanizeError(refused("x"))).toBe("Your role doesn't allow this: m.");
+      expect(humanizeError(refused())).toBe("Your role doesn't allow this: m.");
+    });
+
     it("leaves a read's retry advice to the server's words when they already give it", () => {
       expect(
         humanizeError(
@@ -386,13 +396,13 @@ describe("humanizeError", () => {
     });
 
     it("leaves retry advice to the tail: no code sentence says to try again", () => {
-      for (const [code, sentence] of Object.entries(ERROR_CODE_PREFIXES)) {
+      for (const [code, sentence] of Object.entries({ ...ERROR_CODE_PREFIXES, ...CONDITIONAL_SENTENCES })) {
         expect(sentence, code).not.toMatch(/retry|again|resend/i);
       }
     });
 
     it("keeps a dash out of every code sentence: a bare line joins the server's words with one", () => {
-      for (const [code, sentence] of Object.entries(ERROR_CODE_PREFIXES)) {
+      for (const [code, sentence] of Object.entries({ ...ERROR_CODE_PREFIXES, ...CONDITIONAL_SENTENCES })) {
         expect(sentence, code).not.toMatch(/—/);
       }
     });
