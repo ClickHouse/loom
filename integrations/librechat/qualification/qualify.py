@@ -398,6 +398,9 @@ def ask_assistant(st: dict[str, Any], person: str, question: str) -> dict[str, A
     text: list[str] = []
     usage: dict[str, Any] = {}
     error = ""
+    checked: list[dict[str, Any]] = []
+    unknown: list[str] = []
+    support = ""
     with httpx.stream("POST", url, json=body, headers=headers, timeout=180) as r:
         if r.status_code != 200:
             error = f"HTTP {r.status_code}: {r.read().decode()[:300]}"
@@ -406,6 +409,12 @@ def ask_assistant(st: dict[str, Any], person: str, question: str) -> dict[str, A
                 if not line.startswith("data: ") or line == "data: [DONE]":
                     continue
                 chunk = json.loads(line[6:])
+                if chunk.get("object") == "loom.citations":
+                    # The bridge's own check of the answer's citations, and its names.
+                    checked = chunk.get("citations") or []
+                    unknown = chunk.get("unknown_names") or []
+                    support = str(chunk.get("support") or "")
+                    continue
                 if chunk.get("error"):
                     error = json.dumps(chunk["error"])[:300]
                 usage = chunk.get("usage") or usage
@@ -426,6 +435,9 @@ def ask_assistant(st: dict[str, Any], person: str, question: str) -> dict[str, A
         "first_text_s": first_text,
         "prompt_tokens": usage.get("prompt_tokens", 0),
         "completion_tokens": usage.get("completion_tokens", 0),
+        "server_citations": checked,
+        "unknown_names": unknown,
+        "support": support,
     }
 
 
@@ -482,7 +494,28 @@ def check_citations(
     cited: list[str] = []
     invalid: list[str] = []
     current: dict[str, int | None] = {}  # each key's current version, read once
-    found = list(KEY_RE.finditer(text))
+    versions: dict[str, set[int]] = {}  # each key's every version, read when one is cited
+
+    def history(key: str) -> set[int]:
+        if key not in versions:
+            body = {
+                "org": person["org"],
+                "namespace": ns,
+                "memory_key": key,
+                "agent": writers.get(key, "-"),
+            }
+            code, out, _ = loom_call(st["loom_url"], scorer, "memory.history", body)
+            rows = (out.get("rows") or []) if code == 200 else []
+            versions[key] = {int(r["version"]) for r in rows if r.get("version")}
+        return versions[key]
+
+    # A help citation's page path (`features/memory/writing.md`) is no memory key. An
+    # answer through Loom's assistant cites a memory as `[memory:<key>@v<version>]`, so a
+    # key-shaped example it quotes from the docs (`scope/kind/id`) is no citation either.
+    keyed = HELP_CITE_RE.sub("", text)
+    if st.get("bridge"):
+        keyed = " ".join(m[0] for m in re.finditer(r"\[memory:[^\]]+\]", keyed))
+    found = list(KEY_RE.finditer(keyed))
     for i, m in enumerate(found):
         key = m.group(0)
         if key not in current:
@@ -501,10 +534,14 @@ def check_citations(
         if current[key] is None:
             continue
         # Every mention is checked: a version belongs to the key before it, up to the next key.
-        end = min(m.end() + 80, found[i + 1].start() if i + 1 < len(found) else len(text))
+        end = min(m.end() + 80, found[i + 1].start() if i + 1 < len(found) else len(keyed))
         # A bare version, or the deployed agent's `[memory:<key>@v<version>]`.
-        near = re.search(r"(?:\b|@v)(\d{16,20})\b", text[m.end() : end])
+        near = re.search(r"(?:\b|@v)(\d{16,20})\b", keyed[m.end() : end])
         if near and int(near.group(1)) != current[key]:
+            # An earlier version is a valid citation of what the key once held (an answer
+            # about its history); a version the key never had is not.
+            if int(near.group(1)) in history(key):
+                continue
             stale = f"{key}@{near.group(1)}"
             if stale not in invalid:
                 invalid.append(stale)
@@ -525,6 +562,64 @@ def parse_doc_citations(text: str) -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+# A help citation as the instructions ask for it: `[help:<page> § <A > B>]`, the section
+# optional.
+HELP_CITE_RE = re.compile(r"\[help:(?P<path>[^\]§\s]+?)(?:\s*§\s*(?P<section>[^\]]+?))?\s*\]")
+# How an answer says the documentation does not cover a question.
+HELP_ABSTAIN_PATTERNS = (
+    r"\bnot (documented|covered|described|mentioned|in (loom's|the) documentation)\b",
+    r"\b(documentation|docs) (does|do) ?n[o']t (cover|describe|mention|say)\b",
+    r"\bno (documented|such) (setting|option|feature)\b",
+    r"\b(could ?n[o']t|did ?n[o']t|can ?not) find\b",
+)
+
+
+def is_help_case(case: dict[str, Any]) -> bool:
+    """A question about Loom itself: its direct path is help.search."""
+    return case["baseline"]["op"] == "help.search"
+
+
+def check_help_citations(
+    st: dict[str, Any], person: dict[str, Any], case: dict[str, Any], text: str
+) -> tuple[list[str], list[str], bool]:
+    """Every help citation the answer writes, those that are not valid, and whether one
+    of the case's labeled pages is among the valid ones. Valid: the page is in the
+    server's documentation and a named section is one of its own (help.get with the
+    scorer's token, no model)."""
+    scorer = st["tokens"][f"scorer:{person['namespace']}"]
+    cited: list[str] = []
+    invalid: list[str] = []
+    pages = set(case.get("cite_help") or [])
+    expected = False
+    for m in HELP_CITE_RE.finditer(text):
+        name = m.group(0)[1:-1]
+        if name in cited:
+            continue
+        cited.append(name)
+        path = m["path"].removeprefix("docs/")
+        page = scorer_read(st, scorer, "help.get", {"path": path})
+        if not page.get("found"):
+            invalid.append(f"{name}: no such page")
+            continue
+        section = m["section"] or ""
+        if section and not names_section(
+            section_key(section), [section_key(e["section"]) for e in page.get("sections", [])]
+        ):
+            invalid.append(f"{name}: no such section")
+            continue
+        expected = expected or path in pages
+    return cited, invalid, expected
+
+
+def names_section(cited: tuple[str, ...], sections: list[tuple[str, ...]]) -> bool:
+    """Whether a cited breadcrumb names one of a page's sections, as the server's check reads
+    it (`server.help.domain.index.find_section`): equal to one, equal to one without the
+    page title, or a tail only one section of the page has."""
+    if cited in sections or any(s[1:] == cited for s in sections):
+        return True
+    return sum(s[-len(cited) :] == cited for s in sections) == 1
 
 
 def section_key(section: str) -> tuple[str, ...]:
@@ -624,6 +719,9 @@ def score(case: dict[str, Any], text: str) -> dict[str, Any]:
     )
     if kind == "abstain":
         correct = abstained
+    elif kind == "help_abstain":
+        abstained = matches(HELP_ABSTAIN_PATTERNS, text)
+        correct = abstained
     elif kind == "refusal":
         correct = matches(REFUSAL_PATTERNS, text)
     else:
@@ -677,6 +775,13 @@ def native_score(case: dict[str, Any], code: int, out: dict[str, Any]) -> dict[s
         correct = correct and case["kind"] != "refusal"
     elif spec["op"] == "knowledge.search":
         return native_document_score(case, out)
+    elif spec["op"] == "help.search":
+        # The direct path finds the page; it writes no answer, so only that is scored.
+        pages = [h["path"] for h in out.get("hits") or []]
+        text = json.dumps(pages)
+        wanted = set(case.get("cite_help") or [])
+        correct = bool(wanted & set(pages)) if wanted else not pages
+        cited = pages[:1]
     elif "findings" in spec:
         # A recommendation's direct path: the audit names each labeled finding on rows.
         found = {f["code"] for f in out.get("findings", []) if f.get("count")}
@@ -758,10 +863,13 @@ def cmd_run(args: argparse.Namespace) -> None:
         calls = loom_calls(args.ch_url, case["person"], t0, t1)
         text = got["answer"] or got["error"]
         result = score(case, text)
+        # An answer that names an op or setting the build neither serves nor documents.
+        result["correct"] = result["correct"] and not got.get("unknown_names")
         rows.append(
             {
                 "id": case["id"],
                 "kind": case["kind"],
+                "use_case": case.get("use_case", ""),
                 "documents": is_document_case(case),
                 "librechat": {
                     **got,
@@ -800,6 +908,13 @@ def answer_citations(
         doc_cited, doc_invalid, doc_expected = check_doc_citations(st, person, case, text)
         cited, invalid = cited + doc_cited, invalid + doc_invalid
         expected = doc_expected if case.get("cite_doc") else None
+    if HELP_CITE_RE.search(text):
+        help_cited, help_invalid, help_expected = check_help_citations(st, person, case, text)
+        cited, invalid = cited + help_cited, invalid + help_invalid
+        if case.get("cite_help"):
+            expected = help_expected
+    elif case.get("cite_help"):
+        expected = False
     return {"cited": cited, "invalid_citations": invalid, "cited_expected": expected}
 
 
@@ -978,6 +1093,7 @@ def report(rows: list[dict[str, Any]], model: str) -> str:
                 f"tool calls {sum(g['tool_calls'] for g in got)}"
             )
     lines.extend(document_report(cases))
+    lines.extend(use_case_report(cases))
     price_in, price_out = PRICE_PER_MTOK.get(model, (float("nan"), float("nan")))
     costs = [
         (
@@ -998,6 +1114,27 @@ def report(rows: list[dict[str, Any]], model: str) -> str:
         if r["kind"] == "cancel":
             lines.append(probe_line(r))
     return "\n".join(lines)
+
+
+def use_case_report(cases: list[dict[str, Any]]) -> list[str]:
+    """Per use case (cases.json `use_case`): the answers through LibreChat that are
+    correct and cite validly, out of its cases."""
+    by: dict[str, list[dict[str, Any]]] = {}
+    for r in cases:
+        by.setdefault(r.get("use_case") or "-", []).append(r)
+    lines = [
+        "\n| use case | correct | citations valid | unknown names |",
+        "| --- | --- | --- | --- |",
+    ]
+    for name in sorted(by):
+        got = [r["librechat"] for r in by[name]]
+        valid = sum(not g["invalid_citations"] for g in got)
+        unknown = sorted({n for g in got for n in g.get("unknown_names") or []})
+        lines.append(
+            f"| {name} | {sum(g['correct'] for g in got)}/{len(got)} | {valid}/{len(got)} "
+            f"| {', '.join(unknown) or '-'} |"
+        )
+    return lines
 
 
 def document_report(cases: list[dict[str, Any]]) -> list[str]:

@@ -178,9 +178,14 @@ def test_native_score_compares_counts_as_numbers():
 def test_check_citations_flags_unknown_keys_and_stale_versions(monkeypatch):
     q = _qualify()
     rows = {"policy/deploy/freeze": 1793745407448901606}
+    # An earlier version of a key is a valid citation of what it once held.
+    history = {"policy/deploy/freeze": [1793745407448901606, 1793745400000000000]}
 
     def fake_call(base, token, op, body):
-        assert op == "memory.get" and token == "viewer-token"
+        assert op in ("memory.get", "memory.history") and token == "viewer-token"
+        if op == "memory.history":
+            versions = history.get(body["memory_key"], [])
+            return 200, {"rows": [{"version": v} for v in versions]}, 0.0
         version = rows.get(body["memory_key"])
         return 200, {"found": version is not None, "version": version}, 0.0
 
@@ -202,6 +207,8 @@ def test_check_citations_flags_unknown_keys_and_stale_versions(monkeypatch):
         ["policy/deploy/freeze"],
         ["policy/deploy/freeze@1793745407000000000"],
     )
+    earlier = "Before: `policy/deploy/freeze` (version 1793745400000000000)."
+    assert q.check_citations(st, person, earlier) == (["policy/deploy/freeze"], [])
     unknown = "See policy/deploy/thaw."
     assert q.check_citations(st, person, unknown) == (
         ["policy/deploy/thaw"],
