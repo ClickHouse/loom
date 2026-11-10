@@ -37,13 +37,17 @@ clickhouse:
 # verify-full; the authority is chosen at first boot, so start on an empty ClickHouse.
 postgres:
   # The direct endpoint, never a transaction pooler. "" = the ClickHouse authority.
+  # Both Secrets are required with it, and the names below beside it are refused in
+  # env, extraEnv, secrets.extra and settingsFile.
   host: ""
+  # 1 to 65535.
   port: 5432
   database: loom
   # A role that owns the database. The host, database and user go into the DSN as
   # written: letters, digits, '.', '_' and '-' only.
   user: loom
   # The Secret key holding the role's password, passed to the driver as PGPASSWORD.
+  # Keys take Kubernetes' Secret key characters: letters, digits, '.', '_' and '-'.
   passwordSecret:
     name: ""
     key: password

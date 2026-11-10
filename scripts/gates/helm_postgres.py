@@ -126,7 +126,16 @@ def main() -> None:
     check_unconfigured(render(*sets("networkPolicy.enabled=true", *EVERYTHING)), "defaults")
     check_unconfigured(render(*eks, *sets(*EVERYTHING)), "eks")
     # Without the block, these names are the documented way to set the authority.
-    render(*eks, *sets("env.LOOM_PG_DSN=x", "extraEnv[0].name=PGPASSWORD", "extraEnv[0].value=x"))
+    render(
+        *eks,
+        *sets(
+            "env.LOOM_PG_DSN=x",
+            "extraEnv[0].name=PGPASSWORD",
+            "extraEnv[0].value=x",
+            "secrets.extra.LOOM_PG_DURABILITY=local",
+            "settingsFile.pg_pool_max_size=5",
+        ),
+    )
     for name in RENDERED:
         want = f"set {name} through postgres.*"
         refused(f"{want}, not env", *sets(f"env.{name}=x"))
@@ -140,7 +149,12 @@ def main() -> None:
             f"set {field} through postgres.*, not settingsFile", *sets(f"settingsFile.{field}=x")
         )
     for secret in ("passwordSecret", "caSecret"):
-        refused(f"postgres.{secret}.key must be a Secret key", *sets(f"postgres.{secret}.key="))
+        for bad in ("", ".", "..", "a/b"):
+            refused(
+                f"postgres.{secret}.key must be a Secret key",
+                "--set-string",
+                f"postgres.{secret}.key={bad}",
+            )
     for port in ("0", "05432", "70000", "99999999999999999999", "5432?x"):
         refused("postgres.port must be a port number", "--set-string", f"postgres.port={port}")
     refused(

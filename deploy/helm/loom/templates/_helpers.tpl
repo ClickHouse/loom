@@ -242,7 +242,8 @@ upgraded with --reuse-values from a chart without the block has none. */}}
 {{- if not (regexMatch "^[A-Za-z0-9._-]+$" (toString (get $pg $field))) }}{{ fail (printf "postgres.%s goes into the DSN as written: letters, digits, '.', '_' and '-' only" $field) }}{{ end }}
 {{- end -}}
 {{- range $secret := list "passwordSecret" "caSecret" }}
-{{- if not (regexMatch "^[A-Za-z0-9._-]+$" (toString (dig $secret "key" "" $pg))) }}{{ fail (printf "postgres.%s.key must be a Secret key: letters, digits, '.', '_' and '-'" $secret) }}{{ end }}
+{{- $key := toString (dig $secret "key" "" $pg) }}
+{{- if not (and (regexMatch "^[A-Za-z0-9._-]+$" $key) (ne $key ".") (not (hasPrefix ".." $key))) }}{{ fail (printf "postgres.%s.key must be a Secret key: letters, digits, '.', '_' and '-', not '.' or starting '..'" $secret) }}{{ end }}
 {{- end -}}
 {{- if not (and (regexMatch "^[1-9][0-9]{0,4}$" (toString $pg.port)) (le (int $pg.port) 65535)) }}{{ fail "postgres.port must be a port number, 1 to 65535" }}{{ end -}}
 {{- end -}}

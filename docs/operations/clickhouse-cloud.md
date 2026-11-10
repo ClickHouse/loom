@@ -76,13 +76,11 @@ Jobs and the analytics export):
 - `postgres.caSecret` mounted read-only at `/etc/loom/pg-ca`;
 - with `networkPolicy.enabled`, egress to `postgres.port`.
 
-The chart refuses to render without `postgres.passwordSecret.name` or
-`postgres.caSecret.name`, and when `env`, `extraEnv` or `secrets.extra` also sets one of
-the names it renders (`LOOM_STORAGE_AUTHORITY`, `LOOM_PG_DSN`, `LOOM_PG_DURABILITY`,
-`LOOM_PG_POOL_MAX_SIZE`, `PGPASSWORD`), or `settingsFile` the matching setting. It also
-refuses a `host`, `database` or `user` outside letters, digits, `.`, `_` and `-`, which go
-into the DSN as written, and a `port` outside 1 to 65535. Its values win over the same
-names in `existingSecret` and `envFrom`.
+The chart refuses to render a `postgres` block it cannot pass on as written, and any of
+the names it renders set a second time in `env`, `extraEnv`, `secrets.extra` or
+`settingsFile`; each refusal names the value to fix, and the block's comments in
+`deploy/helm/loom/values.yaml` state the rules. Its values win over the same names in
+`existingSecret` and `envFrom`.
 
 ### Connections
 
