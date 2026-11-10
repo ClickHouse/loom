@@ -11,7 +11,7 @@ import { toast, toastError } from "../components/Toast";
 import { CreateCollectionDialog, parentChoices } from "../flows/CreateCollectionDialog";
 import { MoveCollectionDialog } from "../flows/MoveCollectionDialog";
 import { MembersDialog } from "../flows/MembersDialog";
-import { CollectionBack, CollectionPath, CollectionsInside } from "./LibraryHierarchy";
+import { CollectionBack, CollectionPath } from "./LibraryHierarchy";
 import {
   COLLECTIONS_LISTED,
   COLLECTIONS_PAGES,
@@ -249,17 +249,18 @@ export function LibraryCollections({
 
   return (
     <div className="mb-2 space-y-2 sm:mb-4">
-      {!phone && current && !current.personal && (
-        <CollectionPath
-          current={current}
-          rows={rows ?? []}
-          truncated={collections.truncated}
-          home={home}
-          onPick={onPick}
-        />
-      )}
-      {/* One row at every width, so the list starts where the list rules want it. */}
-      <div className="flex items-center gap-2">
+      {/* One row at every width, so the list starts where the list rules want it: the path
+          leads it (on a phone, one back button). */}
+      <div className="flex flex-wrap items-center gap-2">
+        {!phone && current && !current.personal && (
+          <CollectionPath
+            current={current}
+            rows={rows ?? []}
+            truncated={collections.truncated}
+            home={home}
+            onPick={onPick}
+          />
+        )}
         {phone && current && !current.personal && (
           <CollectionBack
             current={current}
@@ -321,10 +322,6 @@ export function LibraryCollections({
           <span className="hidden sm:inline">New collection</span>
         </Button>
       </div>
-      {/* On a phone the select, a tree, lists them: below it the documents start on the first screen. */}
-      {!phone && rows && !opening && (
-        <CollectionsInside key={current?.namespace ?? ""} rows={rows} current={current} onPick={onPick} />
-      )}
       {collections.truncated && (
         <p className="text-xs text-text-muted">
           {`Only the first ${fmtInt(COLLECTIONS_LISTED)} collections are listed here; a link to a later one ${namespace === null ? "asks to pick another" : "shows the namespace"}.`}

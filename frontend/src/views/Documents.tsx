@@ -41,6 +41,7 @@ import { formatBytesShort } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { LibraryCollections, useReadableCollections } from "./LibraryCollections";
+import { CollectionsInside } from "./LibraryHierarchy";
 import { LibraryPassages, PASSAGES_PANEL_ID } from "./LibraryPassages";
 import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog";
 import { PageContainer } from "../layout/PageContainer";
@@ -1059,6 +1060,19 @@ export function Documents() {
           <BusyButton type="secondary" htmlType="button" busy={loadingMore} onClick={loadMore}>
             Load more
           </BusyButton>
+        </div>
+      )}
+
+      {/* Below the documents, so they start where the list rules want them; on a phone the
+          select, a tree, lists the collections inside. */}
+      {!phone && collections.rows && (
+        <div className="mt-6">
+          <CollectionsInside
+            key={shown?.namespace ?? ""}
+            rows={collections.rows}
+            current={shown}
+            onPick={(c) => goTo(c === picked.namespace ? null : c)}
+          />
         </div>
       )}
 

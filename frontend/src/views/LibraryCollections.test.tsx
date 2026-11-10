@@ -213,41 +213,6 @@ describe("LibraryCollections", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("lists the collections inside afresh, six of them, when another collection is shown", () => {
-    const kids = (parent: string) =>
-      Array.from({ length: 10 }, (_, i) => entry(`${parent}-k${i}`, { parent, title: `${parent} kid ${i}` }));
-    const rows = [ROWS[1], entry("col-other"), ...kids("col-q3"), ...kids("col-other")];
-    const view = (current: CollectionEntry) => (
-      <LibraryCollections
-        org="acme"
-        namespace="team"
-        collections={read(rows)}
-        current={current}
-        onPick={() => undefined}
-      />
-    );
-    const { rerender } = render(view(rows[0]));
-    fireEvent.click(screen.getByRole("button", { name: "Show 4 more" }));
-    expect(screen.getAllByRole("link", { name: /^col-q3 kid / })).toHaveLength(10);
-    rerender(view(rows[1]));
-    expect(screen.getAllByRole("link", { name: /^col-other kid / })).toHaveLength(6);
-  });
-
-  it("lists no collections inside while a linked collection is still opening", () => {
-    const rows = [ROWS[1], entry("col-q3-k", { parent: "col-q3", title: "Kid" })];
-    render(
-      <LibraryCollections
-        org="acme"
-        namespace="team"
-        collections={read(rows)}
-        current={null}
-        opening="col-q3"
-        onPick={() => undefined}
-      />,
-    );
-    expect(screen.queryByRole("region", { name: /Collections/ })).toBeNull();
-  });
-
   it("on a phone shows the path as one back button and leaves the collections inside to the select", () => {
     vi.stubGlobal("matchMedia", (query: string) => ({
       matches: query === PHONE_QUERY,
@@ -270,7 +235,6 @@ describe("LibraryCollections", () => {
     );
     expect(screen.getByRole("button", { name: "Back to Kid" })).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Collection path" })).toBeNull();
-    expect(screen.queryByRole("region", { name: /Collections/ })).toBeNull();
   });
 
   it("gives the user's own collection no menu", () => {
@@ -398,7 +362,42 @@ describe("the Library on a collection", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
     history.replaceState(null, "", "/");
+  });
+
+  it("lists the collections inside below the documents, six again when another is opened", async () => {
+    const kids = (parent: string) =>
+      Array.from({ length: 10 }, (_, i) => entry(`${parent}-k${i}`, { parent, title: `${parent} kid ${i}` }));
+    api.listCollections.mockResolvedValue({
+      collections: [ROWS[1], ...kids("col-q3"), ...kids("col-q3-k0")],
+      next_cursor: null,
+    });
+    history.replaceState(null, "", "/library?collection=col-q3");
+    render(<Documents />);
+    const section = await screen.findByRole("region", { name: /Collections/ });
+    fireEvent.click(within(section).getByRole("button", { name: "Show 4 more" }));
+    expect(within(section).getAllByRole("link", { name: /^col-q3 kid / })).toHaveLength(10);
+    fireEvent.click(within(section).getByRole("link", { name: "col-q3 kid 0" }));
+    await settle();
+    expect(within(screen.getByRole("region", { name: /Collections/ })).getAllByRole("link")).toHaveLength(6);
+  });
+
+  it("lists no collections inside on a phone, where the select lists them", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query === PHONE_QUERY,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    api.listCollections.mockResolvedValue({
+      collections: [ROWS[1], entry("col-q3-k", { parent: "col-q3" })],
+      next_cursor: null,
+    });
+    history.replaceState(null, "", "/library?collection=col-q3");
+    render(<Documents />);
+    await settle();
+    expect(screen.getByRole("button", { name: "Show the documents of" })).toHaveTextContent("col-q3");
+    expect(screen.queryByRole("region", { name: /Collections/ })).toBeNull();
   });
 
   it("reads a linked collection only once collection.list names it", async () => {
