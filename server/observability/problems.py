@@ -109,8 +109,12 @@ class HealthState:
     refused_configuration: str = ""
     # The code-index tiers failing past the warn threshold, one row per entry and
     # tier (`server.code.app.index.tier_health.problem_rows`): org, namespace, tier,
-    # kind, since, failed_passes, lag_commits, fix, severity. None = not read here.
+    # kind, since, failed_passes, lag_commits, reason, repo, branch, error, fix,
+    # severity. None = not read here.
     code_tier_failures: tuple[Mapping[str, Any], ...] | None = None
+    # Whether the reader may see every entry (a platform admin's `/v1/health`, the
+    # doctor): then the `code_tier_failing` message names each entry and its error.
+    code_tier_named: bool = False
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     # Saved keys take precedence over the environment, including explicit empty keys.
     saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)
@@ -903,10 +907,12 @@ _TIER_FAILURES_NAMED = 5
 
 def _code_tier_problems(st: HealthState) -> list[Problem]:
     """One `code_tier_failing` problem for all the code-index tiers that keep failing:
-    each tier with its error kind, failed passes, since when and how far behind, and
-    the fix of each kind. It names no entry or repository, because `/v1/health` answers
-    anyone and an entry may be restricted; `code.repos` and the repository page name
-    them to whoever may read them. Its severity is the worst row's."""
+    each tier with its reason, failed passes, since when and how far behind, and the
+    fix of each kind. `/v1/health` answers anyone and an entry may be restricted, so
+    only a reader who may see every entry (`code_tier_named`) reads which entry each
+    line is (repository@branch and namespace) and its error's first line; `code.repos`
+    and the repository page name them to whoever may read them. Its severity is the
+    worst row's."""
     rows = st.code_tier_failures or ()
     if not rows:
         return []
@@ -914,10 +920,13 @@ def _code_tier_problems(st: HealthState) -> list[Problem]:
     def named(r: Mapping[str, Any]) -> str:
         lag, passes = int(r["lag_commits"]), int(r["failed_passes"])
         # the count the entry's last published status made: a lower bound
-        behind = f", at least {lag} commit{'' if lag == 1 else 's'} behind" if lag >= 0 else ""
+        behind = f", at least {lag} commit{'' if lag == 1 else 's'} behind" if lag > 0 else ""
+        what = f"{r['tier']}: {r['reason']}"
+        if st.code_tier_named:
+            entry = f"{r['repo']}@{r['branch']} ({r['namespace']})"
+            what = f"{entry} {what}" + (f" — {r['error']}" if r["error"] else "")
         return (
-            f"{r['tier']} ({r['kind']}, {passes} failed pass{'' if passes == 1 else 'es'} "
-            f"since {r['since']}{behind})"
+            f"{what}, {passes} failed pass{'' if passes == 1 else 'es'} since {r['since']}{behind}"
         )
 
     shown = [named(r) for r in rows[:_TIER_FAILURES_NAMED]]
@@ -930,8 +939,10 @@ def _code_tier_problems(st: HealthState) -> list[Problem]:
             "code_tier_failing",
             "error" if any(r["severity"] == "error" for r in rows) else "warn",
             f"{len(rows)} code-index {noun} failing, so what {it} trails the "
-            f"branch: {'; '.join(shown)}{tail}. code.repos and the repository page name "
-            "each entry.",
+            f"branch: {'; '.join(shown)}{tail}."
+            + (
+                "" if st.code_tier_named else " code.repos and the repository page name each entry."
+            ),
             " ".join(fixes),
             source="workers",
         )

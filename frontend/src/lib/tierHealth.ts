@@ -35,6 +35,7 @@ const KIND_WORD: Record<string, string> = {
   network: "host unreachable",
   timeout: "timed out",
   disk: "disk full",
+  git_lock: "git lock held",
   permission: "permission denied",
   cmake: "build configure failed",
   harness: "indexer failed",

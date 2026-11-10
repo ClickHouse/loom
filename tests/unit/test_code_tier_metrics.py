@@ -74,9 +74,11 @@ def test_the_wired_rows_are_the_tiers_the_problem_reports(
     monkeypatch.setattr(settings, "code_tier_failing_warn_hours", 3.0)
     monkeypatch.setattr(settings, "code_tier_failing_error_lag_commits", 100)
     snapshot = (
-        recorder.FailingTier("o", "code-new", _failing(1, 0.5), 413),  # transient: none
-        recorder.FailingTier("o", "code-slow", _failing(1, 4), 5),  # 4 hours: warn
-        recorder.FailingTier("o", "code-far", _failing(3, 2), 413),  # error
+        recorder.FailingTier(
+            "o", "code-new", _failing(1, 0.5), 413, "o/r", "main"
+        ),  # transient: none
+        recorder.FailingTier("o", "code-slow", _failing(1, 4), 5, "o/r", "main"),  # 4 hours: warn
+        recorder.FailingTier("o", "code-far", _failing(3, 2), 413, "o/r", "main"),  # error
     )
     monkeypatch.setattr(recorder, "_FAILING", snapshot)
     failing, _ = code_tier_series(state_inputs().failing_code_tiers())
@@ -118,7 +120,7 @@ def test_the_gauges_register_with_the_names_the_alerts_read() -> None:
 def test_each_gauge_reads_its_own_series(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "code_tier_failing_warn_passes", 3)
     monkeypatch.setattr(settings, "code_tier_failing_error_lag_commits", 100)
-    far = (recorder.FailingTier("o", "code-far", _failing(3, 2), 413),)
+    far = (recorder.FailingTier("o", "code-far", _failing(3, 2), 413, "o/r", "main"),)
     monkeypatch.setattr(recorder, "_FAILING", far)
     meter = _Meter()
     metrics_gauges._register_code_tier_gauges(meter)

@@ -538,6 +538,7 @@ def _doctor_problems() -> list[Any]:
                 ch_reader_ok={"ok": True, "failing": False}.get(status),
                 ch_reader_error=detail if status == "failing" else "",
                 code_tier_failures=tiers,
+                code_tier_named=True,  # the operator's host-side view: names each entry
             ),
         )
         if status == "not_probed" and detail:

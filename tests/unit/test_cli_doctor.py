@@ -22,6 +22,10 @@ def test_a_failing_code_tier_is_a_doctor_problem(monkeypatch: pytest.MonkeyPatch
         "namespace": "code-x",
         "tier": "clang",
         "kind": "credential",
+        "reason": "no credential",
+        "repo": "o/x",
+        "branch": "main",
+        "error": "fatal: could not read Username",
         "since": "2026-01-01T00:00:00+00:00",
         "failed_passes": 4,
         "lag_commits": 12,
@@ -32,7 +36,11 @@ def test_a_failing_code_tier_is_a_doctor_problem(monkeypatch: pytest.MonkeyPatch
     lines = doctor._problem_checks(doctor._doctor_problems())
     name, grade, detail = next(line for line in lines if line[0] == "problem:code_tier_failing")
     assert grade == doctor.WARN
-    assert "clang (credential, 4 failed passes" in detail and "Fix: Set the token." in detail
+    # the operator's view names the entry and its error
+    assert (
+        "o/x@main (code-x) clang: no credential — fatal: could not read Username, 4 failed passes"
+    ) in detail
+    assert "Fix: Set the token." in detail
 
 
 def test_doctor_reports_jwt_secret_status(

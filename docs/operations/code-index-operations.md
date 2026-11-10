@@ -846,7 +846,10 @@ The record is read where each reader already looks:
 - once a tier has failed `LOOM_CODE_TIER_FAILING_WARN_PASSES` passes in a row or for
   `LOOM_CODE_TIER_FAILING_WARN_HOURS`, it is the `code_tier_failing` problem in
   `/v1/health`, the dashboard banner and `loom doctor`
-  ([monitoring](./monitoring.md#v1health));
+  ([monitoring](./monitoring.md#v1health)): one line per tier with its reason and
+  fix. `loom doctor` and a platform admin's token also read which entry each line is
+  (repository@branch and namespace) and its error's first line; any other caller does
+  not, since `/v1/health` answers without a token;
 - for push alerting, the `loom.code.tier_failing` and `loom.code.tier_lag_commits`
   gauges carry each tier the `code_tier_failing` problem reports
   ([telemetry](../features/observability/telemetry.md)), with an alert in
@@ -855,7 +858,8 @@ The record is read where each reader already looks:
 
 The kinds (`_KINDS`) and their fixes (`fix_for`) are in
 [`server/code/domain/index/tier_health.py`](../../server/code/domain/index/tier_health.py).
-A failure with kind `unknown` carries the end of the output to read.
+A failure that matches no kind reads "unclassified error" and carries the end of
+the output to read.
 
 ## Failure model
 

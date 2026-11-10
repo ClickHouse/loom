@@ -102,6 +102,8 @@ class FailingTier:
     namespace: str
     health: tier_health.TierHealth
     lag_commits: int
+    repo: str  # owner/name
+    branch: str
 
 
 # The failing tiers of every entry, as this process last read them: the health probe
@@ -131,7 +133,7 @@ async def refresh_failing(ch: Any | None = None) -> None:
         return  # which entries are configured is unknown: the snapshot stays as it was
     try:
         store = CodeRepo(ch)
-        configured = {(c.org, c.namespace) for c in configured_repos()}
+        configured = {(c.org, c.namespace): c for c in configured_repos()}
         failing: list[tuple[str, str, tier_health.TierHealth]] = []
         for row in await store.state_rows_with_prefix(tier_health.STATE_PREFIX):
             org, ns = str(row["org"]), str(row["namespace"])
@@ -148,6 +150,8 @@ async def refresh_failing(ch: Any | None = None) -> None:
                 ns,
                 health,
                 _published_lag(states.get((org, ns)) or {}, health.tier),
+                str(configured[(org, ns)].repo),
+                str(configured[(org, ns)].git_branch),
             )
             for org, ns, health in failing
         ]
@@ -212,6 +216,11 @@ def problem_rows(now: datetime | None = None) -> tuple[dict[str, Any], ...] | No
                     "since": f.health.failing_since,
                     "failed_passes": f.health.failed_passes,
                     "lag_commits": f.lag_commits,
+                    "reason": tier_health.reason(f.health.kind),
+                    # only a caller who may see every entry reads these three
+                    "repo": f.repo,
+                    "branch": f.branch,
+                    "error": tier_health.error_line(f.health.error),
                     # the kind's fix without the repository it names: the problem is public
                     "fix": tier_health.fix_for(f.health.kind, f.health.error, name_where=False),
                     "severity": level,

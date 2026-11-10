@@ -169,6 +169,8 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("submodule_url", re.compile(r"transport 'file' not allowed", re.IGNORECASE)),
     # A full disk also cuts a transfer short ("the remote end hung up"): before network.
     ("disk", re.compile(r"no space left on device|disk quota exceeded", re.IGNORECASE)),
+    # another git process holds a lock file in the checkout (often index.lock)
+    ("git_lock", re.compile(r"unable to create '[^'\n]*\.lock': file exists", re.IGNORECASE)),
     # the C/C++ harness's CMake configure failed: CMake's own last lines come before
     # its line, and can read as any later kind
     ("cmake", re.compile(r"^>> cmake configure failed$", re.MULTILINE)),
@@ -349,9 +351,49 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
             "created under the code repos root: share the root through "
             "LOOM_CODE_REPOS_SHARED_GID and give the group write access to what is there."
         )
+    if kind == "git_lock":
+        return (
+            "Another git process holds a lock in the entry's checkout (often index.lock): "
+            "let it finish, or delete the lock file the error names once no git process "
+            "runs there. Start no shell or agent session inside a checkout under the code "
+            "repos root: a `git status` there takes the same lock."
+        )
     if kind == "harness":
         return "The indexer failed: the error holds the tail of its output."
-    return "See the error; the tier retries every pass."
+    return (
+        "The error matches no known cause: read it in code.index_status or on the "
+        "repository page and fix what it names. The tier retries every pass."
+    )
+
+
+# What each kind says in one phrase, where a status line names the failure.
+REASONS: dict[str, str] = {
+    "credential": "no credential",
+    "pin_missing": "pinned commit gone",
+    "submodule_url": "relative submodule URL",
+    "egress": "egress refused",
+    "network": "host unreachable",
+    "timeout": "timed out",
+    "disk": "disk full",
+    "git_lock": "git lock held",
+    "permission": "permission denied",
+    "cmake": "build configure failed",
+    "harness": "indexer failed",
+    "module": "module failed to build",
+}
+# The first line of an error, as far as a status line shows it.
+ERROR_LINE_CHARS = 200
+
+
+def reason(kind: str) -> str:
+    """The phrase for a failure of `kind`."""
+    return REASONS.get(kind, "unclassified error")
+
+
+def error_line(error: str) -> str:
+    """The first line of a recorded error, redacted and cut to `ERROR_LINE_CHARS`."""
+    line = next((s.strip() for s in redact(error).splitlines() if s.strip()), "")
+    return line if len(line) <= ERROR_LINE_CHARS else line[: ERROR_LINE_CHARS - 1] + "…"
 
 
 def severity(

@@ -105,7 +105,7 @@ def test_a_watermark_moved_since_the_snapshot_gives_no_lag() -> None:
 
 class _Cfg:
     def __init__(self, ns: str) -> None:
-        self.org, self.namespace, self.git_branch = "o", ns, "main"
+        self.org, self.namespace, self.repo, self.git_branch = "o", ns, "o/r", "main"
 
 
 class _Store:
@@ -152,9 +152,9 @@ async def test_the_snapshot_holds_the_failing_tiers_with_their_lag_and_keeps_it_
     assert recorder.problem_rows() is None  # not read yet: unknown, not healthy
     await recorder.refresh_failing()
     snap = recorder._FAILING
-    assert snap is not None and [(f.namespace, f.health.tier, f.lag_commits) for f in snap] == [
-        ("code-a", "clang", 413)
-    ]
+    assert snap is not None and [
+        (f.namespace, f.health.tier, f.lag_commits, f.repo, f.branch) for f in snap
+    ] == [("code-a", "clang", 413, "o/r", "main")]
     store.fail = True
     await recorder.refresh_failing()
     assert recorder._FAILING == snap
@@ -176,6 +176,7 @@ def test_the_problem_names_the_tier_kind_since_lag_and_fix_but_no_entry() -> Non
         "namespace": "code-a",
         "tier": "clang",
         "kind": "credential",
+        "reason": "no credential",
         "since": "2026-01-01T12:00:00+00:00",
         "failed_passes": 12,
         "lag_commits": 413,
@@ -184,20 +185,27 @@ def test_the_problem_names_the_tier_kind_since_lag_and_fix_but_no_entry() -> Non
     }
     (p,) = _problem((row,))
     assert p.severity == "error" and p.source == "workers"
-    assert "clang (credential, 12 failed passes since 2026-01-01T12:00:00+00:00" in p.message
+    assert "clang: no credential, 12 failed passes since 2026-01-01T12:00:00+00:00" in p.message
     assert "at least 413 commits behind" in p.message and "code-a" not in p.message
     assert p.fix == row["fix"]
 
 
 def test_a_problem_row_carries_the_kinds_fix_without_the_repository() -> None:
-    recorder._FAILING = (recorder.FailingTier("o", "code-a", _failing(4), 413),)
+    recorder._FAILING = (recorder.FailingTier("o", "code-a", _failing(4), 413, "o/r", "main"),)
     (row,) = recorder.problem_rows(T0 + timedelta(hours=3)) or ()
     assert row["fix"] == tier_health.fix_for("credential", "")
     assert "private" not in row["fix"] and "github.com" not in row["fix"]
 
 
 def test_many_failing_tiers_are_one_problem_with_each_fix_once() -> None:
-    base = {"org": "o", "tier": "fetch", "kind": "network", "since": "s", "failed_passes": 3}
+    base = {
+        "org": "o",
+        "tier": "fetch",
+        "kind": "network",
+        "reason": "host unreachable",
+        "since": "s",
+        "failed_passes": 3,
+    }
     rows = tuple(
         {
             **base,
@@ -254,7 +262,7 @@ def test_the_doctor_reads_the_failing_tiers_once_and_none_when_clickhouse_is_dow
 
     async def refresh(ch: Any = None) -> None:
         calls.append("tiers")
-        recorder._FAILING = (recorder.FailingTier("o", "code-a", _failing(4), 413),)
+        recorder._FAILING = (recorder.FailingTier("o", "code-a", _failing(4), 413, "o/r", "main"),)
 
     monkeypatch.setattr("server.core.ch.get_client", lambda: client)
     monkeypatch.setattr(repo_registry, "refresh_db_repos", registry)
@@ -310,7 +318,7 @@ async def test_with_code_intelligence_off_no_record_is_a_problem(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "code_intel_enabled", False)
-    recorder._FAILING = (recorder.FailingTier("o", "code-a", _failing(4), 413),)
+    recorder._FAILING = (recorder.FailingTier("o", "code-a", _failing(4), 413, "o/r", "main"),)
     await recorder.refresh_failing()
     assert recorder.problem_rows() == ()
 
@@ -342,8 +350,8 @@ def test_a_failing_tier_never_makes_the_deployment_degraded() -> None:
 
 def test_problem_rows_put_the_errors_first() -> None:
     recorder._FAILING = (
-        recorder.FailingTier("o", "code-a", _failing(4), 5),  # warn: not far behind
-        recorder.FailingTier("o", "code-b", _failing(4), 413),  # error
+        recorder.FailingTier("o", "code-a", _failing(4), 5, "o/r", "main"),  # warn: not far behind
+        recorder.FailingTier("o", "code-b", _failing(4), 413, "o/r", "main"),  # error
     )
     rows = recorder.problem_rows(T0 + timedelta(hours=3)) or ()
     assert [(r["namespace"], r["severity"]) for r in rows] == [
@@ -393,7 +401,7 @@ def test_a_refused_ssh_key_gets_the_ssh_fix_without_the_repository() -> None:
     for _ in range(4):
         health = tier_health.failed(health, "fetch", error, T0)
     assert health is not None
-    recorder._FAILING = (recorder.FailingTier("o", "code-a", health, -1),)
+    recorder._FAILING = (recorder.FailingTier("o", "code-a", health, -1, "o/r", "main"),)
     (row,) = recorder.problem_rows(T0) or ()
     assert row["fix"].startswith("The ssh key was refused:") and "private" not in row["fix"]
 
@@ -420,6 +428,7 @@ def test_the_deployments_own_errors_list_before_a_failing_tier(
         "namespace": "code-a",
         "tier": "clang",
         "kind": "credential",
+        "reason": "no credential",
         "since": "s",
         "failed_passes": 4,
         "lag_commits": 413,
@@ -453,6 +462,80 @@ def test_problem_rows_grade_with_the_live_settings(
     }
     for name, value in {**base, **overrides}.items():
         monkeypatch.setattr(settings, name, value)
-    recorder._FAILING = (recorder.FailingTier("o", "code-a", _failing(4), 413),)
+    recorder._FAILING = (recorder.FailingTier("o", "code-a", _failing(4), 413, "o/r", "main"),)
     rows = recorder.problem_rows(T0 + timedelta(hours=2)) or ()
     assert (rows[0]["severity"] if rows else None) == want
+
+
+LOCKED = (
+    "ToolOutputError: git checkout failed: fatal: Unable to create "
+    "'/srv/repos/checkout-a/.git/index.lock': File exists.\n\n"
+    "Another git process seems to be running in this repository"
+)
+
+
+def _failing_with(error: str, passes: int = 4) -> tier_health.TierHealth:
+    health = None
+    for i in range(passes):
+        health = tier_health.failed(health, "clang_full", error, T0 + timedelta(minutes=30 * i))
+    assert health is not None
+    return health
+
+
+def test_a_held_git_lock_is_its_own_kind_and_its_fix_says_what_to_do() -> None:
+    assert tier_health.classify(LOCKED) == "git_lock"
+    fix = tier_health.fix_for("git_lock", LOCKED, name_where=False)
+    assert "index.lock" in fix and "/srv" not in fix
+
+
+def _two_entries() -> tuple[dict[str, Any], ...]:
+    recorder._FAILING = (
+        recorder.FailingTier("o", "code-a", _failing_with(LOCKED), 0, "o/a", "main"),
+        recorder.FailingTier(
+            "o", "code-a-26-4", _failing_with("PermissionError"), -1, "o/a", "26.4"
+        ),
+    )
+    return recorder.problem_rows(T0 + timedelta(hours=3)) or ()
+
+
+def _tier_problem(rows: tuple[dict[str, Any], ...], *, named: bool) -> Any:
+    (p,) = [
+        p
+        for p in collect_problems(
+            settings, HealthState(code_tier_failures=rows, code_tier_named=named)
+        )
+        if p.code == "code_tier_failing"
+    ]
+    return p
+
+
+def test_an_operator_reads_each_entry_by_repository_branch_and_namespace_with_its_reason() -> None:
+    p = _tier_problem(_two_entries(), named=True)
+    assert (
+        "o/a@main (code-a) clang_full: git lock held — ToolOutputError: git checkout failed: "
+        "fatal: Unable to create '/srv/repos/checkout-a/.git/index.lock': File exists., "
+        "4 failed passes since 2026-01-01T12:00:00+00:00"
+    ) in p.message
+    assert "o/a@26.4 (code-a-26-4) clang_full: unclassified error — PermissionError, 4" in p.message
+    assert "unknown" not in p.message and "commits behind" not in p.message
+    assert tier_health.fix_for("git_lock", "", name_where=False) in p.fix
+    assert tier_health.fix_for("unknown", "", name_where=False) in p.fix
+
+
+def test_an_anonymous_caller_reads_each_reason_and_fix_but_no_entry() -> None:
+    p = _tier_problem(_two_entries(), named=False)
+    assert "clang_full: git lock held, 4 failed passes since" in p.message
+    assert "clang_full: unclassified error, 4 failed passes since" in p.message
+    assert not any(s in p.message for s in ("o/a", "code-a", "/srv", "PermissionError", "unknown"))
+    assert "commits behind" not in p.message
+    assert tier_health.fix_for("git_lock", "", name_where=False) in p.fix
+
+
+def test_a_lag_behind_is_shown_and_a_lag_of_zero_is_not() -> None:
+    recorder._FAILING = (
+        recorder.FailingTier("o", "code-a", _failing_with(LOCKED), 413, "o/a", "main"),
+        recorder.FailingTier("o", "code-b", _failing_with(LOCKED), 0, "o/b", "main"),
+    )
+    p = _tier_problem(recorder.problem_rows(T0 + timedelta(hours=3)) or (), named=True)
+    assert "at least 413 commits behind" in p.message
+    assert p.message.count("commits behind") == 1 and "0 commits" not in p.message

@@ -15,7 +15,7 @@ import time
 from collections.abc import Awaitable
 from typing import Any, cast
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
 from server import __version__, boot
@@ -48,8 +48,26 @@ async def _otel_unindexed_for_health(ch_ok: bool) -> tuple[str, ...] | None:
         return None
 
 
+def _sees_every_entry(request: Request) -> bool:
+    """Whether the caller's bearer token verifies as a platform admin's, who may read
+    every code-index entry. No token, or one that does not verify, is an anonymous
+    caller: `/v1/health` refuses no one."""
+    from server.auth.bearer import bearer_token
+    from server.auth.jwt import TokenError, verify_token
+    from server.operations.base import Role
+
+    try:
+        token = bearer_token(request.headers.get("Authorization"))
+        return token is not None and verify_token(token).has_role(Role.PLATFORM_ADMIN)
+    except TokenError:
+        return False
+
+
 def _health_provider_fields(
-    ch_ok: bool, otel_metrics_unindexed: tuple[str, ...] | None = None
+    ch_ok: bool,
+    otel_metrics_unindexed: tuple[str, ...] | None = None,
+    *,
+    sees_every_entry: bool = False,
 ) -> dict[str, object]:
     """The provider block of `/v1/health` plus the shared problem list and the
     `status` derived from it.
@@ -121,6 +139,7 @@ def _health_provider_fields(
             carry_pinned=tuple(rmt_carry.pinned_overdue()),
             refused_configuration=provider_runtime.refused_configuration(),
             code_tier_failures=tier_health.problem_rows(),
+            code_tier_named=sees_every_entry,
         ),
     )
     return {
@@ -340,7 +359,7 @@ async def health_ready(response: Response) -> dict[str, object]:
 
 
 @health_router.get("/v1/health")
-async def health(response: Response, include: str = "") -> dict[str, object]:
+async def health(request: Request, response: Response, include: str = "") -> dict[str, object]:
     """Multi-tier health.
 
     Default response (lightweight; safe for high-frequency liveness
@@ -359,7 +378,13 @@ async def health(response: Response, include: str = "") -> dict[str, object]:
 
     requested = {s.strip() for s in include.split(",") if s.strip()}
     ch_ok, ch_error = await _ping_clickhouse()
-    prov = _health_provider_fields(ch_ok, await _otel_unindexed_for_health(ch_ok))
+    sees_every_entry = _sees_every_entry(request)
+    prov = _health_provider_fields(
+        ch_ok, await _otel_unindexed_for_health(ch_ok), sees_every_entry=sees_every_entry
+    )
+    if sees_every_entry:
+        # the answer names restricted entries: no shared cache may keep it
+        response.headers["Cache-Control"] = "no-store"
     if not ch_ok:
         response.status_code = 503
     out: dict[str, object] = {
