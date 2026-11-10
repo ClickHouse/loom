@@ -269,13 +269,14 @@ days.
 
 #### Checking an erasure yourself
 
-An operator who holds the org's SQL surface grant with `--namespaces '*'`, or `--all`
-([SQL surface](../../reference/sql-surface.md#access)), can re-count three of the census's
-keys: `loom.memory`, `loom.memory_versions` and `loom.conversations`. Bind the erased id and
-the census time as parameters. ClickHouse still writes the bound values into
-`system.query_log`, as it does for the erasure's own statements (below), so run the check
-from `clickhouse-client` rather than through `pg_clickhouse`, whose pushed-down text a
-Postgres statement log would keep as one more copy:
+An operator who holds the org's SQL surface grant with `--namespaces '*'`, or `--all` ([SQL
+surface](../../reference/sql-surface.md#access)), can re-count three of the census's keys,
+`loom.memory`, `loom.memory_versions` and `loom.conversations`, and check the request ledger
+(the fourth statement, below). Bind the erased id and the census time as parameters.
+ClickHouse still writes the bound values into `system.query_log`, as it does for the
+erasure's own statements (below), so run the check from `clickhouse-client` rather than
+through `pg_clickhouse`, whose pushed-down text a Postgres statement log would keep as one
+more copy:
 
 ```bash
 read -r uid  # the erased id, typed at the prompt so it stays out of the shell history

@@ -1,5 +1,5 @@
-"""The erasure receipt: the census a saga's last complete count recorded, every
-substrate with its count, carried on the ledger row and returned by erasure.status;
+"""The erasure receipt: the census of a saga's latest run, every substrate with its
+count, carried on the ledger row and returned by erasure.status;
 the purge a saga applies; and the ledger reads that act on a saga's rows. CH-free."""
 
 from __future__ import annotations
@@ -211,3 +211,26 @@ def test_the_read_window_ends_a_day_before_the_ledger_ttl() -> None:
     (ttl_days,) = re.findall(r"TTL requested_at \+ toIntervalDay\((\d+)\)", table.split(";")[0])
     (window_days,) = re.findall(r"INTERVAL (\d+) DAY", ledger.LIVE_LEDGER)
     assert int(window_days) == int(ttl_days) - 1
+
+
+async def test_a_step_checkpoint_carries_no_census(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A resume's in-progress rows write the column's default: the latest row then reads
+    as no receipt until the run's own census lands, as the docs say."""
+    rows: list[dict[str, Any]] = []
+
+    async def insert(row: dict[str, Any], **_: Any) -> None:
+        rows.append(row)
+
+    monkeypatch.setattr(saga.erasure_ledger, "insert_request_checkpoint", insert)
+    base: Any = {"id": "x", "org": "o", "scope_type": "user_id", "scope_value": "a"}
+    await saga.checkpoint(row=base, status="in_progress", steps_completed=[], current_step=1)
+    complete = {"per_table": {"loom.memory": 0}, "count": 0, "verified_at": _AT}
+    await saga.checkpoint(
+        row=base,
+        status="completed",
+        steps_completed=[],
+        current_step=2,
+        extra=saga._verify_columns(complete),
+    )
+    assert "census" not in rows[0]
+    assert json.loads(rows[1]["census"]) == {"loom.memory": 0, REBUILD_COPIES: 0}
