@@ -143,7 +143,7 @@ def _health_provider_fields(
             carry_pinned=tuple(rmt_carry.pinned_overdue()),
             refused_configuration=provider_runtime.refused_configuration(),
             code_tier_failures=tier_health.problem_rows(),
-            code_tier_named=sees_every_entry,
+            code_tier_names="unrestricted" if sees_every_entry else "none",
         ),
     )
     return {
@@ -387,7 +387,7 @@ async def health(request: Request, response: Response, include: str = "") -> dic
         ch_ok, await _otel_unindexed_for_health(ch_ok), sees_every_entry=sees_every_entry
     )
     if sees_every_entry:
-        # the answer names restricted entries: no shared cache may keep it
+        # the answer names entries a caller without the token may not read
         response.headers["Cache-Control"] = "no-store"
     if not ch_ok:
         response.status_code = 503

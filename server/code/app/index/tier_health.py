@@ -104,6 +104,9 @@ class FailingTier:
     lag_commits: int
     repo: str  # owner/name
     branch: str
+    # restricted by its repository entry or directory row, or unreadable: no admin
+    # role reads which entry it is
+    restricted: bool
 
 
 # The failing tiers of every entry, as this process last read them: the health probe
@@ -144,20 +147,34 @@ async def refresh_failing(ch: Any | None = None) -> None:
             if health is not None and health.failing:
                 failing.append((org, ns, health))
         states = await store.all_state_many(sorted({(o, n) for o, n, _ in failing}))
-        out = [
-            FailingTier(
-                org,
-                ns,
-                health,
-                _published_lag(states.get((org, ns)) or {}, health.tier),
-                str(configured[(org, ns)].repo),
-                str(configured[(org, ns)].git_branch),
+        out = []
+        for org, ns, health in failing:
+            cfg = configured[(org, ns)]
+            out.append(
+                FailingTier(
+                    org,
+                    ns,
+                    health,
+                    _published_lag(states.get((org, ns)) or {}, health.tier),
+                    cfg.repo,
+                    cfg.git_branch,
+                    await _restricted(org, ns),
+                )
             )
-            for org, ns, health in failing
-        ]
         _FAILING = tuple(sorted(out, key=lambda f: (f.org, f.namespace, f.health.tier)))
     except Exception as e:  # noqa: BLE001 — the health signal keeps its last reading
         logger.warning("tier health: failing tiers not re-read: %s", e)
+
+
+async def _restricted(org: str, ns: str) -> bool:
+    """Whether the entry is restricted; True when its classification cannot be read."""
+    from server.auth.directory import ClassificationUnavailable
+    from server.identity.app.namespace_classification import is_restricted
+
+    try:
+        return await is_restricted(org, ns)
+    except ClassificationUnavailable:
+        return True
 
 
 def _published_lag(state: IndexState, tier: str) -> int:
@@ -217,7 +234,8 @@ def problem_rows(now: datetime | None = None) -> tuple[dict[str, Any], ...] | No
                     "failed_passes": f.health.failed_passes,
                     "lag_commits": f.lag_commits,
                     "reason": tier_health.reason(f.health.kind),
-                    # only a caller who may see every entry reads these three
+                    # only a reader who may see the entry reads these three
+                    "restricted": f.restricted,
                     "repo": f.repo,
                     "branch": f.branch,
                     "error": tier_health.error_line(f.health.kind, f.health.error),

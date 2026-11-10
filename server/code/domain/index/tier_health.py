@@ -169,11 +169,13 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("submodule_url", re.compile(r"transport 'file' not allowed", re.IGNORECASE)),
     # A full disk also cuts a transfer short ("the remote end hung up"): before network.
     ("disk", re.compile(r"no space left on device|disk quota exceeded", re.IGNORECASE)),
-    # another git process holds a lock file in the checkout (often index.lock)
-    ("git_lock", re.compile(r"unable to create '[^'\n]*\.lock': file exists", re.IGNORECASE)),
     # the C/C++ harness's CMake configure failed: CMake's own last lines come before
     # its line, and can read as any later kind
     ("cmake", re.compile(r"^>> cmake configure failed$", re.MULTILINE)),
+    # Another git process holds a lock file in the entry's checkout (often index.lock).
+    # After cmake: a configure step's own git fetch that hits a lock is the build's,
+    # not the checkout's. No later kind's pattern matches git's lock message.
+    ("git_lock", re.compile(r"unable to create '[^'\n]*\.lock': file exists", re.IGNORECASE)),
     (
         "credential",
         re.compile(
@@ -392,15 +394,15 @@ def reason(kind: str) -> str:
 
 def error_line(kind: str, error: str) -> str:
     """The line of a recorded error that says why, redacted, its last
-    `ERROR_LINE_CHARS` kept: the line the kind's pattern matched, else the first line, or
-    the last whole one when the record was cut to `ERROR_CHARS` (it keeps the end of
-    the output, where git's `fatal:` and the exception sit, and starts mid-line)."""
+    `ERROR_LINE_CHARS` kept: the line the kind's pattern matched (for `cmake` and
+    `harness`, whose line is only a marker, the line before it), else the last line,
+    where git's `fatal:` and the exception sit."""
     lines = [s.strip() for s in redact(error).splitlines() if s.strip()]
     patterns = [pattern for k, pattern in _KINDS if k == kind]
-    line = next((s for s in lines if any(p.search(s) for p in patterns)), "")
-    if not line and lines:
-        whole = lines[1:] if len(error) >= ERROR_CHARS and len(lines) > 1 else lines
-        line = whole[-1] if len(error) >= ERROR_CHARS else whole[0]
+    at = next((i for i, s in enumerate(lines) if any(p.search(s) for p in patterns)), None)
+    if at is not None and kind in ("cmake", "harness") and at > 0:
+        at -= 1
+    line = lines[-1 if at is None else at] if lines else ""
     # a long line keeps its end, where a tool's message puts the cause
     return line if len(line) <= ERROR_LINE_CHARS else "…" + line[-(ERROR_LINE_CHARS - 1) :]
 

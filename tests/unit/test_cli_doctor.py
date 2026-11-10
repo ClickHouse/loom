@@ -26,6 +26,7 @@ def test_a_failing_code_tier_is_a_doctor_problem(monkeypatch: pytest.MonkeyPatch
         "repo": "o/x",
         "branch": "main",
         "error": "fatal: could not read Username",
+        "restricted": True,  # the host's own view names it all the same
         "since": "2026-01-01T00:00:00+00:00",
         "failed_passes": 4,
         "lag_commits": 12,

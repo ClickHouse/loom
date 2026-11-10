@@ -112,9 +112,11 @@ class HealthState:
     # kind, since, failed_passes, lag_commits, reason, repo, branch, error, fix,
     # severity. None = not read here.
     code_tier_failures: tuple[Mapping[str, Any], ...] | None = None
-    # Whether the reader may see every entry (a platform admin's `/v1/health`, the
-    # doctor): then the `code_tier_failing` message names each entry and its error.
-    code_tier_named: bool = False
+    # Which entries the `code_tier_failing` message names, with their error: `none`
+    # (anonymous `/v1/health`), `unrestricted` (a platform admin's: no admin role
+    # reads a restricted namespace) or `all` (the doctor, run on the host with the
+    # deployment's own credentials).
+    code_tier_names: str = "none"
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     # Saved keys take precedence over the environment, including explicit empty keys.
     saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)
@@ -909,11 +911,9 @@ def _code_tier_problems(st: HealthState) -> list[Problem]:
     """One `code_tier_failing` problem for all the code-index tiers that keep failing:
     each tier with its reason, failed passes, since when and how far behind, and the
     fix of each kind. `/v1/health` answers anyone and an entry may be restricted, so
-    only a reader who may see every entry (`code_tier_named`) reads which entry each
-    line is (repository@branch, org and namespace) and the error line that says why
-    (`tier_health.error_line`); `code.repos`
-    and the repository page name them to whoever may read them. Its severity is the
-    worst row's."""
+    an entry is named (repository@branch, org and namespace, and the error line that
+    says why) only as `code_tier_names` allows; `code.repos` and the repository page
+    name them to whoever may read them. Its severity is the worst row's."""
     rows = st.code_tier_failures or ()
     if not rows:
         return []
@@ -926,8 +926,10 @@ def _code_tier_problems(st: HealthState) -> list[Problem]:
             f"{r['tier']}: {r['reason']}, {passes} failed pass{'' if passes == 1 else 'es'} "
             f"since {r['since']}{behind}"
         )
-        if not st.code_tier_named:
+        if st.code_tier_names == "none":
             return line
+        if r["restricted"] and st.code_tier_names != "all":
+            return f"a restricted entry's {line}"
         entry = f"{r['repo']}@{r['branch']} ({r['org']}/{r['namespace']})"
         error = f' — "{r["error"]}"' if r["error"] else ""
         return f"{entry} {line}{error}"
@@ -944,7 +946,9 @@ def _code_tier_problems(st: HealthState) -> list[Problem]:
             f"{len(rows)} code-index {noun} failing, so what {it} trails the "
             f"branch: {'; '.join(shown)}{tail}."
             + (
-                "" if st.code_tier_named else " code.repos and the repository page name each entry."
+                ""
+                if st.code_tier_names == "all"
+                else " code.repos and the repository page name each entry."
             ),
             " ".join(fixes),
             source="workers",

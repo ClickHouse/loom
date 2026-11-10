@@ -1,6 +1,6 @@
 """`/v1/health` answers anyone, so its `code_tier_failing` problem names each failing
-entry (repository@branch, org and namespace) and its error only to a platform
-admin's token without per-namespace roles; any other caller, or a token that does not verify, reads the reasons and fixes
+entry that is not restricted (repository@branch, org and namespace) and its error
+only to a platform admin's token without per-namespace roles; any other caller, or a token that does not verify, reads the reasons and fixes
 without the entries."""
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> Any:
     for i in range(4):
         health = tier_health.failed(health, "clang_full", LOCKED, T0 + timedelta(minutes=30 * i))
     assert health is not None
-    recorder._FAILING = (recorder.FailingTier("o", "code-a", health, 0, "o/a", "main"),)
+    recorder._FAILING = (recorder.FailingTier("o", "code-a", health, 0, "o/a", "main", False),)
     yield TestClient(main_module.app)
     recorder.reset_for_tests()
 

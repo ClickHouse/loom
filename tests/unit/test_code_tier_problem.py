@@ -153,8 +153,8 @@ async def test_the_snapshot_holds_the_failing_tiers_with_their_lag_and_keeps_it_
     await recorder.refresh_failing()
     snap = recorder._FAILING
     assert snap is not None and [
-        (f.namespace, f.health.tier, f.lag_commits, f.repo, f.branch) for f in snap
-    ] == [("code-a", "clang", 413, "o/r", "main")]
+        (f.namespace, f.health.tier, f.lag_commits, f.repo, f.branch, f.restricted) for f in snap
+    ] == [("code-a", "clang", 413, "o/r", "main", False)]
     store.fail = True
     await recorder.refresh_failing()
     assert recorder._FAILING == snap
@@ -191,7 +191,9 @@ def test_the_problem_names_the_tier_reason_since_lag_and_fix_but_no_entry() -> N
 
 
 def test_a_problem_row_carries_the_kinds_fix_without_the_repository() -> None:
-    recorder._FAILING = (recorder.FailingTier("o", "code-a", _failing(4), 413, "o/r", "main"),)
+    recorder._FAILING = (
+        recorder.FailingTier("o", "code-a", _failing(4), 413, "o/r", "main", False),
+    )
     (row,) = recorder.problem_rows(T0 + timedelta(hours=3)) or ()
     assert row["fix"] == tier_health.fix_for("credential", "")
     assert "private" not in row["fix"] and "github.com" not in row["fix"]
@@ -262,7 +264,9 @@ def test_the_doctor_reads_the_failing_tiers_once_and_none_when_clickhouse_is_dow
 
     async def refresh(ch: Any = None) -> None:
         calls.append("tiers")
-        recorder._FAILING = (recorder.FailingTier("o", "code-a", _failing(4), 413, "o/r", "main"),)
+        recorder._FAILING = (
+            recorder.FailingTier("o", "code-a", _failing(4), 413, "o/r", "main", False),
+        )
 
     monkeypatch.setattr("server.core.ch.get_client", lambda: client)
     monkeypatch.setattr(repo_registry, "refresh_db_repos", registry)
@@ -318,7 +322,9 @@ async def test_with_code_intelligence_off_no_record_is_a_problem(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "code_intel_enabled", False)
-    recorder._FAILING = (recorder.FailingTier("o", "code-a", _failing(4), 413, "o/r", "main"),)
+    recorder._FAILING = (
+        recorder.FailingTier("o", "code-a", _failing(4), 413, "o/r", "main", False),
+    )
     await recorder.refresh_failing()
     assert recorder.problem_rows() == ()
 
@@ -350,8 +356,10 @@ def test_a_failing_tier_never_makes_the_deployment_degraded() -> None:
 
 def test_problem_rows_put_the_errors_first() -> None:
     recorder._FAILING = (
-        recorder.FailingTier("o", "code-a", _failing(4), 5, "o/r", "main"),  # warn: not far behind
-        recorder.FailingTier("o", "code-b", _failing(4), 413, "o/r", "main"),  # error
+        recorder.FailingTier(
+            "o", "code-a", _failing(4), 5, "o/r", "main", False
+        ),  # warn: not far behind
+        recorder.FailingTier("o", "code-b", _failing(4), 413, "o/r", "main", False),  # error
     )
     rows = recorder.problem_rows(T0 + timedelta(hours=3)) or ()
     assert [(r["namespace"], r["severity"]) for r in rows] == [
@@ -401,7 +409,7 @@ def test_a_refused_ssh_key_gets_the_ssh_fix_without_the_repository() -> None:
     for _ in range(4):
         health = tier_health.failed(health, "fetch", error, T0)
     assert health is not None
-    recorder._FAILING = (recorder.FailingTier("o", "code-a", health, -1, "o/r", "main"),)
+    recorder._FAILING = (recorder.FailingTier("o", "code-a", health, -1, "o/r", "main", False),)
     (row,) = recorder.problem_rows(T0) or ()
     assert row["fix"].startswith("The ssh key was refused:") and "private" not in row["fix"]
 
@@ -462,7 +470,9 @@ def test_problem_rows_grade_with_the_live_settings(
     }
     for name, value in {**base, **overrides}.items():
         monkeypatch.setattr(settings, name, value)
-    recorder._FAILING = (recorder.FailingTier("o", "code-a", _failing(4), 413, "o/r", "main"),)
+    recorder._FAILING = (
+        recorder.FailingTier("o", "code-a", _failing(4), 413, "o/r", "main", False),
+    )
     rows = recorder.problem_rows(T0 + timedelta(hours=2)) or ()
     assert (rows[0]["severity"] if rows else None) == want
 
@@ -490,9 +500,9 @@ def test_a_held_git_lock_is_its_own_kind_and_its_fix_says_what_to_do() -> None:
 
 def _two_entries() -> tuple[dict[str, Any], ...]:
     recorder._FAILING = (
-        recorder.FailingTier("o", "code-a", _failing_with(LOCKED), 0, "o/a", "main"),
+        recorder.FailingTier("o", "code-a", _failing_with(LOCKED), 0, "o/a", "main", False),
         recorder.FailingTier(
-            "o", "code-a-26-4", _failing_with("PermissionError"), -1, "o/a", "26.4"
+            "o", "code-a-26-4", _failing_with("PermissionError"), -1, "o/a", "26.4", False
         ),
     )
     return recorder.problem_rows(T0 + timedelta(hours=3)) or ()
@@ -502,7 +512,8 @@ def _tier_problem(rows: tuple[dict[str, Any], ...], *, named: bool) -> Any:
     (p,) = [
         p
         for p in collect_problems(
-            settings, HealthState(code_tier_failures=rows, code_tier_named=named)
+            settings,
+            HealthState(code_tier_failures=rows, code_tier_names="all" if named else "none"),
         )
         if p.code == "code_tier_failing"
     ]
@@ -536,8 +547,8 @@ def test_an_anonymous_caller_reads_each_reason_and_fix_but_no_entry() -> None:
 
 def test_a_lag_behind_is_shown_and_a_lag_of_zero_is_not() -> None:
     recorder._FAILING = (
-        recorder.FailingTier("o", "code-a", _failing_with(LOCKED), 413, "o/a", "main"),
-        recorder.FailingTier("o", "code-b", _failing_with(LOCKED), 0, "o/b", "main"),
+        recorder.FailingTier("o", "code-a", _failing_with(LOCKED), 413, "o/a", "main", False),
+        recorder.FailingTier("o", "code-b", _failing_with(LOCKED), 0, "o/b", "main", False),
     )
     p = _tier_problem(recorder.problem_rows(T0 + timedelta(hours=3)) or (), named=True)
     assert "at least 413 commits behind" in p.message
@@ -547,8 +558,8 @@ def test_a_lag_behind_is_shown_and_a_lag_of_zero_is_not() -> None:
 def test_the_error_line_is_the_one_that_says_why() -> None:
     cmake = "x" * 700 + "\nCMake Error at CMakeLists.txt:12\n>> cmake configure failed\nexit 1"
     health = _failing_with(cmake)
-    # the record starts mid-line; the kind's own line is the one shown
-    assert tier_health.error_line(health.kind, health.error) == ">> cmake configure failed"
+    # the marker line repeats the reason: the line above it says which
+    assert tier_health.error_line(health.kind, health.error) == "CMake Error at CMakeLists.txt:12"
     # cut, with no line of its kind: the last whole line, where the error sits
     health = _failing_with("y" * 700 + "\n  File x.py, line 3\nValueError: broke")
     assert tier_health.error_line(health.kind, health.error) == "ValueError: broke"
@@ -559,18 +570,58 @@ def test_the_error_line_is_the_one_that_says_why() -> None:
     # one cut line and no kind: that line, not nothing
     health = _failing_with("w" * 900)
     assert tier_health.error_line(health.kind, health.error) == "…" + "w" * 199
-    # not cut: the first line
-    assert tier_health.error_line("unknown", "ToolOutputError: boom\nmore") == (
-        "ToolOutputError: boom"
-    )
+    # not cut either: the cause is printed last
+    out = "ToolOutputError: git submodule update failed: Submodule 'x' registered\nfatal: boom"
+    assert tier_health.error_line("unknown", out) == "fatal: boom"
 
 
 def test_the_dashboard_says_each_kind_as_the_server_does() -> None:
     import re
     from pathlib import Path
 
-    ts = Path("frontend/src/lib/tierHealth.ts").read_text()
+    ts = (Path(__file__).resolve().parents[2] / "frontend/src/lib/tierHealth.ts").read_text()
     block = ts[ts.index("const KIND_WORD") : ts.index("};", ts.index("const KIND_WORD"))]
     words = dict(re.findall(r'^\s+(\w+): "([^"]+)",$', block, re.MULTILINE))
     assert words.pop("unknown") == tier_health.reason("unknown")
     assert words == tier_health.REASONS
+
+
+def test_a_platform_admin_reads_a_restricted_entry_by_its_reason_alone() -> None:
+    recorder._FAILING = (
+        recorder.FailingTier("o", "code-secret", _failing_with(LOCKED), 0, "o/s", "main", True),
+        recorder.FailingTier("o", "code-a", _failing_with(LOCKED), 0, "o/a", "main", False),
+    )
+    rows = recorder.problem_rows(T0 + timedelta(hours=3)) or ()
+    (p,) = [
+        p
+        for p in collect_problems(
+            settings, HealthState(code_tier_failures=rows, code_tier_names="unrestricted")
+        )
+        if p.code == "code_tier_failing"
+    ]
+    assert "a restricted entry's clang_full: git lock held, 4 failed passes" in p.message
+    assert "o/a@main (o/code-a)" in p.message
+    assert not any(s in p.message for s in ("o/s", "code-secret"))
+    assert p.message.count("/srv/repos/checkout-a") == 1  # code-a's error only
+    # the host's own view names it
+    (d,) = [
+        p
+        for p in collect_problems(
+            settings, HealthState(code_tier_failures=rows, code_tier_names="all")
+        )
+        if p.code == "code_tier_failing"
+    ]
+    assert "o/s@main (o/code-secret)" in d.message
+
+
+@pytest.mark.asyncio
+async def test_an_entry_whose_classification_cannot_be_read_counts_as_restricted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.auth.directory import ClassificationUnavailable
+
+    async def unreadable(org: str, ns: str) -> bool:
+        raise ClassificationUnavailable("directory down")
+
+    monkeypatch.setattr("server.identity.app.namespace_classification.is_restricted", unreadable)
+    assert await recorder._restricted("o", "code-a") is True
