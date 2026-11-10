@@ -238,7 +238,8 @@ function SearchOrder({
   grant: (ns: string) => GrantRole;
   onRole: (ns: string, r: GrantRole) => void;
   onMove: (ns: string, to: number) => void;
-  /** A touch screen: no grip, since HTML drag does not start there. */
+  /** A touch screen: no grip, since a long-press drag is not what a touch user expects; the
+   *  arrows are the way there. */
   touch: boolean;
 }) {
   const titleId = useId();
@@ -288,7 +289,7 @@ function SearchOrder({
               className={`flex flex-wrap items-center gap-2 px-2 py-1.5 text-sm ${over === i && dragging !== ns ? "bg-surface" : ""} ${dragging === ns ? "opacity-60" : ""}`}
             >
               {/* Only the grip drags, so a press on the role or an arrow stays a press and the
-                  name can be selected. A touch screen starts no HTML drag: there the arrows
+                  name can be selected. On a touch screen a long-press drag is not what a person expects: there the arrows
                   are the way, and no grip promises otherwise. */}
               {!touch && (
                 <span
@@ -360,7 +361,7 @@ function SearchOrder({
   );
 }
 
-/** A touch screen: HTML drag and drop does not start there. */
+/** A touch screen, where the arrows move a row and no grip shows. */
 const COARSE_POINTER = "(pointer: coarse)";
 
 type RepoInfo = Record<string, { repo: string; branch: string; classification?: string }>;
@@ -454,6 +455,8 @@ function TokenForm({
 
   const eligibleNs = useMemo(() => (mine ?? []).filter((n) => n.kind !== "code"), [mine]);
   const eligibleRepos = useMemo(() => (mine ?? []).filter((n) => n.kind === "code"), [mine]);
+  // A repository is read-only: the list says so and the request sends viewer.
+  const isRepo = (ns: string) => eligibleRepos.some((r) => r.namespace === ns);
   const repoInfo = useRepoInfo(mine ?? storedMine);
   const repoGroups = useMemo(() => {
     const by = new Map<string, { repo: string; restricted: boolean; rows: { namespace: string; branch: string }[] }>();
@@ -510,12 +513,11 @@ function TokenForm({
   const label = nsLabeler(repoInfo);
   const moveTo = (ns: string, to: number) => {
     const from = selectedNs.indexOf(ns);
-    const at = Math.max(0, Math.min(selectedNs.length - 1, to));
-    if (from < 0 || from === at) return;
+    if (from < 0 || from === to) return;
     const next = selectedNs.filter((x) => x !== ns);
-    next.splice(at, 0, ns);
+    next.splice(to, 0, ns);
     setSelectedNs(next);
-    setMoved(`${label(ns)} moved to ${at + 1} of ${next.length}`);
+    setMoved(`${label(ns)} moved to ${to + 1} of ${next.length}`);
   };
 
   // A namespace of its own for a bot: register it (the server makes you its admin), then
@@ -565,7 +567,7 @@ function TokenForm({
       // Ordered = read priority; repositories are read-only.
       namespaces = selectedNs.map((ns) => ({
         namespace: ns,
-        role: eligibleRepos.some((r) => r.namespace === ns) ? "viewer" : (nsRole[ns] ?? grantRoleOf(mine, ns)),
+        role: isRepo(ns) ? "viewer" : (nsRole[ns] ?? grantRoleOf(mine, ns)),
       }));
     }
     setBusy(true);
@@ -687,7 +689,7 @@ function TokenForm({
               touch={touch}
               order={selectedNs}
               label={label}
-              isRepo={(ns) => eligibleRepos.some((r) => r.namespace === ns)}
+              isRepo={isRepo}
               role={(ns) => nsRole[ns] ?? grantRoleOf(mine, ns)}
               grant={(ns) => grantRoleOf(mine, ns)}
               onRole={(ns, r) => setNsRole((m) => ({ ...m, [ns]: r }))}

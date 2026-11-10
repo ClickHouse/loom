@@ -37,6 +37,7 @@ vi.mock("../api", async (importOriginal) => {
     listCodeRepos: vi.fn(async (): Promise<CodeRepoSummary[]> => []),
     listBlacklist: vi.fn(async () => ({ rows: [] })),
     createToken: vi.fn(async () => created()),
+    registerNamespace: vi.fn(async () => ({ registered: true })),
   };
 });
 import { createToken, listCodeRepos, listMine } from "../api";
@@ -317,6 +318,23 @@ describe("the token form", () => {
     );
   });
 
+  it("only these: a namespace created here joins the order last and clears the status", async () => {
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-a" }, WAIT));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
+    await userEvent.click(screen.getByRole("button", { name: "Move ns-b up" }));
+    expect(screen.getByRole("status")).toHaveTextContent("ns-b moved to 1 of 2");
+    vi.mocked(listMine).mockResolvedValue([...ROWS, row("nightly-bot")]);
+    invalidateShared();
+    await userEvent.type(screen.getByLabelText("New namespace name"), "nightly-bot");
+    await userEvent.click(screen.getByRole("button", { name: "Create namespace" }));
+    const order = screen.getByRole("list", { name: "Search order" });
+    await waitFor(() => expect(within(order).getAllByRole("listitem")).toHaveLength(3), WAIT);
+    expect(within(order).getAllByRole("listitem")[2]).toHaveTextContent("nightly-bot");
+    expect(screen.getByRole("status")).toHaveTextContent("");
+  });
+
   it("only these: a row dragged onto another takes its place", async () => {
     render(<Setup />);
     await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
@@ -326,6 +344,8 @@ describe("the token form", () => {
     const items = within(screen.getByRole("list", { name: "Search order" })).getAllByRole("listitem");
     const data = { effectAllowed: "", setData: vi.fn(), getData: vi.fn(), setDragImage: vi.fn() };
     const grip = (li: HTMLElement) => li.querySelector("[draggable]") as HTMLElement;
+    // Only the grip drags: a press on the row's role or arrows stays a press.
+    expect(items[0]).not.toHaveAttribute("draggable");
     fireEvent.dragStart(grip(items[2]), { dataTransfer: data });
     fireEvent.dragOver(items[0], { dataTransfer: data });
     fireEvent.drop(items[0], { dataTransfer: data });
