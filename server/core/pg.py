@@ -258,6 +258,9 @@ def is_outage(e: BaseException) -> bool:
             asyncpg.exceptions.CannotConnectNowError,
             asyncpg.exceptions.AdminShutdownError,
             asyncpg.exceptions.CrashShutdownError,
+            # The driver's protocol lost track of a connection the server ended between
+            # its statements: never a caller's misuse (that is an InterfaceError).
+            asyncpg.exceptions._base.InternalClientError,
             # A result type a later migration changed under a prepared statement: the
             # retry prepares it again.
             asyncpg.exceptions.InvalidCachedStatementError,
@@ -265,17 +268,20 @@ def is_outage(e: BaseException) -> bool:
     )
 
 
-def _raise_if_unavailable(e: Exception, *, outcome_unknown: bool = False) -> None:
-    """503 POSTGRES_UNAVAILABLE for an error a retry may clear; a data or constraint
-    error, whose text quotes the row or the argument, as PostgresRefusedError; otherwise
-    the caller re-raises `e` as it is."""
+def _raise_if_unavailable(
+    e: Exception, *, outcome_unknown: bool = False, lost: bool = False
+) -> None:
+    """503 POSTGRES_UNAVAILABLE for an error a retry may clear, or any error once the
+    connection was `lost` (the driver's error then depends on when it noticed); a data
+    or constraint error, whose text quotes the row or the argument, as
+    PostgresRefusedError; otherwise the caller re-raises `e` as it is."""
     # The driver's own argument error lives in its private module: the public
     # `asyncpg.exceptions.DataError` is the server's SQLSTATE 22000.
     from asyncpg.exceptions._base import DataError as ClientDataError
 
     if isinstance(e, LoomServerError):
         return  # already the answer, a refusal raised in the block included
-    if is_outage(e):
+    if lost or is_outage(e):
         raise PostgresUnavailableError(
             "the commit's answer was lost" if outcome_unknown else "Postgres did not answer",
             outcome_unknown=outcome_unknown,
@@ -311,6 +317,17 @@ async def connection() -> AsyncIterator[Any]:
         raise
     finally:
         await _release(pool, conn)
+
+
+def _lost(conn: Any) -> bool:
+    """Whether the server or the network ended `conn`: closed, or detached from the
+    pool by the driver, which makes any call on it raise an InterfaceError."""
+    import asyncpg
+
+    try:
+        return bool(conn.is_closed())
+    except asyncpg.InterfaceError:
+        return True
 
 
 def _terminate(conn: Any) -> None:
@@ -439,16 +456,17 @@ async def transaction() -> AsyncIterator[Any]:
             try:
                 yield conn
             except BaseException as e:
+                lost = _lost(conn)
                 await _rollback(conn, tx)
                 if isinstance(e, Exception):
-                    _raise_if_unavailable(e)
+                    _raise_if_unavailable(e, lost=lost)
                 raise
             # The standby wait is outside the statement timeout (the module docstring).
             committing = True
             try:
                 await tx.commit()
             except Exception as e:
-                _raise_if_unavailable(e, outcome_unknown=True)
+                _raise_if_unavailable(e, outcome_unknown=True, lost=_lost(conn))
                 raise
     except asyncio.CancelledError as e:
         if committing:
@@ -515,13 +533,9 @@ async def _rollback(conn: Any, tx: Any) -> None:
     """Roll back within `_RELEASE_TIMEOUT_S`, never hiding the error that ended the
     block: a statement still in flight is cancelled first, and one that does not finish
     in time leaves the connection to `_release`, which has a bound of its own."""
-    import asyncpg
 
-    try:
-        if conn.is_closed():
-            return
-    except asyncpg.InterfaceError:
-        return  # lost: the driver detached it from the pool (`_terminate`)
+    if _lost(conn):
+        return  # nothing to roll back; a detached one fails any call (`_terminate`)
     try:
         await asyncio.wait_for(tx.rollback(), _RELEASE_TIMEOUT_S)
     except Exception as e:  # noqa: BLE001 — the error that ended the block is raised

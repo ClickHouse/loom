@@ -6957,6 +6957,33 @@ async def test_a_connection_lost_in_a_transaction_is_503_not_the_drivers_error(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("closed", [True, False])
+async def test_the_drivers_own_error_on_a_lost_connection_is_503(
+    monkeypatch: pytest.MonkeyPatch, closed: bool
+) -> None:
+    """The server ended the connection between two statements: which error the next one
+    raises depends on when the driver noticed. Its protocol caught mid-switch
+    (InternalClientError) is an outage either way; any error once the connection reads
+    closed is too."""
+    import asyncpg
+    import asyncpg.exceptions._base as base
+
+    from server.core import pg
+
+    class _Ended(_PgConn):
+        def is_closed(self) -> bool:
+            return closed
+
+    _pg_pool(monkeypatch, _Ended())
+    with pytest.raises(pg.PostgresUnavailableError) as raised:
+        async with pg.transaction():
+            if closed:
+                raise asyncpg.InterfaceError("connection is closed")
+            raise base.InternalClientError("cannot switch to state 15")
+    assert raised.value.status_code == 503
+
+
+@pytest.mark.asyncio
 async def test_a_durable_read_on_a_demoted_primary_is_the_read_only_outage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
