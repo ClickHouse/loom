@@ -109,8 +109,8 @@ class HealthState:
     refused_configuration: str = ""
     # The code-index tiers failing past the warn threshold, one row per entry and
     # tier (`server.code.app.index.tier_health.problem_rows`): org, namespace, tier,
-    # kind, since, failed_passes, lag_commits, reason, repo, branch, error, fix,
-    # severity. None = not read here.
+    # kind, since, failed_passes, lag_commits, reason, restricted, repo, branch, error,
+    # fix, severity. None = not read here.
     code_tier_failures: tuple[Mapping[str, Any], ...] | None = None
     # Which entries the `code_tier_failing` message names, with their error: `none`
     # (anonymous `/v1/health`), `unrestricted` (a platform admin's: no admin role

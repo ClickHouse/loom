@@ -667,14 +667,19 @@ def test_a_delta_over_its_cap_is_recorded_with_its_sizes_and_the_setting_to_rais
     assert text == "FileRefused: /w/scip_full_x/delta.json is 545908635 bytes; max 536870912"
     health = _failing_with(text)
     assert health.kind == "file_cap" and tier_health.reason("file_cap") == "file over its cap"
-    assert "LOOM_CODE_SCIP_DELTA_FILE_MAX_MB" in health.fix
+    assert "LOOM_CODE_SCIP_DELTA_FILE_MAX_MB (MiB)" in health.fix
     nodes = FileRefused("/w/d.json holds 9 `{`/`[`/`,` bytes; max 8 (code_scip_delta_max_nodes)")
-    assert tier_health.classify(recorder.error_text(nodes)) == "file_cap"
+    nodes_health = _failing_with(recorder.error_text(nodes))
+    assert nodes_health.kind == "file_cap"
+    assert nodes_health.fix.startswith("The compiler tier's delta holds more JSON values")
+    # a checkout's own file over its fixed cap: nothing to raise
+    manifest = FileRefused("/r/co/package.json is 2097152 bytes; max 1048576")
+    assert "package.json (1 MiB)" in _failing_with(recorder.error_text(manifest)).fix
 
 
 def test_a_go_module_that_needs_a_private_module_says_so() -> None:
     error = (
-        "TierDegraded: data-plane-management: go mod download failed: If this is a private "
+        "TierDegraded: services/api: go mod download failed: If this is a private "
         "repository, see https://go.dev/doc/faq#git_https for additional information."
     )
     health = _failing_with(error)

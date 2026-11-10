@@ -42,7 +42,9 @@ def error_text(error: BaseException | str) -> str:
     """The record's error, which `code.index_status` shows a viewer: a tool's or git's
     output whole (redacted later), a refused file's own words (its sizes and cap), a
     file error with the file it names, any other exception's kind, since its text can
-    carry a statement or the server's address."""
+    carry a statement or the server's address. A file's path is absolute: it shows the
+    entry's reader where under the code repos root or the work directory the tier read,
+    as git's own errors do."""
     if isinstance(error, ToolOutputError | GitError | FileRefused) or (
         isinstance(error, OSError) and error.filename is not None
     ):

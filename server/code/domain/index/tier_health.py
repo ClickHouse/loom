@@ -349,12 +349,20 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
             "fetches modules without a credential. The rest of the repository is indexed; "
             "the record clears on the next run that builds the modules it changes."
         )
+    if kind == "file_cap" and "(code_scip_delta_max_nodes)" in text:
+        return (
+            "The compiler tier's delta holds more JSON values than its cap: raise "
+            "LOOM_CODE_SCIP_DELTA_MAX_NODES with LOOM_CODE_SCIP_DELTA_FILE_MAX_MB, within "
+            "the memory the sizing in code-index-operations.md gives."
+        )
     if kind == "file_cap":
         return (
             "A file the tier reads is over its cap (the error names the file, its size and "
-            "the cap): for a compiler-tier delta, raise LOOM_CODE_SCIP_DELTA_FILE_MAX_MB or "
-            "LOOM_CODE_SCIP_DELTA_MAX_NODES, whichever the error names, within the memory "
-            "the sizing in code-index-operations.md gives."
+            "the cap in bytes). For a compiler-tier delta, raise "
+            "LOOM_CODE_SCIP_DELTA_FILE_MAX_MB (MiB) with LOOM_CODE_SCIP_DELTA_MAX_NODES, "
+            "within the memory the sizing in code-index-operations.md gives. A checkout's "
+            "package.json (1 MiB) and lockfile (64 MiB) caps are fixed: the repository's "
+            "file is too large to read."
         )
     if kind == "module":
         return (
@@ -416,11 +424,11 @@ def reason(kind: str) -> str:
 
 
 def error_line(kind: str, error: str) -> str:
-    """The line of a recorded error that says why, redacted, its last
+    """The line of a (redacted) recorded error that says why, its last
     `ERROR_LINE_CHARS` kept: the line the kind's pattern matched (for `cmake` and
     `harness`, whose line is only a marker, the line that says what failed), else the last line,
     where git's `fatal:` and the exception sit."""
-    lines = [s.strip() for s in redact(error).splitlines() if s.strip()]
+    lines = [s.strip() for s in error.splitlines() if s.strip()]
     patterns = [pattern for k, pattern in _KINDS if k == kind]
     at = next((i for i, s in enumerate(lines) if any(p.search(s) for p in patterns)), None)
     if at is not None and kind == "cmake":
