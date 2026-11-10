@@ -1157,6 +1157,28 @@ class GrantsOps:
         )
 
 
+class HelpOps:
+    """The `help.*` operations."""
+
+    # SyncAgent proxies a nested client's coroutines as blocking calls.
+    _loom_nested_client = True
+
+    def __init__(self, agent: Agent) -> None:
+        self._agent = agent
+
+    async def get(
+        self, body: _ops.HelpGetBody | None = None, /, **options: Any
+    ) -> _ops.HelpGetOutput:
+        """`help.get`."""
+        return cast("_ops.HelpGetOutput", await self._agent.call("help.get", body, **options))
+
+    async def search(
+        self, body: _ops.HelpSearchBody | None = None, /, **options: Any
+    ) -> _ops.HelpSearchOutput:
+        """`help.search`."""
+        return cast("_ops.HelpSearchOutput", await self._agent.call("help.search", body, **options))
+
+
 class InboxOps:
     """The `inbox.*` operations."""
 
@@ -3407,6 +3429,7 @@ class OpsClient:
         self.extraction_policy = ExtractionPolicyOps(agent)
         self.facts = FactsOps(agent)
         self.grants = GrantsOps(agent)
+        self.help = HelpOps(agent)
         self.inbox = InboxOps(agent)
         self.insights = InsightsOps(agent)
         self.knowledge = KnowledgeOps(agent)

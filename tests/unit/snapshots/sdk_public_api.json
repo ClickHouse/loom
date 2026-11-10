@@ -783,6 +783,19 @@
             ]
           }
         },
+        "help": {
+          "class": "HelpOps",
+          "methods": {
+            "get": [
+              "body",
+              "options"
+            ],
+            "search": [
+              "body",
+              "options"
+            ]
+          }
+        },
         "inbox": {
           "class": "InboxOps",
           "methods": {

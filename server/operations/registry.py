@@ -14,6 +14,7 @@ from server.assistant.api import ops as assistant
 from server.code.api import ops as code
 from server.code.api import ops_coverage_watch as code_watch
 from server.erasure.api import ops as erasure
+from server.help.api import ops as help_docs
 from server.identity.api import ops_admin_users as admin_users
 from server.identity.api import ops_collections as collections
 from server.identity.api import ops_grants as grants
@@ -62,6 +63,7 @@ _OPERATION_MODULES = (
     memory_records,
     knowledge,
     knowledge_sources,
+    help_docs,
     conversations,
     context,
     context_offload,

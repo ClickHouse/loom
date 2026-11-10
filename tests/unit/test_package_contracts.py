@@ -36,6 +36,7 @@ DOMAINS = frozenset(
         "identity",
         "insights",
         "assistant",
+        "help",
     }
 )
 LAYERS = ("api", "app", "domain", "store", "workers")

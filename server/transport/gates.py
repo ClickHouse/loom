@@ -59,7 +59,8 @@ if TYPE_CHECKING:
 log = logging.getLogger("server.transport.gates")
 
 # The org-level ops an end user may call (server/auth/gateway.py):
-# make and list collections, read their own standing, and read the static agent guide.
+# make and list collections, read their own standing, and read the static agent guide
+# and documentation.
 END_USER_ORG_OPS = frozenset(
     {
         "collection.create",
@@ -67,6 +68,8 @@ END_USER_ORG_OPS = frozenset(
         "namespace.list_mine",
         "grants.pending_for_me",
         "mentor.guide",
+        "help.search",
+        "help.get",
     }
 )
 

@@ -194,6 +194,9 @@ COPY scripts/serve.sh ./scripts/serve.sh
 COPY bench/fixtures ./bench/fixtures
 # mentor.guide serves the agent guide (SKILL.md, reference.md) from here.
 COPY skills/loom ./skills/loom
+# help.search and help.get read the documentation from here (its Markdown; the
+# screenshots under docs/images/ stay out of the build context, .dockerignore).
+COPY docs ./docs
 # Dev tooling — loom_init.py, loom_ingest.py, verify_audit_chain.py, backup
 # and restore. Migrations run in the server's startup lifespan; these ship for
 # `docker exec` operational tasks (token mint, knowledge ingest, audit verification).

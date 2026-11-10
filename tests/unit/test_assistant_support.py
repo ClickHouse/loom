@@ -183,6 +183,27 @@ def test_an_uncited_fact_after_calls_that_found_nothing(ran: frozenset[str], exp
 
 
 @pytest.mark.parametrize(
+    ("returned", "expected"),
+    [
+        # Only the docs were read: they are not the namespace's data.
+        (frozenset({"help.search", "help.get"}), "none"),
+        # A search of the namespace found rows the answer did not cite: the residual an
+        # uncited answer from the docs carries until help citations are checked.
+        (frozenset({"help.search", "help.get", "memory.search"}), "unsupported"),
+    ],
+)
+def test_an_uncited_answer_from_the_docs(returned: frozenset[str], expected: str) -> None:
+    got = rule.support_of(
+        [],
+        text="Share a collection by granting its members a role.",
+        calls=rule.RunCalls(returned, False, returned),
+        citable=CITABLE,
+        no_data=NO_DATA,
+    )
+    assert got == expected
+
+
+@pytest.mark.parametrize(
     ("returned", "failed"),
     [
         # An empty search beside counts that came back: the claim may rest on the counts.
@@ -269,6 +290,7 @@ FOUND_BOOL_OPS: frozenset[str] = frozenset(
         "namespace.get",
         "namespace.guide_get",
         "facts.path",
+        "help.get",
     }
 )
 ALWAYS_RETURNS: dict[str, str] = {
