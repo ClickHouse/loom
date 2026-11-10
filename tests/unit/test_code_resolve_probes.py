@@ -60,7 +60,6 @@ def test_a_lane_under_the_live_set_builds_no_probe(monkeypatch: Any) -> None:
         raise AssertionError("the live set answers; the probe's candidates go unread")
 
     monkeypatch.setattr(lang_rust, "wanted_paths", unread)
-    monkeypatch.delitem(ingest_resolve._LIVE_PATHS_CACHE, ("o", "live-set"), raising=False)
     pf, _ = parse_for_ingest("src/b.rs", b"use crate::a;\n")
     assert pf is not None
     repo = _LiveRepo()

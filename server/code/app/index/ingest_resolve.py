@@ -127,13 +127,13 @@ async def _live_paths(repo: CodeRepo, org: str, ns: str, pf: ParsedFile) -> set[
     return hit[1]
 
 
-def _probes(wanted: Callable[[list[str]], list[str]], specs: list[str]) -> list[str]:
+def _probes(wanted: Callable[[str], list[str]], specs: list[str]) -> list[str]:
     """The first `_MAX_INCLUDE_PROBES` distinct candidates of the specifiers, in order, read
     one specifier at a time and no further than the cut: a file's whole list can run to
     hundreds of megabytes."""
     out: dict[str, None] = {}
     for spec in specs:
-        for path in wanted([spec]):
+        for path in wanted(spec):
             out[path] = None
             if len(out) >= _MAX_INCLUDE_PROBES:
                 return list(out)
@@ -145,7 +145,7 @@ async def _present_for(
     org: str,
     ns: str,
     pf: ParsedFile,
-    wanted: Callable[[list[str]], list[str]],
+    wanted: Callable[[str], list[str]],
     specs: list[str],
 ) -> set[str]:
     """The membership oracle for the specifiers' candidates (`wanted`): the live set or,
@@ -192,7 +192,7 @@ async def _resolve_lane_includes(repo: CodeRepo, org: str, ns: str, pf: ParsedFi
         unit_lane = _lane_module(pf.lang)
         specs = list(pf.includes)
         present = await _present_for(
-            repo, org, ns, pf, lambda s: unit_lane.wanted_paths(pf.path, s), specs
+            repo, org, ns, pf, lambda s: unit_lane.wanted_paths(pf.path, [s]), specs
         )
         pf.includes = unit_lane.resolve_imports(pf.path, specs, present)
         return
@@ -215,7 +215,7 @@ async def _resolve_lane_includes(repo: CodeRepo, org: str, ns: str, pf: ParsedFi
     else:
         return
     present = await _present_for(
-        repo, org, ns, pf, lambda s: lane.wanted_paths(pf.path, s), pf.includes
+        repo, org, ns, pf, lambda s: lane.wanted_paths(pf.path, [s]), pf.includes
     )
     if pf.lang in TS_LANGS:
         # The governing tsconfig's paths / baseUrl, exact, first; A workspace member's
@@ -249,7 +249,7 @@ async def _resolve_py_includes(repo: CodeRepo, org: str, ns: str, pf: ParsedFile
         present = live
     else:
         present = await _present_for(
-            repo, org, ns, pf, lambda s: py_lane.wanted_paths(pf.path, s), specs
+            repo, org, ns, pf, lambda s: py_lane.wanted_paths(pf.path, [s]), specs
         )
     pf.includes = [
         p for p in py_lane.resolve_imports(pf.path, specs, present, roots) if p != pf.path
@@ -793,7 +793,7 @@ async def _resolve_simple_lane_includes(repo: CodeRepo, org: str, ns: str, pf: P
     """An EXTENDS'd module, an included schema, an add_subdirectory, a doc's relative
     link — the includer's directory first, then each ancestor (the C++ ladder), kept
     when the namespace holds the file."""
-    wanted = _probes(lambda s: include_candidates(pf.path, s[0]), pf.includes)
+    wanted = _probes(lambda s: include_candidates(pf.path, s), pf.includes)
     present: set[str] = set()
     if wanted:
         present = await repo.live_paths_present(org, ns, wanted)

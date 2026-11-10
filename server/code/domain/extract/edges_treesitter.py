@@ -224,7 +224,7 @@ def _imported_noise(
             key in resolver.py_bindings
             and isinstance(resolver.import_bound(receiver, bare, rows), tuple)
         )
-    keys = frozenset(k for k, v in resolver.bindings.items() if _repo_shaped(v))
+    keys = resolver.repo_import_keys()
     return bool(
         resolver.script and _import_exempt(receiver, bare, keys)
         and isinstance(resolver.import_bound(receiver, bare, rows), tuple)
@@ -2103,7 +2103,7 @@ def _heritage_target(
     # a heritage clause names a type: a `field` row spelled by its embedded
     # type's name, a method or a value of that name never
     # qualifies and must not make the type ambiguous
-    candidates = resolver.base_rows(bare) if resolver else _base_rows(name_table, bare)
+    candidates = resolver.base_rows(bare) if resolver is not None else _base_rows(name_table, bare)
     if resolver is not None:
         bound = resolver.import_bound(receiver, bare, candidates)
         if isinstance(bound, tuple):
@@ -2664,6 +2664,12 @@ class _CallResolver:
             s for s in self.local_by_name.get(bare, []) if s.kind not in _NEVER_CALLABLE
         ]))
 
+    def repo_import_keys(self) -> frozenset[str]:
+        """The local names this file imports from repository-shaped specifiers, once."""
+        return self._once(("import keys",), lambda: frozenset(
+            k for k, v in self.bindings.items() if _repo_shaped(v)
+        ))
+
     def base_rows(self, bare: str) -> list[tuple[str, str, str]]:
         """`_base_rows`, once per name: the rungs index a list once and keep it."""
         return self._once(("bases", bare), lambda: _base_rows(self.name_table, bare))
@@ -2724,12 +2730,6 @@ class _CallResolver:
         """The file's first definition of `bare` per qualified name."""
         return self._once(("local rows", bare), lambda: _first_per_name(
             (s.qualified_name, s) for s in self.local_by_name.get(bare, [])
-        ))
-
-    def _table_rows(self, bare: str) -> dict[str, tuple[str, str, str]]:
-        """The name table's first row of `bare` per qualified name."""
-        return self._once(("table rows", bare), lambda: _first_per_name(
-            (c[1], c) for c in self.name_table.get(bare, [])
         ))
 
     def _local_class_name(self, name: str) -> bool:
@@ -2950,7 +2950,7 @@ class _CallResolver:
             if row is not None:
                 return Edge("calls", caller.id, row.id, caller.qualified_name, want,
                             self.path, line, 1.0)
-            cand = self._table_rows(bare).get(want)
+            cand = self._by_qn(self.name_table.get(bare, _NO_ROWS)).get(want, [None])[0]
             if cand is not None:
                 return Edge("calls", caller.id, cand[0], caller.qualified_name, want,
                             self.path, line, 1.0)

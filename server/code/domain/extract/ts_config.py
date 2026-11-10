@@ -17,7 +17,7 @@ import posixpath
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
 CONFIG_NAMES = ("tsconfig.json", "jsconfig.json")
 _TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
@@ -68,17 +68,23 @@ def parse_jsonc(text: str) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+class _PathsIndex(NamedTuple):
+    """A `PathsTable`'s lookup: its wildcard patterns by head, then tail, to the pattern's
+    place in `patterns`, with the tail lengths each head holds; the head lengths, shortest
+    first; the patterns in order."""
+
+    heads: dict[str, tuple[dict[str, int], list[int]]]
+    head_lengths: list[int]
+    names: list[str]
+
+
 @dataclass
 class PathsTable:
     """One config's `paths` with the directory its targets are relative to."""
     base: str  # baseUrl resolved against the config dir, or the config dir
     patterns: dict[str, list[str]] = field(default_factory=dict)
-    # (the wildcard patterns by head, then tail, to the pattern's place in `patterns`, with
-    # the tail lengths each head holds; the head lengths shortest first; the patterns in
-    # order), built in one assignment at the first lookup, once `patterns` is filled
-    _index: tuple[dict[str, tuple[dict[str, int], list[int]]], list[int], list[str]] | None = (
-        field(default=None, init=False, repr=False, compare=False)
-    )
+    # built in one assignment at the first lookup, once `patterns` is filled
+    _index: _PathsIndex | None = field(default=None, init=False, repr=False, compare=False)
 
     def best(self, spec: str) -> tuple[str, str] | None:
         """(pattern, `*` binding) of the pattern the compiler picks for `spec`: an exact
@@ -93,10 +99,10 @@ class PathsTable:
                 if "*" in pat:
                     head, _, tail = pat.partition("*")
                     by_head.setdefault(head, {}).setdefault(tail, order)
-            self._index = (
-                {h: (tails, sorted({len(t) for t in tails})) for h, tails in by_head.items()},
-                sorted({len(h) for h in by_head}),
-                list(self.patterns),
+            self._index = _PathsIndex(
+                heads={h: (tails, sorted({len(t) for t in tails})) for h, tails in by_head.items()},
+                head_lengths=sorted({len(h) for h in by_head}),
+                names=list(self.patterns),
             )
         heads, head_lengths, names = self._index
         # the head lengths a prefix of the spec can have, longest first
