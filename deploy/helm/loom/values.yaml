@@ -406,9 +406,8 @@ assistant:
 # 443, the ClickHouse port, postgres.port (with postgres.host) and 6443 (with
 # retireLostPods) anywhere except `egressExcept` (providers, the IdP and git remotes
 # have no fixed range); a ClickHouse or Postgres inside the cluster needs an
-# extraEgress rule. Off,
-# `guardMetadata` gives the Loom pods an egress-only policy that allows every pod
-# and every address but `egressExcept`.
+# extraEgress rule. Off, `guardMetadata` gives the Loom pods an egress-only policy
+# that allows every pod and every address but `egressExcept`.
 networkPolicy:
   enabled: false
   # NetworkPolicy peers allowed to reach the pods (the ALB's subnets, the

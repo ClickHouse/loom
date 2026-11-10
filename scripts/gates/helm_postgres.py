@@ -139,6 +139,8 @@ def main() -> None:
         refused(
             f"set {field} through postgres.*, not settingsFile", *sets(f"settingsFile.{field}=x")
         )
+    for secret in ("passwordSecret", "caSecret"):
+        refused(f"postgres.{secret}.key must be a Secret key", *sets(f"postgres.{secret}.key="))
     for port in ("0", "05432", "70000", "99999999999999999999", "5432?x"):
         refused("postgres.port must be a port number", "--set-string", f"postgres.port={port}")
     refused(
