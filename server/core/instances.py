@@ -224,7 +224,11 @@ async def publish_config(ch: Any) -> None:
         try:
             live = await read_live(ch)
         except Exception as e:  # noqa: BLE001 — the next beat retries
-            log.warning("deployment config not published: live instances unread: %s", e)
+            log.warning(
+                "deployment config not published: live instances unread: %s: %s",
+                type(e).__name__,
+                e,
+            )
             return
         await deployment_config.publish(ch, live=live, published_by=_label)
 
@@ -270,7 +274,7 @@ async def stop(ch: Any) -> None:
             with query_tag(QUERY_TAG), statement_timeout(STOP_S):
                 await beat(ch, stopped=True)
     except Exception as e:  # noqa: BLE001 — shutdown goes on; the row ages out
-        log.warning("instance row not marked stopped: %s", e)
+        log.warning("instance row not marked stopped: %s: %s", type(e).__name__, e)
 
 
 def _reset_for_tests() -> None:

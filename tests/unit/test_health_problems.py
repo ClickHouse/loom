@@ -11,11 +11,14 @@ fix.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import re
+import time
 from typing import Any
 
 import pytest
+from fastapi import Request, Response
 from fastapi.testclient import TestClient
 
 from server import __version__, boot
@@ -789,11 +792,6 @@ def test_an_assistant_still_being_set_up_raises_no_warning(monkeypatch: pytest.M
 def test_health_and_its_gauge_show_the_lease_the_beat_read(
     monkeypatch: pytest.MonkeyPatch, live: bool, shown: str | None
 ) -> None:
-    import asyncio
-    import time
-
-    from fastapi import Request, Response
-
     import server.core.ch as ch_mod
     from server import health
     from server.workers import leader
