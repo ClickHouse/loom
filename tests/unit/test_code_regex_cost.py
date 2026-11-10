@@ -32,6 +32,7 @@ from collections.abc import Callable
 
 import pytest
 
+from tests.unit.code_fixtures import untraced
 from tests.unit.lane_walks import WALKS
 
 _PACKAGES = ("server.code.domain.extract", "server.code.app.index")
@@ -266,6 +267,19 @@ def test_slow_tells_a_load_spike_from_a_step_over_linear() -> None:
     assert _slow(lambda n: (n / 2000) ** 3 * 2.5e-4) == (8_000, 0.0003, 0.016)  # cubic
 
 
+def test_untraced_leaves_the_collector_as_it_found_it() -> None:
+    with untraced():
+        assert not gc.isenabled()
+    assert gc.isenabled()
+    gc.disable()
+    try:
+        with untraced():
+            pass
+        assert not gc.isenabled()
+    finally:
+        gc.enable()
+
+
 @pytest.mark.parametrize("name,pattern", _ALL, ids=[n for n, _ in _ALL])
 def test_a_run_after_a_prefix_costs_linear_time(name: str, pattern: re.Pattern) -> None:
     as_bytes = isinstance(pattern.pattern, bytes)
@@ -297,21 +311,6 @@ faulthandler.dump_traceback_later({_WALK_DEADLINE_S}, exit=True)
 from tests.unit.lane_walks import walk_cost
 print(json.dumps(walk_cost(sys.argv[1])))
 """
-
-
-def test_untraced_leaves_the_collector_as_it_found_it() -> None:
-    from tests.unit.code_fixtures import untraced
-
-    with untraced():
-        assert not gc.isenabled()
-    assert gc.isenabled()
-    gc.disable()
-    try:
-        with untraced():
-            pass
-        assert not gc.isenabled()
-    finally:
-        gc.enable()
 
 
 @pytest.mark.parametrize("name", [w[0] for w in WALKS])
