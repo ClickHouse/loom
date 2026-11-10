@@ -12,6 +12,7 @@
 import {
   ApiError,
   isLostConnection,
+  isPublicationPending,
   LOST_CONNECTION,
   MAY_HAVE_SAVED,
   mayHaveSaved,
@@ -229,7 +230,7 @@ function humanizeApiError(err: ApiError, bare: boolean, read: boolean): string {
     (err.sessionEnded || SESSION_GONE.test(err.serverMessage))
   )
     return "Your session ended — sign in again.";
-  if (err.code === "PUBLICATION_PENDING") return PUBLICATION_PENDING;
+  if (isPublicationPending(err)) return PUBLICATION_PENDING;
   // The server's words for it carry only the request id: the line says it once, in words,
   // wherever it is shown; a caller that also prints ids beside a line skips one it holds.
   if (err.code === "INTERNAL_ERROR") {

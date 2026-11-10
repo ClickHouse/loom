@@ -56,3 +56,13 @@ it("gives a refusal over the deployment's setup no may-have-saved warning, and s
   expect(long).toBeInTheDocument();
   vi.useRealTimers();
 });
+
+it("says a committed write is done even when the wording cannot load", async () => {
+  render(<ToastViewport />);
+  toastError(
+    "Delete failed",
+    new ApiError({ status: 503, code: "PUBLICATION_PENDING", detail: { category: "dependency", retryable: false } }),
+  );
+  expect(await screen.findByText(/^Done, but lists and search have not caught up yet/)).toBeInTheDocument();
+  expect(screen.queryByText(/Delete failed/)).toBeNull();
+});

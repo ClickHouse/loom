@@ -69,6 +69,9 @@ describe("toastError", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Delete failed/)).toBeNull();
+    // Information, not a failure: no alert, no danger icon.
+    expect(document.querySelector("[data-toast-kind]")).toHaveAttribute("data-toast-kind", "info");
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("words a failed read as a read: no may-have-committed warning", async () => {

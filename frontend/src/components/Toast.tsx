@@ -92,9 +92,11 @@ export function toast(msg: string, kind: ToastKind = "ok", opts: ToastOpts = {})
  *  failure carried one. It stays up long enough to read: 8 s plus 50 ms a character, at
  *  most 20 s, and hovering or focusing it holds it. */
 export function toastError(context: string, err: unknown, opts: { read?: boolean } = {}): void {
-  // Said before the wording loads, so a chunk that cannot load never turns it into "failed".
+  // A write that committed while only lists and search lag: not a failure, so no
+  // "<context>:" in front of it. Said before the wording loads, so a chunk that cannot load
+  // never turns it into "failed".
   if (isPublicationPending(err)) {
-    toastPublicationPending(err);
+    toastWithId(PUBLICATION_PENDING, "info", err);
     return;
   }
   // The wording is a lazy chunk (the boot chunk's budget), loaded by the viewport soon
@@ -109,12 +111,6 @@ export function toastError(context: string, err: unknown, opts: { read?: boolean
       const warning = opts.read ? "" : writeWarning(err);
       toastWithId(warning ? `${context}: ${warning}` : `${context}.`, "error", err);
     });
-}
-
-/** A write that committed while only lists and search lag: not a failure, so no
- *  "<context>:" in front of it. */
-function toastPublicationPending(err: unknown): void {
-  toastWithId(PUBLICATION_PENDING, "info", err);
 }
 
 /** An error toast whose caller built its own sentence (how much of a batch went through):
