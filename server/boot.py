@@ -793,6 +793,7 @@ def register_readiness_checks(ch: Any) -> None:
     """The checks `/v1/health/ready` runs (server/core/readiness.py). Each
     module that keeps a piece of warm-up state owns its check; ClickHouse and
     the ledger are cached."""
+    from server.assistant.app import service as assistant_service
     from server.auth import keyring, revocation
     from server.code.app.index import mirrors, repo_registry, sandbox
     from server.core import deployment_config, grant_cache, model_work_gate, pg_profile, readiness
@@ -832,8 +833,6 @@ def register_readiness_checks(ch: Any) -> None:
     readiness.register("model_work_gate", model_work_gate.readiness_check, required=False)
     # Only where an assistant is configured: a missing check means none is.
     if settings.assistant_librechat_url:
-        from server.assistant.app import service as assistant_service
-
         readiness.register("assistant", assistant_service.readiness_check, required=False)
     if settings.ready_requires_mirrors:
         readiness.register("mirrors", mirrors.readiness_check, ttl_s=5.0)
