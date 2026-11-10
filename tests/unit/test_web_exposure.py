@@ -269,46 +269,44 @@ def test_health_reports_mcp_open_and_a_weak_root_key_on_a_reachable_bind(
     assert not found & {"insecure_bind_mcp_open", "insecure_bind_weak_key"}
 
 
+@pytest.mark.parametrize(
+    ("provider", "allow_insecure", "login", "bind", "expected"),
+    [
+        ("", False, "password", "0.0.0.0", "error"),
+        ("gateway", False, "password", "0.0.0.0", "error"),
+        ("", True, "password", "0.0.0.0", "warn"),
+        ("trust-network", False, "password", "0.0.0.0", "info"),
+        ("", False, "oidc", "0.0.0.0", None),  # OIDC sign-in closes self-signup
+        ("", False, "password", "127.0.0.1", None),
+    ],
+)
 def test_health_reports_open_self_signup_on_a_reachable_bind(
     monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+    allow_insecure: bool,
+    login: str,
+    bind: str,
+    expected: str | None,
 ) -> None:
     """Unnamed, it is what the next start refuses; with trust-network named it
     is still listed, as info."""
     from server.observability import problems
 
-    monkeypatch.setattr(settings, "bind_host", "0.0.0.0")
+    monkeypatch.setattr(settings, "bind_host", bind)
     monkeypatch.setattr(settings, "public_base_url", "https://loom.example")
-    monkeypatch.setattr(settings, "allow_insecure", False)
+    monkeypatch.setattr(settings, "allow_insecure", allow_insecure)
     monkeypatch.setattr(settings, "auth_required", True)
     monkeypatch.setattr(settings, "self_signup", "open")
-    monkeypatch.setattr(settings, "identity_provider", "")
-
-    def signup() -> Any:
-        return next(
-            p
-            for p in problems._exposure_problems(settings)
-            if p.code == "insecure_bind_open_signup"
-        )
-
-    assert signup().severity == "error"
-    monkeypatch.setattr(settings, "identity_provider", "gateway")
-    assert signup().severity == "error"
-    monkeypatch.setattr(settings, "identity_provider", "")
-    monkeypatch.setattr(settings, "allow_insecure", True)
-    assert signup().severity == "warn"
-    monkeypatch.setattr(settings, "allow_insecure", False)
-    unnamed_fix = signup().fix
-    monkeypatch.setattr(settings, "identity_provider", "trust-network")
-    assert signup().severity == "info"
-    for fix in (unnamed_fix, signup().fix):
-        assert fix.startswith("Set LOOM_") and fix.endswith("."), fix
-    monkeypatch.setattr(settings, "oauth_login_provider", "oidc")  # closes self-signup
-    found = {p.code for p in problems._exposure_problems(settings)}
-    assert "insecure_bind_open_signup" not in found
-    monkeypatch.setattr(settings, "oauth_login_provider", "password")
-    monkeypatch.setattr(settings, "bind_host", "127.0.0.1")
-    found = {p.code for p in problems._exposure_problems(settings)}
-    assert "insecure_bind_open_signup" not in found
+    monkeypatch.setattr(settings, "identity_provider", provider)
+    monkeypatch.setattr(settings, "oauth_login_provider", login)
+    found = [
+        p
+        for p in problems.collect_problems(settings, problems.HealthState(env={}))
+        if p.code == "insecure_bind_open_signup"
+    ]
+    assert [p.severity for p in found] == ([expected] if expected else [])
+    for p in found:
+        assert p.fix.startswith("Set LOOM_") and p.fix.endswith("."), p.fix
 
 
 def test_a_pem_root_that_is_not_rsa_is_not_weak(monkeypatch: pytest.MonkeyPatch) -> None:

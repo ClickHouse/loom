@@ -334,15 +334,15 @@ back.
 
 ### Public URL and clients
 
-| Variable               | Default          | Set it when                                                                                                                              |
-| ---------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `LOOM_PUBLIC_BASE_URL` | empty            | Always, off loopback: a non-loopback `LOOM_BIND_HOST` refuses to start without it. Empty uses the request's own `Host`.                  |
-| `LOOM_BIND_HOST`       | `127.0.0.1`      | Loom must be reachable by others. In a container it is the address the port is published on.                                             |
-| `LOOM_TRUSTED_PROXIES` | `127.0.0.1`      | Required behind a proxy or load balancer: its addresses or CIDRs. Only those peers' `X-Forwarded-For`/`-Proto` count.                    |
-| `LOOM_ALLOW_INSECURE`  | `false`          | Never on a reachable port. Lets a non-loopback bind start without the [Proxy and TLS](#proxy-and-tls) checks but `LOOM_PUBLIC_BASE_URL`. |
-| `LOOM_OAUTH_ENABLED`   | `false`          | You want one-click MCP connect (OAuth 2.1 browser sign-in instead of a pasted token).                                                    |
-| `LOOM_OAUTH_ISSUER`    | empty            | OAuth is on: the public HTTPS base URL the discovery metadata advertises. Empty derives it per request.                                  |
-| `LOOM_CORS_ORIGINS`    | empty (CORS off) | A browser application on another origin calls Loom directly. List exactly those origins; `*` refuses to start.                           |
+| Variable               | Default          | Set it when                                                                                                                                                   |
+| ---------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_PUBLIC_BASE_URL` | empty            | Always, off loopback: a non-loopback `LOOM_BIND_HOST` refuses to start without it. Empty uses the request's own `Host`.                                       |
+| `LOOM_BIND_HOST`       | `127.0.0.1`      | Loom must be reachable by others. In a container it is the address the port is published on.                                                                  |
+| `LOOM_TRUSTED_PROXIES` | `127.0.0.1`      | Required behind a proxy or load balancer: its addresses or CIDRs. Only those peers' `X-Forwarded-For`/`-Proto` count.                                         |
+| `LOOM_ALLOW_INSECURE`  | `false`          | Never on a reachable port. Lets a non-loopback bind skip the startup refusals in [Proxy and TLS](#proxy-and-tls), all but the missing `LOOM_PUBLIC_BASE_URL`. |
+| `LOOM_OAUTH_ENABLED`   | `false`          | You want one-click MCP connect (OAuth 2.1 browser sign-in instead of a pasted token).                                                                         |
+| `LOOM_OAUTH_ISSUER`    | empty            | OAuth is on: the public HTTPS base URL the discovery metadata advertises. Empty derives it per request.                                                       |
+| `LOOM_CORS_ORIGINS`    | empty (CORS off) | A browser application on another origin calls Loom directly. List exactly those origins; `*` refuses to start.                                                |
 
 Sign-in through your identity provider (dashboard, `loom login` and OAuth) needs
 `LOOM_OAUTH_LOGIN_PROVIDER=oidc` and the `LOOM_OIDC_*` settings; [single sign-on](sso.md)
@@ -838,7 +838,7 @@ memories: provision the appropriate namespace grants through an operator.
 
 Anyone who reaches the port can sign up and gets a writer token on a namespace of
 their own, so the network is the access boundary. On a non-loopback `LOOM_BIND_HOST` the
-server refuses to start with `LOOM_SELF_SIGNUP=open` unless `LOOM_IDENTITY_PROVIDER` is
+server refuses to start with sign-up open unless `LOOM_IDENTITY_PROVIDER` is
 `trust-network`, and `loom doctor` and `/v1/health` list the open sign-up either way.
 
 People sign up in the dashboard. The first person to claim a namespace name becomes its
@@ -924,8 +924,8 @@ The image serves plain HTTP. Put a TLS-terminating proxy or load balancer in fro
   control.
 - A non-loopback `LOOM_BIND_HOST` refuses to start without `LOOM_PUBLIC_BASE_URL`, and,
   unless `LOOM_ALLOW_INSECURE=1`, with auth off, `LOOM_MCP_AUTH_MODE=open` (every MCP tool
-  would run with no principal), `LOOM_SELF_SIGNUP=open` without
-  `LOOM_IDENTITY_PROVIDER=trust-network`, the dev JWT secret, or a key below the minimum size (an
+  would run with no principal), `LOOM_SELF_SIGNUP=open` (unless OIDC sign-in closes it)
+  without `LOOM_IDENTITY_PROVIDER=trust-network`, the dev JWT secret, or a key below the minimum size (an
   HMAC `LOOM_JWT_SECRET` shorter than 32 bytes, or an RSA root,
   `LOOM_JWT_PUBLIC_KEYS_JSON` or inline end-user issuer key under 2048 bits; only the
   length is checked; a key fetched from `jwks_url` is not checked). With auth off, any

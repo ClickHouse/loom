@@ -366,8 +366,8 @@ request acting in the org), besides a person or a service account.
 
 When `LOOM_IDENTITY_PROVIDER` is empty the server infers the mode: auth off gives
 `single-user`, auth on with `LOOM_SELF_SIGNUP=open` gives `trust-network`, auth on
-otherwise gives `gateway`. A non-loopback bind starts with self-signup open only when
-`trust-network` is set explicitly. [Deployment](../operations/deployment.md#identity-modes) lists
+otherwise gives `gateway`. A non-loopback bind with sign-up open also needs `trust-network`
+set explicitly. [Deployment](../operations/deployment.md#identity-modes) lists
 each mode's settings.
 
 ## Related

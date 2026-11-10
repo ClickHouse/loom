@@ -662,22 +662,6 @@ def test_allow_insecure_downgrades_the_bind_problems_to_warn(
     assert _by_code(problems, "insecure_bind_dev_secret").severity == "warn"
 
 
-def test_open_self_signup_on_a_reachable_bind_is_an_error_until_trust_network_is_named(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    env = {
-        "LOOM_BIND_HOST": "0.0.0.0",
-        "LOOM_PUBLIC_BASE_URL": "https://loom.example",
-        "LOOM_AUTH_REQUIRED": "true",
-        "LOOM_SELF_SIGNUP": "open",
-    }
-    for provider, severity in (("", "error"), ("trust-network", "info")):
-        s = _settings(monkeypatch, LOOM_IDENTITY_PROVIDER=provider, **env)
-        problem = _by_code(collect_problems(s, HealthState(env={})), "insecure_bind_open_signup")
-        assert problem.severity == severity
-        assert re.search(r"LOOM_[A-Z_]+", problem.fix), problem.fix
-
-
 def test_participants_a_reconfiguration_would_wait_on_are_a_warn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

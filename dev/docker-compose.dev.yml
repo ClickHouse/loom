@@ -63,7 +63,7 @@ services:
       LOOM_ENTITY_EXTRACT_ENABLED: "${LOOM_ENTITY_EXTRACT_ENABLED:-true}"
       # Browser self-signup so the dashboard's Welcome screen can mint tokens. A
       # trusted-network assumption: with a non-loopback LOOM_BIND_HOST this stack
-      # starts only when .env sets LOOM_IDENTITY_PROVIDER=trust-network.
+      # also needs LOOM_IDENTITY_PROVIDER=trust-network in .env.
       LOOM_SELF_SIGNUP: "open"
       # Marks this stack's rows and lets it run with the development defaults.
       LOOM_INSTANCE_LABEL: "deploy:dev"
