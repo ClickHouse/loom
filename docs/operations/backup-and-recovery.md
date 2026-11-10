@@ -248,11 +248,16 @@ On the Helm chart ([Kubernetes](kubernetes.md)), with release `loom`:
    kubectl wait --for=condition=complete --timeout=10s job/loom-reconcile
    ```
 
-   The `wait` fails when the reconcile exited non-zero: read its output, delete the Job,
-   and run it again. After a clean dry run, run it with `"--apply"` appended.
+   Use `"postgres"` after a Postgres restore. A `wait` that fails while the Job is still
+   active (`kubectl get job loom-reconcile -o jsonpath='{.status.active}'` reads `1`; a
+   dropped log stream ends `logs -f` early) means it is still running: follow its logs
+   again. A Job that failed (`.status.failed` reads `1`) exited non-zero: read its
+   output, delete the Job, and run it again. After a clean dry run, run it with
+   `"--apply"` appended.
 
-4. Start it again: `helm upgrade` with the release's own values, and resume the analytics
-   export. Run each `loom rechunk` the reconcile printed with
+4. Start it again: `helm upgrade` with the release's values file, carrying step 2's new
+   host and without its three `--set` overrides, and resume the analytics export. Run
+   each `loom rechunk` the reconcile printed with
    `kubectl exec deploy/loom -- loom rechunk ...`.
 
 `loom reconcile --apply`:
