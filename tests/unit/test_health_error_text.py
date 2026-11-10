@@ -151,7 +151,7 @@ def test_an_unreached_analysis_probe_shows_no_driver_text(monkeypatch: pytest.Mo
     monkeypatch.setattr(analysis, "_unreached_since", 0.0)
     monkeypatch.setattr(analysis.store, "sealed_secrets", down)
     asyncio.run(analysis.reprobe())
-    ok, error = analysis.analysis_state()
+    ok, error, _ = analysis.analysis_state()
     shown = problems._analysis_problems(
         settings, problems.HealthState(analysis_ok=ok, analysis_error=error)
     )
@@ -196,7 +196,7 @@ def test_an_extra_analyst_grant_names_no_database(
     monkeypatch.setattr(analysis.store, "can_manage_access", lambda: returns(manages))
     monkeypatch.setattr(analysis, "_write_under_lease", lambda: returns(("", "")))
     asyncio.run(analysis.reprobe())
-    ok, error = analysis.analysis_state()
+    ok, error, _ = analysis.analysis_state()
     shown = problems._analysis_problems(
         settings, problems.HealthState(analysis_ok=ok, analysis_error=error)
     )

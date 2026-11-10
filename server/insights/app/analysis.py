@@ -128,14 +128,10 @@ _fix = ""  # the finding's own fix, or '' for health's default
 _running: dict[str, int] = {}
 
 
-def analysis_state() -> tuple[bool | None, str]:
-    """(ready, why not) for health and `loom doctor`."""
-    return _ready, _problem
-
-
-def analysis_fix() -> str:
-    """The fix for the standing finding when it has its own ('' for the default)."""
-    return _fix
+def analysis_state() -> tuple[bool | None, str, str]:
+    """(ready, why not, its own fix or '' for health's default) for health and
+    `loom doctor`."""
+    return _ready, _problem, _fix
 
 
 def _password() -> str:
@@ -810,7 +806,6 @@ async def handle_insights_catalog(input: InsightsCatalogInput) -> InsightsCatalo
 
 
 __all__ = [
-    "analysis_fix",
     "analysis_state",
     "entity_statements",
     "handle_insights_catalog",
