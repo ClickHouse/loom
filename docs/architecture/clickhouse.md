@@ -67,8 +67,9 @@ S3-compatible bucket, which holds the bytes
 settings (`runtime_overrides`), sign-in attempt counts (`auth_attempts`), graph-walk marks
 (`graph_projections`: the projections in flight and each namespace's last graph write),
 each namespace's last write (`namespace_write_keys`) and the supervisor lease are in
-ClickHouse too, so a new Loom pointed at this database, and the document bucket while rows
-name objects in it, gets every feature back. On the filesystem: the code plane's git
+ClickHouse too, so a new Loom pointed at this database (and its Postgres, under that
+authority), and the document bucket while rows name objects in it, gets every feature
+back. On the filesystem: the code plane's git
 mirrors under `var/code_repos`, a cache of the remotes ClickHouse records that a host
 without them re-clones. The root secret `LOOM_JWT_SECRET`, which seals the signing keys
 and stored credentials, is in the env. Process caches and file locks are listed in
