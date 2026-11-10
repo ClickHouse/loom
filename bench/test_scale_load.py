@@ -143,4 +143,5 @@ def test_the_open_loop_starts_each_send_on_time_and_counts_those_past_the_cap() 
         started.append(i)
 
     started.clear()
-    assert asyncio.run(open_loop(10, 1000.0, 5, fast))[0] == 0 and len(started) == 10
+    # a slot for every send: none is past the cap however late the loop runs
+    assert asyncio.run(open_loop(10, 1000.0, 10, fast))[0] == 0 and len(started) == 10

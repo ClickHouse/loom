@@ -1157,9 +1157,10 @@ $B load-ch --shape single --rows 250000     # or --shape zipf --rows 200000 --te
                                             #   --orgs 1000 --agents 4 --users 100
 $B --env .env.pg load-pg                    # into empty Postgres tables
 $B --env .env.pg authority --to postgres    # start a server of that authority, then:
+$B --env .env.pg pg --dump-org <org> --out <run>.json      # vacuum and dump the rows as loaded
 $B --env .env.pg measure --base-url <server> --shape single --out <run>.json
-$B --env .env.pg pg --dead-fraction 0.2 --dump-org <org> --out <run>.json
 $B --env .env.pg erase --base-url <server> --user <org>/<user> --org <org> --out <run>.json
+$B --env .env.pg pg --dead-fraction 0.2 --out <run>.json   # then vacuum with dead rows
 $B --env .env.pg optimize --base-url <server> --shape single --out <run>.json
 $B --env .env.pg fleet --base-url <server>,<server> --rate 15 --seconds 40 --out <run>.json
 $B authority --to clickhouse                # and the same commands without --env .env.pg
