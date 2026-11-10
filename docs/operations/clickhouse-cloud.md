@@ -29,7 +29,7 @@ moves memory from the ClickHouse authority to Postgres.
 
 The overlay reads two Secrets beside `loom-secrets`: `loom-postgres`, key `password`, with
 the role's password, and `loom-postgres-ca`, key `ca.crt`, with the CA bundle. Make them the
-same way as `loom-secrets`, with an ExternalSecret.
+same way as `loom-secrets`, each with an ExternalSecret of its own.
 
 `ca.crt` holds every root certificate the service's CA currently publishes, concatenated as
 PEM; the driver loads the file as a bundle and trusts nothing else. Take the roots from the
@@ -79,8 +79,10 @@ Jobs and the analytics export):
 The chart refuses to render without `postgres.passwordSecret.name` or
 `postgres.caSecret.name`, and when `env`, `extraEnv` or `secrets.extra` also sets one of
 the names it renders (`LOOM_STORAGE_AUTHORITY`, `LOOM_PG_DSN`, `LOOM_PG_DURABILITY`,
-`LOOM_PG_POOL_MAX_SIZE`, `PGPASSWORD`), or `settingsFile` the matching setting. Its values
-win over the same names in `existingSecret` and `envFrom`.
+`LOOM_PG_POOL_MAX_SIZE`, `PGPASSWORD`), or `settingsFile` the matching setting. It also
+refuses a `host`, `database` or `user` outside letters, digits, `.`, `_` and `-`, which go
+into the DSN as written, and a `port` outside 1 to 65535. Its values win over the same
+names in `existingSecret` and `envFrom`.
 
 ### Connections
 

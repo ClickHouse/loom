@@ -115,6 +115,14 @@ def main() -> None:
     off = sets("networkPolicy.enabled=false", *EVERYTHING)
     eks = ("-f", str(CHART / "values-eks.yaml"))
     assert web_policies(render(*CLOUD, *off)) == web_policies(render(*eks, *off)), "policy off"
+    # Another port reaches the DSN and the policy as the same number.
+    moved = render(*CLOUD, *sets("postgres.port=6432", *EVERYTHING))
+    dsn = next(
+        e["value"]
+        for e in loom_container(loom_pods(moved)["Deployment/loom"])["env"]
+        if e["name"] == "LOOM_PG_DSN"
+    )
+    assert urlsplit(dsn).port == 6432 and 6432 in egress_ports(moved), dsn
     check_unconfigured(render(*sets("networkPolicy.enabled=true", *EVERYTHING)), "defaults")
     check_unconfigured(render(*eks, *sets(*EVERYTHING)), "eks")
     # Without the block, these names are the documented way to set the authority.
@@ -131,7 +139,7 @@ def main() -> None:
         refused(
             f"set {field} through postgres.*, not settingsFile", *sets(f"settingsFile.{field}=x")
         )
-    for port in ("0", "05432", "70000", "5432?x"):
+    for port in ("0", "05432", "70000", "99999999999999999999", "5432?x"):
         refused("postgres.port must be a port number", "--set-string", f"postgres.port={port}")
     refused(
         "postgres.host needs postgres.passwordSecret.name", *sets("postgres.passwordSecret.name=")

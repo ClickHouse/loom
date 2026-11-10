@@ -241,7 +241,7 @@ upgraded with --reuse-values from a chart without the block has none. */}}
 {{- range $field := list "host" "database" "user" }}
 {{- if not (regexMatch "^[A-Za-z0-9._-]+$" (toString (get $pg $field))) }}{{ fail (printf "postgres.%s goes into the DSN as written: letters, digits, '.', '_' and '-' only" $field) }}{{ end }}
 {{- end -}}
-{{- if not (and (regexMatch "^[1-9][0-9]*$" (toString $pg.port)) (le (int $pg.port) 65535)) }}{{ fail "postgres.port must be a port number, 1 to 65535" }}{{ end -}}
+{{- if not (and (regexMatch "^[1-9][0-9]{0,4}$" (toString $pg.port)) (le (int $pg.port) 65535)) }}{{ fail "postgres.port must be a port number, 1 to 65535" }}{{ end -}}
 {{- end -}}
 {{- toYaml $pg -}}
 {{- end }}

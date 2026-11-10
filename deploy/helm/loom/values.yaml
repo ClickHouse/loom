@@ -1,5 +1,6 @@
 # Loom on Kubernetes. Every pod is a full replica over one ClickHouse service:
-# docs/operations/kubernetes.md. Values-eks.yaml and values-kind.yaml layer on this.
+# docs/operations/kubernetes.md. Values-eks.yaml and values-kind.yaml layer on this, and
+# values-clickhouse-cloud.yaml on values-eks.yaml.
 
 image:
   repository: ghcr.io/clickhouse/loom

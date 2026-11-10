@@ -14,7 +14,8 @@ postgres:
   port: 5432
   database: loom
   user: loom
-  # Both made by the ExternalSecret beside loom-secrets (docs/operations/clickhouse-cloud.md).
+  # Each made by an ExternalSecret of its own, as loom-secrets is
+  # (docs/operations/clickhouse-cloud.md).
   passwordSecret:
     name: loom-postgres
     key: password
