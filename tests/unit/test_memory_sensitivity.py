@@ -36,6 +36,7 @@ from server.memory.store.rows import (
 )
 from server.memory.workers.observe_extract import _sendable
 from tests.unit.clickhouse_local import CLICKHOUSE, run
+from tests.unit.code_fixtures import untraced
 
 # The coarse filter of the `credential` shape alone: the scheduled pass's filter
 # (`credential,email`) selects a high row through it.
@@ -764,12 +765,15 @@ def test_has_email_finds_what_the_email_regex_finds() -> None:
     assert not has_email("x" * 65 + "@x.com")
 
 
-def _fastest(read: Callable[[str], object], text: str) -> float:
+def _fastest(read: Callable[[Any], object], arg: Any) -> float:
+    """The fastest of three reads in CPU time, untraced: another process holding the CPU
+    does not count, nor does a full collection's pause."""
     times = []
-    for _ in range(3):
-        started = time.perf_counter()
-        read(text)
-        times.append(time.perf_counter() - started)
+    with untraced():
+        for _ in range(3):
+            started = time.process_time()
+            read(arg)
+            times.append(time.process_time() - started)
     return min(times)
 
 
@@ -792,20 +796,10 @@ def _read_escaped_quotes(n: int) -> None:
     assert not reads_high('\\"' * n)
 
 
-def _fastest_seconds(read: Callable[[int], None], n: int) -> float:
-    """The fastest of three reads, so one stall on a busy runner does not count."""
-    times = []
-    for _ in range(3):
-        started = time.perf_counter()
-        read(n)
-        times.append(time.perf_counter() - started)
-    return min(times)
-
-
 @pytest.mark.parametrize(("read", "n"), [(_read_long_runs, 50_000), (_read_escaped_quotes, 5_000)])
 def test_long_runs_are_read_in_linear_time(read: Callable[[int], None], n: int) -> None:
     # From n to 4n, a linear read takes about 4 times as long and a quadratic one 16 times.
-    assert _fastest_seconds(read, 4 * n) < 8 * _fastest_seconds(read, n)
+    assert _fastest(read, 4 * n) < 8 * _fastest(read, n)
 
 
 @pytest.mark.parametrize(

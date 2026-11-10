@@ -249,19 +249,18 @@ def _timed_out(signum: int, frame: object) -> None:
 
 
 def _fastest_seconds(read: Callable[[str], object], text: str) -> float:
-    """The fastest of three reads in CPU time, with the collector off (`untraced`): a
-    busy runner that takes the CPU away stretches wall time, not this, and a full
-    collection inside a read of a few milliseconds would add a step of its own."""
+    """The fastest of three reads in CPU time, untraced: another process holding the CPU
+    does not count, nor does a full collection's pause."""
     times = []
     previous = signal.signal(signal.SIGALRM, _timed_out)
     try:
-        for _ in range(3):
-            signal.setitimer(signal.ITIMER_REAL, _CAP_S)
-            with untraced():
+        with untraced():
+            for _ in range(3):
+                signal.setitimer(signal.ITIMER_REAL, _CAP_S)
                 started = time.process_time()
                 read(text)
                 times.append(time.process_time() - started)
-            signal.setitimer(signal.ITIMER_REAL, 0)
+                signal.setitimer(signal.ITIMER_REAL, 0)
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)
