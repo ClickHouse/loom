@@ -5872,6 +5872,10 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "grants.revoke": 80,
     "grants.share_agent": 80,
     "grants.unshare_agent": 80,
+    # BM25 over the shipped docs' in-process index. A process's first call also reads
+    # and indexes the docs (about a second, off the event loop): over budget by design.
+    "help.get": 20,
+    "help.search": 50,
     "inbox.list": 800,
     "inbox.policy_list": 800,
     "inbox.policy_set": 800,

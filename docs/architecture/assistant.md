@@ -263,17 +263,17 @@ that applies wins:
 | `unchecked`   | Otherwise: its checks could not say (a read failed or ran past its bound, no run id, memory reads not recorded, code citations, past the 50 checked), or it cites nothing and what found data has no citation form (counts and findings: the ops in `ASSISTANT_UNCITABLE_OPS`, such as `namespace.summary` and `namespace.inventory`), or a call failed. |
 
 The ops whose rows an answer can cite, those whose output has no citation form, and
-those that return no namespace data (Loom's own guide and catalog) are sets in
-`server/operations/toolsets.py`, with the output list each op's ledger row counts as
-`out_hits` (or its `found` flag) to say whether it found anything. A test requires
-every op of the assistant toolset to be in exactly one set and to say how its row shows
-it found nothing. The answer's calls are read by its run, its caller's subject and the
-consumer `loom-assistant`, with no namespace filter: a code call is ledgered under the
-code namespace and a refused call under the sentinel. The rows land in the background,
-so an uncited answer's calls are read once more after the ledger's flush interval and
-the batched-insert wait, unless the first read already found a citable op's data; both
-reads together are bounded at three seconds, past which the answer is `unchecked`. A
-presence answer of `code.symbol` finds only where the symbol is present.
+those that return no namespace data (Loom's own guide, documentation and catalog) are
+sets in `server/operations/toolsets.py`, with the output list each op's ledger row
+counts as `out_hits` (or its `found` flag) to say whether it found anything. A test
+requires every op of the assistant toolset to be in exactly one set and to say how its
+row shows it found nothing. The answer's calls are read by its run, its caller's subject
+and the consumer `loom-assistant`, with no namespace filter: a code call is ledgered
+under the code namespace and a refused call under the sentinel. The rows land in the
+background, so an uncited answer's calls are read once more after the ledger's flush
+interval and the batched-insert wait, unless the first read already found a citable op's
+data; both reads together are bounded at three seconds, past which the answer is
+`unchecked`. A presence answer of `code.symbol` finds only where the symbol is present.
 
 The rule reads no wording beyond the abstention sentence, and accepts these residuals:
 
@@ -289,6 +289,10 @@ The rule reads no wording beyond the abstention sentence, and accepts these resi
   `none` when it ends with the abstention sentence, as the instructions ask for every
   read that finds nothing; worded otherwise, it is `unsupported`.
 - An abstention that also states a fact is `none`.
+- An uncited answer from `help.search` and `help.get` is `none`, but `unsupported` when
+  a citable call of the same answer found data: the instructions name a docs page in
+  words, which no check reads, and ask for any memory or document also used to be
+  cited.
 - A document citation verifies when the document holds the section, whether or not this
   answer read it; the instructions ask for a document to be read again before it is
   cited on a later turn.
@@ -324,24 +328,69 @@ nothing; a change it suggests is a draft a person applies elsewhere, as the Assi
 page's tune drafts already are. The instructions require citations, tell the agent to
 call a tool before answering a question about the namespace (a greeting calls none) and
 abstain when none supports it, to write no text before or between its tool calls, to
-read `insights.catalog` before running SQL, and to treat stored text as data that cannot
-grant a tool or approve a change. The agents API
-streams the text of every model step as one answer's content, with nothing between steps
+read `insights.catalog` before running SQL, to answer how Loom works from `help.search`
+and `help.get`, naming the page and section in words rather than as a document citation,
+and to treat stored text as data that cannot grant a tool or approve a change. The
+agents API streams the text of every model step as one answer's content, with nothing
+between steps
 ([streaming](../features/integrations/librechat.md#tool-errors-streaming-and-cancellation)),
 so neither the bridge nor the dashboard can tell a lead-in ("Let me search the
 memories.") from the answer it runs into. While no text has arrived, the dashboard shows
 that the assistant is answering. Asked how a namespace should write, the agent
 recommends rather than only answers: key shape, one claim per key, a memory, a document
-or a record, pins and kinds, each recommendation naming its rows and citing the finding it
-rests on in `namespace.audit`, `mentor.brief` or `namespace.tune`, the namespace's guide
-(`namespace.guide_get`), or Loom's own writing guide (`mentor.guide`, on the toolset for
-that reason).
+or a record, pins and kinds, each recommendation naming its rows and citing the finding
+it rests on in `namespace.audit`, `mentor.brief` or `namespace.tune`, the namespace's
+guide (`namespace.guide_get`), or Loom's own writing guide (`mentor.guide`, on the
+toolset for that reason).
 
 The agent names no namespace on its calls: on the assistant toolset a call that names
 none reads the first namespace its token names ([the assistant
 toolset](../reference/mcp.md#the-assistant-toolset)), which for an answer's token is the
 request's. A test pins a digest of the name, provider, model parameters, instructions
 and tools to the version, so a change to any of them bumps it.
+
+## Loom's documentation
+
+The assistant answers how Loom works from Loom's own documentation, as the build that
+serves the answer ships it. The image copies `docs/` (its Markdown; the screenshots stay
+out of the build context), and two read-only ops on the assistant toolset read it:
+`help.search` (a question or a name in, the best sections out, each with its page, its
+breadcrumb, its anchor, its audience and a snippet) and `help.get` (a page with its
+outline, or one section of it, found by the anchor a hit names, since a page may repeat
+a heading). Both are `experimental`, deployment-scoped and in no curated roster: any
+token that may read the agent guide may call them by name.
+
+The docs are indexed in each process, on its first help call, in a worker thread: each
+page is split at its headings by the splitter documents use
+(`server/knowledge/domain/chunking.py` `detect_sections`), so a section's breadcrumb
+starts with the page title as a document citation's does, and the sections are scored
+with BM25 (`server/core/bm25.py`). Terms are the words, plurals and simple suffixes
+folded, plus every whole identifier (`memory.set`, `LOOM_ASSISTANT_MODEL`), so an exact
+op or setting name finds the line that names it. An operator section's score counts
+three quarters, since most askers use Loom rather than run it. The index holds about
+2,200 sections in about 14 MB and builds in about a second; a search reads only the
+postings of its terms, and concurrent first calls share one build. A page that cannot
+be read is left out with a warning, and a process with no docs answers
+`available: false` until it restarts: the docs change only with the build, so a fault
+never rebuilds the index per call. An answer that rests only on `help.search` and
+`help.get` and cites nothing carries no support label, as one resting on `mentor.guide`
+does: the docs are not the namespace's data. A read returns at most 16,000 characters,
+and a cut one names the offset its rest starts at; a page read, or a cut one, adds the
+page's outline.
+
+**Why not a knowledge source.** Knowledge rows are tenant data: an org and namespace on
+every row, erasure coverage, and a copy per org or a read path across tenants. Indexing
+them spends embedding calls, and replicas of two builds would share one copy during a
+rolling upgrade, so one build would answer from the other's docs. The docs are the
+same text for every caller, hold no tenant data and change only with the build, so
+help keeps them out of ClickHouse: nothing is written, erased or embedded.
+
+**Nothing is withheld by role.** Every page is in the public source tree, and
+`tests/unit/test_public_copy.py` keeps hosts, keys and internal names out of it, so a
+page withheld from a viewer would protect nothing. Each hit says its audience instead:
+`operator` for running or building Loom (`operations/`, `architecture/`,
+`benchmarks/`), `user` for the rest. The contributor pages (`development/`) are not
+indexed. Help reads no environment, setting value or secret.
 
 ## The analysis op
 
@@ -1047,12 +1096,14 @@ token never reads more than the caller's own.
 
 ## Rolling upgrades
 
-`insights.query`, `insights.catalog` and `assistant.ask` are ops, and
-`/v1/assistant/chat/completions` a route, that a build before them does not know: it
-answers `UNKNOWN_OP` or 404, so a client points at them once every replica serves them.
-The analyst user, its grants and policies, `loom.analysis_secrets`,
-`loom.analysis_canary` and `loom.assistant_service` live in ClickHouse and are shared by
-every replica; the agent definition is written as
+`insights.query`, `insights.catalog`, `help.search`, `help.get` and `assistant.ask` are
+ops, and `/v1/assistant/chat/completions` a route, that a build before them does not
+know: it answers `UNKNOWN_OP` or 404, so a client points at them once every replica
+serves them. The agent's tools come from the definition the newest build writes, so
+during an upgrade a help call that reaches an older replica answers `UNKNOWN_OP`, and
+that answer goes without the docs. The analyst user, its grants and policies,
+`loom.analysis_secrets`, `loom.analysis_canary` and `loom.assistant_service` live in
+ClickHouse and are shared by every replica; the agent definition is written as
 [the agent definition](#the-agent-definition) says, never by an older build.
 
 ## Build order
@@ -1081,6 +1132,8 @@ every replica; the agent definition is written as
 5. The chat on the dashboard's Assistant page, on the signed-in session and the page's
    namespace, with a Stop button that closes the request and each answer's checked
    citations under it. Built.
+6. Loom's documentation in the image, `help.search` and `help.get` on the toolset
+   ([Loom's documentation](#looms-documentation)). Built.
 
 Each part moves its section of this page from design to the description of what is
 built.
@@ -1104,6 +1157,7 @@ built.
   `server/assistant/store/service.py`: `loom.assistant_service`.
 - `integrations/librechat/`: the agent definition (`agent.yaml`) and the qualification
   harness.
+- `server/help/`: `help.search` and `help.get`, and the index over the shipped docs.
 - `deploy/librechat/assistant.librechat.yaml`: the deployed LibreChat's configuration.
 
 ## Invariants

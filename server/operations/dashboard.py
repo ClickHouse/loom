@@ -103,6 +103,8 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
             "decision.outcome",
             "decision.precedents",
             "decision.record",
+            "help.get",
+            "help.search",
             "knowledge.outline",
             "knowledge.query",
             "knowledge.synthesize",

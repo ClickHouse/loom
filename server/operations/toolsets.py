@@ -363,6 +363,9 @@ MCP_ASSISTANT_OPS: frozenset[str] = frozenset(
         "mentor.brief",
         # Loom's own guide to writing memory, which recommendations cite.
         "mentor.guide",
+        # Loom's documentation, for how a feature works and how to do something.
+        "help.search",
+        "help.get",
         "grants.list",
         # Cited questions over memory, documents and code.
         "memory.search",
@@ -416,8 +419,8 @@ def is_assistant(toolset: str | None) -> bool:
 # How an assistant answer's tool calls bear on its label (server/assistant/domain/support.py):
 # a call to a CITABLE op returns rows the answer can cite and the citation check verifies; an
 # UNCITABLE op's output (counts, findings, history) has no citation form; a NO_NAMESPACE_DATA
-# op returns Loom's own guide or catalog, never the namespace's data. Every assistant op is in
-# exactly one (tests/unit/test_assistant_support.py).
+# op returns Loom's own guide, documentation or catalog, never the namespace's data. Every
+# assistant op is in exactly one (tests/unit/test_assistant_support.py).
 ASSISTANT_CITABLE_OPS: frozenset[str] = frozenset(
     {
         "memory.search",
@@ -433,7 +436,9 @@ ASSISTANT_CITABLE_OPS: frozenset[str] = frozenset(
         "insights.query",
     }
 )
-ASSISTANT_NO_NAMESPACE_DATA_OPS: frozenset[str] = frozenset({"mentor.guide", "insights.catalog"})
+ASSISTANT_NO_NAMESPACE_DATA_OPS: frozenset[str] = frozenset(
+    {"mentor.guide", "insights.catalog", "help.search", "help.get"}
+)
 ASSISTANT_UNCITABLE_OPS: frozenset[str] = (
     MCP_ASSISTANT_OPS - ASSISTANT_CITABLE_OPS - ASSISTANT_NO_NAMESPACE_DATA_OPS
 )
@@ -458,6 +463,7 @@ ASSISTANT_FOUND_FIELD: dict[str, tuple[str, ...]] = {
     # A fuzzy candidate is no find; a presence answer is.
     "code.symbol": ("definitions", "presence"),
     "insights.query": ("rows",),
+    "help.search": ("hits",),
     "grants.list": ("rows",),
     "namespace.audit": ("findings",),
     "namespace.validate": ("findings",),

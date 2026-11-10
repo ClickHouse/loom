@@ -403,6 +403,8 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "ops.capabilities": "the deployment's capabilities",
     "ops.health": "deployment health",
     "mentor.guide": "the deployment's static agent guide, no memory",
+    "help.search": "the deployment's shipped documentation, no memory",
+    "help.get": "the deployment's shipped documentation, no memory",
     # Not blacklist.*: a pattern has no user axis (created_by is the token subject,
     # which many users' tokens can share). List, remove and sweep would reach another
     # user's patterns, and an add would be a namespace-wide Refuse the token can't manage.

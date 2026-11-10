@@ -155,6 +155,8 @@ OpName = Literal[
     "grants.revoke",
     "grants.share_agent",
     "grants.unshare_agent",
+    "help.get",
+    "help.search",
     "inbox.list",
     "inbox.policy_list",
     "inbox.policy_set",
@@ -517,6 +519,8 @@ OP_NAMES: tuple[str, ...] = (
     "grants.revoke",
     "grants.share_agent",
     "grants.unshare_agent",
+    "help.get",
+    "help.search",
     "inbox.list",
     "inbox.policy_list",
     "inbox.policy_set",
@@ -2154,6 +2158,30 @@ OPS: dict[str, OpSpec] = {
         80,
         True,
         False,
+    ),
+    "help.get": OpSpec(
+        "help.get",
+        "HelpGetInput",
+        "HelpGetBody",
+        "HelpGetOutput",
+        True,
+        "viewer",
+        "experimental",
+        20,
+        False,
+        True,
+    ),
+    "help.search": OpSpec(
+        "help.search",
+        "HelpSearchInput",
+        "HelpSearchBody",
+        "HelpSearchOutput",
+        True,
+        "viewer",
+        "experimental",
+        50,
+        False,
+        True,
     ),
     "inbox.list": OpSpec(
         "inbox.list",
@@ -9797,6 +9825,76 @@ class GrantsUnshareAgentBody(TypedDict, total=False):
 class GrantsUnshareAgentOutput(TypedDict, total=False):
     revoked: Required[bool]
     revoked_at: NotRequired[Optional[str]]
+
+
+class HelpGetInput(TypedDict, total=False):
+    "Read one page of this build's documentation, or one section of it."
+
+    org: NotRequired[str]
+    path: Required[str]
+    section: NotRequired[str]
+    anchor: NotRequired[str]
+    offset: NotRequired[int]
+
+
+class HelpGetBody(TypedDict, total=False):
+    "Read one page of this build's documentation, or one section of it."
+
+    org: NotRequired[str]
+    path: Required[str]
+    section: NotRequired[str]
+    anchor: NotRequired[str]
+    offset: NotRequired[int]
+
+
+class HelpGetOutput(TypedDict, total=False):
+    available: Required[bool]
+    found: Required[bool]
+    path: Required[str]
+    title: NotRequired[str]
+    section: NotRequired[str]
+    anchor: NotRequired[str]
+    audience: NotRequired[Literal["user", "operator"]]
+    text: NotRequired[str]
+    truncated: NotRequired[bool]
+    next_offset: NotRequired[int]
+    sections: NotRequired[list["HelpOutlineEntry"]]
+
+
+class HelpOutlineEntry(TypedDict, total=False):
+    section: Required[str]
+    anchor: Required[str]
+
+
+class HelpSearchInput(TypedDict, total=False):
+    "Search this build's documentation."
+
+    org: NotRequired[str]
+    query: Required[str]
+    limit: NotRequired[int]
+
+
+class HelpSearchBody(TypedDict, total=False):
+    "Search this build's documentation."
+
+    org: NotRequired[str]
+    query: Required[str]
+    limit: NotRequired[int]
+
+
+class HelpSearchOutput(TypedDict, total=False):
+    available: Required[bool]
+    hits: Required[list["HelpHit"]]
+
+
+class HelpHit(TypedDict, total=False):
+    path: Required[str]
+    title: Required[str]
+    section: Required[str]
+    anchor: Required[str]
+    audience: Required[Literal["user", "operator"]]
+    snippet: Required[str]
+    score: Required[float]
 
 
 class InboxListInput(TypedDict, total=False):

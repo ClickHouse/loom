@@ -3105,6 +3105,54 @@ export interface GrantsUnshareAgentOutput {
   revoked_at?: string | null;
 }
 
+export interface HelpGetInput {
+  org?: string;
+  path: string;
+  section?: string;
+  anchor?: string;
+  offset?: number;
+}
+
+export interface HelpOutlineEntry {
+  section: string;
+  anchor: string;
+}
+
+export interface HelpGetOutput {
+  available: boolean;
+  found: boolean;
+  path: string;
+  title?: string;
+  section?: string;
+  anchor?: string;
+  audience?: "user" | "operator";
+  text?: string;
+  truncated?: boolean;
+  next_offset?: number;
+  sections?: HelpOutlineEntry[];
+}
+
+export interface HelpSearchInput {
+  org?: string;
+  query: string;
+  limit?: number;
+}
+
+export interface HelpHit {
+  path: string;
+  title: string;
+  section: string;
+  anchor: string;
+  audience: "user" | "operator";
+  snippet: string;
+  score: number;
+}
+
+export interface HelpSearchOutput {
+  available: boolean;
+  hits: HelpHit[];
+}
+
 export interface InboxListInput {
   org: string;
   namespace: string;
@@ -10167,6 +10215,8 @@ export type OpName =
   | "grants.revoke"
   | "grants.share_agent"
   | "grants.unshare_agent"
+  | "help.get"
+  | "help.search"
   | "inbox.list"
   | "inbox.policy_list"
   | "inbox.policy_set"
@@ -10529,6 +10579,8 @@ export interface OpMap {
   "grants.revoke": { input: GrantsRevokeInput; output: GrantsRevokeOutput };
   "grants.share_agent": { input: GrantsShareAgentInput; output: GrantsShareAgentOutput };
   "grants.unshare_agent": { input: GrantsUnshareAgentInput; output: GrantsUnshareAgentOutput };
+  "help.get": { input: HelpGetInput; output: HelpGetOutput };
+  "help.search": { input: HelpSearchInput; output: HelpSearchOutput };
   "inbox.list": { input: InboxListInput; output: InboxListOutput };
   "inbox.policy_list": { input: InboxPolicyListInput; output: InboxPolicyListOutput };
   "inbox.policy_set": { input: InboxPolicySetInput; output: InboxPolicySetOutput };
@@ -10891,6 +10943,8 @@ export const OPS: readonly OpSpec[] = [
   { name: "grants.revoke", group: "grants", method: "revoke", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "grants.share_agent", group: "grants", method: "shareAgent", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "grants.unshare_agent", group: "grants", method: "unshareAgent", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
+  { name: "help.get", group: "help", method: "get", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 20, audit: false, readOnly: true },
+  { name: "help.search", group: "help", method: "search", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 50, audit: false, readOnly: true },
   { name: "inbox.list", group: "inbox", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 800, audit: false, readOnly: true },
   { name: "inbox.policy_list", group: "inbox", method: "policyList", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 800, audit: false, readOnly: true },
   { name: "inbox.policy_set", group: "inbox", method: "policySet", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 800, audit: true, readOnly: false },
@@ -11140,4 +11194,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 359;
+export const GENERATED_OP_COUNT = 361;
