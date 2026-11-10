@@ -103,3 +103,17 @@ def test_an_admin_token_that_cannot_be_checked_reads_no_entry(
     monkeypatch.setattr("server.auth.revocation.loaded", lambda: False)
     message, cache = _tier_message(client, _bearer(["platform_admin"]))
     assert "code-a" not in message and cache != "no-store"
+
+
+def test_a_platform_admin_reads_a_restricted_entry_by_its_reason_alone(
+    client: TestClient,
+) -> None:
+    (entry,) = recorder._FAILING or ()
+    recorder._FAILING = (
+        entry,
+        recorder.FailingTier("o", "code-s", entry.health, 0, "o/s", "main", True),
+    )
+    message, _ = _tier_message(client, _bearer(["platform_admin"]))
+    assert "o/a@main (o/code-a)" in message
+    assert "a restricted entry's clang_full: git lock held" in message
+    assert "o/s" not in message and "code-s" not in message

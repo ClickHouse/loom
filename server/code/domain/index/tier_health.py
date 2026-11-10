@@ -445,12 +445,17 @@ def error_line(kind: str, error: str) -> str:
     patterns = [pattern for k, pattern in _KINDS if k == kind]
     at = next((i for i, s in enumerate(lines) if any(p.search(s) for p in patterns)), None)
     if at is not None and kind == "cmake":
-        # CMake's own error: the line after `CMake Error at …` says what, unless it is
-        # the call stack's heading; the line above the marker when CMake printed none
+        # CMake's own error: `CMake Error: <what>` says it on its line; after `CMake
+        # Error at …:` the next line does, unless it is the call stack's heading; the
+        # line above the marker when CMake printed none
         error_at = next((i for i in range(at) if lines[i].startswith("CMake Error")), None)
         if error_at is None:
             at = max(at - 1, 0)
-        elif error_at + 1 < at and not lines[error_at + 1].startswith("Call Stack"):
+        elif (
+            lines[error_at].endswith(":")
+            and error_at + 1 < at
+            and not lines[error_at + 1].startswith("Call Stack")
+        ):
             at = error_at + 1
         else:
             at = error_at

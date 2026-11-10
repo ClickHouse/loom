@@ -654,6 +654,12 @@ def test_cmakes_error_line_is_the_one_that_says_what_failed() -> None:
     assert tier_health.error_line("cmake", no_reason + ">> cmake configure failed") == (
         "CMake Error at CMakeLists.txt:1 (project):"
     )
+    one_line = (
+        'CMake Error: The source directory "/x" does not exist.\n'
+        "Specify --help for usage, or press the help button on the CMake GUI.\n"
+        ">> cmake configure failed"
+    )
+    assert tier_health.error_line("cmake", one_line).startswith("CMake Error: The source")
     assert tier_health.error_line("cmake", "clang: not found\n>> cmake configure failed") == (
         "clang: not found"
     )
