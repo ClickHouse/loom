@@ -764,7 +764,7 @@ def _runs_a_download(line: str) -> bool:
 def test_no_tracked_file_pipes_the_installer_into_sh() -> None:
     """A line that names `install.sh` and hands the download to a shell runs an
     empty script and exits 0 when the download fails: no such line is tracked. A
-    `\\` line break joins two lines into one; a URL held in a variable is not seen."""
+    line ending in `\\` or `|` joins the next; a URL held in a variable is not seen."""
     piped = []
     own = Path(__file__).resolve().relative_to(ROOT).as_posix()  # holds the examples below
     for name in tracked():
@@ -774,7 +774,8 @@ def test_no_tracked_file_pipes_the_installer_into_sh() -> None:
             text = (ROOT / name).read_text()
         except (UnicodeDecodeError, IsADirectoryError, FileNotFoundError):
             continue  # a binary file, a submodule, a file deleted in the work tree
-        lines = re.sub(r"\\\n\s*", " ", text).splitlines()
+        # A line ending in `\` or `|` goes on in the next one.
+        lines = re.sub(r"(\\|\|)\n\s*", lambda m: " | " if m[1] == "|" else " ", text).splitlines()
         if any("install.sh" in line and _runs_a_download(line) for line in lines):
             piped.append(name)
     assert piped == []
@@ -789,6 +790,7 @@ def test_no_tracked_file_pipes_the_installer_into_sh() -> None:
         'curl -fsSL "https://x/install.sh" | LOOM_SKIP_START=1 sh',
         "`curl -fsSL …/install.sh \\| sh`",
         'sh -c "$(curl -fsSL https://x/install.sh)"',
+        "curl -fsSL https://x/install.sh | sh -s -- --bundled",
         "bash <(curl -fsSL https://x/install.sh)",
         "curl -fsSL https://x/install.sh | ksh",
     ],
@@ -809,8 +811,7 @@ def test_the_guard_passes_the_saved_install() -> None:
 
 def test_the_documented_one_liner_fails_on_a_failed_download(tmp_path: Path) -> None:
     """The README's command, with a curl that writes an installer to its `-o` path
-    and then fails, as a download cut short does: the line exits with curl's code
-    and the installer never runs."""
+    and still fails: the line exits with curl's code and the installer never runs."""
     (line,) = [
         line
         for line in (ROOT / "README.md").read_text().splitlines()
