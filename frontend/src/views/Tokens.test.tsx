@@ -223,7 +223,7 @@ describe("the token form", () => {
   it("only these: nothing is ticked at first, the page's namespace and the personal one included", async () => {
     const mine = [row("personal-a"), ...ROWS];
     vi.mocked(listMine).mockResolvedValue(mine);
-    useStore.setState({ myNamespaces: mine, identity: { org: ORG, namespace: "personal-a", agent: "loom-ui" } });
+    useStore.setState({ myNamespaces: mine, identity: { org: ORG, namespace: "ns-b", agent: "loom-ui" } });
     render(<Setup />);
     await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
     const personal = await screen.findByRole("checkbox", { name: "Read personal-a" }, WAIT);
@@ -277,6 +277,10 @@ describe("the token form", () => {
     expect(order()).toEqual(["ns-a", "ns-b", "ns-c"]);
     expect(screen.getByRole("button", { name: "Move ns-c up" })).toHaveFocus();
     expect(screen.getByRole("status")).toHaveTextContent("ns-c moved to 3 of 3");
+    // A tick empties the line, so the next move is announced even when its words repeat.
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
+    expect(screen.getByRole("status")).toHaveTextContent("");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
     await userEvent.click(screen.getByRole("button", { name: "Move ns-c up" }));
     await userEvent.click(screen.getByRole("button", { name: "Move ns-c up" }));
     expect((await create()).namespaces.map((n) => (typeof n === "string" ? n : n.namespace))).toEqual([
@@ -320,8 +324,9 @@ describe("the token form", () => {
       await userEvent.click(await screen.findByRole("checkbox", { name: `Read ${ns}` }, WAIT));
     }
     const items = within(screen.getByRole("list", { name: "Search order" })).getAllByRole("listitem");
-    const data = { effectAllowed: "", setData: vi.fn(), getData: vi.fn() };
-    fireEvent.dragStart(items[2], { dataTransfer: data });
+    const data = { effectAllowed: "", setData: vi.fn(), getData: vi.fn(), setDragImage: vi.fn() };
+    const grip = (li: HTMLElement) => li.querySelector("[draggable]") as HTMLElement;
+    fireEvent.dragStart(grip(items[2]), { dataTransfer: data });
     fireEvent.dragOver(items[0], { dataTransfer: data });
     fireEvent.drop(items[0], { dataTransfer: data });
     const order = within(screen.getByRole("list", { name: "Search order" }))
@@ -330,13 +335,14 @@ describe("the token form", () => {
     expect(order).toEqual(["ns-c", "ns-a", "ns-b"]);
     // Downward too, and a drop on its own place changes nothing.
     const now = () => within(screen.getByRole("list", { name: "Search order" })).getAllByRole("listitem");
-    fireEvent.dragStart(now()[0], { dataTransfer: data });
+    expect(screen.getByRole("status")).toHaveTextContent("ns-c moved to 1 of 3");
+    fireEvent.dragStart(grip(now()[0]), { dataTransfer: data });
     fireEvent.dragOver(now()[2], { dataTransfer: data });
     fireEvent.drop(now()[2], { dataTransfer: data });
-    fireEvent.dragStart(now()[1], { dataTransfer: data });
+    fireEvent.dragStart(grip(now()[1]), { dataTransfer: data });
     fireEvent.drop(now()[1], { dataTransfer: data });
     expect(now().map((li) => li.textContent?.match(/ns-[abc]/)?.[0])).toEqual(["ns-a", "ns-b", "ns-c"]);
-    fireEvent.dragStart(now()[2], { dataTransfer: data });
+    fireEvent.dragStart(grip(now()[2]), { dataTransfer: data });
     fireEvent.dragOver(now()[0], { dataTransfer: data });
     fireEvent.drop(now()[0], { dataTransfer: data });
     expect((await create()).namespaces.map((n) => (typeof n === "string" ? n : n.namespace))).toEqual([

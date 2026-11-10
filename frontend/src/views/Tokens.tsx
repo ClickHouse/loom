@@ -237,6 +237,7 @@ function SearchOrder({
   onRole: (ns: string, r: GrantRole) => void;
   onMove: (ns: string, to: number) => void;
 }) {
+  const titleId = useId();
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<number | null>(null);
   // A move can disable the arrow that was pressed (the row reached an end): focus then
@@ -258,25 +259,16 @@ function SearchOrder({
   };
   return (
     <div>
-      <div id="search-order-title" className="text-xs font-medium text-text-muted mb-1">
+      <div id={titleId} className="section-label mb-1">
         Search order
       </div>
-      <ol
-        aria-labelledby="search-order-title"
-        className="rounded-md border border-border bg-surface-2 divide-y divide-border"
-      >
+      <ol aria-labelledby={titleId} className="rounded-md border border-border bg-surface-2 divide-y divide-border">
         {order.map((ns, i) => {
           const repo = isRepo(ns);
           return (
-            // biome-ignore lint/a11y/noNoninteractiveElementInteractions: a draggable row; its Move up and Move down buttons are the keyboard path
+            // biome-ignore lint/a11y/noNoninteractiveElementInteractions: a drop target for a dragged row; its Move up and Move down buttons are the keyboard path
             <li
               key={ns}
-              draggable
-              onDragStart={(e) => {
-                setDragging(ns);
-                e.dataTransfer.effectAllowed = "move";
-                e.dataTransfer.setData("text/plain", ns);
-              }}
               onDragOver={(e) => {
                 if (dragging === null) return;
                 e.preventDefault();
@@ -289,13 +281,26 @@ function SearchOrder({
                 setDragging(null);
                 setOver(null);
               }}
-              onDragEnd={() => {
-                setDragging(null);
-                setOver(null);
-              }}
               className={`flex flex-wrap items-center gap-2 px-2 py-1.5 text-sm ${over === i && dragging !== ns ? "bg-surface" : ""} ${dragging === ns ? "opacity-60" : ""}`}
             >
-              <span className="cursor-grab text-text-muted" aria-hidden="true">
+              {/* Only the grip drags, so a press on the role or an arrow stays a press and the
+                  name can be selected; the whole row is what moves under the pointer. */}
+              <span
+                className="cursor-grab text-text-muted"
+                aria-hidden="true"
+                draggable
+                onDragStart={(e) => {
+                  setDragging(ns);
+                  e.dataTransfer.effectAllowed = "move";
+                  e.dataTransfer.setData("text/plain", ns);
+                  const row = e.currentTarget.closest("li");
+                  if (row) e.dataTransfer.setDragImage(row, 16, 16);
+                }}
+                onDragEnd={() => {
+                  setDragging(null);
+                  setOver(null);
+                }}
+              >
                 <Icon name="dots-vertical-double" size="sm" />
               </span>
               <span className="w-5 shrink-0 text-right tabular text-text-muted">{i + 1}</span>
@@ -478,6 +483,8 @@ function TokenForm({
   );
 
   const toggleNs = (ns: string) => {
+    // A move after a tick says its line again, even when the words are the same.
+    setMoved("");
     if (selectedNs.includes(ns)) {
       setSelectedNs((prev) => prev.filter((x) => x !== ns));
       setNsRole(({ [ns]: _, ...rest }) => rest);
@@ -618,7 +625,7 @@ function TokenForm({
           </div>
           {repoGroups.length > 0 && (
             <div>
-              <div className="text-xs font-medium text-text-muted mb-1">Repositories (read-only)</div>
+              <div className="section-label mb-1">Repositories (read-only)</div>
               <div className="max-h-56 overflow-y-auto rounded-md border border-border bg-surface-2 divide-y divide-border">
                 {repoGroups.map((grp) => {
                   const onCount = grp.rows.filter((n) => selectedNs.includes(n.namespace)).length;
