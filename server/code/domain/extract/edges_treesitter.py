@@ -3157,7 +3157,7 @@ class _CallResolver:
             # (`clickhouse.Dynamic` for …/clickhouse-go/v2, whose path element
             # says clickhouse_go): the imported repository directory whose
             # clause is the alias, or nothing — never every package's Dynamic
-            matched = self._of(candidates, ("clause dirs of", alias), lambda: [
+            matched = self._of(candidates, ("alias heads", alias), lambda: [
                 c for c in {f"{d}.{alias}::" for d in self._imported_package_dirs()}
                 if c in self._scope_heads(candidates)
             ])
