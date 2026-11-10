@@ -52,10 +52,13 @@ header the index does not hold leaves the site declined.
 
 from __future__ import annotations
 
+import bisect
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
+from server.code.domain.extract.text_lines import last_span_at
 from server.code.domain.extract.treesitter import (
     ParsedFile,
     Symbol,
@@ -1623,46 +1626,23 @@ def _resolve_fixtures(
         mod = pf.symbols[0].qualified_name.split("::", 1)[0]
     mod_dir = mod.rsplit(".", 1)[0] if "." in mod else ""
 
+    local_fixtures: dict[str, list[Symbol]] = {}
+    for s in pf.symbols:
+        if s.kind == "fixture":
+            local_fixtures.setdefault(s.name, []).append(s)
+    chosen: dict[str, tuple[tuple[str, str, str], float] | None] = {}
     for req_qname, fixture_name, line in pf.fixture_requests:
         requestor = local_syms.get(req_qname)
         if requestor is None:
             continue
-        cands = [
-            c for c in name_table.get(fixture_name, []) if c[2] == "fixture"
-        ]
-        # same-file fixtures may not be in the repo table yet (first ingest
-        # of this file) — synthesize them from the parse itself.
-        for s in pf.symbols:
-            if s.kind == "fixture" and s.name == fixture_name and not any(
-                c[1] == s.qualified_name for c in cands
-            ):
-                cands.append((s.id, s.qualified_name, "fixture"))
-        if not cands:
+        if fixture_name not in chosen:
+            chosen[fixture_name] = _nearest_fixture(
+                fixture_name, name_table, local_fixtures.get(fixture_name, []), mod, mod_dir
+            )
+        found = chosen[fixture_name]
+        if found is None:
             continue
-
-        def _rank(c: tuple[str, str, str]) -> tuple[int, int]:
-            c_mod = c[1].split("::", 1)[0]
-            if c_mod == mod:
-                return (0, 0)
-            if c_mod == f"{mod_dir}.conftest" and mod_dir:
-                return (1, 0)
-            if c_mod.endswith(".conftest") or c_mod == "conftest":
-                anc = c_mod[: -len(".conftest")] if "." in c_mod else ""
-                if mod_dir == anc or mod_dir.startswith(anc + ".") or anc == "":
-                    # deeper ancestor = nearer = better
-                    return (2, -len(anc))
-            return (3, 0)
-
-        ranked = sorted(cands, key=_rank)
-        best = ranked[0]
-        tier = _rank(best)[0]
-        if tier == 3 and len(cands) != 1:
-            continue  # ambiguous non-conftest fixtures: drop, never guess
-        # two candidates on the same rung = ambiguity pytest would resolve
-        # by plugin order we can't see — drop rather than guess
-        if len(ranked) > 1 and _rank(ranked[1]) == _rank(best) and tier != 0:
-            continue
-        conf = {0: 1.0, 1: 0.9, 2: 0.8, 3: 0.6}[tier]
+        best, conf = found
         edges.append(
             Edge(
                 "fixture_use", requestor.id, best[0], req_qname,
@@ -1670,6 +1650,51 @@ def _resolve_fixtures(
             )
         )
     return edges
+
+
+def _nearest_fixture(
+    fixture_name: str, name_table: dict[str, list[tuple[str, str, str]]],
+    local: list[Symbol], mod: str, mod_dir: str,
+) -> tuple[tuple[str, str, str], float] | None:
+    """The fixture a request of `fixture_name` binds and its confidence; None when
+    there is none or the nearest rung holds two. Depends on the name only, so a file of
+    many requests ranks each name once."""
+    cands = [
+        c for c in name_table.get(fixture_name, []) if c[2] == "fixture"
+    ]
+    # same-file fixtures may not be in the repo table yet (first ingest
+    # of this file) — synthesize them from the parse itself.
+    known = {c[1] for c in cands}
+    for s in local:
+        if s.qualified_name not in known:
+            known.add(s.qualified_name)
+            cands.append((s.id, s.qualified_name, "fixture"))
+    if not cands:
+        return None
+
+    def _rank(c: tuple[str, str, str]) -> tuple[int, int]:
+        c_mod = c[1].split("::", 1)[0]
+        if c_mod == mod:
+            return (0, 0)
+        if c_mod == f"{mod_dir}.conftest" and mod_dir:
+            return (1, 0)
+        if c_mod.endswith(".conftest") or c_mod == "conftest":
+            anc = c_mod[: -len(".conftest")] if "." in c_mod else ""
+            if mod_dir == anc or mod_dir.startswith(anc + ".") or anc == "":
+                # deeper ancestor = nearer = better
+                return (2, -len(anc))
+        return (3, 0)
+
+    ranked = sorted(cands, key=_rank)
+    best = ranked[0]
+    tier = _rank(best)[0]
+    if tier == 3 and len(cands) != 1:
+        return None  # ambiguous non-conftest fixtures: drop, never guess
+    # two candidates on the same rung = ambiguity pytest would resolve
+    # by plugin order we can't see — drop rather than guess
+    if len(ranked) > 1 and _rank(ranked[1]) == _rank(best) and tier != 0:
+        return None
+    return best, {0: 1.0, 1: 0.9, 2: 0.8, 3: 0.6}[tier]
 
 
 @dataclass
@@ -1698,6 +1723,37 @@ SAME_PACKAGE_CONFIDENCE = 0.9  # a bare Go call names its own package first
 # definition under its directory
 IMPORT_BOUND_CONFIDENCE = 1.0
 BARREL_SCOPED_CONFIDENCE = 0.9
+
+
+class _Namesakes:
+    """One name's same-file definitions sorted by qualified name once, so a call site
+    counts the ones under a scope (all but its caller's) by bisection: a file can define
+    one name thousands of times, and a scan of them per call site is quadratic."""
+
+    def __init__(self, syms: list[Symbol]) -> None:
+        self.syms = sorted(syms, key=lambda s: s.qualified_name)  # stable: file order per name
+        self.qns = [s.qualified_name for s in self.syms]
+
+    def one(self, prefix: str, skip: str) -> tuple[int, Symbol | None]:
+        """How many qualified names start with `prefix`, the ones equal to `skip` left
+        out, and that definition when there is exactly one."""
+        lo = bisect.bisect_left(self.qns, prefix)
+        hi = len(self.qns)
+        if prefix:
+            hi = bisect.bisect_left(self.qns, prefix[:-1] + chr(ord(prefix[-1]) + 1), lo)
+        s_lo = bisect.bisect_left(self.qns, skip, lo, hi)
+        s_hi = bisect.bisect_right(self.qns, skip, s_lo, hi)
+        n = hi - lo - (s_hi - s_lo)
+        if n != 1:
+            return n, None
+        return 1, self.syms[lo] if lo < s_lo else self.syms[s_hi]
+
+
+def _first_per_name(pairs: Any) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for qn, row in pairs:
+        out.setdefault(qn, row)
+    return out
 
 
 def _with_local_rows(
@@ -2052,24 +2108,6 @@ def _heritage_target(
     return None
 
 
-def _miss_for(
-    caller: Symbol, name: str, bare: str, line: int, path: str,
-    name_table: dict[str, list[tuple[str, str, str]]], local_by_name: dict[str, list[Symbol]],
-) -> CallMiss:
-    """The declined-site record for one call: `ambiguous` when several
-    definitions of the bare name exist (repo-wide or same-file), else
-    `unresolved`."""
-    candidates = candidates_for_call(name_table, name, bare)
-    n = len(candidates) + len(
-        [s for s in local_by_name.get(bare, []) if s.qualified_name != caller.qualified_name]
-    )
-    return CallMiss(
-        callee_name=bare, call_text=name[:200], from_symbol_id=caller.id,
-        from_qualified_name=caller.qualified_name, path=path, line=line,
-        disposition="ambiguous" if n > 1 else "unresolved", candidates=n,
-    )
-
-
 def extract_edges(
     pf: ParsedFile,
     name_table: dict[str, list[tuple[str, str, str]]],
@@ -2099,9 +2137,9 @@ class _CallResolver:
         # Local import name -> (declaring module scope, declared name)
         # for names a barrel re-exports; the import rung binds through them at 1.0
         self.chains: dict[str, tuple[str, str]] = chains or {}
-        self.path = pf.path
-        self.name_table = name_table
-        self.local_by_name = local_by_name
+        self.path, self.name_table, self.local_by_name = pf.path, name_table, local_by_name
+        # Per-name indexes and candidate pools, each built at its first call site
+        self._memo: dict[tuple[Any, ...], Any] = {}
         self.local_class_by_name: dict[str, list[Symbol]] = {}
         self.typer: Any = None
         self.bindings, self.go = {}, False  # type: dict[str, str], bool
@@ -2221,7 +2259,9 @@ class _CallResolver:
         """The present path a specifier names, '' when none does."""
         from server.code.domain.extract.lang_python import first_present_candidate
 
-        return first_present_candidate(self.path, spec, self.py_resolved, self.py_roots)
+        return self._once(("path of", spec), lambda: first_present_candidate(
+            self.path, spec, self.py_resolved, self.py_roots
+        ))
 
     def _py_scope_bound(
         self, spec: str, bare: str, candidates: list[tuple[str, str, str]],
@@ -2237,7 +2277,7 @@ class _CallResolver:
         if not path:
             return None
         scope = module_scope(path)
-        exact = {(c[0], c[1]) for c in candidates if c[1] == f"{scope}::{bare}"}
+        exact = self._pairs(candidates, f"{scope}::{bare}")
         if len(exact) == 1:
             cid, cqn = next(iter(exact))
             return cid, cqn, IMPORT_BOUND_CONFIDENCE
@@ -2246,11 +2286,11 @@ class _CallResolver:
             return chained
         if path.endswith("/__init__.py"):
             pkg = scope[: -len(".__init__")] if scope.endswith(".__init__") else scope
-            under = {
+            under = self._of(candidates, ("under", pkg, bare), lambda: {
                 (c[0], c[1]) for c in candidates
                 if c[1].startswith(pkg + ".") and c[1].endswith("::" + bare)
                 and c[1].count("::") == 1
-            }
+            })
             if len(under) == 1:
                 cid, cqn = next(iter(under))
                 return cid, cqn, BARREL_SCOPED_CONFIDENCE
@@ -2272,17 +2312,15 @@ class _CallResolver:
         if target is None:
             return None
         if isinstance(target, list):
-            scopes = {module_scope(t) for t in target}
             hits = {
-                (c[0], c[1]) for c in candidates
-                if c[1].split("::", 1)[0] in scopes and c[1] == f"{c[1].split('::', 1)[0]}::{bare}"
+                pair for scope in {module_scope(t) for t in target} if "::" not in scope
+                for pair in self._pairs(candidates, f"{scope}::{bare}")
             }
         else:
             tpath, declared = target
             if not declared:
                 return None  # a submodule: nothing to call
-            wanted = f"{module_scope(tpath)}::{declared}"
-            hits = {(c[0], c[1]) for c in candidates if c[1] == wanted}
+            hits = self._pairs(candidates, f"{module_scope(tpath)}::{declared}")
         if len(hits) == 1:
             cid, cqn = next(iter(hits))
             return cid, cqn, IMPORT_BOUND_CONFIDENCE
@@ -2301,9 +2339,8 @@ class _CallResolver:
         scope = module_scope(path)
         pkg = scope[: -len(".__init__")] if scope.endswith(".__init__") else scope
         hits = {
-            (c[0], c[1]) for c in candidates
-            if c[1].endswith(f"::{cls}::{bare}")
-            and (c[1].startswith(scope + "::") or c[1].startswith(pkg + "."))
+            (c[0], c[1]) for c in self._member_rows(candidates, cls, bare)
+            if c[1].startswith(scope + "::") or c[1].startswith(pkg + ".")
         }
         if len(hits) == 1:
             cid, cqn = next(iter(hits))
@@ -2351,7 +2388,7 @@ class _CallResolver:
                 return False
             if member != bare:
                 # `from m import f as g; g()` — the definitions are named `f`
-                candidates = candidates_for_call(self.name_table, member, member)
+                candidates = self._table(member, member)
             bound = self._py_scope_bound(spec, member, candidates)
             if bound is not None:
                 return bound
@@ -2416,18 +2453,34 @@ class _CallResolver:
     ) -> tuple[str, str] | None:
         """The one `…::<tname>::<bare>` the table holds (TypeScript, Python);
         for Python, two classes of the name are told apart by the import."""
-        suffix = f"::{tname}::{bare}"
-        narrowed = [c for c in candidates if c[1].endswith(suffix)]
+        narrowed = self._member_rows(candidates, tname, bare)
         if len(narrowed) > 1 and self.python:
-            narrowed = self._py_narrow_by_class(tname, narrowed)
+            wide = narrowed
+            narrowed = self._of(
+                wide, ("by class", tname), lambda: self._py_narrow_by_class(tname, wide)
+            )
         if len(narrowed) > 1 and self.python:
-            narrowed = self._py_nearest_module(narrowed, receiver)
+            near = narrowed
+            anchor = self._py_anchor(receiver)
+            narrowed = self._of(
+                near, ("nearest", anchor), lambda: self._py_nearest_module(near, anchor)
+            )
         if len(narrowed) != 1:
             return None
         return narrowed[0][0], narrowed[0][1]
 
+    def _py_anchor(self, receiver: str) -> str:
+        """The path a receiver's defining module is read from: its import's, else this
+        file's."""
+        b = self.py_bindings.get(receiver.split(".", 1)[0]) if receiver else None
+        if b is not None:
+            defined_in = self._py_path_of(b[0])
+            if defined_in:
+                return defined_in
+        return self.path
+
     def _py_nearest_module(
-        self, narrowed: list[tuple[str, str, str]], receiver: str = "",
+        self, narrowed: list[tuple[str, str, str]], anchor: str,
     ) -> list[tuple[str, str, str]]:
         """Two vendored copies of one class (`AirflowConfigParser`
         under `airflow-core/src/airflow/_shared` and `task-sdk/src/airflow/
@@ -2437,12 +2490,6 @@ class _CallResolver:
         wins; a tie stands."""
         from server.code.domain.extract.lang_python import module_scope
 
-        anchor = self.path
-        b = self.py_bindings.get(receiver.split(".", 1)[0]) if receiver else None
-        if b is not None:
-            defined_in = self._py_path_of(b[0])
-            if defined_in:
-                anchor = defined_in
         here = module_scope(anchor).split(".")
 
         def shared(c: tuple[str, str, str]) -> int:
@@ -2488,9 +2535,7 @@ class _CallResolver:
                 if path.endswith("/__init__.py"):
                     pkg = scope[: -len(".__init__")] if scope.endswith(".__init__") else scope
                     scopes.append(pkg)
-        elif tname in self.local_class_by_name or any(
-            s.kind == "class" and s.name == tname for s in self.local_by_name.get(tname, [])
-        ):
+        elif tname in self.local_class_by_name or self._local_class_name(tname):
             scopes.append(module_scope(self.path))
         for scope in scopes:
             hits = [
@@ -2550,7 +2595,7 @@ class _CallResolver:
     ) -> Edge | None:
         """`cls_qn`'s own `bare`, else (depth permitting) its bases'."""
         wanted = f"{cls_qn}::{bare}"
-        hits = [c for c in self.name_table.get(bare, []) if c[1] == wanted]
+        hits = self._by_qn(self.name_table.get(bare, [])).get(wanted, [])
         if len(hits) == 1:
             return Edge(
                 "calls", caller.id, hits[0][0], caller.qualified_name, hits[0][1],
@@ -2560,20 +2605,18 @@ class _CallResolver:
             return self.py_inherited_target(caller, cls_qn, bare, line, depth - 1)
         return None
 
-    def _py_nested_def(self, caller: Symbol, local: list[Symbol]) -> Symbol | None:
+    def _py_nested_def(self, caller: Symbol, local: _Namesakes) -> Symbol | None:
         """The one candidate defined inside the caller, else inside the
         nearest enclosing function of the caller (a sibling closure)."""
         scope = caller.qualified_name
         while "::" in scope:
-            inside = [s for s in local if s.qualified_name.startswith(scope + "::")]
-            if len(inside) == 1:
-                return inside[0]
-            if inside:
+            n, inside = local.one(scope + "::", caller.qualified_name)
+            if n == 1:
+                return inside
+            if n:
                 return None  # several closures of the name in one scope: ambiguous
             scope = scope.rsplit("::", 1)[0]
-            if any(s.kind == "class" and s.qualified_name == scope for s in self.local_types.get(
-                scope.rsplit("::", 1)[-1], []
-            )):
+            if self._local_class(scope):
                 return None  # crossed into the class body: rung 2's ground
         return None
 
@@ -2584,16 +2627,119 @@ class _CallResolver:
             return False
         parent = qualified_name.rsplit("::", 1)[0]
         return any(
-            kind == "class" and qn == parent
-            for _sid, qn, kind in self.name_table.get(parent.rsplit("::", 1)[-1], [])
+            kind == "class"
+            for _sid, _qn, kind in self._by_qn(
+                self.name_table.get(parent.rsplit("::", 1)[-1], [])
+            ).get(parent, ())
         )
+
+    def _once[T](self, key: tuple[Any, ...], build: Callable[[], T]) -> T:
+        if key not in self._memo:
+            self._memo[key] = build()
+        return cast(T, self._memo[key])
+
+    def _local(self, bare: str) -> _Namesakes:
+        """The file's callable definitions of `bare`."""
+        return self._once(("local", bare), lambda: _Namesakes([
+            s for s in self.local_by_name.get(bare, []) if s.kind not in _NEVER_CALLABLE
+        ]))
+
+    def _table(self, name: str, bare: str) -> list[tuple[str, str, str]]:
+        """`candidates_for_call`, once per call text; callers never change the list."""
+        return self._once(
+            ("table", name, bare), lambda: candidates_for_call(self.name_table, name, bare)
+        )
+
+    def _of[T](self, rows: list[Any], key: tuple[Any, ...], build: Callable[[], T]) -> T:
+        """`build()` once per candidate list and `key`; the entry holds the list, so its id
+        is never another list's."""
+        held = self._memo.get(("of", id(rows), *key))
+        if held is None:
+            held = self._memo[("of", id(rows), *key)] = (rows, build())
+        return cast(T, held[1])
+
+    def _by_qn(self, rows: list[tuple[str, str, str]]) -> dict[str, list[tuple[str, str, str]]]:
+        """The rows per qualified name, in order."""
+        def build() -> dict[str, list[tuple[str, str, str]]]:
+            out: dict[str, list[tuple[str, str, str]]] = {}
+            for c in rows:
+                out.setdefault(c[1], []).append(c)
+            return out
+
+        return self._of(rows, ("qn",), build)
+
+    def _pairs(self, rows: list[tuple[str, str, str]], qn: str) -> set[tuple[str, str]]:
+        return {(c[0], c[1]) for c in self._by_qn(rows).get(qn, ())}
+
+    def _by_member(
+        self, rows: list[tuple[str, str, str]],
+    ) -> dict[tuple[str, str], list[tuple[str, str, str]]]:
+        """The rows `…::<owner>::<name>` per (owner, name), in order: what an
+        `endswith(f"::{owner}::{name}")` filter keeps, for an owner and name without `:`."""
+        def build() -> dict[tuple[str, str], list[tuple[str, str, str]]]:
+            out: dict[tuple[str, str], list[tuple[str, str, str]]] = {}
+            for c in rows:
+                parts = c[1].rsplit("::", 2)
+                if len(parts) == 3:
+                    out.setdefault((parts[1], parts[2]), []).append(c)
+            return out
+
+        return self._of(rows, ("member",), build)
+
+    def _member_rows(
+        self, rows: list[tuple[str, str, str]], owner: str, name: str,
+    ) -> list[tuple[str, str, str]]:
+        """`[c for c in rows if c[1].endswith(f"::{owner}::{name}")]`."""
+        if ":" in owner or ":" in name:
+            return self._of(rows, ("suffix", owner, name), lambda: [
+                c for c in rows if c[1].endswith(f"::{owner}::{name}")
+            ])
+        return self._by_member(rows).get((owner, name), [])
+
+    def _local_rows(self, bare: str) -> dict[str, Symbol]:
+        """The file's first definition of `bare` per qualified name."""
+        return self._once(("local rows", bare), lambda: _first_per_name(
+            (s.qualified_name, s) for s in self.local_by_name.get(bare, [])
+        ))
+
+    def _table_rows(self, bare: str) -> dict[str, tuple[str, str, str]]:
+        """The name table's first row of `bare` per qualified name."""
+        return self._once(("table rows", bare), lambda: _first_per_name(
+            (c[1], c) for c in self.name_table.get(bare, [])
+        ))
+
+    def _local_class_name(self, name: str) -> bool:
+        """Does the file's name index hold a class row under `name`?"""
+        names = self._once(("class names",), lambda: {
+            n for n, rows in self.local_by_name.items() if any(s.kind == "class" for s in rows)
+        })
+        return name in names
+
+    def miss(self, caller: Symbol, name: str, bare: str, line: int) -> CallMiss:
+        """The declined-site record for one call: `ambiguous` when several
+        definitions of the bare name exist (repo-wide or same-file), else
+        `unresolved`."""
+        local = self._once(
+            ("all local", bare), lambda: _Namesakes(self.local_by_name.get(bare, []))
+        )
+        n = len(self._table(name, bare)) + local.one("", caller.qualified_name)[0]
+        return CallMiss(
+            callee_name=bare, call_text=name[:200], from_symbol_id=caller.id,
+            from_qualified_name=caller.qualified_name, path=self.path, line=line,
+            disposition="ambiguous" if n > 1 else "unresolved", candidates=n,
+        )
+
+    def _local_class(self, qualified_name: str) -> bool:
+        """Is this the qualified name of a class this file defines?"""
+        rows = self._once(("classes",), lambda: {
+            (t.name, t.qualified_name)
+            for ts in self.local_types.values() for t in ts if t.kind == "class"
+        })
+        return (qualified_name.rsplit("::", 1)[-1], qualified_name) in rows
 
     def _py_is_method(self, s: Symbol) -> bool:
         parent = s.qualified_name.rsplit("::", 1)[0] if "::" in s.qualified_name else ""
-        return any(
-            t.kind == "class" and t.qualified_name == parent
-            for t in self.local_types.get(parent.rsplit("::", 1)[-1], [])
-        )
+        return self._local_class(parent)
 
     def _py_class_object(self, receiver: str) -> str:
         """A receiver that is a class written by name —
@@ -2604,7 +2750,7 @@ class _CallResolver:
             return ""
         if receiver in _PY_BUILTIN_CLASSES:
             return receiver
-        if any(s.kind == "class" for s in self.local_by_name.get(receiver, [])):
+        if self._local_class_name(receiver):
             return receiver
         return ""  # an imported class is the import rung's (1.0, `_py_class_member_bound`)
 
@@ -2699,6 +2845,13 @@ class _CallResolver:
         spec = self.bindings.get(key, "") if key else ""
         if not spec:
             return None
+        return self._of(candidates, ("ts import", key, bare), lambda: self._ts_import_bound(
+            key, spec, bare, candidates
+        ))
+
+    def _ts_import_bound(
+        self, key: str, spec: str, bare: str, candidates: list[tuple[str, str, str]],
+    ) -> tuple[str, str, float] | None | bool:
         from server.code.domain.extract.lang_typescript_refs import (
             _import_bound,
             _is_barrel_spec,
@@ -2769,13 +2922,13 @@ class _CallResolver:
         site when no base is bound — a library base is nobody's miss)."""
         for _bid, base_qn in self.bases.get(self._class_of(caller), []):
             want = f"{base_qn}::{bare}"
-            rows = [s for s in self.local_by_name.get(bare, []) if s.qualified_name == want]
-            if rows:
-                return Edge("calls", caller.id, rows[0].id, caller.qualified_name, want,
+            row = self._local_rows(bare).get(want)
+            if row is not None:
+                return Edge("calls", caller.id, row.id, caller.qualified_name, want,
                             self.path, line, 1.0)
-            cands = [c for c in self.name_table.get(bare, []) if c[1] == want]
-            if cands:
-                return Edge("calls", caller.id, cands[0][0], caller.qualified_name, want,
+            cand = self._table_rows(bare).get(want)
+            if cand is not None:
+                return Edge("calls", caller.id, cand[0], caller.qualified_name, want,
                             self.path, line, 1.0)
         return None
 
@@ -2849,10 +3002,10 @@ class _CallResolver:
     def _in_package(
         self, scope: str, bare: str, candidates: list[tuple[str, str, str]],
     ) -> tuple[str, str, float] | None:
-        exact = [
+        exact = self._of(candidates, ("package", scope, bare), lambda: [
             c for c in candidates
             if c[1].startswith(scope + ".") and c[1].count("::") == 1 and c[1].endswith("::" + bare)
-        ]
+        ])
         if len(exact) == 1:
             return exact[0][0], exact[0][1], IMPORT_BOUND_CONFIDENCE
         return None
@@ -2871,14 +3024,33 @@ class _CallResolver:
         if not dirs:
             return None
         found = [
-            c for c in candidates
-            if c[1].count("::") == 1 and c[1].endswith("::" + bare)
-            and c[1].partition("::")[0].endswith("." + receiver)
-            and c[1].partition("::")[0].rsplit(".", 1)[0] in dirs
+            c for c in self._by_clause(candidates, bare).get(receiver, [])
+            if c[1].partition("::")[0].rsplit(".", 1)[0] in dirs
         ]
         if len(found) == 1:
             return found[0][0], found[0][1], IMPORT_BOUND_CONFIDENCE
         return None
+
+    def _by_clause(
+        self, candidates: list[tuple[str, str, str]], bare: str,
+    ) -> dict[str, list[tuple[str, str, str]]]:
+        """The package-level definitions `<dir>.<clause>::<bare>` per clause, in order."""
+        def build() -> dict[str, list[tuple[str, str, str]]]:
+            out: dict[str, list[tuple[str, str, str]]] = {}
+            for c in candidates:
+                scope, _, rest = c[1].partition("::")
+                if rest == bare and "." in scope:
+                    out.setdefault(scope.rsplit(".", 1)[1], []).append(c)
+            return out
+
+        return self._of(candidates, ("clause", bare), build)
+
+    def _clause_dirs(self, candidates: list[tuple[str, str, str]], clause: str) -> set[str]:
+        """The directories of the candidates' packages whose clause is `clause`."""
+        return self._of(candidates, ("clause dirs", clause), lambda: {
+            c[1].partition("::")[0].rpartition(".")[0] for c in candidates
+            if c[1].partition("::")[0].endswith(f".{clause}")
+        })
 
     def go_same_package(
         self, caller: Symbol, bare: str, candidates: list[tuple[str, str, str]],
@@ -2890,7 +3062,7 @@ class _CallResolver:
         if not self.go:
             return None
         scope = caller.qualified_name.partition("::")[0]
-        own = [c for c in candidates if c[1] == f"{scope}::{bare}"]
+        own = self._by_qn(candidates).get(f"{scope}::{bare}", [])
         if len(own) == 1:
             return own[0][0], own[0][1], SAME_PACKAGE_CONFIDENCE
         return None
@@ -2920,9 +3092,9 @@ class _CallResolver:
         )
         if not tname:
             return None
-        candidates = _with_local_rows(
-            candidates_for_call(self.name_table, bare, bare), self.local_by_name.get(bare, [])
-        )
+        candidates = self._once(("typed", bare), lambda: _with_local_rows(
+            self._table(bare, bare), self.local_by_name.get(bare, [])
+        ))
         if not self.go:
             return self._named_type_target(tname, bare, candidates, receiver)
         alias, _, type_bare = tname.rpartition(".")
@@ -2939,7 +3111,10 @@ class _CallResolver:
             # says clickhouse_go): the imported repository directory whose
             # clause is the alias, or nothing — never every package's Dynamic
             clauses = {f"{d}.{alias}::" for d in self.go_packages.values() if d}
-            matched = [c for c in clauses if any(q[1].startswith(c) for q in candidates)]
+            heads = self._of(candidates, ("heads",), lambda: {
+                q[1].partition("::")[0] + "::" for q in candidates if "::" in q[1]
+            })
+            matched = [c for c in clauses if c in heads]
             if len(matched) != 1:
                 return None
             pkg_dir = matched[0]
@@ -2950,8 +3125,7 @@ class _CallResolver:
             if (t, scope) in seen:
                 continue
             seen.add((t, scope))
-            suffix = f"::{t}::{bare}"
-            narrowed = [c for c in candidates if c[1].endswith(suffix)]
+            narrowed = self._member_rows(candidates, t, bare)
             if scope:
                 narrowed = [c for c in narrowed if c[1].startswith(scope)]
             if len(narrowed) == 1:
@@ -2973,10 +3147,7 @@ class _CallResolver:
                     # import (`type Dynamic = chcol.Dynamic` in another file):
                     # the one repository directory whose clause is talias among
                     # the candidates' packages — then the walk continues there
-                    dirs = {
-                        c[1].partition("::")[0].rpartition(".")[0] for c in candidates
-                        if c[1].partition("::")[0].endswith(f".{talias}")
-                    }
+                    dirs = self._clause_dirs(candidates, talias)
                     if len(dirs) == 1:
                         queue.append((tbare, next(iter(dirs)) + "."))
             # An embedded type of this package keeps the
@@ -3018,10 +3189,7 @@ class _CallResolver:
         # receiver the tree could not type: `lease.acquire()`
         # beside a test double's `acquire` is not the double's; the typed,
         # import and repo-wide rungs decide it
-        local = [
-            s for s in self.local_by_name.get(bare, [])
-            if s.qualified_name != caller.qualified_name and s.kind not in _NEVER_CALLABLE
-        ]
+        names = self._local(bare)
         # A call written with a scope (`IStorage::method()`
         # inside `MergeTreeData::method`) names that scope's definition — the
         # same-file unique `method` (the override) and the enclosing class's
@@ -3030,30 +3198,35 @@ class _CallResolver:
         # the compiler tier sees the base's.
         qualifier = self._call_scope(name, bare) if not self.python else ""
         if qualifier:
-            local = [s for s in local if _in_scope(s.qualified_name, qualifier, bare)]
+            names = self._once(("scoped", bare, qualifier), lambda: _Namesakes([
+                s for s in self._local(bare).syms if _in_scope(s.qualified_name, qualifier, bare)
+            ]))
+        n, target = names.one("", caller.qualified_name)
         if self.python and receiver and receiver not in ("self", "cls"):
-            local = []
+            n = 0
         elif self.lang == "cpp" and receiver and receiver != "this":
             # `volume->getDisk()` is the receiver's method —
             # the file's one `getDisk` (the enclosing class's) is not it
-            local = []
-        elif self.python and local:
+            n = 0
+        elif self.python and n:
             # A bare call inside a function names the closure
             # defined in that function (`go()` beside 788 other `go`s), then one
             # in an enclosing function; a class's method is never a bare call's
-            nested = self._py_nested_def(caller, local)
+            nested = self._py_nested_def(caller, names)
             if nested is not None:
-                local = [nested]
+                n, target = 1, nested
             else:
-                local = [s for s in local if not self._py_is_method(s)]
-        if len(local) == 1:
-            target = local[0]
+                free = self._once(("free", bare), lambda: _Namesakes([
+                    s for s in names.syms if not self._py_is_method(s)
+                ]))
+                n, target = free.one("", caller.qualified_name)
+        if n == 1 and target is not None:
             return Edge(
                 "calls", caller.id, target.id, caller.qualified_name,
                 target.qualified_name, self.path, line, 1.0,
             )
         # 1b) `new Widget()` names a class this file defines
-        if not local and len(self.local_class_by_name.get(bare, [])) == 1:
+        if not n and len(self.local_class_by_name.get(bare, [])) == 1:
             target = self.local_class_by_name[bare][0]
             return Edge(
                 "calls", caller.id, target.id, caller.qualified_name,
@@ -3072,19 +3245,15 @@ class _CallResolver:
             and not (self.python and receiver == "")
         ):
             cls_prefix = caller.qualified_name.rsplit("::", 1)[0]
-            member = [
-                s for s in self.local_by_name.get(bare, [])
-                if s.qualified_name.startswith(cls_prefix + "::") and s.kind not in _NEVER_CALLABLE
-            ]
+            n, target = self._local(bare).one(cls_prefix + "::", "")
             if qualifier and not _in_scope(cls_prefix + "::" + bare, qualifier, bare):
-                member = []  # `Base::m()` is never the enclosing class's `m`
-            if len(member) == 1:
-                target = member[0]
+                n = 0  # `Base::m()` is never the enclosing class's `m`
+            if n == 1 and target is not None:
                 return Edge(
                     "calls", caller.id, target.id, caller.qualified_name,
                     target.qualified_name, self.path, line, 0.8,
                 )
-            if self.python and not member and receiver in ("self", "cls"):
+            if self.python and not n and receiver in ("self", "cls"):
                 # `self.m()` where the class does not define
                 # `m` — the method it inherits, through the heritage clauses
                 inherited = self.py_inherited_target(caller, cls_prefix, bare, line)
@@ -3099,6 +3268,52 @@ class _CallResolver:
             )
         return self._resolve_repo_wide(caller, name, bare, line, receiver)
 
+    def _repo_wide_pool(
+        self, candidates: list[tuple[str, str, str]], bare_call: bool, member: bool,
+    ) -> list[tuple[str, str, str]]:
+        """Rung 3's candidates before the caller is left out: field-based for a script
+        call (a member call names a property, a bare call a binding), and of the caller's
+        language."""
+        if self.script and member:
+            candidates = self.field_based("" if bare_call else "x", candidates)
+        if self.present is not None and not self.python:
+            # A TypeScript, Go or shell call binds a definition of its own
+            # language — the shared module-scoped name scheme also holds the other
+            # script languages' definitions (Python is gated separately below)
+            candidates = [c for c in candidates if self.same_language_definition(c[1])]
+        if self.python and self.py_present is not None:
+            # A Python call binds a Python definition — the
+            # shared module-scoped name scheme also holds TypeScript's
+            candidates = [c for c in candidates if self.py_definition(c[1])]
+        if self.python:
+            # A module constant, a class attribute or a type
+            # alias of the name is not what `f()` calls
+            candidates = [c for c in candidates if c[2] not in _PY_NOT_CALLABLE]
+            if bare_call:
+                # Nor is any class's method — a bare call has
+                # no receiver to reach one through (same-file methods bind above)
+                candidates = [c for c in candidates if not self._py_method_qualified(c[1])]
+        return candidates
+
+    def _narrowed(
+        self, candidates: list[tuple[str, str, str]], skip: str,
+    ) -> list[tuple[str, str, str]]:
+        """Rung 3's candidates without the caller (`skip`, '' for none): a member call on
+        a receiver other than `this` that names only the caller is a library object's
+        method, not recursion."""
+        if skip:
+            candidates = [c for c in candidates if c[1] != skip]
+        if self.go and len(candidates) > 1:
+            # An interface's method signature (kind `method`)
+            # is not what an untyped `x.Get()` reaches for when one concrete
+            # method of the name exists — the concrete method binds
+            concrete = [c for c in candidates if c[2] not in ("method", "field")]
+            if len(concrete) == 1:
+                candidates = concrete
+        if self.script and len(candidates) > 1:
+            candidates = prefer_implementation(candidates)
+        return candidates
+
     @staticmethod
     def _call_scope(name: str, bare: str) -> str:
         """The scope a call was written with (`IStorage` in
@@ -3112,10 +3327,9 @@ class _CallResolver:
     ) -> Edge | None:
         # 2c) the file's import names the module — or, in
         # Go, the package directory the module index resolves
-        candidates = [
-            c for c in candidates_for_call(self.name_table, name, bare)
-            if c[2] not in _NEVER_CALLABLE
-        ]
+        candidates = self._once(("callable", name, bare), lambda: [
+            c for c in self._table(name, bare) if c[2] not in _NEVER_CALLABLE
+        ])
         bound = self.go_package_bound(receiver, bare, candidates)
         if bound is None and receiver == "":
             bound = self.go_same_package(caller, bare, candidates)
@@ -3130,30 +3344,6 @@ class _CallResolver:
                 "calls", caller.id, bound[0], caller.qualified_name,
                 bound[1], self.path, line, bound[2],
             )
-        # 3) unique repo-wide name — field-based for a script call (a member
-        # call names a property, a bare call a binding); and
-        # `this.raw.getHeader()` is never the enclosing `Reply::getHeader`
-        # itself: a member call on a receiver other than `this` that names
-        # only the caller is a library object's method, not recursion
-        if self.script and receiver not in ("this", "super"):
-            candidates = self.field_based(receiver, candidates)
-        if self.present is not None and not self.python:
-            # A TypeScript, Go or shell call binds a definition of its own
-            # language — the shared module-scoped name scheme also holds the other
-            # script languages' definitions (Python is gated separately below)
-            candidates = [c for c in candidates if self.same_language_definition(c[1])]
-        if self.python and self.py_present is not None:
-            # A Python call binds a Python definition — the
-            # shared module-scoped name scheme also holds TypeScript's
-            candidates = [c for c in candidates if self.py_definition(c[1])]
-        if self.python:
-            # A module constant, a class attribute or a type
-            # alias of the name is not what `f()` calls
-            candidates = [c for c in candidates if c[2] not in _PY_NOT_CALLABLE]
-            if receiver == "":
-                # Nor is any class's method — a bare call has
-                # no receiver to reach one through (same-file methods bind above)
-                candidates = [c for c in candidates if not self._py_method_qualified(c[1])]
         if self.python and receiver and receiver not in ("self", "cls") and self._py_library_call(
             receiver, bare, line,
         ):
@@ -3163,17 +3353,17 @@ class _CallResolver:
             and self.typer.is_library(line, receiver)
         ):
             return None  # `parts.size()` on a std::vector is nobody's here
-        if receiver not in ("", "this", "super"):
-            candidates = [c for c in candidates if c[1] != caller.qualified_name]
-        if self.go and len(candidates) > 1:
-            # An interface's method signature (kind `method`)
-            # is not what an untyped `x.Get()` reaches for when one concrete
-            # method of the name exists — the concrete method binds
-            concrete = [c for c in candidates if c[2] not in ("method", "field")]
-            if len(concrete) == 1:
-                candidates = concrete
-        if self.script and len(candidates) > 1:
-            candidates = prefer_implementation(candidates)
+        # 3) unique repo-wide name: what narrows the candidates depends on the call
+        # only through these, so a file of many calls narrows each name once
+        member = receiver not in ("this", "super")
+        pool = self._of(
+            candidates, ("rung 3", receiver == "", member),
+            lambda: self._repo_wide_pool(candidates, receiver == "", member),
+        )
+        skip = caller.qualified_name if receiver not in ("", "this", "super") else ""
+        if skip not in self._of(pool, ("qns",), lambda: {c[1] for c in pool}):
+            skip = ""
+        candidates = self._of(pool, ("narrowed", skip), lambda: self._narrowed(pool, skip))
         if len(candidates) == 1:
             cid, cqname = candidates[0][0], candidates[0][1]
             return Edge(
@@ -3207,6 +3397,7 @@ def callee_targets(
     # resolves the callee whose return the next binding waits on
     # (`batch, _ := conn.PrepareBatch()` → `batch.Append`)
     resolver = _CallResolver(pf, name_table, local_by_name, callee_returns, lane_context)
+    typed_here = {s.name for s in pf.symbols if s.kind == "function" and s.return_type}
     out: dict[str, str] = {}
     typer: Any
     if pf.lang == "python":
@@ -3229,9 +3420,9 @@ def callee_targets(
             continue
         bare = callee.rsplit(".", 1)[-1]
         receiver = callee.rsplit(".", 1)[0] if "." in callee else ""
-        if any(s.kind == "function" and s.return_type for s in local_by_name.get(bare, [])):
+        if bare in typed_here:
             continue  # the same file answers without a read
-        candidates = candidates_for_call(name_table, bare, bare)
+        candidates = resolver._table(bare, bare)
         bound = resolver.go_package_bound(receiver, bare, candidates)
         if bound is None and receiver == "" and resolver.go and pf.symbols:
             # A bare `Conn(t)` is this package's helper first
@@ -3362,30 +3553,28 @@ def extract_edges_and_misses(
         if s.kind == "function":
             local_by_name.setdefault(s.name, []).append(s)
 
-    # locate the enclosing function for each call site by line interval
-    spans = _caller_spans(pf, fn_syms)
-
-    def enclosing(line: int) -> Symbol | None:
-        best: Symbol | None = None
-        for start, end, s in spans:
-            if start <= line <= end:
-                best = s  # innermost wins because spans sort widest-first per start
-            elif start > line:
-                break
-        return best
+    # the enclosing function of each call site by line interval: innermost wins because
+    # spans sort widest-first per start
+    enclosing = last_span_at(_caller_spans(pf, fn_syms))
 
     noise = _NOISE_BY_LANG.get(pf.lang, _NOISE_CPP)
     fallback = _fallback_caller(pf)  # the class, else the file
 
     cpp = pf.lang == "cpp"
     local_classes = {s.name for s in pf.symbols if s.kind in {"class", "struct"}}
+    table_kinds: dict[str, set[str]] = {}  # the kinds the table holds per name, read once
+
+    def _table_kinds(bare: str) -> set[str]:
+        if bare not in table_kinds:
+            table_kinds[bare] = {c[2] for c in name_table.get(bare, [])}
+        return table_kinds[bare]
 
     def _names_a_class(bare: str) -> bool:
         """Is `bare` a class the index knows (same file or repo-wide)? Then
         `Widget(5)` is a construction, not a call to a function named Widget."""
         if bare in local_classes:
             return True
-        return any(c[2] in {"class", "struct"} for c in name_table.get(bare, []))
+        return not _table_kinds(bare).isdisjoint({"class", "struct"})
 
     def _ctor_site(line: int, written: str, argc: int, declared: int = 0) -> bool:
         """Record the construction as an edge or an ambiguous miss; True when
@@ -3416,8 +3605,8 @@ def extract_edges_and_misses(
                     _ctor_site(line, factory[0], factory[1])
                 name = _call_name(child, source)
                 bare = name.split("::")[-1].split(".")[-1]
-                if child.type == "type_conversion_expression" and not any(
-                    c[2] == "function" for c in name_table.get(bare, [])
+                if child.type == "type_conversion_expression" and "function" not in _table_kinds(
+                    bare
                 ):
                     walk_calls(child)
                     continue  # a conversion to a generic type, not a call
@@ -3458,7 +3647,7 @@ def extract_edges_and_misses(
         )
 
     def _miss_of(caller: Symbol, name: str, bare: str, line: int) -> CallMiss:
-        return _miss_for(caller, name, bare, line, pf.path, name_table, local_by_name)
+        return resolver.miss(caller, name, bare, line)
 
     resolver = _CallResolver(pf, name_table, local_by_name, callee_returns, lane_context, chains)
     if header is not None and pf.lang == "cpp" and resolver.typer is not None:

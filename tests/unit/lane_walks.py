@@ -214,6 +214,79 @@ def _rust_parse(text: str) -> object:
     return parse_rust("src/lib.rs", text.encode()).includes
 
 
+def _edges(
+    path: str, table_size: int = 0, context: dict[str, object] | None = None
+) -> Callable[[str], object]:
+    """A file's call edges, against a name table of `table_size` definitions of `a` and
+    the ingest's lane `context` (its present Python paths, as the file's includes). The
+    parse is kept per text, so the best of three times the edges alone; its deadline is
+    lifted in the walk's child process, where a loaded host would trip it."""
+    parsed: dict[str, object] = {}
+
+    def walk(text: str) -> object:
+        import copy
+
+        from server.code.app.index.ingest_parse import parse_for_ingest
+        from server.code.domain.extract.edges_treesitter import extract_edges_and_misses
+        from server.settings import settings
+
+        if text not in parsed:
+            settings.code_parse_timeout_s = 600
+            pf, err = parse_for_ingest(path, text.encode())
+            assert pf is not None and pf.tree is not None, err
+            parsed.clear()
+            parsed[text] = pf
+        table = {"a": [(f"s{i}", f"m{i}::a", "function") for i in range(table_size)]}
+        pf = copy.copy(parsed[text])
+        if context:
+            pf.includes = list(context.get("py_present", []))  # type: ignore[call-overload]
+        return extract_edges_and_misses(pf, table, None, lane_context=context)  # type: ignore[arg-type]
+
+    return walk
+
+
+def _callers(head: str, unit: str, caller: str) -> Callable[[int], str]:
+    """n/2 characters of one name's definitions, then n/2 of functions that call it."""
+    return lambda n: head + unit * (n // 2 // len(unit)) + _numbered(caller)(n // 2)
+
+
+def _deep_proto_imports(text: str) -> object:
+    from server.code.domain.extract.lang_proto import resolve_imports
+
+    return resolve_imports("a/" * 500 + "x.proto", text.split(), set())
+
+
+def _deep_includes(text: str) -> object:
+    from server.code.app.index.ingest_headers import include_candidates
+
+    return [include_candidates("a/" * 500 + "x.cpp", inc) for inc in text.split()]
+
+
+def _go_replaces(text: str) -> object:
+    from server.code.domain.extract.lang_go import go_module_index, go_wanted_paths
+
+    gomod = "module m\n" + "".join(f"replace r{i} => ./d{i}\n" for i in range(3600))
+    return go_wanted_paths(text.split(), go_module_index({"go.mod": gomod}))
+
+
+def _ts_paths(text: str) -> object:
+    from server.code.domain.extract import ts_config as tc
+
+    table = tc.PathsTable(base="", patterns={f"@p{i}/*": [f"src/p{i}/*"] for i in range(1000)})
+    cfg = tc.ResolvedConfig(dir="", tables=[table])
+    return [tc.paths_candidates(spec, cfg) for spec in text.split()]
+
+
+def _cmake_links(text: str) -> object:
+    """A file's links, each against one definition of the name per 100 characters."""
+    from server.code.domain.extract.lang_cmake import cmake_external_edges
+    from server.code.domain.extract.treesitter import ParsedFile
+
+    pf = ParsedFile(path="CMakeLists.txt", lang="cmake", source=b"")
+    table = {"t": [(f"s{i}", f"q{i}::t", "target") for i in range(len(text) // 100)]}
+    return cmake_external_edges(pf, [("t", "t", i) for i in range(len(text) // 20)], table)
+
+
 def _wanted(lane: str) -> Callable[[str], object]:
     """The import probe of one lane over a file's specifiers, one per line."""
 
@@ -355,6 +428,39 @@ WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("python-route-methods", _py_routes, _many_methods("x.add_url_rule('/")),
     ("python-decorator-methods", _py_decorator, _many_methods("@app.route('/")),
     ("starlette-route-methods", _py_routes, _many_methods("import starlette.routing\nRoute('/")),
+    ("python-classes", _python_parse, _numbered("class C{}: pass\n")),
+    ("python-same-named-calls", _edges("a.py"), _callers("", "def a(): pass\n", "a()\n")),
+    ("python-callers", _edges("a.py"), _callers("", "def a(): pass\n", "def g{}(): a()\n")),
+    (
+        "python-self-calls",
+        _edges("a.py"),
+        _callers("class C:\n", "    def a(self): pass\n", "    def g{}(self): self.a()\n"),
+    ),
+    ("python-table-calls", _edges("a.py", 2000), _run("", "a()\n")),
+    (
+        "python-fixture-requests",
+        _edges("a.py"),
+        _callers("", "def f(): pass\n", "def g{}(request): request.getfixturevalue('x')\n"),
+    ),
+    (
+        "python-long-module-calls",
+        _edges(
+            "a/b/c/d/e.py", 2, {"py_present": ["q.py"], "py_roots": [f"r{i}" for i in range(66)]}
+        ),
+        lambda n: "import " + ".".join(["m"] * 1000) + " as x\n" + _run("", "x.f()\n")(n),
+    ),
+    (
+        "go-callers",
+        _edges("a.go"),
+        _callers("package a\n", "func a() {}\n", "func g{}() {{ a() }}\n"),
+    ),
+    ("cpp-callers", _edges("a.cpp"), _callers("", "void a() {}\n", "void g{}() {{ a(); }}\n")),
+    ("rust-callers", _edges("src/a.rs"), _callers("", "fn a() {}\n", "fn g{}() {{ a(); }}\n")),
+    ("proto-deep-imports", _deep_proto_imports, _numbered("p{}.proto\n")),
+    ("cpp-deep-includes", _deep_includes, _numbered("h{}.h\n")),
+    ("go-replaced-modules", _go_replaces, _numbered("x/p{}\n")),
+    ("ts-paths-patterns", _ts_paths, _numbered("q{}\n")),
+    ("cmake-same-named-links", _cmake_links, _run("", "a")),
 ]
 _WALK_N = 100_000
 
@@ -577,23 +683,4 @@ def registry_cost(lang: str) -> list[tuple[str, float, float, int, int]]:
 
 # lane -> the shapes still over linear there, each a follow-up fix. The guard fails once
 # a listed shape runs clearly in linear time, so the entry goes with its fix.
-_TEMPLATE_LITERALS = (
-    "run '`'",
-    "names '`abc`\\n'",
-    "unclosed '`'",
-    "unclosed '`' words",
-    "numbered '`a{}`\\n'",
-)
-KNOWN_SLOW: dict[str, tuple[str, ...]] = {
-    "typescript": _TEMPLATE_LITERALS,
-    "javascript": _TEMPLATE_LITERALS,
-    "rust": (
-        "run '|'",
-        "names 'a(\\n'",
-        "unclosed '<!--'",
-        "unclosed '${'",
-        "unclosed '{%'",
-        "unclosed '(' words",
-        "unclosed '[' words",
-    ),
-}
+KNOWN_SLOW: dict[str, tuple[str, ...]] = {}

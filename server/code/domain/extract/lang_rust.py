@@ -97,15 +97,19 @@ def module_scope_rust(path: str) -> str:
     return f"{crate}::{mods}" if mods else crate
 
 
-def _doc_above(node: Any, source: bytes) -> str:
-    """`///` lines (or one `/** */`) right above the item, attributes skipped."""
+def _doc_above(siblings: list[Any], i: int, source: bytes) -> str:
+    """`///` lines (or one `/** */`) right above the item `siblings[i]`, attributes
+    skipped. The siblings are read from the list: a node's `prev_named_sibling` walks its
+    parent's children from the first, quadratic over a long run of items."""
     parts: list[str] = []
-    sib = node.prev_named_sibling
-    expected_end = node.start_point[0]
+    j = i - 1
+    sib = siblings[j] if j >= 0 else None
+    expected_end = siblings[i].start_point[0]
     while sib is not None:
         if sib.type == "attribute_item":
             expected_end = sib.start_point[0]
-            sib = sib.prev_named_sibling
+            j -= 1
+            sib = siblings[j] if j >= 0 else None
             continue
         if sib.type not in {"line_comment", "block_comment"}:
             break
@@ -117,7 +121,8 @@ def _doc_above(node: Any, source: bytes) -> str:
             break
         parts.append(text)
         expected_end = sib.start_point[0]
-        sib = sib.prev_named_sibling
+        j -= 1
+        sib = siblings[j] if j >= 0 else None
     return "\n".join(reversed(parts))[:_MAX_DOC] if parts else ""
 
 
@@ -153,6 +158,7 @@ class _Walker:
     mod: str
     uses: dict[str, None] = field(default_factory=dict)  # ordered, distinct
     _impls: dict[str, int] = field(default_factory=dict)
+    _types: set[str] = field(default_factory=set)  # the structs and enums added so far
 
     def _add(
         self,
@@ -165,6 +171,8 @@ class _Walker:
         has_body: bool = True,
     ) -> str:
         qname = "::".join((self.mod, *scope, name))
+        if kind in {"struct", "enum"}:
+            self._types.add(qname)
         self.pf.symbols.append(
             Symbol(
                 qualified_name=qname,
@@ -181,14 +189,16 @@ class _Walker:
         return qname
 
     def walk(self, node: Any, scope: tuple[str, ...]) -> None:
-        for child in node.named_children:
-            self._item(child, scope)
+        children = node.named_children
+        for i in range(len(children)):
+            self._item(children, i, scope)
 
-    def _item(self, node: Any, scope: tuple[str, ...]) -> None:
+    def _item(self, siblings: list[Any], i: int, scope: tuple[str, ...]) -> None:
+        node = siblings[i]
         t = node.type
         name_node = node.child_by_field_name("name")
         name = node_text(name_node, self.source) if name_node is not None else ""
-        doc = _doc_above(node, self.source)
+        doc = _doc_above(siblings, i, self.source)
         if t == "function_item" and name:
             self._add(scope, name, "function", _signature(node, self.source), node, doc)
         elif t == "function_signature_item" and name:
@@ -251,10 +261,7 @@ class _Walker:
         self._add((*scope, type_name), impl_name, KIND_IMPL, header, node, doc)
         if trait_name:
             struct_qname = "::".join((self.mod, *scope, type_name))
-            if any(
-                s.qualified_name == struct_qname and s.kind in {"struct", "enum"}
-                for s in self.pf.symbols
-            ):
+            if struct_qname in self._types:
                 self.pf.inherits.append((struct_qname, trait_name))
         self._body(node, (*scope, type_name))
 

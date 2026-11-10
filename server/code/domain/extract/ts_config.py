@@ -72,6 +72,47 @@ class PathsTable:
     """One config's `paths` with the directory its targets are relative to."""
     base: str  # baseUrl resolved against the config dir, or the config dir
     patterns: dict[str, list[str]] = field(default_factory=dict)
+    # the wildcard patterns by head, then tail (to the pattern's place in `patterns`),
+    # with the tail lengths each head holds, the head lengths longest first and the
+    # patterns in order; built at the first lookup, once `patterns` is filled
+    _heads: dict[str, tuple[dict[str, int], list[int]]] | None = field(
+        default=None, repr=False, compare=False
+    )
+    _head_lengths: list[int] = field(default_factory=list, repr=False, compare=False)
+    _names: list[str] = field(default_factory=list, repr=False, compare=False)
+
+    def best(self, spec: str) -> tuple[str, str] | None:
+        """(pattern, `*` binding) of the pattern the compiler picks for `spec`: an exact
+        one, else the matching wildcard with the longest head, the first written on a
+        tie; None when none matches. One lookup per head and tail length the table
+        holds, instead of a match against every pattern."""
+        if spec in self.patterns and "*" not in spec:
+            return spec, ""
+        if self._heads is None:
+            by_head: dict[str, dict[str, int]] = {}
+            for order, pat in enumerate(self.patterns):
+                if "*" in pat:
+                    head, _, tail = pat.partition("*")
+                    by_head.setdefault(head, {}).setdefault(tail, order)
+            self._heads = {
+                h: (tails, sorted({len(t) for t in tails})) for h, tails in by_head.items()
+            }
+            self._head_lengths = sorted({len(h) for h in by_head}, reverse=True)
+            self._names = list(self.patterns)
+        for n in self._head_lengths:
+            if n > len(spec) or spec[:n] not in self._heads:
+                continue
+            tails, lengths = self._heads[spec[:n]]
+            rest = spec[n:]
+            orders = [
+                tails[rest[len(rest) - k :]]
+                for k in lengths
+                if k <= len(rest) and rest[len(rest) - k :] in tails
+            ]
+            if orders:
+                pat = self._names[min(orders)]
+                return pat, rest[: len(rest) - len(pat.partition("*")[2])]
+        return None
 
 
 @dataclass
@@ -185,17 +226,6 @@ def _join(here: str, rel: str) -> str:
     return "" if joined == "." else joined
 
 
-def _match(pattern: str, spec: str) -> str | None:
-    """The `*` binding when `pattern` matches `spec`; '' for an exact,
-    star-less match; None otherwise."""
-    if "*" not in pattern:
-        return "" if pattern == spec else None
-    head, _, tail = pattern.partition("*")
-    if spec.startswith(head) and spec.endswith(tail) and len(spec) >= len(head) + len(tail):
-        return spec[len(head): len(spec) - len(tail)]
-    return None
-
-
 def paths_candidates(spec: str, cfg: ResolvedConfig) -> list[str]:
     """The repository stems a bare specifier maps to, in the compiler's
     order: the longest-prefix `paths` pattern of the nearest table that
@@ -204,17 +234,10 @@ def paths_candidates(spec: str, cfg: ResolvedConfig) -> list[str]:
     if spec.startswith((".", "/")) or not spec:
         return []
     for table in cfg.tables:
-        best: tuple[int, str, str] | None = None
-        for pat in table.patterns:
-            bound = _match(pat, spec)
-            if bound is None:
-                continue
-            prefix_len = len(pat.partition("*")[0]) if "*" in pat else len(pat) + 1
-            if best is None or prefix_len > best[0]:
-                best = (prefix_len, pat, bound)
+        best = table.best(spec)
         if best is None:
             continue
-        stems = (_join(table.base, t.replace("*", best[2], 1)) for t in table.patterns[best[1]])
+        stems = (_join(table.base, t.replace("*", best[1], 1)) for t in table.patterns[best[0]])
         return [s for s in dict.fromkeys(stems) if s]  # the nearest matching table decides
     if cfg.base_url is not None:
         stem = _join(cfg.base_url, spec)

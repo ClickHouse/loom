@@ -21,9 +21,11 @@ by `lang_python` for return annotations, so it imports neither.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.code.domain.extract.text_lines import first_span_at
 from server.code.domain.extract.treesitter import node_text
 
 # Builtins, typing helpers and containers are not receivers a repository
@@ -311,6 +313,13 @@ class PyReceiverTyper:
             self._collect_receiver_callees(pf.tree.root_node, pf.source)
             self._receiver_names -= self._bound_names
         self._scopes.sort(key=lambda s: s.end - s.start)
+        # Per receiver, the scopes binding it, innermost first; looked up by line (a scan
+        # of every scope per call site is quadratic in a file of many functions)
+        self._binders: dict[str, list[_Scope]] = {}
+        for scope in self._scopes:
+            for key in scope.bindings:
+                self._binders.setdefault(key, []).append(scope)
+        self._binder_at: dict[str, Callable[[int], _Scope | None]] = {}
 
     def _collect_receiver_callees(self, node: Any, source: bytes) -> None:
         for child in node.named_children:
@@ -402,9 +411,13 @@ class PyReceiverTyper:
         key = receiver.strip()
         if not key or not all(_NAME_RE.match(p) for p in key.split(".")):
             return ""
-        for scope in self._scopes:  # innermost first
-            if scope.start <= line <= scope.end and key in scope.bindings:
-                return self._resolve(scope.bindings[key])
+        if key not in self._binder_at:
+            self._binder_at[key] = first_span_at(
+                [(s.start, s.end, s) for s in self._binders.get(key, [])]
+            )
+        scope = self._binder_at[key](line)
+        if scope is not None:
+            return self._resolve(scope.bindings[key])
         bound = self._resolve(self._module.bindings.get(key, ""))
         if bound or "." in key:
             return bound

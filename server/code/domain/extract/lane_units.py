@@ -22,6 +22,7 @@ Outside the extractor stamp with the lane modules: neither `chunker.py` nor
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 
 from server.code.domain.extract.chunker import Chunk, _assign_ordinals, _split_oversized
@@ -313,27 +314,35 @@ def bind_sites(
     return edges
 
 
+# not a setting: the ancestor directories a specifier is tried under, nearest first, before
+# the repository root; each costs every import the path's length again
+MAX_ANCESTOR_DIRS = 32
+
+
 def ancestor_candidates(from_path: str, spec: str) -> list[str]:
     """The repository paths a root-relative specifier may name when the
     lane's include root is unknown (protobuf's `-I` roots, a chart's
     template directory): the importing file's directory + spec, then each
-    ancestor directory + spec up to the repository root, then the bare
+    ancestor directory + spec, up to `MAX_ANCESTOR_DIRS` of them, then the bare
     spec — nearest first, duplicates dropped."""
     spec = spec.strip().lstrip("/")
     if not spec:
         return []
+    return list(dict.fromkeys(f"{base}/{spec}" if base else spec for base in _bases(from_path)))
+
+
+@functools.lru_cache(maxsize=256)
+def _bases(from_path: str) -> tuple[str, ...]:
+    """The file's directory and its ancestors, nearest first, up to `MAX_ANCESTOR_DIRS`,
+    then the root (''); read once per importer, not per import."""
     parts = from_path.split("/")[:-1]
-    out: list[str] = []
-    for depth in range(len(parts), -1, -1):
-        base = "/".join(parts[:depth])
-        cand = f"{base}/{spec}" if base else spec
-        if cand not in out:
-            out.append(cand)
-    return out
+    depths = [*range(len(parts), max(len(parts) - MAX_ANCESTOR_DIRS, 0), -1), 0]
+    return tuple("/".join(parts[:depth]) for depth in depths)
 
 
 __all__ = [
     "Site",
+    "MAX_ANCESTOR_DIRS",
     "SiteRule",
     "ancestor_candidates",
     "bind_sites",

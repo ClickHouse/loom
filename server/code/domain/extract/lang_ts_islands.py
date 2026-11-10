@@ -100,6 +100,9 @@ _SQL_KEYWORD_RE = re.compile(
     re.I,
 )
 _ANCESTOR_DEPTH = 8
+# not a setting: a client's name sits at the start or the end of a callee's text; a chain
+# of tagged templates makes each enclosing callee as long as the rest of the file
+_CALLEE_END_BYTES = 64
 VIA_TEMPLATE = "template"
 
 
@@ -151,21 +154,36 @@ def looks_like_sql(text: str, inside_client: bool = False) -> bool:
     return keywords >= 2 or (m.group(1).isupper() and keywords >= 1)
 
 
-def client_dialect(node: Any, source: bytes) -> str:
+def client_dialect(
+    ancestors: list[Any], source: bytes, seen: dict[tuple[int, int], str] | None = None
+) -> str:
     """The dialect of the client whose call encloses the literal, from the
-    callee's text (`queryClickhouse`, `prisma.$queryRaw`, a `sql` tag)."""
-    cur = node.parent
-    for _ in range(_ANCESTOR_DEPTH):
-        if cur is None:
-            break
+    callee's text (`queryClickhouse`, `prisma.$queryRaw`, a `sql` tag). `ancestors`
+    runs from the root to the literal's parent, kept by the walk: a node's `parent`
+    is found from the root down, so reading it per literal is quadratic in a deep tree.
+    `seen` keeps each callee's dialect for the file's next literals."""
+    seen = {} if seen is None else seen
+    for cur in ancestors[: -_ANCESTOR_DEPTH - 1 : -1]:
         if cur.type == "call_expression":
             fn = cur.child_by_field_name("function")
-            callee = node_text(fn, source) if fn is not None else ""
-            for pat, dialect in TS_SQL_CLIENTS:
-                if pat.search(callee):
-                    return dialect
-        cur = cur.parent
+            if fn is None:
+                continue
+            key = (fn.start_byte, fn.end_byte)
+            if key not in seen:
+                callee = _callee_ends(fn, source)
+                seen[key] = next((d for pat, d in TS_SQL_CLIENTS if pat.search(callee)), "")
+            if seen[key]:
+                return seen[key]
     return ""
+
+
+def _callee_ends(fn: Any, source: bytes) -> str:
+    """The callee's text, or its first and last `_CALLEE_END_BYTES` when longer."""
+    start, end = fn.start_byte, fn.end_byte
+    if end - start <= 2 * _CALLEE_END_BYTES:
+        return node_text(fn, source)
+    ends = source[start : start + _CALLEE_END_BYTES] + b" " + source[end - _CALLEE_END_BYTES : end]
+    return ends.decode("utf-8", "replace")
 
 
 def file_dialect(pf: ParsedFile) -> str:
@@ -185,11 +203,15 @@ def find_islands(pf: ParsedFile) -> list[Island]:
     source = pf.source
     default = file_dialect(pf)
 
+    ancestors: list[Any] = []
+    callees: dict[tuple[int, int], str] = {}
+
     def walk(node: Any) -> None:
+        ancestors.append(node)
         for child in node.named_children:
             if child.type == "template_string":
                 text, interpolated = template_text(child, source)
-                client = client_dialect(child, source)
+                client = client_dialect(ancestors, source, callees)
                 if looks_like_sql(text, inside_client=bool(client)):
                     dialect = client or detect_dialect(text)[0] or default
                     out.append(
@@ -203,6 +225,7 @@ def find_islands(pf: ParsedFile) -> list[Island]:
                     )
                 continue
             walk(child)
+        ancestors.pop()
 
     walk(pf.tree.root_node)
     return out

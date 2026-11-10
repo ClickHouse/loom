@@ -208,9 +208,10 @@ def class_members(
     methods, `self.x = …` / `self.x: T = …` (the instance attributes an
     `__init__` sets — the compiler tier names them as members, and the
     receiver typer reads the same statements for their types), at the first
-    assignment's line. Names the class's defs take (`taken`) are skipped."""
+    assignment's line. Names the class's defs take (`taken`) are skipped, and the names
+    added join `taken`."""
     out: list[Symbol] = []
-    seen: set[str] = set(taken)
+    seen = taken
     if body is None:
         return out
     for stmt in body.named_children:
