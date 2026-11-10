@@ -447,7 +447,8 @@ _backlog_cache: dict[str, Any] = {"at": None, "value": None}
 async def _backlog() -> dict[str, dict[str, Any]]:
     """Each source's delivery backlog (`pg_pipeline`) with the reading's age: the workers
     lease holder's last reading when fresh, else a reading of this process's own, kept
-    LOOM_PG_BACKLOG_HEALTH_CACHE_SECONDS. The parked counts are the block's own fields."""
+    LOOM_PG_BACKLOG_HEALTH_CACHE_SECONDS. Its counts stop at LOOM_PG_BACKLOG_COUNT_CAP
+    (`capped`); the block's `parked_*` fields count in full."""
     from server.knowledge.store import pg_documents
     from server.memory.store import pg_memory
     from server.observability import pg_pipeline
@@ -470,6 +471,7 @@ async def _backlog() -> dict[str, dict[str, Any]]:
     return {
         source: {
             "pending": r.pending,
+            "parked": r.parked,
             "oldest_age_s": r.oldest_age_s,
             "capped": r.capped,
             "reading_age_s": round(age, 1),

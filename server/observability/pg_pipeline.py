@@ -15,8 +15,9 @@
   export periods (`loom.pg.backlog_reading_age_s` says how old it is).
 - `loom.ch.inserts` and `loom.ch.insert_rows` {table}: the memory write path's inserts of
   memory rows and search documents (`memory.store.inserts`) and the audit writers' rows
-  (`observability.audit`, `pg_publish`), under either authority: what drives ClickHouse's
-  part creation.
+  (`observability.audit`, `pg_publish`), under either authority. Memory rows and search
+  documents are committed inserts, one part each; audit rows are batched by default
+  (LOOM_CH_BATCHED_INSERTS).
 
 Labels are closed enums; none names a namespace, a key or a user.
 """
@@ -151,7 +152,7 @@ def register(meter: Any) -> None:
     _inserts = meter.create_counter(
         name="loom.ch.inserts",
         description="ClickHouse inserts of memory rows, search documents and audit rows, "
-        "by table (memory|memory_embeddings|audit_log): what drives part creation",
+        "by table (memory|memory_embeddings|audit_log); the first two make a part each",
         unit="1",
     )
     _insert_rows = meter.create_counter(
@@ -200,8 +201,10 @@ def register(meter: Any) -> None:
     meter.create_observable_gauge(
         name="loom.pg.oldest_pending_age_s",
         callbacks=[_oldest],
-        description="Age of the oldest delivery owed and not parked, by source (memory: "
-        "those a search waits for)",
+        description="Age of the oldest pending delivery, by source: memory's (those a "
+        "search waits for) from its commit, knowledge's from its source's latest commit, "
+        "each among the first LOOM_PG_BACKLOG_COUNT_CAP by lease; the audit outbox's in "
+        "seconds past due, over every row past due",
         unit="s",
     )
     meter.create_observable_gauge(

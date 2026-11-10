@@ -118,7 +118,8 @@ refuses a role that may not write one.
 `GET /v1/health` reports `storage_authority` and, under Postgres, `pg_ok`; with
 `?include=postgres` also a `postgres` block of `standby`, `parked_deliveries`,
 `parked_audits`, `parked_knowledge_deliveries` and `backlog` (each source's pending
-deliveries, the oldest one's age and the reading's,
+and parked deliveries counted up to `LOOM_PG_BACKLOG_COUNT_CAP`, `capped` past it, the
+oldest one's age and the reading's,
 [pipeline SLOs](monitoring.md#pipeline-slos)), statements the default answer leaves
 out of a liveness probe. `pg_ok` is false when a query on the request pool got no answer
 within two seconds, every pooled connection busy included. `/v1/health/ready` does not

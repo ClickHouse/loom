@@ -214,13 +214,13 @@ memory row and search document are in ClickHouse
 finds earlier writes not yet there waits for them, up to `LOOM_PG_PROJECTION_WAIT_MS`
 (default 2000 ms), and answers 503 `PROJECTION_BEHIND` past it.
 
-| Objective                                   | Target                                                                                                      | Signal                                                                        |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| A search waits for earlier writes           | p99 below `LOOM_PG_PROJECTION_WAIT_MS` (the wait stops there)                                               | `loom.pg.search_wait_ms{outcome="passed"}`                                    |
-| A write is in ClickHouse                    | p50 near `LOOM_PG_PUBLISH_INTERVAL_MS`, p99 below `LOOM_PG_PUBLISH_INTERVAL_MS` plus the measured flush p99 | `loom.pg.projection_lag_ms{path="flush"}`                                     |
-| Nothing waits past a stopped writer's lease | oldest pending below twice `LOOM_PG_REQUEST_LEASE_SECONDS` plus `LOOM_PG_DELIVERY_IDLE_INTERVAL_SECONDS`    | `loom.pg.oldest_pending_age_s{source="memory"}`                               |
-| No lag errors outside an outage             | 0                                                                                                           | `loom.requests{loom.error_code="PROJECTION_BEHIND" or "PUBLICATION_PENDING"}` |
-| Nothing ClickHouse keeps refusing           | 0                                                                                                           | `loom.pg.backlog{state="parked"}`                                             |
+| Objective                                   | Target                                                                                                                                                                                          | Signal                                                                        |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| A search waits for earlier writes           | p99 below `LOOM_PG_PROJECTION_WAIT_MS` (the wait stops there)                                                                                                                                   | `loom.pg.search_wait_ms{outcome="passed"}`                                    |
+| A write is in ClickHouse                    | p50 below `LOOM_PG_PUBLISH_INTERVAL_MS` plus the flush p50 (a flush starts at once until sustained writes spend its burst), p99 below `LOOM_PG_PUBLISH_INTERVAL_MS` plus the measured flush p99 | `loom.pg.projection_lag_ms{path="flush"}`                                     |
+| Nothing waits past a stopped writer's lease | oldest pending below twice `LOOM_PG_REQUEST_LEASE_SECONDS` plus `LOOM_PG_DELIVERY_IDLE_INTERVAL_SECONDS`                                                                                        | `loom.pg.oldest_pending_age_s{source="memory"}`                               |
+| No lag errors outside an outage             | 0                                                                                                                                                                                               | `loom.requests{loom.error_code="PROJECTION_BEHIND" or "PUBLICATION_PENDING"}` |
+| Nothing ClickHouse keeps refusing           | 0                                                                                                                                                                                               | `loom.pg.backlog{state="parked"}`                                             |
 
 A search's worst wait under a writer that stopped before publishing is its lease
 (`LOOM_PG_REQUEST_LEASE_SECONDS`): a waiting search publishes an expired delivery itself.
@@ -236,7 +236,7 @@ Alerts:
 | `loom.pg.oldest_pending_age_s{source="memory"}`                | above the target for 10 minutes                   | the delivery worker is not keeping up, or ClickHouse refuses            | `GET /v1/health?include=postgres` → `postgres.backlog`, the `pg_delivery` worker status          |
 | `loom.pg.backlog{state="parked"}`                              | above 0                                           | a delivery ClickHouse kept refusing                                     | the delivery's `last_error` ([storage authority](../architecture/storage-authority.md#delivery)) |
 | `loom.pg.backlog_reading_age_s`, or no `loom.pg.backlog` point | older than 3 export periods                       | the reading stopped: no lease holder, or its pass fails                 | the `backlog not read` warning in the `pg_delivery` and `knowledge_pg_delivery` workers' logs    |
-| `loom.ch.inserts` rate per table                               | well above the deployment's write rate per second | many small inserts, which make many parts                               | the publish interval (`LOOM_PG_PUBLISH_INTERVAL_MS`) and `clickhouse_parts` in `ops.health`      |
+| `loom.ch.inserts{table="memory"}` or `memory_embeddings` rate  | well above the deployment's write rate per second | many small inserts, which make many parts                               | the publish interval (`LOOM_PG_PUBLISH_INTERVAL_MS`) and `clickhouse_parts` in `ops.health`      |
 
 ### Integrity invariants
 

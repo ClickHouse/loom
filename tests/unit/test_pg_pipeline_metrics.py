@@ -171,13 +171,21 @@ def test_health_reads_the_backlog_itself_off_the_lease_holder(
     monkeypatch.setattr(pg_memory, "outbox_backlog", reading("audit_outbox"))
     monkeypatch.setattr(pg_documents, "backlog", reading("knowledge"))
     monkeypatch.setattr(health, "_backlog_cache", {"at": None, "value": None})
+    clock = ManualClock(t=50.0)
+    monkeypatch.setattr(health, "time", clock)
+    monkeypatch.setattr(settings, "pg_backlog_health_cache_seconds", 10.0)
     first = asyncio.run(health._backlog())
-    asyncio.run(health._backlog())  # within the cache period: no second reading
-    # The parked counts are the block's own fields; the reading says how old it is.
+    clock.advance(9)
+    cached = asyncio.run(health._backlog())  # within the cache period: no second reading
+    # The reading says how old it is; `capped` reads against the counts beside it.
     assert first["memory"] == {
-        "pending": 1, "oldest_age_s": 2.0, "capped": False, "reading_age_s": 0.0,
+        "pending": 1, "parked": 4, "oldest_age_s": 2.0, "capped": False, "reading_age_s": 0.0,
     }  # fmt: skip
+    assert cached["memory"]["reading_age_s"] == 9.0
     assert reads == ["memory", "audit_outbox", "knowledge"]
+    clock.advance(1)  # the period is over: read again
+    asyncio.run(health._backlog())
+    assert len(reads) == 6
 
 
 def test_health_on_the_lease_holder_answers_its_fresh_readings_without_reading(
@@ -233,12 +241,16 @@ def test_a_backlog_read_that_fails_is_logged_and_not_raised(
     from server.memory.store import pg_memory
     from server.memory.workers import pg_delivery
 
+    caps: list[int] = []
+
     async def down(cap: int) -> Any:
+        caps.append(cap)
         raise ConnectionError("the authority is unreachable")
 
+    monkeypatch.setattr(settings, "pg_backlog_count_cap", 7)
     monkeypatch.setattr(pg_memory, "backlog", down)
     asyncio.run(pg_delivery._read_backlog())  # raises nothing
-    assert "backlog not read" in caplog.text
+    assert "backlog not read" in caplog.text and caps == [7]
 
 
 @pytest.mark.parametrize(

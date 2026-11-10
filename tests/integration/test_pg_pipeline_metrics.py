@@ -103,7 +103,10 @@ async def test_the_outbox_backlog_counts_due_and_parked_rows(org_call: Any) -> N
             ns,
             row_hash,
         )
-        due = await pg_memory.outbox_backlog(1_000_000)
+        async with pg.transaction() as conn:
+            # Held, so a running delivery worker's claim (SKIP LOCKED) passes it by.
+            await conn.execute("SELECT 1 FROM loom.audit_outbox WHERE org = $1 FOR UPDATE", org)
+            due = await pg_memory.outbox_backlog(1_000_000)
         assert due.pending >= 1
         assert due.oldest_age_s is not None and due.oldest_age_s >= 3600  # this row's age
         await pg.execute("UPDATE loom.audit_outbox SET due_at = 'infinity' WHERE org = $1", org)
@@ -128,7 +131,8 @@ async def test_the_knowledge_backlog_counts_pending_and_parked_deliveries(org_ca
             f"SELECT org, namespace, source_uri, version, user_id, row, 1, {lease}, now() "
             "FROM loom.knowledge_heads WHERE org = $1 AND namespace = $2 "
             "ON CONFLICT (org, namespace, source_uri, version) DO UPDATE SET settled = false, "
-            f"targets = 1, lease_until = {lease}, lease_token = d.lease_token + 1",
+            f"targets = 1, lease_until = {lease}, fenced_until = now(), "
+            "lease_token = d.lease_token + 1",
             org,
             ns,
         )
