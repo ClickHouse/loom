@@ -1148,7 +1148,7 @@ reads:
 
 Reproduce, on a private ClickHouse and Postgres, with a server from source with
 background workers off, auth off and the fake embedder (`.env` for the ClickHouse
-authority, `.env.pg` naming `LOOM_STORAGE_AUTHORITY=postgres` and `LOOM_PG_DSN`). The
+authority, `.env.pg`, a copy of `.env` that adds `LOOM_STORAGE_AUTHORITY=postgres` and `LOOM_PG_DSN`). The
 artifact records each run's setup (shape, size, caps, setting values); the commands
 follow this pattern:
 

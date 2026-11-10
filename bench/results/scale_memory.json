@@ -13,7 +13,7 @@
   "concurrency": 5,
   "calls_per_op": 400,
   "bulk_set_entries": 20,
-  "rows": "a vector probe's \"rows\": 0 means its rows were not recorded (the later runs record namespace_rows and scope_rows)"
+  "rows": "a vector probe's \"rows\" is its namespace's row count (not the scope's); 0 means it was not recorded (the later runs record namespace_rows and scope_rows)"
  },
  "runs": {
   "single_250k_postgres": {
@@ -1796,7 +1796,7 @@
   "cost_20k_postgres": {
    "shape": "single",
    "authority": "postgres",
-   "build": "not recorded (a pre-merge state of the bulk peer-read branch)",
+   "build": "not recorded",
    "parts_before": {
     "memory": {
      "parts": 13,
@@ -1996,7 +1996,7 @@
   "cost_20k_clickhouse": {
    "shape": "single",
    "authority": "clickhouse",
-   "build": "not recorded (a pre-merge state of the bulk peer-read branch)",
+   "build": "not recorded",
    "parts_before": {
     "memory": {
      "parts": 15,
