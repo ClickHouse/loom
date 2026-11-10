@@ -62,8 +62,8 @@ services:
       LOOM_MEMORY_CAPTURE_STRUCTURED_ANSWERS: "${LOOM_MEMORY_CAPTURE_STRUCTURED_ANSWERS:-true}"
       LOOM_ENTITY_EXTRACT_ENABLED: "${LOOM_ENTITY_EXTRACT_ENABLED:-true}"
       # Browser self-signup so the dashboard's Welcome screen can mint tokens. A
-      # trusted-network assumption: a non-loopback LOOM_BIND_HOST refuses to start
-      # unless .env sets LOOM_IDENTITY_PROVIDER=trust-network.
+      # trusted-network assumption: with a non-loopback LOOM_BIND_HOST this stack
+      # starts only when .env sets LOOM_IDENTITY_PROVIDER=trust-network.
       LOOM_SELF_SIGNUP: "open"
       # Marks this stack's rows and lets it run with the development defaults.
       LOOM_INSTANCE_LABEL: "deploy:dev"

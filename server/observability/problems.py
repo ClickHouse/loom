@@ -489,7 +489,7 @@ def _exposure_problems(settings: Any) -> list[Problem]:
             )
         )
     if reachable and settings.self_signup_served():
-        named = settings.identity_provider == "trust-network"
+        named = not settings.open_signup_unnamed()
         out.append(
             Problem(
                 "insecure_bind_open_signup",
@@ -497,8 +497,8 @@ def _exposure_problems(settings: Any) -> list[Problem]:
                 f"LOOM_SELF_SIGNUP=open on a non-loopback bind (LOOM_BIND_HOST="
                 f"{settings.bind_host}): anyone who reaches the port can sign up and gets a "
                 "writer token.",
-                "Nothing to do if everyone who can reach the port may have an account; otherwise "
-                "turn self-signup off or bind 127.0.0.1."
+                "Set LOOM_SELF_SIGNUP=off or bind 127.0.0.1 unless everyone who can reach the "
+                "port may have an account."
                 if named
                 else "Set LOOM_IDENTITY_PROVIDER=trust-network if everyone who can reach the "
                 "port may have an account, turn self-signup off, or bind 127.0.0.1.",

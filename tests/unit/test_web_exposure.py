@@ -282,11 +282,23 @@ def test_health_reports_open_self_signup_on_a_reachable_bind(
     monkeypatch.setattr(settings, "auth_required", True)
     monkeypatch.setattr(settings, "self_signup", "open")
     monkeypatch.setattr(settings, "identity_provider", "")
-    found = {p.code: p.severity for p in problems._exposure_problems(settings)}
-    assert found["insecure_bind_open_signup"] == "error"
+
+    def signup() -> Any:
+        return next(
+            p
+            for p in problems._exposure_problems(settings)
+            if p.code == "insecure_bind_open_signup"
+        )
+
+    assert signup().severity == "error"
+    monkeypatch.setattr(settings, "allow_insecure", True)
+    assert signup().severity == "warn"
+    monkeypatch.setattr(settings, "allow_insecure", False)
+    unnamed_fix = signup().fix
     monkeypatch.setattr(settings, "identity_provider", "trust-network")
-    found = {p.code: p.severity for p in problems._exposure_problems(settings)}
-    assert found["insecure_bind_open_signup"] == "info"
+    assert signup().severity == "info"
+    for fix in (unnamed_fix, signup().fix):
+        assert fix.startswith("Set LOOM_") and fix.endswith("."), fix
     monkeypatch.setattr(settings, "oauth_login_provider", "oidc")  # closes self-signup
     found = {p.code for p in problems._exposure_problems(settings)}
     assert "insecure_bind_open_signup" not in found

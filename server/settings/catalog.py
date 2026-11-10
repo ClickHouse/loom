@@ -461,6 +461,11 @@ class AuthSettings(BaseModel):
         delegated to OIDC (which closes them)."""
         return self.self_signup == "open" and self.oauth_login_provider != "oidc"
 
+    def open_signup_unnamed(self) -> bool:
+        """Self-signup is served but identity_provider does not name trust-network,
+        which a non-loopback bind refuses."""
+        return self.self_signup_served() and self.identity_provider != "trust-network"
+
     def auth_actually_required(self) -> bool:
         """Whether the HTTP transport should require a bearer.
 
@@ -5003,8 +5008,7 @@ class RuntimeSettings(BaseModel):
     # The address Loom is reachable on: `loom serve` and `make server` bind
     # it; in a container (which listens on all its interfaces) it is the
     # address the port is published on. Anything but loopback turns on the
-    # startup checks: public_base_url set, and no auth-off, MCP open mode, dev
-    # secret or weak root, gateway or end-user key.
+    # startup checks of `server.boot.require_safe_bind`.
     bind_host: str = "127.0.0.1"
     # Comma-separated peer addresses or CIDRs whose X-Forwarded-For/Proto
     # headers uvicorn applies; any other peer's are ignored. "*" trusts all.

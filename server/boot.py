@@ -133,7 +133,8 @@ def require_safe_bind(
         raise InsecureBindRefused(
             f"refusing to start: {where} and LOOM_SELF_SIGNUP=open gives anyone who reaches "
             "it a writer token. Set LOOM_IDENTITY_PROVIDER=trust-network if everyone who can "
-            "reach the port may have an account, turn self-signup off, or bind 127.0.0.1."
+            "reach the port may have an account, turn self-signup off, bind 127.0.0.1, or set "
+            "LOOM_ALLOW_INSECURE=1 if the port is not actually reachable."
         )
     if dev_secret:
         raise InsecureBindRefused(
