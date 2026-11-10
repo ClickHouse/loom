@@ -102,7 +102,15 @@ def _support(
             False,
             "unchecked",
         ),
-        ("It holds 3 users.", [], frozenset({"memory.inspect"}), False, "unchecked"),
+        ("It holds 3 users.", [], frozenset({"namespace.inventory"}), False, "unchecked"),
+        # An inspection that listed rows the answer could cite, and cites none.
+        (
+            "Alice wrote the deploy freeze policy.",
+            [],
+            frozenset({"memory.inspect"}),
+            False,
+            "unsupported",
+        ),
         ("Deploys freeze on Fridays.", [], frozenset(), True, "unchecked"),
         ("Deploys freeze on Fridays.", [], None, False, "unchecked"),
         # Loom's own guide is no namespace data.
@@ -204,7 +212,11 @@ def test_every_assistant_op_says_how_its_ledger_row_shows_it_found_nothing(op: A
     ]
     assert sum(marks) == 1, name
     for field in toolsets.ASSISTANT_FOUND_FIELD.get(name, ()):
-        hint = _field_type(op.output_model, field)
+        model = op.output_model
+        *parents, last = field.split(".")
+        for step in parents:
+            model = _field_type(model, step)
+        hint = _field_type(model, last)
         lists = [hint, *typing.get_args(hint)]
         assert any(typing.get_origin(h) is list for h in lists), (name, field, hint)
     if name in toolsets.ASSISTANT_FOUND_BOOL_OPS:

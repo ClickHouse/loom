@@ -424,6 +424,7 @@ ASSISTANT_CITABLE_OPS: frozenset[str] = frozenset(
         "memory.ask",
         "memory.get",
         "memory.list",
+        "memory.inspect",
         "knowledge.search",
         "knowledge.get",
         "knowledge.list",
@@ -438,12 +439,17 @@ ASSISTANT_UNCITABLE_OPS: frozenset[str] = (
 )
 
 # Whether an assistant op's call found anything, as its ledger row records it (event_args):
-# the output lists whose summed length is `out_hits`; an op whose miss is `found: false`
-# (`out_found`); or an op that always returns data, with why.
+# the output lists whose summed length is `out_hits` (a dotted name reaches into a nested
+# object). The two sets after it change no behaviour (the run read takes any row without a
+# found-nothing column as data); they exist so the completeness test makes a new op's
+# author name its signal: a miss is `found: false` (`out_found`), or the op always returns
+# data, and why.
 ASSISTANT_FOUND_FIELD: dict[str, tuple[str, ...]] = {
     "memory.search": ("results",),
     "memory.ask": ("results",),
     "memory.list": ("entries",),
+    # The subject's own and read rows (its counts come with them either way).
+    "memory.inspect": ("own.newest", "others.newest"),
     "memory.history": ("rows",),
     "memory.aggregate": ("rows",),
     "facts.traverse": ("nodes",),
@@ -475,7 +481,6 @@ ASSISTANT_FOUND_BOOL_OPS: frozenset[str] = frozenset(
 )
 ASSISTANT_ALWAYS_RETURNS: dict[str, str] = {
     "namespace.inventory": "one section per plane, its counts zero or not",
-    "memory.inspect": "the subject's counts and settings, zero or not",
     "mentor.brief": "the namespace's usage counts and hints, zero or not",
     "mentor.guide": "Loom's own writing guide",
     "insights.catalog": "the tables an analysis may read",

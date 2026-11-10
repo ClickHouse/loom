@@ -265,6 +265,11 @@ def test_an_assistant_op_records_how_many_rows_it_found() -> None:
     # Other ops, and a call with no op name, carry none.
     assert "out_hits" not in project_result(hits, op_name="memory.bulk_get")
     assert "out_hits" not in project_result(hits)
+    # An inspection finds the subject's own and read rows, nested in their views.
+    inspected = {"own": {"newest": [{"memory_key": "a"}], "total": 4}, "others": {"newest": []}}
+    assert project_result(inspected, op_name="memory.inspect")["out_hits"] == "1"
+    empty = {"own": {"newest": [], "total": 0}, "others": {"newest": []}}
+    assert project_result(empty, op_name="memory.inspect")["out_hits"] == "0"
     # A presence answer finds only where the symbol is present.
     absent = {"definitions": [], "presence": [{"verdict": "absent"}, {"verdict": "unknown"}]}
     assert project_result(absent, op_name="code.symbol")["out_hits"] == "0"
