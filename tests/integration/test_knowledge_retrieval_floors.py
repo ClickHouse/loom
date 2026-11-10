@@ -219,13 +219,13 @@ QUERIES = [
 
 
 async def _post(c: httpx.AsyncClient, url: str, **kw: Any) -> httpx.Response:
-    """`c.post`, waiting out a 429 as its `retry_after_s` says: the corpus is ingested
+    """`c.post`, waiting out a 429 for its `Retry-After` header: the corpus is ingested
     back to back, faster than the namespace's ingest rate refills."""
     for _ in range(10):
         r = await c.post(url, **kw)
         if r.status_code != 429:
             return r
-        await asyncio.sleep(float(r.headers.get("Retry-After") or 1))
+        await asyncio.sleep(float(r.headers["Retry-After"]))
     return r
 
 

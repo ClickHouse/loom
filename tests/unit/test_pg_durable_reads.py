@@ -37,7 +37,7 @@ _NOT_READS = {
     "pg_documents": {
         "refuse_unstorable_keys", "encode_row", "decode_row", "commit", "complete",
         "complete_own", "drop_unbacked", "claim_due", "failed", "release", "drop_version",
-        "sweep_erasure_evidence", "sweep_settled",
+        "sweep_erasure_evidence", "sweep_settled", "keep_text", "restore_text",
     },
 }  # fmt: skip
 
