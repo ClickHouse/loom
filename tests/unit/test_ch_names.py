@@ -254,8 +254,13 @@ _CLIENT_MODULES = {
     "server/core/schema/preflight.py",
     "server/observability/otel_exporters.py",
 }
-# Clients that never name Loom's tables: the reader-login probe, an external source.
-_UNWRAPPED = {"server/cli/ch_setup.py", "server/tracker/store/source/qa_intel.py"}
+# Clients that never name Loom's tables: the reader-login probe, the SQL surface
+# users' login probe, an external source.
+_UNWRAPPED = {
+    "server/cli/ch_setup.py",
+    "server/cli/sql_access.py",
+    "server/tracker/store/source/qa_intel.py",
+}
 
 
 def test_every_client_on_loom_clickhouse_is_wrapped() -> None:

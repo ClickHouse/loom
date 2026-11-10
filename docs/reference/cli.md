@@ -279,6 +279,10 @@ python scripts/codegen/docs_reference.py
 | `loom provider-lock` | The provider configuration lock. |  |
 | `loom provider-lock clear` | Free the provider configuration lock of a holder whose process stopped (refused while it renews, heartbeats or has a query running). | `--holder` |
 | `loom export-analytics` | Write one UTC day of usage and a namespace snapshot to S3 as Parquet, names hashed under LOOM_ANALYTICS_EXPORT_NAME_KEY. | `--bucket`, `--prefix`, `--day`, `--role-arn`, `--region`, `--expected-bucket-owner` |
+| `loom sql-access` | Make, rescope or drop a ClickHouse user that reads a tenant's memory, conversations and request ledger through the sql_v1_* views. |  |
+| `loom sql-access grant` | Make the user read exactly this scope, creating it (and printing its password once) when there is none. | `--user`, `--org`, `--namespaces`, `--all`, `--rotate` |
+| `loom sql-access revoke` | Take the user's scope away, then drop the user. | `--user` |
+| `loom sql-access list` | Every granted scope row, by SQL user. |  |
 | `loom reembed` | Re-embed vectors whose embedding_model != the configured embedder (run after changing LOOM_EMBEDDING_MODEL — Loom does not auto-re-embed). | `--org`, `--namespace`, `--batch-size`, `--in-database`, `--dry-run`, `--delete-old`, `--key-only`, `--resume` |
 | `loom reextract` | Replay a namespace's raw evidence (memory.set_from_messages turns) through a running server's write path into ANOTHER namespace — the current extractor over the stored transcripts; the source is… | `--org`, `--namespace`, `--into`, `--base-url`, `--token`, `--dates`, `--concurrency`, `--limit-sessions`, `--dry-run` |
 | `loom deploy-delta` | What a colour swap changed: the deployment's ledger rows (volume, errors, p50/p95, upstream spend per operation) and its ClickHouse statement shapes (runs, bytes, seconds) for a window on each side… | `--swap-at`, `--window-min`, `--ch-os-user`, `--cluster`, `--top`, `--json` |

@@ -542,6 +542,10 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "One row: insights.query's sealed scope key and analyst password; no org, "
         "namespace or content."
     ),
+    "loom.sql_access": (
+        "Which (org, namespace) each SQL user of the SQL surface reads: ClickHouse user "
+        "names and scopes, no content."
+    ),
     "loom.assistant_service": (
         "One row: the assistant's LibreChat service user (its email and agent id) and its "
         "sealed password and API key; no org, namespace or content."
