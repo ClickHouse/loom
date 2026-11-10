@@ -306,8 +306,9 @@ namespaces, `sql_v1_memories` leaves out rejected and tombstoned rows (the histo
 tombstoned versions), and a summary consolidated from the user's memories carries another
 `user_id`, which the census counts and these queries do not. The request ledger count is a
 separate check outside the receipt: an erasure scrubs a user's request ledger rows to
-`<erased>` rather than deleting them, and the request ledger's view reads its 31-day window.
-Every other census key is Loom's count alone.
+`<erased>` rather than deleting them, and the request ledger's view holds only its window
+([`sql_v1_agent_events`](../../reference/sql-surface.md#sql_v1_agent_events)), so it
+confirms the scrub only for rows inside it. Every other census key is Loom's count alone.
 
 What the receipt does not cover:
 
