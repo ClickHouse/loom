@@ -45,7 +45,7 @@ export const ERROR_CODE_PREFIXES: Record<string, string> = {
   CODED_WIDTH_MISMATCH: "The embedding model's width doesn't match the vector tables — see Settings › Models & keys.",
   SELF_SIGNUP_DISABLED: "Sign-up is off on this instance. Ask your operator.",
   SCHEMA_PENDING: "Loom's database is not upgraded for this yet:",
-  INTERNAL_ERROR: "Loom hit an internal error. If it keeps happening, send the request id to your operator.",
+  INTERNAL_ERROR: "Loom hit an internal error. If it keeps happening, tell your operator.",
   EMAIL_IN_USE: "That email belongs to another account:",
   NAMESPACE_CLAIMED: "That name is already taken:",
   NAMESPACE_TAKEN: "That name is already taken:",
@@ -219,12 +219,9 @@ function humanizeApiError(err: ApiError, bare: boolean, read: boolean): string {
   )
     return "Your session ended — sign in again.";
   if (err.code === "PUBLICATION_PENDING") return PUBLICATION_PENDING;
-  // The server's words for it carry only the request id: a caller with its own lead-in
-  // (toastError, errorLine) shows the id beside the line; any other line carries it.
-  if (err.code === "INTERNAL_ERROR") {
-    const id = !bare && err.requestId ? ` Request id ${err.requestId}.` : "";
-    return withTail(`${ERROR_CODE_PREFIXES.INTERNAL_ERROR}${id}`, retryTail(err, read));
-  }
+  // The server's words for it carry only the request id, which a caller that has one shows
+  // beside the line (a toast's detail, ListState, errorLine): the line itself names none.
+  if (err.code === "INTERNAL_ERROR") return withTail(ERROR_CODE_PREFIXES.INTERNAL_ERROR, retryTail(err, read));
   const own = codeSentence(err);
   const lead = own ?? CATEGORY_SENTENCES[categoryOf(err)] ?? sentenceForStatus(err.status);
   let text: string;

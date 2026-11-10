@@ -7,7 +7,12 @@ import { toast } from "../components/Toast";
 import { ThreadActions } from "./ThreadActions";
 
 vi.mock("../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
-vi.mock("../components/Toast", () => ({ toast: vi.fn(), toastError: vi.fn(), ToastViewport: () => null }));
+vi.mock("../components/Toast", () => ({
+  toast: vi.fn(),
+  toastError: vi.fn(),
+  errorToastMs: () => 8000,
+  ToastViewport: () => null,
+}));
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
@@ -115,7 +120,11 @@ describe("ThreadActions", () => {
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     await waitFor(() =>
-      expect(toast).toHaveBeenCalledWith('Deleted part of "Deploy plan", then failed: down', "error"),
+      expect(toast).toHaveBeenCalledWith(
+        'Deleted part of "Deploy plan", then failed: down',
+        "error",
+        expect.objectContaining({ durationMs: expect.any(Number) }),
+      ),
     );
   });
 
@@ -157,6 +166,7 @@ describe("ThreadActions", () => {
       expect(toast).toHaveBeenCalledWith(
         'Deleted part of "Deploy plan", then failed: down; 2 messages are left',
         "error",
+        expect.objectContaining({ durationMs: 8000 }),
       ),
     );
   });

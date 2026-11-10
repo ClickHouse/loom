@@ -153,7 +153,7 @@ describe("humanizeError", () => {
           message: "internal error; request_id=abc",
           detail: { category: "internal", retryable: false },
         },
-        "Loom hit an internal error. If it keeps happening, send the request id to your operator. It may have been saved; check before trying again.",
+        "Loom hit an internal error. If it keeps happening, tell your operator. It may have been saved; check before trying again.",
       ],
       [
         "a busy write that may have landed says to check first",
@@ -263,7 +263,7 @@ describe("humanizeError", () => {
       expect(humanizeError(new ApiError({ status: 418 }), { bare: true })).toBe("Loom answered with status 418.");
     });
 
-    it("keeps the request id in an internal error's line where no caller shows it", () => {
+    it("names no request id in an internal error's line: the caller shows it beside the line", () => {
       const err = new ApiError({
         status: 500,
         code: "INTERNAL_ERROR",
@@ -272,10 +272,10 @@ describe("humanizeError", () => {
         detail: { category: "internal", retryable: false },
       });
       expect(humanizeError(err, { read: true })).toBe(
-        "Loom hit an internal error. If it keeps happening, send the request id to your operator. Request id r9.",
+        "Loom hit an internal error. If it keeps happening, tell your operator.",
       );
       expect(errorLine(err, { read: true })).toBe(
-        "Loom hit an internal error. If it keeps happening, send the request id to your operator. Request id r9.",
+        "Loom hit an internal error. If it keeps happening, tell your operator. Request id r9.",
       );
     });
 
@@ -289,7 +289,7 @@ describe("humanizeError", () => {
           new ApiError({ status: 500, code: "INTERNAL_ERROR", detail: { category: "internal", retryable: false } }),
           { read: true },
         ),
-      ).toBe("Loom hit an internal error. If it keeps happening, send the request id to your operator.");
+      ).toBe("Loom hit an internal error. If it keeps happening, tell your operator.");
     });
 
     it("tells a read, not a writer, that the call can go again when the server marked it unsafe", () => {

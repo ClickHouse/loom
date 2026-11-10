@@ -23,7 +23,7 @@ function callText(text: string, start: number): string {
 describe("error toasts", () => {
   // `toastError(context, e)` keeps one lead-in, the request id and the reading time. A toast
   // that words an error itself passes `bare` (its own words are the lead-in); anything else
-  // reads "Pin failed: Couldn't do that: …" or loses the request id.
+  // reads "Pin failed: Couldn't do that: …"; one that keeps its own sentence passes the request id and the reading time itself (MembersDialog, ThreadActions).
   it("are raised with toastError, or word the error bare inside their own sentence", () => {
     const calls = Object.entries(SOURCES)
       .filter(([path]) => !path.endsWith("components/Toast.tsx"))

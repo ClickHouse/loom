@@ -4,7 +4,8 @@ import { TextField } from "@clickhouse/click-ui/TextField";
 import { createThreadRow, deleteThread, getConversationThread, renameThread, type Identity } from "../api";
 import { humanizeError } from "../lib/errorWords";
 import { confirmAction } from "../components/ConfirmDialog";
-import { toast } from "../components/Toast";
+import { toast, errorToastMs } from "../components/Toast";
+import { errorRequestId } from "../lib/format";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { RowMenu, type RowMenuItem } from "../components/ui/RowMenu";
 import { Alert } from "../components/ui";
@@ -48,7 +49,10 @@ export function ThreadActions({
     if (r.error) {
       const why = humanizeError(r.error, { bare: true });
       const rest = r.left ? `; ${r.left} messages are left` : "";
-      toast(r.parts ? `Deleted part of "${name}", then failed: ${why}${rest}` : `Delete failed: ${why}`, "error");
+      // Its own sentence (how much was deleted), with what toastError gives a toast.
+      const msg = r.parts ? `Deleted part of "${name}", then failed: ${why}${rest}` : `Delete failed: ${why}`;
+      const rid = errorRequestId(r.error);
+      toast(msg, "error", { ...(rid ? { detail: `request id ${rid}` } : {}), durationMs: errorToastMs(msg) });
     } else if (r.left) toast(`Deleted part of "${name}"; ${r.left} messages are left`, "info");
     else toast(`Deleted "${name}"`, "ok");
     onChanged();
