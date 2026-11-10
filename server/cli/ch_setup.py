@@ -444,7 +444,7 @@ def _write_analyst() -> None:
         if isinstance(e, SetupRefused):
             advice = ""  # a refusal Loom wrote names its own next step
         else:
-            # The cause's own fix, when it has one, replaces the printed-SQL advice.
+            # The printed SQL carries the same password, so a cause with its own fix replaces it.
             _, fix = shown_refusal(e)
             advice = (
                 f"; {fix}"

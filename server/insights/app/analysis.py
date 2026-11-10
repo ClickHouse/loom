@@ -73,7 +73,7 @@ _STATEMENT_CODES = frozenset(
         6,  # CANNOT_PARSE_TEXT
         10,  # NOT_FOUND_COLUMN_IN_BLOCK
         16,  # NO_SUCH_COLUMN_IN_TABLE
-        36,  # BAD_ARGUMENTS
+        boundary.BAD_ARGUMENTS,
         42,  # NUMBER_OF_ARGUMENTS_DOESNT_MATCH
         43,  # ILLEGAL_TYPE_OF_ARGUMENT
         44,  # ILLEGAL_COLUMN
@@ -106,7 +106,8 @@ _STATEMENT_CODES = frozenset(
 
 
 class SetupRefused(RuntimeError):
-    """A refusal Loom wrote, safe to show as is; any other error shows as its kind."""
+    """A refusal Loom wrote, safe to show as is; any other error shows as
+    `shown_refusal` words it."""
 
 
 _WRITE_LEASE = "analysis.entities"

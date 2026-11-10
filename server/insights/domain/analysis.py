@@ -32,7 +32,7 @@ from server.core.sql_literal import sql_string
 # back its narrower grants over N's (`needs_rewrite`).
 ENTITY_VERSION = 2
 
-# ClickHouse error codes refusal_cause reads; the app and the store test ACCESS_DENIED too.
+# ClickHouse server error codes.
 BAD_ARGUMENTS = 36
 ACCESS_DENIED = 497
 
