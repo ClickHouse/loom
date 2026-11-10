@@ -1011,17 +1011,17 @@ of one setup, not absolute times. Every figure below is in
 its setup and, where the harness recorded it, its build.
 
 **Bytes per key**, with the row shape these runs wrote (a commit's full `loom.memory` row
-as JSON in Postgres), as loaded in the runs of 200,000 keys and more; later snapshots in
-the artifact and the 20,000-key runs carry somewhat more per row, from parts with few
-rows:
+as JSON in Postgres), from the main runs (single 250k and 500k, zipf 200k), each
+the first size its run recorded; later snapshots in the artifact and the 20,000-key runs
+carry somewhat more per row, from parts with few rows:
 
 | Store      | Table               | Bytes                                           | Per key |
 | ---------- | ------------------- | ----------------------------------------------- | ------: |
-| ClickHouse | `memory_embeddings` | 13,130 to 13,220 per row                        |  13,210 |
-| ClickHouse | `memory`            | 90 (single) to 161 (zipf) per head after merges |      92 |
-| ClickHouse | `memory_versions`   | 107 to 110 per version                          |     264 |
-| Postgres   | `memory_current`    | 1,594 to 1,634 per head                         |   1,623 |
-| Postgres   | `memory_revisions`  | 2,149 to 2,151 per revision                     |   5,160 |
+| ClickHouse | `memory_embeddings` | 13,170 to 13,212 per row                        |  13,210 |
+| ClickHouse | `memory`            | 90 (single) to 163 (zipf) per head after merges |      92 |
+| ClickHouse | `memory_versions`   | 107 to 111 per version                          |     264 |
+| Postgres   | `memory_current`    | 1,594 to 1,623 per head                         |   1,623 |
+| Postgres   | `memory_revisions`  | 2,149 to 2,150 per revision                     |   5,160 |
 
 **Cost per million memories**, at list prices ([ClickHouse Cloud
 pricing](https://clickhouse.com/pricing), AWS us-east-1). Storage: 13.6 GB in ClickHouse
