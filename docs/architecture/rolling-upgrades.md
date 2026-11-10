@@ -385,7 +385,8 @@ schema. These rules keep that safe. The operator procedure is in
     step on N, so a step resumed across builds submits its mutation again; the
     statements are idempotent. No gate holds the rollout, and the mixed-version gate
     does not check this rule.
-35. **One token mint** (`service_accounts.create`, `caller_home._minted_home`).
+35. **One token mint** (`service_accounts.create`, `caller_home._minted_home`,
+    `me_service_accounts.dev_caller`).
     - _Where a token saves._ N sends a delegated token's unaddressed calls to the
       namespace its claim names before `*` when it may write there; N-1 sends them to the
       owner's saved pick, as for a bare `*` token. A token of that shape (one from
@@ -412,7 +413,7 @@ schema. These rules keep that safe. The operator procedure is in
       token as the single user `you` in `self_signup_org`, and N-1 as `dev` in `default`;
       each build's Tokens page lists its own owner's. A token stays valid either way. One
       N-1 saved is listed with `GET /v1/me/service_accounts?subject=dev&org=default` and
-      revoked by `service_accounts.revoke` with the same `subject` and `org` (a
+      revoked by `POST /v1/me/service_accounts.revoke` with the same `subject` and `org` (a
       `token.mint` token, with the org it named).
 36. **The memory a cached `code.ask` answer quoted** (`loom.code_answers.memory_namespace`
     and `memory_keys`, migration `086_code_answer_memory_scope.sql`): N-1 writes an

@@ -197,6 +197,21 @@ def test_the_single_user_mints_on_the_namespace_it_administers(
     assert _listed(client, headers)["laptop"]["created_by"] == "you"
 
 
+def test_a_token_the_old_owner_made_is_listed_and_revoked_by_name(client: TestClient) -> None:
+    """A token saved under the previous auth-off owner, `dev` in `default`, is off
+    the Tokens list and reached by naming that subject and org."""
+    old = {"subject": "dev", "org": "default"}
+    r = client.post("/v1/me/service_accounts.create", json={"name": "old", **old})
+    assert r.status_code == 200, r.text
+    assert "old" not in _listed(client, {})
+    rows = client.get("/v1/me/service_accounts", params=old).json()["rows"]
+    assert [(row["name"], row["created_by"]) for row in rows] == [("old", "dev")]
+    r = client.post("/v1/me/service_accounts.revoke", json={"name": "old", **old})
+    assert r.status_code == 200, r.text
+    rows = client.get("/v1/me/service_accounts", params=old).json()["rows"]
+    assert rows[0]["revoked_at"] is not None
+
+
 @pytest.mark.parametrize("headers", NO_CALLER)
 def test_a_token_made_without_a_name_is_listed_and_revoked(
     client: TestClient, headers: dict[str, str]
