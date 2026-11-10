@@ -353,9 +353,10 @@ memory the workers process has. The full index of such a tree takes about an hou
     released before the next is parsed; one file entry alone may fill it, and a file
     entry over it fails the pass, naming the entry. Any other value that large (a
     deleted path, a header value, an ignored key) reads `delta invalid`, since the
-    harness never writes one; the deleted paths are read one at a time. A fixed cap of 64 million characters, not a setting,
-    bounds one value's and one round's text the same way; a real entry has about 32
-    characters per counted byte, so for one it binds near 2,000,000 counted bytes.
+    harness never writes one; the deleted paths are read one at a time. A fixed cap
+    of 64 million characters, not a setting, bounds one value's and one round's text
+    the same way; a real entry has about 32 characters per counted byte, so for one
+    it binds near 2,000,000 counted bytes.
     The largest file entry of a large C++ tree's full run holds about 600,000 counted
     bytes (some 100,000 edges), about a fifth of the round budget and a third of the
     character cap. The densest round repository code can write (minimal symbols)
