@@ -5209,6 +5209,12 @@ class StorageSettings(BaseModel):
     # search before answering 503 PROJECTION_BEHIND; a diagnostic report waits as long,
     # then reads on and names `projection` in `skipped`.
     pg_projection_wait_ms: int = Field(default=2000, ge=0)
+    # The most deliveries one backlog reading counts per source (`loom.pg.backlog`, health's
+    # `postgres.backlog`); past it the reading says so (`capped`) and stops counting.
+    pg_backlog_count_cap: int = Field(default=10000, ge=1)
+    # Seconds a replica that does not hold the workers lease keeps its own backlog reading
+    # for `GET /v1/health?include=postgres`; the lease holder's fresh one is used first.
+    pg_backlog_health_cache_seconds: float = Field(default=10.0, ge=0, allow_inf_nan=False)
     # Seconds the writing request holds its revisions' delivery; past it, the delivery
     # worker or a waiting admission in the namespace publishes them instead.
     pg_request_lease_seconds: int = Field(default=5, ge=1)

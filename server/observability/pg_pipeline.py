@@ -33,8 +33,6 @@ _inserts: Any = None
 _insert_rows: Any = None
 
 SOURCES = ("memory", "audit_outbox", "knowledge")
-# The most deliveries a backlog reading counts; past it the gauge reads the cap.
-BACKLOG_CAP = 10_000
 TABLES = frozenset({"memory", "memory_embeddings", "audit_log"})
 
 

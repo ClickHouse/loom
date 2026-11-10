@@ -70,6 +70,8 @@ async def _read_backlog() -> None:
     from server.observability import pg_pipeline
 
     try:
-        pg_pipeline.set_backlog("knowledge", await pg_documents.backlog(pg_pipeline.BACKLOG_CAP))
+        pg_pipeline.set_backlog(
+            "knowledge", await pg_documents.backlog(settings.pg_backlog_count_cap)
+        )
     except Exception as e:  # noqa: BLE001 — the pass's publishes must not wait on a gauge
         log.warning("knowledge_pg_delivery: backlog not read: %s", error_summary(e))

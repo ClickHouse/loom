@@ -441,14 +441,13 @@ async def _postgres_block() -> dict[str, object]:
     }
 
 
-# A replica not holding the workers lease reads the backlog itself, at most this often.
-_BACKLOG_TTL_S = 10.0
-_backlog_cache: dict[str, Any] = {"at": -_BACKLOG_TTL_S, "value": None}
+_backlog_cache: dict[str, Any] = {"at": None, "value": None}
 
 
 async def _backlog() -> dict[str, dict[str, Any]]:
     """Each source's delivery backlog (`pg_pipeline`): the lease holder's last reading
-    when fresh, else a reading of this process's own, kept `_BACKLOG_TTL_S`."""
+    when fresh, else a reading of this process's own, kept
+    LOOM_PG_BACKLOG_HEALTH_CACHE_SECONDS."""
     import dataclasses
 
     from server.knowledge.store import pg_documents
@@ -458,8 +457,9 @@ async def _backlog() -> dict[str, dict[str, Any]]:
     readings = pg_pipeline.fresh_backlog()
     if len(readings) < len(pg_pipeline.SOURCES):
         now = time.monotonic()
-        if now - _backlog_cache["at"] >= _BACKLOG_TTL_S or _backlog_cache["value"] is None:
-            cap = pg_pipeline.BACKLOG_CAP
+        at = _backlog_cache["at"]
+        if at is None or now - at >= settings.pg_backlog_health_cache_seconds:
+            cap = settings.pg_backlog_count_cap
             _backlog_cache["value"] = {
                 "memory": await pg_memory.backlog(cap),
                 "audit_outbox": await pg_memory.outbox_backlog(cap),

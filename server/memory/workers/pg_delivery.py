@@ -89,9 +89,9 @@ async def _read_backlog() -> None:
     from server.observability import pg_pipeline
 
     try:
-        pg_pipeline.set_backlog("memory", await pg_memory.backlog(pg_pipeline.BACKLOG_CAP))
+        pg_pipeline.set_backlog("memory", await pg_memory.backlog(settings.pg_backlog_count_cap))
         pg_pipeline.set_backlog(
-            "audit_outbox", await pg_memory.outbox_backlog(pg_pipeline.BACKLOG_CAP)
+            "audit_outbox", await pg_memory.outbox_backlog(settings.pg_backlog_count_cap)
         )
     except Exception as e:  # noqa: BLE001 — the pass's publishes must not wait on a gauge
         log.warning("pg_delivery: backlog not read: %s", error_summary(e))
