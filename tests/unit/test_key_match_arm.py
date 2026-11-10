@@ -182,6 +182,8 @@ def test_key_qualifies_mirrors_the_statement_predicate() -> None:
     assert not key_match_key_qualifies("user_task_status", stems)  # one of three
     assert not key_match_key_qualifies("melanie_instrument", stems)
     assert not key_match_key_qualifies("", stems)
+    # a part with whitespace is split before it is stemmed
+    assert key_match_key_qualifies("task worktree", stems)
 
 
 def _gate(**kw):

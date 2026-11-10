@@ -1,6 +1,7 @@
-"""The key-match arm's statement, run on clickhouse-local against the real
+"""The key-match arm's statements, run on clickhouse-local against the real
 `loom.memory_embeddings`: at most `per_key` rows of a key, in one order however the parts
-are read."""
+are read; a key is split at `_` and at whitespace before it is stemmed, as `key_parts`
+splits it, and a key without whitespace reads as it did at the `_` split alone."""
 
 from __future__ import annotations
 
@@ -109,9 +110,17 @@ _KEYS = (
 )
 
 
-@pytest.mark.parametrize("query", ["task worktree path", "editor theme", "flaky CI tests"])
+@pytest.mark.parametrize(
+    ("query", "keys"),
+    [
+        ("task worktree path", ["worktree_path", "user_task_worktree"]),
+        # `pref/editor` stays one part: one of two matched
+        ("editor theme", []),
+        ("flaky CI tests", ["ci-run_flaky_tests"]),
+    ],
+)
 def test_a_key_without_whitespace_reads_as_it_did_at_the_underscore_split(
-    query: str, tmp_path
+    query: str, keys: list[str], tmp_path
 ) -> None:
     """Every statement returns the same rows, in the same order, as it did when keys were
     split at `_` alone: their parts, counts and document frequencies are unchanged."""
@@ -127,3 +136,4 @@ def test_a_key_without_whitespace_reads_as_it_did_at_the_underscore_split(
         before = sql.replace(KEY_PARTS, "splitByChar('_', lower(memory_key))")
         assert before != sql
         assert run([], sql, p, path=tmp_path) == run([], before, p, path=tmp_path)
+    assert [r["memory_key"] for r in run([], _SQL, params, path=tmp_path)] == keys

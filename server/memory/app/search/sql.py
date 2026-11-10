@@ -11,10 +11,9 @@ from server.memory.app.served_superseded import served_flags as _served
 from server.memory.domain.search_sql import agent_filter, agent_or_shared_predicate
 from server.memory.domain.temporal_sql import as_of_predicate, served_status_sql
 
-# A memory key's parts, as the key-match arm stems them: split at `_` and at the six
-# ASCII whitespace characters, which `stem()` refuses in a word. A key without
-# whitespace splits as it does at `_` alone. `translate` maps bytes, so the split costs
-# what `splitByChar` alone does (a regular expression split doubled it).
+# A memory key's parts as the key-match arm stems them: split at `_` and at the six ASCII
+# whitespace characters `stem()` refuses in a word; `translate` maps bytes, so this costs
+# what `splitByChar` alone does.
 KEY_PARTS = r"splitByChar('_', translate(lower(memory_key), ' \t\n\v\f\r', '______'))"
 
 
