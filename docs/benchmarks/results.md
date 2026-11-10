@@ -57,6 +57,7 @@ reproduction command.
 | [`code.ask` cache threshold](#codeask-answer-cache-threshold)                         | Determine whether paraphrased questions can share an answer without sharing across materially different questions.                                                                                                         | 42 paraphrase pairs, 43 different-question pairs, 22 one-identifier near-misses and 2 unlabelled pairs.                                                                                                                                                            | About 130 embedding calls for each tested embedding model; cosine sweep with and without the identifier guard.                                                                                                                                                                                                 | Paraphrase hits versus false hits at each threshold; the shipped threshold requires zero false hits on the 65 labelled different pairs.                                                                                                                                                                                                                   |
 | [Design decisions from design documents](#design-decisions-from-design-documents)     | Answer why questions, make change requests whose obvious move a design document rejected, answer questions on reversed or unrecorded decisions, and explain how a feature works, given different design knowledge per arm. | Private set: 5 design documents (4 revised once), 10 why, 15 change, 10 supersession or abstention and 13 feature tasks, 3 samples each.                                                                                                                           | Nothing, `knowledge.get`, knowledge hits of `loom_search`, gold rows or extracted rows through `memory.for_file` and `loom_search`, or extracted rows with the knowledge hits.                                                                                                                                 | `gpt-6-luna`-judged argument and feature-fact precision/recall, rejected-option avoidance, constraint satisfaction, stale statements and failed abstentions; paired against arm 0, the gold rows, and, for arm 6, the knowledge hits and the extracted rows alone.                                                                                        |
 | [Document parsing](#document-parsing)                                                 | Read a PDF, DOCX or PPTX into text, headings, tables and page locators without losing content; then serve `knowledge.search` hits cited by page and quotes decision extraction can ground.                                 | Committed corpus of 54 files (6 public-domain PEPs, the rest synthetic), split dev and held-out by a fixed alternation within each category recorded in `gold.jsonl`; parse scores on the held-out 27; 212 search queries and 12 mined documents from both splits. | The reference extractor reading a PDF's text layer, and with its layout reader and OCR, and a layout-model baseline, through one normalizer; artifacts ingested through a stub extractor, fake n-gram embedder; `knowledge.search` top 5 within each document; decision extraction with `gpt-6-luna`, dry run. | Parse fidelity against gold labels from the specs the files were rendered from (text recall and precision, heading F1 and level, table cell F1, locators, silent loss) and efficiency (time and memory); retrieval (search found and cited at 1 and 5) and extraction quote match. Paired against the text layer with 95% bootstrap intervals over files. |
+| [Memory at scale](#memory-at-scale)                                                   | Load synthetic memories straight into the stores, then run the memory ops through one server under each authority.                                                                                                         | Synthetic, offline: one namespace of 250,000 and 500,000 keys, and 200,000 keys Zipf-sized over 10,000 namespaces in 1,000 orgs; 2.4 versions per key.                                                                                                             | `memory.get`, `memory.set` and `memory.search` (top 10), 400 calls each, and 40 `memory.bulk_set` calls of 20 entries, at concurrency 5; `erasure.request` by user and by an org's namespaces; `memory.set` at fixed rates over several processes; fake 3072-dimension embedder.                               | p50 and p99 latency and refusals, ClickHouse bytes, CPU and memory per call from `system.query_log`, parts and merges from `system.part_log` and `system.parts`, store bytes and list-price cost per million memories; not a capacity promise (one shared host).                                                                                          |
 
 These protocols cover the public measurements, not every runnable harness. The
 [coverage matrix](./coverage.md) marks surfaces that currently have only a harness or no
@@ -985,6 +986,195 @@ PYTHONPATH=$PWD .venv/bin/python -m bench.docparse run --extractor <text-layer t
 PYTHONPATH=$PWD .venv/bin/python -m bench.docparse artifacts bench/results/docparse_parses/baseline.jsonl --out art/baseline
 PYTHONPATH=$PWD .venv/bin/python -m bench.docparse downstream text_layer=art/text_layer layout_ocr=art/layout_ocr baseline=art/baseline --base-url <loom> --token <the stub's token> --out downstream.json
 ```
+
+### Memory at scale
+
+`bench/scale_load.py` loads synthetic memories straight into the stores and then runs the
+memory ops through one server built from source. Every key has 1 to 4 versions (2.4 on
+average), `created_at` spreads over 360 days, 13 monthly partitions, and each embedding
+row carries two 3072-dimension vectors (the fake embedder's width, which every `Quantized`
+column is declared for). Two shapes:
+
+- **single**: one org, one namespace, one agent and user `-`, so every search and every
+  conflict check reads the whole namespace;
+- **zipf**: 10,000 namespaces over 1,000 orgs, sized by a Zipf law of exponent 1, with 4
+  agents and 100 users per namespace; a search reads one agent's and one user's rows.
+
+The runs used local containers on a shared host: one machine with 32 cores and 61 GB,
+ClickHouse 26.10 capped at 12 GiB (`max_server_memory_usage`), Postgres 16 in Docker with
+`shared_buffers` 2 GB and no standby, other workloads beside them (1-minute load 13 to
+224, recorded with every op). The Postgres latencies are pessimistic: a managed Postgres
+on local NVMe commits faster, though a synchronous standby adds a round trip. The host's
+free disk bounded the sizes; 1M keys and up did not fit beside both stores. Compare rows
+of one setup, not absolute times. Every figure below is in
+[`bench/results/scale_memory.json`](../../bench/results/scale_memory.json), each run with
+its setup and, where the harness recorded it, its build.
+
+**Bytes per key**, with the row shape these runs wrote (a commit's full `loom.memory` row
+as JSON in Postgres), from the main runs (single 250k and 500k, zipf 200k), each
+the first size its run recorded; later snapshots in the artifact and the 20,000-key runs
+carry somewhat more per row, from parts with few rows. The "Per key" column is the single
+250k Postgres run's bytes of each table after its ops divided by its 252,103 keys:
+
+| Store      | Table               | Bytes                                           | Per key |
+| ---------- | ------------------- | ----------------------------------------------- | ------: |
+| ClickHouse | `memory_embeddings` | 13,170 to 13,212 per row                        |  13,212 |
+| ClickHouse | `memory`            | 90 (single) to 163 (zipf) per head after merges |      92 |
+| ClickHouse | `memory_versions`   | 107 to 110 per version                          |     264 |
+| Postgres   | `memory_current`    | 1,594 to 1,623 per head                         |   1,623 |
+| Postgres   | `memory_revisions`  | 2,149 to 2,150 per revision                     |   5,136 |
+
+**Cost per million memories**, at list prices ([ClickHouse Cloud
+pricing](https://clickhouse.com/pricing), AWS us-east-1). Storage: 13.6 GB in ClickHouse
+is $0.34 a month at $25.30 per TB-month; the 6.8 GB in Postgres is on the instance's own
+disk, which ClickHouse Managed Postgres prices per instance rather than per GB. Compute:
+ClickHouse CPU per call sent, refused calls' statements included, measured on 20,000 keys
+in one namespace with ClickHouse capped at 4 GiB and 256 MB of Postgres `shared_buffers`
+(`clickhouse_cpu_ms_per_call`, each statement's `OSCPUVirtualTimeMicroseconds`), priced at
+$0.29846 per unit-hour of 2 vCPU. It is a floor: it prices CPU as if the service ran fully
+used, and leaves out merges and the time a service sits idle:
+
+| Op                            | CPU per call (ms) | Per million calls |
+| ----------------------------- | ----------------: | ----------------: |
+| `memory.get`                  |           5 to 16 |    $0.22 to $0.68 |
+| `memory.set`                  |               215 |              $8.9 |
+| `memory.search`               |        108 to 182 |      $4.5 to $7.6 |
+| `memory.bulk_set`, 20 entries |             1,761 |               $73 |
+
+The read ranges span the two authorities' runs. The write rows are the ClickHouse
+authority's: under Postgres a write's ClickHouse inserts are sent by the publication
+batch, whose statements are not tagged with the op, so that run's write figures leave them
+out. A `set` and a `search` scan their scope, so their CPU grows with it, as their bytes
+do (below). Postgres's compute is the instance's and was not metered per call. In the
+Postgres run ClickHouse stalled, inserts past their deadline and reads timing out: of 200
+`set` calls, 10 were answered 504 `BACKEND_TIMEOUT`, 2 were 503 `POSTGRES_UNAVAILABLE` and
+6 passed the harness's 120 s client timeout; 32 of 200 `search` calls were 503
+`PROJECTION_BEHIND`; and all 20 `bulk_set` calls were refused (13 `PUBLICATION_PENDING`, 7
+`PROJECTION_BEHIND`).
+
+**Ops**, p50 / p99 in ms at concurrency 5, 400 calls each (40 for `memory.bulk_set`, 20
+entries a call), with the calls refused:
+
+| Setup        | Authority  | `memory.get` | `memory.set` | `memory.bulk_set` (batched read) | `memory.search` | Refused      |
+| ------------ | ---------- | -----------: | -----------: | -------------------------------: | --------------: | ------------ |
+| single, 250k | Postgres   |     29 / 140 |  406 / 7,282 |                  21,614 / 41,906 |     697 / 2,446 | 1 bulk (503) |
+| single, 250k | ClickHouse |     38 / 273 |  464 / 1,520 |                  22,104 / 57,220 |     739 / 2,703 | none         |
+| single, 500k | ClickHouse |  115 / 1,839 |  619 / 6,758 |                          not run |         not run | none         |
+| zipf, 200k   | Postgres   |     93 / 559 |  454 / 4,861 |                    2,284 / 6,126 |     347 / 1,849 | 8 bulk (503) |
+| zipf, 200k   | ClickHouse |    120 / 763 | 909 / 28,071 |                    2,016 / 4,022 |         not run | none         |
+
+The single 500k run stopped after `memory.set`, when the disk reached its floor; the zipf
+ClickHouse run stopped after `memory.bulk_set`, when ClickHouse stalled (a `SYSTEM FLUSH
+LOGS` ran past 180 s), and started on 186,494 heads, after the Postgres run's erasures.
+Each "Refused" figure counts calls answered 503; no call of these runs was answered 500.
+Neither authority was faster on every op: Postgres had the lower `get` and `set` p50,
+ClickHouse the lower `set` p99 at 250k, in single runs on this host. Under Postgres
+`memory.set` made 3.4 new parts a second per memory table at 250k, against 9.9 under
+ClickHouse.
+
+**The vector leg** (the statement of `memory.search` that ranks the scope's vectors,
+codes-first), searched one call at a time:
+
+| Scope                                           |  Namespace rows | Parts | Read (MiB) | p50 (ms) |
+| ----------------------------------------------- | --------------: | ----: | ---------: | -------: |
+| single, 250k                                    | 277,628 or more |    59 |        185 |      312 |
+| the same after `OPTIMIZE TABLE … FINAL`         |         277,628 |    14 |        165 |      160 |
+| single, 500k                                    | 527,628 or more |    69 |        283 |      301 |
+| zipf, the largest namespace, one agent and user |          15,166 |    54 |         52 |      117 |
+| zipf, the third namespace, one agent and user   |           6,285 |    53 |         43 |       69 |
+
+In the single shape the scope is the namespace, and the leg reads about 0.56 to 0.70 KB
+per row of it (the probes recorded no row count: the 250k rows are those after the
+`OPTIMIZE`, which only removes rows, and the 500k rows are the load's). After the
+`OPTIMIZE`, `memory.search` p50 fell from 671 to 392 ms at 250k. In the zipf shape the
+scope is one agent's and one user's rows, about 1/400 of the namespace's: a scope of a few
+dozen rows still reads tens of MiB, a granule of every part of its partitions.
+
+**The write path's conflict check** reads the writer's scope too. At 250k, each
+`memory.set` read 164 to 185 MiB. With the batched read, `memory.bulk_set` read 6.0 to 6.6
+GiB a call, held up to 4.7 GiB in one statement and failed 65 to 93 statements a round of
+20 calls on the memory cap, leaving 5 to 22 entries unchecked; with
+`LOOM_MEMORY_BULK_PEER_READ=per_fact` it read 3.0 to 4.1 GiB, held at most 154 MiB and
+failed none (three rounds each, alternated on the same rows).
+
+**Erasure** at zipf 200k (`erasure.request`, purge), of different orgs and users in each
+authority's run:
+
+| Authority  | Scope                  |   Keys | Seconds | Outcome                                       |
+| ---------- | ---------------------- | -----: | ------: | --------------------------------------------- |
+| Postgres   | one user               |    590 |     235 | completed                                     |
+| Postgres   | an org's 10 namespaces | 14,125 |     184 | completed                                     |
+| ClickHouse | one user               |    113 |     186 | 504 `BACKEND_TIMEOUT` (a write past 60 s)     |
+| ClickHouse | an org's 10 namespaces | 52,071 |     236 | failed: `memory.tombstone` read past its 30 s |
+
+The org erasures ran with `external: false`, which skips the external backends' steps; on
+these stores those are unconfigured stubs that erase nothing. During the ClickHouse runs
+the erasure's mutations of `memory_embeddings` held the server: a `count()` over 19,941
+rows took 153 s and a `system.mutations` lookup 184 s.
+
+**Postgres** at zipf 200k (200,000 heads, 480,000 revisions as loaded): `VACUUM (ANALYZE)`
+took 0.49 s for `memory_current` and 0.56 s for `memory_revisions`. After the Postgres
+run's erasures (186,491 live heads), with 52,122 dead heads and 120,482 dead revisions
+(the erasures' deleted rows plus a fifth of the rest rewritten in place), it took 0.57 s
+for `memory_current` (275 MB of heap as loaded, so at least 0.48 GB/s) and 0.89 s for
+`memory_revisions` (969 MB as loaded, at least 1.09 GB/s), both tables in the page cache;
+a `COPY` of the largest org's rows of every memory table took 8.9 s for 351 MB.
+
+**Several serving processes.** `memory.set` was sent open loop (each write at its time
+slot, whatever earlier writes were doing, up to 512 in flight) at 15 and 150 a second over
+two replicas of two web workers each (Postgres authority, small data, ClickHouse capped at
+4 GiB). At 15 a second the host completed 8.6 a second; at 150 the 512-write cap held what
+was sent to 57 a second, and the host completed 24 a second. ClickHouse got 4.3 to 5.7 new
+parts a second per memory table, no partition passed 55 active parts
+(`parts_to_delay_insert` is 1,000) and at most 11 merges ran at once, so merges kept up.
+The refusals were the host's limits, all 503s: `PROJECTION_BEHIND`, `ADMISSION_CONTENDED`
+and `OVERLOADED`. A rate of 1,500 a second would only raise the writes not sent at the
+cap, and was not run.
+
+**Extrapolated, and the ceiling hit first.** Each figure grows linearly with what it
+reads:
+
+1. **A read scope's exact vector scan**, at about one million memories in one scope
+   (org, namespace, agent, user). At 0.6 KB a row, a search and every write's conflict
+   check read 0.6 GB at 1M rows, 6 GB at 10M and 60 GB at 100M, each call: seconds per
+   call before 10M. The size of the largest scope sets it, not the total number of
+   memories.
+2. **Erasure under the ClickHouse authority** is an observation, not a measured
+   ceiling: at 200k keys, on a ClickHouse that had already stalled, its mutations of the
+   vector table held the server's reads past their deadlines.
+3. **One Postgres primary**, at 100M to 1B keys: 6.8 KB a key is 680 GB at 100M and
+   6.8 TB at 1B. At the rates above, from tables in the page cache, a vacuum pass over 1B
+   heads (1.6 TB) is near an hour and over their revisions (5.1 TB) over an hour, longer
+   from disk; a one-org copy at 39 MB/s is half an hour for an org of 10M keys.
+4. **ClickHouse storage**: 13.6 KB a key is 1.4 TB at 100M and 13.6 TB at 1B, nearly
+   all of it vectors.
+
+Reproduce, on a private ClickHouse and Postgres, with a server from source with background
+workers off, auth off and the fake embedder (`.env` for the ClickHouse authority,
+`.env.pg`, a copy of `.env` that adds `LOOM_STORAGE_AUTHORITY=postgres` and
+`LOOM_PG_DSN`). The artifact records each run's setup (shape, size, caps, setting values);
+the commands follow this pattern:
+
+```bash
+B="env PYTHONPATH=$PWD .venv/bin/python bench/scale_load.py"
+$B load-ch --shape single --rows 250000     # or --shape zipf --rows 200000 --tenants 10000 \
+                                            #   --orgs 1000 --agents 4 --users 100
+$B --env .env.pg load-pg                    # into empty Postgres tables
+$B --env .env.pg authority --to postgres    # start a server of that authority, then:
+$B --env .env.pg pg --dump-org <org> --out <run>-pg-loaded.json      # vacuum and dump the rows as loaded
+$B --env .env.pg measure --base-url <server> --shape single --out <run>-measure.json
+$B --env .env.pg erase --base-url <server> --user <org>/<user> --org <org> --out <run>-erase.json
+$B --env .env.pg pg --dead-fraction 0.2 --out <run>-pg-dead.json   # then vacuum with dead rows
+$B --env .env.pg optimize --base-url <server> --shape single --out <run>-optimize.json
+$B --env .env.pg fleet --base-url <server>,<server> --rate 15 --seconds 40 --out <run>-fleet.json
+$B authority --to clickhouse                # then measure and erase without --env .env.pg
+```
+
+`authority --to` switches the recorded authority between runs on these private stores,
+which a deployment never does. `measure --ops` and `--calls` narrow a run (the bulk peer
+read rounds ran `--ops memory.bulk_set,memory.set --calls 100`, alternating the server's
+`LOOM_MEMORY_BULK_PEER_READ`), `pg` without `--dead-fraction` times a vacuum of the rows
+as loaded, and `load-ch --offset` grows a load (the 500k run grew the 250k one).
 
 ## Reference computations
 
