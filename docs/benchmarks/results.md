@@ -1013,7 +1013,8 @@ its setup and, where the harness recorded it, its build.
 **Bytes per key**, with the row shape these runs wrote (a commit's full `loom.memory` row
 as JSON in Postgres), from the main runs (single 250k and 500k, zipf 200k), each
 the first size its run recorded; later snapshots in the artifact and the 20,000-key runs
-carry somewhat more per row, from parts with few rows:
+carry somewhat more per row, from parts with few rows. The "Per key" column is the single
+250k run's, with 2.4 versions a key:
 
 | Store      | Table               | Bytes                                           | Per key |
 | ---------- | ------------------- | ----------------------------------------------- | ------: |
