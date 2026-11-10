@@ -457,6 +457,9 @@ async def test_the_entry_lock_path_notes_a_dependency_it_cannot_fetch(monkeypatc
     await code_scip._record_tier("org", "code-go", "go", 0, f"{_PRIVATE}\ndone lib\n".encode())
     record = tier_health.parse("go", state["tier_health:go"])
     assert record.state == "unavailable" and not record.failing
+    # a run that built nothing leaves it, as the worker's does
+    await code_scip._record_tier("org", "code-go", "go", 0, b"skip svc (no Go change in window)\n")
+    assert tier_health.parse("go", state["tier_health:go"]).state == "unavailable"
     # a later run that builds without such a failure clears it
     await code_scip._record_tier("org", "code-go", "go", 0, b"done lib\n")
     assert tier_health.parse("go", state["tier_health:go"]).state == "ok"

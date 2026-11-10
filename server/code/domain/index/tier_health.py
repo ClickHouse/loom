@@ -42,11 +42,12 @@ def state_key(tier: str) -> str:
 @dataclass(frozen=True)
 class TierHealth:
     """One tier's last outcome for one entry. `failing_since` and the counters
-    describe the current run of failures; all are empty once the tier is ok."""
+    describe the current run of failures (for an `unavailable` note, `failing_since`
+    is when it was first noted); all are empty once the tier is ok."""
 
     tier: str
-    # ok | failing | unavailable (a part the tier cannot fetch on this host: noted, not
-    # failing, and kept until a run builds it)
+    # ok | failing | unavailable (a dependency the tier cannot fetch on this host:
+    # noted, not failing; the next run that builds without one clears it)
     state: str = "ok"
     kind: str = ""
     error: str = ""

@@ -276,7 +276,7 @@ async def _record_tier(
     the end of the command's output. The Go harness exits 0 when a module would not
     build: the module lines in the kept tail fail the record as the worker's do, and
     those whose dependency cannot be fetched from here are noted, as the worker notes
-    them."""
+    them; a Go run that built no module leaves the record as it is."""
     from server.code.app.index import tier_health
     from server.code.app.index.compiler_tier import BASE_UNKNOWN_EXIT
     from server.code.domain.index.tier_health import (
@@ -305,7 +305,14 @@ async def _record_tier(
                     CodeRepo(), org, ns, tier, "; ".join(unreachable)
                 )
                 return
+            elif tier == "go" and not _built_a_module(text):
+                return  # built nothing: a standing record stays, as the worker keeps it
     await tier_health.record(CodeRepo(), org, ns, tier, error)
+
+
+def _built_a_module(output: str) -> bool:
+    """The Go harness built a module: it prints `done <dir>` for each one it indexed."""
+    return any(line.startswith("done ") for line in output.splitlines())
 
 
 def _write_out(chunk: bytes) -> None:
