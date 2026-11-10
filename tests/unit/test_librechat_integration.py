@@ -231,18 +231,20 @@ def test_count_labels_match_the_fixture():
     assert _case("tune-drafts")["baseline"]["equals"] == 0
 
 
-def test_report_prints_the_cancel_probe_and_an_inconclusive_one():
-    row = {
-        "id": "cancel-probe",
-        "kind": "cancel",
-        "ended_before_cut": False,
-        "loom_calls": 2,
-        "loom_calls_after_disconnect": 0,
-    }
+@pytest.mark.parametrize(
+    ("row", "verdict"),
+    [
+        ({"loom_calls_before_disconnect": 0}, "the disconnect stopped the run (0 Loom calls"),
+        ({"loom_calls_after_disconnect": 1}, "the run went on after the disconnect"),
+        ({"loom_calls_before_disconnect": 2}, "inconclusive"),
+        ({"ended_before_cut": True}, "inconclusive"),
+        ({"ended_before_cut": True, "error": "HTTP 403: no"}, "refused: HTTP 403: no"),
+    ],
+)
+def test_the_cancel_probe_passes_only_when_no_call_came_before_or_after_the_cut(row, verdict):
     q = _qualify()
-    assert "cancel probe: 2 Loom calls, 0 after the client disconnected" in q.report([row], "m")
-    ended = {**row, "ended_before_cut": True}
-    assert "the answer ended before the disconnect, inconclusive" in q.report([ended], "m")
+    line = q.report([{"id": "cancel-probe", "kind": "cancel", **row}], "m")
+    assert f"cancel probe: {verdict}" in line
 
 
 def _patched_client(monkeypatch, q, transport):
@@ -271,8 +273,8 @@ def test_the_cancel_probe_disconnects_at_its_delay_while_the_answer_runs(monkeyp
         monkeypatch, q, httpx.MockTransport(lambda req: httpx.Response(200, stream=body))
     )
     started = time.monotonic()
-    ended = asyncio.run(q.read_until("http://lc/x", {}, {}, 0.2))
-    assert ended is False and body.closed
+    assert asyncio.run(q.read_until("http://lc/x", {}, {}, 0.2)) == (False, "")
+    assert body.closed
     assert time.monotonic() - started < 5
 
 
@@ -283,7 +285,23 @@ def test_the_cancel_probe_says_when_the_answer_ended_before_its_delay(monkeypatc
         q,
         httpx.MockTransport(lambda req: httpx.Response(200, text="data: [DONE]\n\n")),
     )
-    assert asyncio.run(q.read_until("http://lc/x", {}, {}, 5.0)) is True
+    assert asyncio.run(q.read_until("http://lc/x", {}, {}, 5.0)) == (True, "")
+
+
+@pytest.mark.parametrize(
+    ("response", "error"),
+    [
+        (httpx.Response(403, text="no grant"), "HTTP 403: no grant"),
+        (
+            httpx.Response(200, text='data: {"error": {"code": "RATE_LIMITED"}}\n\n'),
+            '{"code": "RATE_LIMITED"}',
+        ),
+    ],
+)
+def test_the_cancel_probe_keeps_a_refusal(monkeypatch, response, error):
+    q = _qualify()
+    _patched_client(monkeypatch, q, httpx.MockTransport(lambda req: response))
+    assert asyncio.run(q.read_until("http://lc/x", {}, {}, 5.0)) == (True, error)
 
 
 def test_direct_path_reads_with_the_assistant_toolsets_forced_arguments(monkeypatch):
@@ -677,3 +695,29 @@ def test_seed_writes_each_documents_revision_after_its_first_write(monkeypatch):
     # Every document is written before any revision of one.
     first = {b["source_uri"]: i for i, b in reversed(list(enumerate(docs)))}
     assert docs.index(next(b for b in docs if b["content"] == writes[-1])) > max(first.values())
+
+
+def test_the_cancel_probe_cuts_at_its_delay_and_counts_the_calls_on_each_side(monkeypatch):
+    q = _qualify()
+    seen = {}
+
+    async def read_until(url, body, headers, cut_s):
+        seen["cut_s"] = cut_s
+        return False, ""
+
+    windows = []
+
+    def loom_calls(ch_url, subject, since, until):
+        windows.append((since, until))
+        return [{}] * (len(windows) - 1)  # none before the cut, one after
+
+    monkeypatch.setattr(q, "read_until", read_until)
+    monkeypatch.setattr(q, "loom_calls", loom_calls)
+    monkeypatch.setattr(q.time, "sleep", lambda s: None)
+    st = {"librechat": {"alice": {"agent_id": "a", "api_key": "k"}}, "librechat_url": "http://lc"}
+    args = type("A", (), {"cancel_after": 0.5, "cancel_wait": 0.0, "ch_url": "http://ch"})()
+    row = q.cancel_probe(st, args)
+    assert seen["cut_s"] == 0.5
+    assert windows[0][1] == windows[1][0]  # the two counts meet at the disconnect
+    assert row["loom_calls_before_disconnect"] == 0 and row["loom_calls_after_disconnect"] == 1
+    assert "the run went on after the disconnect" in q.probe_line(row)

@@ -848,48 +848,73 @@ def cmd_rescore(args: argparse.Namespace) -> None:
     print(report(saved["rows"], saved.get("model", "")))
 
 
-async def read_until(url: str, body: dict[str, Any], headers: dict[str, str], cut_s: float) -> bool:
-    """Read one streamed answer and disconnect `cut_s` after sending it; True when the
-    answer ended first."""
+async def read_until(
+    url: str, body: dict[str, Any], headers: dict[str, str], cut_s: float
+) -> tuple[bool, str]:
+    """Read one streamed answer and disconnect `cut_s` after sending it: (whether the
+    answer ended first, the refusal or error it carried)."""
 
-    async def read() -> None:
+    async def read() -> str:
         async with httpx.AsyncClient(timeout=180) as client:
             async with client.stream("POST", url, json=body, headers=headers) as r:
-                async for _ in r.aiter_lines():
-                    pass
+                if r.status_code != 200:
+                    return f"HTTP {r.status_code}: {(await r.aread()).decode()[:300]}"
+                async for line in r.aiter_lines():
+                    if line.startswith("data: {"):
+                        error = json.loads(line[6:]).get("error")
+                        if error:
+                            return json.dumps(error)[:300]
+        return ""
 
     task = asyncio.ensure_future(read())
     done, _ = await asyncio.wait({task}, timeout=cut_s)
     if done:
-        task.result()
-        return True
+        return True, task.result()
     task.cancel()  # closes the connection
     with contextlib.suppress(asyncio.CancelledError):
         await task
-    return False
+    return False, ""
 
 
 def cancel_probe(st: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
-    """Disconnect `--cancel-after` seconds into an answer and count the Loom calls that still
-    arrive. The cut is a delay, not the first token: the agent writes no text before its
-    tool calls, so a cut at the first token would come after them."""
+    """Disconnect `--cancel-after` seconds into an answer and count the Loom calls before
+    and after. The cut is a delay, not the first token: the agent writes no text before
+    its tool calls, so a cut at the first token would come after them."""
     url, body, headers = answer_request(
         st, "alice", "List every memory in the namespace with its version."
     )
     t0 = time.time()
-    ended = asyncio.run(read_until(url, body, headers, args.cancel_after))
+    ended, error = asyncio.run(read_until(url, body, headers, args.cancel_after))
     disconnected = time.time()
     time.sleep(args.cancel_wait)
-    calls = loom_calls(args.ch_url, "alice", t0, time.time())
+    before = loom_calls(args.ch_url, "alice", t0, disconnected)
     after = loom_calls(args.ch_url, "alice", disconnected, time.time())
-    print(f"cancel probe: {len(calls)} Loom calls in total, {len(after)} after the disconnect")
-    return {
+    row = {
         "id": "cancel-probe",
         "kind": "cancel",
         "ended_before_cut": ended,
-        "loom_calls": len(calls),
+        "error": error,
+        "loom_calls_before_disconnect": len(before),
         "loom_calls_after_disconnect": len(after),
     }
+    print(probe_line(row))
+    return row
+
+
+def probe_line(row: dict[str, Any]) -> str:
+    """The cancel probe's verdict. It shows that a disconnect stops the run only when no
+    Loom call came before the cut (so the tools were still to run) and none came after."""
+    before = row.get("loom_calls_before_disconnect", 0)
+    after = row.get("loom_calls_after_disconnect", 0)
+    if row.get("error"):
+        verdict = f"refused: {row['error']}"
+    elif after:
+        verdict = "the run went on after the disconnect"
+    elif row.get("ended_before_cut") or before:
+        verdict = "inconclusive: the answer ended or its tool calls began before the cut"
+    else:
+        verdict = "the disconnect stopped the run"
+    return f"cancel probe: {verdict} ({before} Loom calls before the cut, {after} after)"
 
 
 def pct(values: list[float], q: float) -> float:
@@ -966,12 +991,7 @@ def report(rows: list[dict[str, Any]], model: str) -> str:
     )
     for r in rows:
         if r["kind"] == "cancel":
-            lines.append(
-                "cancel probe: the answer ended before the disconnect, inconclusive"
-                if r.get("ended_before_cut")
-                else f"cancel probe: {r['loom_calls']} Loom calls, "
-                f"{r['loom_calls_after_disconnect']} after the client disconnected"
-            )
+            lines.append(probe_line(r))
     return "\n".join(lines)
 
 
