@@ -1989,7 +1989,8 @@
      "per_row": 1231.5
     }
    },
-   "setup": "20,000 keys, single shape, ClickHouse capped at 4 GiB, Postgres 16 with shared_buffers 256 MB, one server process"
+   "setup": "20,000 keys, single shape, ClickHouse capped at 4 GiB, Postgres 16 with shared_buffers 256 MB, one server process",
+   "note": "its write ops' clickhouse blocks count only statements tagged with the op: the publication batch's inserts (pg_batch.flush) are left out; the harness now counts them"
   },
   "cost_20k_clickhouse": {
    "shape": "single",

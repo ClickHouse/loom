@@ -48,7 +48,7 @@ def test_a_writes_outcome_is_read_from_its_answer() -> None:
     assert _outcomes("/v1/memory.set", {"status": "active"}) == ["written"]
     # a skipped entry (a pinned or locked key) is in `written` with version 0
     written = [{"version": 1}, {"version": 2}, {"version": 0}]
-    bulk = {"written": written, "duplicates": [{}], "merged": [], "unchecked": 2}
+    bulk = {"written": written, "duplicates": ["k1"], "merged": [], "unchecked": 2}
     assert sorted(_outcomes("/v1/memory.bulk_set", bulk)) == [
         "duplicate",
         "unchecked",
@@ -72,12 +72,15 @@ class _Rows:
 
 
 class _Ch:
-    def __init__(self, row: list[Any]) -> None:
+    def __init__(self, row: list[Any], flush_row: list[Any] | None = None) -> None:
         self.row = row
+        self.flush_row = flush_row
 
     def query(self, sql: str, parameters: dict[str, Any]) -> _Rows:
         assert parameters["op"] == "memory.set "
-        self.flushes = parameters["flushes"]
+        if parameters["flushes"] and self.flush_row:
+            # the publication batch's statements in the window, counted with the op's
+            return _Rows([a + b for a, b in zip(self.row, self.flush_row, strict=True)])
         return _Rows(self.row)
 
 
@@ -92,9 +95,10 @@ def test_op_reads_divides_by_the_calls_sent() -> None:
         "clickhouse_cpu_ms_per_call": 150.0,
     }
     # under the Postgres authority a write also counts the publication batch's statements
-    fake = _Ch([0, 0, 0, 0, 0])
-    op_reads(fake, "memory.set", 0.0, 1.0, 1, flushes=True)
-    assert fake.flushes is True
+    fake = _Ch([2, 0, 0, 0, 1000], flush_row=[3, 0, 0, 0, 4000])
+    assert op_reads(fake, "memory.set", 0.0, 1.0, 1)["statements_per_call"] == 2.0
+    flushed = op_reads(fake, "memory.set", 0.0, 1.0, 1, flushes=True)
+    assert flushed["statements_per_call"] == 5.0 and flushed["clickhouse_cpu_ms_per_call"] == 5.0
     # no call sent: the window's totals, not a division by zero
     assert (
         op_reads(_Ch([0, None, None, 0, None]), "memory.set", 0.0, 1.0, 0)[
@@ -102,3 +106,25 @@ def test_op_reads_divides_by_the_calls_sent() -> None:
         ]
         == 0.0
     )
+
+
+def test_the_open_loop_starts_each_send_on_time_and_counts_those_past_the_cap() -> None:
+    import asyncio
+
+    from bench.scale_load import open_loop
+
+    started: list[int] = []
+
+    async def slow(i: int) -> None:
+        started.append(i)
+        await asyncio.sleep(0.2)  # longer than the run: every send is still in flight
+
+    # 20 sends due over 0.1 s, at most 5 in flight: 5 start, 15 are counted, none waits
+    skipped, took = asyncio.run(open_loop(20, 200.0, 5, slow))
+    assert started == [0, 1, 2, 3, 4] and skipped == 15 and took < 0.2
+
+    async def fast(i: int) -> None:
+        started.append(i)
+
+    started.clear()
+    assert asyncio.run(open_loop(10, 1000.0, 5, fast))[0] == 0 and len(started) == 10

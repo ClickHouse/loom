@@ -8,8 +8,8 @@ memory. `load-pg` copies those rows into the Postgres authority's `loom.memory_c
 and `loom.memory_revisions`, streamed from ClickHouse in the shape
 `server.memory.store.pg_memory.encode_row` writes. `measure` then drives the real ops
 through a running server and reads what the stores report: parts, part-log rates,
-the vector read's bytes against its part count, table and index sizes, the time of a
-user erasure and an org erasure, a vacuum and a `COPY` of one org's rows.
+the vector read's bytes against its part count, table and index sizes. `erase` times a
+user erasure and an org erasure; `pg` times a vacuum and a `COPY` of one org's rows.
 
 Two shapes:
 
@@ -42,7 +42,7 @@ import sys
 import time
 import uuid
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC
 from pathlib import Path
@@ -793,7 +793,7 @@ def measure(args: argparse.Namespace) -> None:
             t0,
             t1,
             len(calls),
-            flushes=writes and env.get("LOOM_STORAGE_AUTHORITY") == "postgres",
+            flushes=writes and result["authority"] == "postgres",
         )
         ops[op]["host_load_1m"] = round(os.getloadavg()[0], 1)
         print(op, json.dumps(ops[op]), flush=True)
@@ -840,6 +840,38 @@ def _partition_sample(ch: Any) -> dict[str, Any]:
     }
 
 
+async def open_loop(
+    total: int, rate: float, max_in_flight: int, send: Callable[[int], Awaitable[None]]
+) -> tuple[int, float]:
+    """Start `send(i)` for i < `total` at start + i / `rate`, whatever earlier sends are
+    doing, with at most `max_in_flight` running; a send due while that many run is not
+    started and is counted. Returns (not started, seconds the schedule took), once every
+    started send has finished."""
+    gate = asyncio.Semaphore(max_in_flight)
+    skipped = 0
+
+    async def run(i: int) -> None:
+        try:
+            await send(i)
+        finally:
+            gate.release()
+
+    tasks = []
+    start = time.monotonic()
+    for i in range(total):
+        delay = start + i / rate - time.monotonic()
+        if delay > 0:
+            await asyncio.sleep(delay)
+        if gate.locked():  # at the in-flight cap: this send is not started, and counted
+            skipped += 1
+            continue
+        await gate.acquire()
+        tasks.append(asyncio.create_task(run(i)))
+    took = time.monotonic() - start
+    await asyncio.gather(*tasks)
+    return skipped, took
+
+
 def fleet(args: argparse.Namespace) -> None:
     """`memory.set` at `--rate` writes a second, open loop (write i is sent at
     start + i / rate whatever earlier writes are doing, up to `--max-in-flight` at once),
@@ -870,8 +902,6 @@ def fleet(args: argparse.Namespace) -> None:
     async def drive_open_loop() -> tuple[list[float], Counter[str], int, float]:
         lat: list[float] = []
         errors: Counter[str] = Counter()
-        gate = asyncio.Semaphore(args.max_in_flight)
-        skipped = 0
         clients = [httpx.AsyncClient(base_url=u, timeout=args.timeout) for u in urls]
 
         async def one(i: int) -> None:
@@ -892,22 +922,10 @@ def fleet(args: argparse.Namespace) -> None:
                     errors[f"{r.status_code}:{_error_code(r)}"] += 1
             except httpx.HTTPError as e:
                 errors[type(e).__name__] += 1
-            finally:
-                gate.release()
 
-        tasks = []
-        start = time.monotonic()
-        for i in range(int(args.rate * args.seconds)):
-            delay = start + i / args.rate - time.monotonic()
-            if delay > 0:
-                await asyncio.sleep(delay)
-            if gate.locked():  # at the in-flight cap: this write is not sent, and counted
-                skipped += 1
-                continue
-            await gate.acquire()
-            tasks.append(asyncio.create_task(one(i)))
-        sent_for = time.monotonic() - start
-        await asyncio.gather(*tasks)
+        skipped, sent_for = await open_loop(
+            int(args.rate * args.seconds), args.rate, args.max_in_flight, one
+        )
         for c in clients:
             await c.aclose()
         return lat, errors, skipped, sent_for
@@ -1090,6 +1108,7 @@ def pg_ops(args: argparse.Namespace) -> None:
     out: dict[str, Any] = {"sizes": pg_sizes(env)}
     if args.dead_fraction:
         out["dead_rows"] = pg_dead_rows(env, args.dead_fraction)
+        out["sizes_with_dead_rows"] = pg_sizes(env)  # the heap the vacuum below scans
     out["vacuum_s"] = {t: pg_vacuum_s(env, t) for t in ("memory_current", "memory_revisions")}
     if args.dump_org:
         out["dump_org"] = {"org": args.dump_org, **pg_dump_org_s(env, args.dump_org)}

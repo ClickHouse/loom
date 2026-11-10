@@ -1018,8 +1018,8 @@ as JSON in Postgres):
 | ClickHouse | `memory_embeddings` | 13,210 per row              |  13,210 |
 | ClickHouse | `memory`            | 92 per head after merges    |      92 |
 | ClickHouse | `memory_versions`   | 110 per version             |     264 |
-| Postgres   | `memory_current`    | 1,594 to 1,623 per head     |   1,623 |
-| Postgres   | `memory_revisions`  | 2,149 to 2,150 per revision |   5,160 |
+| Postgres   | `memory_current`    | 1,594 to 1,634 per head     |   1,623 |
+| Postgres   | `memory_revisions`  | 2,149 to 2,151 per revision |   5,160 |
 
 **Cost per million memories**, at list prices
 ([ClickHouse Cloud pricing](https://clickhouse.com/pricing), AWS us-east-1). Storage: 13.6 GB in ClickHouse is $0.34 a month at $25.30 per TB-month; the 6.8 GB in
@@ -1111,8 +1111,8 @@ a `count()` over 19,941 rows took 153 s and a `system.mutations` lookup 184 s.
 `VACUUM (ANALYZE)` took 0.49 s for `memory_current` and 0.56 s for `memory_revisions`.
 After the Postgres run's erasures (186,491 live heads), with 52,122 dead heads and
 120,482 dead revisions made by rewriting rows in place, it took 0.57 s for
-`memory_current` (275 MB heap, about 0.5 GB/s) and 0.89 s for `memory_revisions`
-(969 MB, about 1.1 GB/s), both tables in the page cache; a `COPY` of the largest org's rows of every memory table took 8.9 s
+`memory_current` (275 MB of heap as loaded, so at least 0.5 GB/s) and 0.89 s for
+`memory_revisions` (969 MB as loaded, at least 1.1 GB/s), both tables in the page cache; a `COPY` of the largest org's rows of every memory table took 8.9 s
 for 351 MB.
 
 **Several serving processes.** `memory.set` was sent open loop (each write at its time
@@ -1156,12 +1156,21 @@ $B load-ch --shape single --rows 250000          # or: --shape zipf --rows 20000
 $B --env .env.pg load-pg
 $B --env .env.pg authority --to postgres         # then start the Postgres-authority server
 $B --env .env.pg measure --base-url <server> --shape single --out pg.json
+# The bulk peer reads: three rounds, each a batched arm then a per-fact arm (the server
+# restarted with LOOM_MEMORY_BULK_PEER_READ=per_fact for the second).
+$B --env .env.pg measure --base-url <server> --shape single --ops memory.bulk_set,memory.set \
+   --calls 100 --vector-reps 1 --out round-1-batched.json
 $B --env .env.pg erase --base-url <server> --user <org>/<user> --org <org> --out erase.json  # zipf
 $B --env .env.pg pg --dead-fraction 0.2 --dump-org <org> --out pg-store.json                # zipf
 $B authority --to clickhouse                     # stop it; start the ClickHouse-authority server
 $B measure --base-url <server> --shape single --out ch.json
 $B --env .env.pg authority --to postgres         # stop it; start the Postgres-authority server
 $B --env .env.pg optimize --base-url <server> --shape single --out optimize.json
+# 500k, under the ClickHouse authority only: grow the single load by 250,000 keys.
+$B authority --to clickhouse                     # stop it; start the ClickHouse-authority server
+$B load-ch --shape single --offset 250000 --rows 250000
+$B measure --base-url <server> --shape single --out ch-500k.json
+$B optimize --base-url <server> --shape single --before-only --out vector-500k.json
 # The cost runs and the fleet: empty memory tables, ClickHouse capped at 4 GiB, Postgres
 # shared_buffers 256 MB.
 $B load-ch --shape single --rows 20000 --batch 20000 && $B --env .env.pg load-pg
@@ -1170,7 +1179,8 @@ $B --env .env.pg measure --base-url <server> --shape single --calls 200 --vector
 $B authority --to clickhouse                     # stop it; start the ClickHouse-authority server
 $B measure --base-url <server> --shape single --calls 200 --vector-reps 10 --out cost-ch.json
 $B --env .env.pg authority --to postgres         # stop it; start two Postgres-authority servers
-$B --env .env.pg fleet --base-url <server>,<server> --rate 15 --seconds 40 --out fleet.json
+$B --env .env.pg fleet --base-url <server>,<server> --rate 15 --seconds 40 --out fleet-15.json
+$B --env .env.pg fleet --base-url <server>,<server> --rate 150 --seconds 40 --out fleet-150.json
 ```
 
 `authority --to` switches the recorded authority between runs on these private stores,
