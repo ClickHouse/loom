@@ -275,6 +275,26 @@ describe("humanizeError", () => {
       expect(api(given)).toBe(line);
     });
 
+    it("tells a read, not a writer, that the call can go again when the server marked it unsafe", () => {
+      const busy = new ApiError({
+        status: 503,
+        code: "OVERLOADED",
+        detail: { category: "capacity", retryable: false },
+      });
+      expect(humanizeError(busy, { read: true })).toBe("Loom is busy right now. Try again in a moment.");
+      expect(humanizeError(busy)).toBe("Loom is busy right now. It may have been saved; check before trying again.");
+    });
+
+    it("an ok answer whose body is unreadable may have been a committed write", () => {
+      const err = new ApiError({ status: 200, code: "ANSWER_UNREADABLE" });
+      expect(humanizeError(err)).toBe(
+        "Loom's answer could not be read; a proxy in front of it may have answered instead. It may have been saved; check before trying again.",
+      );
+      expect(humanizeError(err, { read: true })).toBe(
+        "Loom's answer could not be read; a proxy in front of it may have answered instead. Try again in a moment.",
+      );
+    });
+
     it("leaves the lead-in to a caller that brings its own", () => {
       const err = new ApiError({
         status: 409,

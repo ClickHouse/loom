@@ -2,7 +2,7 @@
 // (docs/development/dashboard-design.md, errors). Kept out of lib/format.ts so the boot
 // chunk does not carry it: the toast viewport loads it soon after the shell paints, and
 // toastError falls back to its context alone if it cannot.
-import { ApiError, PUBLICATION_PENDING } from "./errors";
+import { ApiError, isLostConnection, LOST_CONNECTION, PUBLICATION_PENDING } from "./errors";
 import { errorRequestId } from "./format";
 
 /** Sentences for the server's error codes (`server/core/errors.py` and the
@@ -15,6 +15,8 @@ export const ERROR_CODE_PREFIXES: Record<string, string> = {
   AUTH_INVALID: "Sign-in rejected:",
   SIGNED_IN_ELSEWHERE: "You signed in afresh in another tab. Nothing was lost.",
   IDEMPOTENT_IN_PROGRESS: "This request is still running:",
+  // Made by the dashboard (api.ts readJson): an ok answer whose body is not JSON.
+  ANSWER_UNREADABLE: "Loom's answer could not be read; a proxy in front of it may have answered instead.",
   AUTH_INSUFFICIENT: "Your role doesn't allow this:",
   IDENTITY_INCOMPLETE: "This token is scoped — the request has to name the namespace:",
   POLICY_FORBIDDEN: "Blocked by a policy:",
@@ -83,16 +85,20 @@ function sentenceForStatus(status: number): string {
 
 /** What to do next, from the body alone: whether resending can work and when. Silent when
  *  the server's own words already say it. */
-function retryTail(err: ApiError): string {
+function retryTail(err: ApiError, read: boolean): string {
   // Made by the dashboard (api.ts) before anything was sent: it carries no body.
   if (err.code === "SIGNED_IN_ELSEWHERE") return "It is safe to send it once more.";
+  const mayHaveLanded = read ? "Try again in a moment." : "It may have been saved; check before trying again.";
+  // Made by the dashboard (api.ts readJson): the answer was ok, only its body unreadable.
+  if (err.code === "ANSWER_UNREADABLE") return mayHaveLanded;
   const category = typeof err.detail.category === "string" ? err.detail.category : "";
   const retryable = err.detail.retryable;
   // Busy or a dependency, yet not retryable: the server's mark for a write that may have
   // landed before it failed (`handler_failure_detail`). It wins over a message that says to
-  // retry: the message was written for the error, the mark for this call.
+  // retry: the message was written for the error, the mark for this call. An op the server
+  // does not call idempotent may still only have read (a dry run): its caller says so.
   if (retryable === false && err.detail.committed !== true && (category === "capacity" || category === "dependency"))
-    return "It may have been saved; check before trying again.";
+    return mayHaveLanded;
   if (/\b(retry\w*|again|resend\w*)\b/i.test(err.serverMessage)) return "";
   if (category === "configuration") return "Trying again won't help until that's changed.";
   const wait = Number(err.detail.retry_after_s ?? err.retryAfter);
@@ -122,8 +128,6 @@ function withTail(text: string, tail: string): string {
   return `${/[.!?]$/.test(text) ? text : `${text}.`} ${tail}`;
 }
 
-const LOST_CONNECTION =
-  "Lost connection to Loom mid-request. The work may still have committed on the server — re-check the list before retrying.";
 /** The same, for a caller that only read (`read`): nothing can have committed. */
 const LOST_CONNECTION_READ = "Lost connection to Loom.";
 const TIMED_OUT = "Loom didn't answer in time. It may still finish; check before trying again.";
@@ -148,14 +152,14 @@ export interface HumanizeOptions {
  *  errors map too; a dashboard bug reads as one; any other value is shown as its text. */
 export function humanizeError(err: unknown, opts: HumanizeOptions = {}): string {
   if (!err) return DASHBOARD_FAULT;
-  if (err instanceof ApiError) return humanizeApiError(err, opts.bare === true);
+  if (err instanceof ApiError) return humanizeApiError(err, opts.bare === true, opts.read === true);
   const raw = err instanceof Error ? err.message : String(err);
   // Raw network errors (connection drop, fetch aborted, etc.) come
   // back as bare strings like "Failed to fetch" / "fetch failed" /
   // "Load failed" / "NetworkError when attempting…". Distinguish "we
   // never reached the server" from "the server said no" — and warn that
   // the server may have committed the work even though we lost the response.
-  if (/^(failed to fetch|fetch failed|load failed|networkerror|network error)\b/i.test(raw)) {
+  if (isLostConnection(raw)) {
     return opts.read ? LOST_CONNECTION_READ : LOST_CONNECTION;
   }
   // A DOMException is not an Error in every engine, so the name is read off the object;
@@ -191,7 +195,7 @@ function leadFor(err: ApiError): string {
   return codeSentence(err) ?? CATEGORY_SENTENCES[category] ?? sentenceForStatus(err.status);
 }
 
-function humanizeApiError(err: ApiError, bare: boolean): string {
+function humanizeApiError(err: ApiError, bare: boolean, read: boolean): string {
   // A page that read while its session was away says so plainly (the dashboard's card
   // offers the sign-in), not as a rejected credential. Behind a proxy, or with auth off,
   // there is no session here to sign in to: the server's words stand.
@@ -217,7 +221,7 @@ function humanizeApiError(err: ApiError, bare: boolean): string {
   else if (err.code && !codeSentence(err))
     text = bare ? `error code ${err.code}.` : `${lead.replace(/[:.]$/, "")} (${err.code}).`;
   else text = joinSentence(lead, "");
-  return withTail(text, retryTail(err));
+  return withTail(text, retryTail(err, read));
 }
 
 /** An inline line's reason ("Couldn't load …:"): the bare words and, when the failure

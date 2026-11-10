@@ -392,12 +392,11 @@ async function readJson<T>(r: Response): Promise<T> {
   try {
     return (await r.json()) as T;
   } catch (e) {
-    if (e instanceof Error && e.name !== "SyntaxError") throw e;
-    throw new ApiError({
-      status: r.status,
-      message: "Loom's answer could not be read; a proxy in front of it may have answered instead",
-      requestId: r.headers.get("X-Request-Id") ?? "",
-    });
+    // Only the parser's refusal is a body that is not JSON; anything else (a cut body, an
+    // abort) keeps its own name. A DOMException is not an Error in every engine.
+    if (typeof e !== "object" || e === null || !("name" in e) || e.name !== "SyntaxError") throw e;
+    // The status was ok, so a write may well have committed: errorWords says so to a writer.
+    throw new ApiError({ status: r.status, code: "ANSWER_UNREADABLE", requestId: r.headers.get("X-Request-Id") ?? "" });
   }
 }
 

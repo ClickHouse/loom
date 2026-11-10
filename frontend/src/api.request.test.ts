@@ -96,7 +96,7 @@ describe("an ok answer that is not JSON", () => {
   it("is an ApiError that says so, not the parser's words", async () => {
     stubFetch(200, "<html><body>Bad gateway page</body></html>", { "X-Request-Id": "req-html" });
     const err = await rejection(post("/v1/memory.list", {}));
-    expect(err.serverMessage).toMatch(/could not be read; a proxy in front of it may have answered instead/);
+    expect(err.code).toBe("ANSWER_UNREADABLE");
     expect(err.requestId).toBe("req-html");
   });
 });

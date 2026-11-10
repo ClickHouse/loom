@@ -131,3 +131,14 @@ export async function apiErrorFromResponse(r: Response): Promise<ApiError> {
  *  says it without the lazy wording chunk. */
 export const PUBLICATION_PENDING =
   "Done, but lists and search have not caught up yet. Don't send it once more; reload in a moment to see the result.";
+
+/** The line for a call whose connection dropped before its answer came: a write may still
+ *  have committed. Here, not in errorWords, so the toast keeps it without the lazy chunk. */
+export const LOST_CONNECTION =
+  "Lost connection to Loom mid-request. The work may still have committed on the server — re-check the list before retrying.";
+
+/** The browsers' own words for a call that never got its answer ("Failed to fetch",
+ *  "Load failed", "NetworkError when attempting…", Chrome's "network error" on a cut body). */
+export function isLostConnection(text: string): boolean {
+  return /^(failed to fetch|fetch failed|load failed|networkerror|network error)\b/i.test(text);
+}
