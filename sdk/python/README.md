@@ -31,8 +31,8 @@ async def main() -> None:
         await agent.memory.set("deploy_window", "Deploy Tue/Thu, never Friday")
         got = await agent.memory.get("deploy_window")  # by key
         hits = await agent.memory.search("when do we deploy")  # by meaning
-        assert got is not None
-        print(got["value"], [hit.memory_key for hit in hits])
+        if got is not None:
+            print(got["value"], [hit.memory_key for hit in hits])
 
 
 asyncio.run(main())
@@ -70,7 +70,7 @@ assert p["ok"], (p["missing_ops"], p["missing_fields"])
 print(OPS["memory.search"].idempotent, OPS["memory.search"].role)
 ```
 
-`agent.memory.search(...)` and `agent.knowledge.search(...)` also accept `**extra`, so a field the server shipped this week rides the body without an SDK release. Errors are typed by the server's `detail.code`, and by HTTP status when a body carries none: `NotFound`, `ValidationError`, `AuthInvalid`, `AuthInsufficient`, `PreconditionFailed`, `RateLimited`, `BackendUnavailable` — every one carries `.request_id` (the `X-Request-Id` the server echoed), `.status`, and the server's `.category` and `.retryable`, the SDK's own when the body names none ([the error envelope](../../docs/reference/errors.md#the-error-envelope-over-http)).
+`agent.memory.search(...)` and `agent.knowledge.search(...)` also accept `**extra`, so a field the server shipped this week rides the body without an SDK release. Errors are typed by the server's `detail.code`, and by HTTP status when a body carries none: `NotFound`, `ValidationError`, `AuthInvalid`, `AuthInsufficient`, `PreconditionFailed`, `RateLimited`, `BackendUnavailable` — every one carries `.request_id` (the `X-Request-Id` the server echoed), `.status`, and the server's `.category` and `.retryable`, the SDK's own when the body names none ([the error envelope](https://github.com/ClickHouse/loom/blob/main/docs/reference/errors.md#the-error-envelope-over-http)).
 
 `await agent.capabilities()` pairs `ops.capabilities` with what the bearer token itself says (`roles` / `ns_roles`, decoded, not verified) so an integration does not poll ops its token cannot call: `caps.can_call("conflicts.list")` is `True` / `False` when known and `None` when the SDK cannot tell — then make the call; `await agent.can_call(op)` answers for the Agent's namespace; `caps.callable()` lists every served op the token may call. Cached 60 s.
 
@@ -169,7 +169,7 @@ The SDK logs through the stdlib logger `loom` (a `NullHandler` by default; your 
 
 ## Examples
 
-[`examples/agent_memory.py`](./examples/agent_memory.py) — probe → remember ×3 → recall → ask with citations → outcome → typed errors, with its actual run in [`examples/README.md`](./examples/README.md). The TypeScript SDK ships the same example.
+[`examples/agent_memory.py`](https://github.com/ClickHouse/loom/blob/main/sdk/python/examples/agent_memory.py) — probe → remember ×3 → recall → ask with citations → outcome → typed errors, with its actual run in [`examples/README.md`](https://github.com/ClickHouse/loom/blob/main/sdk/python/examples/README.md). The TypeScript SDK ships the same example.
 
 ## License
 

@@ -341,7 +341,7 @@ each one from the browser. Shapes are in the [HTTP API reference](../reference/h
 ## 5. First memory from Python
 
 ```bash
-pip install clickhouse-loom
+pip install clickhouse-loom    # or, from a clone: pip install ./sdk/python
 ```
 
 ```python
@@ -367,7 +367,7 @@ asyncio.run(main())
 
 Where the SDK finds its server and credential is in
 [Python SDK → Credentials](../reference/python-sdk.md#credentials).
-The TypeScript SDK is `npm install @clickhouse/loom`.
+The TypeScript SDK installs with `npm install @clickhouse/loom`.
 
 The client surfaces are in the [Python SDK](../reference/python-sdk.md) and
 [TypeScript SDK](../reference/typescript-sdk.md) references.

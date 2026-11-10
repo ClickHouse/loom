@@ -7,6 +7,7 @@ import re
 import tomllib
 from pathlib import Path
 
+import pytest
 from loom.sync import _CLIENT_ATTRS
 
 SDK_ROOT = Path(__file__).resolve().parents[2] / "sdk" / "python"
@@ -34,7 +35,7 @@ def test_readme_installs_the_published_package() -> None:
     assert re.search(rf"^pip install {re.escape(PROJECT['name'])}$", README, re.M)
 
 
-def test_the_first_example_runs_as_a_script() -> None:
+def test_the_first_example_compiles_as_a_module() -> None:
     """The example a reader copies first is a whole program: it compiles as a
     module, with no `await` outside a function."""
     use = README[README.index("\n## Use\n") :]
@@ -48,3 +49,18 @@ def test_the_typescript_readme_installs_the_published_package() -> None:
     name = json.loads((ts_root / "package.json").read_text())["name"]
     readme = (ts_root / "README.md").read_text()
     assert re.search(rf"^npm install {re.escape(name)}$", readme, re.M)
+
+
+@pytest.mark.parametrize("sdk", ["python", "typescript"])
+def test_the_package_readme_links_resolve_on_the_registry(sdk: str) -> None:
+    """The README is the package's page on PyPI or npm, where a relative link has
+    nothing to resolve against: every link is absolute, and one into this
+    repository names a path that exists."""
+    readme = (SDK_ROOT.parent / sdk / "README.md").read_text()
+    targets = re.findall(r"\]\(([^)\s]+)\)", readme)
+    assert [t for t in targets if not re.match(r"https?://|#", t)] == []
+    repo = "https://github.com/ClickHouse/loom/"
+    for target in targets:
+        if target.startswith(repo):
+            path = re.sub(r"^(?:blob|tree)/main/", "", target[len(repo) :]).split("#")[0]
+            assert (SDK_ROOT.parents[1] / path).exists(), target
