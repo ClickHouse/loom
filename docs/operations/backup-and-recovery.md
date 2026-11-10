@@ -378,8 +378,8 @@ feature. Carry these:
 - ClickHouse: the same service, a copy with its Keeper state, or a `dev/backup_loom.py`
   dump restored into a ClickHouse that `loom migrate` prepared;
 - Postgres, under `LOOM_STORAGE_AUTHORITY=postgres`: the same service, or a copy taken
-  with ClickHouse's from the stopped source deployment (to restore only one store, see
-  [Under the Postgres authority](#under-the-postgres-authority));
+  with the source deployment stopped, together with its ClickHouse copy (to restore only
+  one store, see [restoring one store](#restoring-one-store));
 - the env config (`.env` or the container environment);
 - `LOOM_JWT_SECRET`. Without it no token verifies, and the stored credentials and
   signing keys do not open;

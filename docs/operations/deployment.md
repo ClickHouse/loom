@@ -7,15 +7,15 @@ the dashboard, and runs the background workers. Its containers keep no durable s
 their own, so you can replace or add them freely: ClickHouse holds Loom's data, uploaded
 document originals included unless their bytes are kept in an S3-compatible bucket
 ([where originals are stored](../features/knowledge.md#where-originals-are-stored)), and
-under the [Postgres memory
-authority](../architecture/storage-authority.md#why-two-stores), Postgres holds live
-memory and knowledge state; the code index keeps bare git mirrors on disk, a cache of
-the remotes ClickHouse records. A deployment moves with ClickHouse (and Postgres, under
-that authority), its env config, `LOOM_JWT_SECRET` and, while rows name objects in it,
-the document bucket ([moving a
-deployment](./backup-and-recovery.md#moving-a-deployment)). The compose files under
-`dev/` are the supported production files. Every setting named here is in the generated
-[configuration reference](../reference/configuration.md).
+under the
+[Postgres memory authority](../architecture/storage-authority.md#why-two-stores),
+Postgres holds live memory and knowledge state; the code index keeps bare git mirrors on
+disk, a cache of the remotes ClickHouse records. A deployment moves with ClickHouse (and
+Postgres, under that authority), its env config, `LOOM_JWT_SECRET` and, while rows name
+objects in it, the document bucket
+([moving a deployment](./backup-and-recovery.md#moving-a-deployment)). The compose files
+under `dev/` are the supported production files. Every setting named here is in the
+generated [configuration reference](../reference/configuration.md).
 
 ## Deployment ladder
 
