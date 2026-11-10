@@ -51,7 +51,6 @@ from server.tracker.api.models import (
     within_item_bound,
 )
 from server.tracker.domain import bisect, defect_answer, similar
-from tests.unit.code_fixtures import untraced
 
 # A run this long takes a quadratic pattern well past the 8x bound, and the
 # whole file stays within a few seconds.
@@ -249,18 +248,17 @@ def _timed_out(signum: int, frame: object) -> None:
 
 
 def _fastest_seconds(read: Callable[[str], object], text: str) -> float:
-    """The fastest of three reads in CPU time, untraced: another process holding the CPU
-    does not count, nor does a full collection's pause."""
+    """The fastest of three reads in CPU time: another process holding the CPU does not
+    count."""
     times = []
     previous = signal.signal(signal.SIGALRM, _timed_out)
     try:
-        with untraced():
-            for _ in range(3):
-                signal.setitimer(signal.ITIMER_REAL, _CAP_S)
-                started = time.process_time()
-                read(text)
-                times.append(time.process_time() - started)
-                signal.setitimer(signal.ITIMER_REAL, 0)
+        for _ in range(3):
+            signal.setitimer(signal.ITIMER_REAL, _CAP_S)
+            started = time.process_time()
+            read(text)
+            times.append(time.process_time() - started)
+            signal.setitimer(signal.ITIMER_REAL, 0)
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)
