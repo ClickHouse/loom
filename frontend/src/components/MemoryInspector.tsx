@@ -56,7 +56,6 @@ import { graphSeedHref, isModifiedClick, openGraphAt } from "../lib/graphLink";
 import { AgentBadge } from "./AgentBadge";
 import { DiffView } from "./DiffView";
 import { keepOpenOnToasts, toast, toastError } from "./Toast";
-import { isPublicationPending } from "../lib/errors";
 import { IconButton } from "./IconButton";
 import { SkeletonText } from "./Skeleton";
 import { Chip, ExternalLink, Loading, LoadingSkeleton, Tip } from "./ui";
@@ -522,10 +521,8 @@ export function MemoryInspector({
       toast(wasPinned ? "Unpinned" : "Pinned", "ok");
       onChanged();
     } catch (e) {
+      setDetail((d) => (d ? { ...d, pinned: wasPinned } : d));
       toastError("Pin failed", e);
-      // Committed, with only search lagging: the new state stands.
-      if (isPublicationPending(e)) onChanged();
-      else setDetail((d) => (d ? { ...d, pinned: wasPinned } : d));
     }
   };
 
@@ -705,9 +702,8 @@ export function MemoryInspector({
       });
       onChanged();
     } catch (e) {
+      setDetail((d) => (d ? { ...d, tags: prev } : d));
       toastError("Tag update failed", e);
-      if (isPublicationPending(e)) onChanged();
-      else setDetail((d) => (d ? { ...d, tags: prev } : d));
     }
   };
 
@@ -769,8 +765,7 @@ export function MemoryInspector({
       if (formSession.current === session) setEditing(false);
     } catch (e) {
       toastError("Save failed", e);
-      if (!isPublicationPending(e)) return;
-      if (formSession.current === session) setEditing(false);
+      return;
     }
     await reread();
   };
@@ -870,10 +865,6 @@ export function MemoryInspector({
       onClose();
     } catch (e) {
       toastError("Delete failed", e);
-      if (isPublicationPending(e)) {
-        onChanged();
-        onClose();
-      }
     }
   };
 

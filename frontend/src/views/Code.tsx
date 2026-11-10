@@ -1869,7 +1869,8 @@ export function HealthTab({ id }: { id: CodeId }) {
   const [cov, setCov] = useState<CodeCoverage | null | undefined>(undefined);
   const [recent, setRecent] = useState<CodeRecentCommitRow[] | "failed" | null>(null);
   const [errs, setErrs] = useState<{ rows: CodeIndexErrorRow[]; total: number } | null | undefined>(undefined);
-  // Why each section's last read failed, said beside its "Couldn't load" line.
+  // Why each section's first read failed, said beside its "Couldn't load" line; kept while it
+  // keeps failing, so its alert is not said again.
   const [why, setWhy] = useState<{ cov?: string; recent?: string; errs?: string }>({});
   const [showErrs, setShowErrs] = useState(false);
   const [spend, setSpend] = useState<{ usd: number; ops: number } | null | undefined>(undefined);

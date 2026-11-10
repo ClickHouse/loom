@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryDetail, MyNamespaceEntry, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
-import { ApiError } from "../lib/errors";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { MemoryInspector } from "./MemoryInspector";
 
@@ -92,22 +91,6 @@ describe("MemoryInspector pin", () => {
 
     await waitFor(() => expect(pinMemory).toHaveBeenCalledTimes(1));
     expect(vi.mocked(pinMemory).mock.calls[0]).toEqual([identity, "coffee_pref", LIVE]);
-  });
-
-  it("keeps a committed pin as done while only search lags", async () => {
-    vi.mocked(pinMemory).mockRejectedValueOnce(
-      new ApiError({ status: 503, code: "PUBLICATION_PENDING", message: "the write is committed" }),
-    );
-    const onChanged = vi.fn();
-    render(<MemoryInspector identity={identity} memoryKey="coffee_pref" onClose={() => {}} onChanged={onChanged} />);
-    await screen.findByText("oat milk, no sugar");
-    await userEvent.click(screen.getByRole("button", { name: "More actions" }));
-    await userEvent.click(await screen.findByRole("menuitem", { name: "Pin" }));
-    await waitFor(() => expect(onChanged).toHaveBeenCalled());
-    await userEvent.click(screen.getByRole("button", { name: "More actions" }));
-    // Pinned stands: a writer is offered no Unpin, and the Pin the rollback would bring back is gone.
-    await screen.findByRole("menu", { name: "More actions" });
-    expect(screen.queryByRole("menuitem", { name: "Pin" })).toBeNull();
   });
 
   it("unpins the row it read, by that row's own agent, user and session", async () => {

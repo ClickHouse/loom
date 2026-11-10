@@ -219,7 +219,7 @@ describe("humanizeError", () => {
           message: "the write is committed; do not repeat it. Its ClickHouse rows follow shortly",
           detail: { category: "dependency", retryable: false, committed: true },
         },
-        "Done, but lists and search have not caught up yet. Don't send it once more; reload in a moment to see the result.",
+        "Done, but lists and search have not caught up yet, so this page may still show the old state. Don't send it once more; reload in a moment to see the result.",
       ],
       [
         "a request still running names that, not a load problem",
@@ -368,6 +368,12 @@ describe("humanizeError", () => {
     it("leaves retry advice to the tail: no code sentence says to try again", () => {
       for (const [code, sentence] of Object.entries(ERROR_CODE_PREFIXES)) {
         expect(sentence, code).not.toMatch(/retry|again|resend/i);
+      }
+    });
+
+    it("keeps a dash out of every code sentence: a bare line joins the server's words with one", () => {
+      for (const [code, sentence] of Object.entries(ERROR_CODE_PREFIXES)) {
+        expect(sentence, code).not.toMatch(/—/);
       }
     });
 

@@ -130,7 +130,7 @@ export async function apiErrorFromResponse(r: Response): Promise<ApiError> {
  *  nothing else: the server's words name its tables. Here, not in errorWords, so the toast
  *  says it without the lazy wording chunk. */
 export const PUBLICATION_PENDING =
-  "Done, but lists and search have not caught up yet. Don't send it once more; reload in a moment to see the result.";
+  "Done, but lists and search have not caught up yet, so this page may still show the old state. Don't send it once more; reload in a moment to see the result.";
 
 /** A write that committed with only its search copy pending: callers treat it as done. */
 export function isPublicationPending(err: unknown): boolean {
