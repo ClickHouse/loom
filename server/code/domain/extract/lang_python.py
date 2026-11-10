@@ -360,7 +360,7 @@ def import_specs(node: Any, source: bytes) -> list[str]:
     module = _dotted(mod_node, source)
     if not module:
         return []
-    out.append(module)
+    found = {module: None}  # ordered, distinct as read: a member repeated is one spec
     sep = 0 if module.endswith(".") else 1  # the dot `join_spec` adds
     for c in node.named_children:
         if _same_node(c, mod_node):
@@ -374,8 +374,8 @@ def import_specs(node: Any, source: bytes) -> list[str]:
             )
             member = _dotted(name, source) if name is not None else ""
         if member and _IDENT_RE.match(member) and len(module) + sep + len(member) < _MAX_SPEC_CHARS:
-            out.append(join_spec(module, member))
-    return out
+            found[join_spec(module, member)] = None
+    return list(found)
 
 
 def join_spec(module: str, member: str) -> str:
