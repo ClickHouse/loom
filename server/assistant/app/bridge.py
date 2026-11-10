@@ -135,8 +135,8 @@ def refuse_org_wide(auth: AuthInfo) -> None:
         )
 
 
-# Every answer token's id starts so: a token delegated from one carries it among its
-# parents, which is how a descendant is told from the caller's own token.
+# Every answer token's id starts with this, so a token delegated from one names it among
+# its parents: that is how a descendant is told from the caller's own token.
 ANSWER_JTI_PREFIX = "assistant-answer-"
 
 

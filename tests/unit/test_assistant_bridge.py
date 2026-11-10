@@ -1163,7 +1163,11 @@ def test_assistant_ask_over_mcp_on_another_toolset_refuses_an_answer_token(
     import server.transport.mcp_call as mcp_call
     from tests.unit.mcp_probe import serve_probe
 
+    import server.transport.mcp_outcome as mcp_outcome
+
     serve_probe(monkeypatch)
+    rows: list[tuple[Any, dict[str, Any]]] = []
+    monkeypatch.setattr(mcp_outcome, "_emit_mcp_event", lambda *a, **k: rows.append((a, k)))
     monkeypatch.setattr(settings, "assistant_librechat_url", "http://librechat:3080")
     answer = _caller(org="acme", namespaces=("n",), consumer=ASSISTANT_CONSUMER)
     params = {
@@ -1175,6 +1179,10 @@ def test_assistant_ask_over_mcp_on_another_toolset_refuses_an_answer_token(
     result = out["result"]
     assert result["isError"] is True
     assert result["structuredContent"]["code"] == "ASSISTANT_SELF_CALL"
+    # Ledgered as the op's refused call.
+    ((args, kw),) = rows
+    assert args[0] == "assistant.ask" and kw["success"] is False
+    assert kw["error_code"] == "ASSISTANT_SELF_CALL"
 
 
 def test_an_answer_token_acting_for_someone_is_still_refused(
