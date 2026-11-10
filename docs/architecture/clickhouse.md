@@ -1,15 +1,15 @@
 # ClickHouse
 
-Durable Loom state lives in ClickHouse, except the live memory and knowledge state that
-Postgres holds under the
-[Postgres memory authority](storage-authority.md#why-two-stores), and document bytes
-kept in an S3-compatible bucket. Loom's ClickHouse databases are `loom` and
-`loom_telemetry`. The canonical ClickHouse schema is
-[`schemas/schema.sql`](../../schemas/schema.sql), dumped from a server with every
-migration applied; the Postgres schema is the journal in `schemas/pg_migrations/`. The
-generated [schema reference](../reference/schema.md) lists every ClickHouse table with
-its engine, keys, TTL and indexes. This page covers the table families, how Loom uses
-engines, indexes and views, and how migrations run.
+Durable Loom state lives in ClickHouse, except what Postgres holds under the Postgres
+memory authority (live memory, knowledge state and their ledgers) and document bytes
+kept in an S3-compatible bucket. The
+[storage authority](storage-authority.md#the-tables) page lists the Postgres tables.
+Loom's ClickHouse databases are `loom` and `loom_telemetry`. The canonical ClickHouse
+schema is [`schemas/schema.sql`](../../schemas/schema.sql), dumped from a server with
+every migration applied; the Postgres schema is the journal in `schemas/pg_migrations/`.
+The generated [schema reference](../reference/schema.md) lists every ClickHouse table
+with its engine, keys, TTL and indexes. This page covers the table families, how Loom
+uses engines, indexes and views, and how migrations run.
 
 ## Goals and non-goals
 
@@ -74,8 +74,8 @@ the Postgres memory authority), and the document bucket while rows name objects 
 gets every feature back. On the filesystem: the code plane's git mirrors under
 `var/code_repos`, a cache of the remotes ClickHouse records that a host without them
 re-clones. The root secret `LOOM_JWT_SECRET`, which seals the signing keys and stored
-credentials, is in the env. Process caches and file locks are listed in [system
-overview](system-overview.md#deployment-topology).
+credentials, is in the env. Process caches and file locks are listed in
+[system overview](system-overview.md#deployment-topology).
 
 ## Conventions every table follows
 
