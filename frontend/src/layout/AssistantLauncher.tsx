@@ -50,7 +50,9 @@ export function AssistantLauncher() {
           reason); below xl it names the icon too. */}
       <Tip content={worded ? (reason ? `${reasonShort} (${keys})` : keys) : tip} side="bottom">
         <Button
-          type="secondary"
+          // Below xl an icon like the header's bells and help, frameless; from xl a button
+          // with its word. One element either way, so the focus stays across the width.
+          type={worded ? "secondary" : "empty"}
           htmlType="button"
           iconLeft={icon}
           aria-label={name}
