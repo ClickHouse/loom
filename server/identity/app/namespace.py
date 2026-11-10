@@ -23,6 +23,7 @@ from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.errors import PreconditionFailedError, ValidationError
 from server.core.naming import SSO_NAMESPACE_PREFIX, reserved_for_sso
+from server.core.principals import COLLECTION_PREFIX
 from server.identity.api.models import (
     NamespaceBrowseInput,
     NamespaceBrowseOutput,
@@ -153,6 +154,8 @@ def registry_row(
         # An agent's namespace is bound to the agent (its exchange checks it).
         "owner_email": existing["owner_email"] if existing and trust_made else input.owner_email,
         "description": _set_or_stored(input.description, existing, "description", ""),
+        # A collection's title is collection.create's to set; never from this form.
+        "title": str((existing or {}).get("title") or ""),
         # A fresh row with no explicit kind is classified by name, the same call the
         # first-write hook makes, so registering a bench-prefixed name first and writing
         # to it second lands the same row as the bare write would.
@@ -646,7 +649,8 @@ async def delete_namespace(org: str, namespace: str) -> NamespaceDeleteOutput:
         if active:
             row = dict(existing)
             row["active"] = False
-            row["updated_at"] = now
+            # Never behind the row it replaces: on a tie the row inserted last wins.
+            row["updated_at"] = max(now, existing["updated_at"])
             await ch.insert("loom.namespaces", [row])
         if existing.get("kind") == "collection":
             # The tree last, and on every delete: only it decides access, so a
@@ -739,7 +743,6 @@ async def handle_namespace_browse(
         "(toString(n.classification) != 'restricted' "
         "OR (ifNull(n.kind, 'memory') = 'code' AND toString(n.join_policy) = 'approval'))",
     ]
-    from server.auth.sharing import COLLECTION_PREFIX
 
     # A collection is never joined (its grants open it), so it is not in the directory.
     where.append("NOT startsWith(n.namespace, {col_prefix:String})")

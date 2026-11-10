@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from server.auth.directory import ClassificationUnavailable, directory
 from server.auth.fail_closed import note_answered_unverified, refused_unverified, reset
 from server.core.ch import set_quota_key
+from server.core.principals import COLLECTION_PREFIX
 
 if TYPE_CHECKING:
     from server.auth.authz import CachedGate
@@ -273,7 +274,7 @@ async def collection_clause(org: str, column: str = "namespace") -> tuple[str, d
     return (
         f" AND (NOT startsWith({column}, {{col_prefix:String}})"
         f" OR {column} IN {{col_readable:Array(String)}})",
-        {"col_prefix": sharing.COLLECTION_PREFIX, "col_readable": readable},
+        {"col_prefix": COLLECTION_PREFIX, "col_readable": readable},
     )
 
 

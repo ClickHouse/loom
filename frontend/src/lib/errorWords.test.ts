@@ -65,6 +65,16 @@ describe("humanizeError", () => {
     // Each row: what the server answered, and the one line the person reads.
     const rows: [string, ConstructorParameters<typeof ApiError>[0], string][] = [
       [
+        "a taken collection name says why, with nothing about trying again",
+        {
+          status: 409,
+          code: "COLLECTION_NAME_TAKEN",
+          message: "the name 'col-x' belonged to a deleted collection in acme: a deleted name is never used again",
+          detail: { category: "input", retryable: false, deleted: true, suggestion: "col-x-ab12" },
+        },
+        "Name taken: the name 'col-x' belonged to a deleted collection in acme: a deleted name is never used again.",
+      ],
+      [
         "a precondition that is not an edit race names no race",
         {
           status: 409,

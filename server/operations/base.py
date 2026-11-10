@@ -122,6 +122,10 @@ class Operation:
     # hashed). `loom.audit_log` outlives erasures, so an op whose input carries a
     # credential leaves it out.
     audit_subject: Callable[[Any, Any], dict[str, Any]] | None = None
+    # The namespace an `audit=True` row is filed under, from the input and the
+    # response, when the op picks it (a collection created from its title); None
+    # files it under the namespace the gate authorized.
+    audit_namespace: Callable[[Any, Any], str] | None = None
 
     @property
     def read_only(self) -> bool:

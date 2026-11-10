@@ -11,7 +11,7 @@ import pytest
 
 from server.auth import context
 from server.auth.jwt import AuthInfo
-from server.core.errors import PreconditionFailedError
+from server.core.errors import CollectionNameTakenError
 from server.identity.api.models_collections import CollectionCreateInput
 from server.identity.app import collections
 from server.identity.app.directory import IdentityDirectory
@@ -82,7 +82,7 @@ def test_a_collection_name_holding_data_is_taken(
         if admin:
             assert asyncio.run(create).created
         else:
-            with pytest.raises(PreconditionFailedError, match="taken"):
+            with pytest.raises(CollectionNameTakenError, match="already used"):
                 asyncio.run(create)
     finally:
         context.set_current_auth(None)

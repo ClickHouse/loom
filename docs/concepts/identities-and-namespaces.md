@@ -361,8 +361,10 @@ How a caller gets a token at all is the deployment's identity mode
 A collection is a namespace named `col-…` that only grants open: no token claim or org
 admin role reaches it. A collection can sit inside another and inherit its grants, and a
 grant on one can name a `user:`, `group:` or `agent:` principal, or `everyone` (every
-request acting in the org), besides a person or a service account.
-[Sharing knowledge](../architecture/sharing.md) describes the model.
+request acting in the org), besides a person or a service account. People name a
+collection by its title, and the server derives its `col-…` name from it; the name stays
+its address for good. [Sharing knowledge](../architecture/sharing.md) describes the model
+and how a name is derived.
 
 When `LOOM_IDENTITY_PROVIDER` is empty the server infers the mode: auth off gives
 `single-user`, auth on with `LOOM_SELF_SIGNUP=open` gives `trust-network`, auth on

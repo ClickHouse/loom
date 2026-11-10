@@ -5,6 +5,7 @@ three new tables hold."""
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -622,8 +623,6 @@ def test_no_collection_is_hidden_with_auth_off_or_from_a_platform_admin(
 
 def test_a_document_rewrite_keeps_who_wrote_it(monkeypatch: pytest.MonkeyPatch) -> None:
     """A metadata edit or a delete writes the next version from the row read."""
-    from datetime import datetime
-
     from server.knowledge.store import documents
 
     stored = {
@@ -718,7 +717,13 @@ def test_a_collection_delete_cut_short_is_closed_by_its_retry(
 
     from server.identity.app import collections, namespace
 
-    directory = {"org": ORG, "namespace": "col-hr", "kind": "collection", "active": True}
+    directory = {
+        "org": ORG,
+        "namespace": "col-hr",
+        "kind": "collection",
+        "active": True,
+        "updated_at": datetime(2026, 1, 1),
+    }
     retired: list[str] = []
 
     @asynccontextmanager
@@ -830,8 +835,6 @@ def test_the_gate_never_takes_me_as_a_namespace_name(auth: str | None) -> None:
 
 
 def test_a_write_of_the_same_text_keeps_its_author_and_new_text_takes_the_writer() -> None:
-    from datetime import datetime
-
     from server.knowledge.app.writes import _author_for
     from server.knowledge.store.documents import DocumentRow
 
@@ -992,8 +995,6 @@ def test_blanking_the_issuer_keeps_a_revoke_that_landed_meanwhile(
 ) -> None:
     """The row is read again under its claim: a revoke written after the list
     read is carried, never undone by the rewrite."""
-    from datetime import datetime
-
     from server.identity.app import grants
 
     listed = _grant_row("user:carol", version=5, granted_by="user:bob")
@@ -1118,8 +1119,6 @@ def test_a_collection_whose_create_stopped_short_is_still_deleted(
 def test_an_end_users_original_never_passes_to_another_writer_of_new_text() -> None:
     """Without fresh bytes a write carries the prior original, but not an end
     user's to someone else: that user's erasure must still find it."""
-    from datetime import datetime
-
     from server.knowledge.app.writes import _original_of
     from server.knowledge.store.documents import DocumentRow
 

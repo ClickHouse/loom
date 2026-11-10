@@ -7886,7 +7886,9 @@ class CollectionCreateInput(TypedDict, total=False):
     "Create a collection: a namespace read and written only through grants."
 
     org: Required[str]
-    namespace: Required[str]
+    namespace: NotRequired[str]
+    title: NotRequired[str]
+    derive_name: NotRequired[bool]
     parent: NotRequired[str]
     description: NotRequired[str]
 
@@ -7896,6 +7898,8 @@ class CollectionCreateBody(TypedDict, total=False):
 
     org: NotRequired[str]
     namespace: NotRequired[str]
+    title: NotRequired[str]
+    derive_name: NotRequired[bool]
     parent: NotRequired[str]
     description: NotRequired[str]
 
@@ -7904,6 +7908,7 @@ class CollectionCreateOutput(TypedDict, total=False):
     namespace: Required[str]
     parent: Required[str]
     created: Required[bool]
+    title: NotRequired[str]
 
 
 class CollectionDeleteInput(TypedDict, total=False):
@@ -7954,6 +7959,7 @@ class CollectionEntry(TypedDict, total=False):
     personal: Required[bool]
     role: Required[str]
     description: NotRequired[str]
+    title: NotRequired[str]
 
 
 class CollectionMoveInput(TypedDict, total=False):

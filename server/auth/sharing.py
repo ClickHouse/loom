@@ -26,7 +26,14 @@ from typing import TYPE_CHECKING, Any
 
 from server.core import grant_cache
 from server.core.errors import BACKEND_NOT_NOW
-from server.core.principals import EVERYONE, PERSONAL_PREFIX, USER, personal_name, principal_id
+from server.core.principals import (
+    COLLECTION_PREFIX,
+    EVERYONE,
+    PERSONAL_PREFIX,
+    USER,
+    personal_name,
+    principal_id,
+)
 from server.operations.base import Role, rank_role
 
 if TYPE_CHECKING:
@@ -37,15 +44,14 @@ log = logging.getLogger(__name__)
 # Ancestors a collection inherits from, at most; `collection.move` refuses a
 # deeper tree.
 MAX_DEPTH = 8  # not a setting: a lower value would cut inheritance in trees already stored
-# A collection is known by its name, so the gate needs no read to tell one,
-# and nothing that fails to load can let another rule admit one. The prefixes
-# are reserved: `namespace.register` and `namespace.restore` refuse them.
-COLLECTION_PREFIX = "col-"
 # What a request names its end user's personal collection by.
 PERSONAL_ALIAS = "@me"
 
 
 def is_collection(namespace: str) -> bool:
+    """A collection is known by its name, so the gate needs no read to tell one, and
+    nothing that fails to load can let another rule admit one. The prefixes are
+    reserved: `namespace.register` and `namespace.restore` refuse them."""
     return namespace.startswith(COLLECTION_PREFIX)
 
 

@@ -17,7 +17,9 @@ Create a collection: a namespace read and written only through grants.
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
-| `namespace` | `str` | required | The collection's name, also its namespace: 'col-' then lowercase letters, digits and '-'. |
+| `namespace` | `str` | `''` | The collection's name, also its namespace ('col-' then lowercase letters, digits and '-'), ignored with `derive_name`. |
+| `title` | `str` | `''` | What the collection is called on screen (at most 200 characters, no control or invisible ones; titles repeat across the org); '' for none. |
+| `derive_name` | `bool` | `False` | Derive the name from `title`, not `namespace`; a title used under the parent (top level: the caller's own) answers that one. |
 | `parent` | `str` | `''` | The collection it sits in and inherits grants from; '' for a top-level one. |
 | `description` | `str` | `''` | What the collection holds, shown beside its name (at most 2000 characters); '' for none. |
 
@@ -25,7 +27,8 @@ Create a collection: a namespace read and written only through grants.
 | --- | --- | --- |
 | `namespace` | `str` | The namespace the op reads or writes. |
 | `parent` | `str` | The collection it sits in; '' for a top-level one. |
-| `created` | `bool` | False when the caller's collection already existed there |
+| `created` | `bool` | False when the collection already existed: the caller's own by that name, or the one the title already names there. |
+| `title` | `str` | The collection's title; '' for none. |
 
 ## `collection.delete`
 
@@ -59,7 +62,7 @@ List the collections the caller can read, by name.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `collections` | `list[_CollectionEntry]` | The collections the caller can read on this page, by name, with the caller's role and the collection's description. |
+| `collections` | `list[_CollectionEntry]` | The collections the caller can read on this page, by name, with the caller's role and the collection's title and description. |
 | `next_cursor` | `str \| None` | Pass as `cursor` for the next page; none on the last. |
 
 ## `collection.move`

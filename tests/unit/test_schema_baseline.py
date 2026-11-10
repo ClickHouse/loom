@@ -145,6 +145,7 @@ def test_the_journal_files() -> None:
         "089_code_repo_row_kind.sql",
         "090_sql_surface.sql",
         "091_erasure_census.sql",
+        "092_collection_titles.sql",
     ]
 
 

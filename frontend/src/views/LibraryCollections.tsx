@@ -11,6 +11,7 @@ import { toast, toastError } from "../components/Toast";
 import { CreateCollectionDialog, parentChoices } from "../flows/CreateCollectionDialog";
 import { MoveCollectionDialog } from "../flows/MoveCollectionDialog";
 import { MembersDialog } from "../flows/MembersDialog";
+import { collectionTitle, distinctTitle, repeatedTitles } from "../lib/collections";
 import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
 import { useStore } from "../lib/state";
@@ -26,10 +27,12 @@ const ROLE_LABEL: Record<string, string> = { viewer: "Viewer", writer: "Writer",
 /** A description beside a name is cut to this many characters; the name never is. */
 const LABEL_TEXT = 80;
 
-/** What a collection is called on screen: its description beside its name, and "My files"
- *  for the user's own (`@me`). */
-export function collectionLabel(c: CollectionEntry): string {
+/** What a collection is called on screen: its title (its name when it has none, and both
+ *  when another collection shows the same title) with its description beside it, and
+ *  "My files" for the user's own (`@me`). */
+export function collectionLabel(c: CollectionEntry, repeated: Set<string> = new Set()): string {
   if (c.personal) return "My files";
+  const shown = distinctTitle(c, repeated);
   // By character as a reader sees it, so a cut never splits an emoji.
   // (By code point where the browser has no Intl.Segmenter.)
   const description = c.description ?? "";
@@ -38,7 +41,7 @@ export function collectionLabel(c: CollectionEntry): string {
       ? Array.from(new Intl.Segmenter().segment(description), (s) => s.segment)
       : Array.from(description);
   const d = text.length > LABEL_TEXT ? `${text.slice(0, LABEL_TEXT - 1).join("")}…` : text.join("");
-  return d ? `${c.namespace} · ${d}` : c.namespace;
+  return d ? `${shown} · ${d}` : shown;
 }
 
 /** The collections in tree order, each parent before its children, with its depth. A
@@ -53,9 +56,11 @@ export function treeOrder(rows: CollectionEntry[]): { c: CollectionEntry; depth:
     if (siblings) siblings.push(c);
     else children.set(parent, [c]);
   }
-  // The user's own collection first, then by name.
+  // The user's own collection first, then by what is shown, then by name.
   const order = (a: CollectionEntry, b: CollectionEntry) =>
-    Number(b.personal) - Number(a.personal) || a.namespace.localeCompare(b.namespace);
+    Number(b.personal) - Number(a.personal) ||
+    collectionTitle(a).localeCompare(collectionTitle(b)) ||
+    a.namespace.localeCompare(b.namespace);
   const out: { c: CollectionEntry; depth: number }[] = [];
   const seen = new Set<string>();
   const visit = (c: CollectionEntry, depth: number) => {
@@ -174,13 +179,14 @@ export function LibraryCollections({
     setMoving(null);
   }, [place]);
   const ordered = useMemo(() => treeOrder(rows ?? []), [rows]);
+  const repeated = useMemo(() => repeatedTitles(rows ?? []), [rows]);
+  const byName = useMemo(() => new Map((rows ?? []).map((c) => [c.namespace, c])), [rows]);
   const parents = useMemo(() => parentChoices(rows ?? []), [rows]);
 
   const onDelete = async (c: CollectionEntry) => {
     const ok = await confirmAction({
-      title: `Delete ${c.namespace}?`,
-      message:
-        "Its documents, their original files and its memories are erased from disk, its grants stop applying, and the collections inside it become top-level. The name cannot be used again.",
+      title: `Delete ${collectionTitle(c)}?`,
+      message: `Its documents, their original files and its memories are erased from disk, its grants stop applying, and the collections inside it become top-level. Its address ${c.namespace} is retired for good.`,
       confirmLabel: "Delete collection",
       danger: true,
     });
@@ -188,11 +194,11 @@ export function LibraryCollections({
     try {
       const r = await deleteCollection(org, c.namespace);
       if (r.erasure_status && r.erasure_status !== "completed") {
-        toast(`Deleted ${c.namespace}; erasing what it held is being retried`, "info", {
+        toast(`Deleted ${collectionTitle(c)}; erasing what it held is being retried`, "info", {
           detail: `erasure ${r.erasure_id}`,
         });
       } else {
-        toast(`Deleted ${c.namespace}`, "ok");
+        toast(`Deleted ${collectionTitle(c)}`, "ok");
       }
       onDeleted?.(c.namespace);
       // Only while it is still the one shown: a Back during the confirm moved elsewhere. A
@@ -202,16 +208,21 @@ export function LibraryCollections({
       // The header's namespace is gone with it: the header picks the next one.
       if (c.namespace === namespace) useStore.getState().openNamespacePicker(true);
     } catch (e) {
-      toastError(`Couldn't delete ${c.namespace}`, e);
+      toastError(`Couldn't delete ${collectionTitle(c)}`, e);
     }
   };
 
+  // A parent the caller reads by its title; one it cannot read by the name the list gives.
+  const parentShown = (parent: string) => {
+    const p = byName.get(parent);
+    return p ? collectionTitle(p) : parent;
+  };
   // What the place shown is, behind the info button beside the select (and the role, which
   // a phone has no room to print).
   const about = current
     ? current.personal
       ? "Your own files: no one else's grants reach them."
-      : `${ROLE_LABEL[current.role] ?? current.role} of a collection: only its members read it${current.parent ? `, with everyone who reaches ${current.parent}` : ""}. Agents find it with knowledge.search.`
+      : `${ROLE_LABEL[current.role] ?? current.role} of a collection: only its members read it${current.parent ? `, with everyone who reaches ${parentShown(current.parent)}` : ""}. Agents find it with knowledge.search at its address ${current.namespace}.`
     : `${namespace === null ? "" : "The namespace picked at the top. "}A collection is a shelf of documents that only its members read; agents search the ones they can read.`;
   const shownRef = useRef<string | null>(null);
   shownRef.current = current?.namespace ?? null;
@@ -245,9 +256,12 @@ export function LibraryCollections({
             <Select.Item key={c.namespace} value={c.namespace}>
               {/* Indented, not marked: the closed select and a screen reader read the name. */}
               <span className="collection-depth" style={{ "--depth": depth } as CSSProperties}>
-                {collectionLabel(c)}
-                {/* The whole description, unseen, so the select's search finds a word past the cut. */}
-                {c.description && <span hidden>{` ${c.description}`}</span>}
+                {collectionLabel(c, repeated)}
+                {/* The name a title hides and the whole description, unseen, so the select's
+                    search finds them. */}
+                {(c.title || c.description) && (
+                  <span hidden>{` ${c.title ? c.namespace : ""} ${c.description ?? ""}`}</span>
+                )}
               </span>
             </Select.Item>
           ))}
@@ -266,7 +280,7 @@ export function LibraryCollections({
             {about}
           </Popover.Content>
         </Popover>
-        {items.length > 0 && current && <RowMenu name={current.namespace} items={items} />}
+        {items.length > 0 && current && <RowMenu name={collectionTitle(current)} items={items} />}
         {/* Its words only where there is room; a phone shows the plus. */}
         <Button
           type="secondary"
