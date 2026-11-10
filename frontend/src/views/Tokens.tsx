@@ -26,7 +26,7 @@ import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal } from "../components/ui/Modal";
 import { IconButton } from "../components/IconButton";
 import { isMemoryNamespace } from "../lib/namespace";
-import { useMedia } from "../lib/useMedia";
+import { COARSE_POINTER, useMedia } from "../lib/useMedia";
 import {
   CLIENTS,
   configPreviewText,
@@ -279,7 +279,10 @@ function SearchOrder({
                 e.preventDefault();
                 setOver(i);
               }}
-              onDragLeave={() => setOver((o) => (o === i ? null : o))}
+              onDragLeave={(e) => {
+                // A move between the row's own parts is no leave.
+                if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver((o) => (o === i ? null : o));
+              }}
               onDrop={(e) => {
                 e.preventDefault();
                 if (dragging !== null) onMove(dragging, i);
@@ -358,9 +361,6 @@ function SearchOrder({
     </div>
   );
 }
-
-/** A touch screen, where the arrows move a row and no grip shows. */
-const COARSE_POINTER = "(pointer: coarse)";
 
 type RepoInfo = Record<string, { repo: string; branch: string; classification?: string }>;
 
@@ -478,7 +478,7 @@ function TokenForm({
   const writableMemory = eligibleNs
     .filter((n) => isMemoryNamespace(n.namespace, mine) && writes(grantRoleOf(mine, n.namespace)))
     .map((n) => n.namespace);
-  const listedWrites = selectedNs.some((ns) => isMemoryNamespace(ns, mine) && writes(nsRole[ns] ?? "viewer"));
+  const listedWrites = selectedNs.some((ns) => isMemoryNamespace(ns, mine) && writes(nsRole[ns]));
   const everythingHome =
     homeEdited && writableMemory.includes(homeEdited)
       ? homeEdited
@@ -507,8 +507,8 @@ function TokenForm({
       setNsRole((m) => ({ ...m, [ns]: grantRoleOf(mine, ns) }));
     }
   };
-  // The order the ticked namespaces are searched in: moved by drag, or by a row's arrows.
   const label = nsLabeler(repoInfo);
+  // The order the ticked namespaces are searched in: moved by drag, or by a row's arrows.
   const moveTo = (ns: string, to: number) => {
     const from = selectedNs.indexOf(ns);
     if (from < 0 || from === to) return;
@@ -565,7 +565,7 @@ function TokenForm({
       // Ordered = read priority; repositories are read-only.
       namespaces = selectedNs.map((ns) => ({
         namespace: ns,
-        role: isRepo(ns) ? "viewer" : (nsRole[ns] ?? grantRoleOf(mine, ns)),
+        role: isRepo(ns) ? "viewer" : nsRole[ns],
       }));
     }
     setBusy(true);
@@ -688,7 +688,7 @@ function TokenForm({
               order={selectedNs}
               label={label}
               isRepo={isRepo}
-              role={(ns) => nsRole[ns] ?? grantRoleOf(mine, ns)}
+              role={(ns) => nsRole[ns]}
               grant={(ns) => grantRoleOf(mine, ns)}
               onRole={(ns, r) => setNsRole((m) => ({ ...m, [ns]: r }))}
               onMove={moveTo}
