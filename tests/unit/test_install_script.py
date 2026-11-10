@@ -767,20 +767,47 @@ def test_no_tracked_file_pipes_the_installer_into_sh() -> None:
     line ending in `\\` or `|` joins the next; a URL held in a variable is not seen."""
     piped = []
     own = Path(__file__).resolve().relative_to(ROOT).as_posix()  # holds the examples below
-    for name in tracked():
+    for name in tracked(*_TEXT_ROOTS):
         if name == own:
             continue
         try:
-            text = (ROOT / name).read_text()
+            text = (ROOT / name).read_text(encoding="utf-8")
         except (UnicodeDecodeError, IsADirectoryError, FileNotFoundError):
             continue  # a binary file, a submodule, a file deleted in the work tree
-        # A line ending in `\` or `|` goes on in the next one.
-        lines = re.sub(
-            r"(\\|\|)\n[ \t]*", lambda m: " | " if m[1] == "|" else " ", text
-        ).splitlines()
-        if any("install.sh" in line and _runs_a_download(line) for line in lines):
+        if any("install.sh" in line and _runs_a_download(line) for line in _logical_lines(text)):
             piped.append(name)
     assert piped == []
+
+
+# Where a command a user is shown can live; a source archive's walk stays out of
+# installed dependencies.
+_TEXT_ROOTS = (
+    "README.md", "install.sh", "docs", "scripts", "integrations", "sdk", "server",
+    "frontend/src", ".claude", ".github",
+)  # fmt: skip
+
+
+def _logical_lines(text: str) -> list[str]:
+    """Lines as a shell reads them: one ending in `\\` goes on in the next, and so does
+    one ending in a pipe, unless it is a Markdown table row."""
+    out: list[str] = []
+    joining = False
+    for line in text.splitlines():
+        out[-1:] = [out[-1] + " " + line.strip()] if joining and out else [*out[-1:], line]
+        last = out[-1].rstrip()
+        joining = last.endswith("\\") or (last.endswith("|") and not line.lstrip().startswith("|"))
+        if last.endswith("\\"):
+            out[-1] = last[:-1]
+    return out
+
+
+def test_a_table_row_does_not_join_the_next() -> None:
+    assert _logical_lines("| `install.sh` | x |\n| sh | y |") == [
+        "| `install.sh` | x |",
+        "| sh | y |",
+    ]
+    assert _logical_lines("curl x/install.sh |\n  sh") == ["curl x/install.sh | sh"]
+    assert _logical_lines("curl x/install.sh \\\n  | sh") == ["curl x/install.sh  | sh"]
 
 
 @pytest.mark.parametrize(
