@@ -607,7 +607,8 @@ async def _run_handler(op: Operation, payload: Any, call: _HttpCall) -> tuple[An
             # request is not a mute row.
             error=_http_exception_note(he),
         )
-        _record_failure(op, identity, elapsed_ms, "HANDLER_HTTP_ERROR")
+        code = he.detail.get("code") if isinstance(he.detail, dict) else None
+        _record_failure(op, identity, elapsed_ms, str(code or "HANDLER_HTTP_ERROR"))
         detail = handler_failure_detail(he.detail, he.status_code, op.idempotent)
         raise HTTPException(he.status_code, detail=detail, headers=he.headers) from he
     except LoomServerError as le:

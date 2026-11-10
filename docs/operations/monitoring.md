@@ -224,7 +224,7 @@ finds earlier writes not yet there waits for them, up to `LOOM_PG_PROJECTION_WAI
 
 A search's worst wait under a writer that stopped before publishing is its lease
 (`LOOM_PG_REQUEST_LEASE_SECONDS`): a waiting search publishes an expired delivery itself.
-That is above the default wait, so it shows as `outcome="behind_503"`, not as a latency.
+That is above the default wait, so it shows as `outcome="deadline"`, not as a latency.
 Readiness does not depend on any of these: every replica reads the same Postgres, so a
 lag-driven readiness check would take every replica out of rotation at once.
 
@@ -232,10 +232,10 @@ Alerts:
 
 | Signal                                                         | Alert when                                        | Means                                                        | First step                                                                                       |
 | -------------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| `loom.pg.search_wait_ms{outcome="behind_503"}` rate            | above 0 for 5 minutes                             | searches answer 503 while ClickHouse is behind               | ClickHouse reachability, then `loom.pg.backlog` and the `pg_delivery` worker's passes            |
+| `loom.pg.search_wait_ms{outcome="deadline"}` rate              | above 0 for 5 minutes                             | reads wait to the deadline: a search answers 503             | ClickHouse reachability, then `loom.pg.backlog` and the `pg_delivery` worker's passes            |
 | `loom.pg.oldest_pending_age_s{source="memory"}`                | above the target for 10 minutes                   | the delivery worker is not keeping up, or ClickHouse refuses | `GET /v1/health?include=postgres` → `postgres.backlog`, the `pg_delivery` worker status          |
 | `loom.pg.backlog{state="parked"}`                              | above 0                                           | a delivery ClickHouse kept refusing                          | the delivery's `last_error` ([storage authority](../architecture/storage-authority.md#delivery)) |
-| `loom.pg.backlog_reading_age_s`, or no `loom.pg.backlog` point | older than 3 export periods                       | the reading stopped: no lease holder, or its pass fails      | `loom.worker.consecutive_failures{worker="pg_delivery"}`                                         |
+| `loom.pg.backlog_reading_age_s`, or no `loom.pg.backlog` point | older than 3 export periods                       | the reading stopped: no lease holder, or its pass fails      | the `backlog not read` warning in the `pg_delivery` and `knowledge_pg_delivery` workers' logs    |
 | `loom.ch.inserts` rate per table                               | well above the deployment's write rate per second | many small inserts, which make many parts                    | the publish interval (`LOOM_PG_PUBLISH_INTERVAL_MS`) and `clickhouse_parts` in `ops.health`      |
 
 ### Integrity invariants

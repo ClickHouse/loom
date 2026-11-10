@@ -418,9 +418,9 @@ async def _pg_ok() -> bool:
 
 
 async def _postgres_block() -> dict[str, object]:
-    """How commits are acknowledged (`pg_profile.standby_now`), and the deliveries, audit
+    """How commits are acknowledged (`pg_profile.standby_now`); the deliveries, audit
     rows and knowledge document deliveries ClickHouse kept refusing past the attempt cap;
-    each None when unread."""
+    and each source's backlog (`_backlog`); each None when unread."""
     from server.core import pg_profile
     from server.knowledge.store import pg_documents
     from server.memory.store import pg_memory
@@ -445,18 +445,17 @@ _backlog_cache: dict[str, Any] = {"at": None, "value": None}
 
 
 async def _backlog() -> dict[str, dict[str, Any]]:
-    """Each source's delivery backlog (`pg_pipeline`): the lease holder's last reading
-    when fresh, else a reading of this process's own, kept
-    LOOM_PG_BACKLOG_HEALTH_CACHE_SECONDS."""
-    import dataclasses
-
+    """Each source's delivery backlog (`pg_pipeline`) with the reading's age: the workers
+    lease holder's last reading when fresh, else a reading of this process's own, kept
+    LOOM_PG_BACKLOG_HEALTH_CACHE_SECONDS. The parked counts are the block's own fields."""
     from server.knowledge.store import pg_documents
     from server.memory.store import pg_memory
     from server.observability import pg_pipeline
+    from server.observability.otel_probes import _census_reads_here
 
-    readings = pg_pipeline.fresh_backlog()
+    now = time.monotonic()
+    readings = pg_pipeline.fresh_readings() if _census_reads_here() else {}
     if len(readings) < len(pg_pipeline.SOURCES):
-        now = time.monotonic()
         at = _backlog_cache["at"]
         if at is None or now - at >= settings.pg_backlog_health_cache_seconds:
             cap = settings.pg_backlog_count_cap
@@ -466,8 +465,17 @@ async def _backlog() -> dict[str, dict[str, Any]]:
                 "knowledge": await pg_documents.backlog(cap),
             }
             _backlog_cache["at"] = now
-        readings = _backlog_cache["value"]
-    return {source: dataclasses.asdict(r) for source, r in readings.items()}
+        age = now - _backlog_cache["at"]
+        readings = {s: (r, age) for s, r in _backlog_cache["value"].items()}
+    return {
+        source: {
+            "pending": r.pending,
+            "oldest_age_s": r.oldest_age_s,
+            "capped": r.capped,
+            "reading_age_s": round(age, 1),
+        }
+        for source, (r, age) in readings.items()
+    }
 
 
 async def _bounded(read: Awaitable[Any], default: Any) -> Any:

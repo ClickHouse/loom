@@ -198,12 +198,13 @@ def _handler_failed(
         # Full traceback at ERROR — the JSON-RPC error carries only the
         # request id, so this line is the only place the cause is visible.
         log.exception("mcp.internal_error %s request_id=%s: %s", op.name, request_id, e)
+    error_code = str((refused or failure or {}).get("code") or "INTERNAL_ERROR")
     _emit_mcp_event(
         op.name,
         arguments,
         elapsed_ms,
         success=False,
-        error_code=str((refused or failure or {}).get("code") or "INTERNAL_ERROR"),
+        error_code=error_code,
         request_id=request_id,
         error=e,
     )
@@ -219,7 +220,7 @@ def _handler_failed(
             success=False,
             duration_ms=elapsed_ms,
             transport="mcp",
-            error_code=str((refused or failure or {}).get("code") or "INTERNAL_ERROR"),
+            error_code=error_code,
         )
         # Scope the FAILING span too, so MCP errors filter by tenant.
         _otel.set_loom_attributes(

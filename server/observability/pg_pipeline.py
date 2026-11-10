@@ -3,8 +3,8 @@
 
 - `loom.pg.search_wait_ms`: what a read paid at the barrier when ClickHouse was behind
   (`pg_validation.admit`), by op, outcome and traffic class: the user-visible time
-  from a write to its being searchable. It stops at LOOM_PG_PROJECTION_WAIT_MS; past it
-  the read answers 503 (`outcome=behind_503`).
+  from a write to its being searchable. It stops at LOOM_PG_PROJECTION_WAIT_MS
+  (`outcome=deadline`): a search then answers 503, a report that may skip it reads on.
 - `loom.pg.projection_lag_ms`: from a revision's commit to its last search target
   landing, measured on Postgres's clock as the delivery clears (`pg_memory._complete_in`),
   by path: the writer's own flush or a redelivery.
@@ -12,8 +12,8 @@
   reading per delivery pass, taken first in the pass by the worker that owns the source,
   exported only by the process holding the workers lease, dropped once older than two
   export periods (`loom.pg.backlog_reading_age_s` says how old it is).
-- `loom.ch.inserts` and `loom.ch.insert_rows` {table}: the inserts of memory rows, search
-  documents and audit rows, which drive ClickHouse's part creation.
+- `loom.ch.inserts` and `loom.ch.insert_rows` {table}: every insert of memory rows, search
+  documents and audit rows, under either authority, which drive ClickHouse's part creation.
 
 Labels are closed enums; none names a namespace, a key or a user.
 """
@@ -60,12 +60,17 @@ def set_backlog(source: str, reading: Backlog) -> None:
         pass
 
 
-def fresh_backlog() -> dict[str, Backlog]:
-    """The readings younger than two export periods."""
+def fresh_readings() -> dict[str, tuple[Backlog, float]]:
+    """The readings younger than two export periods, each with its age in seconds."""
     limit = 2 * float(settings.otel_metrics_export_interval_s)
     now = time.monotonic()
     with _lock:
-        return {s: r for s, (r, at) in _readings.items() if now - at <= limit}
+        return {s: (r, now - at) for s, (r, at) in _readings.items() if now - at <= limit}
+
+
+def fresh_backlog() -> dict[str, Backlog]:
+    """The readings younger than two export periods."""
+    return {s: r for s, (r, _) in fresh_readings().items()}
 
 
 def _reading_ages() -> dict[str, float]:
@@ -125,7 +130,7 @@ def register(meter: Any) -> None:
         name="loom.pg.search_wait_ms",
         description="Time a read waited at the Postgres barrier for ClickHouse to hold "
         "the namespace's writes, by op (loom.operation), outcome "
-        "(passed|behind_503) and traffic class; only reads that found it behind",
+        "(passed|deadline) and traffic class; only reads that found it behind",
         unit="ms",
     )
     _projection_lag = meter.create_histogram(
@@ -145,12 +150,12 @@ def register(meter: Any) -> None:
         description="Rows in those inserts, by table",
         unit="1",
     )
-    from server.observability.otel_probes import _census_reads_here
+    from server.observability import otel_probes
 
     def _backlog(_options: Any) -> Any:
         from opentelemetry.metrics import Observation
 
-        if not _census_reads_here():
+        if not otel_probes._census_reads_here():
             return []
         out = []
         for source, r in fresh_backlog().items():
@@ -161,7 +166,7 @@ def register(meter: Any) -> None:
     def _oldest(_options: Any) -> Any:
         from opentelemetry.metrics import Observation
 
-        if not _census_reads_here():
+        if not otel_probes._census_reads_here():
             return []
         return [
             Observation(r.oldest_age_s, {"source": source})
@@ -172,7 +177,7 @@ def register(meter: Any) -> None:
     def _ages(_options: Any) -> Any:
         from opentelemetry.metrics import Observation
 
-        if not _census_reads_here():
+        if not otel_probes._census_reads_here():
             return []
         return [Observation(age, {"source": s}) for s, age in _reading_ages().items()]
 
