@@ -338,7 +338,8 @@ def import_specs(node: Any, source: bytes) -> list[str]:
     `import a.b as c, d` → ['a.b', 'd']; `from a.b import x, y as z` →
     ['a.b', 'a.b.x', 'a.b.y'] (a member may be a submodule; the ingest keeps
     the specs a file satisfies); `from . import m` → ['.', '.m'];
-    `from ..p import q` → ['..p', '..p.q']; `from m import *` → ['m']."""
+    `from ..p import q` → ['..p', '..p.q']; `from m import *` → ['m']. A member whose
+    joined spec would reach `_MAX_SPEC_CHARS` is left out, the module kept."""
     out: list[str] = []
     if node.type == "import_statement":
         for c in node.named_children:

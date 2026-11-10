@@ -307,7 +307,7 @@ def test_every_registered_lane_has_a_sample_that_reads_as_it() -> None:
 
 @pytest.mark.parametrize("lang", _registered_lanes())
 def test_a_registered_lane_costs_linear_time(lang: str) -> None:
-    from tests.unit.lane_walks import KNOWN_SLOW
+    from tests.unit.lane_walks import KNOWN_SLOW, SHAPES
 
     done = subprocess.run(
         [sys.executable, "-c", _REGISTRY_CHILD, lang],
@@ -317,11 +317,9 @@ def test_a_registered_lane_costs_linear_time(lang: str) -> None:
         cwd=pathlib.Path(__file__).resolve().parents[2],
     )
     assert done.returncode == 0, done.stderr[-4000:]
-    from tests.unit.lane_walks import SHAPES
-
     known = KNOWN_SLOW.get(lang, ())
     timed = json.loads(done.stdout)
-    # a shape that reads as another lane is that lane's: most must read as this one
+    # a shape that reads as another lane is that lane's: at least half must read as this one
     assert len(timed) >= len(SHAPES) // 2 and set(known) <= {t[0] for t in timed}, lang
     slow, linear, reparsed = {}, set(), {}
     for shape, small, big, parsed_small, parsed_big in timed:

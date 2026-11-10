@@ -554,22 +554,25 @@ def registry_cost(lang: str) -> list[tuple[str, float, float, int, int]]:
     cost(lambda n: "a\n", 1)  # the first file of a lane loads its grammar and imports
     out = []
     for name, text in SHAPES:
-        small, bs, read_as = cost(text, _REGISTRY_N)
+        # distinct names run 4 times larger: a dedupe by a list's `in` is quadratic at C
+        # speed, under the timer's floor at 20,000 characters
+        n = 4 * _REGISTRY_N if name.startswith("numbered") else _REGISTRY_N
+        small, bs, read_as = cost(text, n)
         if read_as != as_lang:
             continue
         if small > 1.0:  # already over any linear budget: 4N would only spend the deadline
             out.append((name, small, float("inf"), bs, bs))
             continue
-        big, bb, _ = cost(text, 4 * _REGISTRY_N)
+        big, bb, _ = cost(text, 4 * n)
         if name in KNOWN_SLOW.get(lang, ()) or (big > 0.02 and big > 8 * small):
-            small = min(small, cost(text, _REGISTRY_N)[0], cost(text, _REGISTRY_N)[0])
-            big = min(big, cost(text, 4 * _REGISTRY_N)[0], cost(text, 4 * _REGISTRY_N)[0])
+            small = min(small, cost(text, n)[0], cost(text, n)[0])
+            big = min(big, cost(text, 4 * n)[0], cost(text, 4 * n)[0])
         out.append((name, small, big, bs, bb))
     return out
 
 
 # lane -> the shapes still over linear there, each a follow-up fix. The guard fails once
-# a listed shape runs within budget, so the entry goes with its fix.
+# a listed shape runs clearly in linear time, so the entry goes with its fix.
 _TEMPLATE_LITERALS = (
     "run '`'",
     "names '`abc`\\n'",

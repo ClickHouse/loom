@@ -216,7 +216,7 @@ class _Walker:
         elif t == "use_declaration":
             arg = node.child_by_field_name("argument")
             if arg is not None:
-                self.uses.update(dict.fromkeys(_use_paths(arg, self.source)))
+                _collect_use_paths(arg, self.source, "", self.uses)
         elif t in {"foreign_mod_item", "extern_block"}:
             self._body(node, scope)
 
@@ -258,18 +258,11 @@ class _Walker:
         self._body(node, (*scope, type_name))
 
 
-def _use_paths(arg: Any, source: bytes) -> list[str]:
-    """The module paths a `use` argument names, one per leaf, distinct: `a::{b, c::D}`
-    → `a::b`, `a::c::D`; `a::*` → `a`; `a as b` → `a`. A joined path of
-    `_MAX_USE_CHARS` or more is dropped."""
-    out: dict[str, None] = {}
-    _collect_use_paths(arg, source, "", out)
-    return list(out)
-
-
 def _collect_use_paths(arg: Any, source: bytes, above: str, out: dict[str, None]) -> None:
-    """Each leaf's path into `out`: `above` is the joined path of the enclosing lists,
-    so each leaf's path is built once and every level adds only its own work."""
+    """The module paths a `use` argument names, one per leaf, into `out`: `a::{b, c::D}`
+    → `a::b`, `a::c::D`; `a::*` → `a`; `a as b` → `a`. `above` is the joined path of the
+    enclosing lists, so each leaf's path is built once; a joined path of `_MAX_USE_CHARS`
+    or more is dropped."""
 
     def leaf(p: str) -> None:
         if not above:
