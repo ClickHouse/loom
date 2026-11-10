@@ -173,6 +173,23 @@ describe("AssistantChat", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(shown);
   });
 
+  it("says a refusal with no lead of its own once, with one retry wait", async () => {
+    answers.push(
+      refusal(503, {
+        code: "MODEL_CALL_DEFERRED",
+        message: "the model gateway is queueing calls",
+        category: "capacity",
+        retryable: true,
+        retry_after_s: 3,
+      }),
+    );
+    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    await ask("Who owns billing?");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Loom is busy: the model gateway is queueing calls. Try again in 3 s.");
+    expect(alert.textContent?.match(/Try again/g)).toHaveLength(1);
+  });
+
   it("shows an error event after part of the answer, and keeps that part", async () => {
     const s = sse();
     answers.push(() => s);

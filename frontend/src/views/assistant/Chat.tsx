@@ -46,10 +46,13 @@ const REFUSAL_LEAD: Record<string, string> = {
 function refusalText(e: unknown): string {
   if (!(e instanceof ApiError)) return humanizeError(e);
   const lead = REFUSAL_LEAD[e.code];
+  // Any other code is worded whole by humanizeError, its retry advice included.
+  if (!lead) return humanizeError(e);
   const said = (e.serverMessage || e.code).replace(/\.$/, "");
-  const text = lead ? `${lead} ${said}.` : humanizeError(e);
   const retry = e.detail.retry_after_s;
-  return typeof retry === "number" && retry > 0 ? `${text} Try again in ${Math.ceil(retry)} s.` : text;
+  return typeof retry === "number" && retry > 0
+    ? `${lead} ${said}. Try again in ${Math.ceil(retry)} s.`
+    : `${lead} ${said}.`;
 }
 
 const isAbort = (e: unknown) => e instanceof DOMException && e.name === "AbortError";
