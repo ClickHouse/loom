@@ -39,17 +39,24 @@ _NOT_READS = {
         "complete_own", "drop_unbacked", "claim_due", "failed", "release", "drop_version",
         "sweep_erasure_evidence", "sweep_settled", "keep_text", "restore_text",
     },
+    # Writes, each in its own transaction; `take` commits the token it returns.
+    "pg_jobs": {"project", "insert", "adopt", "take", "save", "request_cancel", "expire"},
 }  # fmt: skip
 
 _STORES = {
     "pg_memory": "server/memory/store/pg_memory.py",
     "pg_documents": "server/knowledge/store/pg_documents.py",
+    "pg_jobs": "server/knowledge/store/pg_jobs.py",
 }
 
 # Every module that calls a read of the journal stores, and why what it reads reaches
 # ClickHouse only durably. A new caller is classified here before it ships.
 _CALLERS = {
     "server/health.py": "counts for the health report; sends nothing",
+    "server/knowledge/app/ingest_jobs.py": "a job's status to the caller and the worker's "
+    "queue; a job reaches ClickHouse from `ingest_run._take`'s durable read or a save",
+    "server/knowledge/app/ingest_run.py": "a job is projected from a durable read or its own "
+    "save; a run's read under its token decides a save, which commits",
     "server/knowledge/app/inspect.py": "a report to the caller; sends nothing",
     "server/knowledge/app/pg_serving.py": "filters what a knowledge search serves; sends nothing",
     "server/knowledge/store/blobs.py": "keeps originals a commit owes; deletes none of them",
@@ -545,3 +552,42 @@ def test_a_retirement_stops_at_a_postgres_outage(monkeypatch: pytest.MonkeyPatch
     error = asyncio.run(pg_publish.retire_decision_records(owing, deadline=_a_lease(), ch=None))  # type: ignore[arg-type]
     assert isinstance(error, pg.PostgresUnavailableError)
     assert reads == ["a"]
+
+
+@pytest.mark.parametrize("durable_version, projected", [(3, [3]), (2, [])])
+def test_a_job_is_projected_again_only_from_a_durable_read(
+    monkeypatch: pytest.MonkeyPatch, durable_version: int, projected: list[int]
+) -> None:
+    """A job version ClickHouse lacks is read again durably first: one only the primary
+    holds (a save whose commit wait was cut off) is not sent, or a failover that lost it
+    would bring it back through `adopt`."""
+    from datetime import UTC, datetime
+
+    from server.core import pg
+    from server.knowledge.app import ingest_jobs, ingest_run
+    from server.knowledge.store import pg_jobs
+
+    now = datetime.now(UTC).replace(tzinfo=None)
+    job = {"org": "o", "namespace": "n", "ingestion_id": "i"}
+
+    def row(version: int) -> dict[str, Any]:
+        return {**job, "version": version, "state": "done", "updated_at": now}
+
+    sent: list[int] = []
+
+    async def both(*key: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+        return row(3), row(2)
+
+    async def get(*key: Any, durable: bool = False) -> dict[str, Any]:
+        assert durable
+        return row(durable_version)
+
+    async def project(r: dict[str, Any]) -> None:
+        sent.append(int(r["version"]))
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(ingest_jobs, "both", both)
+    monkeypatch.setattr(pg_jobs, "get", get)
+    monkeypatch.setattr(pg_jobs, "project", project)
+    asyncio.run(ingest_run._take(job))
+    assert sent == projected

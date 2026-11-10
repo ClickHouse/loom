@@ -1155,7 +1155,10 @@ the rules `ingestions.due` describes.
   `loom.knowledge_ingestions`, which reports and `knowledge.inspect` read. The insert is
   best effort: every version carries the whole row, so the next save repairs a version
   that did not land, and a run that finds ClickHouse behind a job's last version (an
-  ended job has no next save) projects it again. The originals sweep and a user
+  ended job has no next save) projects it again, from a durable read
+  ([only durable revisions are published](#only-durable-revisions-are-published)): a
+  version only the primary holds would otherwise come back through ClickHouse after a
+  failover lost it. The originals sweep and a user
   erasure's shared-originals check also read the open jobs' originals from Postgres
   (`owed_originals`), so a job whose projection has not landed keeps its original.
 - **Fencing.** A run takes its job under the deployment-wide lease on its id, as under
