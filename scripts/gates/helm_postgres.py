@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, urlsplit
 from scripts.gates.helm_metadata_egress import (
     EVERYTHING,
     LOOM_PODS,
+    REQUIRED,
     loom_pods,
     render,
     sets,
@@ -101,7 +102,7 @@ def check_unconfigured(docs: list[dict[str, Any]], what: str) -> None:
 
 
 def refused(want: str, *args: str) -> None:
-    cmd = ["helm", "template", "loom", str(CHART), *CLOUD, *sets("secrets.jwtSecret=" + "j" * 40)]
+    cmd = ["helm", "template", "loom", str(CHART), *CLOUD, *sets(*REQUIRED)]
     done = subprocess.run([*cmd, *args], capture_output=True, text=True)
     assert done.returncode != 0, f"the chart accepted {args}"
     assert want in done.stderr, f"unexpected refusal for {args}: {done.stderr}"
