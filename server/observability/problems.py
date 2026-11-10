@@ -62,6 +62,9 @@ class HealthState:
     worker_lease_error: str = ""
     # Why this process stopped contending for the workers lease ('' while it does).
     worker_lease_given_up: str = ""
+    # Whether some process holds the workers lease with a live renewal, as the
+    # last instance beat read it (None = not read within the live window).
+    worker_lease_holder_live: bool | None = None
     # `None` = not a server process (the doctor shell); '' = a server that
     # booted without a label.
     instance_label: str | None = None
@@ -618,33 +621,69 @@ def _deployment_problems(settings: Any, state: HealthState) -> list[Problem]:
             )
         )
     elif state.worker_lease_held is False:
-        mode = settings.workers_mode()
-        if mode == "off" and settings.background_workers == "auto":
+        if absent := _lease_absent(settings, state.worker_lease_holder_live):
+            out.append(absent)
+    return out
+
+
+_RUN_HERE = "On a ClickHouse no deployment uses, set LOOM_BACKGROUND_WORKERS=on to run them here."
+_ON_NOT_COUNTED = (
+    "A process with LOOM_BACKGROUND_WORKERS=on takes no lease, so this check cannot see it."
+)
+_START_WORKERS = "Start the workers container (or a replica with LOOM_BACKGROUND_WORKERS=auto)."
+_WHY_NO_LEASE = (
+    "`/v1/health?include=workers` shows in `workers_leader.reason` why an auto process does "
+    "not take the lease."
+)
+
+
+def _lease_absent(settings: Any, holder_live: bool | None) -> Problem | None:
+    """This process holds no workers lease: nothing when some process holds a
+    live one, a warning when none does, a note when the last instance beat has
+    not read the lease lately."""
+    if holder_live:
+        return None
+    outside = settings.auto_outside_deployment()
+    off = settings.background_workers == "off"
+    if holder_live is False:
+        if outside:
             msg = (
-                "This process runs no background workers: LOOM_BACKGROUND_WORKERS=auto runs "
-                "none outside the deployment (LOOM_DEPLOYMENT unset). Set it to on to run them."
+                "No process holds a live workers lease, and LOOM_BACKGROUND_WORKERS=auto runs "
+                f"none outside the deployment (LOOM_DEPLOYMENT unset). {_ON_NOT_COUNTED}"
             )
-        elif mode == "off":
-            msg = (
-                "This process runs no background workers (LOOM_BACKGROUND_WORKERS=off): "
-                "extraction and consolidation depend on a workers container holding the lease."
+            fix = (
+                f"{_RUN_HERE} On a shared one, check the deployment's workers process; do not "
+                "run them from this one."
             )
         else:
             msg = (
-                "This process does not hold the workers lease (LOOM_BACKGROUND_WORKERS="
-                f"{mode}): another process runs the workers, or none does yet."
+                "No process holds a live workers lease, so no auto process runs the background "
+                f"workers: extraction and consolidation wait. {_ON_NOT_COUNTED}"
             )
-        out.append(
-            Problem(
-                "workers_lease_absent",
-                "info",
-                msg,
-                "Keep LOOM_BACKGROUND_WORKERS=auto on every replica; one of them holds the "
-                "lease and runs the workers.",
-                source="workers",
-            )
+            fix = f"{_START_WORKERS} {_WHY_NO_LEASE}" if off else _WHY_NO_LEASE
+        return Problem("workers_lease_absent", "warn", msg, fix, source="workers")
+    if outside:
+        msg = (
+            "This process runs no background workers: LOOM_BACKGROUND_WORKERS=auto runs "
+            "none outside the deployment (LOOM_DEPLOYMENT unset)."
         )
-    return out
+        fix = _RUN_HERE
+    elif off:
+        msg = (
+            "This process runs no background workers (LOOM_BACKGROUND_WORKERS=off): "
+            "extraction and consolidation depend on a workers container holding the lease."
+        )
+        fix = _START_WORKERS
+    else:
+        msg = (
+            "This process does not hold the workers lease (LOOM_BACKGROUND_WORKERS=auto): "
+            "another process runs the workers, or none does yet."
+        )
+        fix = (
+            "Keep LOOM_BACKGROUND_WORKERS=auto on every replica; one of them holds the lease "
+            "and runs the workers."
+        )
+    return Problem("workers_lease_absent", "info", msg, fix, source="workers")
 
 
 def _otel_problems(settings: Any, state: HealthState) -> list[Problem]:

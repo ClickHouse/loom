@@ -232,17 +232,18 @@ Grants and `ns_roles` carry only `viewer`, `writer` or `admin`; `ORG_ADMIN` and
 
 One image serves every role. Settings decide what a process does:
 
-| Mode                | Settings                                                             | What runs                                                                               |
-| ------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| All-in-one          | `LOOM_BACKGROUND_WORKERS=auto` (default)                             | Web tier, and the workers in the process that holds the deployment's ClickHouse lease.  |
-| Web replica         | `LOOM_BACKGROUND_WORKERS=off`                                        | HTTP, MCP and the dashboard. Refreshes its own revocation snapshot and signing keyring. |
-| Workers             | `LOOM_BACKGROUND_WORKERS=on`, or `auto`                              | The supervisor and its workers; `/v1/health` still answers.                             |
-| Branch / A-B server | `LOOM_BOOT_MIGRATE=false`, `LOOM_INSTANCE_LABEL=<who>:<what>:<port>` | Serves a shared ClickHouse without applying migrations; `auto` runs no workers there.   |
+| Mode                | Settings                                                                         | What runs                                                                               |
+| ------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| All-in-one          | `LOOM_BACKGROUND_WORKERS=auto` (default)                                         | Web tier, and the workers in the process that holds the deployment's ClickHouse lease.  |
+| Web replica         | `LOOM_BACKGROUND_WORKERS=off`                                                    | HTTP, MCP and the dashboard. Refreshes its own revocation snapshot and signing keyring. |
+| Workers             | `LOOM_BACKGROUND_WORKERS=auto`, `LOOM_DEPLOYMENT=1`, `LOOM_SERVES_TRAFFIC=false` | The supervisor and its workers; `/v1/health` still answers.                             |
+| Branch / A-B server | `LOOM_BOOT_MIGRATE=false`, `LOOM_INSTANCE_LABEL=<who>:<what>:<port>`             | Serves a shared ClickHouse without applying migrations; `auto` runs no workers there.   |
 
 `LOOM_WEB_WORKERS` sets uvicorn processes per container (unset, the image starts one per
 CPU the container may use, at most one per GiB of memory and at most 8). Each runs the full
 lifespan; under `auto` the deployment's lease picks the one that runs the workers. `on`
-takes no lease, so it belongs only on a single-process workers container.
+takes no lease: each process runs its own copy of the workers, and unless an `auto` process
+holds the lease the others report `workers_lease_absent`. A workers container runs `auto`.
 
 **Leader election.** `server/workers/leader.py` (`decide_supervisor`, `keep_lease`) elects
 one supervisor per deployment through ClickHouse: key `workers_supervisor` in the Keeper

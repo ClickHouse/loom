@@ -938,3 +938,43 @@ def test_a_given_up_lease_is_a_health_problem() -> None:
         )
     }
     assert "workers_lease_given_up" in codes and "workers_lease_absent" not in codes
+
+
+class _LockCH:
+    """Answers the workers lease read."""
+
+    def __init__(self, row: Any) -> None:
+        self.row = row
+
+    async def query_one(self, sql: str, *a: Any, **k: Any) -> Any:
+        assert "_migration_lock" in sql
+        return self.row
+
+
+@pytest.mark.parametrize(
+    ("row", "live"),
+    [
+        ({"holder": "workers:7:a1", "stale": False}, True),
+        ({"holder": "workers:7:a1", "stale": True}, False),
+        (None, False),
+    ],
+)
+def test_each_beat_records_whether_some_process_holds_a_live_lease(
+    monkeypatch: pytest.MonkeyPatch, row: Any, live: bool
+) -> None:
+    from server.workers import leader
+
+    monkeypatch.setattr(leader, "_holder_read", None)
+    asyncio.run(leader.read_holder(_LockCH(row)))
+    assert leader.holder_live() is live
+
+
+def test_a_lease_read_older_than_a_live_instance_row_answers_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core import instances
+    from server.workers import leader
+
+    old = time.monotonic() - instances.live_window_s() - 1
+    monkeypatch.setattr(leader, "_holder_read", (old, True))
+    assert leader.holder_live() is None

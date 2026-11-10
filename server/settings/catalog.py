@@ -5028,9 +5028,13 @@ class RuntimeSettings(BaseModel):
         """`background_workers` as this process runs it: `auto` outside the
         deployment is `off`, so a branch server never runs the deployment's
         workers. `on` is the explicit opt-in there."""
-        if self.background_workers == "auto" and not self.deployment:
+        if self.auto_outside_deployment():
             return "off"
         return self.background_workers
+
+    def auto_outside_deployment(self) -> bool:
+        """`auto` on a process outside the deployment, which runs no workers."""
+        return self.background_workers == "auto" and not self.deployment
 
     # ---- outbound HTTP ----
     # Seconds the shared outbound HTTP clients (server/clients/_http.py: model and
