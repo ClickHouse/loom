@@ -291,6 +291,9 @@ def test_the_dev_stack_publishes_its_stores_on_loopback_only() -> None:
     for name in ("dev/ci_start_clickhouse.sh", "dev/ci_start_postgres.sh"):
         flags = re.findall(r'-p "([^"]*)"', (root / name).read_text())
         assert flags and all(f.startswith("127.0.0.1:") for f in flags), (name, flags)
+    # On the host network, so it listens on loopback itself.
+    pgch = (root / "dev/ci_start_pg_clickhouse.sh").read_text()
+    assert "--network host" in pgch and "-c listen_addresses=127.0.0.1" in pgch
 
 
 def test_allow_insecure_lets_either_start() -> None:

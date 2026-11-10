@@ -215,6 +215,8 @@ loom sql-access revoke --user acme_bi
 
 ## Querying
 
+From the org's own Postgres, see [Query Loom from Postgres](../guides/query-from-postgres.md).
+
 ```sql
 SELECT memory_key, value, updated_at
 FROM loom.sql_v1_memories

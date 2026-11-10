@@ -81,6 +81,14 @@ LOOM_BASE_URL=http://localhost:7777 make test-integration
   `LOOM_PG_STANDBY=0` (no synchronous standby) needs `LOOM_PG_STANDBY=0` in pytest's
   environment too, so the standby health test skips. Against a ClickHouse-authority server
   all but the tests that use the API alone skip.
+- `tests/integration/test_pg_clickhouse_live_ch.py` reads the
+  [SQL surface](../reference/sql-surface.md) from a Postgres with `pg_clickhouse`: start
+  one with `dev/ci_start_pg_clickhouse.sh` (host network, port 5433, so a Linux Docker host:
+  the container reaches the ClickHouse published on 127.0.0.1; `LOOM_PGCH_POSTGRES` and
+  `LOOM_PGCH_VERSION` pick the image), and set
+  `LOOM_PGCH_DSN=postgres://app:appdev@127.0.0.1:5433/app` beside the `LOOM_CH_*` of that
+  ClickHouse. It skips without them. Remove the container afterwards
+  (`docker rm -f loom-pgch`, or your `LOOM_PGCH_CONTAINER`).
 - CI sets `LOOM_LATENCY_BUDGET_MULTIPLIER=10`: shared runners are noisy enough that the
   default per-op budgets fire violations.
 - Tests that depend on self-signup skip in CI, which has no `LOOM_SELF_SIGNUP=open`; prefer
