@@ -38,8 +38,8 @@ the two are independent.
    exec "$HOME/.cursor/hooks/cursor-session-hook.sh" "$@"
    ```
 
-5. Turn on conversation logging for the namespace (the dashboard's **Record conversations** switch or
-   `conversation.set_logging`). Until then the server accepts the turns and
+5. Turn on conversation logging for the namespace (the dashboard's **Record
+   conversations** switch or `conversation.set_logging`). Until then the server accepts the turns and
    stores none.
 
 | Variable                     | Default                 | Meaning                                                                                         |

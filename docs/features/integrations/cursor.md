@@ -53,8 +53,8 @@ Turns are stored only when the namespace has conversation logging on.
    exec "$HOME/.cursor/hooks/cursor-session-hook.sh" "$@"
    ```
 
-5. Turn on conversation logging for the namespace (the dashboard's **Record conversations** switch or
-   `conversation.set_logging`). Until then the server accepts the turns and stores none.
+5. Turn on conversation logging for the namespace (the dashboard's **Record
+   conversations** switch or `conversation.set_logging`). Until then the server accepts the turns and stores none.
 
 | Variable                     | Default                 | Meaning                                                                                         |
 | ---------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------- |

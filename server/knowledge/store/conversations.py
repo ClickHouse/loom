@@ -749,8 +749,8 @@ async def namespace_logging_enabled(
     are both "nobody has expressed a preference": defaulting those to on would
     keep transcripts for a namespace whose owner never answered the question.
 
-    Turn it on per namespace with `conversation.set_logging` or the Sessions
-    Record conversations switch in the dashboard.
+    Turn it on per namespace with `conversation.set_logging` or the Record
+    conversations switch on the dashboard's Conversations page.
     """
     ch = ch or _default_client()
     r = await ch.query_one(
