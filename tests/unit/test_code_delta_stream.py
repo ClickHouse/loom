@@ -310,9 +310,8 @@ def test_the_worst_round_costs_its_documented_bytes_per_counted_byte(
     finally:
         tracemalloc.stop()
     assert len(batch[0].symbols) == symbols
-    print(f"worst round peak {peak >> 20} MiB, {peak // budget} B per counted byte")
     # the docs give about 330 B per counted byte
-    assert peak < 512 * budget, peak
+    assert peak < 512 * budget, (peak, peak // budget)
 
 
 def test_a_round_is_released_before_the_next_is_parsed(

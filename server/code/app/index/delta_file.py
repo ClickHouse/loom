@@ -67,10 +67,10 @@ class _Values:
     """The JSON text of an open file, parsed one value at a time: the standard parser
     finds where each value ends, and pydantic's JSON parser reads it."""
 
-    def __init__(self, path: Path, fd: int, max_nodes: int, size: int) -> None:
+    def __init__(self, path: Path, fd: int, round_nodes: int, size: int) -> None:
         self._path, self._fd = path, fd
         self._left = size  # bytes the file had when opened: never read past them
-        self._max_nodes = max_nodes
+        self._round_nodes = round_nodes
         self._utf8 = codecs.getincrementaldecoder("utf-8")()
         self._decoder = json.JSONDecoder()
         self._text, self._at, self._eof = "", 0, False
@@ -110,10 +110,10 @@ class _Values:
     def _refused(self, nodes: int, entry: int) -> FileRefused:
         """The refusal for the cap file entry `entry` passed: a setting, or the fixed text
         cap. It names the entry: the one file to look at."""
-        if nodes > self._max_nodes:
+        if nodes > self._round_nodes:
             return FileRefused(
                 f"file entry {entry}: {self._path}: one value holds more than "
-                f"{self._max_nodes} `{{`/`[`/`,` bytes (code_scip_delta_round_max_nodes)"
+                f"{self._round_nodes} `{{`/`[`/`,` bytes (code_scip_delta_round_max_nodes)"
             )
         return FileRefused(
             f"file entry {entry}: {self._path}: one value holds more than {_MAX_CHARS} "
@@ -142,7 +142,7 @@ class _Values:
             except (RecursionError, ValueError):  # too deep; an integer past its digit limit
                 raise ValueError("delta invalid: not JSON") from None
             nodes = _counted(text, start, end)
-            if nodes > self._max_nodes or end - start > _MAX_CHARS:
+            if nodes > self._round_nodes or end - start > _MAX_CHARS:
                 if entry is None:
                     raise ValueError("delta invalid: a value outside `files` is over a round's cap")
                 raise self._refused(nodes, entry)
@@ -244,7 +244,7 @@ class DeltaFile:
         header: ScipDelta,
         parsed: _Parsed,
         *,
-        max_nodes: int,
+        round_nodes: int,
         max_bytes: int,
     ) -> None:
         self._path, self._stamp = path, stamp
@@ -252,7 +252,7 @@ class DeltaFile:
         self.deleted_files = parsed.deleted
         # each entry's path, counted bytes and characters, by index
         self.paths, self._nodes, self._chars = parsed.paths, parsed.nodes, parsed.chars
-        self._max_nodes, self._max_bytes = max_nodes, max_bytes  # as read at open
+        self._round_nodes, self._max_bytes = round_nodes, max_bytes  # as read at open
 
     def _plan(self, max_files: int, keep: Callable[[str], bool]) -> list[array[int]]:
         """The rounds by entry index: at most `max_files` kept entries and the round's
@@ -265,7 +265,7 @@ class DeltaFile:
                 continue
             n, c = self._nodes[i], self._chars[i]
             if batch and (
-                len(batch) >= max_files or nodes + n > self._max_nodes or chars + c > _MAX_CHARS
+                len(batch) >= max_files or nodes + n > self._round_nodes or chars + c > _MAX_CHARS
             ):
                 rounds.append(batch)
                 batch, nodes, chars = array("I"), 0, 0
@@ -296,7 +296,7 @@ class DeltaFile:
         try:
             if stamp != self._stamp:
                 raise FileRefused(f"{self._path} changed while it was read")
-            values = _Values(self._path, fd, self._max_nodes, self._stamp.size)
+            values = _Values(self._path, fd, self._round_nodes, self._stamp.size)
             rounds = iter(plan)
             current, at = next(rounds), 0
             batch: list[ScipFile] = []
@@ -422,13 +422,13 @@ def open_delta(path: Path) -> DeltaFile:
     value over `code_scip_delta_round_max_nodes`, every file entry a valid one, one
     `files` array. Only an absent file raises FileNotFoundError; a link, even a
     dangling one, is refused. An invalid delta raises a short ValueError."""
-    max_nodes = settings.code_scip_delta_round_max_nodes
+    round_nodes = settings.code_scip_delta_round_max_nodes
     max_bytes = settings.code_scip_delta_file_max_mb * 1024 * 1024
     fd, stamp = _open(path, max_bytes)
     try:
         _count(path, fd, stamp, settings.code_scip_delta_max_nodes)
         os.lseek(fd, 0, os.SEEK_SET)
-        parsed = _parse(_Values(path, fd, max_nodes, stamp.size))
+        parsed = _parse(_Values(path, fd, round_nodes, stamp.size))
         if _stamp(os.fstat(fd)) != stamp:  # the parse read what the count counted
             raise FileRefused(f"{path} changed while it was read")
     finally:
@@ -438,4 +438,4 @@ def open_delta(path: Path) -> DeltaFile:
         checked = ScipDelta.model_validate(parsed.header)
     except ValidationError as e:
         raise ValueError(f"delta invalid: {e.error_count()} error(s)") from None
-    return DeltaFile(path, stamp, checked, parsed, max_nodes=max_nodes, max_bytes=max_bytes)
+    return DeltaFile(path, stamp, checked, parsed, round_nodes=round_nodes, max_bytes=max_bytes)
