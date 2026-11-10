@@ -60,6 +60,8 @@ _STORES = {
 # ClickHouse only durably. A new caller is classified here before it ships.
 _CALLERS = {
     "server/health.py": "counts for the health report; sends nothing",
+    "server/knowledge/workers/pg_delivery.py": "counts the backlog for a gauge; sends nothing",
+    "server/memory/workers/pg_delivery.py": "counts the backlogs for gauges; sends nothing",
     "server/knowledge/app/ingest_jobs.py": "a job's status to the caller and the worker's "
     "queue, and the versions knowledge.inspect compares (sends nothing); a job reaches "
     "ClickHouse from `ingest_run._take`'s durable read or a save",
