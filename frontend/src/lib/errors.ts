@@ -156,12 +156,15 @@ export function writeWarning(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
   if (isLostConnection(raw)) return LOST_CONNECTION;
   if (name === "TimeoutError") return TIMED_OUT;
-  // A refusal for the deployment's setup came before anything was written.
-  if (
-    err instanceof ApiError &&
-    err.detail.category !== "configuration" &&
-    (err.code === "ANSWER_UNREADABLE" || (err.status >= 500 && err.detail.retryable !== true))
-  )
-    return MAY_HAVE_SAVED;
+  if (err instanceof ApiError && mayHaveSaved(err)) return MAY_HAVE_SAVED;
   return "";
+}
+
+/** Whether a failed write may have landed: an ok answer whose body could not be read, or a
+ *  5xx not marked retryable (`handler_failure_detail`; a handler that raised partway, a
+ *  proxy's 502 or 504), unless the refusal was over the deployment's setup, which comes
+ *  before anything is written. One rule for the line and for the toast's fallback. */
+export function mayHaveSaved(err: ApiError): boolean {
+  if (err.detail.category === "configuration") return false;
+  return err.code === "ANSWER_UNREADABLE" || (err.status >= 500 && err.detail.retryable !== true);
 }

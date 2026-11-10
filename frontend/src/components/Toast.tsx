@@ -103,10 +103,9 @@ export function toastError(context: string, err: unknown, opts: { read?: boolean
   // The wording is a lazy chunk (the boot chunk's budget), loaded by the viewport soon
   // after paint; this import then resolves at once.
   import("../lib/errorWords")
-    .then(({ humanizeError }) => {
-      const msg = `${context}: ${humanizeError(err, { bare: true, read: opts.read })}`;
-      toast(msg, "error", { ...detail, durationMs: errorToastMs(msg) });
-    })
+    .then(({ humanizeError }) =>
+      toastErrorLine(`${context}: ${humanizeError(err, { bare: true, read: opts.read })}`, err),
+    )
     // The wording could not load (a deploy replaced the chunk, the network dropped): the
     // context alone still says what failed.
     .catch(() => {
@@ -114,6 +113,13 @@ export function toastError(context: string, err: unknown, opts: { read?: boolean
       const msg = warning ? `${context}: ${warning}` : `${context}.`;
       toast(msg, "error", { ...detail, durationMs: errorToastMs(msg) });
     });
+}
+
+/** An error toast whose caller built its own sentence (how much of a batch went through):
+ *  the request id underneath and the reading time, as toastError gives every error toast. */
+export function toastErrorLine(msg: string, err: unknown): void {
+  const rid = errorRequestId(err);
+  toast(msg, "error", { ...(rid ? { detail: `request id ${rid}` } : {}), durationMs: errorToastMs(msg) });
 }
 
 export function errorToastMs(msg: string): number {

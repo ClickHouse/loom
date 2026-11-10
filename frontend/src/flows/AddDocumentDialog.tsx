@@ -223,7 +223,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
       toast(stopped(sourceUri.trim(), r), "info");
     } catch (e) {
       // The follow is stopped and the cancel may or may not have landed.
-      toastError(`Stop failed; ${sourceUri.trim()} may still be extracting`, e);
+      toastError(`Stop failed (${sourceUri.trim()} may still be extracting)`, e);
     } finally {
       setStopping(false);
       reset();

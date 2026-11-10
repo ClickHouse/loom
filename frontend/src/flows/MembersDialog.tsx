@@ -14,8 +14,7 @@ import {
 } from "../api";
 import { useStore } from "../lib/state";
 import { holdsAdminGrant } from "../lib/role";
-import { toast, toastError, errorToastMs } from "../components/Toast";
-import { errorRequestId } from "../lib/format";
+import { toast, toastError, toastErrorLine } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
 import { Modal, ModalFooter } from "../components/ui/Modal";
@@ -217,10 +216,8 @@ export function MembersDialog({
     if (ok === targets.length) {
       toast(targets.length > 1 ? `${verb} ${subject} on ${ok} branches` : `${verb} ${subject}`, "ok");
     } else {
-      // Its own sentence (how many branches went through), with what toastError gives a toast.
       const msg = `${verb} ${subject} on ${ok} of ${targets.length} branches — ${humanizeError(firstError, { bare: true })}`;
-      const rid = errorRequestId(firstError);
-      toast(msg, "error", { ...(rid ? { detail: `request id ${rid}` } : {}), durationMs: errorToastMs(msg) });
+      toastErrorLine(msg, firstError);
     }
     setBusy(null);
     load();

@@ -267,7 +267,7 @@ describe("AddDocumentDialog", () => {
     await user.click(await within(dialog).findByRole("button", { name: "Stop ingestion" }));
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     expect(vi.mocked(toastError).mock.calls.at(-1)).toEqual([
-      "Stop failed; spec.pdf may still be extracting",
+      "Stop failed (spec.pdf may still be extracting)",
       expect.objectContaining({ message: "down" }),
     ]);
     expect(onAdded).not.toHaveBeenCalled();

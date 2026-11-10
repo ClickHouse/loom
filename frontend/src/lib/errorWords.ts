@@ -9,7 +9,15 @@
 //   3. the HTTP status;
 // then the server's words, then one tail from the body: when it can go again, that it may
 // have saved (a write; `read` drops it), or that only a change to the setup helps.
-import { ApiError, isLostConnection, LOST_CONNECTION, MAY_HAVE_SAVED, PUBLICATION_PENDING, TIMED_OUT } from "./errors";
+import {
+  ApiError,
+  isLostConnection,
+  LOST_CONNECTION,
+  MAY_HAVE_SAVED,
+  mayHaveSaved,
+  PUBLICATION_PENDING,
+  TIMED_OUT,
+} from "./errors";
 import { errorRequestId } from "./format";
 
 /** Sentences for the server's error codes (`server/core/errors.py` and the
@@ -104,18 +112,18 @@ const UNKNOWN_STATUS = "Couldn't do that:";
 function retryTail(err: ApiError, read: boolean): string {
   // Made by the dashboard (api.ts) from a 401 that came before any handler ran: no body.
   if (err.code === "SIGNED_IN_ELSEWHERE") return "It is safe to send it once more.";
-  const mayHaveLanded = read ? "Try again in a moment." : MAY_HAVE_SAVED;
-  // Made by the dashboard (api.ts readJson): the answer was ok, only its body unreadable.
-  if (err.code === "ANSWER_UNREADABLE") return mayHaveLanded;
   const category = categoryOf(err);
   const retryable = err.detail.retryable;
-  // A 5xx not marked retryable may follow a write the call made (`handler_failure_detail`;
-  // a handler that raised partway answers INTERNAL_ERROR; a proxy's 502 or 504 says
-  // nothing). It wins over a message that says to retry: the message was written for the
-  // error, the mark for this call. A caller that only read (a dry run too) says so.
-  if (err.status >= 500 && retryable !== true && category !== "configuration") {
-    if (!read) return mayHaveLanded;
-    if (retryable === false && (category === "capacity" || category === "dependency")) return mayHaveLanded;
+  // A write that may have landed (lib/errors.ts mayHaveSaved) says so; it wins over a
+  // message that says to retry: the message was written for the error, the mark for this
+  // call. A caller that only read (a dry run too) is told it can go again instead.
+  if (mayHaveSaved(err)) {
+    if (!read) return MAY_HAVE_SAVED;
+    if (
+      err.code === "ANSWER_UNREADABLE" ||
+      (retryable === false && (category === "capacity" || category === "dependency"))
+    )
+      return "Try again in a moment.";
   }
   if (/\b(retry\w*|again|resend\w*)\b/i.test(err.serverMessage)) return "";
   if (category === "configuration") return "Trying again won't help until that's changed.";

@@ -3,14 +3,14 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api";
 import { confirmAction } from "../components/ConfirmDialog";
-import { toast } from "../components/Toast";
+import { toast, toastErrorLine } from "../components/Toast";
 import { ThreadActions } from "./ThreadActions";
 
 vi.mock("../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
 vi.mock("../components/Toast", () => ({
   toast: vi.fn(),
   toastError: vi.fn(),
-  errorToastMs: () => 8000,
+  toastErrorLine: vi.fn(),
   ToastViewport: () => null,
 }));
 vi.mock("../api", async (importOriginal) => {
@@ -120,10 +120,9 @@ describe("ThreadActions", () => {
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     await waitFor(() =>
-      expect(toast).toHaveBeenCalledWith(
+      expect(toastErrorLine).toHaveBeenCalledWith(
         'Deleted part of "Deploy plan", then failed: down',
-        "error",
-        expect.objectContaining({ durationMs: expect.any(Number) }),
+        expect.any(Error),
       ),
     );
   });
@@ -163,10 +162,9 @@ describe("ThreadActions", () => {
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     await waitFor(() =>
-      expect(toast).toHaveBeenCalledWith(
+      expect(toastErrorLine).toHaveBeenCalledWith(
         'Deleted part of "Deploy plan", then failed: down; 2 messages are left',
-        "error",
-        expect.objectContaining({ durationMs: 8000 }),
+        expect.any(Error),
       ),
     );
   });
