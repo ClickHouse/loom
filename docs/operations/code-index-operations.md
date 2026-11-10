@@ -846,8 +846,8 @@ The record is read where each reader already looks:
 - once a tier has failed `LOOM_CODE_TIER_FAILING_WARN_PASSES` passes in a row or for
   `LOOM_CODE_TIER_FAILING_WARN_HOURS`, it is the `code_tier_failing` problem in
   `/v1/health`, the dashboard banner and `loom doctor`
-  ([monitoring](./monitoring.md#v1health)): one line per tier with its reason and
-  fix. `loom doctor`, which reads with the deployment's own credentials, also names
+  ([monitoring](./monitoring.md#v1health)): one line per failing entry and tier with its
+  reason, and the fix of each kind once. `loom doctor`, which reads with the deployment's own credentials, also names
   each entry it lists, up to five, as repository@branch (org/namespace) with the error
   line that says why; `code.repos` names the rest. A platform admin's token reads the
   same for every entry that is not

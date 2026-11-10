@@ -539,6 +539,7 @@ def test_an_operator_reads_each_entry_by_repository_branch_and_namespace_with_it
         '2026-01-01T12:00:00+00:00 — "PermissionError"'
     ) in p.message
     assert "unknown" not in p.message and "commits behind" not in p.message
+    assert "code.repos" not in p.message  # every entry named: no pointer to the rest
     assert tier_health.fix_for("git_lock", "", name_where=False) in p.fix
     assert tier_health.fix_for("unknown", "", name_where=False) in p.fix
 
@@ -589,7 +590,6 @@ def test_the_dashboard_says_each_kind_as_the_server_does() -> None:
     ts = (Path(__file__).resolve().parents[2] / "frontend/src/lib/tierHealth.ts").read_text()
     block = ts[ts.index("const KIND_WORD") : ts.index("};", ts.index("const KIND_WORD"))]
     words = dict(re.findall(r'^\s+(\w+): "([^"]+)",$', block, re.MULTILINE))
-    assert words.pop("unknown") == tier_health.reason("unknown")
     assert words == tier_health.REASONS
 
 

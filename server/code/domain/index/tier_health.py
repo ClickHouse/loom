@@ -424,6 +424,7 @@ REASONS: dict[str, str] = {
     "cmake": "build configure failed",
     "harness": "indexer failed",
     "module": "module failed to build",
+    "unknown": "unclassified error",
 }
 # How much of an error's line a status line shows.
 ERROR_LINE_CHARS = 200
@@ -431,9 +432,7 @@ ERROR_LINE_CHARS = 200
 
 def reason(kind: str) -> str:
     """The phrase for a failure of `kind`; a kind a later build adds reads as itself."""
-    if kind in ("", "unknown"):
-        return "unclassified error"
-    return REASONS.get(kind, kind)
+    return REASONS.get(kind or "unknown", kind)
 
 
 def error_line(kind: str, error: str) -> str:
