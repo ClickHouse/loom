@@ -2,12 +2,12 @@
 
 This page connects Claude Code, Codex, Cursor or another MCP client to a running Loom
 server. Install the plugin (or wire the MCP entry), point it at the server, and work as
-usual. The next session starts with what the agent saved; the session's transcript is kept
-once the namespace's owner turns on **Recording** on the dashboard's Conversations page
-([recording](../features/conversations-and-sessions.md#recording-is-the-owners-choice)),
-which is off by default. To run a server yourself, start with the
-[quickstart](quickstart.md); to have your agent install a pinned release and prove it
-works, give it the latest release's
+usual. The next session starts with what the agent saved. Recording, which keeps the
+session's transcript, is off by default; the namespace's owner turns it on from the
+dashboard's Conversations page
+([recording](../features/conversations-and-sessions.md#recording-is-the-owners-choice)).
+To run a server yourself, start with the [quickstart](quickstart.md); to have your agent
+install a pinned release and prove it works, give it the latest release's
 `https://github.com/ClickHouse/loom/releases/latest/download/agent-setup.txt` ([Set up
 Loom with your coding agent](agent-setup.md)).
 
