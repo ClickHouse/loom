@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import contextlib
 import json
 import os
 import re
@@ -867,14 +866,10 @@ async def read_until(
                             return json.dumps(error)[:300]
         return ""
 
-    task = asyncio.ensure_future(read())
-    done, _ = await asyncio.wait({task}, timeout=cut_s)
-    if done:
-        return True, task.result()
-    task.cancel()  # closes the connection
-    with contextlib.suppress(asyncio.CancelledError):
-        await task
-    return False, ""
+    try:
+        return True, await asyncio.wait_for(read(), cut_s)
+    except TimeoutError:  # wait_for cancels read(), which closes the connection
+        return False, ""
 
 
 def cancel_probe(st: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
@@ -906,11 +901,11 @@ def cancel_probe(st: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]
 
 
 def probe_line(row: dict[str, Any]) -> str:
-    """The cancel probe's verdict, the calls sorted by when they began. A call begun after
-    the cut shows the run went on; the disconnect is shown to stop the run only when no
-    call began before the cut either (so the tools were still to run)."""
+    """The cancel probe's verdict from its two counts. A call begun after the cut shows the
+    run went on; the disconnect is shown to stop the run only when no call began before
+    the cut either (so the tools were still to run)."""
     if "loom_calls_before_disconnect" not in row:
-        sys.exit("a cancel-probe row saved by an older harness: run `run --cancel-probe` again")
+        return "cancel probe: saved by an older harness, not a result"
     before = row["loom_calls_before_disconnect"]
     after = row["loom_calls_after_disconnect"]
     if row["error"]:

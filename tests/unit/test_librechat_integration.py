@@ -271,8 +271,7 @@ def test_a_cancel_row_without_its_counts_is_not_read_as_a_pass():
         "loom_calls": 1,
         "loom_calls_after_disconnect": 0,
     }
-    with pytest.raises(SystemExit, match="older harness"):
-        _qualify().report([old], "m")
+    assert "cancel probe: saved by an older harness, not a result" in _qualify().report([old], "m")
 
 
 def test_the_cancel_probe_sorts_the_calls_by_when_they_began(monkeypatch):
