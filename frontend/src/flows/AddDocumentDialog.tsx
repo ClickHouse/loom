@@ -5,8 +5,7 @@ import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { addKnowledge, cancelIngestion, type Identity, type IngestCancelResult } from "../api";
-import { toast, toastError, toastPublicationPending } from "../components/Toast";
-import { isPublicationPending } from "../lib/errors";
+import { toast, toastError } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { humanizeError } from "../lib/errorWords";
@@ -120,14 +119,11 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
   const canSubmit =
     sourceUri.trim() !== "" && busy === null && (mode === "file" ? !!file && !verdict?.refusal : content.trim() !== "");
 
-  const done = () => {
+  const finish = (msg: string, level: "ok" | "info" = "ok") => {
+    toast(msg, level);
     onAdded();
     reset();
     onOpenChange(false);
-  };
-  const finish = (msg: string, level: "ok" | "info" = "ok") => {
-    toast(msg, level);
-    done();
   };
 
   const submitFile = async () => {
@@ -194,14 +190,8 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
       }
       finish(replaceMode ? `Replaced ${replaceMode.sourceUri}` : "Document added");
     } catch (e) {
-      if (!isPublicationPending(e)) {
-        setError(humanizeError(e));
-        setBusy(null);
-        return;
-      }
-      // Saved, with only search lagging: closed as on success, so nothing invites a second write.
-      toastPublicationPending(e);
-      done();
+      setError(humanizeError(e));
+      setBusy(null);
     }
   };
 

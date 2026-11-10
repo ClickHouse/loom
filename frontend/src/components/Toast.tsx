@@ -10,8 +10,8 @@ import { errorRequestId } from "../lib/format";
  *
  * Each toast owns its timer: success and info leave after 3.5 s, an error after
  * 8 s plus 50 ms a character, at most 20 s (`errorToastMs`) — an error is read,
- * not glanced at. So is a committed write's info line, which gets the error's time. Hovering or focusing a toast pauses its clock so the message
- * can be read or copied; a close button dismisses it early. The stack is capped
+ * not glanced at. So is a committed write's info line, which gets the error's time.
+ * Hovering or focusing a toast pauses its clock so the message can be read or copied; a close button dismisses it early. The stack is capped
  * at four — a burst of failures drops the oldest rather than covering the page.
  *
  * A toast raised with a `key` replaces the one still showing under the same
@@ -111,17 +111,15 @@ export function toastError(context: string, err: unknown, opts: { read?: boolean
 }
 
 /** A write that committed while only lists and search lag: not a failure, so no
- *  "<context>:" in front of it. A dialog shows it in place of its success toast, and closes. */
-export function toastPublicationPending(err: unknown): void {
+ *  "<context>:" in front of it. */
+function toastPublicationPending(err: unknown): void {
   toastWithId(PUBLICATION_PENDING, "info", err);
 }
 
 /** An error toast whose caller built its own sentence (how much of a batch went through):
- *  the request id underneath and the reading time, as toastError gives every error toast.
- *  A committed write is still said as done, for the callers that come here directly. */
+ *  the request id underneath and the reading time, as toastError gives every error toast. */
 export function toastErrorLine(msg: string, err: unknown): void {
-  if (isPublicationPending(err)) toastPublicationPending(err);
-  else toastWithId(msg, "error", err);
+  toastWithId(msg, "error", err);
 }
 
 function toastWithId(msg: string, kind: ToastKind, err: unknown): void {

@@ -3,7 +3,7 @@
 import { act, cleanup, render, screen } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../lib/errors";
-import { ToastViewport, errorToastMs, toastError, toastErrorLine } from "./Toast";
+import { ToastViewport, errorToastMs, toastError } from "./Toast";
 
 afterEach(() => {
   cleanup();
@@ -68,18 +68,6 @@ describe("toastError", () => {
         "Done, but lists and search have not caught up yet, so this page may still show the old state. Don't send it once more; reload in a moment to see the result.",
       ),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/Delete failed/)).toBeNull();
-  });
-
-  it("says a committed write went through when the caller built its own line", async () => {
-    render(<ToastViewport />);
-    act(() =>
-      toastErrorLine(
-        "Delete failed: Done, but lists and search have not caught up yet.",
-        new ApiError({ status: 503, code: "PUBLICATION_PENDING", message: "the write is committed" }),
-      ),
-    );
-    expect(await screen.findByText(/^Done, but lists and search have not caught up yet/)).toBeInTheDocument();
     expect(screen.queryByText(/Delete failed/)).toBeNull();
   });
 

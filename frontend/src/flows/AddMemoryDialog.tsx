@@ -6,8 +6,7 @@ import { TextField } from "@clickhouse/click-ui/TextField";
 import { setMemory, type Identity } from "../api";
 import { sharedTagVocabulary } from "../lib/sharedReads";
 import { humanizeError } from "../lib/errorWords";
-import { toast, toastPublicationPending } from "../components/Toast";
-import { isPublicationPending } from "../lib/errors";
+import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, fieldError } from "../components/ui";
 
@@ -85,18 +84,13 @@ export function AddMemoryDialog({ open, onOpenChange, identity, onAdded }: Props
         ttlSeconds: EXPIRY_OPTIONS[expiryIdx].ttlSeconds,
       });
       toast("Memory added", "ok");
+      onAdded();
+      reset();
+      onOpenChange(false);
     } catch (e) {
-      if (!isPublicationPending(e)) {
-        setError(humanizeError(e));
-        setBusy(false);
-        return;
-      }
-      // Saved, with only search lagging: closed as on success, so nothing invites a second write.
-      toastPublicationPending(e);
+      setError(humanizeError(e));
+      setBusy(false);
     }
-    onAdded();
-    reset();
-    onOpenChange(false);
   };
 
   return (
