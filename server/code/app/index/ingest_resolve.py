@@ -88,8 +88,8 @@ async def _py_roots_for(
 
 
 _MAX_INCLUDE_PROBES = 3000  # one bloom-filtered membership read per file
-# not a setting: the package directories one Go file lists for imports no conventional file
-# name satisfied; each is a store read
+# The package directories one Go file lists for imports no conventional file name satisfied
+# not a setting: each is a store read, a bound per file
 _MAX_GO_LISTINGS = 256
 
 # (org, ns) -> (read at, live path set). The probing form — every candidate a file's

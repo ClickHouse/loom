@@ -314,9 +314,9 @@ def bind_sites(
     return edges
 
 
-# not a setting: the directories a specifier is tried under, the file's own and its nearest
-# ancestors, before the repository root; each adds one candidate per import, so a deep path
-# multiplies a file's candidates
+# The directories a specifier is tried under, the file's own and its nearest ancestors,
+# before the repository root
+# not a setting: each adds one candidate per import; a deep path multiplies them
 MAX_ANCESTOR_DIRS = 32
 
 
