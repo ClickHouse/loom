@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { moveCollection, type CollectionEntry } from "../api";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert } from "../components/ui";

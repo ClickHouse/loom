@@ -33,7 +33,7 @@ import {
 } from "../api/structure";
 import { useIdentity, useStore } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { canCall } from "../lib/canCall";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { confirmAction } from "../components/ConfirmDialog";

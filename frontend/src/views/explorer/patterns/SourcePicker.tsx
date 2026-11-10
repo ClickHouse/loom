@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { listTrackerSources, setSavedNamespace } from "../../../api";
 import { useAbortableEffect } from "../../../lib/hooks";
-import { humanizeError } from "../../../lib/format";
+import { humanizeError } from "../../../lib/errorWords";
 import { useStore } from "../../../lib/state";
 import { resetNamespaceRoleCache } from "../../../lib/namespaceRole";
 import {

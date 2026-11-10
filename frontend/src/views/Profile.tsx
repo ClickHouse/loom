@@ -18,7 +18,8 @@ import {
 } from "../api";
 import { useStore, useIdentity } from "../lib/state";
 import { RowSkeleton } from "../components/Skeleton";
-import { fmtInt, humanizeError, parseChTime, relativeTime } from "../lib/format";
+import { fmtInt, parseChTime, relativeTime } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { useVisiblePoll } from "../lib/hooks";
 import { toast } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";

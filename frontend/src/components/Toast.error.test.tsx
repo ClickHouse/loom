@@ -11,7 +11,7 @@ afterEach(() => {
 });
 
 describe("toastError", () => {
-  it("uses the context as the only lead-in and keeps the retry advice", () => {
+  it("uses the context as the only lead-in and keeps the retry advice", async () => {
     render(<ToastViewport />);
     act(() =>
       toastError(
@@ -26,7 +26,7 @@ describe("toastError", () => {
       ),
     );
     expect(
-      screen.getByText(
+      await screen.findByText(
         "Couldn't delete Research notes: Too many requests. Namespace 'x' exceeded its rate limit. Try again in 4 s.",
       ),
     ).toBeInTheDocument();
@@ -37,14 +37,15 @@ describe("toastError", () => {
         new ApiError({ status: 409, code: "PRECONDITION_FAILED", message: "the upload expired" }),
       ),
     );
-    expect(screen.getByText("Couldn't save: the upload expired")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't save: the upload expired")).toBeInTheDocument();
   });
 
-  it("stays up longer for a longer line, at most 20 s", () => {
+  it("stays up longer for a longer line, at most 20 s", async () => {
     vi.useFakeTimers();
     render(<ToastViewport />);
     const long = "x".repeat(150);
-    act(() => toastError("Couldn't save", new Error(long)));
+    toastError("Couldn't save", new Error(long));
+    await act(() => vi.dynamicImportSettled());
     act(() => vi.advanceTimersByTime(8_000));
     expect(screen.getByText(`Couldn't save: ${long}`)).toBeInTheDocument();
     act(() => vi.advanceTimersByTime(errorToastMs(`Couldn't save: ${long}`)));

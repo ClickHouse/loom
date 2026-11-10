@@ -11,7 +11,7 @@ import {
   type TrackerSection,
 } from "../../../api";
 import { useAbortableEffect } from "../../../lib/hooks";
-import { humanizeError } from "../../../lib/format";
+import { humanizeError } from "../../../lib/errorWords";
 import { Board, type BoardStatus } from "./Board";
 import {
   buildBoard,

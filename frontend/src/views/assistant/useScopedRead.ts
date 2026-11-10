@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { humanizeError } from "../../lib/format";
+import { humanizeError } from "../../lib/errorWords";
 
 export interface ScopedRead<T> {
   data: T | null;

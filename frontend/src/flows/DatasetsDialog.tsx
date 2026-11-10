@@ -4,7 +4,7 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { approveDataset, DATASET_TYPES, getDatasets, type Dataset, type DatasetType, type Identity } from "../api";
 import { ApiError } from "../lib/errors";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
 import { toast, toastError } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";

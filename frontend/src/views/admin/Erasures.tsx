@@ -20,7 +20,8 @@ import { hasAdminClaim, hasOrgAdminClaim, hasWriterClaim } from "../../lib/role"
 import { useNamespaceRole } from "../../lib/namespaceRole";
 import { useAbortableEffect } from "../../lib/hooks";
 import { ApiError } from "../../lib/errors";
-import { humanizeError, listTime } from "../../lib/format";
+import { listTime } from "../../lib/format";
+import { humanizeError } from "../../lib/errorWords";
 import { NameBadge } from "../../components/AgentBadge";
 import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";

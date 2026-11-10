@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { codeRecentCommits, codeReindex, type CodeRecentCommitRow, type CodeRepoSummary } from "../api";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
 import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";

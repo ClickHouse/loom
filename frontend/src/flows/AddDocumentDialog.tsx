@@ -8,7 +8,7 @@ import { addKnowledge, cancelIngestion, type Identity, type IngestCancelResult }
 import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { TabTrigger } from "../components/ui/TabTrigger";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { FollowLost, fileVerdict, type IngestPhase, ingestFile, ingestStep } from "../lib/fileIngest";
 import { AllowPartial, IngestProgress, PickedFile, readableFormats, useKnowledgeFormats } from "./FileIngest";
 

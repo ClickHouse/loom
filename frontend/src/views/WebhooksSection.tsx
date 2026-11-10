@@ -18,7 +18,7 @@ import {
 } from "../api/webhooks";
 import { useIdentity } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { confirmAction } from "../components/ConfirmDialog";
 import { toast, toastError } from "../components/Toast";
 import { RowMenu } from "../components/ui/RowMenu";

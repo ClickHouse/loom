@@ -3,7 +3,8 @@ import { Icon } from "@clickhouse/click-ui/Icon";
 import { Select } from "@clickhouse/click-ui/Select";
 import { getBrief, type BriefGetResponse } from "../api/briefs";
 import { CopyButton } from "./CopyButton";
-import { humanizeError, relativeTime } from "../lib/format";
+import { relativeTime } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 
 /** What to say in Claude Code or Codex (the loom-session skill) to restore a
  *  brief: the brief with the client's compaction summary, or, asked for

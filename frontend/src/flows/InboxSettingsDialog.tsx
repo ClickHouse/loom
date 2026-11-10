@@ -21,7 +21,8 @@ import {
   type PosterPolicy,
   type Principal,
 } from "../api/tasks";
-import { humanizeError, relativeTime } from "../lib/format";
+import { relativeTime } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { ApiError } from "../lib/errors";
 import { toast } from "../components/Toast";
 import { ModePill } from "../components/TaskPills";

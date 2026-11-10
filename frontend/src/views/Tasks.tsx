@@ -24,7 +24,7 @@ import { setViewParam, useStore, useIdentity } from "../lib/state";
 import { canCall } from "../lib/canCall";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { useVisiblePoll } from "../lib/hooks";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import {
   ACTION_LABEL,
   DIALOG_ACTIONS,

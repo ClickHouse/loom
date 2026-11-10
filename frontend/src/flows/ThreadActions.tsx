@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { createThreadRow, deleteThread, getConversationThread, renameThread, type Identity } from "../api";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { confirmAction } from "../components/ConfirmDialog";
 import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";

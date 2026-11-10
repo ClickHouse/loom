@@ -1,7 +1,8 @@
 import { Button } from "@clickhouse/click-ui/Button";
 import type { IconName } from "@clickhouse/click-ui/Icon";
 import { useEffect, useState, type ReactNode } from "react";
-import { errorRequestId, humanizeError } from "../../lib/format";
+import { errorRequestId } from "../../lib/format";
+import { humanizeError } from "../../lib/errorWords";
 import { EmptyState } from "../EmptyState";
 
 /** Nothing exists yet: the big state, with its one action. */

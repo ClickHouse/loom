@@ -17,7 +17,7 @@ import { MemoryInspector } from "../../components/MemoryInspector";
 import { toast } from "../../components/Toast";
 import { Loading } from "../../components/ui";
 import { useAbortableEffect } from "../../lib/hooks";
-import { humanizeError } from "../../lib/format";
+import { humanizeError } from "../../lib/errorWords";
 import { isRecord } from "../../lib/guards";
 import { useIdentity } from "../../lib/state";
 import { Bar } from "./Bar";

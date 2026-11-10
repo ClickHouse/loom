@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { IconButton } from "./IconButton";
-import { errorRequestId, humanizeError } from "../lib/format";
+import { errorRequestId } from "../lib/format";
 
 /**
  * Transient notifications.
@@ -91,8 +91,11 @@ export function toast(msg: string, kind: ToastKind = "ok", opts: ToastOpts = {})
  *  most 20 s, and hovering or focusing it holds it. */
 export function toastError(context: string, err: unknown): void {
   const rid = errorRequestId(err);
-  const msg = `${context}: ${humanizeError(err, { bare: true })}`;
-  toast(msg, "error", { ...(rid ? { detail: `request id ${rid}` } : {}), durationMs: errorToastMs(msg) });
+  // The wording loads on the first error, not with the shell (the boot chunk's budget).
+  void import("../lib/errorWords").then(({ humanizeError }) => {
+    const msg = `${context}: ${humanizeError(err, { bare: true })}`;
+    toast(msg, "error", { ...(rid ? { detail: `request id ${rid}` } : {}), durationMs: errorToastMs(msg) });
+  });
 }
 
 export function errorToastMs(msg: string): number {

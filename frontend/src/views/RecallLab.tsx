@@ -15,7 +15,8 @@ import { ScopeBadge } from "../components/ScopeBadge";
 import { Chip, ListTime, Loading, PageHeader, TabTrigger, TipTarget } from "../components/ui";
 import { ListState } from "../components/ui/ListState";
 import { ListToolbar } from "../components/ui/ListToolbar";
-import { humanizeError, displayAgent, previewValue, SENSITIVE_LABEL } from "../lib/format";
+import { displayAgent, previewValue, SENSITIVE_LABEL } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
 import { signed, termText, whyTerms } from "../lib/whyNote";
 

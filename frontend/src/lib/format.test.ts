@@ -9,8 +9,6 @@ import {
   errorRequestId,
   formatBytesShort,
   refreshDetail,
-  ERROR_CODE_PREFIXES,
-  humanizeError,
   isServiceSubject,
   relativeTime,
   restoreText,
@@ -18,6 +16,7 @@ import {
   truncate,
   sentenceCase,
 } from "./format";
+import { ERROR_CODE_PREFIXES, humanizeError } from "./errorWords";
 
 describe("displaySubject", () => {
   it("shows a dash for nothing", () => {

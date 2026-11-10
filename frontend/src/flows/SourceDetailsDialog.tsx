@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { inspectKnowledgeSource } from "../api/knowledgeSources";
 import { kindLabel, syncBadge, type KnowledgeSourceDetail } from "../lib/knowledgeSources";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, ListTime, Loading, MetaList, MetaRow, SectionHeading } from "../components/ui";

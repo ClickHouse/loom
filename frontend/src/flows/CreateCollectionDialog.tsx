@@ -6,7 +6,7 @@ import { createCollection, type CollectionEntry } from "../api";
 import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, fieldError } from "../components/ui";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { isPersonalCollection, NAMESPACE_NAME, PERSONAL_COLLECTION_PREFIX } from "../lib/namespace";
 
 // server/auth/sharing.py: a collection's name starts with `col-`, and `col-me-` is kept

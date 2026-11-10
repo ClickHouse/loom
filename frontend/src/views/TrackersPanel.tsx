@@ -9,7 +9,8 @@ import { lazy, Suspense, useState } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { checkTrackerSource } from "../api";
-import { fmtInt, humanizeError, relativeTime } from "../lib/format";
+import { fmtInt, relativeTime } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import {
   canAdminister,
   freshnessOf,

@@ -11,7 +11,7 @@ import { toast, toastError } from "../components/Toast";
 import { CreateCollectionDialog, parentChoices } from "../flows/CreateCollectionDialog";
 import { MoveCollectionDialog } from "../flows/MoveCollectionDialog";
 import { MembersDialog } from "../flows/MembersDialog";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
 import { useStore } from "../lib/state";
 

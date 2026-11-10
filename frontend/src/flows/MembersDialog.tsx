@@ -20,7 +20,7 @@ import { IconButton } from "../components/IconButton";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { fieldError, ListTime, Loading, Tip } from "../components/ui";
 import { ListState } from "../components/ui/ListState";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { oneOf } from "../lib/oneOf";
 
 interface Props {

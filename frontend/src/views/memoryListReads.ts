@@ -9,7 +9,8 @@ import {
   type SearchHit,
 } from "../api";
 import { CARD_VALUE_CHARS } from "../components/MemoryCard";
-import { errorRequestId, humanizeError } from "../lib/format";
+import { errorRequestId } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { KEYWORD_PAGE, keywordThenRanked } from "../lib/memoriesSearch";
 

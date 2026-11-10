@@ -14,7 +14,7 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Link } from "@clickhouse/click-ui/Link";
 import { listKnowledgeSources } from "../api/knowledgeSources";
 import { ApiError } from "../lib/errors";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
 import {
   kindLabel,

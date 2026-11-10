@@ -5,7 +5,7 @@ import { type ChatMessage, type Citation, type Support, streamAssistantChat } fr
 import { Alert, Unavailable } from "../../components/ui";
 import { fieldError } from "../../components/ui/fieldError";
 import { ApiError } from "../../lib/errors";
-import { humanizeError } from "../../lib/format";
+import { humanizeError } from "../../lib/errorWords";
 import { AnswerText } from "./AnswerText";
 import { Sources, supportLabel } from "./Sources";
 

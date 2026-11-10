@@ -3,7 +3,7 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { LONG_CALL_MS, clearAgentMemories } from "../api";
 import { useIdentity } from "../lib/state";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert } from "../components/ui";

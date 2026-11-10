@@ -5,7 +5,7 @@ import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { createTask, updateTask, type Caller, type Disclosure, type Inbox, type TaskRow } from "../api/tasks";
 import { PRIORITY_LABEL, conflictOf, isoFromLocal, localFromIso, type UpdateConflict } from "../lib/tasks";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { toast } from "../components/Toast";
 import { CancelButton, DateTimeField, DialogFrame, ErrorNote } from "./TaskDialogFrame";
 import { oneOf } from "../lib/oneOf";

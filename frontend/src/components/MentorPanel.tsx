@@ -15,7 +15,7 @@ import {
 import { useStore } from "../lib/state";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { Loading, Panel, SectionHeading } from "./ui";
 import { useFold } from "../lib/folds";
 import { toast } from "./Toast";

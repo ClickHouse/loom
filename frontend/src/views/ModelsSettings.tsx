@@ -10,7 +10,7 @@ import {
 } from "../api/models";
 import { ModelsForm } from "./ModelsForm";
 import { Alert, Loading } from "../components/ui";
-import { errorLine } from "../lib/format";
+import { errorLine } from "../lib/errorWords";
 
 const PHASES: Record<string, string> = {
   drain: "Pausing agent requests",

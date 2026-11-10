@@ -1,7 +1,7 @@
 import { joinNamespace, cancelNamespaceRequest, leaveNamespace, type JoinResponse } from "../api";
 import { toast } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
-import { humanizeError } from "./format";
+import { humanizeError } from "./errorWords";
 
 /**
  * One join, one wording.
