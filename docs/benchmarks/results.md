@@ -1014,12 +1014,12 @@ its setup and, where the harness recorded it, its build.
 as JSON in Postgres), from the main runs (single 250k and 500k, zipf 200k), each
 the first size its run recorded; later snapshots in the artifact and the 20,000-key runs
 carry somewhat more per row, from parts with few rows. The "Per key" column is the single
-250k Postgres run's bytes of each table divided by its keys:
+250k Postgres run's bytes of each table after its ops divided by its 252,103 keys:
 
 | Store      | Table               | Bytes                                           | Per key |
 | ---------- | ------------------- | ----------------------------------------------- | ------: |
-| ClickHouse | `memory_embeddings` | 13,170 to 13,212 per row                        |  13,210 |
-| ClickHouse | `memory`            | 90 (single) to 163 (zipf) per head after merges |      91 |
+| ClickHouse | `memory_embeddings` | 13,170 to 13,212 per row                        |  13,212 |
+| ClickHouse | `memory`            | 90 (single) to 163 (zipf) per head after merges |      92 |
 | ClickHouse | `memory_versions`   | 107 to 110 per version                          |     264 |
 | Postgres   | `memory_current`    | 1,594 to 1,623 per head                         |   1,623 |
 | Postgres   | `memory_revisions`  | 2,149 to 2,150 per revision                     |   5,136 |
