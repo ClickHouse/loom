@@ -1,15 +1,16 @@
 # ClickHouse
 
-Durable Loom state lives in ClickHouse, except what Postgres holds under the Postgres
-memory authority and document bytes kept in an S3-compatible bucket. Postgres then holds
-live memory, knowledge state, every idempotency key and the erasure and authority
-ledgers; the [storage authority](storage-authority.md#the-tables) page lists its tables.
-Loom's ClickHouse databases are `loom` and `loom_telemetry`. The canonical ClickHouse
-schema is [`schemas/schema.sql`](../../schemas/schema.sql), dumped from a server with
-every migration applied; the Postgres schema is the journal in `schemas/pg_migrations/`.
-The generated [schema reference](../reference/schema.md) lists every ClickHouse table
-with its engine, keys, TTL and indexes. This page covers the table families, how Loom
-uses engines, indexes and views, and how migrations run.
+Durable Loom state lives in ClickHouse, except document bytes kept in an S3-compatible
+bucket and, under the Postgres memory authority, what Postgres holds. Postgres then
+holds live memory, knowledge state and every idempotency key, and keeps its own copy of
+the erasure ledger and the recorded authority; the
+[storage authority](storage-authority.md#the-tables) page lists its tables. Loom's
+ClickHouse databases are `loom` and `loom_telemetry`. The canonical ClickHouse schema is
+[`schemas/schema.sql`](../../schemas/schema.sql), dumped from a server with every
+migration applied; the Postgres schema is the journal in `schemas/pg_migrations/`. The
+generated [schema reference](../reference/schema.md) lists every ClickHouse table with
+its engine, keys, TTL and indexes. This page covers the table families, how Loom uses
+engines, indexes and views, and how migrations run.
 
 ## Goals and non-goals
 

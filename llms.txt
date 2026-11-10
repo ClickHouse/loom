@@ -2,7 +2,7 @@
 
 > Loom is a self-hosted MCP server that gives AI agents shared long-term memory, document search with citations and a code index. It keeps its data in ClickHouse, with Postgres as an option for live memory and knowledge state, and serves it over MCP, HTTP and the Python and TypeScript SDKs.
 
-Start with docs/index.md (the map). A coding agent installing Loom: follow docs/getting-started/agent-setup.md; connecting to a running server: docs/getting-started/connect-a-coding-agent.md. Whether Loom fits a use case: docs/getting-started/overview.md. Every operation's fields are in docs/reference/operations/.
+Start with docs/index.md (the map). A coding agent installing Loom: follow docs/getting-started/agent-setup.md, which each release attaches with its pins filled in as agent-setup.txt; connecting to a running server: docs/getting-started/connect-a-coding-agent.md. Whether Loom fits a use case: docs/getting-started/overview.md. Every operation's fields are in docs/reference/operations/.
 
 ## Getting started
 
@@ -115,7 +115,7 @@ Start with docs/index.md (the map). A coding agent installing Loom: follow docs/
 ## Architecture
 
 - [Assistant design](docs/architecture/assistant.md): This page is the design of Loom's assistant, which answers questions about what a namespace holds and how it is used, with a citation for every claim.
-- [ClickHouse](docs/architecture/clickhouse.md): Durable Loom state lives in ClickHouse, except what Postgres holds under the Postgres memory authority and document bytes kept in an S3-compatible bucket.
+- [ClickHouse](docs/architecture/clickhouse.md): Durable Loom state lives in ClickHouse, except document bytes kept in an S3-compatible bucket and, under the Postgres memory authority, what Postgres holds.
 - [Code index architecture](docs/architecture/code-index-architecture.md): This page is the inside view of the code index: how files become chunks, symbols and edges, and how the two tiers stay current.
 - [Document extraction](docs/architecture/document-extraction.md): An uploaded original is parsed into one shape, the extraction artifact, by an extractor service: a separate process with its own dependencies, never the Loom server.
 - [Failure and recovery](docs/architecture/failure-and-recovery.md): The primary write and every access decision fail closed.
