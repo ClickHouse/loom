@@ -7,6 +7,10 @@ Verifies:
   - erasure.status returns the final state
   - namespace erasure tombstones the namespace's memory + chunks
   - other namespaces unaffected
+  - a completed erasure carries its receipt: a zero census that the status and the
+    erasure.completed audit row repeat, and the purge it applied
+  - a single-namespace erasure that asked to purge reports purge false
+  - a ledger row past 89 days is not served
 """
 
 from __future__ import annotations

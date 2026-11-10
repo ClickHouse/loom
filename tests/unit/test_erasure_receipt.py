@@ -183,3 +183,14 @@ async def test_the_status_read_stops_at_89_days() -> None:
 
     assert await ledger.fetch_request_status("x", ch=_Fake()) is None  # type: ignore[arg-type]
     assert "WHERE id = {id:UUID} AND requested_at > now() - INTERVAL 89 DAY" in sent[0]
+
+
+@pytest.mark.parametrize(("stored", "applied"), [(True, True), (False, False)])
+def test_the_re_verify_of_an_older_namespace_list_row_takes_the_purge_it_ran(
+    stored: bool, applied: bool
+) -> None:
+    """A bare-array scope (an older row) names no purge; the column holds the one the saga ran."""
+    from server.cli import hygiene
+
+    row = {"scope_type": "namespace_list", "scope_value": '["a", "b"]', "purge": stored}
+    assert hygiene._re_verify_scope(row) == ("namespace", ["a", "b"], applied, True)
