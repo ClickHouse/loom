@@ -4,12 +4,15 @@ expire, and a case set the harness can score."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
+import httpx
 import pytest
 import yaml
 
@@ -228,17 +231,59 @@ def test_count_labels_match_the_fixture():
     assert _case("tune-drafts")["baseline"]["equals"] == 0
 
 
-def test_report_prints_a_cancel_probe_without_a_first_token():
-    rows = [
-        {
-            "id": "cancel-probe",
-            "kind": "cancel",
-            "ttft_s": None,
-            "loom_calls": 0,
-            "loom_calls_after_disconnect": 0,
-        }
-    ]
-    assert "cancel probe: first token -, 0 Loom calls" in _qualify().report(rows, "m")
+def test_report_prints_the_cancel_probe_and_an_inconclusive_one():
+    row = {
+        "id": "cancel-probe",
+        "kind": "cancel",
+        "ended_before_cut": False,
+        "loom_calls": 2,
+        "loom_calls_after_disconnect": 0,
+    }
+    q = _qualify()
+    assert "cancel probe: 2 Loom calls, 0 after the client disconnected" in q.report([row], "m")
+    ended = {**row, "ended_before_cut": True}
+    assert "the answer ended before the disconnect, inconclusive" in q.report([ended], "m")
+
+
+def _patched_client(monkeypatch, q, transport):
+    real = q.httpx.AsyncClient
+    monkeypatch.setattr(q.httpx, "AsyncClient", lambda **kw: real(transport=transport, **kw))
+
+
+class _Slow(httpx.AsyncByteStream):
+    """An answer whose body never comes within the test: the tool calls are still running."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def __aiter__(self):
+        await asyncio.sleep(30)
+        yield b"data: [DONE]\n\n"
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+def test_the_cancel_probe_disconnects_at_its_delay_while_the_answer_runs(monkeypatch):
+    q = _qualify()
+    body = _Slow()
+    _patched_client(
+        monkeypatch, q, httpx.MockTransport(lambda req: httpx.Response(200, stream=body))
+    )
+    started = time.monotonic()
+    ended = asyncio.run(q.read_until("http://lc/x", {}, {}, 0.2))
+    assert ended is False and body.closed
+    assert time.monotonic() - started < 5
+
+
+def test_the_cancel_probe_says_when_the_answer_ended_before_its_delay(monkeypatch):
+    q = _qualify()
+    _patched_client(
+        monkeypatch,
+        q,
+        httpx.MockTransport(lambda req: httpx.Response(200, text="data: [DONE]\n\n")),
+    )
+    assert asyncio.run(q.read_until("http://lc/x", {}, {}, 5.0)) is True
 
 
 def test_direct_path_reads_with_the_assistant_toolsets_forced_arguments(monkeypatch):

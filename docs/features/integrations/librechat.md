@@ -79,8 +79,10 @@ agent in the UI. It is not Loom authorization; the token on each call is.
 - **Cancellation.** In the UI path the generation runs server-side, apart from the
   browser connection: closing the tab does not stop it, and its tool calls still reach
   Loom. The stop button (`/api/agents/chat/abort`) stops it. On the agents API, closing
-  the connection stops the run: in one probe, with an agent whose first token came before
-  its tool calls, disconnecting after the first token left no Loom call in the next 20 s.
+  the connection stops the run: in one probe, disconnecting before the agent's first tool
+  call left no Loom call in the next 20 s. The probe (`run --cancel-probe`) disconnects
+  `--cancel-after` seconds (1) into the answer, and reports itself inconclusive when the
+  answer ended first.
 
 ## What LibreChat stores
 
@@ -324,8 +326,6 @@ The same cases asked through Loom's chat route, each with the person's own token
 28 correct and the other 3 refused with `RATE_LIMITED` once the namespace had spent the
 assistant's half of the default $1 cap (all 3 correct with the cap at $20); a mean of
 $0.027 and a maximum of $0.047 per answer, p95 9.4 s.
-
-The deployed agent's table was measured with an earlier agent definition.
 
 A model's answers vary from run to run, so one run of 28 cases is a sample, not a
 bound. The invalid memory citations are two hash keys the answer shortened and one key

@@ -29,6 +29,8 @@ hold it, since an answer's token is delegated from a live grant.
 from __future__ import annotations
 
 import argparse
+import asyncio
+import contextlib
 import json
 import os
 import re
@@ -367,9 +369,10 @@ def cmd_setup_bridge(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------- one answer
 
 
-def ask_assistant(
-    st: dict[str, Any], person: str, question: str, *, cancel_after_first: bool = False
-) -> dict[str, Any]:
+def answer_request(
+    st: dict[str, Any], person: str, question: str
+) -> tuple[str, dict[str, Any], dict[str, str]]:
+    """The URL, body and headers of one streamed answer, through the bridge or LibreChat."""
     body: dict[str, Any] = {
         "stream": True,
         "stream_options": {"include_usage": True},
@@ -385,15 +388,18 @@ def ask_assistant(
         body["model"] = lc["agent_id"]
         url = f"{st['librechat_url']}/api/agents/v1/chat/completions"
         auth = {"Authorization": f"Bearer {lc['api_key']}"}
+    # A compressed stream reaches the client only once the answer is complete.
+    return url, body, {**auth, "Accept-Encoding": "identity"}
+
+
+def ask_assistant(st: dict[str, Any], person: str, question: str) -> dict[str, Any]:
+    url, body, headers = answer_request(st, person, question)
     started = time.perf_counter()
     first_delta = first_text = None
     text: list[str] = []
     usage: dict[str, Any] = {}
     error = ""
-    # A compressed stream reaches the client only once the answer is complete.
-    with httpx.stream(
-        "POST", url, json=body, headers={**auth, "Accept-Encoding": "identity"}, timeout=180
-    ) as r:
+    with httpx.stream("POST", url, json=body, headers=headers, timeout=180) as r:
         if r.status_code != 200:
             error = f"HTTP {r.status_code}: {r.read().decode()[:300]}"
         else:
@@ -413,8 +419,6 @@ def ask_assistant(
                         if first_text is None:
                             first_text = now
                         text.append(delta["content"])
-                if cancel_after_first and first_delta is not None:
-                    break
     return {
         "answer": "".join(text),
         "error": error,
@@ -844,12 +848,36 @@ def cmd_rescore(args: argparse.Namespace) -> None:
     print(report(saved["rows"], saved.get("model", "")))
 
 
+async def read_until(url: str, body: dict[str, Any], headers: dict[str, str], cut_s: float) -> bool:
+    """Read one streamed answer and disconnect `cut_s` after sending it; True when the
+    answer ended first."""
+
+    async def read() -> None:
+        async with httpx.AsyncClient(timeout=180) as client:
+            async with client.stream("POST", url, json=body, headers=headers) as r:
+                async for _ in r.aiter_lines():
+                    pass
+
+    task = asyncio.ensure_future(read())
+    done, _ = await asyncio.wait({task}, timeout=cut_s)
+    if done:
+        task.result()
+        return True
+    task.cancel()  # closes the connection
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    return False
+
+
 def cancel_probe(st: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
-    """Disconnect after the first streamed token and count the Loom calls that still arrive."""
-    t0 = time.time()
-    got = ask_assistant(
-        st, "alice", "List every memory in the namespace with its version.", cancel_after_first=True
+    """Disconnect `--cancel-after` seconds into an answer and count the Loom calls that still
+    arrive. The cut is a delay, not the first token: the agent writes no text before its
+    tool calls, so a cut at the first token would come after them."""
+    url, body, headers = answer_request(
+        st, "alice", "List every memory in the namespace with its version."
     )
+    t0 = time.time()
+    ended = asyncio.run(read_until(url, body, headers, args.cancel_after))
     disconnected = time.time()
     time.sleep(args.cancel_wait)
     calls = loom_calls(args.ch_url, "alice", t0, time.time())
@@ -858,7 +886,7 @@ def cancel_probe(st: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]
     return {
         "id": "cancel-probe",
         "kind": "cancel",
-        "ttft_s": got["ttft_s"],
+        "ended_before_cut": ended,
         "loom_calls": len(calls),
         "loom_calls_after_disconnect": len(after),
     }
@@ -939,8 +967,9 @@ def report(rows: list[dict[str, Any]], model: str) -> str:
     for r in rows:
         if r["kind"] == "cancel":
             lines.append(
-                f"cancel probe: first token {fmt_s(r['ttft_s'], unit=' s')}, "
-                f"{r['loom_calls']} Loom calls, "
+                "cancel probe: the answer ended before the disconnect, inconclusive"
+                if r.get("ended_before_cut")
+                else f"cancel probe: {r['loom_calls']} Loom calls, "
                 f"{r['loom_calls_after_disconnect']} after the client disconnected"
             )
     return "\n".join(lines)
@@ -1030,6 +1059,12 @@ def main() -> None:
     run.add_argument("--out", default=str(HERE / "results.json"))
     run.add_argument("--only", nargs="*", help="case ids to run")
     run.add_argument("--cancel-probe", action="store_true", help="also disconnect one answer early")
+    run.add_argument(
+        "--cancel-after",
+        type=float,
+        default=1.0,
+        help="seconds into the probe's answer at which the client disconnects",
+    )
     run.add_argument("--cancel-wait", type=float, default=20.0)
     run.add_argument(
         "--native-only",
