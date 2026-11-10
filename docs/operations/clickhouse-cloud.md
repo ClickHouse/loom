@@ -41,7 +41,7 @@ openssl x509 -inform DER -in root.der -out root.pem
 ```
 
 Check the bundle against the chain the server sends, trusting nothing but the bundle, as
-the driver does:
+the driver does (OpenSSL 3; `-no-CAstore` is new there):
 
 ```bash
 openssl verify -no-CApath -no-CAstore -CAfile roots.pem -untrusted chain.pem \
@@ -140,9 +140,9 @@ pod with a ClickHouse admin credential that may create users, passing the admin 
 from a file, never typed at an echoing terminal:
 
 ```bash
-pod=$(kubectl get deploy -n loom -o name \
+web=$(kubectl get deploy -n loom -o name \
   -l app.kubernetes.io/instance=loom,app.kubernetes.io/component=web)
-kubectl exec -i -n loom "$pod" -- sh -c \
+kubectl exec -i -n loom "$web" -- sh -c \
   'read -r LOOM_CH_PASSWORD; export LOOM_CH_PASSWORD LOOM_CH_USER=default;
    exec loom sql-access grant --user acme_sql --org acme --namespaces support,research' < admin.pass
 ```

@@ -117,6 +117,8 @@ def main() -> None:
     assert web_policies(render(*CLOUD, *off)) == web_policies(render(*eks, *off)), "policy off"
     check_unconfigured(render(*sets(*EVERYTHING)), "defaults")
     check_unconfigured(render(*eks, *sets(*EVERYTHING)), "eks")
+    # Without the block, these names are the documented way to set the authority.
+    render(*eks, *sets("env.LOOM_PG_DSN=x", "extraEnv[0].name=PGPASSWORD", "extraEnv[0].value=x"))
     for name in RENDERED:
         want = f"set {name} through postgres.*"
         refused(f"{want}, not env", *sets(f"env.{name}=x"))
