@@ -77,11 +77,53 @@ def test_a_key_with_whitespace_is_split_before_it_is_stemmed() -> None:
     assert sorted(r["memory_key"] for r in rows) == sorted(_SPACED)
 
 
-def test_key_parts_in_python_are_the_statements_parts() -> None:
-    keys = ["user_task_worktree", "a__b", "_lead", "communication style", "x\ty\nz", "p/q-r s"]
+def test_key_parts_in_python_are_the_statements_parts_for_an_ascii_key() -> None:
+    keys = [
+        "user_task_worktree",
+        "a__b",
+        "_lead",
+        "communication style",
+        "x\ty\nz",
+        "p/q-r s",
+        # each escape in the statement's literal is whitespace, not its letter
+        "pref\x0bvim\x0cfoo\rbar_vfr",
+    ]
     rows = run(
         [],
         f"SELECT {KEY_PARTS} AS parts FROM (SELECT arrayJoin({{keys:Array(String)}}) AS memory_key)",
         {"keys": keys},
     )
     assert [r["parts"] for r in rows] == [key_parts(k) for k in keys]
+
+
+_KEYS = (
+    "user_task_worktree",
+    "worktree_path",
+    "user_prs_open_count",
+    "pr_review_policy",
+    "a__task",
+    "_task_lead",
+    "Task_Owner",
+    "pref/editor_theme",
+    "ci-run_flaky_tests",
+)
+
+
+@pytest.mark.parametrize("query", ["task worktree path", "editor theme", "flaky CI tests"])
+def test_a_key_without_whitespace_reads_as_it_did_at_the_underscore_split(
+    query: str, tmp_path
+) -> None:
+    """Every statement returns the same rows, in the same order, as it did when keys were
+    split at `_` alone: their parts, counts and document frequencies are unchanged."""
+    run(_setup(*(_row(f"s{i % 3}", key) for i, key in enumerate(_KEYS))), "SELECT 1", path=tmp_path)
+    params = {**_params(per_key=3, limit=10), "stems": key_match_query_stems(query)}
+    where = "e.org = {org:String} AND e.tombstoned_at IS NULL"
+    statements = [
+        (key_match_precheck_sql(), params),
+        (_SQL, params),
+        (key_match_component_sql(where), {**params, "pool_keys": list(_KEYS)}),
+    ]
+    for sql, p in statements:
+        before = sql.replace(KEY_PARTS, "splitByChar('_', lower(memory_key))")
+        assert before != sql
+        assert run([], sql, p, path=tmp_path) == run([], before, p, path=tmp_path)

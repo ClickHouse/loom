@@ -102,7 +102,7 @@ _KEY_MATCH_STOP = frozenset(
 
 def key_match_query_stems(query: str) -> list[str]:
     """Snowball stems of the query's content tokens (stop words and single
-    characters dropped), the tokens a memory key's `_`-separated parts are
+    characters dropped), the tokens a memory key's parts (`key_parts`) are
     matched against."""
     from server.memory.domain.lemmatize import lemma_tokens, snowball_stem_tokens
 
@@ -139,7 +139,10 @@ _KEY_SPLIT = re.compile(r"[_ \t\n\v\f\r]")
 
 
 def key_parts(memory_key: str) -> list[str]:
-    """A memory key's parts as the arm's statements stem them (`sql.KEY_PARTS`)."""
+    """A memory key's parts as the arm's statements split them (`sql.KEY_PARTS`), the
+    same for an ASCII key. Python lowercases every letter and ClickHouse's `lower()` only
+    ASCII ones, so a non-ASCII key's parts can differ in case here; the gate stays a
+    superset, since the query's stems are lowercased in Python too."""
     return _KEY_SPLIT.split(str(memory_key or "").lower())
 
 
@@ -229,7 +232,7 @@ def key_match_gate(
 async def _run_key_match_pool(ctx: SearchContext) -> None:
     """The memory key names the attribute the question asks for (`user_task_worktree` ↔ "task
     worktree path"), and outside lexical mode no other leg reads it. This arm matches the
-    query's stemmed content tokens against the key's `_`-separated parts in ClickHouse, pulls
+    query's stemmed content tokens against the key's parts (`sql.KEY_PARTS`) in ClickHouse, pulls
     the rows whose key shares at least two stems (or every stem of a short key), and adds them
     to the pool as candidates with a `key_match` component the fusion pass turns into a boost.
     Rows already in the pool only gain the component. Additive and fail-open; the mode
