@@ -9,7 +9,6 @@ import { humanizeError } from "../lib/errorWords";
 import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, fieldError } from "../components/ui";
-import { isCommitted } from "../lib/errors";
 
 interface Props {
   open: boolean;
@@ -89,14 +88,6 @@ export function AddMemoryDialog({ open, onOpenChange, identity, onAdded }: Props
       reset();
       onOpenChange(false);
     } catch (e) {
-      // Committed, only its search copy lags: added, so the dialog closes as on success.
-      if (isCommitted(e)) {
-        toast("Memory added; lists and search catch up shortly", "ok");
-        onAdded();
-        reset();
-        onOpenChange(false);
-        return;
-      }
       setError(humanizeError(e));
       setBusy(false);
     }

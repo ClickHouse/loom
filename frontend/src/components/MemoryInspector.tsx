@@ -72,7 +72,6 @@ import { canCall } from "../lib/canCall";
 import { historyChange, previousVersion } from "../lib/historyChange";
 import { MenuTrigger } from "./ui/Menu";
 import { shortcutOff } from "../lib/shortcuts";
-import { isCommitted } from "../lib/errors";
 
 type SectionId = "history" | "related" | "provenance" | "lineage" | "evidence" | "links";
 const SECTIONS_KEY = "loom_inspector_sections_v1";
@@ -766,8 +765,7 @@ export function MemoryInspector({
       if (formSession.current === session) setEditing(false);
     } catch (e) {
       toastError("Save failed", e);
-      if (!isCommitted(e)) return;
-      if (formSession.current === session) setEditing(false);
+      return;
     }
     await reread();
   };

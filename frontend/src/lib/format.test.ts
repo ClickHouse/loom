@@ -87,6 +87,8 @@ describe("humanizeError", () => {
     const lost =
       "Lost connection to Loom mid-request. The work may still have committed on the server — re-check the list before retrying.";
     expect(humanizeError(new TypeError("Failed to fetch"))).toBe(lost);
+    // Chrome's words when the body of an answer is cut after its headers.
+    expect(humanizeError(new TypeError("network error"))).toBe(lost);
     // A read lost nothing: no "may still have committed". A caller's own lead-in alone
     // keeps the warning, since most of those are writes.
     expect(humanizeError(new TypeError("Failed to fetch"), { read: true })).toBe("Lost connection to Loom.");
@@ -231,7 +233,7 @@ describe("humanizeError", () => {
           message: "the write is committed; do not repeat it. Its ClickHouse rows follow shortly",
           detail: { category: "dependency", retryable: false, committed: true },
         },
-        "Done. Lists and search catch up shortly; don't send it again.",
+        "It was saved, but lists and search have not caught up yet. Don't send it once more; reload in a moment to see it.",
       ],
       [
         "a request still running names that, not a load problem",

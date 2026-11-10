@@ -496,7 +496,7 @@ function ConflictsPanel() {
       if (!sameVisit) return;
       setReason("");
     } catch (e) {
-      toastError("Failed", e);
+      toastError("Couldn't load more", e, { read: true });
     } finally {
       if (visit.current === myVisit) setBusy(false);
     }

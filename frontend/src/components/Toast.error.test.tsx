@@ -64,10 +64,11 @@ describe("toastError", () => {
       ),
     );
     expect(
-      await screen.findByText("Done. Lists and search catch up shortly; don't send it again."),
+      await screen.findByText(
+        "It was saved, but lists and search have not caught up yet. Don't send it once more; reload in a moment to see it.",
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Delete failed/)).toBeNull();
-    expect(screen.queryByText(/Saved/)).toBeNull();
   });
 
   it("words a failed read as a read: no may-have-committed warning", async () => {

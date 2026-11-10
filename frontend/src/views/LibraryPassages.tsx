@@ -120,7 +120,7 @@ export function LibraryPassages({
       }
     } catch (e) {
       // The hits it would have replaced stay (a failed Show more, say).
-      if (!ctrl.signal.aborted) setError(humanizeError(e));
+      if (!ctrl.signal.aborted) setError(humanizeError(e, { read: true }));
     } finally {
       if (!ctrl.signal.aborted) setBusy(false);
     }

@@ -2,7 +2,7 @@
 // (docs/development/dashboard-design.md, errors). Kept out of lib/format.ts so the boot
 // chunk does not carry it: the toast viewport loads it soon after the shell paints, and
 // toastError falls back to its context alone if it cannot.
-import { ApiError, isCommitted } from "./errors";
+import { ApiError } from "./errors";
 import { errorRequestId } from "./format";
 
 /** Sentences for the server's error codes (`server/core/errors.py` and the
@@ -10,6 +10,12 @@ import { errorRequestId } from "./format";
  *  its category or status would. The server's own message rides along after the sentence
  *  (it states the cause): a sentence ending in ":" introduces it; one ending in "."
  *  precedes it. No sentence says to try again: `retryTail` owns that, from the body. */
+/** The write committed; only Loom's search copy of it lags (`server/core/pg_lease.py`). The
+ *  page may still show the old state, so the line says what to do about that, and nothing
+ *  else: the server's words name its tables. */
+export const PUBLICATION_PENDING =
+  "It was saved, but lists and search have not caught up yet. Don't send it once more; reload in a moment to see it.";
+
 export const ERROR_CODE_PREFIXES: Record<string, string> = {
   AUTH_INVALID: "Sign-in rejected:",
   SIGNED_IN_ELSEWHERE: "You signed in afresh in another tab. Nothing was lost; this is safe to send once more.",
@@ -49,10 +55,6 @@ export const ERROR_CODE_PREFIXES: Record<string, string> = {
   REPO_EXISTS: "This repository is already indexed:",
   REPO_QUOTA: "The repository limit is reached:",
 };
-
-/** The write committed and its copy for search follows (`server/core/pg_lease.py`): a
- *  success said late, so no cause and no retry advice. */
-const PUBLICATION_PENDING = "Done. Lists and search catch up shortly; don't send it again.";
 
 /** Refusals whose check could not run answer with category `dependency` (server
  *  `unverified_class`): the caller may well be allowed, so no sentence about roles. */
@@ -154,7 +156,7 @@ export function humanizeError(err: unknown, opts: HumanizeOptions = {}): string 
   // "Load failed" / "NetworkError when attempting…". Distinguish "we
   // never reached the server" from "the server said no" — and warn that
   // the server may have committed the work even though we lost the response.
-  if (/^(failed to fetch|fetch failed|load failed|networkerror)\b/i.test(raw)) {
+  if (/^(failed to fetch|fetch failed|load failed|networkerror|network error)\b/i.test(raw)) {
     return opts.read ? LOST_CONNECTION_READ : LOST_CONNECTION;
   }
   // A DOMException is not an Error in every engine, so the name is read off the object;
@@ -201,7 +203,7 @@ function humanizeApiError(err: ApiError, bare: boolean): string {
     (err.sessionEnded || SESSION_GONE.test(err.serverMessage))
   )
     return "Your session ended — sign in again.";
-  if (isCommitted(err)) return PUBLICATION_PENDING;
+  if (err.code === "PUBLICATION_PENDING") return PUBLICATION_PENDING;
   const lead = leadFor(err);
   let text: string;
   if (err.serverMessage && bare) {

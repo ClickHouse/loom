@@ -50,7 +50,12 @@ export function useScopedRead<T>(scope: string): ScopedRead<T> {
       read(mine.signal)
         .then((data) => settle(() => ({ scope, data, error: null, busy: false })))
         .catch((e) =>
-          settle((s) => ({ scope, data: s.scope === scope ? s.data : null, error: humanizeError(e), busy: false })),
+          settle((s) => ({
+            scope,
+            data: s.scope === scope ? s.data : null,
+            error: humanizeError(e, { read: true }),
+            busy: false,
+          })),
         );
     },
     [scope],

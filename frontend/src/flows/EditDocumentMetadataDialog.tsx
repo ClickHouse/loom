@@ -6,7 +6,6 @@ import { TextField } from "@clickhouse/click-ui/TextField";
 import { updateKnowledgeMetadata, type Identity, type KnowledgeEntry } from "../api";
 import { toast, toastError } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { isCommitted } from "../lib/errors";
 
 interface Props {
   open: boolean;
@@ -68,10 +67,6 @@ export function EditDocumentMetadataDialog({ open, onOpenChange, identity, entry
       onOpenChange(false);
     } catch (e) {
       toastError("Save failed", e);
-      if (isCommitted(e)) {
-        onSaved();
-        onOpenChange(false);
-      }
     } finally {
       setBusy(false);
     }

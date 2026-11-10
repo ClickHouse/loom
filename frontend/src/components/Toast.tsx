@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { IconButton } from "./IconButton";
-import { isCommitted } from "../lib/errors";
+import { ApiError } from "../lib/errors";
 import { errorRequestId } from "../lib/format";
 
 /**
@@ -93,15 +93,13 @@ export function toast(msg: string, kind: ToastKind = "ok", opts: ToastOpts = {})
 export function toastError(context: string, err: unknown, opts: { read?: boolean } = {}): void {
   const rid = errorRequestId(err);
   const detail = rid ? { detail: `request id ${rid}` } : {};
-  // A write that committed while only its search copy lags is not a failure, even when the
-  // wording cannot load.
-  const committed = isCommitted(err);
   // The wording is a lazy chunk (the boot chunk's budget), loaded by the viewport soon
   // after paint; this import then resolves at once.
   import("../lib/errorWords")
-    .then(({ humanizeError }) => {
-      if (committed) {
-        toast(humanizeError(err), "info", detail);
+    .then(({ humanizeError, PUBLICATION_PENDING }) => {
+      // Not a failure, so no "<context>:" in front: it committed, the lists lag.
+      if (err instanceof ApiError && err.code === "PUBLICATION_PENDING") {
+        toast(PUBLICATION_PENDING, "info", detail);
         return;
       }
       const msg = `${context}: ${humanizeError(err, { bare: true, read: opts.read })}`;
@@ -109,7 +107,7 @@ export function toastError(context: string, err: unknown, opts: { read?: boolean
     })
     // The wording could not load (a deploy replaced the chunk, the network dropped): the
     // context alone still says what failed.
-    .catch(() => toast(committed ? "Done." : `${context}.`, committed ? "info" : "error", detail));
+    .catch(() => toast(`${context}.`, "error", detail));
 }
 
 export function errorToastMs(msg: string): number {
