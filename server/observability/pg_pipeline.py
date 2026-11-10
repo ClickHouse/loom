@@ -14,8 +14,9 @@
   reading per delivery pass, taken first in the pass by the worker that owns the source
   and exported by the process that runs it (the workers child by default, else the lease
   holder): a process that runs no delivery pass has none, and a reading older than two
-  export periods is dropped (`loom.pg.backlog_reading_age_s` says how old each is), so a
-  pass that runs longer than that leaves no point until the next one reads.
+  export periods is dropped (`loom.pg.backlog_reading_age_s` says how old each is), so when
+  the time between two passes' starts (a pass and the interval after it) passes two
+  export periods, no point is exported until the next pass reads.
 - `loom.ch.inserts` and `loom.ch.insert_rows` {table}: the memory write path's inserts of
   memory rows and search documents (`memory.store.inserts`) and the audit writers' rows
   (`observability.audit`, `pg_publish`), under either authority. Memory rows and search
