@@ -498,7 +498,10 @@ def print_connect(
     with_token = bool(token)
     print("\n  Save a first memory with curl:")
     print(_curl_snippet(base_url, org, namespace, with_token=with_token))
-    print("\n  …or with the Python SDK (pip install ./sdk/python):")
+    print(
+        "\n  …or with the Python SDK"
+        " (pip install clickhouse-loom, or from a clone: pip install ./sdk/python):"
+    )
     print(_sdk_snippet(base_url, org, namespace, with_token=with_token))
     print("\n  Wire Claude Code (MCP, coding toolset):")
     print(f"    {_claude_mcp_add_line(base_url, token)}")
