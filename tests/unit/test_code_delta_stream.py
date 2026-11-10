@@ -668,7 +668,8 @@ def test_a_header_past_its_caps_is_refused_before_the_entries_are_parsed(
     real = delta_file._entry
     monkeypatch.setattr(delta_file, "_entry", lambda text, i: parsed.append(i) or real(text, i))
     path = tmp_path / "delta.json"
-    _write(path, 3, features=["x"] * 17)
-    with pytest.raises(ValueError, match="delta invalid: 'features'"):
+    body = {"commit": "c" * 40, "features": ["x"] * 17, "files": [_entry(i) for i in range(3)]}
+    path.write_text(json.dumps(body))
+    with pytest.raises(ValueError, match=r"^delta invalid: 'features'$"):
         open_delta(path)
     assert parsed == []
