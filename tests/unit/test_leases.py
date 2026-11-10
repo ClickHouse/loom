@@ -165,7 +165,8 @@ async def test_a_lease_whose_renewals_fail_is_lost_at_half_its_ttl() -> None:
         async with leases.cluster_lease("job", ttl_s=0.6, ch=ch) as lease:
             ch.down = True
             await asyncio.sleep(2)
-    assert 0.25 <= loop.time() - started < 1.0 and not lease.held  # long before the 2 s block
+    # at half the TTL, before another process may take the key over (at the TTL)
+    assert 0.25 <= loop.time() - started < 0.6 and not lease.held
 
 
 async def test_a_renewal_that_recovers_before_half_the_ttl_keeps_the_lease() -> None:
@@ -266,9 +267,8 @@ async def test_one_renewal_that_hangs_is_retried_before_the_lease_counts_as_lost
             await super().execute(sql, params, **kw)
 
     ch = HangsOnce()
-    lease = await leases.take("job", ttl_s=1.2, ch=ch)
+    lease = await leases.take("job", ttl_s=1.2, renew=True, ch=ch)
     assert lease is not None
-    lease.keep_renewed()
     try:
         await asyncio.sleep(1.0)  # past half the TTL from the take
         # the first hung and a later one was sent; held means one landed
@@ -293,4 +293,5 @@ async def test_renewals_that_all_hang_still_lose_the_lease_at_half_its_ttl() -> 
     with pytest.raises(leases.LeaseLost):
         async with leases.cluster_lease("job", ttl_s=0.6, ch=ch):
             await asyncio.sleep(2)
-    assert 0.25 <= loop.time() - started < 1.0  # at half the TTL, long before the 2 s block
+    # at half the TTL, before another process may take the key over (at the TTL)
+    assert 0.25 <= loop.time() - started < 0.6

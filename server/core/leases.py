@@ -10,10 +10,10 @@ first, for a name almost never held). Loom requires a Keeper
 arbitration without one.
 
 Expiry is judged on the ClickHouse server's clock. A holder renews every sixth of
-the TTL (a twelfth after a failed renewal), gives each attempt a twelfth of the TTL,
-and counts the lease lost half the TTL after the last renewal it saw land, before
-another process can take it over. There are no fencing tokens: a statement already
-sent still lands.
+the TTL (a twelfth after a failed renewal), gives each attempt at most a twelfth of
+the TTL, and counts the lease lost half the TTL after the last renewal it saw land,
+before another process can take it over. There are no fencing tokens: a statement
+already sent still lands.
 
 `cluster_lease` holds a name for a block and cancels the block once the lease is
 lost; `take` returns a `Lease` to release yourself. `holding` is a claim: a
