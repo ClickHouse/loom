@@ -186,8 +186,11 @@ export function CollectionPath({
   const folded = above.slice(0, -1);
   const parent = above.at(-1);
   const sep = <Icon name="chevron-right" size="xs" aria-hidden="true" className="text-text-muted" />;
-  const title = (c: CollectionEntry) => (
-    <span className="inline-block max-w-48 truncate align-bottom">{distinctTitle(c, repeated)}</span>
+  // Cut to one line; the whole title is the link's name and its tooltip.
+  const cut = (text: string) => (
+    <span title={text} className="inline-block max-w-48 truncate align-bottom">
+      {text}
+    </span>
   );
   return (
     <nav aria-label="Collection path" className="min-w-0 text-sm">
@@ -195,7 +198,7 @@ export function CollectionPath({
         {home && (
           <li className="flex min-w-0 items-center gap-1">
             <PlaceLink collection={home.collection} onOpen={home.open}>
-              <span className="inline-block max-w-48 truncate align-bottom">{home.label}</span>
+              {cut(home.label)}
             </PlaceLink>
           </li>
         )}
@@ -231,7 +234,7 @@ export function CollectionPath({
               <HiddenParent part={parent} truncated={truncated} />
             ) : (
               <PlaceLink collection={parent.namespace} onOpen={() => onPick(parent.namespace)}>
-                {title(parent)}
+                {cut(distinctTitle(parent, repeated))}
               </PlaceLink>
             )}
           </li>
@@ -275,7 +278,6 @@ export function CollectionsInside({
   // (the select above finds any of them).
   return (
     <section aria-labelledby={HEADING_ID} className={`space-y-1 ${className}`}>
-      {/* The page's first section under its h1. */}
       <SectionHeading id={HEADING_ID} level={2} label="Collections" count={inside.length} focusable />
       <ul ref={list} className="space-y-1">
         {inside.slice(0, count).map((c) => (

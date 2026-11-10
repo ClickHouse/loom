@@ -249,8 +249,8 @@ export function LibraryCollections({
 
   return (
     <div className="mb-2 space-y-2 sm:mb-4">
-      {/* One row at every width, so the list starts where the list rules want it: the path
-          leads it (on a phone, one back button). */}
+      {/* One row at the widths the list budget measures, so the documents start where the list
+          rules want them: the path leads it (on a phone, one back button). Narrower, it wraps. */}
       <div className="flex flex-wrap items-center gap-2">
         {!phone && current && !current.personal && (
           <CollectionPath

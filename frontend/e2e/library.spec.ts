@@ -150,13 +150,18 @@ test.describe("a collection's path at 1400 px", () => {
     const collections = [
       entry("col-team", "", "Team handbook and onboarding"),
       entry("col-q3", "col-team", "Quarter three planning"),
-      entry("col-interviews", "col-q3", "Customer interviews"),
+      // Long enough to be cut: the worst case for the row's one line.
+      entry("col-interviews", "col-q3", "Customer interviews from the third quarter's discovery round"),
       entry("col-notes", "col-interviews", "Interview notes"),
       ...Array.from({ length: 8 }, (_, i) => entry(`col-notes-${i}`, "col-notes", `Session ${i + 1} notes`)),
     ];
     await page.route("**/v1/collection.list", (r) => r.fulfill({ json: { collections, next_cursor: null } }));
     await page.goto("/library?collection=col-notes");
-    await expect(page.getByRole("navigation", { name: "Collection path" })).toBeVisible();
+    const path = page.getByRole("navigation", { name: "Collection path" });
+    await expect(path).toBeVisible();
+    // The path and the select share one line.
+    const select = page.getByRole("button", { name: "Show the documents of" });
+    expect(Math.abs((await boxOf(path)).y - (await boxOf(select)).y)).toBeLessThan(16);
     const first = page.locator("main [data-doc-row]").first();
     await expect(first).toBeVisible();
     expect((await boxOf(first)).y).toBeLessThanOrEqual(300);

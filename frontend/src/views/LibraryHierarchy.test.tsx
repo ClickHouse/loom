@@ -89,6 +89,19 @@ describe("CollectionPath", () => {
     ).toBeInTheDocument();
   });
 
+  it("folds a top the caller cannot read with the ones above the parent, saying what it is", async () => {
+    const rows = [
+      entry("col-b", { parent: "col-hidden", title: "B" }),
+      entry("col-c", { parent: "col-b", title: "C" }),
+      entry("col-d", { parent: "col-c", title: "D" }),
+    ];
+    render(<CollectionPath current={rows[2]} rows={rows} onPick={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "2 more above" }));
+    expect(await screen.findByText(/^col-hidden: a collection you can't open/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "B" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "C" })).toBeInTheDocument();
+  });
+
   it("leads a top-level collection back to the place that lists it, and shows nothing without one", () => {
     const open = vi.fn();
     render(
