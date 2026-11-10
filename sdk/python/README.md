@@ -13,8 +13,9 @@ pip install clickhouse-loom
 Python 3.11+. Runtime deps: `httpx[http2]` (HTTP/2 via `h2`).
 
 The SDK's version is the server release's. A release not yet on PyPI installs from its
-assets ([installing from a GitHub Release](https://github.com/ClickHouse/loom/blob/main/docs/development/release-process.md#installing-from-a-github-release)). From the root of a clone,
-`pip install ./sdk/python`.
+assets ([installing from a GitHub
+Release](https://github.com/ClickHouse/loom/blob/main/docs/development/release-process.md#installing-from-a-github-release)).
+From the root of a clone, `pip install ./sdk/python`.
 
 ## Use
 

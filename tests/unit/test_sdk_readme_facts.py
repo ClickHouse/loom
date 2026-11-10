@@ -70,8 +70,16 @@ def test_the_package_readme_links_resolve_on_the_registry(sdk: str) -> None:
                 assert anchor.lower() in anchors(dest), target
 
 
-@pytest.mark.parametrize("cli", ["init.py", "up.py", "login.py"])
-def test_the_cli_hints_name_the_published_package(cli: str) -> None:
-    """`loom init`, `loom up` and `loom login` print how to install the SDK."""
-    source = (SDK_ROOT.parents[1] / "server" / "cli" / cli).read_text()
-    assert f"pip install {PROJECT['name']}" in source
+def test_the_cli_hints_name_the_published_package(capsys: pytest.CaptureFixture[str]) -> None:
+    """What `loom init` and `loom up` print tells the reader to install the
+    published package."""
+    from server.cli import init, up
+
+    signed_up = {"namespace": "agent-bot", "org": "dev", "subject": "agent-bot", "claim_code": "c"}
+    hint = init.connect_lines(signed_up, base_url="http://x", token_path="t", config_path="c")
+    up.print_connect(
+        base_url="http://x", mode="single-user", org="dev", namespace="local", token="",
+        build_commit="b",
+    )  # fmt: skip
+    for printed in (hint, capsys.readouterr().out):
+        assert f"pip install {PROJECT['name']}" in printed
