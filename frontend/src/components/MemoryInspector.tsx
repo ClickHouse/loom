@@ -2394,7 +2394,9 @@ function EntitySummary({
         {mentions === null ? (
           <Loading layout="inline" label="Loading memories" />
         ) : "failed" in mentions ? (
-          <div className="text-xs text-text-muted">Couldn't load the memories that mention it: {mentions.failed}</div>
+          <div role="status" className="text-xs text-text-muted">
+            Couldn't load the memories that mention it: {mentions.failed}
+          </div>
         ) : (
           <>
             <div className="text-xs text-text-muted mb-1">
@@ -2431,7 +2433,9 @@ function EntitySummary({
         {neighbours === null ? (
           <Loading layout="inline" label="Loading neighbours" />
         ) : "failed" in neighbours ? (
-          <div className="text-xs text-text-muted">Couldn't load neighbours: {neighbours.failed}</div>
+          <div role="status" className="text-xs text-text-muted">
+            Couldn't load neighbours: {neighbours.failed}
+          </div>
         ) : neighbours.length === 0 ? (
           <div className="text-xs text-text-muted">None recorded</div>
         ) : (

@@ -54,13 +54,32 @@ describe("inline error lines", () => {
 });
 
 describe("a stored error line", () => {
-  // `const text = humanizeError(e)` then "Audit failed: ${text}": the same double lead-in
-  // the two rules above catch inline, one step removed.
+  // `const text = humanizeError(e)` or `setError(humanizeError(e))`, then "Audit failed:
+  // ${text}" or "Couldn't load: {error}": the same double lead-in the two rules above catch
+  // inline, one step removed.
   it("is not put after a lead-in of its own", () => {
+    const stored = (text: string) => [
+      ...[...text.matchAll(/const (\w+) = humanizeError\(([^)]*)\)/g)].map((m) => ({ m, name: m[1], args: m[2] })),
+      ...[...text.matchAll(/\bset(\w+)\(humanizeError\(([^)]*)\)\)/g)].map((m) => ({
+        m,
+        name: m[1][0].toLowerCase() + m[1].slice(1),
+        args: m[2],
+      })),
+    ];
+    // The rendering is looked for in the component that stores the line: one file may hold
+    // several, each with its own `error`.
+    const component = (text: string, at: number) => {
+      const starts = [...text.matchAll(/^(?:export )?function /gm)].map((m) => m.index ?? 0);
+      const start = starts.filter((i) => i <= at).pop() ?? 0;
+      return text.slice(start, starts.find((i) => i > at) ?? text.length);
+    };
     const calls = Object.entries(SOURCES).flatMap(([path, text]) =>
-      [...text.matchAll(/const (\w+) = humanizeError\(([^)]*)\)/g)]
-        .filter((m) => !/bare: true/.test(m[2]) && new RegExp(`:\\s*\\$?\\{${m[1]}\\}`).test(text))
-        .map((m) => `${path}:${text.slice(0, m.index).split("\n").length}`),
+      stored(text)
+        .filter(
+          ({ m, name, args }) =>
+            !/bare: true/.test(args) && new RegExp(`:\\s*\\$?\\{${name}\\}`).test(component(text, m.index ?? 0)),
+        )
+        .map(({ m }) => `${path}:${text.slice(0, m.index).split("\n").length}`),
     );
     expect(calls).toEqual([]);
   });

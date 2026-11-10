@@ -361,7 +361,7 @@ function PosterPicker({
             onChangeRef.current(next);
         })
         .catch((e) => {
-          if (!cancelled) setError(humanizeError(e));
+          if (!cancelled) setError(humanizeError(e, { bare: true, read: true }));
         })
         .finally(() => {
           if (!cancelled) setLoading(false);

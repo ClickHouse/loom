@@ -36,7 +36,7 @@ describe("humanizeError", () => {
   });
 
   it("swaps a known code prefix for its sentence and keeps the detail", () => {
-    expect(humanizeError(new Error("AUTH_INVALID: token expired"))).toBe("Sign-in rejected: token expired");
+    expect(humanizeError(new Error("AUTH_INVALID: token expired"))).toBe("Sign-in rejected: token expired.");
     expect(humanizeError("NOT_FOUND")).toBe("Not found — it may have been deleted, or be somewhere you can't read.");
   });
 
@@ -72,7 +72,7 @@ describe("humanizeError", () => {
           message: "the upload expired; upload the file again",
           detail: { category: "input", retryable: false },
         },
-        "Couldn't do that: the upload expired; upload the file again",
+        "Couldn't do that: the upload expired; upload the file again.",
       ],
       [
         "a name clash is not 'input rejected'",
@@ -82,7 +82,7 @@ describe("humanizeError", () => {
           message: "key x is pinned",
           detail: { category: "input", retryable: false },
         },
-        "Couldn't do that: key x is pinned",
+        "Couldn't do that: key x is pinned.",
       ],
       [
         "a missing row reads as not found",
@@ -92,7 +92,7 @@ describe("humanizeError", () => {
           message: "no source s1",
           detail: { category: "input", retryable: false },
         },
-        "Not found: no source s1",
+        "Not found: no source s1.",
       ],
       [
         "an operator's fix says retrying won't help",
@@ -112,7 +112,7 @@ describe("humanizeError", () => {
           message: "namespace 'x' exceeded its rate limit",
           detail: { category: "capacity", retryable: true, retry_after_s: 3 },
         },
-        "Too many requests. namespace 'x' exceeded its rate limit. Try again in 3 s.",
+        "Over a limit for now: namespace 'x' exceeded its rate limit. Try again in 3 s.",
       ],
       [
         "the wait comes from the Retry-After header when the body has none",
@@ -133,7 +133,7 @@ describe("humanizeError", () => {
           message: "grants could not be read",
           detail: { category: "dependency", retryable: true },
         },
-        "Loom couldn't check your access just now. grants could not be read. Try again in a moment.",
+        "Loom couldn't check your access just now: grants could not be read. Try again in a moment.",
       ],
       [
         "a real refusal names the role",
@@ -143,7 +143,7 @@ describe("humanizeError", () => {
           message: "writer needed on dev/x",
           detail: { category: "auth", retryable: false },
         },
-        "Your role doesn't allow this: writer needed on dev/x",
+        "Your role doesn't allow this: writer needed on dev/x.",
       ],
       [
         "an internal error on a write may have left the write behind",
@@ -178,7 +178,7 @@ describe("humanizeError", () => {
           message: "resending can extract the messages twice",
           detail: { category: "dependency", retryable: true },
         },
-        "A service Loom relies on failed: resending can extract the messages twice",
+        "A service Loom relies on failed: resending can extract the messages twice.",
       ],
       [
         "a migration not applied yet keeps the server's words and says retrying won't help",
@@ -229,7 +229,7 @@ describe("humanizeError", () => {
           message: "a request with this idempotency key is still running; retry once it answers",
           detail: { category: "capacity", retryable: true },
         },
-        "Not done yet: a request with this idempotency key is still running; retry once it answers",
+        "Not done yet: a request with this idempotency key is still running; retry once it answers.",
       ],
       [
         "a call raced by the same person's sign-in in another tab is safe to send once more",
@@ -239,12 +239,12 @@ describe("humanizeError", () => {
       [
         "a reused request key names the reuse, not 'already done'",
         { status: 409, code: "IDEMPOTENT_CONFLICT", message: "Idempotency-Key reused with different body" },
-        "This request key was already used for a different request: Idempotency-Key reused with different body",
+        "This request key was already used for a different request: Idempotency-Key reused with different body.",
       ],
       [
         "a FastAPI 422",
         { status: 422, code: "VALIDATION_FAILED", message: "namespace: field required" },
-        "Not accepted: namespace: field required",
+        "Not accepted: namespace: field required.",
       ],
     ];
     it.each(rows)("%s", (_name, given, line) => {
@@ -256,7 +256,7 @@ describe("humanizeError", () => {
         humanizeError(new ApiError({ status: 403, code: "AUTH_INSUFFICIENT", message: "acme is the only admin" }), {
           bare: true,
         }),
-      ).toBe("Your role doesn't allow this. acme is the only admin.");
+      ).toBe("Your role doesn't allow this — acme is the only admin.");
     });
 
     it("keeps the category's words after a caller's lead-in for a code with no message", () => {
@@ -334,16 +334,16 @@ describe("humanizeError", () => {
       const err = new ApiError({
         status: 409,
         code: "PRECONDITION_FAILED",
-        message: "the name col-x is taken in acme",
+        message: "the name col-x is taken in acme.",
       });
-      expect(humanizeError(err, { bare: true })).toBe("the name col-x is taken in acme");
+      expect(humanizeError(err, { bare: true })).toBe("the name col-x is taken in acme.");
       expect(humanizeError(new ApiError({ status: 404 }), { bare: true })).toBe("Not found.");
       // A code's own sentence carries the next step, so it stays.
       expect(
         humanizeError(new ApiError({ status: 403, code: "AUTH_INSUFFICIENT", message: "admin needed on t" }), {
           bare: true,
         }),
-      ).toBe("Your role doesn't allow this. admin needed on t.");
+      ).toBe("Your role doesn't allow this — admin needed on t.");
     });
 
     it("keeps the retry tail when the server's words only contain the letters of 'again'", () => {
@@ -354,7 +354,7 @@ describe("humanizeError", () => {
           message: "writes against it are queued",
           detail: { category: "capacity", retryable: true },
         }),
-      ).toBe("Loom is busy right now. writes against it are queued. Try again in a moment.");
+      ).toBe("Loom is busy right now: writes against it are queued. Try again in a moment.");
     });
 
     it("leaves retry advice to the tail: no code sentence says to try again", () => {
@@ -365,7 +365,7 @@ describe("humanizeError", () => {
 
     it("words the upload's refusals, for when the format list could not check the file first", () => {
       expect(api({ status: 415, code: "UNSUPPORTED_FILE", message: ".doc files are not supported" })).toBe(
-        "Loom can't read this file type: .doc files are not supported",
+        "Loom can't read this file type: .doc files are not supported.",
       );
     });
 
@@ -377,13 +377,13 @@ describe("humanizeError", () => {
       ended.sessionEnded = true;
       expect(humanizeError(ended)).toBe("Your session ended — sign in again.");
       expect(api({ status: 401, code: "AUTH_INVALID", message: "token jti 'j1' is revoked" })).toBe(
-        "Sign-in rejected: token jti 'j1' is revoked",
+        "Sign-in rejected: token jti 'j1' is revoked.",
       );
       for (const flag of ["__LOOM_AUTH_DISABLED", "__LOOM_PROXY_AUTH"] as const) {
         window[flag] = true;
         try {
           expect(api({ status: 401, code: "AUTH_INVALID", message: "missing bearer token" })).toBe(
-            "Sign-in rejected: missing bearer token",
+            "Sign-in rejected: missing bearer token.",
           );
         } finally {
           delete window[flag];

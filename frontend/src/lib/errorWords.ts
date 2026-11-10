@@ -47,9 +47,9 @@ export const ERROR_CODE_PREFIXES: Record<string, string> = {
   IDEMPOTENT_CONFLICT: "This request key was already used for a different request:",
   BLACKLISTED: "Blocked by a privacy filter:",
   BLOB_GONE: "The original file is no longer stored, so it can't be downloaded or extracted.",
-  RATE_LIMITED: "Too many requests.",
-  OVERLOADED: "Loom is busy right now.",
-  BACKEND_TIMEOUT: "Loom took too long to answer.",
+  RATE_LIMITED: "Over a limit for now:",
+  OVERLOADED: "Loom is busy right now:",
+  BACKEND_TIMEOUT: "Loom took too long to answer:",
   CODED_WIDTH_MISMATCH: "The embedding model's width doesn't match the vector tables — see Settings › Models & keys.",
   SELF_SIGNUP_DISABLED: "Sign-up is off on this instance. Ask your operator.",
   SCHEMA_PENDING: "Loom's database is not upgraded for this yet:",
@@ -99,7 +99,7 @@ function sentenceForStatus(status: number): string {
   if (status === 404) return "Not found:";
   if (status === 400 || status === 422) return "Not accepted:";
   if (status === 413) return "Too large:";
-  if (status === 429) return "Too many requests.";
+  if (status === 429) return "Over a limit for now:";
   if (status === 504) return "Loom didn't answer in time:";
   if (status === 502 || status === 503) return "Loom didn't answer:";
   if (status >= 500) return "Loom hit a server error:";
@@ -140,11 +140,11 @@ function retryTail(err: ApiError, read: boolean): string {
 function joinSentence(friendly: string, message: string): string {
   const msg = message.trim();
   if (!msg) return friendly.endsWith(":") ? friendly.slice(0, -1) + "." : friendly;
-  // After a full stop the server's words start a sentence of their own.
-  return `${friendly} ${friendly.endsWith(".") ? asSentence(msg) : msg}`;
+  // The server's words close the line, whatever introduced them.
+  return `${friendly} ${asSentence(msg)}`;
 }
 
-/** A server message set after a full stop: closed, and left as written, since its first
+/** A server message closed with a full stop, and otherwise left as written, since its first
  *  word may be a name (a lowercase namespace, a subject) that a capital would change. */
 function asSentence(msg: string): string {
   const t = msg.trim();
@@ -214,7 +214,7 @@ const SESSION_GONE = /missing bearer token/;
 /** The code's own sentence, when it says more than its category or status. */
 function codeSentence(err: ApiError): string | undefined {
   const category = categoryOf(err);
-  if (UNVERIFIED_CODES.has(err.code) && category === "dependency") return "Loom couldn't check your access just now.";
+  if (UNVERIFIED_CODES.has(err.code) && category === "dependency") return "Loom couldn't check your access just now:";
   return ERROR_CODE_PREFIXES[err.code];
 }
 
@@ -244,7 +244,8 @@ function humanizeApiError(err: ApiError, bare: boolean, read: boolean): string {
   if (err.serverMessage && bare) {
     // The caller's lead-in replaces a generic one; a code's sentence stays, since it
     // carries the next step ("Your role doesn't allow this.").
-    text = own ? `${own.replace(/:$/, ".")} ${asSentence(err.serverMessage)}` : err.serverMessage;
+    // A dash, not a second colon, after the caller's "…:"; the server's words stay as written.
+    text = own ? `${own.replace(/[:.]$/, "")} — ${asSentence(err.serverMessage)}` : asSentence(err.serverMessage);
   } else if (err.serverMessage) text = joinSentence(lead, err.serverMessage);
   // With no message the code is all the server said: kept for support, never the sentence.
   // A generic lead-in says little, so the code goes with it; after a caller's own lead-in a

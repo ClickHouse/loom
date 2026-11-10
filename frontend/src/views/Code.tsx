@@ -547,7 +547,7 @@ function RepositoriesHome({
         await setCodeRepoAccess(b.org, b.namespace, classification, join_policy, opening ? b.namespace : "");
         done += 1;
       } catch (e) {
-        toastError(b.namespace, e);
+        toastError(`Couldn't change access on ${b.namespace}`, e);
       }
     }
     if (done)
@@ -2080,7 +2080,9 @@ export function HealthTab({ id }: { id: CodeId }) {
         {cov === undefined ? (
           <Loading layout="inline" label="Loading coverage" />
         ) : cov === null ? (
-          <div className="text-xs text-text-muted">Couldn't load coverage: {why.cov}</div>
+          <div role="status" className="text-xs text-text-muted">
+            Couldn't load coverage: {why.cov}
+          </div>
         ) : (
           <div className="space-y-2">
             <Table
@@ -2194,7 +2196,9 @@ export function HealthTab({ id }: { id: CodeId }) {
           {recent === null ? (
             <Loading layout="inline" label="Loading recent commits" />
           ) : recent === "failed" ? (
-            <div className="text-xs text-text-muted">Couldn't load the recent commits: {why.recent}</div>
+            <div role="status" className="text-xs text-text-muted">
+              Couldn't load the recent commits: {why.recent}
+            </div>
           ) : recent.length === 0 ? (
             <div className="text-xs text-text-muted">No commits recorded yet.</div>
           ) : (
@@ -2242,7 +2246,9 @@ export function HealthTab({ id }: { id: CodeId }) {
           </button>
           {errs === undefined && <Loading layout="inline" label="Loading the index errors" className="mt-2" />}
           {errs === null && (
-            <div className="mt-2 text-xs text-text-muted">Couldn't load the index errors: {why.errs}</div>
+            <div role="status" className="mt-2 text-xs text-text-muted">
+              Couldn't load the index errors: {why.errs}
+            </div>
           )}
           {errs && errs.total === 0 && (
             <div className="mt-2 text-xs text-text-muted">

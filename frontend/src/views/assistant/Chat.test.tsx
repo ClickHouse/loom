@@ -148,7 +148,7 @@ describe("AssistantChat", () => {
     await ask("Who owns billing?");
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(
-      "Too many requests. the assistant's share of 'team''s daily model cost cap is spent. Try again in 3600 s.",
+      "Over a limit for now: the assistant's share of 'team''s daily model cost cap is spent. Try again in 3600 s.",
     );
     expect(screen.getByLabelText("Question")).toHaveValue("Who owns billing?");
 
@@ -159,12 +159,12 @@ describe("AssistantChat", () => {
   });
 
   it.each([
-    ["AUTH_INSUFFICIENT", 403, "Your role doesn't allow this: the caller cannot read 'team' in 'dev'"],
-    ["OVERLOADED", 503, "Loom is busy right now. the caller cannot read 'team' in 'dev'."],
+    ["AUTH_INSUFFICIENT", 403, "Your role doesn't allow this: the caller cannot read 'team' in 'dev'."],
+    ["OVERLOADED", 503, "Loom is busy right now: the caller cannot read 'team' in 'dev'."],
     [
       "MODEL_CALLS_DISABLED",
       403,
-      "Model calls are off for this org; an org admin can turn them on in Admin › Guardrails unless a platform admin locked them: the caller cannot read 'team' in 'dev'",
+      "Model calls are off for this org; an org admin can turn them on in Admin › Guardrails unless a platform admin locked them: the caller cannot read 'team' in 'dev'.",
     ],
   ])("shows a %s refusal in the chat", async (code, status, shown) => {
     answers.push(refusal(status, { code, message: "the caller cannot read 'team' in 'dev'" }));
@@ -202,7 +202,7 @@ describe("AssistantChat", () => {
     render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
     await ask("Who owns billing?");
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Loom couldn't check your access just now. the grant store did not answer. Try again in a moment.",
+      "Loom couldn't check your access just now: the grant store did not answer. Try again in a moment.",
     );
   });
 
@@ -234,7 +234,7 @@ describe("AssistantChat", () => {
       s.close();
     });
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "The assistant could not finish this answer: LibreChat ended the answer with an error",
+      "The assistant could not finish this answer: LibreChat ended the answer with an error.",
     );
     expect(lastAnswer()).toHaveTextContent("Ada");
     // An error inside the stream is the chat's, not the page's: the composer stays.
@@ -251,7 +251,7 @@ describe("AssistantChat", () => {
       s.close();
     });
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "The answer was cut off: the answer stopped before it was complete",
+      "The answer was cut off: the answer stopped before it was complete.",
     );
     expect(lastAnswer()).toHaveTextContent("Ada");
   });

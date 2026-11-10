@@ -32,12 +32,6 @@ interface Turn {
   support?: Support;
 }
 
-// A refusal before the stream or an error event inside it, worded as every error is
-// (lib/errorWords.ts): an answer only reads, so nothing is left to check before asking again.
-function refusalText(e: unknown): string {
-  return humanizeError(e, { read: true });
-}
-
 const isAbort = (e: unknown) => e instanceof DOMException && e.name === "AbortError";
 
 // What one request may carry (server/assistant/api/models.py): the earlier messages, newest
@@ -155,7 +149,9 @@ export function AssistantChat({
         }
         // A refused question was never answered: it waits in the field to be asked again.
         if (before) setDraft((d) => d || question);
-        finish(id, { state: before ? "refused" : "failed", error: refusalText(e) }, "");
+        // Worded as every error is (lib/errorWords.ts): an answer only reads, so nothing is
+        // left to check before asking again.
+        finish(id, { state: before ? "refused" : "failed", error: humanizeError(e, { read: true }) }, "");
       })
       .finally(() => {
         if (controller.current === mine) controller.current = null;

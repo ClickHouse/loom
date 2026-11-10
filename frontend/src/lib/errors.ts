@@ -132,6 +132,11 @@ export async function apiErrorFromResponse(r: Response): Promise<ApiError> {
 export const PUBLICATION_PENDING =
   "Done, but lists and search have not caught up yet. Don't send it once more; reload in a moment to see the result.";
 
+/** A write that committed with only its search copy pending: callers treat it as done. */
+export function isPublicationPending(err: unknown): boolean {
+  return err instanceof ApiError && err.code === "PUBLICATION_PENDING";
+}
+
 /** The line for a call whose connection dropped before its answer came: a write may still
  *  have committed. Here, not in errorWords, so the toast keeps it without the lazy chunk. */
 export const LOST_CONNECTION =

@@ -3,7 +3,7 @@
 import { act, cleanup, render, screen } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../lib/errors";
-import { ToastViewport, errorToastMs, toastError } from "./Toast";
+import { ToastViewport, errorToastMs, toastError, toastErrorLine } from "./Toast";
 
 afterEach(() => {
   cleanup();
@@ -27,7 +27,7 @@ describe("toastError", () => {
     );
     expect(
       await screen.findByText(
-        "Couldn't delete Research notes: Too many requests. namespace 'x' exceeded its rate limit. Try again in 4 s.",
+        "Couldn't delete Research notes: Over a limit for now — namespace 'x' exceeded its rate limit. Try again in 4 s.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("request id req-9")).toBeInTheDocument();
@@ -37,7 +37,7 @@ describe("toastError", () => {
         new ApiError({ status: 409, code: "PRECONDITION_FAILED", message: "the upload expired" }),
       ),
     );
-    expect(await screen.findByText("Couldn't save: the upload expired")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't save: the upload expired.")).toBeInTheDocument();
   });
 
   it("keeps the may-have-committed warning on a write that lost its connection", async () => {
@@ -71,6 +71,18 @@ describe("toastError", () => {
     expect(screen.queryByText(/Delete failed/)).toBeNull();
   });
 
+  it("says a committed write went through when the caller built its own line", async () => {
+    render(<ToastViewport />);
+    act(() =>
+      toastErrorLine(
+        "Delete failed: Done, but lists and search have not caught up yet.",
+        new ApiError({ status: 503, code: "PUBLICATION_PENDING", message: "the write is committed" }),
+      ),
+    );
+    expect(await screen.findByText(/^Done, but lists and search have not caught up yet/)).toBeInTheDocument();
+    expect(screen.queryByText(/Delete failed/)).toBeNull();
+  });
+
   it("words a failed read as a read: no may-have-committed warning", async () => {
     render(<ToastViewport />);
     act(() => toastError("Load failed", new DOMException("signal timed out", "TimeoutError"), { read: true }));
@@ -86,7 +98,7 @@ describe("toastError", () => {
       ),
     );
     expect(
-      await screen.findByText("Save failed: Your role doesn't allow this. memory.set needs writer on t."),
+      await screen.findByText("Save failed: Your role doesn't allow this — memory.set needs writer on t."),
     ).toBeInTheDocument();
   });
 
