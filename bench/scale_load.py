@@ -1003,7 +1003,7 @@ def optimize(args: argparse.Namespace) -> None:
             )
             print(phase, json.dumps(out[phase][-1]), flush=True)
     out["table_parts"] = parts(ch)
-    Path(args.out).write_text(json.dumps(out, indent=2))
+    _save(args.out, out)
     print(f"wrote {args.out}")
 
 
@@ -1075,7 +1075,7 @@ def erase(args: argparse.Namespace) -> None:
                 "body": r.json() if r.content else None,
             }
             print("org", json.dumps(out["org"], default=str)[:2000], flush=True)
-    Path(args.out).write_text(json.dumps(out, indent=2, default=str))
+    _save(args.out, out)
 
 
 def pg_dead_rows(env: dict[str, str], fraction: float) -> dict[str, dict[str, int]]:
@@ -1115,7 +1115,7 @@ def pg_ops(args: argparse.Namespace) -> None:
     if args.dump_org:
         out["dump_org"] = {"org": args.dump_org, **pg_dump_org_s(env, args.dump_org)}
     print(json.dumps(out, indent=2))
-    Path(args.out).write_text(json.dumps(out, indent=2))
+    _save(args.out, out)
 
 
 def set_authority(args: argparse.Namespace) -> None:
