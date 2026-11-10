@@ -60,8 +60,9 @@ curl -s 'http://localhost:7777/v1/health?include=workers' | jq '.workers_leader'
   `schema.pending` to be empty (the zero-downtime pair's swap does exactly this).
 - **`problems`** is a list of `{code, severity, message, fix, source}`, worst first. The
   same list is printed by `loom doctor` and shown as the dashboard banner. `loom doctor`
-  names each entry it lists in `code_tier_failing` (up to five; `code.repos` names the rest); a platform admin's token names each entry
-  that is not restricted ([when a tier fails](./code-index-operations.md#when-a-tier-fails)).
+  names each entry it lists in `code_tier_failing`, up to five (`code.repos` names the
+  rest); a platform admin's token names each entry that is not restricted
+  ([when a tier fails](./code-index-operations.md#when-a-tier-fails)).
 
 | Problem code                              | Severity                                                                                            | Meaning                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ----------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

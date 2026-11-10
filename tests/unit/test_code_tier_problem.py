@@ -821,3 +821,12 @@ def test_the_doctor_says_where_the_rest_are_when_it_names_only_some() -> None:
         if p.code == "code_tier_failing"
     ]
     assert "and 2 more" in p.message and "code.repos and the repository page" in p.message
+
+
+def test_the_checkout_file_fix_gives_the_caps_the_tier_reads_under() -> None:
+    from server.code.app.index import untrusted_files
+
+    fix = tier_health.fix_for("file_refused", "FileRefused: /r/package.json is 9 bytes; max 1")
+    mib = 1024 * 1024
+    assert f"package.json is read up to {untrusted_files.PACKAGE_JSON_MAX_BYTES // mib} MiB" in fix
+    assert f"yarn.lock up to {untrusted_files.CHECKOUT_FILE_MAX_BYTES // mib} MiB" in fix

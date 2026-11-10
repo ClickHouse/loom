@@ -848,8 +848,9 @@ The record is read where each reader already looks:
   `/v1/health`, the dashboard banner and `loom doctor`
   ([monitoring](./monitoring.md#v1health)): one line per tier with its reason and
   fix. `loom doctor`, which reads with the deployment's own credentials, also names
-  each entry it lists (up to five; `code.repos` names the rest) (repository@branch, org and namespace) with the error line that says why.
-  A platform admin's token reads the same for every entry that is not
+  each entry it lists, up to five, as repository@branch (org/namespace) with the error
+  line that says why; `code.repos` names the rest. A platform admin's token reads the
+  same for every entry that is not
   [restricted](../architecture/security.md#restricted-namespaces); a restricted one
   reads as "a restricted entry", as does one whose classification cannot be read. Any
   other caller reads no entry, since `/v1/health` answers without a token;
