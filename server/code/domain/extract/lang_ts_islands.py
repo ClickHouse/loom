@@ -154,15 +154,12 @@ def looks_like_sql(text: str, inside_client: bool = False) -> bool:
     return keywords >= 2 or (m.group(1).isupper() and keywords >= 1)
 
 
-def client_dialect(
-    ancestors: list[Any], source: bytes, seen: dict[tuple[int, int], str] | None = None
-) -> str:
+def client_dialect(ancestors: list[Any], source: bytes, seen: dict[tuple[int, int], str]) -> str:
     """The dialect of the client whose call encloses the literal, from the
     callee's text (`queryClickhouse`, `prisma.$queryRaw`, a `sql` tag). `ancestors`
     runs from the root to the literal's parent, kept by the walk: a node's `parent`
     is found from the root down, so reading it per literal is quadratic in a deep tree.
     `seen` keeps each callee's dialect for the file's next literals."""
-    seen = {} if seen is None else seen
     for cur in ancestors[: -_ANCESTOR_DEPTH - 1 : -1]:
         if cur.type == "call_expression":
             fn = cur.child_by_field_name("function")

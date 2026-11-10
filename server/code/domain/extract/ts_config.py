@@ -109,8 +109,8 @@ class PathsTable:
             rest = spec[n:]
             orders = [
                 tails[rest[len(rest) - k :]]
-                for k in lengths
-                if k <= len(rest) and rest[len(rest) - k :] in tails
+                for k in lengths[: bisect.bisect_right(lengths, len(rest))]
+                if rest[len(rest) - k :] in tails
             ]
             if orders:
                 pat = self._names[min(orders)]

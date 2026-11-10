@@ -284,8 +284,8 @@ async def _resolve_code_lane_imports(repo: CodeRepo, org: str, ns: str, pf: Pars
 
 async def _resolve_go_imports(repo: CodeRepo, org: str, ns: str, pf: ParsedFile) -> None:
     """Go import resolution for one file: the conventional file names of each in-module
-    import probed in one membership read, then one directory listing per import the
-    names missed."""
+    import probed in one membership read, then one directory listing per package the
+    names missed, up to `_MAX_GO_LISTINGS` of them."""
     from server.code.domain.extract.lang_go import (
         go_imports,
         go_package_file,

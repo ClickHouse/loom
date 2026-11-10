@@ -3049,10 +3049,10 @@ class _CallResolver:
         dirs = {d for d in self.go_packages.values() if d}
         if not dirs:
             return None
-        found = [
+        found = self._of(candidates, ("clause in dirs", bare, receiver), lambda: [
             c for c in self._by_clause(candidates, bare).get(receiver, [])
             if c[1].partition("::")[0].rsplit(".", 1)[0] in dirs
-        ]
+        ])  # `dirs` holds this file's imported directories, the same at every site
         if len(found) == 1:
             return found[0][0], found[0][1], IMPORT_BOUND_CONFIDENCE
         return None
