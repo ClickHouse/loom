@@ -14,11 +14,19 @@ interface Label {
   tone: string;
 }
 
-/** The label of an answer with this support and these citations; null when it has none.
- *  `unknownNames` are the op and setting names it wrote that the server neither serves nor
- *  documents, which make it unsupported whatever it cites. */
+// What a check compares each cited source with.
+const COMPARED =
+  "Loom compared each source this answer cites with what it holds and what the answer's own reads returned";
+
+/**
+ * The label of an answer with this support and these citations; null when it has none.
+ * "Checked" says whether the check ran and "confirm" says what it found. `unknownNames` are
+ * the op and setting names it wrote that the server neither serves nor documents, which make
+ * it unsupported whatever it cites.
+ */
 export function supportLabel(support: Support, citations: Citation[], unknownNames: string[] = []): Label | null {
-  const verified = citations.filter((c) => c.verified).length;
+  const found = citations.filter((c) => c.verified).length;
+  const count = `${found} of ${citations.length} ${citations.length === 1 ? "source" : "sources"} found in Loom`;
   if (support === "none") return null;
   if (support === "unsupported" && unknownNames.length > 0) {
     const names = unknownNames.join(", ");
@@ -30,14 +38,12 @@ export function supportLabel(support: Support, citations: Citation[], unknownNam
     };
   }
   if (support === "supported") {
-    const all = verified === citations.length;
+    const all = found === citations.length;
     return {
-      text: all
-        ? "Checked against what Loom holds"
-        : `Checked against what Loom holds: ${verified} of ${citations.length} sources verified`,
+      text: all ? "Checked against what Loom holds" : `Partly confirmed: ${count}`,
       why: all
-        ? "Loom checked each source this answer cites against what it holds and what the answer's own reads returned."
-        : `Loom verified ${verified} of the ${citations.length} sources this answer cites; each one not verified says why.`,
+        ? `${COMPARED}, and found each one.`
+        : `${COMPARED}, and found ${found} of ${citations.length}; each source it did not find says why.`,
       icon: "check-in-circle",
       tone: "text-text-muted",
     };
@@ -45,14 +51,14 @@ export function supportLabel(support: Support, citations: Citation[], unknownNam
   if (support === "unsupported") {
     return citations.length > 0
       ? {
-          text: "Couldn't confirm: none of its sources were verified",
-          why: "None of the sources this answer cites was verified against what Loom holds or what the answer read. Each source below says why.",
+          text: `Couldn't confirm: ${count}`,
+          why: `${COMPARED}, and found none of them; each source below says why.`,
           icon: "warning",
           tone: "text-warn",
         }
       : {
           text: "Couldn't confirm: it gives no sources",
-          why: "This answer looked in Loom but gives no source for what it says, so nothing it says could be checked.",
+          why: "This answer looked in Loom but gives no source for what it says, so Loom had nothing to compare it with.",
           icon: "warning",
           tone: "text-warn",
         };
@@ -61,13 +67,13 @@ export function supportLabel(support: Support, citations: Citation[], unknownNam
   return citations.length > 0
     ? {
         text: "Sources not checked",
-        why: "Loom could not check this answer's sources. Each source below says why.",
+        why: "Loom could not compare this answer's sources with what it holds; each source below says why.",
         icon: "info-in-circle",
         tone: "text-text-muted",
       }
     : {
-        text: "Not checked: it gives no sources Loom can check",
-        why: "This answer cites nothing Loom can check: what it read has no citation form, or its reads could not be checked.",
+        text: "Not checked: it cites nothing Loom holds",
+        why: "Its facts come from Loom's own reads, which have no rows an answer can cite, or its reads could not be checked.",
         icon: "info-in-circle",
         tone: "text-text-muted",
       };
@@ -77,7 +83,7 @@ export function supportLabel(support: Support, citations: Citation[], unknownNam
  * One finished answer's label and citations, as the server checked them against Loom with
  * the answer's token. The label follows the answer's `support` (server/assistant/domain/
  * support.py): an answer that makes no claim, such as a greeting or an abstention, has none.
- * A verified memory or document opens where the dashboard shows it; an unverified citation
+ * A memory, document or help page found in Loom opens where the dashboard shows it; any other citation
  * says why.
  */
 export function Sources({
@@ -96,7 +102,7 @@ export function Sources({
   const openDocsPage = useStore((s) => s.openDocsPage);
   const labelId = useId();
   const label = supportLabel(support, citations, unknownNames);
-  // Where a verified citation opens: a memory in the drawer (any writer's: the wildcard
+  // Where a citation found in Loom opens: a memory in the drawer (any writer's: the wildcard
   // reads it whichever agent, user or session it is filed under), a document in its
   // preview, a docs page on the Help view at its section.
   const opener = (c: Citation): (() => void) | undefined => {
@@ -134,7 +140,7 @@ export function Sources({
             const open = opener(c);
             return (
               <li key={c.text} className="break-words">
-                <span className="text-text-muted">{c.verified ? "Verified" : "Not verified"} · </span>
+                <span className="text-text-muted">{c.verified ? "Found in Loom" : "Not confirmed"} · </span>
                 {open ? (
                   <Link component="button" type="button" size="sm" onClick={open}>
                     {citationText(c)}

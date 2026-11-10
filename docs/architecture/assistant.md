@@ -325,13 +325,16 @@ images and no links in the answer's text, where each citation shows as written. 
 dashboard's `img-src 'self' data: blob:` already stops a remote image that would carry
 rows away in its URL. Under a finished answer its Sources
 (`frontend/src/views/assistant/Sources.tsx`) list each citation as the server checked
-it: a verified memory opens in the memory drawer and a verified document in the
-Library, by the citation's `ref`; an unverified one shows why. A label above them
-says the answer's support in words, with a "Why this label" note: "Checked against what
-Loom holds" (with "n of m sources verified" when some were not), "Couldn't confirm: none
-of its sources were verified", "Couldn't confirm: it gives no sources", "Sources not checked"
-or "Not checked: it gives no sources Loom can check"; an answer whose support is `none`
-has no label. A value the dashboard does not know reads as `unchecked`.
+it: one found in Loom reads "Found in Loom", a memory opening in the memory drawer, a
+document in the Library and a help citation on the Help page at its section, by the
+citation's `ref`; any other reads "Not confirmed" with its reason. A label above them says the answer's support in words, where "checked" says
+whether the check ran and "confirm" says what it found: "Checked against what Loom
+holds", "Partly confirmed: n of m sources found in Loom", "Couldn't confirm: 0 of m
+sources found in Loom", "Couldn't confirm: it names …" (an op or setting this Loom does
+not have), "Couldn't confirm: it gives no sources", "Sources not checked" or
+"Not checked: it cites nothing Loom holds". Each label's "Why this label" note says in
+one sentence what was compared; an answer whose support is `none` has no label. A value
+the dashboard does not know reads as `unchecked`.
 
 ## The agent definition
 
