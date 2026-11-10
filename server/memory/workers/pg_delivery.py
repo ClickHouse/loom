@@ -15,6 +15,7 @@ import logging
 from dataclasses import dataclass
 
 from server.core import pg
+from server.core.error_summary import error_summary
 from server.settings import settings
 from server.workers import pass_context
 from server.workers.status import record_pass
@@ -49,6 +50,7 @@ async def run_pass() -> DeliveryResult:
         pass_context.mark_idle()
         return result
     with record_pass("pg_delivery") as rec:
+        await _read_backlog()
         claims = await pg_memory.claim_due(settings.pg_delivery_batch_rows)
         result.claimed = len(claims)
         if claims:
@@ -78,3 +80,18 @@ async def run_pass() -> DeliveryResult:
                 result.published_audits,
             )
     return result
+
+
+async def _read_backlog() -> None:
+    """The memory and audit outbox backlogs for the pipeline gauges, first in the pass so
+    a pass that fails on ClickHouse still takes them."""
+    from server.memory.store import pg_memory
+    from server.observability import pg_pipeline
+
+    try:
+        pg_pipeline.set_backlog("memory", await pg_memory.backlog(pg_pipeline.BACKLOG_CAP))
+        pg_pipeline.set_backlog(
+            "audit_outbox", await pg_memory.outbox_backlog(pg_pipeline.BACKLOG_CAP)
+        )
+    except Exception as e:  # noqa: BLE001 — the pass's publishes must not wait on a gauge
+        log.warning("pg_delivery: backlog not read: %s", error_summary(e))

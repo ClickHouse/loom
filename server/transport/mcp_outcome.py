@@ -214,7 +214,12 @@ def _handler_failed(
         from server.observability import otel as _otel
 
         _otel.record_op(
-            op.name, namespace=rl_ns or "-", success=False, duration_ms=elapsed_ms, transport="mcp"
+            op.name,
+            namespace=rl_ns or "-",
+            success=False,
+            duration_ms=elapsed_ms,
+            transport="mcp",
+            error_code=str((refused or failure or {}).get("code") or "INTERNAL_ERROR"),
         )
         # Scope the FAILING span too, so MCP errors filter by tenant.
         _otel.set_loom_attributes(

@@ -435,6 +435,7 @@ def record_op(
     success: bool,
     duration_ms: float,
     transport: str = "http",
+    error_code: str = "",
 ) -> None:
     """Emit one metric tick per Loom op. No-op when OTel metrics disabled.
 
@@ -442,6 +443,8 @@ def record_op(
     agent traffic land in the same series and become impossible to tell apart —
     which defeats the point of instrumenting both, since the question worth
     asking is whether agents see different retrieval quality than the UI.
+    `error_code` names a failure's code ("" on success) on `loom.requests`, so a
+    503 PROJECTION_BEHIND or PUBLICATION_PENDING rate reads as callers saw it.
     """
     try:
         attrs = {
@@ -451,7 +454,9 @@ def record_op(
             "success": "true" if success else "false",
         }
         if _request_counter is not None:
-            _request_counter.add(1, attributes=attrs)
+            # The error code on the counter only: a closed set (a LoomServerError code),
+            # which would multiply the duration histogram's series for no reader.
+            _request_counter.add(1, attributes={**attrs, "loom.error_code": error_code})
         if _request_duration is not None:
             _request_duration.record(duration_ms, attributes=attrs)
     except Exception:  # noqa: BLE001 — telemetry must never fail a request

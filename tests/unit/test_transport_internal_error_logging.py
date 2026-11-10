@@ -169,7 +169,10 @@ def test_every_http_failure_path_records_a_failed_op(
     # default transport — so success and failure series divide cleanly.
     assert kwargs["namespace"] == "ns-x"
     assert isinstance(kwargs["duration_ms"], int)
-    assert set(kwargs) == {"namespace", "success", "duration_ms"}
+    # `error_code` goes on the request counter alone, never on the duration histogram
+    # (`otel.record_op`), so the two series still divide.
+    assert set(kwargs) == {"namespace", "success", "duration_ms", "error_code"}
+    assert kwargs["error_code"]
     # No stray success tick on a failed request.
     assert not any(c[1].get("success") is True for c in rec.calls)
 

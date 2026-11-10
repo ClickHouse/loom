@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from collections.abc import Awaitable
 from typing import Any, cast
 
@@ -424,18 +425,49 @@ async def _postgres_block() -> dict[str, object]:
     from server.knowledge.store import pg_documents
     from server.memory.store import pg_memory
 
-    standby, deliveries, audits, documents = await asyncio.gather(
+    standby, deliveries, audits, documents, backlog = await asyncio.gather(
         _bounded(pg_profile.standby_now(), None),
         _bounded(pg_memory.parked_count(), None),
         _bounded(pg_memory.parked_audits_count(), None),
         _bounded(pg_documents.parked_count(), None),
+        _bounded(_backlog(), None),
     )
     return {
         "standby": standby,
         "parked_deliveries": deliveries,
         "parked_audits": audits,
         "parked_knowledge_deliveries": documents,
+        "backlog": backlog,
     }
+
+
+# A replica not holding the workers lease reads the backlog itself, at most this often.
+_BACKLOG_TTL_S = 10.0
+_backlog_cache: dict[str, Any] = {"at": -_BACKLOG_TTL_S, "value": None}
+
+
+async def _backlog() -> dict[str, dict[str, Any]]:
+    """Each source's delivery backlog (`pg_pipeline`): the lease holder's last reading
+    when fresh, else a reading of this process's own, kept `_BACKLOG_TTL_S`."""
+    import dataclasses
+
+    from server.knowledge.store import pg_documents
+    from server.memory.store import pg_memory
+    from server.observability import pg_pipeline
+
+    readings = pg_pipeline.fresh_backlog()
+    if len(readings) < len(pg_pipeline.SOURCES):
+        now = time.monotonic()
+        if now - _backlog_cache["at"] >= _BACKLOG_TTL_S or _backlog_cache["value"] is None:
+            cap = pg_pipeline.BACKLOG_CAP
+            _backlog_cache["value"] = {
+                "memory": await pg_memory.backlog(cap),
+                "audit_outbox": await pg_memory.outbox_backlog(cap),
+                "knowledge": await pg_documents.backlog(cap),
+            }
+            _backlog_cache["at"] = now
+        readings = _backlog_cache["value"]
+    return {source: dataclasses.asdict(r) for source, r in readings.items()}
 
 
 async def _bounded(read: Awaitable[Any], default: Any) -> Any:

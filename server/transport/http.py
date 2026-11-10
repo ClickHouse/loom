@@ -513,7 +513,9 @@ async def _bind_context_and_policy(
     return payload
 
 
-def _record_failure(op: Operation, identity: dict[str, str], elapsed_ms: int) -> None:
+def _record_failure(
+    op: Operation, identity: dict[str, str], elapsed_ms: int, error_code: str
+) -> None:
     # Failures must reach the same counter as successes — as mcp.py
     # already does — or `loom.requests{success="false"}` is permanently
     # empty for HTTP and every error-rate panel reads clean while the
@@ -527,6 +529,7 @@ def _record_failure(op: Operation, identity: dict[str, str], elapsed_ms: int) ->
             namespace=identity["namespace"],
             success=False,
             duration_ms=elapsed_ms,
+            error_code=error_code,
         )
     except Exception:  # noqa: BLE001 — telemetry never changes a response
         pass
@@ -604,7 +607,7 @@ async def _run_handler(op: Operation, payload: Any, call: _HttpCall) -> tuple[An
             # request is not a mute row.
             error=_http_exception_note(he),
         )
-        _record_failure(op, identity, elapsed_ms)
+        _record_failure(op, identity, elapsed_ms, "HANDLER_HTTP_ERROR")
         detail = handler_failure_detail(he.detail, he.status_code, op.idempotent)
         raise HTTPException(he.status_code, detail=detail, headers=he.headers) from he
     except LoomServerError as le:
@@ -620,7 +623,7 @@ async def _run_handler(op: Operation, payload: Any, call: _HttpCall) -> tuple[An
             # HANDLER_HTTP_ERROR rows say what failed.
             error=le,
         )
-        _record_failure(op, identity, elapsed_ms)
+        _record_failure(op, identity, elapsed_ms, le.code)
         detail = handler_failure_detail(le.to_detail(), le.status_code, op.idempotent)
         raise HTTPException(status_code=le.status_code, detail=detail, headers=le.headers()) from le
     except Exception as e:
@@ -643,7 +646,7 @@ async def _run_handler(op: Operation, payload: Any, call: _HttpCall) -> tuple[An
             error_code="INTERNAL_ERROR",
             error=e,
         )
-        _record_failure(op, identity, elapsed_ms)
+        _record_failure(op, identity, elapsed_ms, "INTERNAL_ERROR")
         raise HTTPException(
             status_code=500,
             detail={
