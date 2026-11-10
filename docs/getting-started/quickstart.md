@@ -345,7 +345,7 @@ pip install clickhouse-loom    # or, from a clone: pip install ./sdk/python
 ```
 
 A release not yet on PyPI installs from its assets
-([Python SDK → Install](../reference/python-sdk.md#install)).
+([installing from a GitHub Release](../development/release-process.md#installing-from-a-github-release)).
 
 ```python
 import asyncio

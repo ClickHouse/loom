@@ -88,7 +88,7 @@ def connect_lines(out: dict[str, Any], *, base_url: str, token_path: str, config
         "  Connect:",
         f'    export LOOM_API_KEY="$(cat {token_path})"',
         f"    export LOOM_BASE_URL={base_url}",
-        "    # Python:  pip install clickhouse-loom  →  "
+        "    # Python:  pip install clickhouse-loom (from a clone: pip install ./sdk/python)  →  "
         f"Datapack(org={org!r}, namespace={ns!r}).agent({agent!r})",
         f'    # Claude Code:  claude mcp add --transport http loom "{mcp_url}" '
         '-H "Authorization: Bearer $LOOM_API_KEY" -s user',
