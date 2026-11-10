@@ -10,8 +10,9 @@ first, for a name almost never held). Loom requires a Keeper
 arbitration without one.
 
 Expiry is judged on the ClickHouse server's clock. A holder renews every sixth of
-the TTL (a twelfth after a failed renewal) and counts the lease lost half the TTL
-after the last renewal it saw land, before another process can take it over. There
+the TTL (a twelfth after a failed renewal), gives each attempt a twelfth of the TTL,
+and counts the lease lost half the TTL after the last renewal it saw land, before
+another process can take it over. There
 are no fencing tokens: a statement already sent still lands.
 
 `cluster_lease` holds a name for a block and cancels the block once the lease is
@@ -210,7 +211,9 @@ class Lease:
             if left <= 0:
                 break
             try:
-                if not await asyncio.wait_for(self.renew(), left):
+                # one attempt gets a twelfth of the TTL, so a call that hangs (a read past
+                # its deadline) leaves room for retries before half the TTL has passed
+                if not await asyncio.wait_for(self.renew(), min(left, self.ttl_s / 12)):
                     break
                 pause = self.ttl_s / 6
             except Exception as e:  # noqa: BLE001 — retried until half the TTL has passed

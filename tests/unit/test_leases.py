@@ -247,3 +247,28 @@ async def test_a_claim_whose_reply_came_after_its_ttl_never_opens_its_block() ->
         await late
     await successor
     assert entered == ["successor"]
+
+
+async def test_one_renewal_that_hangs_is_retried_before_the_lease_counts_as_lost() -> None:
+    """A renewal whose ClickHouse call hangs (a read past its deadline) is cut short
+    and retried, so one slow call well inside the window does not lose the lease."""
+    ch = FakeLockTable()
+    lease = await leases.take("job", ttl_s=1.2, ch=ch)
+    assert lease is not None
+    real = lease._keeper_renew
+    calls = 0
+
+    async def hangs_once() -> bool:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            await asyncio.sleep(10)  # the first renewal's call never answers in time
+        return await real()
+
+    lease._keeper_renew = hangs_once  # type: ignore[method-assign]
+    lease.keep_renewed()
+    try:
+        await asyncio.sleep(1.0)  # past half the TTL from the take
+        assert lease.held and not lease.lost and calls >= 2
+    finally:
+        await lease.release()
