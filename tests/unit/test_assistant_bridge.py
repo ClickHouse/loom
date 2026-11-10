@@ -1161,9 +1161,8 @@ def test_assistant_ask_over_mcp_on_another_toolset_refuses_an_answer_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import server.transport.mcp_call as mcp_call
-    from tests.unit.mcp_probe import serve_probe
-
     import server.transport.mcp_outcome as mcp_outcome
+    from tests.unit.mcp_probe import serve_probe
 
     serve_probe(monkeypatch)
     rows: list[tuple[Any, dict[str, Any]]] = []
