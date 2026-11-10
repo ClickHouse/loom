@@ -74,6 +74,7 @@ vi.mock("../api/memoryLifecycle", () => ({
   })),
 }));
 import * as api from "../api";
+import { ApiError } from "../lib/errors";
 import * as lc from "../api/memoryLifecycle";
 import { confirmAction } from "./ConfirmDialog";
 import { toast, toastError } from "./Toast";
@@ -172,6 +173,33 @@ describe("MemoryInspector lifecycle actions", () => {
     await open("writer");
     await userEvent.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("This memory is no longer live", "info"));
+  });
+
+  it("keeps a committed tag change, edit and delete as done while only search lags", async () => {
+    const pending = new ApiError({ status: 503, code: "PUBLICATION_PENDING", message: "the write is committed" });
+    vi.mocked(api.setMemory).mockRejectedValue(pending);
+    vi.mocked(api.deleteMemory).mockRejectedValueOnce(pending);
+    const onChanged = vi.fn();
+    const onClose = vi.fn();
+    vi.mocked(api.getMemory).mockResolvedValue(LIVE);
+    useStore.setState({ authed: true, whoami: person, myNamespaces: [grant("writer")], identity });
+    render(<MemoryInspector identity={identity} memoryKey="coffee_pref" onClose={onClose} onChanged={onChanged} />);
+    await screen.findByText("oat milk, no sugar");
+
+    await userEvent.click(screen.getByRole("button", { name: "Remove coffee" }));
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("Tag update failed", pending));
+    expect(onChanged).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Remove coffee" })).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Save new version" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Save new version" })).toBeNull());
+    expect(toastError).toHaveBeenCalledWith("Save failed", pending);
+
+    const before = onChanged.mock.calls.length;
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(onChanged.mock.calls.length).toBeGreaterThan(before);
   });
 
   it("offers no write a lock refuses", async () => {

@@ -37,7 +37,7 @@ describe("humanizeError", () => {
 
   it("swaps a known code prefix for its sentence and keeps the detail", () => {
     expect(humanizeError(new Error("AUTH_INVALID: token expired"))).toBe("Sign-in rejected: token expired.");
-    expect(humanizeError("NOT_FOUND")).toBe("Not found — it may have been deleted, or be somewhere you can't read.");
+    expect(humanizeError("NOT_FOUND")).toBe("Not found; it may have been deleted, or be somewhere you can't read.");
   });
 
   it("passes an unknown code and the dashboard's own words through unchanged", () => {
@@ -259,12 +259,12 @@ describe("humanizeError", () => {
       ).toBe("Your role doesn't allow this — acme is the only admin.");
     });
 
-    it("joins a code's full sentence to the server's words with a space, not a dash", () => {
+    it("joins a code's sentence to the server's words with one dash, none inside the sentence", () => {
       expect(
         humanizeError(new ApiError({ status: 403, code: "SELF_SIGNUP_DISABLED", message: "set by the operator" }), {
           bare: true,
         }),
-      ).toBe("Sign-up is off on this instance. Ask your operator. set by the operator.");
+      ).toBe("Sign-up is off on this instance; ask your operator — set by the operator.");
     });
 
     it("keeps the category's words after a caller's lead-in for a code with no message", () => {

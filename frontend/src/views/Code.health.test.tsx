@@ -4,6 +4,7 @@
  */
 import { act, cleanup, render, screen, waitFor } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "../lib/errors";
 import { HealthTab } from "./Code";
 
 const ST = {
@@ -81,6 +82,28 @@ describe("HealthTab: a failed poll", () => {
       // The sections read before keep their reads too.
       expect(screen.queryByText(/Couldn't load the index errors/)).toBeNull();
       expect(screen.queryByText(/Couldn't load the recent commits/)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the first failure's line while a section keeps failing, so its alert is not said again", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const down = (id: string) =>
+        new ApiError({ status: 503, message: "the index store did not answer", requestId: id });
+      codeCoverage.mockRejectedValueOnce(down("req-1")).mockRejectedValueOnce(down("req-2"));
+      codeIndexErrors.mockResolvedValue({ rows: [], total: 0 });
+      codeRecentCommits.mockResolvedValue({ rows: [] });
+      render(<HealthTab id={{ org: "dev", namespace: "code-app" }} />);
+      const line = await screen.findByText(/^Couldn't load coverage: .*req-1/);
+      const reads = codeCoverage.mock.calls.length;
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      await waitFor(() => expect(codeCoverage.mock.calls.length).toBeGreaterThan(reads));
+      expect(line).toHaveTextContent(/req-1/);
+      expect(screen.queryByText(/req-2/)).toBeNull();
     } finally {
       vi.useRealTimers();
     }

@@ -34,11 +34,11 @@ export const ERROR_CODE_PREFIXES: Record<string, string> = {
   // Made by the dashboard (api.ts readJson): an ok answer whose body is not JSON.
   ANSWER_UNREADABLE: "Loom's answer could not be read; a proxy in front of it may have answered instead.",
   AUTH_INSUFFICIENT: "Your role doesn't allow this:",
-  IDENTITY_INCOMPLETE: "This token is scoped — the request has to name the namespace:",
+  IDENTITY_INCOMPLETE: "This token is scoped, so the request has to name the namespace:",
   POLICY_FORBIDDEN: "Blocked by a policy:",
   TOKEN_NAME_TAKEN: "Name taken:",
-  NOT_FOUND: "Not found — it may have been deleted, or be somewhere you can't read:",
-  RESOURCE_NOT_FOUND: "Not found — it may have been deleted, or be somewhere you can't read:",
+  NOT_FOUND: "Not found; it may have been deleted, or be somewhere you can't read:",
+  RESOURCE_NOT_FOUND: "Not found; it may have been deleted, or be somewhere you can't read:",
   NAMESPACE_NOT_FOUND: "That namespace doesn't exist:",
   NAMESPACE_NOT_ACCESSIBLE: "You don't have access to that namespace:",
   CHAR_LIMIT_EXCEEDED: "Too long:",
@@ -46,12 +46,12 @@ export const ERROR_CODE_PREFIXES: Record<string, string> = {
   UNSUPPORTED_FILE: "Loom can't read this file type:",
   IDEMPOTENT_CONFLICT: "This request key was already used for a different request:",
   BLACKLISTED: "Blocked by a privacy filter:",
-  BLOB_GONE: "The original file is no longer stored, so it can't be downloaded or extracted.",
+  BLOB_GONE: "The original file is no longer stored, so it can't be downloaded or extracted:",
   RATE_LIMITED: "Over a limit for now:",
   OVERLOADED: "Loom is busy right now:",
   BACKEND_TIMEOUT: "Loom took too long to answer:",
-  CODED_WIDTH_MISMATCH: "The embedding model's width doesn't match the vector tables — see Settings › Models & keys.",
-  SELF_SIGNUP_DISABLED: "Sign-up is off on this instance. Ask your operator.",
+  CODED_WIDTH_MISMATCH: "The embedding model's width doesn't match the vector tables (see Settings › Models & keys):",
+  SELF_SIGNUP_DISABLED: "Sign-up is off on this instance; ask your operator:",
   SCHEMA_PENDING: "Loom's database is not upgraded for this yet:",
   ASSISTANT_UNAVAILABLE: "The assistant is not available:",
   ASSISTANT_UPSTREAM_FAILED: "The assistant could not finish this answer:",
@@ -269,5 +269,5 @@ function humanizeApiError(err: ApiError, bare: boolean, read: boolean): string {
 export function errorLine(err: unknown, opts: { read?: boolean } = {}): string {
   const rid = errorRequestId(err);
   const text = humanizeError(err, { bare: true, read: opts.read === true });
-  return rid && !text.includes(rid) ? `${/[.!?]$/.test(text) ? text : `${text}.`} Request id ${rid}.` : text;
+  return rid && !text.includes(rid) ? withTail(text, `Request id ${rid}.`) : text;
 }

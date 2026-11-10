@@ -105,33 +105,30 @@ export function toastError(context: string, err: unknown, opts: { read?: boolean
     // The wording could not load (a deploy replaced the chunk, the network dropped): the
     // context alone still says what failed.
     .catch(() => {
-      const rid = errorRequestId(err);
-      const detail = rid ? { detail: `request id ${rid}` } : {};
       const warning = opts.read ? "" : writeWarning(err);
-      const msg = warning ? `${context}: ${warning}` : `${context}.`;
-      toast(msg, "error", { ...detail, durationMs: errorToastMs(msg) });
+      toastWithId(warning ? `${context}: ${warning}` : `${context}.`, "error", err);
     });
 }
 
 /** A write that committed while only lists and search lag: not a failure, so no
  *  "<context>:" in front of it. A dialog shows it in place of its success toast, and closes. */
 export function toastPublicationPending(err: unknown): void {
-  const rid = errorRequestId(err);
-  const detail = rid ? { detail: `request id ${rid}` } : {};
-  toast(PUBLICATION_PENDING, "info", { ...detail, durationMs: errorToastMs(PUBLICATION_PENDING) });
+  toastWithId(PUBLICATION_PENDING, "info", err);
 }
 
 /** An error toast whose caller built its own sentence (how much of a batch went through):
- *  the request id underneath and the reading time, as toastError gives every error toast. */
+ *  the request id underneath and the reading time, as toastError gives every error toast.
+ *  A committed write is still said as done, for the callers that come here directly. */
 export function toastErrorLine(msg: string, err: unknown): void {
-  if (isPublicationPending(err)) {
-    toastPublicationPending(err);
-    return;
-  }
+  if (isPublicationPending(err)) toastPublicationPending(err);
+  else toastWithId(msg, "error", err);
+}
+
+function toastWithId(msg: string, kind: ToastKind, err: unknown): void {
   const rid = errorRequestId(err);
   // An id the line already says (an internal error's) is not printed a second time.
-  const id = rid && !msg.includes(rid) ? { detail: `request id ${rid}` } : {};
-  toast(msg, "error", { ...id, durationMs: errorToastMs(msg) });
+  const detail = rid && !msg.includes(rid) ? { detail: `request id ${rid}` } : {};
+  toast(msg, kind, { ...detail, durationMs: errorToastMs(msg) });
 }
 
 export function errorToastMs(msg: string): number {

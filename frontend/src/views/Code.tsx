@@ -1887,7 +1887,8 @@ export function HealthTab({ id }: { id: CodeId }) {
           if (live()) setError(e);
         });
       // A failed poll after a good read keeps that read, as the status above does; only a
-      // section with nothing read yet says its read failed.
+      // section with nothing read yet says its read failed. The first failure's line stands,
+      // so a lasting outage does not re-announce its alert each minute with a new request id.
       codeCoverage(id, { signal })
         .then((c) => {
           if (live()) setCov(c);
@@ -1895,7 +1896,7 @@ export function HealthTab({ id }: { id: CodeId }) {
         .catch((e: unknown) => {
           if (!live()) return;
           setCov((c) => c ?? null);
-          setWhy((w) => ({ ...w, cov: errorLine(e, { read: true }) }));
+          setWhy((w) => ({ ...w, cov: w.cov || errorLine(e, { read: true }) }));
         });
       codeRecentCommits(id, 15, { signal })
         .then((r) => {
@@ -1905,7 +1906,7 @@ export function HealthTab({ id }: { id: CodeId }) {
           // Said as a failure: "no commits recorded yet" would be a claim.
           if (!live()) return;
           setRecent((r) => (Array.isArray(r) ? r : "failed"));
-          setWhy((w) => ({ ...w, recent: errorLine(e, { read: true }) }));
+          setWhy((w) => ({ ...w, recent: w.recent || errorLine(e, { read: true }) }));
         });
       codeIndexErrors(id, 100, { signal })
         .then((e) => {
@@ -1914,7 +1915,7 @@ export function HealthTab({ id }: { id: CodeId }) {
         .catch((e: unknown) => {
           if (!live()) return;
           setErrs((x) => x ?? null);
-          setWhy((w) => ({ ...w, errs: errorLine(e, { read: true }) }));
+          setWhy((w) => ({ ...w, errs: w.errs || errorLine(e, { read: true }) }));
         });
       listCostRollup(id, { days: 7, groupBy: ["operation"], signal })
         .then((r) => {
