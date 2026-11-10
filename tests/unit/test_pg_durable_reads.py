@@ -43,12 +43,16 @@ _NOT_READS = {
     # Writes, each in its own transaction, and the ClickHouse projection; `take` commits
     # the token it returns.
     "pg_jobs": {"project", "insert", "adopt", "take", "save", "request_cancel", "expire"},
+    # Writes, each in its own transaction (a delete returns what it removed), and the
+    # check of what Postgres can store.
+    "pg_datasets": {"storable", "upsert", "approve", "forget", "forget_published"},
 }  # fmt: skip
 
 _STORES = {
     "pg_memory": "server/memory/store/pg_memory.py",
     "pg_documents": "server/knowledge/store/pg_documents.py",
     "pg_jobs": "server/knowledge/store/pg_jobs.py",
+    "pg_datasets": "server/knowledge/store/pg_datasets.py",
 }
 
 # Every module that calls a read of the journal stores, and why what it reads reaches
@@ -65,6 +69,8 @@ _CALLERS = {
     "decide holds and print commands; a held head reaches ClickHouse through a claim",
     "server/knowledge/app/pg_serving.py": "filters what a knowledge search serves; sends nothing",
     "server/knowledge/store/blobs.py": "keeps originals a commit owes; deletes none of them",
+    "server/knowledge/store/datasets.py": "catalog rows to the caller; a write it decides "
+    "(a carry, an approval) projects only its own commit",
     "server/knowledge/store/documents.py": "reads beside the writer's own commit; "
     "the worker's sends are its durable claims",
     "server/memory/app/blacklist_sweep.py": "tombstones through its own commit",

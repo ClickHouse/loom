@@ -75,7 +75,7 @@ from server.knowledge.domain.extract.structural import StructuralChunk, chunk_ar
 from server.knowledge.domain.ingest_states import OPEN_STATES
 from server.knowledge.store import datasets as datasets_repo
 from server.knowledge.store import documents as documents_repo
-from server.knowledge.store import ingestions, pg_jobs
+from server.knowledge.store import ingestions, pg_datasets, pg_jobs
 from server.knowledge.store.documents import DocumentInsertRow, DocumentRow, OlderNotRetired
 from server.knowledge.store.pg_documents import HeadMoved
 from server.settings import settings
@@ -421,16 +421,21 @@ async def _publish_datasets(
     """The artifact's tables as datasets of the job's document version; an
     approved dataset of the live `prior` row carries its types."""
     live = prior if prior is not None and prior.superseded_at is None else None
-    return await datasets.publish(
-        job,
-        parsed.artifact,
-        doc_version=version,
-        revision=revision,
-        artifact_sha256=parsed.artifact_sha256,
-        prior_version=live.version if live else 0,
-        lease=lease,
-        alive=lambda: _current(job),  # an erased job writes no more of its rows
-    )
+    key = (job["org"], job["namespace"], job["ingestion_id"])
+    try:
+        return await datasets.publish(
+            job,
+            parsed.artifact,
+            doc_version=version,
+            revision=revision,
+            artifact_sha256=parsed.artifact_sha256,
+            prior_version=live.version if live else 0,
+            lease=lease,
+            alive=lambda: _current(job),  # an erased job writes no more of its rows
+            held_job=key if _RUN_TOKEN.get() is not None else None,
+        )
+    except pg_datasets.JobErased as e:
+        raise JobGone(job["ingestion_id"]) from e
 
 
 def _refuse_unstorable_keys(job: dict[str, Any]) -> None:

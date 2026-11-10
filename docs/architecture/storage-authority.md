@@ -26,6 +26,7 @@ locks; ClickHouse keeps doing what it is good at, scanning vectors and text.
 | Scope generations (admission)                                    | Postgres `loom.scope_generations`                                                     |
 | Knowledge document heads, their delivery jobs, deletion evidence | Postgres `loom.knowledge_heads`, `loom.knowledge_deliveries`, `loom.erased_documents` |
 | Knowledge ingestion jobs                                         | Postgres `loom.knowledge_jobs`                                                        |
+| Knowledge dataset catalog: serving snapshots, schema approvals   | Postgres `loom.knowledge_datasets`                                                    |
 | Vectors, lexical and vector search, the searchable memory rows   | ClickHouse `loom.memory_embeddings`, `loom.memory`                                    |
 | Revision history, the audit trail, usage                         | ClickHouse `loom.memory_versions`, `loom.audit_log`, usage tables                     |
 
@@ -86,6 +87,7 @@ and every tenant index leads with `org`.
 | `loom.erased_documents`     | `(org, namespace, doc_id)`                                 | deletion evidence: the `doc_id` of every version of each document an erasure removed, ClickHouse's included, refused at a commit; no content, kept `LOOM_PG_ERASURE_EVIDENCE_HOURS`                                                                                                                                                                                                     |
 | `loom.knowledge_jobs`       | `(org, namespace, ingestion_id)`                           | each ingestion job: its complete `loom.knowledge_ingestions` row, the queue's columns, the token that fences its run's reads and saves, and when a cancel was asked for ([ingestion jobs](#ingestion-jobs))                                                                                                                                                                             |
 | `loom.erasure_ledger`       | `(org, id)`                                                | the erasures requested of the deployment: each one's scope, purge flag, urgency, request time, completion or abandonment time, and the Postgres steps that committed (`pg_steps`, each in its step's transaction), written before its first ClickHouse checkpoint, so a restore of either store runs again what it lost (`loom reconcile`); no content, kept `LOOM_ERASURE_LEDGER_DAYS` |
+| `loom.knowledge_datasets`   | `(org, namespace, source_uri, doc_version, dataset_id)`    | each dataset's catalog row at a document version: the snapshot that serves it, its schema and approval ([datasets](#datasets))                                                                                                                                                                                                                                                          |
 
 A head is the row `loom.memory FINAL` would serve: a commit replaces it only when its
 version is not older, as `ReplacingMergeTree(version)` decides. Holding the whole row
@@ -1085,26 +1087,27 @@ of its own in one transaction:
 
 1. It takes each namespace's document lock (`pg.KNOWLEDGE_LOCK_KEY`) alone, which every
    commit holds shared, so no commit lands in a locked namespace between its read and
-   its delete. A user's scope locks every namespace holding the user's heads or
-   deliveries, reading again until no namespace more holds one. The user's namespaces
-   that hold only ClickHouse rows are read for evidence without a lock: a commit there
-   during the step makes a head carrying the user's id, which the residue census
-   finds, so the saga fails and runs again. Until the transaction ends, a knowledge
-   write in the locked namespaces, any user's, waits `LOOM_PG_COMMIT_LOCK_TIMEOUT_MS`
-   and answers 503, so a scope with a long ClickHouse history holds them for its whole
-   evidence read.
-2. It locks the scope's heads in a commit's key order, deletes the deliveries, the heads
-   and the ingestion jobs ([ingestion jobs](#ingestion-jobs)), and keeps the `doc_id` of
-   every version of the scope's documents, those ClickHouse holds included, in
-   `loom.erased_documents` for `LOOM_PG_ERASURE_EVIDENCE_HOURS`. A row built from a read
-   of a document keeps its `doc_id` (a delete's tombstone, a metadata edit), and a write
-   that carries a live document's original or author names it (`built_from`), so a
-   commit built from a removed one is refused (`DocumentErased`, 404), read after the
-   heads' locks the erasure holds. A write built from a version a later write replaced
-   before the erasure keeps that version's id and is refused too; one that reads after
-   the erasure carries none (a new version takes a fresh id, and a deleted document
-   lends none) and commits. A version a merge folded away before the erasure leaves no
-   id.
+   its delete. A user's scope locks every namespace holding the user's heads, deliveries
+   or dataset catalog rows (an approval adding a first Postgres row elsewhere is found
+   by the residue census), reading again until no namespace more holds one. The user's
+   namespaces that hold only ClickHouse rows are read for evidence without a lock: a
+   commit there during the step makes a head carrying the user's id, which the residue
+   census finds, so the saga fails and runs again. Until the transaction ends, a
+   knowledge write in the locked namespaces, any user's, waits
+   `LOOM_PG_COMMIT_LOCK_TIMEOUT_MS` and answers 503, so a scope with a long ClickHouse
+   history holds them for its whole evidence read.
+2. It locks the scope's heads in a commit's key order, deletes the deliveries, the
+   heads, the ingestion jobs ([ingestion jobs](#ingestion-jobs)) and, last, the dataset
+   catalog rows ([datasets](#datasets)), and keeps the `doc_id` of every version of the
+   scope's documents, those ClickHouse holds included, in `loom.erased_documents` for
+   `LOOM_PG_ERASURE_EVIDENCE_HOURS`. A row built from a read of a document keeps its
+   `doc_id` (a delete's tombstone, a metadata edit), and a write that carries a live
+   document's original or author names it (`built_from`), so a commit built from a
+   removed one is refused (`DocumentErased`, 404), read after the heads' locks the
+   erasure holds. A write built from a version a later write replaced before the erasure
+   keeps that version's id and is refused too; one that reads after the erasure carries
+   none (a new version takes a fresh id, and a deleted document lends none) and commits.
+   A version a merge folded away before the erasure leaves no id.
 3. It waits out the leases of the deliveries it removed, and of an earlier run's
    (`quiet_at`). A parked delivery has no lease of its own: the wait covers the send
    that parked it, from its `fenced_until`. A delivery the worker took over
@@ -1209,6 +1212,52 @@ A build that predates the table keeps its jobs in ClickHouse alone, so a read ta
 newer version of the two stores, a run of a job Postgres holds first takes ClickHouse's
 version when it is the newer, and a job only ClickHouse holds runs there
 ([rolling upgrades](rolling-upgrades.md#the-rules), rule 40).
+
+## Datasets
+
+`loom.knowledge_datasets` holds the dataset catalog under this authority, keyed by
+`(org, namespace, source_uri, doc_version, dataset_id)`: each catalog row, the complete
+`loom.datasets` row, says which snapshot of `loom.dataset_rows` serves a dataset of a
+source at a document version, and its schema and approval
+(`schemas/pg_migrations/007_knowledge_datasets.sql`,
+`server/knowledge/store/pg_datasets.py`).
+
+- **Writes.** Every catalog write (an ingest's publish, an approval, a metadata edit's
+  carry) commits there, over an older version of the row only, as
+  `ReplacingMergeTree(version)` decides, then is inserted into `loom.datasets`, best
+  effort, for a build that predates the table and a rollback to one. A dataset's rows
+  are written before the catalog row that names them, as under ClickHouse.
+- **Approval.** `knowledge.dataset_approve` commits in one transaction, under the
+  namespace's lock a document commit shares and an erasure holds alone, that holds the
+  source's head (`FOR SHARE`). The switch lands unless the head has moved past the
+  document version reviewed (a later version, or that version deleted), an erasure
+  removed that document (`loom.erased_documents`), or a write of the catalog row
+  followed the one the approver read; otherwise it answers 409 `PRECONDITION_FAILED`
+  with nothing written. A source with no head (written before its namespace had heads)
+  is approved the same way. The source's claim still keeps an approval apart from an
+  ingest's publish, which checks that no approval landed while it ran.
+- **Reads.** Every read of the catalog (`datasets_repo.at_version`) takes Postgres's
+  rows, and the rows only ClickHouse holds ([rolling
+  upgrades](rolling-upgrades.md#the-rules), rule 42, lists its callers).
+- **Deletes.** A later publish, a delete and a failed run remove their catalog rows
+  there first, then the ClickHouse rows and the snapshots' rows, using the datasets
+  either store names, so a dataset whose projection never landed loses its rows too.
+- **Keys Postgres cannot store.** A source written before its namespace had heads may
+  hold a source URI or an uploader Postgres cannot store: its catalog stays in
+  ClickHouse alone, read and approved as without this authority.
+- **Erasure.** `pg_knowledge.delete` deletes the scope's catalog rows with its heads,
+  deliveries and jobs, the catalog rows last. A publish's catalog write reads its job's
+  row in the same transaction (`pg_datasets.upsert`), so it writes nothing once the
+  erasure deleted the job, and an erasure that comes after waits for it and deletes what
+  it wrote. A metadata edit's carry, a publish of a job only ClickHouse holds and an
+  approval of a dataset only ClickHouse held have no Postgres row to read: one that
+  lands between the erasure's Postgres step and its end is found by the residue census,
+  and the saga runs again.
+
+A build that predates the table keeps its catalog rows in ClickHouse alone, so a read
+also takes those, the newer version of a dataset winning, and an approval of a dataset
+only ClickHouse holds commits it to Postgres through its approval's commit ([rolling
+upgrades](rolling-upgrades.md#the-rules), rule 42).
 
 ## Failure
 

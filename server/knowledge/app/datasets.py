@@ -11,7 +11,9 @@ same.
 An approval that retypes a column types the rows again from the stored
 artifact, under a new snapshot written before the source's claim is taken;
 under the claim it checks that the document and the snapshot are still the
-ones reviewed, then writes the catalog row that switches to it.
+ones reviewed, then writes the catalog row that switches to it. Under the
+Postgres authority the catalog is loom.knowledge_datasets, and the switch
+commits in the transaction that holds the source's head.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
+from server.core import pg
 from server.core.datetimes import naive_utc_now
 from server.core.errors import (
     BackendUnavailableError,
@@ -46,6 +49,7 @@ from server.knowledge.api.models_knowledge import (
 from server.knowledge.domain import datasets as ds
 from server.knowledge.domain.extract.artifact import Artifact, Table
 from server.knowledge.store import datasets as datasets_repo
+from server.knowledge.store import pg_datasets
 
 log = logging.getLogger(__name__)
 
@@ -113,13 +117,16 @@ async def publish(
     prior_version: int,
     lease: Any,
     alive: Callable[[], Awaitable[Any]] | None = None,
+    held_job: tuple[str, str, str] | None = None,
 ) -> Published:
     """Write a dataset per table of `artifact` for document version
     `doc_version`. `prior_version` is the version of the source's live
     document row (0 for none), whose approved datasets carry. Each catalog row
     is written first, empty, so a run that stops midway can find the rows it
     wrote (`datasets_repo.forget`); nothing serves it before the document row.
-    `alive` is awaited before each statement: it raises once the job is gone."""
+    `alive` is awaited before each statement: it raises once the job is gone. `held_job`
+    names the job when Postgres holds it: each catalog write then commits only while it
+    does (`pg_datasets.upsert`)."""
     if not artifact.tables:
         return Published()
     org, ns, uri = job["org"], job["namespace"], job["source_uri"]
@@ -170,11 +177,11 @@ async def publish(
         )
         if alive is not None:
             await alive()
-        await datasets_repo.insert_catalog([base])
+        await datasets_repo.insert_catalog([base], job=held_job)
         new = await _write(base, table, schema, lease, alive)
         if alive is not None:
             await alive()
-        await datasets_repo.insert_catalog([new])
+        await datasets_repo.insert_catalog([new], job=held_job)
     return published
 
 
@@ -318,9 +325,7 @@ async def handle_knowledge_dataset_approve(
             return KnowledgeDatasetApproveOutput(found=False)
         row = found[0]
         if str(row["snapshot_id"]) != input.snapshot_id:
-            raise PreconditionFailedError(
-                f"snapshot {input.snapshot_id} no longer serves the dataset; read it again"
-            )
+            raise _no_longer_served(input.snapshot_id)
         columns = ds.columns_from_json(json.loads(row["schema"]))
         unknown = sorted(set(input.columns) - {c.name for c in columns})
         if unknown:
@@ -355,6 +360,12 @@ async def handle_knowledge_dataset_approve(
         return await _switch(input, doc.version, row, new, retyped=True)
 
 
+def _no_longer_served(snapshot_id: str) -> PreconditionFailedError:
+    return PreconditionFailedError(
+        f"snapshot {snapshot_id} no longer serves the dataset; read it again"
+    )
+
+
 async def _forget_quietly(catalog: dict[str, Any]) -> None:
     try:
         await datasets_repo.forget_snapshot(catalog)
@@ -375,15 +386,20 @@ async def _switch(
     retyped: bool,
 ) -> KnowledgeDatasetApproveOutput:
     """Under the source's claim: write `new` over `row` when the document and
-    the snapshot are still the ones read; found=False when the source moved.
-    A retype's rows go when its catalog row was never sent (refused, failed or
-    cut off before it); once sent, the row may have landed though the insert
-    failed, so they stay for the source's next ingest or delete."""
+    the snapshot are still the ones read: 409 when they moved, found=False when the
+    source has no document row any more. Under the Postgres authority the
+    write commits in the transaction that holds the source's head
+    (`pg_datasets.approve`), which checks both again. A retype's rows go when nothing
+    committed (refused, failed, or cut off before it was sent); they stay when the write
+    may have committed (sent, its answer lost). Once committed, the replaced snapshot's
+    rows go, unless the projection into loom.datasets failed: that table still names
+    them."""
     from server.knowledge.app.ingest_run import claim_source
     from server.knowledge.store import documents as documents_repo
 
     org, ns, uri = input.org, input.namespace, input.source_uri
     sent = False
+    projected = True  # the ClickHouse-alone write raises on failure, before this matters
     try:
         async with claim_source(org, ns, uri) as held:
             if not held:
@@ -402,17 +418,31 @@ async def _switch(
                 or not again
                 or (int(again[0]["snapshot_id"]) != int(row["snapshot_id"]))
             ):  # a later revision, or another approval: what was reviewed no longer serves
-                raise PreconditionFailedError(
-                    f"snapshot {input.snapshot_id} no longer serves the dataset; read it again"
-                )
+                raise _no_longer_served(input.snapshot_id)
             # Stamped now, past the row it replaces: one written while this call
             # typed its rows or waited for the claim must not outrank it in FINAL.
-            new = datasets_repo.dataset_row(new, version=int(again[0]["version"]))
+            read = int(again[0]["version"])
+            new = datasets_repo.dataset_row(new, version=read)
+            # Sent first: a write whose answer was lost may have landed, so its rows stay.
             sent = True
-            await datasets_repo.insert_catalog([new])
+            if pg.enabled() and pg_datasets.storable(new):
+                try:
+                    outcome = await pg_datasets.approve(new, read=read, doc_id=live.doc_id)
+                except BaseException as e:
+                    sent = pg.may_have_committed(e)  # else nothing committed: its rows go
+                    raise
+                if outcome == "moved":
+                    sent = False  # nothing committed: the retype's rows go
+                    raise _no_longer_served(input.snapshot_id)
+                # Where the projection failed, loom.datasets (an older build's catalog)
+                # still names the replaced snapshot: its rows stay for the source's next
+                # ingest or delete.
+                projected = await datasets_repo.project([new])
+            else:
+                await datasets_repo.insert_catalog([new])
     finally:
         if retyped and not sent:
             await _forget_quietly(new)
-    if retyped:
+    if retyped and projected:
         await _forget_quietly(row)  # the snapshot it replaced
     return KnowledgeDatasetApproveOutput(found=True, dataset=_out(new), retyped=retyped)

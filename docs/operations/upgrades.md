@@ -149,14 +149,18 @@ checkout.
     ([rolling upgrades](../architecture/rolling-upgrades.md), rule 38). Do it before
     retrying a parked delivery.
 12. A deployment of the Postgres authority that moves to a build keeping knowledge
-    ingestion jobs in Postgres (`005_knowledge_jobs.sql`), a roll forward after a
-    rollback included: once the newer build serves alone, run again every erasure that
-    completed while a replica of an older build served since the newer build first
-    served. An older build's erasure removes no job from `loom.knowledge_jobs`, and the
-    newer build's worker projects such a job back into `loom.knowledge_ingestions` and
-    runs it until the erasure runs again
-    ([rolling upgrades](../architecture/rolling-upgrades.md), rule 40). Step 11's runs
-    cover both; one run per erasure is enough.
+    ingestion jobs (`005_knowledge_jobs.sql`) or the dataset catalog
+    (`007_knowledge_datasets.sql`) in Postgres, a roll forward after a rollback
+    included: once the newer build serves alone, run again every erasure that completed
+    while a replica of an older build served since the newer build first served. An
+    older build's erasure removes no job from `loom.knowledge_jobs` and no catalog row
+    from `loom.knowledge_datasets`: the newer build's worker projects such a job back
+    into `loom.knowledge_ingestions` and runs it, and the catalog rows stay until the
+    erasure runs again ([rolling upgrades](../architecture/rolling-upgrades.md), rules
+    40 and 42). Step 11's runs cover the heads, the jobs and the catalog rows alike; one
+    run per erasure is enough. Ask again, too, each `knowledge.delete` and
+    `knowledge.bulk_delete` an older build answered in that window: it removed the
+    sources' datasets from `loom.datasets` alone.
 
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in
