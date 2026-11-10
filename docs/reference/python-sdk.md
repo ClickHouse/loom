@@ -10,13 +10,15 @@ name and a typed shape.
 
 ## Install
 
-Python 3.11 or later. The only runtime dependency is `httpx[http2]`. The package is not
-published to a package index; install it from a clone or from git:
+Python 3.11 or later. The only runtime dependency is `httpx[http2]`.
 
 ```bash
-pip install ./sdk/python                    # from a clone of the repository
-pip install "clickhouse-loom @ git+https://github.com/ClickHouse/loom#subdirectory=sdk/python"
+pip install clickhouse-loom
 ```
+
+Each server release publishes the SDK at the same version
+([supported versions](../operations/supported-versions.md)); `pip install ./sdk/python`
+installs it from a clone.
 
 The package ships `py.typed` and passes `mypy --strict`.
 

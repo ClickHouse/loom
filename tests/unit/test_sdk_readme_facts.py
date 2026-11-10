@@ -1,7 +1,8 @@
-"""The Python SDK README states the package facts pyproject and the code hold."""
+"""The SDK READMEs state the package facts pyproject, package.json and the code hold."""
 
 from __future__ import annotations
 
+import json
 import re
 import tomllib
 from pathlib import Path
@@ -27,3 +28,23 @@ def test_readme_lists_every_agent_client() -> None:
     listed = re.findall(r"`(\w+)`", m.group(2))
     assert int(m.group(1)) == len(listed)
     assert sorted(listed) == sorted(_CLIENT_ATTRS)
+
+
+def test_readme_installs_the_published_package() -> None:
+    assert re.search(rf"^pip install {re.escape(PROJECT['name'])}$", README, re.M)
+
+
+def test_the_first_example_runs_as_a_script() -> None:
+    """The example a reader copies first is a whole program: it compiles as a
+    module, with no `await` outside a function."""
+    use = README[README.index("\n## Use\n") :]
+    example = use.split("```python\n", 1)[1].split("\n```", 1)[0]
+    compile(example, "README.md", "exec")
+    assert "asyncio.run(" in example
+
+
+def test_the_typescript_readme_installs_the_published_package() -> None:
+    ts_root = SDK_ROOT.parent / "typescript"
+    name = json.loads((ts_root / "package.json").read_text())["name"]
+    readme = (ts_root / "README.md").read_text()
+    assert re.search(rf"^npm install {re.escape(name)}$", readme, re.M)

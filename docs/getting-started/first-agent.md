@@ -2,7 +2,7 @@
 
 This tutorial builds a small agent with the Python SDK. It continues from the
 [quickstart](./quickstart.md): the stack runs on `http://localhost:7777` and
-`pip install ./sdk/python` is done. Every step runs on the stock stack. Extraction and
+`pip install clickhouse-loom` is done. Every step runs on the stock stack. Extraction and
 `memory.ask` synthesis need a real LLM; ranking is meaningful on the released stack's
 local embedder, not on a checkout's fake one
 ([providers](../operations/deployment.md#providers)).
@@ -211,7 +211,7 @@ call.
 
 ## The same agent in TypeScript
 
-The TypeScript SDK (`@clickhouse/loom`, built from `sdk/typescript`, see
+The TypeScript SDK (`npm install @clickhouse/loom`, see
 [quickstart step 5](./quickstart.md#5-first-memory-from-python)) has the same identity
 model and session, with shorter verb names. It has no run helper; runs go through the
 typed `call`.

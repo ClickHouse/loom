@@ -2,17 +2,9 @@
 
 Typed client for [Loom](https://github.com/ClickHouse/loom), the shared-production agent memory, knowledge, conflict and observability plane on ClickHouse. Every wire operation the server declares is a typed method here; the types are generated from the server's operation registry, so what the deployment serves is what the SDK types.
 
-Not on npm yet (`release.yml` is manual and has never published), so build it
-from a clone of the repo and install the built package — `dist/` is not
-committed and `npm install github:…#path:` is not supported by current npm:
-
 ```bash
-git clone https://github.com/ClickHouse/loom
-npm --prefix loom/sdk/typescript ci && npm --prefix loom/sdk/typescript run build
-npm install ./loom/sdk/typescript          # or: npm pack in that dir, then install the .tgz
+npm install @clickhouse/loom
 ```
-
-<!-- restore `npm install @clickhouse/loom` when release.yml publishes -->
 
 Node ≥ 20 (uses the platform `fetch`). Zero runtime dependencies.
 

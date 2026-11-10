@@ -6,53 +6,43 @@ This package contains the **client SDK only**. Loom is designed for shared produ
 
 ## Install
 
-Not on PyPI yet, so install from source — pure Python, no build step — or from
-the wheel attached to a GitHub Release
-([docs/development/release-process.md](https://github.com/ClickHouse/loom/blob/main/docs/development/release-process.md#installing-from-a-github-release)):
-
 ```bash
-pip install ./sdk/python                     # from a clone of ClickHouse/loom
-# without a clone (needs the same GitHub access as `git clone`):
-pip install "clickhouse-loom @ git+https://github.com/ClickHouse/loom#subdirectory=sdk/python"
+pip install clickhouse-loom
 ```
-
-<!-- restore `pip install clickhouse-loom` when release.yml publishes -->
 
 Python 3.11+. Runtime deps: `httpx[http2]` (HTTP/2 via `h2`).
 
+Each server release publishes the SDK at the same version; `pip install ./sdk/python`
+installs it from a clone.
+
 ## Use
 
-You'll need:
-
-- A `base_url` pointing at your team's Loom deployment.
-- A credential. Either sign in once with `python -m loom login --server <url>` (or `loom.login(url)` in a notebook), approving on any browser with your password or SSO; every `Agent` you point at that server (`base_url=` or `LOOM_BASE_URL`) then uses that session and refreshes it. Or use a JWT your operator mints (`POST /v1/admin/token.mint`, `loom mint-token`), passed as `api_key=` or `LOOM_API_KEY` — the right choice for CI and services.
+Against a personal install on this machine (`http://localhost:7777`, the `dev/local`
+namespace, no token):
 
 ```python
-from loom import Datapack
-import os
+import asyncio
 
-dp = Datapack(
-    org="clickhouse",
-    namespace="eng-tooling",
-    base_url=os.environ["LOOM_BASE_URL"],  # e.g. https://loom.example.com
-    api_key=os.environ["LOOM_API_KEY"],  # JWT from your operator
-)
+from loom import Agent
 
-agent = dp.agent("claude-desktop")
 
-# Save a memory
-await agent.memory.set(
-    memory_key="deploy_window",
-    value="Deploy Tue/Thu, never Friday",
-    memory_type="preference",
-)
+async def main() -> None:
+    async with Agent(org="dev", namespace="local", agent="my-agent") as agent:
+        await agent.memory.set("deploy_window", "Deploy Tue/Thu, never Friday")
+        got = await agent.memory.get("deploy_window")  # by key
+        hits = await agent.memory.search("when do we deploy")  # by meaning
+        print(got["value"], [hit.memory_key for hit in hits])
 
-# Recall by key
-got = await agent.memory.get(memory_key="deploy_window")
 
-# Or semantic search
-hits = await agent.memory.search("when do we deploy")
+asyncio.run(main())
 ```
+
+For a team server, pass `base_url=` (or set `LOOM_BASE_URL`) and a credential, with
+your account's org and namespace. Either sign in once with
+`python -m loom login --server <url>` (or `loom.login(url)` in a notebook), approving on
+any browser with your password or SSO, and every `Agent` pointed at that server uses that
+session and refreshes it; or pass a token from **Settings → Tokens**, or one your
+operator mints, as `api_key=` or `LOOM_API_KEY`, the right choice for CI and services.
 
 The `Agent` exposes 28 client modules: `client`, `account`, `deployment`, `assistant`, `memory`, `working_memory`, `knowledge`, `conversations`, `profile`, `context`, `facts`, `learnings`, `conflicts`, `blacklist`, `grants`, `erasure`, `cost`, `audit`, `namespaces`, `procedure`, `run`, `tasks`, `policy`, `decision`, `calibration`, `briefs`, `code`, `tracker`. Each of the named ones is the hand-written layer over a wire-op group on the Loom server (`account`, `deployment` and `assistant` cover the routes outside the op registry: service accounts, MCP setup, model settings, worker health, the assistant's streamed chat); `client` holds every served op as a generated method (below).
 
