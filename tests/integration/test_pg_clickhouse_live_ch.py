@@ -60,10 +60,10 @@ async def test_an_orgs_postgres_joins_its_tenants_memories(ch: Any, pg: Any) -> 
     raw = ch_client_from_env()
     org, other = unique_org("pgch"), unique_org("pgchb")
     rows = [
-        [org, "ns", "a", "alice", "-", "plan", "fact", "alice is on the team plan", 1, ""],
+        [org, "ns", "a", "alice", "-", "team", "fact", "alice works on the support team", 1, ""],
         [org, "ns", "a", "alice", "-", "pin", "fact", "badge pin 4471", 1, "high"],
-        [org, "ns", "a", "bob", "-", "plan", "fact", "bob is on the free plan", 1, ""],
-        [other, "ns", "a", "alice", "-", "plan", "fact", "another tenant's alice", 1, ""],
+        [org, "ns", "a", "bob", "-", "team", "fact", "bob works on the research team", 1, ""],
+        [other, "ns", "a", "alice", "-", "team", "fact", "another tenant's alice", 1, ""],
     ]
     raw.insert("loom.memory", rows, column_names=_MEMORY)
     tag = uuid.uuid4().hex[:8]
@@ -124,8 +124,8 @@ async def test_an_orgs_postgres_joins_its_tenants_memories(ch: Any, pg: Any) -> 
         )
         assert [tuple(r) for r in joined] == [
             ("alice@example.com", org, "pin", None, "sensitive", True),
-            ("alice@example.com", org, "plan", "alice is on the team plan", "", False),
-            ("bob@example.com", org, "plan", "bob is on the free plan", "", False),
+            ("alice@example.com", org, "team", "alice works on the support team", "", False),
+            ("bob@example.com", org, "team", "bob works on the research team", "", False),
         ]
         usage = await app.fetchval(f"SELECT count(*) FROM {schema}.sql_v1_usage_daily")
         assert usage == 0
@@ -139,7 +139,7 @@ async def test_an_orgs_postgres_joins_its_tenants_memories(ch: Any, pg: Any) -> 
         await app.execute("RESET pg_clickhouse.session_settings")
 
         await sql_access.revoke(user, ch=ch)
-        with pytest.raises(Exception, match="(?i)authentication|password"):
+        with pytest.raises(Exception, match="AUTHENTICATION_FAILED|Authentication failed"):
             await app.fetch(f"SELECT count(*) FROM {schema}.sql_v1_memories")
     finally:
         for conn in (app, own):

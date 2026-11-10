@@ -116,11 +116,11 @@ tables) and run the import and the grants again:
 ## 5. Query and join
 
 ```sql
--- The facts Loom holds about each account on the team plan
+-- The facts Loom holds about each account on the support team
 SELECT a.email, m.memory_key, m.value, m.updated_at
 FROM accounts AS a
 JOIN loom.sql_v1_memories AS m ON m.user_id = a.loom_user_id
-WHERE a.plan = 'team' AND m.status = 'active'
+WHERE a.team = 'support' AND m.status = 'active'
 ORDER BY m.updated_at DESC;
 
 -- Model spend per day for the last month
