@@ -106,8 +106,7 @@ _STATEMENT_CODES = frozenset(
 
 
 class SetupRefused(RuntimeError):
-    """A refusal Loom wrote, safe to show as is; any other error shows as
-    `shown_cause` words it."""
+    """A refusal Loom wrote, safe to show as is; `shown_cause` words any other error."""
 
 
 _WRITE_LEASE = "analysis.entities"
