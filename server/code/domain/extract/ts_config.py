@@ -11,6 +11,7 @@ the namespace holds; it never touches the file system.
 """
 from __future__ import annotations
 
+import bisect
 import json
 import posixpath
 import re
@@ -73,13 +74,13 @@ class PathsTable:
     base: str  # baseUrl resolved against the config dir, or the config dir
     patterns: dict[str, list[str]] = field(default_factory=dict)
     # the wildcard patterns by head, then tail (to the pattern's place in `patterns`),
-    # with the tail lengths each head holds, the head lengths longest first and the
+    # with the tail lengths each head holds, the head lengths shortest first and the
     # patterns in order; built at the first lookup, once `patterns` is filled
     _heads: dict[str, tuple[dict[str, int], list[int]]] | None = field(
-        default=None, repr=False, compare=False
+        default=None, init=False, repr=False, compare=False
     )
-    _head_lengths: list[int] = field(default_factory=list, repr=False, compare=False)
-    _names: list[str] = field(default_factory=list, repr=False, compare=False)
+    _head_lengths: list[int] = field(default_factory=list, init=False, repr=False, compare=False)
+    _names: list[str] = field(default_factory=list, init=False, repr=False, compare=False)
 
     def best(self, spec: str) -> tuple[str, str] | None:
         """(pattern, `*` binding) of the pattern the compiler picks for `spec`: an exact
@@ -97,10 +98,12 @@ class PathsTable:
             self._heads = {
                 h: (tails, sorted({len(t) for t in tails})) for h, tails in by_head.items()
             }
-            self._head_lengths = sorted({len(h) for h in by_head}, reverse=True)
+            self._head_lengths = sorted({len(h) for h in by_head})
             self._names = list(self.patterns)
-        for n in self._head_lengths:
-            if n > len(spec) or spec[:n] not in self._heads:
+        # the head lengths a prefix of the spec can have, longest first
+        fits = bisect.bisect_right(self._head_lengths, len(spec))
+        for n in reversed(self._head_lengths[:fits]):
+            if spec[:n] not in self._heads:
                 continue
             tails, lengths = self._heads[spec[:n]]
             rest = spec[n:]

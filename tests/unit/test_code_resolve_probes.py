@@ -9,6 +9,7 @@ from typing import Any
 
 from server.code.app.index import ingest_resolve
 from server.code.app.index.ingest_parse import parse_for_ingest
+from server.code.app.ttl_cache import TtlCache
 from server.code.domain.extract import lang_python, lang_rust
 
 
@@ -75,6 +76,7 @@ def test_the_go_listing_rung_reads_a_bounded_number_of_directories(monkeypatch: 
         return [("m", "")]
 
     monkeypatch.setattr(ingest_resolve, "_go_module_index", index)
+    monkeypatch.setattr(ingest_resolve, "_GO_LISTING_CACHE", TtlCache(lambda: 60.0))
     dirs = ingest_resolve._MAX_GO_LISTINGS + 50
     imports = "".join(f'\t"m/p{i}"\n' for i in range(dirs))
     pf, _ = parse_for_ingest("a.go", f"package a\n\nimport (\n{imports})\n".encode())

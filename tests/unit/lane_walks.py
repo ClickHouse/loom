@@ -238,6 +238,7 @@ def _edges(
             parsed.clear()
             parsed[text] = pf
         table = {"a": [(f"s{i}", f"m{i}::a", "function") for i in range(table_size)]}
+        table["Base"] = [(f"b{i}", f"m{i}::Base", "class") for i in range(table_size)]
         if own:
             for s in parsed[text].symbols:  # type: ignore[attr-defined]
                 table.setdefault(s.name, []).append((s.id, s.qualified_name, s.kind))
@@ -441,6 +442,13 @@ WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
         _callers("class C:\n", "    def a(self): pass\n", "    def g{}(self): self.a()\n"),
     ),
     ("python-table-calls", _edges("a.py", 2000), _run("", "a()\n")),
+    (
+        "python-inherited-calls",
+        _edges("a.py", 2000),
+        lambda n: (
+            "from m import Base\nclass C(Base):\n" + _numbered("    def g{}(self): self.a()\n")(n)
+        ),
+    ),
     (
         "python-fixture-requests",
         _edges("a.py"),

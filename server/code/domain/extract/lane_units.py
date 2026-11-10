@@ -328,15 +328,16 @@ def ancestor_candidates(from_path: str, spec: str) -> list[str]:
     spec = spec.strip().lstrip("/")
     if not spec:
         return []
-    return list(dict.fromkeys(f"{base}/{spec}" if base else spec for base in _bases(from_path)))
+    bases = (*ancestor_dirs(from_path), "")
+    return list(dict.fromkeys(f"{base}/{spec}" if base else spec for base in bases))
 
 
 @functools.lru_cache(maxsize=256)
-def _bases(from_path: str) -> tuple[str, ...]:
-    """The file's directory and its ancestors, nearest first, up to `MAX_ANCESTOR_DIRS`,
-    then the root (''); read once per importer, not per import."""
+def ancestor_dirs(from_path: str) -> tuple[str, ...]:
+    """The file's directory and its ancestors, nearest first, up to `MAX_ANCESTOR_DIRS`
+    of them, the root left out; read once per file, not per import."""
     parts = from_path.split("/")[:-1]
-    depths = [*range(len(parts), max(len(parts) - MAX_ANCESTOR_DIRS, 0), -1), 0]
+    depths = range(len(parts), max(len(parts) - MAX_ANCESTOR_DIRS, 0), -1)
     return tuple("/".join(parts[:depth]) for depth in depths)
 
 
@@ -345,6 +346,7 @@ __all__ = [
     "MAX_ANCESTOR_DIRS",
     "SiteRule",
     "ancestor_candidates",
+    "ancestor_dirs",
     "bind_sites",
     "enclosing_symbol",
     "span_chunks",

@@ -102,6 +102,18 @@ def test_paths_best_answers_what_the_pattern_loop_answers() -> None:
             assert table.best(spec) == _scan_best(patterns, spec)
 
 
+def test_a_deep_file_tries_the_nearest_ancestors_then_the_root() -> None:
+    from server.code.domain.extract.lane_units import MAX_ANCESTOR_DIRS
+
+    from_path = "/".join(f"d{i}" for i in range(MAX_ANCESTOR_DIRS + 8)) + "/x.proto"
+    ladder = ancestor_candidates(from_path, "p.proto")
+    dirs = from_path.split("/")[:-1]
+    assert len(ladder) == MAX_ANCESTOR_DIRS + 1 and ladder[-1] == "p.proto"
+    assert ladder[0] == "/".join(dirs) + "/p.proto"
+    assert ladder[-2] == "/".join(dirs[:9]) + "/p.proto"
+    assert include_candidates(from_path.replace(".proto", ".c"), "h.h")[-1] == "h.h"
+
+
 def test_the_ladders_answer_what_the_loops_answered_within_the_cap() -> None:
     rnd = random.Random(5)
     for _ in range(3000):

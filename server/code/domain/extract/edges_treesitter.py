@@ -53,7 +53,6 @@ header the index does not hold leaves the site declined.
 from __future__ import annotations
 
 import bisect
-import itertools
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -218,16 +217,17 @@ def _imported_noise(
     """A noise-named call is still a site when the file
     imports its binding key from an indexed module — the repository's own
     `parse`, not the runtime's."""
+    rows = name_table.get(bare, _NO_ROWS)
     if getattr(resolver, "python", False):
         key = bare if receiver == "" else receiver.split(".", 1)[0]
         return bool(
             key in resolver.py_bindings
-            and isinstance(resolver.import_bound(receiver, bare, name_table.get(bare, [])), tuple)
+            and isinstance(resolver.import_bound(receiver, bare, rows), tuple)
         )
     keys = frozenset(k for k, v in resolver.bindings.items() if _repo_shaped(v))
     return bool(
         resolver.script and _import_exempt(receiver, bare, keys)
-        and isinstance(resolver.import_bound(receiver, bare, name_table.get(bare, [])), tuple)
+        and isinstance(resolver.import_bound(receiver, bare, rows), tuple)
     )
 
 
@@ -2095,7 +2095,11 @@ def _heritage_target(
     # a heritage clause names a type: a `field` row spelled by its embedded
     # type's name, a method or a value of that name never
     # qualifies and must not make the type ambiguous
-    candidates = [c for c in name_table.get(bare, []) if c[2] not in _NOT_A_BASE_KIND]
+    def base_rows() -> list[tuple[str, str, str]]:
+        return [c for c in name_table.get(bare, []) if c[2] not in _NOT_A_BASE_KIND]
+
+    # the resolver's rungs index a list once and keep it: one list per base name
+    candidates = resolver._once(("bases", bare), base_rows) if resolver else base_rows()
     if resolver is not None:
         bound = resolver.import_bound(receiver, bare, candidates)
         if isinstance(bound, tuple):
@@ -2144,7 +2148,8 @@ class _CallResolver:
         # for names a barrel re-exports; the import rung binds through them at 1.0
         self.chains: dict[str, tuple[str, str]] = chains or {}
         self.path, self.name_table, self.local_by_name = pf.path, name_table, local_by_name
-        # Per-name indexes and candidate pools, each built at its first call site
+        # Per-name indexes and candidate pools, each built at its first call site:
+        # `_once` keys by purpose and name, `_of` by "of", a candidate list's id and purpose
         self._memo: dict[tuple[Any, ...], Any] = {}
         self.local_class_by_name: dict[str, list[Symbol]] = {}
         self.typer: Any = None
@@ -2394,7 +2399,7 @@ class _CallResolver:
                 return False
             if member != bare:
                 # `from m import f as g; g()` — the definitions are named `f`
-                candidates = self._table(member, member)
+                candidates = self.candidates(member, member)
             bound = self._py_scope_bound(spec, member, candidates)
             if bound is not None:
                 return bound
@@ -2582,7 +2587,7 @@ class _CallResolver:
         then their bases (a same-file hierarchy is walked; a base declared in
         another file stops the walk there), that defines `bare`."""
         for base in self.py_bases.get(cls_qn, []):
-            target = _heritage_target(base, cls_qn, self.local_types, self.name_table, self)
+            target = self._base_target(base, cls_qn)
             if target is None:
                 continue
             found = self._py_member_of(caller, target[1], bare, line, target[2], depth)
@@ -2595,6 +2600,13 @@ class _CallResolver:
                 if found is not None:
                     return found
         return None
+
+    def _base_target(self, base: str, cls_qn: str) -> tuple[str, str, float] | None:
+        """`_heritage_target` of a class's base, once per file: every `self.m()` the class
+        does not define asks it again."""
+        return self._once(("base", base, cls_qn), lambda: _heritage_target(
+            base, cls_qn, self.local_types, self.name_table, self
+        ))
 
     def _py_member_of(
         self, caller: Symbol, cls_qn: str, bare: str, line: int, conf: float, depth: int,
@@ -2650,7 +2662,7 @@ class _CallResolver:
             s for s in self.local_by_name.get(bare, []) if s.kind not in _NEVER_CALLABLE
         ]))
 
-    def _table(self, name: str, bare: str) -> list[tuple[str, str, str]]:
+    def candidates(self, name: str, bare: str) -> list[tuple[str, str, str]]:
         """`candidates_for_call`, once per call text; callers never change the list."""
         return self._once(
             ("table", name, bare), lambda: candidates_for_call(self.name_table, name, bare)
@@ -2728,7 +2740,7 @@ class _CallResolver:
         local = self._once(
             ("all local", bare), lambda: _Namesakes(self.local_by_name.get(bare, []))
         )
-        n = len(self._table(name, bare)) + local.one("", caller.qualified_name)[0]
+        n = len(self.candidates(name, bare)) + local.one("", caller.qualified_name)[0]
         return CallMiss(
             callee_name=bare, call_text=name[:200], from_symbol_id=caller.id,
             from_qualified_name=caller.qualified_name, path=self.path, line=line,
@@ -3090,7 +3102,7 @@ class _CallResolver:
         if not tname:
             return None
         candidates = self._once(("typed", bare), lambda: _with_local_rows(
-            self._table(bare, bare), self.local_by_name.get(bare, [])
+            self.candidates(bare, bare), self.local_by_name.get(bare, [])
         ))
         if not self.go:
             return self._named_type_target(tname, bare, candidates, receiver)
@@ -3301,30 +3313,30 @@ class _CallResolver:
         method or the script implementations over their `.d.ts` twins. The pool holds
         one row per qualified name (`candidates_for_call`), so the caller is at most one
         row: each count is the pool's less that row, and no list is copied per caller."""
-        n, rows = self._without(pool, skip)
+        n, first = self._without(pool, skip)
         if self.go and n > 1:
             concrete = self._of(pool, ("concrete",), lambda: [
                 c for c in pool if c[2] not in ("method", "field")
             ])
             k, kept = self._without(concrete, skip)
             if k == 1:
-                n, rows = k, kept
+                n, first = k, kept
         if self.script and n > 1:
             impl = self._of(pool, ("implementations",), lambda: [
                 c for c in pool if not c[1].split("::", 1)[0].endswith(".d")
             ])
             k, kept = self._without(impl, skip)
             if k and k < n:
-                n, rows = k, kept
-        return rows[0] if n == 1 else None
+                n, first = k, kept
+        return first if n == 1 else None
 
     def _without(
         self, rows: list[tuple[str, str, str]], skip: str,
-    ) -> tuple[int, list[tuple[str, str, str]]]:
-        """How many of `rows` remain without the one named `skip`, and the first two."""
+    ) -> tuple[int, tuple[str, str, str] | None]:
+        """How many of `rows` remain without the one named `skip`, and the first."""
         qns = self._of(rows, ("qns",), lambda: {c[1] for c in rows})
         n = len(rows) - (1 if skip and skip in qns else 0)
-        return n, list(itertools.islice((c for c in rows if not skip or c[1] != skip), 2))
+        return n, next((c for c in rows if not skip or c[1] != skip), None)
 
     @staticmethod
     def _call_scope(name: str, bare: str) -> str:
@@ -3340,7 +3352,7 @@ class _CallResolver:
         # 2c) the file's import names the module — or, in
         # Go, the package directory the module index resolves
         candidates = self._once(("callable", name, bare), lambda: [
-            c for c in self._table(name, bare) if c[2] not in _NEVER_CALLABLE
+            c for c in self.candidates(name, bare) if c[2] not in _NEVER_CALLABLE
         ])
         bound = self.go_package_bound(receiver, bare, candidates)
         if bound is None and receiver == "":
@@ -3432,7 +3444,7 @@ def callee_targets(
         receiver = callee.rsplit(".", 1)[0] if "." in callee else ""
         if bare in typed_here:
             continue  # the same file answers without a read
-        candidates = resolver._table(bare, bare)
+        candidates = resolver.candidates(bare, bare)
         bound = resolver.go_package_bound(receiver, bare, candidates)
         if bound is None and receiver == "" and resolver.go and pf.symbols:
             # A bare `Conn(t)` is this package's helper first
@@ -3464,7 +3476,7 @@ def _bind_name_receiver(
     binds to its definition through the import alone (never a repo-wide
     guess); the caller reads that definition's annotation as the type."""
     name = callee[len("name:"):]
-    bound = resolver.import_bound("", name, resolver._table(name, name))
+    bound = resolver.import_bound("", name, resolver.candidates(name, name))
     if isinstance(bound, tuple):
         out[callee] = bound[1]
 

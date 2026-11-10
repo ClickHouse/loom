@@ -14,7 +14,6 @@ every processor) and forgotten when the header itself is re-ingested.
 from __future__ import annotations
 
 import asyncio
-import functools
 import logging
 import posixpath
 import re
@@ -24,7 +23,7 @@ from typing import Any
 from server.code.app.index.ingest_stats import FileIngestStats
 from server.code.domain.extract.bounded_parse import ParseTimeout
 from server.code.domain.extract.edges_treesitter import HeaderDecls, remainder_ctor_sites
-from server.code.domain.extract.lane_units import MAX_ANCESTOR_DIRS
+from server.code.domain.extract.lane_units import ancestor_dirs
 from server.code.domain.extract.treesitter import _INCLUDE_RE, ParsedFile
 from server.settings import settings
 
@@ -59,7 +58,7 @@ def include_candidates(from_path: str, include: str) -> list[str]:
         return []
     norm = posixpath.normpath(inc)
     out: dict[str, None] = {}
-    for d in [*_ancestor_dirs(posixpath.dirname(from_path)), ""]:
+    for d in [*ancestor_dirs(from_path), ""]:
         if not d:
             cand = norm
         elif norm.startswith("."):  # `..` climbs out of `d`, `.` is `d` itself
@@ -69,17 +68,6 @@ def include_candidates(from_path: str, include: str) -> list[str]:
         if cand and not cand.startswith(".."):
             out[cand] = None
     return list(out)
-
-
-@functools.lru_cache(maxsize=256)
-def _ancestor_dirs(d: str) -> tuple[str, ...]:
-    """`d` and its ancestors, nearest first, up to `MAX_ANCESTOR_DIRS`; read once per
-    includer, not per include."""
-    dirs: list[str] = []
-    while d and len(dirs) < MAX_ANCESTOR_DIRS:
-        dirs.append(d)
-        d = posixpath.dirname(d)
-    return tuple(dirs)
 
 
 _ELIDED_BODY_RE = re.compile(r"/\* … body elided[^*]*\*/")
