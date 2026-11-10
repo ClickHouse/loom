@@ -513,12 +513,12 @@ def test_a_standing_problem_is_logged_once(
 
 
 @pytest.mark.parametrize(
-    ("error", "advised"),
+    ("error", "advised", "own_fix"),
     [
         # A refusal Loom wrote names its own next step.
-        (app.SetupRefused(app.NOT_MIGRATED), False),
-        (RuntimeError("Code: 497. DB::Exception: Not enough privileges"), True),
-        (RuntimeError(_CLOUD_PASSWORD_REFUSAL), False),
+        (app.SetupRefused(app.NOT_MIGRATED), False, False),
+        (RuntimeError("Code: 497. DB::Exception: Not enough privileges"), True, False),
+        (RuntimeError(_CLOUD_PASSWORD_REFUSAL), False, True),
     ],
 )
 def test_ch_setups_analyst_line_advises_the_printed_sql_only_where_no_fix_fits(
@@ -526,6 +526,7 @@ def test_ch_setups_analyst_line_advises_the_printed_sql_only_where_no_fix_fits(
     capsys: pytest.CaptureFixture[str],
     error: Exception,
     advised: bool,
+    own_fix: bool,
 ) -> None:
     from server.cli import _ch, ch_setup
 
@@ -538,7 +539,7 @@ def test_ch_setups_analyst_line_advises_the_printed_sql_only_where_no_fix_fits(
     line = capsys.readouterr().out.strip()
     assert line.startswith("· loom_analyst (insights.query): not written (")
     assert ("--print-analyst-sql" in line) is advised
-    assert ("Drop the loom_analyst user" in line) is ("Invalid password" in str(error))
+    assert ("Drop the loom_analyst user" in line) is own_fix
 
 
 def test_a_replica_whose_first_setup_could_not_run_answers_overloaded(
@@ -881,15 +882,15 @@ def test_a_first_boot_with_no_answer_about_the_user_is_no_finding(
 
 
 @pytest.mark.parametrize(
-    "error",
+    ("error", "cause"),
     [
-        "Code: 159. DB::Exception: Timeout exceeded",
-        "Code: 158. DB::Exception: Limit for rows to read exceeded",
-        "Code: 241. DB::Exception: Memory limit (for query) exceeded",
+        ("Code: 159. DB::Exception: Timeout exceeded", "(Code 159)"),
+        ("Code: 158. DB::Exception: Limit for rows to read exceeded", "(Code 158)"),
+        ("Code: 241. DB::Exception: Memory limit (for query) exceeded", "(Code 241)"),
     ],
 )
 def test_a_capped_reserved_scope_count_is_a_finding(
-    monkeypatch: pytest.MonkeyPatch, ready: None, error: str
+    monkeypatch: pytest.MonkeyPatch, ready: None, error: str, cause: str
 ) -> None:
     # A count that hits a cap was not narrowed to nothing by a scope policy.
     async def run(sql: str, **_: Any) -> Any:
@@ -899,7 +900,7 @@ def test_a_capped_reserved_scope_count_is_a_finding(
 
     monkeypatch.setattr(app.store, "run_statement", run)
     problem, repairable, _ = asyncio.run(app._probe())
-    assert "count in the reserved scope failed" in problem and repairable
+    assert f"count in the reserved scope failed {cause}" in problem and repairable
 
 
 def test_a_canary_read_with_no_answer_raises(monkeypatch: pytest.MonkeyPatch, ready: None) -> None:

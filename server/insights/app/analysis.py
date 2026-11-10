@@ -129,8 +129,7 @@ _running: dict[str, int] = {}
 
 
 def analysis_state() -> tuple[bool | None, str, str]:
-    """(ready, why not, its own fix or '' for health's default) for health and
-    `loom doctor`."""
+    """(ready, why not, its own fix or '' for health's default) for health."""
     return _ready, _problem, _fix
 
 
@@ -625,8 +624,9 @@ async def _probe() -> tuple[str, bool, str]:
             if _no_answer(e):
                 raise
             # A cap the count hit: no policy narrows the reserved scope to nothing.
+            cause, _ = shown_refusal(e)
             return (
-                f"{t.name}'s count in the reserved scope failed ({shown_refusal(e)[0]}): "
+                f"{t.name}'s count in the reserved scope failed ({cause}): "
                 f"{boundary.ANALYST_USER} may have no scope policy on it",
                 True,
                 error_line(e),
@@ -649,8 +649,9 @@ async def _probe() -> tuple[str, bool, str]:
                 continue
             if _no_answer(e):
                 raise  # no answer about the grant
+            cause, _ = shown_refusal(e)
             return (
-                f"{boundary.ANALYST_USER} was not refused {shown} ({shown_refusal(e)[0]})",
+                f"{boundary.ANALYST_USER} was not refused {shown} ({cause})",
                 False,
                 error_line(e),
             )

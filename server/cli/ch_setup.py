@@ -441,10 +441,9 @@ def _write_analyst() -> None:
         run_connected(lambda _ch: rewrite())
     except Exception as e:  # noqa: BLE001 — insights.query is optional; the rest of setup stands
         line = error_line(e)
-        _, fix = shown_refusal(e)
         if isinstance(e, SetupRefused):
             advice = ""  # a refusal Loom wrote names its own next step
-        elif fix:
+        elif fix := shown_refusal(e)[1]:
             advice = f"; {fix}"  # the printed SQL would carry the same refusal
         else:
             advice = "; have an admin run the SQL `loom ch-setup --print-analyst-sql` prints"
