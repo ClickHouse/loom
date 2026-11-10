@@ -123,6 +123,26 @@ def _variable_uses(n: int) -> str:
     return "set(S " + "a.c " * (n // 8) + ")\nadd_library(t " + "${S} " * (n // 10) + ")\n"
 
 
+def _glob_words(n: int) -> str:
+    """A glob variable of n/4 words that name no source, used n/10 times by one target."""
+    return "file(GLOB S " + "a " * (n // 4) + ")\nadd_library(t " + "${S} " * (n // 10) + ")\n"
+
+
+def _file_set_entries(n: int) -> str:
+    return "set(S " + "FILE_SET.c " * (n // 22) + ")\nadd_library(t " + "${S} " * (n // 10) + ")\n"
+
+
+def _one_module_files(text: str) -> object:
+    """A setup.cfg whose entry points all name one module, then that module once per
+    4,000 characters of it."""
+    from server.code.domain.extract.py_layouts import layout_from_texts, module_entry_facets
+    from server.code.domain.extract.treesitter import ParsedFile
+
+    layout = layout_from_texts({"setup.cfg": text}, [])
+    pf = ParsedFile(path="m.py", lang="python", source=b"")
+    return [len(module_entry_facets(pf, layout)) for _ in range(len(text) // 4000)]
+
+
 def _entry_point_files(text: str) -> object:
     """A layout from one setup.py, then the entry points of one Python file per 4,000
     characters of it."""
@@ -262,7 +282,14 @@ WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("cmake-rows", _cmake, _run("", "a\n")),
     ("cmake-variable-uses", _cmake_units, _variable_uses),
     ("cmake-unclosed-functions", _cmake_units, _run("", "function(f)\n")),
+    ("cmake-glob-words", _cmake_units, _glob_words),
+    ("cmake-file-set-entries", _cmake_units, _file_set_entries),
     ("python-entry-point-files", _entry_point_files, _entry_points),
+    (
+        "setup-cfg-entry-points-of-one-module",
+        _one_module_files,
+        lambda n: "[options.entry_points]\nconsole_scripts =\n" + _numbered("  a{0} = m:f\n")(n),
+    ),
     ("setup-cfg-name-spaces", _py_layout("setup.cfg"), _run("[options]\na", " ", "b\n")),
     ("markdown-ambiguous-references", _doc_references, _run("# a\n", "`abc`\n")),
     ("pr-body-unclosed-comments", _pr_body, _run("", "<!--")),

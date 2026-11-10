@@ -100,8 +100,10 @@ _SOURCE_EXTS: tuple[str, ...] = (
     ".cfg",
 )
 _DECLARING = {"add_library", "add_executable", "function", "macro", "option", "add_test"}
-# A `${VAR}` use repeats every entry of VAR: without a cap, uses times entries facets
+# A `${VAR}` use repeats every entry of VAR: without a cap, uses times entries facets.
+# Sources stop being added once a file has this many facets.
 _MAX_FACETS = 10_000
+_SOURCE_SKIP = frozenset({"TYPE", "BASE_DIRS", "FILES", "HEADERS"})
 
 
 def is_cmake_path(path: str) -> bool:
@@ -276,6 +278,14 @@ def _is_source(arg: str) -> bool:
     return arg.lower().endswith(tuple(e.lower() for e in _SOURCE_EXTS)) and "$<" not in arg
 
 
+def _builds(arg: str) -> bool:
+    """Whether a source argument gives a `builds` facet: a variable keeps only these, so
+    every entry a `${VAR}` use expands to counts toward the cap."""
+    if arg in _VISIBILITY or arg.startswith("FILE_SET") or arg in _SOURCE_SKIP:
+        return False
+    return _is_source(arg) or "*" in arg
+
+
 @dataclass
 class _Acc:
     path: str
@@ -303,10 +313,11 @@ def _remember_variable(c: Command, acc: _Acc) -> bool:
             "false",
         }
         pats = [a for a in c.args[2:] if a not in skip and not a.startswith("${")]
-        acc.variables[c.args[1]] = [("**/" + p if recursive and "/" not in p else p) for p in pats]
+        globs = [("**/" + p if recursive and "/" not in p else p) for p in pats]
+        acc.variables[c.args[1]] = [g for g in globs if _builds(g)]
         return True
     if c.name == "set" and len(c.args) >= 2 and not c.args[0].startswith("CMAKE_"):
-        acc.variables[c.args[0]] = [a for a in c.args[1:] if _is_source(a) or "*" in a]
+        acc.variables[c.args[0]] = [a for a in c.args[1:] if _builds(a)]
         return True
     return False
 
@@ -327,13 +338,10 @@ def _add_target(c: Command, acc: _Acc) -> None:
 
 
 def _add_sources(target: str, args: list[str], line: int, acc: _Acc) -> None:
-    skip = {"TYPE", "BASE_DIRS", "FILES", "HEADERS"}
     for a in _expand(args, acc.variables):
         if len(acc.facets) >= _MAX_FACETS:
             return
-        if a in _VISIBILITY or a.startswith("FILE_SET") or a in skip:
-            continue
-        if _is_source(a) or "*" in a:
+        if _builds(a):
             conf = 1.0 if "*" not in a else 0.9
             acc.facets.append(
                 Facet(FACET_BUILDS, _rel(acc.path, a), acc.ordinal_of.get(target, 0), line, conf)

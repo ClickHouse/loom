@@ -45,6 +45,9 @@ VENDOR_SEGMENTS: frozenset[str] = frozenset({
     "_vendor", "vendor", "_vendored", "vendored", "third_party", "third-party",
 })
 MAX_MANIFESTS = 200
+# a file can serve every entry point: each is a facet on it, so a manifest of 1 MiB of them
+# must not give every module hundreds of thousands
+MAX_ENTRY_POINTS = 10_000
 MAX_ROOTS = 64  # a tree of fixture packages (pip's tests/data) must not make every probe a scan
 
 _TABLE_RE = re.compile(r"^\s*+\[\s*+([^\]]*[^\]\s])\s*+\]\s*+(?:#.*)?$")
@@ -428,7 +431,7 @@ def layout_from_texts(texts: dict[str, str], present: Iterable[str]) -> Layout:
             notes[p] = "empty"
             continue
         roots.update(dict.fromkeys(roots_from_manifest(p, text)))
-        eps.extend(entry_points_from_manifest(p, text))
+        eps.extend(entry_points_from_manifest(p, text)[: MAX_ENTRY_POINTS - len(eps)])
     roots.update(dict.fromkeys(conftest_roots(present)))
     return Layout(tuple(roots)[:MAX_ROOTS], tuple(eps), tuple(manifests), notes)
 

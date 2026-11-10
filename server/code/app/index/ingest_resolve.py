@@ -334,7 +334,7 @@ async def _go_module_index(repo: CodeRepo, org: str, ns: str) -> list[tuple[str,
         # An EMPTY index is not cached — a first backfill reaching .go files before any
         # go.mod is indexed would otherwise treat every cross-package import as a
         # library for ten minutes — unless every go.mod was read or is known over its
-        # cap, which the next file would find again
+        # cap or empty, which the next file would find again
         _GO_MODULE_INDEX_CACHE.put(key, index)
     return index
 
@@ -498,7 +498,7 @@ async def _workspace_registry(
     read.update((f"{d}/package.json", t) for d, t in texts.items())
     reg = tw.registry(texts)
     # An empty registry in a first backfill is the manifests not yet indexed, not a fact;
-    # one empty because a manifest is over its cap is.
+    # one empty because a manifest is over its cap or empty is.
     if reg or (
         any(_known_empty(org, ns, p, PACKAGE_JSON_MAX_BYTES) for p in read)
         and _read_or_known_empty(org, ns, read, PACKAGE_JSON_MAX_BYTES)

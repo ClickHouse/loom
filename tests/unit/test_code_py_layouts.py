@@ -435,3 +435,11 @@ def test_a_list_inside_an_unclosed_entry_point_list_is_read_once():
         ("a", "console_scripts", 1),
         ("g", "console_scripts", 2),
     ]
+
+
+def test_a_layout_keeps_the_first_entry_points_up_to_the_cap():
+    text = "[options.entry_points]\nconsole_scripts =\n" + "".join(
+        f"  a{i} = m:f\n" for i in range(pl.MAX_ENTRY_POINTS + 5)
+    )
+    eps = pl.layout_from_texts({"setup.cfg": text}, []).entry_points
+    assert len(eps) == pl.MAX_ENTRY_POINTS and eps[-1].name == f"a{pl.MAX_ENTRY_POINTS - 1}"
