@@ -749,65 +749,34 @@ def test_an_unreachable_docker_daemon_is_named_before_any_pull(
     assert not Path(installer_env["LOOM_INSTALL_DIR"]).exists()  # nor any file written
 
 
-# After `install.sh`, a pipe into a shell (`sh`, `bash`, `/bin/sh`, through `sudo`),
-# within that one pipeline stage.
-_PIPE_TO_SHELL = re.compile(r"\|\s*(?:[^\s|;&]+\s+)*?(?:\S*/)?(?:ba|da|k|z)?sh\b")
-# A download run as `sh -c "$(curl …)"` or `sh <(curl …)`.
-_SHELL_OF_DOWNLOAD = re.compile(r"sh\s+(?:-c\s+[\"']?\$\(|<\()")
+# curl's `-o FILE` or `-O` (alone or among short flags): the download is saved, so `&&` can stop on its failure.
+_SAVES = re.compile(r"\s-(?:o\s*(?!-(?:\s|$))\S|[A-Za-z]*O\b)")
+# Installed dependencies, which hold other projects' install lines.
+_NOT_OURS = {"node_modules", ".venv", ".git"}
 
 
-def _runs_a_download(line: str) -> bool:
-    after = line.split("install.sh", 1)[1]
-    return bool(_PIPE_TO_SHELL.search(after) or _SHELL_OF_DOWNLOAD.search(line))
+def _unsaved_download(line: str) -> bool:
+    """A line that runs curl on `install.sh` without saving it to a file."""
+    return "curl" in line and "install.sh" in line and not _SAVES.search(line)
 
 
-def test_no_tracked_file_pipes_the_installer_into_sh() -> None:
-    """A line that names `install.sh` and hands the download to a shell runs an
-    empty script and exits 0 when the download fails: no such line is tracked. A
-    line ending in `\\` or `|` joins the next; a URL held in a variable is not seen."""
-    piped = []
+def test_every_installer_download_is_saved_first() -> None:
+    """A downloaded installer handed straight to a shell (`curl … | sh`,
+    `sh -c "$(curl …)"`, `bash <(curl …)`) runs as an empty script and exits 0 when
+    the download fails; every tracked line that fetches `install.sh` saves it to a file
+    first. A `\\` line break joins two lines into one."""
     own = Path(__file__).resolve().relative_to(ROOT).as_posix()  # holds the examples below
-    for name in tracked(*_TEXT_ROOTS):
-        if name == own:
+    unsaved = []
+    for name in tracked():
+        if name == own or _NOT_OURS & set(Path(name).parts):
             continue
         try:
             text = (ROOT / name).read_text(encoding="utf-8")
         except (UnicodeDecodeError, IsADirectoryError, FileNotFoundError):
             continue  # a binary file, a submodule, a file deleted in the work tree
-        if any("install.sh" in line and _runs_a_download(line) for line in _logical_lines(text)):
-            piped.append(name)
-    assert piped == []
-
-
-# Where a command a user is shown can live; a source archive's walk stays out of
-# installed dependencies.
-_TEXT_ROOTS = (
-    "README.md", "install.sh", "docs", "scripts", "integrations", "sdk", "server",
-    "frontend/src", ".claude", ".github",
-)  # fmt: skip
-
-
-def _logical_lines(text: str) -> list[str]:
-    """Lines as a shell reads them: one ending in `\\` goes on in the next, and so does
-    one ending in a pipe, unless it is a Markdown table row."""
-    out: list[str] = []
-    joining = False
-    for line in text.splitlines():
-        out[-1:] = [out[-1] + " " + line.strip()] if joining and out else [*out[-1:], line]
-        last = out[-1].rstrip()
-        joining = last.endswith("\\") or (last.endswith("|") and not line.lstrip().startswith("|"))
-        if last.endswith("\\"):
-            out[-1] = last[:-1]
-    return out
-
-
-def test_a_table_row_does_not_join_the_next() -> None:
-    assert _logical_lines("| `install.sh` | x |\n| sh | y |") == [
-        "| `install.sh` | x |",
-        "| sh | y |",
-    ]
-    assert _logical_lines("curl x/install.sh |\n  sh") == ["curl x/install.sh | sh"]
-    assert _logical_lines("curl x/install.sh \\\n  | sh") == ["curl x/install.sh  | sh"]
+        if any(_unsaved_download(line) for line in re.sub(r"\\\n\s*", " ", text).splitlines()):
+            unsaved.append(name)
+    assert unsaved == []
 
 
 @pytest.mark.parametrize(
@@ -815,27 +784,28 @@ def test_a_table_row_does_not_join_the_next() -> None:
     [
         "curl -fsSL https://x/install.sh | sh",
         "curl -fsSL 'https://x/install.sh' | sudo -E bash",
-        "curl https://x/install.sh -fsSL | /bin/sh -s -- --bundled",
-        'curl -fsSL "https://x/install.sh" | LOOM_SKIP_START=1 sh',
+        'curl -fsSL "https://x/install.sh" | LOOM_SKIP_START=1 sh -s -- --bundled',
         "`curl -fsSL …/install.sh \\| sh`",
         'sh -c "$(curl -fsSL https://x/install.sh)"',
-        "curl -fsSL https://x/install.sh | sh -s -- --bundled",
         "bash <(curl -fsSL https://x/install.sh)",
-        "curl -fsSL https://x/install.sh | ksh",
+        "curl https://x/install.sh -o - | sh",
     ],
 )
-def test_the_guard_flags_a_piped_install(line: str) -> None:
-    assert _runs_a_download(line)
+def test_an_unsaved_download_is_flagged(line: str) -> None:
+    assert _unsaved_download(line)
 
 
-def test_the_guard_passes_the_saved_install() -> None:
-    assert not _runs_a_download(
-        "curl -fsSL https://x/install.sh -o loom-install.sh && sh loom-install.sh"
-    )
-    assert not _runs_a_download("sha256sum install.sh | sha256sum -c")
-    assert not _runs_a_download(
-        "curl -fLO https://x/install.sh && sha256sum install.sh | grep -q abc && sh install.sh"
-    )
+@pytest.mark.parametrize(
+    "line",
+    [
+        "curl -fsSL https://x/install.sh -o loom-install.sh && sh loom-install.sh",
+        "curl -fL https://x/install.sh -o loom-install.sh",
+        "curl -fsSLO https://x/install.sh && sh install.sh",
+        "| `install.sh` | bash-compatible installer |",
+    ],
+)
+def test_a_saved_download_passes(line: str) -> None:
+    assert not _unsaved_download(line)
 
 
 def test_the_documented_one_liner_fails_on_a_failed_download(tmp_path: Path) -> None:
