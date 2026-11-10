@@ -826,6 +826,7 @@ async def admin_token_mint(
     outranks the caller's token or live grants. It is saved to the caller's
     token list under `input.name`, with its own `sa:` subject, and revoked
     there; `loom mint-token` mints for any other subject."""
+    from server.auth.default_namespace import auth_off_subject
     from server.auth.delegation import DEFAULT_TTL_DAYS, NEVER, Delegated, delegable_role, delegate
     from server.auth.grant_claims import service_account_change
     from server.auth.jwt import new_jti
@@ -845,8 +846,6 @@ async def admin_token_mint(
         # Auth off: a valid bearer names the owner, in its own org; else the
         # single user. The token list reads the same owner, so the token is
         # listed and revocable.
-        from server.auth.default_namespace import auth_off_subject
-
         bearer = tokens.dev_bearer(request)
         refuse_foreign_org(bearer, input.org, "mint a token for")
         creator = bearer.subject if bearer is not None else auth_off_subject()

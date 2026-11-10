@@ -193,6 +193,7 @@ def test_the_single_user_mints_on_the_namespace_it_administers(
     r = client.post("/v1/me/service_accounts.create", json=body, headers=headers)
     assert r.status_code == 200, r.text
     assert r.json()["org"] == org
+    assert r.json()["namespaces"] == [ns, "*"]
     assert _listed(client, headers)["laptop"]["created_by"] == "you"
 
 
