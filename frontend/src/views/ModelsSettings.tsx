@@ -79,7 +79,7 @@ export function ModelsSettings() {
           setError("");
         }
       } catch (e) {
-        if (!controller.signal.aborted) setError(`Couldn't load model settings: ${errorLine(e)}`);
+        if (!controller.signal.aborted) setError(`Couldn't load model settings: ${errorLine(e, { read: true })}`);
       } finally {
         loading = false;
       }
@@ -131,7 +131,7 @@ export function ModelsSettings() {
                       setConfirmReset(false);
                       setReload((value) => value + 1);
                     } catch (e) {
-                      setError(`Couldn't reset model settings: ${errorLine(e, { read: false })}`);
+                      setError(`Couldn't reset model settings: ${errorLine(e)}`);
                     } finally {
                       setResetting(false);
                     }
@@ -173,7 +173,7 @@ export function ModelsSettings() {
                       await retryModelConfiguration(status.pending.config_id);
                       setReload((value) => value + 1);
                     } catch (e) {
-                      setError(`Couldn't retry the rebuild: ${errorLine(e, { read: false })}`);
+                      setError(`Couldn't retry the rebuild: ${errorLine(e)}`);
                     } finally {
                       setRetrying(false);
                     }

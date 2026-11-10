@@ -683,7 +683,7 @@ export function Runs() {
       .catch((e: unknown) => {
         if (!live) return;
         setDetail(null);
-        setDetailError(errorLine(e));
+        setDetailError(errorLine(e, { read: true }));
       })
       .finally(() => {
         if (live) setDetailLoading(false);

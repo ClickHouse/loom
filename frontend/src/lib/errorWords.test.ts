@@ -263,6 +263,22 @@ describe("humanizeError", () => {
       expect(humanizeError(new ApiError({ status: 418 }), { bare: true })).toBe("Loom answered with status 418.");
     });
 
+    it("keeps the request id in an internal error's line where no caller shows it", () => {
+      const err = new ApiError({
+        status: 500,
+        code: "INTERNAL_ERROR",
+        message: "internal error; request_id=r9",
+        requestId: "r9",
+        detail: { category: "internal", retryable: false },
+      });
+      expect(humanizeError(err, { read: true })).toBe(
+        "Loom hit an internal error. If it keeps happening, send the request id to your operator. Request id r9.",
+      );
+      expect(errorLine(err, { read: true })).toBe(
+        "Loom hit an internal error. If it keeps happening, send the request id to your operator. Request id r9.",
+      );
+    });
+
     it("tells a read what a 5xx leaves to do, with no write warning", () => {
       expect(humanizeError(new ApiError({ status: 503, retryAfter: 5 }), { read: true })).toBe(
         "Loom didn't answer. Try again in 5 s.",
@@ -372,8 +388,8 @@ describe("errorLine", () => {
         new ApiError({ status: 409, code: "PRECONDITION_FAILED", message: "the upload expired", requestId: "r1" }),
       ),
     ).toBe("the upload expired. Request id r1.");
-    expect(errorLine(new TypeError("Failed to fetch"))).toBe("Lost connection to Loom.");
-    // A write's inline line keeps the warning that it may have landed.
-    expect(errorLine(new TypeError("Failed to fetch"), { read: false })).toMatch(/may still have committed/);
+    expect(errorLine(new TypeError("Failed to fetch"), { read: true })).toBe("Lost connection to Loom.");
+    // Without `read` the line keeps the warning that a write may have landed.
+    expect(errorLine(new TypeError("Failed to fetch"))).toMatch(/may still have committed/);
   });
 });

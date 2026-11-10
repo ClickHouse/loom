@@ -1,8 +1,9 @@
 // How the dashboard words a failure: one line that says what happened and what to do
 // (docs/development/dashboard-design.md, errors). Kept out of lib/format.ts so the boot
 // chunk does not carry it: the toast viewport loads it soon after the shell paints, and
-// toastError falls back to its context alone if it cannot (lib/staleChunk.ts reloads for no
-// failure of this chunk where the browser names the file, as Chrome and Firefox do). The order a line is built in:
+// toastError falls back to its context alone if it cannot. lib/staleChunk.ts does not reload
+// when this chunk fails to load, where the browser names the file (Chrome, Firefox).
+// The order a line is built in:
 //   1. the code's own sentence, where it says more than its category or status;
 //   2. the body's category, unless `input` (the server's word for any other 4xx);
 //   3. the HTTP status;
@@ -90,6 +91,11 @@ function sentenceForStatus(status: number): string {
   return UNKNOWN_STATUS;
 }
 
+/** Whose move an error is, from its body (`classified` on the server); "" without one. */
+function categoryOf(err: ApiError): string {
+  return typeof err.detail.category === "string" ? err.detail.category : "";
+}
+
 /** The lead-in for a status that says nothing about why. */
 const UNKNOWN_STATUS = "Couldn't do that:";
 
@@ -101,7 +107,7 @@ function retryTail(err: ApiError, read: boolean): string {
   const mayHaveLanded = read ? "Try again in a moment." : MAY_HAVE_SAVED;
   // Made by the dashboard (api.ts readJson): the answer was ok, only its body unreadable.
   if (err.code === "ANSWER_UNREADABLE") return mayHaveLanded;
-  const category = typeof err.detail.category === "string" ? err.detail.category : "";
+  const category = categoryOf(err);
   const retryable = err.detail.retryable;
   // A 5xx not marked retryable may follow a write the call made (`handler_failure_detail`;
   // a handler that raised partway answers INTERNAL_ERROR; a proxy's 502 or 504 says
@@ -196,14 +202,9 @@ const SESSION_GONE = /missing bearer token/;
 
 /** The code's own sentence, when it says more than its category or status. */
 function codeSentence(err: ApiError): string | undefined {
-  const category = typeof err.detail.category === "string" ? err.detail.category : "";
+  const category = categoryOf(err);
   if (UNVERIFIED_CODES.has(err.code) && category === "dependency") return "Loom couldn't check your access just now.";
   return ERROR_CODE_PREFIXES[err.code];
-}
-
-function leadFor(err: ApiError): string {
-  const category = typeof err.detail.category === "string" ? err.detail.category : "";
-  return codeSentence(err) ?? CATEGORY_SENTENCES[category] ?? sentenceForStatus(err.status);
 }
 
 function humanizeApiError(err: ApiError, bare: boolean, read: boolean): string {
@@ -218,33 +219,36 @@ function humanizeApiError(err: ApiError, bare: boolean, read: boolean): string {
   )
     return "Your session ended — sign in again.";
   if (err.code === "PUBLICATION_PENDING") return PUBLICATION_PENDING;
-  // The server's words for it carry only the request id, which the line's caller shows.
-  if (err.code === "INTERNAL_ERROR") return withTail(ERROR_CODE_PREFIXES.INTERNAL_ERROR, retryTail(err, read));
-  const lead = leadFor(err);
+  // The server's words for it carry only the request id: a caller with its own lead-in
+  // (toastError, errorLine) shows the id beside the line; any other line carries it.
+  if (err.code === "INTERNAL_ERROR") {
+    const id = !bare && err.requestId ? ` Request id ${err.requestId}.` : "";
+    return withTail(`${ERROR_CODE_PREFIXES.INTERNAL_ERROR}${id}`, retryTail(err, read));
+  }
+  const own = codeSentence(err);
+  const lead = own ?? CATEGORY_SENTENCES[categoryOf(err)] ?? sentenceForStatus(err.status);
   let text: string;
   if (err.serverMessage && bare) {
     // The caller's lead-in replaces a generic one; a code's sentence stays, since it
     // carries the next step ("Your role doesn't allow this.").
-    const own = codeSentence(err);
     text = own ? `${own.replace(/:$/, ".")} ${asSentence(err.serverMessage)}` : err.serverMessage;
   } else if (err.serverMessage) text = joinSentence(lead, err.serverMessage);
   // With no message the code is all the server said: kept for support, never the sentence.
   // A generic lead-in says little, so the code goes with it (or alone, after a caller's own
   // lead-in); a code's own sentence already says it all.
-  else if (err.code && !codeSentence(err))
-    text = bare ? `error code ${err.code}.` : `${lead.replace(/[:.]$/, "")} (${err.code}).`;
+  else if (err.code && !own) text = bare ? `error code ${err.code}.` : `${lead.replace(/[:.]$/, "")} (${err.code}).`;
   // Nothing said and a status that means nothing: after a caller's own lead-in, only the
   // status is left to name ("Save failed: Loom answered with status 418.").
-  else if (bare && !codeSentence(err) && lead === UNKNOWN_STATUS) text = `Loom answered with status ${err.status}.`;
+  else if (bare && !own && lead === UNKNOWN_STATUS) text = `Loom answered with status ${err.status}.`;
   else text = joinSentence(lead, "");
   return withTail(text, retryTail(err, read));
 }
 
 /** An inline line's reason ("Couldn't load …:"): the bare words and, when the failure
- *  carried one, the request id, since the sentence may ask the reader to send it. A read's
- *  by default; a write's line passes `read: false`, so a lost connection keeps its warning. */
+ *  carried one, the request id, since the sentence may ask the reader to send it. A read
+ *  passes `read`; without it the line keeps the write warning, as `humanizeError` does. */
 export function errorLine(err: unknown, opts: { read?: boolean } = {}): string {
   const rid = errorRequestId(err);
-  const text = humanizeError(err, { bare: true, read: opts.read ?? true });
+  const text = humanizeError(err, { bare: true, read: opts.read === true });
   return rid ? `${/[.!?]$/.test(text) ? text : `${text}.`} Request id ${rid}.` : text;
 }

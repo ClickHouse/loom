@@ -2368,14 +2368,14 @@ function EntitySummary({
       })
       .catch((e: unknown) => {
         // A failed read says so: "mentioned only in this memory" would be a claim.
-        if (live) setMentions({ failed: errorLine(e) });
+        if (live) setMentions({ failed: errorLine(e, { read: true }) });
       });
     relatedFacts({ org: identity.org, namespace: identity.namespace }, want, { top_k: POPOVER_LIST })
       .then((r) => {
         if (live) setNeighbours((r.related || []).map((n) => n.entity).slice(0, POPOVER_LIST));
       })
       .catch((e: unknown) => {
-        if (live) setNeighbours({ failed: errorLine(e) });
+        if (live) setNeighbours({ failed: errorLine(e, { read: true }) });
       });
     return () => {
       live = false;

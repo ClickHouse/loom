@@ -9,6 +9,17 @@ const SOURCES = import.meta.glob<string>(["../**/*.{ts,tsx}", "!../**/*.test.{ts
   eager: true,
 });
 
+/** The whole `toast(…)` call from its opening paren to its closing one, however Biome wrapped
+ *  it: a context may hold ";" or a newline before the error's words. */
+function callText(text: string, start: number): string {
+  let depth = 0;
+  for (let i = text.indexOf("(", start); i < text.length; i += 1) {
+    if (text[i] === "(") depth += 1;
+    else if (text[i] === ")" && --depth === 0) return text.slice(start, i + 1);
+  }
+  return text.slice(start);
+}
+
 describe("error toasts", () => {
   // `toastError(context, e)` keeps one lead-in, the request id and the reading time. A toast
   // that words an error itself passes `bare` (its own words are the lead-in); anything else
@@ -19,9 +30,7 @@ describe("error toasts", () => {
       .flatMap(([path, text]) =>
         [...text.matchAll(/\btoast\(/g)]
           .filter((m) => {
-            // To the end of the line: a context may hold a ";" before the error's words.
-            const end = text.indexOf("\n", m.index);
-            const call = text.slice(m.index, end < 0 ? undefined : end);
+            const call = callText(text, m.index);
             return /humanizeError\(/.test(call) && !/bare: true/.test(call);
           })
           .map((m) => `${path}:${text.slice(0, m.index).split("\n").length}`),
