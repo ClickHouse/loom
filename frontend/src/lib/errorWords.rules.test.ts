@@ -19,7 +19,9 @@ describe("error toasts", () => {
       .flatMap(([path, text]) =>
         [...text.matchAll(/\btoast\(/g)]
           .filter((m) => {
-            const call = text.slice(m.index, text.indexOf(";", m.index));
+            // To the end of the line: a context may hold a ";" before the error's words.
+            const end = text.indexOf("\n", m.index);
+            const call = text.slice(m.index, end < 0 ? undefined : end);
             return /humanizeError\(/.test(call) && !/bare: true/.test(call);
           })
           .map((m) => `${path}:${text.slice(0, m.index).split("\n").length}`),

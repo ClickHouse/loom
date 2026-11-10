@@ -1,8 +1,8 @@
 // How the dashboard words a failure: one line that says what happened and what to do
 // (docs/development/dashboard-design.md, errors). Kept out of lib/format.ts so the boot
 // chunk does not carry it: the toast viewport loads it soon after the shell paints, and
-// toastError falls back to its context alone if it cannot (lib/staleChunk.ts reloads for
-// no failure of this chunk). The order a line is built in:
+// toastError falls back to its context alone if it cannot (lib/staleChunk.ts reloads for no
+// failure of this chunk where the browser names the file, as Chrome and Firefox do). The order a line is built in:
 //   1. the code's own sentence, where it says more than its category or status;
 //   2. the body's category, unless `input` (the server's word for any other 4xx);
 //   3. the HTTP status;
@@ -21,7 +21,7 @@ import { errorRequestId } from "./format";
 export const ERROR_CODE_PREFIXES: Record<string, string> = {
   AUTH_INVALID: "Sign-in rejected:",
   SIGNED_IN_ELSEWHERE: "You signed in afresh in another tab. Nothing was lost.",
-  IDEMPOTENT_IN_PROGRESS: "This request is still running:",
+  IDEMPOTENT_IN_PROGRESS: "Not done yet:",
   // Made by the dashboard (api.ts readJson): an ok answer whose body is not JSON.
   ANSWER_UNREADABLE: "Loom's answer could not be read; a proxy in front of it may have answered instead.",
   AUTH_INSUFFICIENT: "Your role doesn't allow this:",
@@ -87,8 +87,11 @@ function sentenceForStatus(status: number): string {
   if (status === 504) return "Loom didn't answer in time:";
   if (status === 502 || status === 503) return "Loom didn't answer:";
   if (status >= 500) return "Loom hit a server error:";
-  return "Couldn't do that:";
+  return UNKNOWN_STATUS;
 }
+
+/** The lead-in for a status that says nothing about why. */
+const UNKNOWN_STATUS = "Couldn't do that:";
 
 /** What to do next, from the body alone: whether resending can work and when. Silent when
  *  the server's own words already say it. */
@@ -124,12 +127,11 @@ function joinSentence(friendly: string, message: string): string {
   return `${friendly} ${friendly.endsWith(".") ? asSentence(msg) : msg}`;
 }
 
-/** A server message set after a full stop: capitalised and closed. */
+/** A server message set after a full stop: closed, and left as written, since its first
+ *  word may be a name (a lowercase namespace, a subject) that a capital would change. */
 function asSentence(msg: string): string {
   const t = msg.trim();
-  const closed = /[.!?]$/.test(t) ? t : `${t}.`;
-  // A message that opens with an identifier (`if_match_sha256 …`, `memory.set …`) keeps it.
-  return /^[a-z]+(\s|$)/.test(closed) ? closed.charAt(0).toUpperCase() + closed.slice(1) : closed;
+  return /[.!?]$/.test(t) ? t : `${t}.`;
 }
 
 function withTail(text: string, tail: string): string {
@@ -231,6 +233,9 @@ function humanizeApiError(err: ApiError, bare: boolean, read: boolean): string {
   // lead-in); a code's own sentence already says it all.
   else if (err.code && !codeSentence(err))
     text = bare ? `error code ${err.code}.` : `${lead.replace(/[:.]$/, "")} (${err.code}).`;
+  // Nothing said and a status that means nothing: after a caller's own lead-in, only the
+  // status is left to name ("Save failed: Loom answered with status 418.").
+  else if (bare && !codeSentence(err) && lead === UNKNOWN_STATUS) text = `Loom answered with status ${err.status}.`;
   else text = joinSentence(lead, "");
   return withTail(text, retryTail(err, read));
 }

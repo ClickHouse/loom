@@ -8,8 +8,9 @@ import { errorRequestId } from "../lib/format";
 /**
  * Transient notifications.
  *
- * Each toast owns its timer: success and info leave after 3.5 s, errors
- * after 8 s — an error is read, not glanced at. Hovering or focusing a
+ * Each toast owns its timer: success and info leave after 3.5 s, an error
+ * after 8 s plus 50 ms a character, at most 20 s (`errorToastMs`) — an error is
+ * read, not glanced at. Hovering or focusing a
  * toast pauses its clock so the message can be read or copied; a close
  * button dismisses it early. The stack is capped at four — a burst of
  * failures drops the oldest rather than covering the page.
@@ -144,8 +145,9 @@ export function keepOpenOnToasts(e: Event): boolean {
 export function ToastViewport({ pinned = null }: { pinned?: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
 
-  // Load the error wording soon after the shell paints, so an error toast never fetches
-  // it: in a tab opened before a redeploy that fetch would miss and reload the page.
+  // Load the error wording soon after the shell paints, so an error toast never fetches it:
+  // in a tab opened before a redeploy that fetch would miss, and the toast would fall back
+  // to its context alone.
   useEffect(() => {
     const t = window.setTimeout(() => {
       import("../lib/errorWords").catch(() => {});

@@ -21,7 +21,8 @@ export function installStaleChunkReload(
 ): void {
   win.addEventListener("vite:preloadError", (event: Event) => {
     // The error wording's chunk has its own fallback (Toast.tsx toastError): a reload for it
-    // would lose the page, and the fallback toast with it.
+    // would lose the page, and the fallback toast with it. Known only where the browser's
+    // message names the file (Chrome, Firefox); Safari's does not, and reloads as before.
     if (/errorWords/.test(preloadErrorText(event))) return;
     let last = 0;
     try {

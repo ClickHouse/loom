@@ -27,7 +27,7 @@ describe("toastError", () => {
     );
     expect(
       await screen.findByText(
-        "Couldn't delete Research notes: Too many requests. Namespace 'x' exceeded its rate limit. Try again in 4 s.",
+        "Couldn't delete Research notes: Too many requests. namespace 'x' exceeded its rate limit. Try again in 4 s.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("request id req-9")).toBeInTheDocument();

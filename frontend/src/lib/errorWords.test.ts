@@ -112,7 +112,7 @@ describe("humanizeError", () => {
           message: "namespace 'x' exceeded its rate limit",
           detail: { category: "capacity", retryable: true, retry_after_s: 3 },
         },
-        "Too many requests. Namespace 'x' exceeded its rate limit. Try again in 3 s.",
+        "Too many requests. namespace 'x' exceeded its rate limit. Try again in 3 s.",
       ],
       [
         "the wait comes from the Retry-After header when the body has none",
@@ -133,7 +133,7 @@ describe("humanizeError", () => {
           message: "grants could not be read",
           detail: { category: "dependency", retryable: true },
         },
-        "Loom couldn't check your access just now. Grants could not be read. Try again in a moment.",
+        "Loom couldn't check your access just now. grants could not be read. Try again in a moment.",
       ],
       [
         "a real refusal names the role",
@@ -229,7 +229,7 @@ describe("humanizeError", () => {
           message: "a request with this idempotency key is still running; retry once it answers",
           detail: { category: "capacity", retryable: true },
         },
-        "This request is still running: a request with this idempotency key is still running; retry once it answers",
+        "Not done yet: a request with this idempotency key is still running; retry once it answers",
       ],
       [
         "a call raced by the same person's sign-in in another tab is safe to send once more",
@@ -249,6 +249,18 @@ describe("humanizeError", () => {
     ];
     it.each(rows)("%s", (_name, given, line) => {
       expect(api(given)).toBe(line);
+    });
+
+    it("keeps a name at the start of the server's words as written", () => {
+      expect(
+        humanizeError(new ApiError({ status: 403, code: "AUTH_INSUFFICIENT", message: "acme is the only admin" }), {
+          bare: true,
+        }),
+      ).toBe("Your role doesn't allow this. acme is the only admin.");
+    });
+
+    it("names only the status after a caller's lead-in when nothing else was said", () => {
+      expect(humanizeError(new ApiError({ status: 418 }), { bare: true })).toBe("Loom answered with status 418.");
     });
 
     it("tells a read what a 5xx leaves to do, with no write warning", () => {
@@ -297,7 +309,7 @@ describe("humanizeError", () => {
         humanizeError(new ApiError({ status: 403, code: "AUTH_INSUFFICIENT", message: "admin needed on t" }), {
           bare: true,
         }),
-      ).toBe("Your role doesn't allow this. Admin needed on t.");
+      ).toBe("Your role doesn't allow this. admin needed on t.");
     });
 
     it("keeps the retry tail when the server's words only contain the letters of 'again'", () => {
@@ -308,7 +320,7 @@ describe("humanizeError", () => {
           message: "writes against it are queued",
           detail: { category: "capacity", retryable: true },
         }),
-      ).toBe("Loom is busy right now. Writes against it are queued. Try again in a moment.");
+      ).toBe("Loom is busy right now. writes against it are queued. Try again in a moment.");
     });
 
     it("leaves retry advice to the tail: no code sentence says to try again", () => {

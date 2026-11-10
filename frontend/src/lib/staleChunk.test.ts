@@ -38,6 +38,12 @@ describe("installStaleChunkReload", () => {
     expect(e.defaultPrevented).toBe(false);
   });
 
+  it("reloads for the wording chunk where the browser does not name the file (Safari)", () => {
+    const { reload, fire } = setup();
+    fire("Importing a module script failed.");
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
   it("reloads once and suppresses the error on a missing chunk", () => {
     const { reload, fire } = setup();
     const e = fire();
