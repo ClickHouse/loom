@@ -11,6 +11,12 @@ from server.memory.app.served_superseded import served_flags as _served
 from server.memory.domain.search_sql import agent_filter, agent_or_shared_predicate
 from server.memory.domain.temporal_sql import as_of_predicate, served_status_sql
 
+# A memory key's parts, as the key-match arm stems them: split at `_` and at the six
+# ASCII whitespace characters, which `stem()` refuses in a word. A key without
+# whitespace splits as it does at `_` alone. `translate` maps bytes, so the split costs
+# what `splitByChar` alone does (a regular expression split doubled it).
+KEY_PARTS = r"splitByChar('_', translate(lower(memory_key), ' \t\n\v\f\r', '______'))"
+
 
 def _read_scope_where(input: Any, params: dict[str, Any], alias: str = "e") -> list[str]:
     """The read-scope and replay predicates the fact leg applies (`memory/domain/search_sql`):
@@ -126,16 +132,16 @@ def key_match_precheck_sql() -> str:
     empty answer here means the wide statement (`key_match_sql`) would return nothing under any
     version rule; a row here says nothing about the strength filter, and the wide statement
     runs as usual."""
-    return """
+    return f"""
         SELECT 1 AS any_key
         FROM (
-            SELECT arrayCount(t -> has({stems:Array(String)}, t), key_stems) AS matched,
+            SELECT arrayCount(t -> has({{stems:Array(String)}}, t), key_stems) AS matched,
                    length(key_stems) AS key_parts
             FROM (
                 SELECT arrayMap(t -> stem(t, 'en'),
-                                splitByChar('_', lower(memory_key))) AS key_stems
+                                {KEY_PARTS}) AS key_stems
                 FROM loom.memory_embeddings
-                WHERE org = {org:String} AND namespace = {ns:String}
+                WHERE org = {{org:String}} AND namespace = {{ns:String}}
             )
         )
         WHERE matched >= 2 OR (matched >= 1 AND matched = key_parts)
@@ -164,7 +170,7 @@ def key_match_sql(where_sql: str) -> str:
                  SELECT s, count() AS c
                  FROM (
                    SELECT arrayJoin(arrayDistinct(arrayMap(t -> stem(t, 'en'),
-                          splitByChar('_', lower(memory_key))))) AS s
+                          {KEY_PARTS}))) AS s
                    FROM loom.memory_embeddings FINAL
                    WHERE org = {{org:String}} AND namespace = {{ns:String}}
                      AND tombstoned_at IS NULL
@@ -197,13 +203,13 @@ def key_match_sql(where_sql: str) -> str:
         FROM (
             SELECT *,
                    arrayMap(t -> stem(t, 'en'),
-                            splitByChar('_', lower(memory_key))) AS key_stems,
+                            {KEY_PARTS}) AS key_stems,
                    arrayCount(t -> has({{stems:Array(String)}}, t), key_stems) AS matched,
                    length(key_stems) AS key_parts
             FROM loom.memory_embeddings FINAL
             PREWHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND arrayExists(t -> has({{stems:Array(String)}}, stem(t, 'en')),
-                              splitByChar('_', lower(memory_key)))
+                              {KEY_PARTS})
             
         ) AS e
         WHERE {where_sql}
@@ -234,7 +240,7 @@ def key_match_component_sql(where_sql: str) -> str:
                      sumMap(arrayFilter(s -> has({{stems:Array(String)}}, s),
                                         arrayDistinct(arrayMap(
                                             t -> stem(t, 'en'),
-                                            splitByChar('_', lower(memory_key))))) AS ks,
+                                            {KEY_PARTS}))) AS ks,
                             arrayResize([toUInt64(1)], length(ks), toUInt64(1))))
                FROM loom.memory_embeddings FINAL
               WHERE org = {{org:String}} AND namespace = {{ns:String}}
@@ -257,7 +263,7 @@ def key_match_component_sql(where_sql: str) -> str:
                    -- liveness window (`_live_window_where`)
                    expires_at, valid_to,
                    arrayMap(t -> stem(t, 'en'),
-                            splitByChar('_', lower(memory_key))) AS key_stems,
+                            {KEY_PARTS}) AS key_stems,
                    arrayCount(t -> has({{stems:Array(String)}}, t), key_stems) AS matched,
                    length(key_stems) AS key_parts
             FROM loom.memory_embeddings FINAL

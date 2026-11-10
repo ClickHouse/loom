@@ -134,7 +134,7 @@ def test_code_surfaces_still_yield_files_and_symbols() -> None:
 def test_key_match_statement_filters_keys_in_prewhere_before_the_wide_read() -> None:
     """The wide pass reads a row's vectors only when its key
     shares a stem with the query; every pass merges under FINAL."""
-    from server.memory.app.search.sql import key_match_sql
+    from server.memory.app.search.sql import KEY_PARTS, key_match_sql
 
     sql = key_match_sql("e.org = {org:String} AND e.tombstoned_at IS NULL")
     inner = sql[
@@ -143,7 +143,7 @@ def test_key_match_statement_filters_keys_in_prewhere_before_the_wide_read() -> 
     assert (
         "PREWHERE org = {org:String} AND namespace = {ns:String}\n"
         "              AND arrayExists(t -> has({stems:Array(String)}, stem(t, 'en')),\n"
-        "                              splitByChar('_', lower(memory_key)))" in inner
+        f"                              {KEY_PARTS})" in inner
     )
     assert "\n            WHERE" not in inner and "SELECT *" in sql  # no version rule
     assert sql.count("FROM loom.memory_embeddings FINAL") == 3  # two statistics scans + wide pass

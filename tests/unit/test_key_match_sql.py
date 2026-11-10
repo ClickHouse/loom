@@ -6,7 +6,13 @@ from __future__ import annotations
 
 import pytest
 
-from server.memory.app.search.sql import key_match_sql
+from server.memory.app.search.key_match import key_match_query_stems, key_parts
+from server.memory.app.search.sql import (
+    KEY_PARTS,
+    key_match_component_sql,
+    key_match_precheck_sql,
+    key_match_sql,
+)
 from tests.unit.clickhouse_local import CLICKHOUSE, EMBEDDINGS, VECTOR, run
 
 pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
@@ -55,3 +61,27 @@ def test_two_keys_that_tie_keep_one_order_at_the_limit() -> None:
     )
     rows = run(setup, _SQL, _params(per_key=3, limit=1))
     assert [r["memory_key"] for r in rows] == ["user_task_worktree"]
+
+
+# A key with whitespace in a part (`stem()` refuses one) beside one split at `_` alone.
+_SPACED = ("communication style", "user_communication_style")
+
+
+def test_a_key_with_whitespace_is_split_before_it_is_stemmed() -> None:
+    setup = _setup(*(_row("s1", key) for key in _SPACED))
+    params = {**_params(per_key=3, limit=10), "stems": key_match_query_stems("communication style")}
+    assert run(setup, key_match_precheck_sql(), params) == [{"any_key": 1}]
+    assert sorted(r["memory_key"] for r in run(setup, _SQL, params)) == sorted(_SPACED)
+    component = key_match_component_sql("e.org = {org:String} AND e.tombstoned_at IS NULL")
+    rows = run(setup, component, {**params, "pool_keys": list(_SPACED)})
+    assert sorted(r["memory_key"] for r in rows) == sorted(_SPACED)
+
+
+def test_key_parts_in_python_are_the_statements_parts() -> None:
+    keys = ["user_task_worktree", "a__b", "_lead", "communication style", "x\ty\nz", "p/q-r s"]
+    rows = run(
+        [],
+        f"SELECT {KEY_PARTS} AS parts FROM (SELECT arrayJoin({{keys:Array(String)}}) AS memory_key)",
+        {"keys": keys},
+    )
+    assert [r["parts"] for r in rows] == [key_parts(k) for k in keys]

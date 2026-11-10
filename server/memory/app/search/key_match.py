@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any
 
 from server.memory.api.models_search import MemorySearchInput, _MemorySearchHit
@@ -133,16 +134,25 @@ def key_match_enabled(input: MemorySearchInput) -> bool:
     return key_match_mode(input) != "off"
 
 
+# `sql.KEY_PARTS` in Python: `_` and the six ASCII whitespace characters
+_KEY_SPLIT = re.compile(r"[_ \t\n\v\f\r]")
+
+
+def key_parts(memory_key: str) -> list[str]:
+    """A memory key's parts as the arm's statements stem them (`sql.KEY_PARTS`)."""
+    return _KEY_SPLIT.split(str(memory_key or "").lower())
+
+
 def key_match_key_qualifies(memory_key: str, stems: set[str]) -> bool:
-    """The arm's SQL predicate on one key, in Python and unweighted: the
-    `_`-split, Snowball-stemmed parts share at least two stems with the
+    """The arm's SQL predicate on one key, in Python and unweighted: the key's
+    parts (`key_parts`), Snowball-stemmed, share at least two stems with the
     query, or every part of a short key is one (`matched >= 2 OR (matched
     >= 1 AND matched = key_parts)`). Without the idf floor this is a
     superset of what the statement returns — it says whether a pooled row
     *could* gain the component, never that it will not."""
     from server.memory.domain.lemmatize import snowball_stem_tokens
 
-    parts = str(memory_key or "").lower().split("_")
+    parts = key_parts(memory_key)
     key_stems = snowball_stem_tokens(parts)
     matched = sum(1 for t in key_stems if t in stems)
     return matched >= 2 or (matched >= 1 and matched == len(key_stems))
