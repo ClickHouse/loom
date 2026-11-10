@@ -385,14 +385,16 @@ claude plugin marketplace add ClickHouse/loom
 claude plugin install loom@loom
 ```
 
+On a single-user server on this machine, keep the default server URL and leave the token
+empty when Claude Code asks for the plugin's settings.
+
 Without the plugin, add the MCP entry directly:
 
 ```bash
 claude mcp add --transport http loom "http://localhost:7777/mcp?toolset=coding" -s user
 ```
 
-Both reach a single-user server on this machine without a token of yours: when Claude Code
-asks for the plugin's settings, keep the default server URL and leave the token empty.
+Both reach a single-user server on this machine without a token of yours.
 
 With auth on, create a token in **Settings → Tokens** and choose **Claude Code** under
 **Connect**: the dialog shows the setup for the plugin and for a `claude mcp add` entry,
