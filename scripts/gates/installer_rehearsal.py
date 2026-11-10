@@ -138,6 +138,11 @@ def installed_version(home: Path, distro: str) -> str:
     return version_file.read_text().strip()
 
 
+def saved_copy_removed(home: Path, distro: str) -> None:
+    """A good install removes the installer the command saved."""
+    check(not (home / "loom-install.sh").exists(), f"{distro}: the install left loom-install.sh")
+
+
 def read_env(home: Path) -> dict[str, str]:
     lines = (home / ".loom" / ".env").read_text().splitlines()
     return dict(line.split("=", 1) for line in lines if "=" in line and not line.startswith("#"))
@@ -535,9 +540,7 @@ class Rehearsal:
             remove_stack_on_exit(home, stacks)
         installed = installed_version(home, distro)
         check(installed == version, f"{distro}: installed {installed}, not {version}")
-        check(
-            not (home / "loom-install.sh").exists(), f"{distro}: the install left loom-install.sh"
-        )
+        saved_copy_removed(home, distro)
         status = health(port)
         check(status["status"] == "ok", f"{distro}: health answered {status}")
         key = f"rehearsal/{distro}"
@@ -551,6 +554,7 @@ class Rehearsal:
         check(
             "Preserved existing" in output, f"{distro}: the re-run printed no 'Preserved existing'"
         )
+        saved_copy_removed(home, distro)
         check(
             read_env(home)["LOOM_JWT_SECRET"] == secret, f"{distro}: a re-run replaced the secret"
         )
@@ -599,6 +603,7 @@ class Rehearsal:
         check(
             "Preserved existing" in output, f"{distro}: the upgrade printed no 'Preserved existing'"
         )
+        saved_copy_removed(home, distro)
         installed = installed_version(home, distro)
         check(installed == version, f"{distro}: the upgrade left {installed}, not {version}")
         pinned = read_env(home)["LOOM_VERSION"]

@@ -769,15 +769,13 @@ echo 'curl: (22) The requested URL returned error: 404' >&2
 exit 22
 """
 )
-# `&& sh FILE`, maybe after environment assignments: the step that runs the installer.
-_RUNS_INSTALLER = re.compile(r"&&\s*(?:\w+=\S*\s+)*sh\s")
 _CODE = re.compile(r"^[ \t]*```[^\n]*\n(.*?)^[ \t]*```|`([^`\n]+)`", re.MULTILINE | re.DOTALL)
 
 
 def _documented_installs() -> list[tuple[str, str]]:
-    """(page, script) for every command a tracked page shows that downloads
-    `install.sh`: its example's lines up to and including it, as a reader pastes
-    them, with each `\\` continuation joined and a `<placeholder>` filled."""
+    """(page, example) for every example a tracked page shows that downloads
+    `install.sh`: its lines with each `\\` continuation joined and a `<placeholder>`
+    filled."""
     found = []
     for name in tracked():
         if not name.endswith(".md"):
@@ -789,14 +787,14 @@ def _documented_installs() -> list[tuple[str, str]]:
                     re.sub(r"<[^>]*>", "x", line.strip().replace("\\|", "|"))
                     for line in example.splitlines()
                 ]
-                for i, line in enumerate(lines):
-                    if "curl" in line and "install.sh" in line:
-                        found.append((name, "\n".join(lines[: i + 1])))
+                if any("curl" in line and "install.sh" in line for line in lines):
+                    found.append((name, "\n".join(lines)))
     return found
 
 
 def _run_install(script: str, tmp_path: Path, curl_script: str) -> subprocess.CompletedProcess[str]:
-    """`script` under `sh -e` in an empty home, with `curl_script` as curl."""
+    """`script` under `sh -e`, stopping at the first failing line, in an empty home with
+    `curl_script` as curl."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     curl = bin_dir / "curl"
@@ -812,34 +810,37 @@ def _run_install(script: str, tmp_path: Path, curl_script: str) -> subprocess.Co
 
 
 _INSTALLS = _documented_installs()
+# The inspect path checks a downloaded bundle by hand before it installs from it.
+_INSPECT = "LOOM_INSTALL_BUNDLE="
 
 
 def test_the_pages_show_install_commands() -> None:
     pages = {page for page, _ in _INSTALLS}
     assert {"README.md", "docs/getting-started/quickstart.md"} <= pages
+    assert any(_INSPECT in example for _, example in _INSTALLS)
 
 
-@pytest.mark.parametrize(("page", "script"), _INSTALLS)
+@pytest.mark.parametrize(("page", "example"), _INSTALLS)
 def test_a_documented_install_stops_on_a_failed_download(
-    page: str, script: str, tmp_path: Path
+    page: str, example: str, tmp_path: Path
 ) -> None:
     """Piped into a shell, a download that fails runs what curl wrote and exits 0;
-    every install command a page shows exits with curl's error and runs nothing."""
-    result = _run_install(script, tmp_path, _FAILING_CURL)
-    assert result.returncode != 0, (page, script, result)
-    assert "404" in result.stderr, (page, script, result.stderr)
-    assert not (tmp_path / ".loom").exists(), (page, script)
+    every install example a page shows exits with curl's error and runs nothing."""
+    result = _run_install(example, tmp_path, _FAILING_CURL)
+    assert result.returncode != 0, (page, example, result)
+    assert "404" in result.stderr, (page, example, result.stderr)
+    assert not (tmp_path / ".loom").exists(), (page, example)
 
 
-@pytest.mark.parametrize(("page", "script"), _INSTALLS)
+@pytest.mark.parametrize(
+    ("page", "example"), [case for case in _INSTALLS if _INSPECT not in case[1]]
+)
 def test_a_documented_install_runs_the_installer_and_cleans_up(
-    page: str, script: str, tmp_path: Path
+    page: str, example: str, tmp_path: Path
 ) -> None:
-    """With a download that works, a command that runs the installer runs it and
-    removes its saved copy; the inspect path's download alone runs nothing."""
-    result = _run_install(script, tmp_path, _WORKING_CURL)
-    assert result.returncode == 0, (page, script, result)
-    runs = bool(_RUNS_INSTALLER.search(script.splitlines()[-1]))  # the inspect path only saves
-    saved = [*tmp_path.glob("loom-install.sh"), *tmp_path.glob("loom-agent-setup/loom-install.sh")]
-    assert (tmp_path / ".loom").exists() == runs, (page, script)
-    assert bool(saved) != runs, (page, script, saved)
+    """With a download that works, every install example runs the installer and leaves
+    no saved copy behind."""
+    result = _run_install(example, tmp_path, _WORKING_CURL)
+    assert result.returncode == 0, (page, example, result)
+    assert (tmp_path / ".loom").exists(), (page, example)
+    assert list(tmp_path.rglob("loom-install.sh")) == [], (page, example)
