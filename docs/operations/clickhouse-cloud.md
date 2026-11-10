@@ -84,10 +84,9 @@ the names it renders set a second time in `env`, `extraEnv`, `secrets.extra` or
 
 ### Connections
 
-Each Loom process runs at most `postgres.poolMaxSize` pooled statements at once; a call
-that finds every connection busy waits up to `LOOM_PG_STATEMENT_TIMEOUT_MS` for one, then
-answers 503. Each process holds up to `postgres.poolMaxSize` connections, and a rollout runs
-the old and the new pods side by side, so size the service for twice the steady count:
+Each Loom process holds up to `postgres.poolMaxSize` connections; a call that finds them
+all busy waits up to `LOOM_PG_STATEMENT_TIMEOUT_MS` for one, then answers 503. A rollout
+runs the old and the new pods side by side, so size the service for twice the steady count:
 
 ```text
 poolMaxSize × (webWorkers × web pods + worker processes) × 2
@@ -135,7 +134,8 @@ restarts. A pod that starts between steps 1 and 2 (a scale-up, an eviction, the 
 export or a hook Job) fails to boot until step 2, and boots on its next restart.
 
 The CA: create the new bundle under a new Secret name and `helm upgrade` with
-`postgres.caSecret.name` set to it. The pod spec changes, so the pods roll.
+`postgres.caSecret.name` set to it. The pod spec changes, so the pods roll. Delete the old
+Secret only once the rollout has finished and no revision you might roll back to names it.
 
 ## The SQL surface user
 
