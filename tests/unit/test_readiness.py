@@ -148,6 +148,21 @@ def test_boot_registers_every_check(monkeypatch) -> None:
     assert "mirrors" in readiness.names()
 
 
+def test_the_assistant_check_is_registered_only_where_one_is_configured(monkeypatch) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "ready_requires_mirrors", False)
+    monkeypatch.setattr(settings, "assistant_librechat_url", "")
+    monkeypatch.setattr(readiness, "_CHECKS", {})
+    boot.register_readiness_checks(object())
+    assert "assistant" not in readiness.names()
+    monkeypatch.setattr(settings, "assistant_librechat_url", "http://librechat:3080")
+    boot.register_readiness_checks(object())
+    # Reported, never required: a deployment whose assistant is down still serves.
+    assert "assistant" in readiness.names()
+    assert readiness._CHECKS["assistant"].required is False
+
+
 def test_a_stale_grant_watermark_is_reported_but_not_required(monkeypatch) -> None:
     import time
 

@@ -243,27 +243,38 @@ def test_a_refusals_body_is_never_read(world: _World) -> None:
 
 
 @pytest.mark.parametrize(
-    ("change", "refusal"),
+    ("change", "refusal", "reason"),
     [
-        ({"librechat": ""}, AssistantUnavailableError),
-        ({"answering": None}, AssistantUnavailableError),
-        ({"auth": {"org": "*"}}, AuthInsufficientError),
-        ({"auth": {"read_scope": "own_user"}}, AuthInsufficientError),
+        ({"librechat": ""}, AssistantUnavailableError, "not_configured"),
+        ({"answering": None}, AssistantUnavailableError, "starting"),
+        ({"answering": None, "ready": False}, AssistantUnavailableError, "failing"),
+        ({"auth": {"org": "*"}}, AuthInsufficientError, "org_wide"),
+        ({"auth": {"read_scope": "own_user"}}, AuthInsufficientError, "narrowed"),
         # Pinned to one end user with no `read_scope`: narrowed all the same.
-        ({"auth": {"read_user_id": "u1"}}, AuthInsufficientError),
-        ({"auth": {"expires_at": int(time.time()) + 30}}, AuthInsufficientError),
-        ({"denied": True}, AuthInsufficientError),
-        ({"switched_off": True}, ModelCallsDisabled),
-        ({"over_cap": True}, RateLimitedError),
+        ({"auth": {"read_user_id": "u1"}}, AuthInsufficientError, "narrowed"),
+        (
+            {"auth": {"expires_at": int(time.time()) + 30}},
+            AuthInsufficientError,
+            "token_expires_soon",
+        ),
+        ({"denied": True}, AuthInsufficientError, None),
+        ({"switched_off": True}, ModelCallsDisabled, None),
+        ({"over_cap": True}, RateLimitedError, None),
     ],
 )
 def test_what_the_bridge_refuses_before_calling_librechat(
-    world: _World, monkeypatch: pytest.MonkeyPatch, change: dict[str, Any], refusal: type
+    world: _World,
+    monkeypatch: pytest.MonkeyPatch,
+    change: dict[str, Any],
+    refusal: type,
+    reason: str | None,
 ) -> None:
     if "librechat" in change:
         monkeypatch.setattr(settings, "assistant_librechat_url", change["librechat"])
     if "answering" in change:
         monkeypatch.setattr(service, "_answering", change["answering"])
+        # None: before the first setup try; False: after a failed one.
+        monkeypatch.setattr(service, "_ready", change.get("ready"))
     world.denied = change.get("denied", False)
     world.switched_off = change.get("switched_off", False)
     world.over_cap = change.get("over_cap", False)
@@ -272,9 +283,11 @@ def test_what_the_bridge_refuses_before_calling_librechat(
         await bridge.authorize(auth, ORG, NS)  # as the route and assistant.ask call them
         await bridge.open_answer(auth, ORG, NS)
 
-    with pytest.raises(refusal):
+    with pytest.raises(refusal) as refused:
         asyncio.run(ask(_caller(**change.get("auth", {}))))
     assert world.librechat_body == {} and "minted" not in world.delegated
+    # A reason a client can branch on, in the refusal's detail (none for the others).
+    assert refused.value.to_detail().get("reason") == reason
 
 
 def test_the_cap_check_is_the_assistants_share_and_fails_closed(world: _World) -> None:
@@ -658,8 +671,8 @@ def test_a_client_that_went_away_is_its_own_failure(monkeypatch: pytest.MonkeyPa
 def test_a_key_librechat_no_longer_takes_is_set_up_again(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    forgotten: list[str] = []
-    monkeypatch.setattr(service, "forget_answering", forgotten.append)
+    forgotten: list[bool] = []
+    monkeypatch.setattr(service, "forget_answering", lambda: forgotten.append(True))
     monkeypatch.setattr(settings, "assistant_concurrent_answers", 3)
     world.status = 401
     stale = asyncio.run(bridge.open_answer(_caller(), ORG, NS))
@@ -672,7 +685,7 @@ def test_a_key_librechat_no_longer_takes_is_set_up_again(
 
     with pytest.raises(AssistantUpstreamError, match="setting the assistant up again"):
         asyncio.run(run(stale))
-    assert forgotten and "401" in forgotten[0]
+    assert forgotten == [True]
     # A second answer meets the same stale key while the setup still runs: told the same.
     monkeypatch.setattr(service, "_answering", None)
     with pytest.raises(AssistantUpstreamError, match="setting the assistant up again"):
@@ -691,12 +704,13 @@ def test_a_forgotten_service_is_set_up_again(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(service, "_loop", None)
     monkeypatch.setattr(service, "start_setup_loop", lambda: started.append(True))
     # Restored after the test: forgetting marks the service as setting up again.
-    monkeypatch.setattr(service, "_ready", None)
+    monkeypatch.setattr(service, "_ready", True)
     monkeypatch.setattr(service, "_problem", "")
-    service.forget_answering("LibreChat refused the stored key or agent (401)")
+    service.forget_answering()
     assert service.answering() is None and started == [True]
-    ready, problem = service.assistant_state()
-    assert ready is False and "401" in problem
+    # Starting over, not failing: `/v1/health` raises no warning for it.
+    assert service.assistant_state() == (None, "")
+    assert service.unready_reason() == "starting"
 
 
 def test_a_request_past_the_ops_bounds_is_refused() -> None:
@@ -1216,3 +1230,61 @@ def test_an_answer_token_acting_for_someone_is_still_refused(
     r = http.post(ROUTE, headers=headers, json={"messages": QUESTION})
     assert (r.status_code, r.json()["detail"]["code"]) == (403, "ASSISTANT_SELF_CALL")
     assert world.librechat_body == {} and rows[0]["error_code"] == "ASSISTANT_SELF_CALL"
+
+
+def test_a_short_lived_tokens_refusal_says_how_long_it_has_left(world: _World) -> None:
+    with pytest.raises(AuthInsufficientError) as refused:
+        asyncio.run(bridge.authorize(_caller(expires_at=int(time.time()) + 30), ORG, NS))
+    detail = refused.value.to_detail()
+    assert detail["reason"] == "token_expires_soon" and 0 <= detail["left_s"] <= 30
+
+
+@pytest.mark.parametrize(("ready", "reason"), [(None, "starting"), (False, "failing")])
+def test_a_process_not_set_up_says_whether_it_is_starting_or_failing(
+    monkeypatch: pytest.MonkeyPatch, ready: bool | None, reason: str
+) -> None:
+    monkeypatch.setattr(service, "_ready", ready)
+    assert service.unready_reason() == reason
+    check = service.readiness_check()
+    assert (check.ok, check.reason) == (False, reason)
+
+
+def test_a_process_set_up_is_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(service, "_ready", True)
+    monkeypatch.setattr(service, "_problem", "")
+    check = service.readiness_check()
+    assert (check.ok, check.reason) == (True, "")
+
+
+def test_a_process_set_up_with_auth_off_is_not_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Set up all the same, but every question is refused, so a client must not offer it.
+    monkeypatch.setattr(service, "_ready", True)
+    monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: False)
+    check = service.readiness_check()
+    assert (check.ok, check.reason) == (False, "auth_off")
+
+
+def test_the_chat_route_with_auth_off_says_so(client: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.assistant.app import routes
+
+    monkeypatch.setattr(routes, "verify_bearer_header", lambda *_a, **_k: None)
+    monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: False)
+    http, _rows = client
+    r = http.post(ROUTE, headers={"X-Loom-Namespace": NS}, json={"messages": QUESTION})
+    assert r.status_code == 503
+    assert (r.json()["detail"]["code"], r.json()["detail"]["reason"]) == (
+        "ASSISTANT_UNAVAILABLE",
+        "auth_off",
+    )
+
+
+def test_assistant_ask_with_auth_off_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.assistant.api.models import AssistantAskInput
+    from server.assistant.app import ask
+
+    monkeypatch.setattr(ask, "current_auth", lambda: None)
+    with pytest.raises(AssistantUnavailableError) as refused:
+        asyncio.run(
+            ask.handle_assistant_ask(AssistantAskInput(org=ORG, namespace=NS, question="q"))
+        )
+    assert refused.value.to_detail()["reason"] == "auth_off"

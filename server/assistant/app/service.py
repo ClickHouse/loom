@@ -30,7 +30,7 @@ import yaml
 
 from server.assistant.domain import definition as agent_definition
 from server.assistant.store import service as store
-from server.core import leases, paths
+from server.core import leases, paths, readiness
 from server.core.ch import set_query_tag, statement_timeout
 from server.core.ch_errors import error_line
 from server.core.errors import error_kind
@@ -51,7 +51,8 @@ _BROWSER_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 S
 # The service user's LibreChat name: LibreChat wants at least three characters.
 _USER_NAME = "loom-assistant"
 
-# Whether this process has the service set up: None = not yet tried, False = a problem.
+# Whether this process has the service set up: None = not yet tried or being set up
+# again, False = the last try failed (`_problem` says why).
 _ready: bool | None = None
 _problem = ""
 # The agent id and agents API key answers run with, once a setup succeeded.
@@ -69,18 +70,37 @@ def assistant_state() -> tuple[bool | None, str]:
     return _ready, _problem
 
 
+def unready_reason() -> str:
+    """Why this process cannot answer yet, in one word a client can branch on:
+    "starting" before the first try or while the service is set up again, "failing"
+    after a try that failed (the setup loop keeps retrying)."""
+    if _ready is None:
+        return "starting"
+    return "failing"
+
+
+def readiness_check() -> readiness.CheckResult:
+    """The `assistant` check of `/v1/health/ready`: ready once this process set the
+    service up and auth is on (with auth off every question is refused)."""
+    if not settings.auth_actually_required():
+        return readiness.result(False, "auth_off")
+    return readiness.result(_ready is True, unready_reason())
+
+
 def answering() -> tuple[str, str] | None:
     """(agent id, agents API key) once this process set the service up, else None."""
     return _answering
 
 
-def forget_answering(why: str) -> None:
+def forget_answering() -> None:
     """LibreChat no longer takes the stored key or agent (another replica replaced it,
     or LibreChat's database was): drop them and set the service up again, which reads
     the row another replica may have written or repairs it."""
     global _answering, _ready, _problem
     _answering = None
-    _ready, _problem = False, f"setting up the assistant again: {why}"
+    # Not a failed try: the process is starting over, and `/v1/health` warns only if
+    # that try fails.
+    _ready, _problem = None, ""
     if _loop is None or _loop.done():
         start_setup_loop()
 
@@ -338,5 +358,7 @@ __all__ = [
     "current_definition",
     "ensure_service",
     "opened",
+    "readiness_check",
     "start_setup_loop",
+    "unready_reason",
 ]

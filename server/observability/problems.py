@@ -92,8 +92,8 @@ class HealthState:
     analysis_error: str = ""
     # The finding's own fix, when it has one.
     analysis_fix: str = ""
-    # The assistant's LibreChat service: None = not set up yet or no LibreChat
-    # configured, False = its setup failed (`assistant_error` says why).
+    # The assistant's LibreChat service: None = not set up yet, being set up again or
+    # no LibreChat configured, False = its setup failed (`assistant_error` says why).
     assistant_ok: bool | None = None
     assistant_error: str = ""
     # Whether a sign-in lately found loom.oauth_signin_state at its key limit.
