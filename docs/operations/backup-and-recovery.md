@@ -376,6 +376,8 @@ back every feature. Carry these:
 
 - ClickHouse: the same service, a copy with its Keeper state, or a `dev/backup_loom.py`
   dump restored into a ClickHouse that `loom migrate` prepared;
+- under `LOOM_STORAGE_AUTHORITY=postgres`, the same Postgres, or one restored as
+  [under the Postgres authority](#under-the-postgres-authority) describes;
 - the env config (`.env` or the container environment);
 - `LOOM_JWT_SECRET`. Without it no token verifies, and the stored credentials and
   signing keys do not open;

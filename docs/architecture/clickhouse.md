@@ -3,9 +3,10 @@
 Durable Loom state lives in ClickHouse, in the `loom` and `loom_telemetry` databases,
 except what the [Postgres memory authority](storage-authority.md) moves to Postgres. The
 canonical schema is [`schemas/schema.sql`](../../schemas/schema.sql), dumped from a
-server with every migration applied. The generated [schema reference](../reference/schema.md) lists every
-table with its engine, keys, TTL and indexes. This page covers the table families, how
-Loom uses engines, indexes and views, and how migrations run.
+server with every migration applied. The generated
+[schema reference](../reference/schema.md) lists every table with its engine, keys, TTL
+and indexes. This page covers the table families, how Loom uses engines, indexes and
+views, and how migrations run.
 
 ## Goals and non-goals
 

@@ -2,8 +2,8 @@
 
 Loom is a Python server (a FastAPI application plus a supervisor of background workers)
 and ClickHouse, with Postgres as an option for live memory. Under
-`LOOM_STORAGE_AUTHORITY=postgres`, Postgres holds live memory and the head of every
-knowledge document ([storage authority](storage-authority.md)). Loom is stateful:
+`LOOM_STORAGE_AUTHORITY=postgres`, Postgres holds live memory and the knowledge catalog
+([storage authority](storage-authority.md)). Loom is stateful:
 everything it knows is stored in those stores, including facts and their vectors,
 documents, conversations, the entity graph, the code index, tasks, audit, cost and
 erasure progress. The server processes keep no durable state of their own, so any number
@@ -369,16 +369,17 @@ and on this page.
 
 ### One engine: ClickHouse
 
-Every plane (facts and vectors, BM25 and token indexes, the entity graph walked with
-`WITH RECURSIVE`, the code index, ledgers and cost) is a set of tables in one database.
+Under the default ClickHouse authority, every plane (facts and vectors, BM25 and token
+indexes, the entity graph walked with `WITH RECURSIVE`, the code index, ledgers and cost)
+is a set of ClickHouse tables.
 
 **Why:** one backup, one access boundary, one query language for retrieval and analytics,
 and joins between memory and its telemetry without a sync job. Hybrid retrieval runs as
 SQL next to the data. A separate vector store would add a second consistency domain,
 dual writes and fusion across network hops.
 
-Under the Postgres memory authority, Postgres holds live memory and its revision journal,
-and knowledge document heads; a delivery worker brings each revision into ClickHouse,
+Under the Postgres memory authority, Postgres holds live memory, its revision journal and
+the knowledge catalog; a delivery worker brings each revision into ClickHouse,
 which keeps the vectors, the search legs, the history and the analytics
 ([storage authority](storage-authority.md)). A backup then covers both stores
 ([backup and recovery](../operations/backup-and-recovery.md#under-the-postgres-authority)).
