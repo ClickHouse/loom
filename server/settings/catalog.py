@@ -388,8 +388,8 @@ class AuthSettings(BaseModel):
 
     # Browser self-signup: "off" (endpoint 404s) or "open"
     # (/v1/auth/self-signup mints JWTs scoped to the requested namespace).
-    # A non-loopback bind refuses served sign-up (`self_signup_served`) unless
-    # identity_provider is "trust-network" or allow_insecure is set.
+    # A non-loopback bind refuses "open" unless identity_provider is "trust-network",
+    # allow_insecure is set, or oauth_login_provider is "oidc" (which closes sign-up).
     self_signup: Literal["off", "open"] = "off"
     # Default org for self-signed tokens.
     self_signup_org: str = "dev"
@@ -458,13 +458,12 @@ class AuthSettings(BaseModel):
         return self
 
     def self_signup_served(self) -> bool:
-        """Whether /v1/auth/self-signup and agent sign-up are open: "open", and
-        sign-in not delegated to OIDC (which closes them)."""
+        """Whether the sign-up gate lets self-signup and agent sign-up through:
+        "open", and sign-in not delegated to OIDC (which closes them)."""
         return self.self_signup == "open" and self.oauth_login_provider != "oidc"
 
     def open_signup_unnamed(self) -> bool:
-        """Self-signup is served but identity_provider does not name trust-network,
-        which a non-loopback bind refuses."""
+        """Self-signup is served but identity_provider does not name trust-network."""
         return self.self_signup_served() and self.identity_provider != "trust-network"
 
     def auth_actually_required(self) -> bool:
@@ -5009,7 +5008,7 @@ class RuntimeSettings(BaseModel):
     # The address Loom is reachable on: `loom serve` and `make server` bind
     # it; in a container (which listens on all its interfaces) it is the
     # address the port is published on. Anything but loopback turns on the
-    # startup checks of `server.boot.require_safe_bind`.
+    # startup checks in the deployment guide's "Proxy and TLS" section.
     bind_host: str = "127.0.0.1"
     # Comma-separated peer addresses or CIDRs whose X-Forwarded-For/Proto
     # headers uvicorn applies; any other peer's are ignored. "*" trusts all.
