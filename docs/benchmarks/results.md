@@ -1011,14 +1011,14 @@ of one setup, not absolute times. Every figure below is in
 its setup and, where the harness recorded it, its build.
 
 **Bytes per key**, with the row shape these runs wrote (a commit's full `loom.memory` row
-as JSON in Postgres), across the runs of 200,000 keys and more; the 20,000-key cost runs
-carry more per row in ClickHouse (up to 13,232, 237 and 181 bytes), from the overhead of
-parts with few rows:
+as JSON in Postgres), as loaded in the runs of 200,000 keys and more; later snapshots in
+the artifact and the 20,000-key runs carry somewhat more per row, from parts with few
+rows:
 
 | Store      | Table               | Bytes                                           | Per key |
 | ---------- | ------------------- | ----------------------------------------------- | ------: |
 | ClickHouse | `memory_embeddings` | 13,130 to 13,220 per row                        |  13,210 |
-| ClickHouse | `memory`            | 91 (single) to 161 (zipf) per head after merges |      92 |
+| ClickHouse | `memory`            | 90 (single) to 161 (zipf) per head after merges |      92 |
 | ClickHouse | `memory_versions`   | 107 to 110 per version                          |     264 |
 | Postgres   | `memory_current`    | 1,594 to 1,634 per head                         |   1,623 |
 | Postgres   | `memory_revisions`  | 2,149 to 2,151 per revision                     |   5,160 |
