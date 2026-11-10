@@ -340,13 +340,14 @@ flowchart LR
 ```
 
 - **Server processes hold no durable state.** Cross-replica state (revocations, signing
-  keys, runtime overrides, sign-in attempt counts, graph write marks, the supervisor lease,
-  erasure checkpoints, the blacklist version, the idempotency cache) and uploaded document
-  originals live in ClickHouse, the bytes of those written with
+  keys, runtime overrides, sign-in attempt counts, graph write marks, the supervisor
+  lease, erasure checkpoints, the blacklist version, the idempotency cache) and uploaded
+  document originals live in ClickHouse, the bytes of those written with
   `LOOM_DOCUMENT_OBJECT_STORE=s3` in an S3-compatible bucket instead. Under the Postgres
-  authority, the idempotency cache lives in Postgres. A new Loom with the same ClickHouse
-  (and Postgres, under that authority), env config and `LOOM_JWT_SECRET`, and that bucket
-  while rows name objects in it, gets every feature back.
+  authority, the idempotency cache, the erasure ledger and the recorded authority live
+  in Postgres ([the tables](storage-authority.md#the-tables)). A new Loom with the same
+  ClickHouse (and Postgres, under that authority), env config and `LOOM_JWT_SECRET`, and
+  that bucket while rows name objects in it, gets every feature back.
 - **State outside ClickHouse and Postgres.** The code plane's git mirrors under
   `var/code_repos` (a cache: a host without them re-clones) and the rate-limit buckets on
   the `loom-shared` volume, neither the system of record; and, while any catalog row

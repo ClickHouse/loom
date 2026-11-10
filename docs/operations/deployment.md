@@ -1,6 +1,6 @@
 # Deployment
 
-Loom is one server image plus ClickHouse (and Postgres under
+Loom is one server image plus ClickHouse (and Postgres, under
 `LOOM_STORAGE_AUTHORITY=postgres`), with the document extractor service as an image of
 its own ([container images](#container-images)). The server image serves HTTP, MCP and
 the dashboard, and runs the background workers. Its containers keep no durable state of

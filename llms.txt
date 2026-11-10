@@ -20,7 +20,7 @@ Start with docs/index.md (the map). A coding agent installing Loom: follow docs/
 - [Backup and recovery](docs/operations/backup-and-recovery.md): A Loom backup is a ClickHouse backup, plus the document bucket while any catalog row names an object in it, and under the Postgres authority a backup of Postgres too.
 - [ClickHouse Cloud and Managed Postgres](docs/operations/clickhouse-cloud.md): This guide runs Loom on Kubernetes over two managed services: ClickHouse Cloud for projections, vectors, history and analytics, and ClickHouse Managed Postgres as the memory authority.
 - [Code index operations](docs/operations/code-index-operations.md): The code index runs only when an operator enables its workers and configures repositories.
-- [Deployment](docs/operations/deployment.md): Loom is one server image plus ClickHouse (and Postgres under `LOOM_STORAGE_AUTHORITY=postgres`), with the document extractor service as an image of its own (container images).
+- [Deployment](docs/operations/deployment.md): Loom is one server image plus ClickHouse (and Postgres, under `LOOM_STORAGE_AUTHORITY=postgres`), with the document extractor service as an image of its own (container images).
 - [Kubernetes](docs/operations/kubernetes.md): `deploy/helm/loom` runs Loom as N identical replicas on Kubernetes: one Deployment of web pods over one ClickHouse service, each pod a full replica.
 - [Maintenance](docs/operations/maintenance.md): Every command here is a `loom` subcommand; run it inside the container that has the deployment's environment (`docker exec loom-server loom …`, or `loom-workers` in a split deployment).
 - [Monitoring](docs/operations/monitoring.md): This page says what to watch.
@@ -115,7 +115,7 @@ Start with docs/index.md (the map). A coding agent installing Loom: follow docs/
 ## Architecture
 
 - [Assistant design](docs/architecture/assistant.md): This page is the design of Loom's assistant, which answers questions about what a namespace holds and how it is used, with a citation for every claim.
-- [ClickHouse](docs/architecture/clickhouse.md): Durable Loom state lives in ClickHouse (the `loom` and `loom_telemetry` databases), except what the Postgres memory authority holds and document bytes kept in an S3 bucket.
+- [ClickHouse](docs/architecture/clickhouse.md): Durable Loom state lives in ClickHouse (the `loom` and `loom_telemetry` databases), except what the Postgres memory authority holds and document bytes kept in an S3-compatible bucket.
 - [Code index architecture](docs/architecture/code-index-architecture.md): This page is the inside view of the code index: how files become chunks, symbols and edges, and how the two tiers stay current.
 - [Document extraction](docs/architecture/document-extraction.md): An uploaded original is parsed into one shape, the extraction artifact, by an extractor service: a separate process with its own dependencies, never the Loom server.
 - [Failure and recovery](docs/architecture/failure-and-recovery.md): The primary write and every access decision fail closed.

@@ -2,9 +2,8 @@
 
 Durable Loom state lives in ClickHouse (the `loom` and `loom_telemetry` databases),
 except what the [Postgres memory authority](storage-authority.md#why-two-stores) holds
-and document bytes kept in an S3 bucket. Under that authority, Postgres holds live
-memory and knowledge state; with `LOOM_DOCUMENT_OBJECT_STORE=s3`, the bucket holds the
-bytes of uploaded originals. The canonical schema is
+and document bytes kept in an S3-compatible bucket. Under that authority, Postgres holds
+live memory and knowledge state. The canonical schema is
 [`schemas/schema.sql`](../../schemas/schema.sql), dumped from a server with every
 migration applied. The generated [schema reference](../reference/schema.md) lists every
 table with its engine, keys, TTL and indexes. This page covers the table families, how
