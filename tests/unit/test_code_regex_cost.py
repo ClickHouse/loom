@@ -215,19 +215,31 @@ def _composites(p: re.Pattern) -> list[tuple[str, str, str]]:
     return shapes + keyed + [(" ".join(words) + " a ", unit, "b") for unit in units]
 
 
+def _over(small: float, big: float) -> bool:
+    return big > _BOUND_S or (big > _FLOOR_S / 10 and big > _RATIO * small)
+
+
 def _slow(cost: Callable[[int], float]) -> tuple[int, float, float] | None:
     """(n, the time at n / 4, the time at n) where the text first grows over linear."""
     small = cost(_SIZES[0])
     for n in _SIZES[1:]:
         big = cost(n)
-        if big > _BOUND_S or (big > _FLOOR_S / 10 and big > _RATIO * small):
+        if _over(small, big):
             # Timers jitter on a loaded host: the best of three runs of each counts.
             small = min(small, cost(n // 4), cost(n // 4))
             big = min(big, cost(n), cost(n))
-            if big > _BOUND_S or (big > _FLOOR_S / 10 and big > _RATIO * small):
+            if _over(small, big) and (big > _BOUND_S / 32 or _over(big, _best(cost, 4 * n))):
                 return n, round(small, 4), round(big, 4)
         small = big
     return None
+
+
+def _best(cost: Callable[[int], float], n: int) -> float:
+    """The best of three times at n, the size past a step that looked over linear. A load
+    spike that outlasts the reruns at one size does not grow again at the next, and a
+    pattern over linear grows over 8 times again. A step already over a thirty-second of
+    the bound fails without this run, which keeps a cubic pattern's run there under 4 s."""
+    return min(cost(n) for _ in range(3))
 
 
 @pytest.mark.parametrize("name,pattern", _ALL, ids=[n for n, _ in _ALL])
@@ -251,7 +263,7 @@ def test_a_run_after_a_prefix_costs_linear_time(name: str, pattern: re.Pattern) 
 # when it overruns, so a regression fails here instead of hanging the suite. Only the
 # growth from N to 4N is judged, since a linear walk at 4N takes seconds on a slow
 # runner: a walk whose quadratic part at N is over half its linear part grows more
-# than 8 times, and a purely quadratic one 16 times or to the deadline.
+# than 8 times, and a purely quadratic one grows 16 times or runs into the deadline.
 _WALK_DEADLINE_S = 60
 
 
