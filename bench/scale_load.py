@@ -40,6 +40,7 @@ import os
 import random
 import statistics
 import sys
+import threading
 import time
 import uuid
 from collections import Counter
@@ -883,8 +884,6 @@ def fleet(args: argparse.Namespace) -> None:
     reached and the merges in flight (sampled every second), against the tables'
     `parts_to_delay_insert` and `parts_to_throw_insert`. It reports the rate offered (writes
     sent a second) beside the rate served (successful writes a second)."""
-    import threading
-
     env = _env(args.env)
     ch = ch_client(env)
     urls = [u.strip() for u in args.base_url.split(",") if u.strip()]

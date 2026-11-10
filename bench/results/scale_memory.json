@@ -838,7 +838,7 @@
      "seconds": 0.89
     }
    },
-   "vacuum_with_dead_rows_note": "dead rows made by rewriting every fifth head and revision in place (now: bench/scale_load.py pg --dead-fraction 0.2)",
+   "vacuum_with_dead_rows_note": "dead rows: the Postgres run's erasures' deleted rows plus every fifth remaining head and revision rewritten in place; `pg --dead-fraction 0.2` writes such a run as dead_rows, sizes_with_dead_rows and vacuum_s",
    "build": "not recorded"
   },
   "zipf_200k_erasure_postgres": {
@@ -1991,7 +1991,7 @@
     }
    },
    "setup": "20,000 keys, single shape, ClickHouse capped at 4 GiB, Postgres 16 with shared_buffers 256 MB, one server process",
-   "note": "its write ops' clickhouse blocks count only statements tagged with the op: the publication batch's inserts (pg_batch.flush) are left out; the harness now counts them"
+   "note": "the publication batch's inserts (pg_batch.flush) are not counted in this run's write ops' clickhouse blocks"
   },
   "cost_20k_clickhouse": {
    "shape": "single",

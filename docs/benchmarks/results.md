@@ -1110,7 +1110,8 @@ a `count()` over 19,941 rows took 153 s and a `system.mutations` lookup 184 s.
 **Postgres** at zipf 200k (200,000 heads, 480,000 revisions as loaded):
 `VACUUM (ANALYZE)` took 0.49 s for `memory_current` and 0.56 s for `memory_revisions`.
 After the Postgres run's erasures (186,491 live heads), with 52,122 dead heads and
-120,482 dead revisions made by rewriting rows in place, it took 0.57 s for
+120,482 dead revisions (the erasures' deleted rows plus a fifth of the rest rewritten in
+place), it took 0.57 s for
 `memory_current` (275 MB of heap as loaded, so at least 0.48 GB/s) and 0.89 s for
 `memory_revisions` (969 MB as loaded, at least 1.09 GB/s), both tables in the page cache; a `COPY` of the largest org's rows of every memory table took 8.9 s
 for 351 MB.

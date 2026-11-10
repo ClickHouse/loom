@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import math
 from typing import Any
 
 import httpx
@@ -22,8 +24,6 @@ def test_the_zipf_shape_names_orgs_and_namespaces_by_tenant_rank() -> None:
 
 def test_the_zipf_ranks_reach_every_tenant() -> None:
     # The same arithmetic as the SQL, in Python: every rank from 0 to T - 1 is drawn.
-    import math
-
     t = 10
     ranks = {math.floor(pow(t + 1, (n * 0.6180339887498949) % 1)) - 1 for n in range(5000)}
     assert ranks == set(range(t))
@@ -113,8 +113,6 @@ def test_op_reads_divides_by_the_calls_sent() -> None:
 
 
 def test_the_open_loop_starts_each_send_on_time_and_counts_those_past_the_cap() -> None:
-    import asyncio
-
     from bench.scale_load import open_loop
 
     started: list[int] = []
