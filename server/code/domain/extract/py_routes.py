@@ -49,8 +49,8 @@ FACET_MODIFIER = "modifier"
 
 _MAX_FACETS_PER_FILE = 400
 _MAX_NAME = 200
-# not a setting: a route path or router prefix is cut to this before it is joined into a
-# name, so a cut path still fills a cut name and costs a constant per route or method
+# not a setting: a router prefix, and a route path joined once per method, is cut to this
+# first, so a cut path still fills a cut name and costs a constant per route or method
 _MAX_PATH = 2 * _MAX_NAME
 _HTTP = "get|post|put|patch|delete|head|options"
 _STR = r"""r?['"]([^'"]*)['"]"""
