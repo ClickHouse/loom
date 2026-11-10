@@ -97,8 +97,8 @@ steps:
    role on the request's namespace. The chat route takes the same `Origin` and CSRF
    checks as `POST /v1/{op}`. Refused here, before LibreChat is called: a revoked or
    expired caller, an assistant answer's own token or one delegated from it
-   (`ASSISTANT_SELF_CALL`), an org-wide (`*`) token (an answer reads one org), a token whose
-   reads are narrower than its namespace (as `insights.query` refuses it), a caller
+   (`ASSISTANT_SELF_CALL`), an org-wide (`*`) token (an answer reads one org), a token
+   whose reads are narrower than its namespace (as `insights.query` refuses it), a caller
    whose token has less life left than one answer may run (a dashboard or `loom login`
    caller is not refused for its access token, which a refresh replaces every hour: its
    answer's token ends at sign-out instead), an org whose model calls an admin
@@ -106,10 +106,10 @@ steps:
    running its most concurrent answers ([Model and cost](#model-and-cost)).
 2. Delegate the answer's token from the caller's (`server/auth/delegation.py`
    `delegate`): `viewer` on the request's namespace alone, minted for the caller's own
-   subject with consumer `loom-assistant` and an id starting with `assistant-answer-` (so a
-   token delegated from it is told by its `parents`), as a service-account token when the caller's
-   is one, and expiring when an answer may run no longer (`LOOM_ASSISTANT_ANSWER_TTL_S`,
-   default ten minutes). Delegation applies every rule a minted child follows: the
+   subject with consumer `loom-assistant` and an id starting with `assistant-answer-`
+   (so a token delegated from it is told by its `parents`), as a service-account token
+   when the caller's is one, and expiring when an answer may run no longer
+   (`LOOM_ASSISTANT_ANSWER_TTL_S`, default ten minutes). Delegation applies every rule a minted child follows: the
    creator's live grant, the end user, the ancestor subjects and their issue times, the
    chain depth limit, and the caller's token id among the child's `parents`. The bridge
    also asks for the caller's sign-in session among the `parents` (`delegate`'s
@@ -807,8 +807,8 @@ the MCP endpoint) show that:
 - a request to LibreChat without a token reads nothing, and one with a token reads as
   it;
 - a revoked caller, an answer token or its child, an org-wide token, a narrowed
-  `read_scope`, a caller about to expire
-  and an org with model calls switched off are refused before LibreChat is called;
+  `read_scope`, a caller about to expire and an org with model calls switched off are
+  refused before LibreChat is called;
 - two replicas booting at once register one service user and keep one key, a service row
   its maker left at any step is finished by the next boot, registration never runs where
   LibreChat would log the password, `loom secrets reseal` rewrites both sealed rows
@@ -1048,11 +1048,12 @@ built.
 - The assistant writes no memory, document or grant.
 - The assistant never calls itself: calls between Loom and LibreChat go one way per hop,
   and only the assistant's two entry points (the `assistant.ask` op and
-  `POST /v1/assistant/chat/completions`) call LibreChat. Both refuse an answer's own token (consumer `loom-assistant`) and any
-  token delegated from one with `ASSISTANT_SELF_CALL` (403), ledgered as a refused
-  answer, on every transport and toolset: an answer token's id starts with
-  `assistant-answer-`, so a descendant is told by its parents. No model endpoint Loom
-  serves for LibreChat's model calls may be an assistant op or call the assistant.
+  `POST /v1/assistant/chat/completions`) call LibreChat. Both refuse an answer's own
+  token (consumer `loom-assistant`) and any token delegated from one with
+  `ASSISTANT_SELF_CALL` (403), ledgered as a refused answer, on every transport and
+  toolset: an answer token's id starts with `assistant-answer-`, so a descendant is told
+  by its parents. No model endpoint Loom serves for LibreChat's model calls may be an
+  assistant op or call the assistant.
 - The headless LibreChat's configuration keeps LibreChat's own memory off
   (`memory: disabled: true` in `deploy/librechat/assistant.librechat.yaml` and the Helm
   copy), so what a person tells the assistant is not kept a second time outside Loom.
