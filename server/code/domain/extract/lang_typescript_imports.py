@@ -392,7 +392,7 @@ def resolve_imports(
     first candidate that exists). `present` is the oracle — the namespace's live paths
     or a fixture set. `extra`: per specifier, the exact candidates a tsconfig's `paths`
     / `baseUrl` gave, tried before the guessing ladder. Pure."""
-    out: dict[str, None] = {}  # ordered and deduplicated: a list's `in` per hit is quadratic
+    out: dict[str, None] = {}
     for spec in specs:
         cands = [*(extra or {}).get(spec, []), *import_candidates(from_path, spec)]
         hit = next((c for c in cands if c in present), None)

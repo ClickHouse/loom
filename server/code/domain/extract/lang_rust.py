@@ -339,8 +339,7 @@ def use_candidates(from_path: str, use_path: str) -> list[str]:
             base = from_path[:-3]
         rest = segs
     bases = (base,) if head in {"crate", "self", "super"} else (base, root)
-    # up to the cap only: every stem of a long path joined and deduplicated by a list's
-    # `in` is cubic in its segments
+    # the deepest stems up to the cap only: a long path has one per segment
     out: dict[str, None] = {}
     for b in bases:
         for n in range(len(rest), 0, -1):
@@ -353,7 +352,7 @@ def use_candidates(from_path: str, use_path: str) -> list[str]:
 def resolve_uses(from_path: str, uses: list[str], present: set[str]) -> list[str]:
     """The indexed module files the `use` / `mod` paths name (one per path,
     the deepest that exists). Pure; `present` is the oracle."""
-    out: dict[str, None] = {}  # ordered and deduplicated: a list's `in` per hit is quadratic
+    out: dict[str, None] = {}
     for u in uses:
         hit = next((c for c in use_candidates(from_path, u) if c in present), None)
         if hit and hit != from_path:

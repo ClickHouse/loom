@@ -761,7 +761,7 @@ def go_resolve_imports_indexed(
     """`go_resolve_imports` across a module index. Returns the resolved files and the
     (spec, package directory) pairs of the in-repository imports no conventional file
     name satisfied — the listing rung's input."""
-    out: dict[str, None] = {}  # ordered and deduplicated: a list's `in` per hit is quadratic
+    out: dict[str, None] = {}
     unresolved: list[tuple[str, str]] = []
     for spec in specs:
         module, directory = go_module_for(spec, index)
@@ -781,7 +781,7 @@ def go_resolve_imports_indexed(
 def go_wanted_paths(specs: list[str], index: list[tuple[str, str]]) -> list[str]:
     """Every candidate file the specs may name across the index; the one
     membership probe's input."""
-    out: dict[str, None] = {}  # ordered and deduplicated: a list's `in` per path is quadratic
+    out: dict[str, None] = {}
     for spec in specs:
         module, directory = go_module_for(spec, index)
         if module:

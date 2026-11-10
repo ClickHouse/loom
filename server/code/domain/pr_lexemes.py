@@ -32,9 +32,10 @@ from collections.abc import Iterable
 from server.code.domain.extract.tokenize import code_tokens
 
 # (?i)(fix|close|resolve)\w*\s*:?\s*#(\d+) — plus the URL spelling GitHub
-# also auto-links ("Closes: https://github.com/Org/Repo/issues/123").
+# also auto-links ("Closes: https://github.com/Org/Repo/issues/123"). The space runs are
+# possessive: two greedy runs around an optional colon split a long run every way.
 LINKED_ISSUE_RE = re.compile(
-    r"(?i)\b(?:fix|close|resolve)\w*\s*:?\s*(?:#|https?://github\.com/[\w.-]+/[\w.-]+/issues/)(\d+)"
+    r"(?i)\b(?:fix|close|resolve)\w*\s*+(?::\s*+)?(?:#|https?://github\.com/[\w.-]+/[\w.-]+/issues/)(\d+)"
 )
 
 _CI_BLOCK_RE = re.compile(

@@ -379,7 +379,7 @@ def _handle(c: Command, acc: _Acc) -> None:
             if a not in _VISIBILITY and "$<" not in a and not a.startswith("-")
         )
     elif c.name in ("function", "macro") and c.args:
-        # the first `end…` on a later line; a scan of every later command per block is quadratic
+        # the first `end…` on a later line
         ends = acc.block_ends.get("end" + c.name, [])
         i = bisect.bisect_right(ends, c.start_line, key=lambda e: e[0])
         end = ends[i][1] if i < len(ends) else c.end_line

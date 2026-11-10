@@ -17,7 +17,7 @@ from server.settings import settings
 @pytest.fixture(autouse=True)
 def _fresh_caches() -> Any:
     caches = (
-        ingest_resolve._KNOWN_EMPTY,
+        ingest_resolve._EMPTY_VERDICTS,
         ingest_resolve._PACKAGE_JSON_CACHE,
         ingest_resolve._BARREL_CACHE,
         ingest_resolve._WORKSPACE_CACHE,
@@ -182,7 +182,7 @@ def test_a_barrel_over_the_file_cap_forwards_nothing_and_is_read_once(
     assert asked == ["src/index.ts"]
     monkeypatch.setattr(settings, "code_ingest_max_file_bytes", 0)  # no cap: it forwards
     ingest_resolve._BARREL_CACHE.clear()
-    ingest_resolve._KNOWN_EMPTY.clear()
+    ingest_resolve._EMPTY_VERDICTS.clear()
     with ingest_resolve.git_text_source(git_dir, sha):
         got = asyncio.run(ingest_resolve._barrel_targets_of(repo, "o", "n", "src/index.ts"))  # type: ignore[arg-type]
     assert got == ("src/a.ts",)
@@ -270,8 +270,8 @@ def test_the_chunk_fallback_holds_the_callers_cap_and_records_the_cut() -> None:
     assert asyncio.run(read(repo, "o", "n", "go.mod", 50)) == ""
     assert asyncio.run(read(repo, "o", "n", "go.mod", 50)) == ""
     assert repo.reads == 2  # the cut is known: the second read under 50 asks no chunks
-    assert ingest_resolve._known_empty("o", "n", "go.mod", 50)
-    assert not ingest_resolve._known_empty("o2", "n", "go.mod", 50)
+    assert ingest_resolve._is_empty_verdict("o", "n", "go.mod", 50)
+    assert not ingest_resolve._is_empty_verdict("o2", "n", "go.mod", 50)
 
 
 def test_a_cut_the_chunks_made_does_not_stop_a_recovered_mirror(
@@ -300,4 +300,4 @@ def test_a_manifest_verdict_outlasts_a_pass_of_oversize_barrels() -> None:
     ingest_resolve._over_cap(("o", "n", "package.json", 1 << 20), "o", "n", "big")
     for i in range(2_000):
         ingest_resolve._over_cap(("o", "n", f"src/b{i}.ts", 1_000_000), "o", "n", "big")
-    assert ingest_resolve._known_empty("o", "n", "package.json", 1 << 20)
+    assert ingest_resolve._is_empty_verdict("o", "n", "package.json", 1 << 20)

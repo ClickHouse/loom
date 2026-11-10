@@ -273,7 +273,6 @@ def parse_python(path: str, source: bytes) -> ParsedFile:
             return
 
     walk(tree.root_node, ())
-    # distinct, in first-seen order: a list's `in` per specifier is quadratic
     pf.includes = list(dict.fromkeys(s for s in pf.includes if s))
     # the module's constants, type aliases and `__all__`
     # join the defs and classes; a declaration beside its implementation folds
@@ -507,7 +506,7 @@ def roots_for(from_path: str, extra: tuple[str, ...] | list[str] = ()) -> list[s
     root, and every `src/` beneath those (the src layout; a monorepo's
     `packages/x/src/x`); then the roots the checkout's manifests declare
     (`py_layouts.Layout.roots_for`). Distinct, in order."""
-    out: dict[str, None] = {}  # ordered and deduplicated: a list's `in` per root is quadratic
+    out: dict[str, None] = {}
     d = from_path.rsplit("/", 1)[0] if "/" in from_path else ""
     dirs: list[str] = []
     while True:
@@ -554,7 +553,7 @@ def import_candidates(
             cands = [f"{stem}/__init__.py" if stem else "__init__.py",
                      f"{stem}/__init__.pyi" if stem else "__init__.pyi"]
         return [c for c in cands if c != from_path]
-    out: dict[str, None] = {}  # ordered and deduplicated: a list's `in` per path is quadratic
+    out: dict[str, None] = {}
     for root in roots_for(from_path, roots):
         stem = f"{root}/{rel}" if root else rel
         out.update(dict.fromkeys(module_files(stem)))

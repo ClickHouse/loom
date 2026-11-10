@@ -180,6 +180,12 @@ def _pr_body(text: str) -> object:
     return strip_pr_template(text)
 
 
+def _linked_issues(text: str) -> object:
+    from server.code.domain.pr_lexemes import linked_issues
+
+    return linked_issues(text)
+
+
 def _lane_includes(text: str) -> object:
     import asyncio
 
@@ -304,6 +310,7 @@ WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("setup-cfg-name-spaces", _py_layout("setup.cfg"), _run("[options]\na", " ", "b\n")),
     ("markdown-ambiguous-references", _doc_references, _run("# a\n", "`abc`\n")),
     ("pr-body-unclosed-comments", _pr_body, _run("", "<!--")),
+    ("pr-body-fix-spaces", _linked_issues, _run("fix", " ", "b")),
     ("markdown-lane-includes", _lane_includes, _numbered("[a](x{}.md)\n")),
     ("python-imports", _wanted("python"), _numbered("m{}\n")),
     ("python-import-statements", _python_parse, _numbered("import m{}\n")),

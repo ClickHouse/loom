@@ -443,3 +443,18 @@ def test_a_layout_keeps_the_first_entry_points_up_to_the_cap():
     )
     eps = pl.layout_from_texts({"setup.cfg": text}, []).entry_points
     assert len(eps) == pl.MAX_ENTRY_POINTS and eps[-1].name == f"a{pl.MAX_ENTRY_POINTS - 1}"
+
+
+def test_an_entry_point_naming_a_package_lands_on_its_init_under_a_root():
+    layout = pl.Layout(
+        roots=("lib",),
+        entry_points=(pl.EntryPoint("p", "console_scripts", "pkg", "", "setup.py", 1),),
+    )
+    init = parse_file("lib/pkg/__init__.py", b"x = 1\n")
+    assert [f.name for f in pl.module_entry_facets(init, layout)] == ["p"]
+    assert pl.module_entry_facets(parse_file("lib/pkg/sub.py", b"x = 1\n"), layout) == []
+
+
+def test_a_run_of_spaces_before_an_ini_delimiter_reads_the_same_option():
+    cp = pl._ini("[pytest]\npythonpath" + " " * 50 + "= src  tests\n")
+    assert cp is not None and cp.get("pytest", "pythonpath") == "src  tests"

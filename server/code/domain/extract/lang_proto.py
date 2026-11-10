@@ -362,7 +362,7 @@ def is_external_import(spec: str) -> bool:
 
 def wanted_paths(from_path: str, specs: list[str]) -> list[str]:
     """Every repository path the imports may name, for one membership read."""
-    out: dict[str, None] = {}  # ordered and deduplicated: a list's `in` per path is quadratic
+    out: dict[str, None] = {}
     for spec in specs:
         if is_external_import(spec):
             continue
