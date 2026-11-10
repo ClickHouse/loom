@@ -38,7 +38,7 @@ def _support(
 @pytest.mark.parametrize(
     ("text", "codes", "returned", "failed", "expected"),
     [
-        # The owner's cases.
+        # The common cases.
         (
             "Hello! What would you like to know about this namespace?",
             [],
@@ -120,7 +120,7 @@ def _support(
         # No text at all.
         ("", [], frozenset({"memory.search"}), False, "none"),
         # Accepted residuals (docs/architecture/assistant.md#support).
-        # R-a: a greeting or a question back after a call that found data.
+        # A greeting or a question back after a call that found data.
         (
             "Hi! What would you like to know?",
             [],
@@ -142,9 +142,9 @@ def _support(
             False,
             "unchecked",
         ),
-        # R-b: an uncited fact after calls that found nothing.
+        # An uncited fact after calls that found nothing.
         ("Your database runs on port 5432.", [], frozenset(), False, "none"),
-        # R-c: an abstention that also states a fact.
+        # An abstention that also states a fact.
         (
             "It is 5432. Nothing stored in Loom answers this.",
             [],
@@ -267,7 +267,7 @@ def _calls(monkeypatch: pytest.MonkeyPatch, *reads: ledger.RunCalls | Exception)
         return None
 
     monkeypatch.setattr(app_support.ledger, "run_calls", run_calls)
-    monkeypatch.setattr(app_support.asyncio, "sleep", no_wait)
+    monkeypatch.setattr(app_support, "_wait", no_wait)
     return asked
 
 
@@ -328,6 +328,28 @@ def test_a_run_read_that_hangs_leaves_an_uncited_answer_unchecked(
     monkeypatch.setattr(app_support.ledger, "run_calls", hang)
     monkeypatch.setattr(app_support, "_CALLS_S", 0.05)
     assert _answer([], "Deploys freeze on Fridays.") == "unchecked"
+
+
+def test_a_second_read_that_hangs_after_uncitable_data_leaves_the_answer_unchecked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reads: list[int] = []
+
+    async def first_then_hang(*_: Any) -> ledger.RunCalls:
+        reads.append(1)
+        if len(reads) == 1:
+            return ledger.RunCalls(frozenset({"namespace.summary"}), False)
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    async def no_wait(_s: float) -> None:
+        return None
+
+    monkeypatch.setattr(app_support.ledger, "run_calls", first_then_hang)
+    monkeypatch.setattr(app_support, "_wait", no_wait)
+    monkeypatch.setattr(app_support, "_CALLS_S", 0.05)
+    assert _answer([], "This namespace holds 1,204 memories.") == "unchecked"
+    assert len(reads) == 2
 
 
 def _event(operation: str, args: dict[str, str], **kw: Any) -> str:

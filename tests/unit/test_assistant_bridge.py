@@ -123,6 +123,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
     monkeypatch.setattr(bridge, "operation_over_share", over_cap)
     # The answer's tool calls found nothing (a test may say otherwise).
     monkeypatch.setattr(bridge.support.ledger, "run_calls", _found_nothing)
+    monkeypatch.setattr(bridge.support, "_wait", _no_wait)
     monkeypatch.setattr(bridge, "delegate", delegate)
     monkeypatch.setattr(bridge, "_running", {})
     monkeypatch.setattr(
@@ -158,6 +159,10 @@ def _org_slot(org: str) -> Any:
     slots = contextlib.ExitStack()
     slots.enter_context(tenant_slots.hold(org))
     return slots
+
+
+async def _no_wait(_seconds: float) -> None:
+    return None
 
 
 async def _found_nothing(*_: Any) -> Any:

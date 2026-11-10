@@ -23,10 +23,10 @@ export function supportLabel(support: Support, citations: Citation[]): Label | n
     return {
       text: all
         ? "Checked against what Loom holds"
-        : `Checked against what Loom holds: ${verified} of ${citations.length} sources`,
+        : `Checked against what Loom holds: ${verified} of ${citations.length} sources verified`,
       why: all
         ? "Loom checked each source this answer cites against what it holds and what the answer's own reads returned."
-        : "Loom checked each source this answer cites; the ones marked Not verified did not check out, and each says why.",
+        : `Loom verified ${verified} of the ${citations.length} sources this answer cites; each one not verified says why.`,
       icon: "check-in-circle",
       tone: "text-text-muted",
     };
@@ -34,8 +34,8 @@ export function supportLabel(support: Support, citations: Citation[]): Label | n
   if (support === "unsupported") {
     return citations.length > 0
       ? {
-          text: "Couldn't confirm: none of its sources checked out",
-          why: "None of the sources this answer cites matched what Loom holds or what the answer read. Each source below says why.",
+          text: "Couldn't confirm: none of its sources were verified",
+          why: "None of the sources this answer cites was verified against what Loom holds or what the answer read. Each source below says why.",
           icon: "warning",
           tone: "text-warn",
         }

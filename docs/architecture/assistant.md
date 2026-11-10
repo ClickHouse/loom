@@ -245,12 +245,12 @@ it (`server/assistant/domain/support.py`), from the codes its citation checks en
 and, for an answer that cites nothing, from what its own tool calls found; the first
 that applies wins:
 
-| `support`     | When                                                                                                                                                                                                                                                                                                                                                      |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `none`        | The answer has no text; or it cites nothing and either says the abstention sentence the agent's instructions give ("Nothing stored in Loom answers this.", in any case or emphasis) or none of its calls found data and none failed. A greeting, a capability reply and an abstention make no claim.                                                      |
-| `supported`   | A citation verified.                                                                                                                                                                                                                                                                                                                                      |
-| `unsupported` | A citation failed for a reason of its own (its key was not returned to this answer, its document or section is not there, its statement did not run in this answer); or it cites nothing although a call of an op whose rows it could cite found data.                                                                                                    |
-| `unchecked`   | Otherwise: its checks could not say (a read failed or ran past its bound, no run id, memory reads not recorded, code citations, past the 50 checked), or it cites nothing and what found data has no citation form (counts and findings: `namespace.summary`, `namespace.inventory` and the other ops outside `ASSISTANT_CITABLE_OPS`), or a call failed. |
+| `support`     | When                                                                                                                                                                                                                                                                                                                                                     |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `none`        | The answer has no text; or it cites nothing and either says the abstention sentence the agent's instructions give ("Nothing stored in Loom answers this.", in any case or emphasis) or none of its calls found data and none failed. A greeting, a capability reply and an abstention make no claim.                                                     |
+| `supported`   | A citation verified.                                                                                                                                                                                                                                                                                                                                     |
+| `unsupported` | A citation failed for a reason of its own (its key was not returned to this answer, its document or section is not there, its statement did not run in this answer); or it cites nothing although a call of an op whose rows it could cite found data.                                                                                                   |
+| `unchecked`   | Otherwise: its checks could not say (a read failed or ran past its bound, no run id, memory reads not recorded, code citations, past the 50 checked), or it cites nothing and what found data has no citation form (counts and findings: the ops in `ASSISTANT_UNCITABLE_OPS`, such as `namespace.summary` and `namespace.inventory`), or a call failed. |
 
 The ops whose rows an answer can cite, those whose output has no citation form, and
 those that return no namespace data (Loom's own guide and catalog) are sets in
@@ -287,8 +287,8 @@ rows away in its URL. Under a finished answer its Sources
 it: a verified memory opens in the memory drawer and a verified document in the
 Library, by the citation's `ref`; an unverified one shows why. A label above them
 says the answer's support in words, with a "Why this label" note: "Checked against what
-Loom holds" (with "n of m sources" when some did not verify), "Couldn't confirm: none of
-its sources checked out", "Couldn't confirm: it gives no sources", "Sources not checked"
+Loom holds" (with "n of m sources verified" when some were not), "Couldn't confirm: none
+of its sources were verified", "Couldn't confirm: it gives no sources", "Sources not checked"
 or "Not checked: it gives no sources Loom can check"; an answer whose support is `none`
 has no label. A value the dashboard does not know reads as `unchecked`.
 

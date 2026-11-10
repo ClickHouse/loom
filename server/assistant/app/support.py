@@ -44,6 +44,11 @@ async def support(checked: list[Checked], text: str, *, org: str, run_id: str, s
     )
 
 
+async def _wait(seconds: float) -> None:
+    """The pause before the re-read: a seam the tests replace."""
+    await asyncio.sleep(seconds)
+
+
 async def _calls(org: str, run_id: str, subject: str) -> tuple[frozenset[str] | None, bool]:
     """(the ops whose calls found data, whether a call failed); None when the run cannot be
     read (no run id, a failed read)."""
@@ -54,7 +59,7 @@ async def _calls(org: str, run_id: str, subject: str) -> tuple[frozenset[str] | 
             calls = await ledger.run_calls(org, run_id, subject)
             if not calls.returned & ASSISTANT_CITABLE_OPS:
                 delay = FLUSH_INTERVAL_S + settings.ch_batched_insert_wait_max_ms / 1000
-                await asyncio.sleep(delay + _INSERT_SLACK_S)
+                await _wait(delay + _INSERT_SLACK_S)
                 calls = await ledger.run_calls(org, run_id, subject)
     except TimeoutError:
         log.warning("reading an answer's tool calls ran past %s s", _CALLS_S)

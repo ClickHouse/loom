@@ -446,9 +446,9 @@ describe("AssistantChat", () => {
     expect(within(sources).getAllByRole("listitem")).toHaveLength(3);
     expect(within(sources).getByText(/code citations are not checked/)).toBeInTheDocument();
     expect(within(sources).queryByRole("button", { name: /code:/ })).toBeNull();
-    // Two of its three sources checked out: the label counts them.
+    // Two of its three sources were verified (code is never checked): the label counts them.
     expect(screen.getByTestId("assistant-support")).toHaveTextContent(
-      "Checked against what Loom holds: 2 of 3 sources",
+      "Checked against what Loom holds: 2 of 3 sources verified",
     );
     const memory = within(sources).getByRole("button", { name: "memory:billing/invoices@v3" });
     await userEvent.setup().click(memory);
@@ -485,7 +485,7 @@ describe("AssistantChat", () => {
       s.raw(citationsEvent(cited, "unsupported"));
       s.done();
     });
-    expect(await screen.findByText("Couldn't confirm: none of its sources checked out")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't confirm: none of its sources were verified")).toBeInTheDocument();
     expect(screen.getByText(/the current version is 3/)).toBeInTheDocument();
     // A statement is named by its first line, so one query of an answer reads apart from another.
     expect(screen.getByText("SQL query: SELECT count() FROM loom.memory")).toBeInTheDocument();
