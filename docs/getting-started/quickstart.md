@@ -35,14 +35,15 @@ curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.s
 ```
 
 A failed download stops with curl's error and a non-zero exit. The installer downloads
-`loom-stack.tar.gz` from the latest GitHub Release, verifies its SHA-256, installs the Compose and ClickHouse configuration under `~/.loom`, pulls the matching
+`loom-stack.tar.gz` from the latest GitHub Release, verifies its SHA-256, installs the
+Compose and ClickHouse configuration under `~/.loom`, pulls the matching
 `ghcr.io/clickhouse/loom:X.Y.Z` and `ghcr.io/clickhouse/loom-extractor:X.Y.Z` (the
 document extractor service) images, and waits for `http://localhost:7777/v1/health`. The
 server image contains the API, workers, migrations and the built React dashboard at the
-server root; no Python or Node installation is needed. Python, TypeScript and Go
-compiler indexers are included and enabled. A repository indexed with the TypeScript
-indexer gets its dependencies installed automatically. Both images support Linux `amd64`
-and `arm64`, including Docker Desktop on Apple Silicon.
+server root; no Python or Node installation is needed. Python, TypeScript and Go compiler
+indexers are included and enabled. A repository indexed with the TypeScript indexer gets
+its dependencies installed automatically. Both images support Linux `amd64` and `arm64`,
+including Docker Desktop on Apple Silicon.
 
 The stack runs its own ClickHouse container. To use a ClickHouse you already run, a
 self-managed server or a ClickHouse Cloud service (26.4 or later, with a Keeper), pass its
@@ -67,11 +68,11 @@ curl -fsSL https://github.com/ClickHouse/loom/releases/download/v1.2.3/install.s
 
 curl -fLO https://github.com/ClickHouse/loom/releases/latest/download/loom-stack.tar.gz
 curl -fLO https://github.com/ClickHouse/loom/releases/latest/download/loom-stack.tar.gz.sha256
-curl -fLO https://github.com/ClickHouse/loom/releases/latest/download/install.sh
+curl -fL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh
 sha256sum -c loom-stack.tar.gz.sha256
 tar -tzf loom-stack.tar.gz
 LOOM_INSTALL_BUNDLE="$PWD/loom-stack.tar.gz" \
-  LOOM_INSTALL_CHECKSUM="$PWD/loom-stack.tar.gz.sha256" sh install.sh
+  LOOM_INSTALL_CHECKSUM="$PWD/loom-stack.tar.gz.sha256" sh loom-install.sh
 ```
 
 `LOOM_PORT`, `LOOM_BIND_HOST`, `LOOM_IMAGE_REPOSITORY`,

@@ -748,10 +748,11 @@ def test_an_unreachable_docker_daemon_is_named_before_any_pull(
     assert not Path(installer_env["LOOM_INSTALL_DIR"]).exists()  # nor any file written
 
 
-# The installer piped into a shell: `install.sh | sh`, with the URL quoted or not,
-# across a `\` line break, or written to stdout with `-o -` first.
+# A command that names the installer's URL and pipes it into a shell: quoted or
+# not, across a `\` line break, after `-o -`, into `sudo`, `bash`, `dash` or
+# `zsh`. A URL held in a variable is out of its reach.
 _PIPED_INSTALLER = re.compile(
-    r"install\.sh['\"]?\s*(?:-o\s*-\s*)?(?:\\\n\s*)?\\?\|\s*(?:\w+=\S*\s+)*(?:ba|da)?sh\b"
+    r"install\.sh['\"]?\s*(?:-o\s*-\s*)?(?:\\\n\s*)?\\?\|\s*(?:\w+=\S*\s+)*(?:sudo\s+)?(?:ba|da|z)?sh\b"
 )
 
 
