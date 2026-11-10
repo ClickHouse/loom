@@ -193,8 +193,8 @@ async def _afford(org: str, namespace: str) -> tuple[str, str]:
     answering = service.answering()
     if answering is None:
         raise AssistantUnavailableError(
-            "the assistant is not set up in this web process yet: /v1/health/ready's "
-            "assistant check says whether it is starting or failing",
+            "the assistant is not set up in this web process yet: detail.reason says "
+            "whether it is starting or failing, and /v1/health names a failed try",
             reason=service.unready_reason(),
         )
     if await switched_off(org):

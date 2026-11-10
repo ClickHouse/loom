@@ -80,9 +80,8 @@ def unready_reason() -> str:
 
 
 def readiness_check() -> readiness.CheckResult:
-    """The `assistant` check of `/v1/health/ready`: reported, never required (a deployment
-    whose assistant is down still serves everything else). Its reason is
-    `unready_reason()`."""
+    """The `assistant` check of `/v1/health/ready`: ready once this process set the
+    service up."""
     return readiness.result(_ready is True, unready_reason())
 
 
