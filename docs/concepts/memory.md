@@ -27,7 +27,8 @@ shared volume.
 - **One engine.** Under the default ClickHouse authority, vector search, lexical search,
   the graph walk, filters, audit and erasure are SQL over the same rows, with no second
   store to keep in step. The cost is that every read is a query, not a key-value hit.
-  The Postgres authority keeps live memory and answers key reads in Postgres.
+  The Postgres authority keeps live memory and answers point reads (by key or id) in
+  Postgres.
 - **A write is a new version.** The memory tables are `ReplacingMergeTree(version)` read
   with `FINAL`. A revision, tombstone, pin or restore inserts a new version row.
 

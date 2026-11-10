@@ -6,8 +6,8 @@ ledgers beside them (idempotency, erasure, the recorded authority), in the table
 [storage authority](../architecture/storage-authority.md#the-tables) lists. The Postgres
 schema is defined by `schemas/pg_migrations/`, and the shape of the ClickHouse databases
 by the numbered migrations in `schemas/migrations/`; `schemas/schema.sql` is the result
-of applying all of them, dumped from a live server. The table at the end of this page is
-generated from `schema.sql`.
+of applying every ClickHouse migration, dumped from a live server. The table at the end
+of this page is generated from `schema.sql`.
 
 ## Where the schema comes from
 
