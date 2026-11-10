@@ -48,8 +48,10 @@ list, with the admission and delivery settings, is in the
 2. Create the database and the role, and take the **direct** connection string, on
    port 5432, from the service's connection details, not the pooler's: the service's
    pooler runs in transaction mode.
-3. Set the [settings](#settings) and start Loom. The boot log reads the service's
-   `synchronous_standby_names`; with two standbys it names them, and Loom starts.
+3. Set the [settings](#settings) and start Loom. Check that
+   `GET /v1/health?include=postgres` reports `postgres.standby` `synchronous`: the boot
+   refuses an empty `synchronous_standby_names` and warns when fewer standbys are
+   attached than it names ([what the boot checks](#what-the-boot-checks)).
 
 Failover, standby placement and the old primary's fencing are the service's. On
 Kubernetes, the chart's `postgres` values set all of this ([ClickHouse Cloud and Managed

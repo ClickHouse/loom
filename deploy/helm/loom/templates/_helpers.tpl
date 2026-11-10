@@ -235,6 +235,10 @@ upgraded with --reuse-values from a chart without the block has none. */}}
 {{- if $pg.host -}}
 {{- if not (dig "passwordSecret" "name" "" $pg) }}{{ fail "postgres.host needs postgres.passwordSecret.name: the Secret holding the role's password" }}{{ end -}}
 {{- if not (dig "caSecret" "name" "" $pg) }}{{ fail "postgres.host needs postgres.caSecret.name: the CA bundle verify-full checks the server's certificate against" }}{{ end -}}
+{{- range $field := list "host" "database" "user" }}
+{{- if not (regexMatch "^[A-Za-z0-9._-]+$" (toString (get $pg $field))) }}{{ fail (printf "postgres.%s goes into the DSN as written: letters, digits, '.', '_' and '-' only" $field) }}{{ end }}
+{{- end -}}
+{{- if lt (int $pg.poolMaxSize) 2 }}{{ fail "postgres.poolMaxSize must be 2 or more: the pool keeps 2 connections open" }}{{ end -}}
 {{- end -}}
 {{- toYaml $pg -}}
 {{- end }}
@@ -265,7 +269,8 @@ upgraded with --reuse-values from a chart without the block has none. */}}
 {{- end }}
 
 {{- define "loom.pgVolumeMount" -}}
-{{- if dig "host" "" (.Values.postgres | default dict) -}}
+{{- $pg := include "loom.postgres" . | fromYaml -}}
+{{- if $pg.host -}}
 - name: pg-ca
   mountPath: /etc/loom/pg-ca
   readOnly: true

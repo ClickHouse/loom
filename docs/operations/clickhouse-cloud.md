@@ -94,14 +94,18 @@ poolMaxSize × (webWorkers × web pods + worker processes) × 2
 Web pods are `autoscaling.maxReplicas` with autoscaling on, else `replicaCount`; worker
 processes are `workers.replicaCount` with `workers.enabled`, else one, which a web pod
 runs. Each running erasure holds one more connection for its Postgres step. The overlay
-fixes `webWorkers` at 4 and `poolMaxSize` at 5: with three web pods and one workers pod
-that is 130 connections, which fits a service whose `max_connections` leaves 150 for Loom.
+sets `webWorkers` to 2, what the image picks for the chart's 2-CPU limit, and
+`poolMaxSize` to 5: with three web pods and one workers pod that is 70 connections, which
+fits a service whose `max_connections` leaves 100 for Loom. Raising `webWorkers` needs
+`resources.limits.cpu` and memory (1 GiB per process) to match.
 Replicas added past the chart's count by anything else are outside the sum.
 
 ## After the install
 
-- The boot log names the standbys it found in `synchronous_standby_names`; with two
-  attached, Loom starts.
+- Loom refuses to start when the service's `synchronous_standby_names` is empty. It
+  starts with fewer standbys attached than it names, logging the WARNING
+  `Postgres durability: fewer synchronous standbys are attached than required`, and
+  commits wait until they are.
 - `GET /v1/health` reports `storage_authority: postgres` and `pg_ok`.
   `GET /v1/health?include=postgres` adds a `postgres` block with `standby: synchronous`;
   the block is missing whenever `pg_ok` is false, when the check's `SELECT 1` fails for

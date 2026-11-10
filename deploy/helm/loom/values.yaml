@@ -39,7 +39,8 @@ postgres:
   host: ""
   port: 5432
   database: loom
-  # A role that owns the database.
+  # A role that owns the database. The host, database and user go into the DSN as
+  # written: letters, digits, '.', '_' and '-' only.
   user: loom
   # The Secret key holding the role's password, passed to the driver as PGPASSWORD.
   passwordSecret:
@@ -50,9 +51,10 @@ postgres:
   caSecret:
     name: ""
     key: ca.crt
-  # LOOM_PG_DURABILITY: synchronous refuses to start without a synchronous standby.
+  # LOOM_PG_DURABILITY: synchronous refuses to start when the server's
+  # synchronous_standby_names is empty.
   durability: synchronous
-  # LOOM_PG_POOL_MAX_SIZE: connections per Loom process.
+  # LOOM_PG_POOL_MAX_SIZE: connections per Loom process, 2 or more (the pool keeps 2).
   poolMaxSize: 20
 
 embedding:

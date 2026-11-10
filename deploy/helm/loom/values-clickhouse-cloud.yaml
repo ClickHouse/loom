@@ -23,10 +23,11 @@ postgres:
     key: ca.crt
   # The service runs two HA standbys, so commits wait for one.
   durability: synchronous
-  # 5 × (4 web processes × 3 pods + 1 workers process) × 2 during a rollout = 130
+  # 5 × (2 web processes × 3 pods + 1 workers process) × 2 during a rollout = 70
   # connections, plus booting processes, erasures and CLI runs: fits a service whose
-  # max_connections leaves 150 for Loom.
+  # max_connections leaves 100 for Loom.
   poolMaxSize: 5
 
-# Fixed, so the connection count above holds on any node size.
-webWorkers: "4"
+# What the image picks for the chart's 2-CPU limit, set so the count above is stated;
+# raise it with resources.limits.cpu.
+webWorkers: "2"

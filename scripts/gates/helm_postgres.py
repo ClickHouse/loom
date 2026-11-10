@@ -19,7 +19,14 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from scripts.gates.helm_metadata_egress import EVERYTHING, LOOM_PODS, loom_pods, render, sets
+from scripts.gates.helm_metadata_egress import (
+    EVERYTHING,
+    LOOM_PODS,
+    loom_pods,
+    render,
+    sets,
+    web_policies,
+)
 
 CHART = Path(__file__).resolve().parents[2] / "deploy" / "helm" / "loom"
 CLOUD = ("-f", str(CHART / "values-eks.yaml"), "-f", str(CHART / "values-clickhouse-cloud.yaml"))
@@ -76,16 +83,12 @@ def check_configured(docs: list[dict[str, Any]], what: str) -> None:
 
 
 def egress_ports(docs: list[dict[str, Any]]) -> set[int]:
-    labels = loom_pods(docs)["Deployment/loom"]["metadata"]["labels"]
-    ports = set()
-    for d in docs:
-        if d["kind"] != "NetworkPolicy":
-            continue
-        match = d["spec"]["podSelector"].get("matchLabels", {})
-        if all(labels.get(k) == v for k, v in match.items()):
-            for rule in d["spec"].get("egress", []):
-                ports |= {p["port"] for p in rule.get("ports", [])}
-    return ports
+    return {
+        p["port"]
+        for spec in web_policies(docs)
+        for rule in spec.get("egress", [])
+        for p in rule.get("ports", [])
+    }
 
 
 def check_unconfigured(docs: list[dict[str, Any]], what: str) -> None:
@@ -108,6 +111,10 @@ def main() -> None:
     docs = render(*CLOUD, *sets(*EVERYTHING))
     check_configured(docs, "cloud overlay")
     assert 5432 in egress_ports(docs), "cloud overlay: no egress to Postgres"
+    # Off, the one egress-only policy opens every port already: the block leaves it as is.
+    off = sets("networkPolicy.enabled=false", *EVERYTHING)
+    eks = ("-f", str(CHART / "values-eks.yaml"))
+    assert web_policies(render(*CLOUD, *off)) == web_policies(render(*eks, *off)), "policy off"
     check_unconfigured(render(*sets(*EVERYTHING)), "defaults")
     check_unconfigured(render("-f", str(CHART / "values-eks.yaml"), *sets(*EVERYTHING)), "eks")
     for name in RENDERED:
@@ -116,6 +123,9 @@ def main() -> None:
         refused(f"{want}, not secrets.extra", *sets(f"secrets.extra.{name}=x"))
         refused(f"{want}, not extraEnv", *sets(f"extraEnv[0].name={name}", "extraEnv[0].value=x"))
     refused("postgres.host needs postgres.caSecret.name", *sets("postgres.caSecret.name="))
+    for field, bad in (("user", "lo@m"), ("database", "a/b"), ("host", "h?x")):
+        refused(f"postgres.{field} goes into the DSN as written", *sets(f"postgres.{field}={bad}"))
+    refused("postgres.poolMaxSize must be 2 or more", *sets("postgres.poolMaxSize=1"))
     refused(
         "postgres.host needs postgres.passwordSecret.name", *sets("postgres.passwordSecret.name=")
     )
