@@ -72,12 +72,17 @@ agent in the UI. It is not Loom authorization; the token on each call is.
   (`/api/agents/chat/stream/:streamId`). The agents API (`/api/agents/v1/chat/completions`)
   streams OpenAI-style chunks, but compresses the response when the client accepts
   compression, and a compressed stream arrives only when the answer is complete: a client
-  that needs incremental tokens sends `Accept-Encoding: identity`.
+  that needs incremental tokens sends `Accept-Encoding: identity`. The agents API runs
+  the MCP tools inside the run and sends no `tool_calls` chunk for them: the stream holds
+  content and reasoning deltas only, the text of every model step as one answer with
+  nothing between steps.
 - **Cancellation.** In the UI path the generation runs server-side, apart from the
   browser connection: closing the tab does not stop it, and its tool calls still reach
   Loom. The stop button (`/api/agents/chat/abort`) stops it. On the agents API, closing
-  the connection stops the run: in one probe, disconnecting after the first token left no
-  Loom call in the next 20 s.
+  the connection stops the run: in one probe, disconnecting before the agent's first tool
+  call left no Loom call in the next 20 s. The probe (`run --cancel-probe`) disconnects
+  `--cancel-after` seconds (1) into the answer and sorts the Loom calls by whether they
+  began before or after the cut; `probe_line` in `qualify.py` says what each outcome shows.
 
 ## What LibreChat stores
 
@@ -134,7 +139,8 @@ orgs, mints a token per person, revokes one, and scores each answer:
   and a version written next to it is the row's current version.
 - **tool calls:** the `mcp` rows Loom ledgered under the person's subject during the answer.
 - **latency and time to first token:** end to end, and to the first streamed delta, which
-  is the model's one-line preamble before its first tool call, not the answer.
+  for the harness's own agent (`setup`) is the model's one-line preamble before its first
+  tool call, not the answer; Loom's agent (`setup-bridge`) is told to write none.
 
 | Target (LibreChat path)                                 | Value         | Measured on v0.8.8, 14 cases, `claude-haiku-4-5-20251001`                 |
 | ------------------------------------------------------- | ------------- | ------------------------------------------------------------------------- |

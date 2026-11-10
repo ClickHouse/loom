@@ -29,6 +29,7 @@ hold it, since an answer's token is delegated from a live grant.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import re
@@ -367,9 +368,10 @@ def cmd_setup_bridge(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------- one answer
 
 
-def ask_assistant(
-    st: dict[str, Any], person: str, question: str, *, cancel_after_first: bool = False
-) -> dict[str, Any]:
+def answer_request(
+    st: dict[str, Any], person: str, question: str
+) -> tuple[str, dict[str, Any], dict[str, str]]:
+    """The URL, body and headers of one streamed answer, through the bridge or LibreChat."""
     body: dict[str, Any] = {
         "stream": True,
         "stream_options": {"include_usage": True},
@@ -385,15 +387,18 @@ def ask_assistant(
         body["model"] = lc["agent_id"]
         url = f"{st['librechat_url']}/api/agents/v1/chat/completions"
         auth = {"Authorization": f"Bearer {lc['api_key']}"}
+    # A compressed stream reaches the client only once the answer is complete.
+    return url, body, {**auth, "Accept-Encoding": "identity"}
+
+
+def ask_assistant(st: dict[str, Any], person: str, question: str) -> dict[str, Any]:
+    url, body, headers = answer_request(st, person, question)
     started = time.perf_counter()
     first_delta = first_text = None
     text: list[str] = []
     usage: dict[str, Any] = {}
     error = ""
-    # A compressed stream reaches the client only once the answer is complete.
-    with httpx.stream(
-        "POST", url, json=body, headers={**auth, "Accept-Encoding": "identity"}, timeout=180
-    ) as r:
+    with httpx.stream("POST", url, json=body, headers=headers, timeout=180) as r:
         if r.status_code != 200:
             error = f"HTTP {r.status_code}: {r.read().decode()[:300]}"
         else:
@@ -413,8 +418,6 @@ def ask_assistant(
                         if first_text is None:
                             first_text = now
                         text.append(delta["content"])
-                if cancel_after_first and first_delta is not None:
-                    break
     return {
         "answer": "".join(text),
         "error": error,
@@ -436,7 +439,8 @@ def loom_calls(ch_url: str, subject: str, since: float, until: float) -> list[di
     """The MCP calls Loom ledgered for this person between two instants, in Loom's database
     (`QUALIFY_CH_DATABASE`, the server's `LOOM_CH_DATABASE`; `loom` by default)."""
     sql = (
-        "SELECT operation, success, error_code, consumer FROM {db:Identifier}.agent_events "
+        "SELECT operation, success, error_code, consumer, "
+        "toUnixTimestamp64Milli(ts) - latency_ms AS started_ms FROM {db:Identifier}.agent_events "
         "WHERE subject = {s:String} AND transport = 'mcp' "
         "AND ts >= fromUnixTimestamp64Milli({a:Int64}) "
         "AND ts <= fromUnixTimestamp64Milli({b:Int64}) "
@@ -844,24 +848,78 @@ def cmd_rescore(args: argparse.Namespace) -> None:
     print(report(saved["rows"], saved.get("model", "")))
 
 
+async def read_until(
+    url: str, body: dict[str, Any], headers: dict[str, str], cut_s: float
+) -> tuple[bool, str]:
+    """Read one streamed answer and disconnect `cut_s` after sending it: (whether the
+    answer ended first, the refusal or error it carried)."""
+
+    async def read() -> str:
+        async with httpx.AsyncClient(timeout=180) as client:
+            async with client.stream("POST", url, json=body, headers=headers) as r:
+                if r.status_code != 200:
+                    return f"HTTP {r.status_code}: {(await r.aread()).decode()[:300]}"
+                async for line in r.aiter_lines():
+                    if line.startswith("data: {"):
+                        error = json.loads(line[6:]).get("error")
+                        if error:
+                            return json.dumps(error)[:300]
+        return ""
+
+    try:
+        return True, await asyncio.wait_for(read(), cut_s)
+    except TimeoutError:  # wait_for cancels read(), which closes the connection
+        return False, ""
+
+
 def cancel_probe(st: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
-    """Disconnect after the first streamed token and count the Loom calls that still arrive."""
-    t0 = time.time()
-    got = ask_assistant(
-        st, "alice", "List every memory in the namespace with its version.", cancel_after_first=True
+    """Disconnect `--cancel-after` seconds into an answer and count the Loom calls before
+    and after. The cut is a delay, not the first token: Loom's agent (`agent.yaml`, the
+    `setup-bridge` path) writes no text before its tool calls, so a cut at its first token
+    would come after them."""
+    url, body, headers = answer_request(
+        st, "alice", "List every memory in the namespace with its version."
     )
+    t0 = time.time()
+    ended, error = asyncio.run(read_until(url, body, headers, args.cancel_after))
     disconnected = time.time()
     time.sleep(args.cancel_wait)
+    # a call's row is stamped when it ends: sort the calls by when they began
     calls = loom_calls(args.ch_url, "alice", t0, time.time())
-    after = loom_calls(args.ch_url, "alice", disconnected, time.time())
-    print(f"cancel probe: {len(calls)} Loom calls in total, {len(after)} after the disconnect")
-    return {
+    before = [c for c in calls if int(c["started_ms"]) < disconnected * 1000]
+    after = [c for c in calls if int(c["started_ms"]) >= disconnected * 1000]
+    row = {
         "id": "cancel-probe",
         "kind": "cancel",
-        "ttft_s": got["ttft_s"],
-        "loom_calls": len(calls),
+        "ended_before_cut": ended,
+        "error": error,
+        "loom_calls_before_disconnect": len(before),
         "loom_calls_after_disconnect": len(after),
     }
+    print(probe_line(row))
+    return row
+
+
+def probe_line(row: dict[str, Any]) -> str:
+    """The cancel probe's verdict: a refusal, an answer that ended before the cut, or what
+    its two counts show. A call begun after the cut shows the run went on. No call on
+    either side shows it only when the cut came after the run reached the agents API,
+    which the probe cannot see: raise `--cancel-after` if it may have come before."""
+    if "loom_calls_before_disconnect" not in row:
+        return "cancel probe: saved by an older harness, not a result"
+    before = row["loom_calls_before_disconnect"]
+    after = row["loom_calls_after_disconnect"]
+    if row["error"]:
+        verdict = f"refused: {row['error']}"
+    elif row["ended_before_cut"]:
+        verdict = "inconclusive: the answer ended before the cut"
+    elif after:
+        verdict = "the run went on after the disconnect"
+    elif before:
+        verdict = "inconclusive: its tool calls began before the cut"
+    else:
+        verdict = "no Loom call on either side of the cut"
+    return f"cancel probe: {verdict} ({before} Loom calls before the cut, {after} after)"
 
 
 def pct(values: list[float], q: float) -> float:
@@ -938,11 +996,7 @@ def report(rows: list[dict[str, Any]], model: str) -> str:
     )
     for r in rows:
         if r["kind"] == "cancel":
-            lines.append(
-                f"cancel probe: first token {fmt_s(r['ttft_s'], unit=' s')}, "
-                f"{r['loom_calls']} Loom calls, "
-                f"{r['loom_calls_after_disconnect']} after the client disconnected"
-            )
+            lines.append(probe_line(r))
     return "\n".join(lines)
 
 
@@ -1030,6 +1084,13 @@ def main() -> None:
     run.add_argument("--out", default=str(HERE / "results.json"))
     run.add_argument("--only", nargs="*", help="case ids to run")
     run.add_argument("--cancel-probe", action="store_true", help="also disconnect one answer early")
+    run.add_argument(
+        "--cancel-after",
+        type=float,
+        default=1.0,
+        help="seconds into the probe's answer at which the client disconnects; lower it when"
+        " the probe reports that its tool calls began before the cut",
+    )
     run.add_argument("--cancel-wait", type=float, default=20.0)
     run.add_argument(
         "--native-only",

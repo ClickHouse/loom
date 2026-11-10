@@ -4,12 +4,15 @@ expire, and a case set the harness can score."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
+import httpx
 import pytest
 import yaml
 
@@ -228,17 +231,129 @@ def test_count_labels_match_the_fixture():
     assert _case("tune-drafts")["baseline"]["equals"] == 0
 
 
-def test_report_prints_a_cancel_probe_without_a_first_token():
-    rows = [
-        {
-            "id": "cancel-probe",
-            "kind": "cancel",
-            "ttft_s": None,
-            "loom_calls": 0,
-            "loom_calls_after_disconnect": 0,
-        }
-    ]
-    assert "cancel probe: first token -, 0 Loom calls" in _qualify().report(rows, "m")
+_PROBE = {
+    "id": "cancel-probe",
+    "kind": "cancel",
+    "ended_before_cut": False,
+    "error": "",
+    "loom_calls_before_disconnect": 0,
+    "loom_calls_after_disconnect": 0,
+}
+
+
+@pytest.mark.parametrize(
+    ("row", "verdict"),
+    [
+        ({}, "no Loom call on either side of the cut (0 Loom calls"),
+        ({"loom_calls_after_disconnect": 1}, "the run went on after the disconnect"),
+        (
+            {"loom_calls_before_disconnect": 1, "loom_calls_after_disconnect": 1},
+            "the run went on after the disconnect",
+        ),
+        ({"loom_calls_before_disconnect": 2}, "inconclusive: its tool calls began"),
+        ({"ended_before_cut": True}, "inconclusive: the answer ended"),
+        (
+            {"ended_before_cut": True, "loom_calls_after_disconnect": 1},
+            "inconclusive: the answer ended",
+        ),
+        ({"ended_before_cut": True, "error": "HTTP 403: no"}, "refused: HTTP 403: no"),
+    ],
+)
+def test_the_cancel_probe_verdicts(row, verdict):
+    assert f"cancel probe: {verdict}" in _qualify().report([{**_PROBE, **row}], "m")
+
+
+def test_a_cancel_row_without_its_counts_is_not_read_as_a_pass():
+    old = {
+        "id": "cancel-probe",
+        "kind": "cancel",
+        "ttft_s": 0.6,
+        "loom_calls": 1,
+        "loom_calls_after_disconnect": 0,
+    }
+    assert "cancel probe: saved by an older harness, not a result" in _qualify().report([old], "m")
+
+
+def test_the_cancel_probe_sorts_the_calls_by_when_they_began(monkeypatch):
+    # The calls are sorted on `started_ms` (the ledger's `ts - latency_ms`) against the
+    # disconnect: one begun before the cut counts before it, one begun after counts after.
+    q = _qualify()
+    seen = {}
+
+    async def read_until(url, body, headers, cut_s):
+        seen["cut_s"] = cut_s
+        seen["cut_at"] = q.time.time()
+        return False, ""
+
+    def loom_calls(ch_url, subject, since, until):
+        cut_ms = seen["cut_at"] * 1000
+        return [{"started_ms": cut_ms - 100}, {"started_ms": cut_ms + 5000}]
+
+    monkeypatch.setattr(q, "read_until", read_until)
+    monkeypatch.setattr(q, "loom_calls", loom_calls)
+    st = {"librechat": {"alice": {"agent_id": "a", "api_key": "k"}}, "librechat_url": "http://lc"}
+    args = type("A", (), {"cancel_after": 0.5, "cancel_wait": 0.0, "ch_url": "http://ch"})()
+    row = q.cancel_probe(st, args)
+    assert seen["cut_s"] == 0.5
+    assert row["loom_calls_before_disconnect"] == 1 and row["loom_calls_after_disconnect"] == 1
+    assert "the run went on after the disconnect" in q.probe_line(row)
+
+
+def _patched_client(monkeypatch, q, transport):
+    real = q.httpx.AsyncClient
+    monkeypatch.setattr(q.httpx, "AsyncClient", lambda **kw: real(transport=transport, **kw))
+
+
+class _Slow(httpx.AsyncByteStream):
+    """An answer whose body never comes within the test: the tool calls are still running."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def __aiter__(self):
+        await asyncio.sleep(30)
+        yield b"data: [DONE]\n\n"
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+def test_the_cancel_probe_disconnects_at_its_delay_while_the_answer_runs(monkeypatch):
+    q = _qualify()
+    body = _Slow()
+    _patched_client(
+        monkeypatch, q, httpx.MockTransport(lambda req: httpx.Response(200, stream=body))
+    )
+    started = time.monotonic()
+    assert asyncio.run(q.read_until("http://lc/x", {}, {}, 0.2)) == (False, "")
+    assert body.closed
+    assert time.monotonic() - started < 5
+
+
+def test_the_cancel_probe_says_when_the_answer_ended_before_its_delay(monkeypatch):
+    q = _qualify()
+    _patched_client(
+        monkeypatch,
+        q,
+        httpx.MockTransport(lambda req: httpx.Response(200, text="data: [DONE]\n\n")),
+    )
+    assert asyncio.run(q.read_until("http://lc/x", {}, {}, 5.0)) == (True, "")
+
+
+@pytest.mark.parametrize(
+    ("response", "error"),
+    [
+        (httpx.Response(403, text="no grant"), "HTTP 403: no grant"),
+        (
+            httpx.Response(200, text='data: {"error": {"code": "RATE_LIMITED"}}\n\n'),
+            '{"code": "RATE_LIMITED"}',
+        ),
+    ],
+)
+def test_the_cancel_probe_keeps_a_refusal(monkeypatch, response, error):
+    q = _qualify()
+    _patched_client(monkeypatch, q, httpx.MockTransport(lambda req: response))
+    assert asyncio.run(q.read_until("http://lc/x", {}, {}, 5.0)) == (True, error)
 
 
 def test_direct_path_reads_with_the_assistant_toolsets_forced_arguments(monkeypatch):
