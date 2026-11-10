@@ -193,7 +193,8 @@ def test_a_pattern_costs_linear_time(name: str, pattern: re.Pattern) -> None:
 # costs N**k, and one that searches on from each repeated keyword to a closer that never
 # comes costs N**2. The sizes grow 4 times a step and a run stops at the first step that
 # grows more than 8 times; a step that takes at most a sixty-fourth of the bound is
-# confirmed at 4 times its size first, so a cubic pattern costs seconds, not hours.
+# confirmed at 4 times its size first. A pattern of degree k then spends one run of up to
+# 4**k / 64 times the bound there per composite: 2 s for a cubic one, not hours.
 _SIZES = (500, 2_000, 8_000, 32_000)
 _PREFIXES = ("a", "- a", "a:a", "a = a", "export default a", "'a", "# a")
 _SEPS = ("", " a", "a=", "a(", "a ", "#a ")  # after an opener: `*a=`, `@if(`, `{#if `
@@ -217,8 +218,8 @@ def _composites(p: re.Pattern) -> list[tuple[str, str, str]]:
 
 
 def _over(small: float, big: float) -> bool:
-    """Whether `big`, the time at 4 times the size of `small`'s, grows over linear: over
-    the bound, or past the floor and over 8 times `small`."""
+    """Whether `big`, the time at 4 times `small`'s size, grows over linear: over the
+    bound, or over 10 ms and over 8 times `small`."""
     return big > _BOUND_S or (big > _FLOOR_S / 10 and big > _RATIO * small)
 
 
@@ -260,8 +261,8 @@ def test_slow_tells_a_load_spike_from_a_step_over_linear() -> None:
         return lambda n: at_32k.pop(0) if n >= 32_000 else linear(n)
 
     assert _slow(linear) is None
-    # a 10.1 ms spike over the three runs at 32,000, and in one run of the three at 128,000
-    runs = [0.0101] * 3 + [0.09, linear(128_000), 1.0]
+    # a 10.1 ms spike over the three runs at 32,000, and in two of the three at 128,000
+    runs = [0.0101] * 3 + [0.09, 0.09, linear(128_000), 1.0]
     assert _slow(timed(runs)) is None and runs == [1.0]  # the run not over 8x ended it
 
     def quadratic_past_a_sixty_fourth(n: int) -> float:
