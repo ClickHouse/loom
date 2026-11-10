@@ -51,10 +51,11 @@ async def held_sources() -> list[dict[str, Any]]:
 
 
 async def dataset_sources_lost(after: datetime) -> list[dict[str, Any]]:
-    """The sources (org, namespace, source_uri) whose Postgres catalog rows name a dataset
-    snapshot written after `after`: its rows lived in ClickHouse alone, so the dataset
-    reads with no rows until the source's file is uploaded and ingested again."""
-    return await pg_datasets.sources_with_snapshots_since(int(after.timestamp() * 1e9))
+    """The sources (org, namespace, source_uri) whose Postgres catalog rows were written
+    after `after`: a dataset's rows live in ClickHouse alone, so after a ClickHouse
+    restore to before then some may be missing until the source's file is uploaded and
+    ingested again."""
+    return await pg_datasets.sources_written_since(int(after.timestamp() * 1e9))
 
 
 async def publish_held(*, batch: int = 200, passes: int = 1000) -> int:

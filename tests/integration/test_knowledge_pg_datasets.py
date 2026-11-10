@@ -315,21 +315,21 @@ async def test_a_user_erasure_locks_the_namespace_of_the_user_s_headless_catalog
     assert got["schema_state"] == "needs_clarification"
 
 
-async def test_a_clickhouse_restore_names_the_sources_whose_snapshots_it_lost(
+async def test_a_clickhouse_restore_names_the_sources_whose_catalog_rows_follow_it(
     stores: httpx.AsyncClient,
 ) -> None:
-    """A catalog row whose snapshot was written after the point names rows the restore
-    removed; a row that carries an older snapshot does not."""
-    import time
+    """A catalog row written after the point may name rows the restore removed, even when
+    its snapshot id (drawn when the rows' write began) is older; a row written before
+    the point is not named."""
     from datetime import UTC, datetime
 
     from server.knowledge.app import restore_reconcile
     from server.knowledge.store import pg_datasets
 
     org = unique_org("pgds-restore")
+    before = {**_catalog(org, 100, snapshot_id=1), "version": 1}
     point = datetime.now(UTC)
-    later = time.time_ns() + 1
-    await pg_datasets.upsert([_catalog(org, 100, snapshot_id=1)])
-    await pg_datasets.upsert([_catalog(org, 100, source_uri="kb://new.csv", snapshot_id=later)])
+    across = _catalog(org, 100, source_uri="kb://big.xlsx", snapshot_id=1)
+    await pg_datasets.upsert([before, across])
     lost = [s for s in await restore_reconcile.dataset_sources_lost(point) if s["org"] == org]
-    assert lost == [{"org": org, "namespace": "docs", "source_uri": "kb://new.csv"}]
+    assert lost == [{"org": org, "namespace": "docs", "source_uri": "kb://big.xlsx"}]

@@ -219,8 +219,9 @@ which runs again what the restored store lost of the other's record.
 3. Run `loom reconcile --restored clickhouse --point <time>` (or `--restored postgres`),
    which prints what it would run again; then the same with `--apply`.
 4. Start the deployment.
-5. After a ClickHouse restore, run each `loom rechunk` the reconcile printed: a
-   knowledge document's chunks live in ClickHouse alone.
+5. After a ClickHouse restore, run each `loom rechunk` the reconcile printed, and
+   upload and ingest again each source it names under "to ingest again": a knowledge
+   document's chunks and a dataset's rows live in ClickHouse alone.
 
 On the Helm chart ([Kubernetes](kubernetes.md)), with release `loom`:
 
@@ -258,7 +259,8 @@ On the Helm chart ([Kubernetes](kubernetes.md)), with release `loom`:
 4. Start it again: `helm upgrade` with the release's values file, carrying step 2's new
    host and without its three `--set` overrides, and resume the analytics export. Run
    each `loom rechunk` the reconcile printed with
-   `kubectl exec deploy/loom -- loom rechunk ...`.
+   `kubectl exec deploy/loom -- loom rechunk ...`, and upload and ingest again each
+   source it names under "to ingest again".
 
 `loom reconcile --apply`:
 
@@ -301,9 +303,11 @@ On the Helm chart ([Kubernetes](kubernetes.md)), with release `loom`:
   serve once Postgres has no matching head.
 
 A dataset's rows are in ClickHouse alone, and only an ingest builds them: after a
-ClickHouse restore, a dataset whose snapshot was published or approved after the point
-reads with no rows (its catalog row, in Postgres, names the lost snapshot), and
-`loom reconcile` names each such source to upload and ingest again.
+ClickHouse restore, a dataset whose rows were written after the point (a publish, or an
+approval that retyped a column) reads with rows missing, since its catalog row, in
+Postgres, names them. `loom reconcile` names, in its dry run too, each source with a
+catalog row written after the point, to upload and ingest again; that includes a row
+an approval or a metadata edit wrote over rows that survived.
 
 Knowledge ingestion jobs need no step of their own: a job's reads take the newer of
 Postgres's row and ClickHouse's, and a job Postgres holds is projected again when a
