@@ -124,6 +124,7 @@ async def reconcile(
 ) -> int:
     """The command's body; returns its exit code."""
     from server.erasure.app import replay as erasure_replay
+    from server.knowledge.app import restore_reconcile as knowledge_reconcile
     from server.memory.app import restore_reconcile
 
     why = await _refusal(restored, point, live=live, ch=ch)
@@ -160,8 +161,6 @@ async def reconcile(
         return 2
     failed = 0
     if store == "clickhouse":
-        from server.knowledge.app import restore_reconcile as knowledge_reconcile
-
         # Held first: nothing republished lands before the erasures it predates run.
         memory = await restore_reconcile.hold(after)
         knowledge = await knowledge_reconcile.hold(after)
@@ -184,8 +183,6 @@ async def reconcile(
     for entry in still_open:
         failed += await _step(erasure_replay.requeue(entry, store, point)) == "failed"
     if store == "clickhouse":
-        from server.knowledge.app import restore_reconcile as knowledge_reconcile
-
         memory = await restore_reconcile.publish_held()
         knowledge = await knowledge_reconcile.publish_held()
         print(f"  published: {memory} memory revisions, {knowledge} knowledge documents")

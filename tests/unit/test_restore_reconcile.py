@@ -1157,3 +1157,75 @@ def test_the_ledger_sweep_runs_after_a_copy_that_failed(monkeypatch: pytest.Monk
     result = recovery.RecoveryResult()
     asyncio.run(recovery._keep_pg_ledger(result, recovery.RecoveryConfig()))
     assert result.ledger_swept == 4
+
+
+def test_the_heads_clickhouse_lacks_or_holds_older_are_held_page_by_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Memory and knowledge alike: a head ClickHouse holds at an older version, or not at
+    all, is held; one it holds at the same version is not; the next page starts after
+    the last key of the one before."""
+    from server.knowledge.store import pg_documents
+    from server.memory.app import restore_reconcile
+    from server.memory.store.rows import identity_key
+
+    def head(key: str, version: int) -> dict[str, Any]:
+        return {
+            "org": "o", "namespace": "n", "agent": "a", "user_id": "u", "session_id": "-",
+            "memory_key": key, "version": version, "seq": version, "memory_type": "semantic",
+            "sensitivity": "",
+        }  # fmt: skip
+
+    pages = [[head("k1", 2), head("k2", 3)], [head("k3", 4)], []]
+    afters: list[Any] = []
+
+    async def page(after: Any, limit: int) -> list[dict[str, Any]]:
+        afters.append(after)
+        return pages[len(afters) - 1]
+
+    held: list[Any] = []
+
+    async def hold(seqs: Any, targets: Any) -> None:
+        held.extend(zip(seqs, targets, strict=True))
+
+    class _Published:
+        """ClickHouse holds k1 at the same version, k2 at an older one, k3 not at all."""
+
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            got = {"k1": 2, "k2": 1}
+            return [
+                {**dict(zip(("org", "namespace", "agent", "user_id", "session_id", "memory_key"), k, strict=True)), "v": got[k[5]]}
+                for k in params["keys"]
+                if k[5] in got
+            ]  # fmt: skip
+
+    monkeypatch.setattr(pg_memory, "head_page", page)
+    monkeypatch.setattr(pg_memory, "hold", hold)
+    assert asyncio.run(restore_reconcile.hold_heads_behind(_Published(), page=2)) == 2
+    assert [s for s, _ in held] == [("o", "n", 3), ("o", "n", 4)]
+    assert all(t == pg_memory.republish_targets(head("k", 1), is_head=True) for _, t in held)
+    assert afters == [None, identity_key(head("k2", 3)), identity_key(head("k3", 4))]
+
+    docs = [[{"org": "o", "namespace": "n", "source_uri": u, "version": v}
+             for u, v in (("kb://a", 2), ("kb://b", 3))], []]  # fmt: skip
+    doc_afters: list[Any] = []
+
+    async def doc_page(after: Any, limit: int) -> list[dict[str, Any]]:
+        doc_afters.append(after)
+        return docs[len(doc_afters) - 1]
+
+    held_docs: list[Any] = []
+
+    async def hold_heads(keys: Any) -> int:
+        held_docs.extend(keys)
+        return len(keys)
+
+    class _Documents:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            return [{"org": "o", "namespace": "n", "source_uri": "kb://a", "v": 2}]
+
+    monkeypatch.setattr(pg_documents, "head_page", doc_page)
+    monkeypatch.setattr(pg_documents, "hold_heads", hold_heads)
+    assert asyncio.run(knowledge_reconcile.hold_documents_behind(_Documents(), page=2)) == 1
+    assert held_docs == [("o", "n", "kb://b")]
+    assert doc_afters == [None, ("o", "n", "kb://b")]
