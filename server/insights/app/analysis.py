@@ -73,7 +73,7 @@ _STATEMENT_CODES = frozenset(
         6,  # CANNOT_PARSE_TEXT
         10,  # NOT_FOUND_COLUMN_IN_BLOCK
         16,  # NO_SUCH_COLUMN_IN_TABLE
-        boundary.BAD_ARGUMENTS,
+        36,  # BAD_ARGUMENTS
         42,  # NUMBER_OF_ARGUMENTS_DOESNT_MATCH
         43,  # ILLEGAL_TYPE_OF_ARGUMENT
         44,  # ILLEGAL_COLUMN
@@ -626,7 +626,7 @@ async def _probe() -> tuple[str, bool, str]:
             # A cap the count hit: no policy narrows the reserved scope to nothing.
             cause, _ = shown_refusal(e)
             return (
-                f"{t.name}'s count in the reserved scope failed ({cause}): "
+                f"{t.name}'s count in the reserved scope failed with {cause}: "
                 f"{boundary.ANALYST_USER} may have no scope policy on it",
                 True,
                 error_line(e),
@@ -651,7 +651,7 @@ async def _probe() -> tuple[str, bool, str]:
                 raise  # no answer about the grant
             cause, _ = shown_refusal(e)
             return (
-                f"{boundary.ANALYST_USER} was not refused {shown} ({cause})",
+                f"{boundary.ANALYST_USER} was not refused {shown}: {cause}",
                 False,
                 error_line(e),
             )

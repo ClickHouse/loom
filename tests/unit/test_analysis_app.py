@@ -584,7 +584,7 @@ def test_an_unavailable_answer_names_no_cause(monkeypatch: pytest.MonkeyPatch, r
         (
             # An answer that is neither a refusal nor a passing fault.
             "Code: 60. DB::Exception: Unknown table",
-            f"{boundary.ANALYST_USER} was not refused memory.value (Code 60)",
+            f"{boundary.ANALYST_USER} was not refused memory.value: Code 60",
             False,
         ),
     ],
@@ -884,9 +884,12 @@ def test_a_first_boot_with_no_answer_about_the_user_is_no_finding(
 @pytest.mark.parametrize(
     ("error", "cause"),
     [
-        ("Code: 159. DB::Exception: Timeout exceeded", "(Code 159)"),
-        ("Code: 158. DB::Exception: Limit for rows to read exceeded", "(Code 158)"),
-        ("Code: 241. DB::Exception: Memory limit (for query) exceeded", "(Code 241)"),
+        (
+            "Code: 159. DB::Exception: Timeout exceeded. (TIMEOUT_EXCEEDED) (version 26.10.2.93)",
+            "with Code 159 (TIMEOUT_EXCEEDED):",
+        ),
+        ("Code: 158. DB::Exception: Limit for rows to read exceeded", "with Code 158:"),
+        ("Code: 241. DB::Exception: Memory limit (for query) exceeded", "with Code 241:"),
     ],
 )
 def test_a_capped_reserved_scope_count_is_a_finding(

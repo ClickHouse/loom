@@ -32,7 +32,7 @@ from server.core.sql_literal import sql_string
 # back its narrower grants over N's (`needs_rewrite`).
 ENTITY_VERSION = 2
 
-# ClickHouse error codes the app, the store and refusal_cause share.
+# ClickHouse error codes refusal_cause reads; the app and the store test ACCESS_DENIED too.
 BAD_ARGUMENTS = 36
 ACCESS_DENIED = 497
 
@@ -613,8 +613,8 @@ _PASSWORD_FIX = (
     f"a stored one that lacks any of them is refused. Drop the {ANALYST_USER} user if it "
     "exists, then delete the row in loom.analysis_secrets (loom is LOOM_CH_DATABASE): "
     "the next setup draws a new pair (Loom's own where its server user has access "
-    "management, else `loom ch-setup`). Rules that ask for more refuse a new pair too: "
-    "relax the server's password_complexity rules."
+    "management, else `loom ch-setup`). Rules that ask for more refuse a new pair too: on "
+    "a self-managed server, relax its password_complexity rules."
 )
 
 
