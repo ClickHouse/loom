@@ -237,6 +237,17 @@ describe("the token form", () => {
     expect(screen.getByText(/Tick the namespaces this token reads/)).toBeInTheDocument();
   });
 
+  it("only these: one ticked namespace offers nothing to reorder", async () => {
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-a" }, WAIT));
+    const order = screen.getByRole("list", { name: "Search order" });
+    expect(order.querySelector("[draggable]")).toBeNull();
+    expect(screen.queryByText(/to change the order/)).toBeNull();
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
+    expect(screen.getByText(/to change the order/)).toBeInTheDocument();
+  });
+
   it("only these: every tick can be taken back, and then nothing is created", async () => {
     render(<Setup />);
     await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));

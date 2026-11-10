@@ -292,7 +292,7 @@ function SearchOrder({
               className={`flex flex-wrap items-center gap-2 px-2 py-1.5 text-sm ${over === i && dragging !== ns ? "bg-surface" : ""} ${dragging === ns ? "opacity-60" : ""}`}
             >
               {/* Only the grip drags, so a press on the role or an arrow stays a press and the name can be selected. */}
-              {!touch && (
+              {!touch && order.length > 1 && (
                 <span
                   className="cursor-grab text-text-muted"
                   aria-hidden="true"
@@ -720,7 +720,7 @@ function TokenForm({
           <p className="text-xs text-text-muted">
             {selectedNs.length === 0
               ? "Tick the namespaces this token reads. Nothing else, whatever you join later."
-              : `${selectedNs.length} ticked, and nothing else, whatever you join later. Number 1 is searched first. ${touch ? "Use a row's arrows" : "Drag a row by its grip, or use its arrows,"} to change the order.`}
+              : `${selectedNs.length} ticked, and nothing else, whatever you join later. Number 1 is searched first.${selectedNs.length > 1 ? ` ${touch ? "Use a row's arrows" : "Drag a row by its grip, or use its arrows,"} to change the order.` : ""}`}
           </p>
         </fieldset>
       )}

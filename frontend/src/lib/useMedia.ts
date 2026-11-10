@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 /** Under Tailwind's `sm` breakpoint: a phone, where a toolbar holds one control. */
 export const PHONE_QUERY = "(max-width: 639px)";
 
-/** A touch screen: the token form's search order moves rows by arrows there, with no grip. */
+/** A touch screen: the primary pointer is a finger, not a mouse. */
 export const COARSE_POINTER = "(pointer: coarse)";
 
 /** Whether `query` matches, kept current as the viewport changes. */
