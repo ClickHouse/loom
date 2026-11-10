@@ -192,6 +192,30 @@ def test_an_uncited_fact_after_calls_that_found_nothing(ran: frozenset[str], exp
     assert got == expected
 
 
+@pytest.mark.parametrize(
+    ("returned", "failed"),
+    [
+        # An empty search beside counts that came back: the claim may rest on the counts.
+        (frozenset({"namespace.summary"}), False),
+        # An empty search beside a call that failed: the check cannot say.
+        (frozenset(), True),
+    ],
+)
+def test_an_empty_search_beside_other_data_or_a_failure_is_unchecked(
+    returned: frozenset[str], failed: bool
+) -> None:
+    got = rule.support_of(
+        [],
+        text="This namespace holds 1,204 memories.",
+        returned=returned,
+        failed=failed,
+        ran=returned | {"memory.search"},
+        citable=CITABLE,
+        no_data=NO_DATA,
+    )
+    assert got == "unchecked"
+
+
 def test_a_question_back_that_cites_each_match_is_supported() -> None:
     text = "Two match: [memory:deploy/staging@v2] and [memory:deploy/prod@v4]. Which one?"
     assert (

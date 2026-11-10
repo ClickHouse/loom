@@ -62,7 +62,8 @@ def support_of(
     - none: no text, or it cites nothing and is an abstention or made no citable call;
     - supported: a citation verified;
     - unsupported: a citation failed for a reason of its own, or it cites nothing although
-      a citable op's call found data, or ran and found nothing (a claim nothing backs);
+      a citable op's call found data, or ran and found nothing while no other call found
+      data or failed (a claim nothing backs);
     - unchecked: otherwise (its checks could not say, what it read has no citation form, or
       a call failed).
     """
