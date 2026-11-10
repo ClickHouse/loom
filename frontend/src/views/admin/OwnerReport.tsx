@@ -37,7 +37,7 @@ export function OwnerReportSection() {
       const r = await getOwnerReport(identity, userId.trim(), { signal: ctl.signal });
       if (!ctl.signal.aborted) setReport(r);
     } catch (e) {
-      if (!ctl.signal.aborted) setError(humanizeError(e));
+      if (!ctl.signal.aborted) setError(humanizeError(e, { read: true }));
     } finally {
       if (!ctl.signal.aborted) setBusy(false);
     }

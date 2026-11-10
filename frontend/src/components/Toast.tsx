@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { IconButton } from "./IconButton";
-import { ApiError } from "../lib/errors";
+import { ApiError, PUBLICATION_PENDING } from "../lib/errors";
 import { errorRequestId } from "../lib/format";
 
 /**
@@ -93,15 +93,16 @@ export function toast(msg: string, kind: ToastKind = "ok", opts: ToastOpts = {})
 export function toastError(context: string, err: unknown, opts: { read?: boolean } = {}): void {
   const rid = errorRequestId(err);
   const detail = rid ? { detail: `request id ${rid}` } : {};
+  // Not a failure, so no "<context>:" in front: the write committed and only the lists lag.
+  // Said before the wording loads, so a chunk that cannot load never turns it into "failed".
+  if (err instanceof ApiError && err.code === "PUBLICATION_PENDING") {
+    toast(PUBLICATION_PENDING, "info", { ...detail, durationMs: errorToastMs(PUBLICATION_PENDING) });
+    return;
+  }
   // The wording is a lazy chunk (the boot chunk's budget), loaded by the viewport soon
   // after paint; this import then resolves at once.
   import("../lib/errorWords")
-    .then(({ humanizeError, PUBLICATION_PENDING }) => {
-      // Not a failure, so no "<context>:" in front: it committed, the lists lag.
-      if (err instanceof ApiError && err.code === "PUBLICATION_PENDING") {
-        toast(PUBLICATION_PENDING, "info", detail);
-        return;
-      }
+    .then(({ humanizeError }) => {
       const msg = `${context}: ${humanizeError(err, { bare: true, read: opts.read })}`;
       toast(msg, "error", { ...detail, durationMs: errorToastMs(msg) });
     })

@@ -493,7 +493,7 @@ export function Documents() {
     const opened = ++openSeq.current;
     try {
       const docPromise = getKnowledge({ org: identity.org, namespace: identity.namespace }, r.source_uri).catch((e) => {
-        if (opened === openSeq.current) toastError("Open failed", e);
+        if (opened === openSeq.current) toastError("Open failed", e, { read: true });
         return null;
       });
       const blobPromise = r.has_blob
@@ -530,7 +530,7 @@ export function Documents() {
         else onMissing();
       })
       .catch((e) => {
-        if (!ac.signal.aborted) toastError("Open failed", e);
+        if (!ac.signal.aborted) toastError("Open failed", e, { read: true });
       });
   };
   // The deep-link effect, the rows and the passage panel call the latest render's handlers

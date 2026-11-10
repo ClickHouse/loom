@@ -198,7 +198,7 @@ function parseJsonObject(text: string, what: string): Record<string, unknown> {
   try {
     v = JSON.parse(text);
   } catch (e) {
-    throw new Error(`${what} is not valid JSON: ${humanizeError(e)}`);
+    throw new Error(`${what} is not valid JSON: ${humanizeError(e, { bare: true })}`);
   }
   if (!isRecord(v)) throw new Error(`${what} must be a JSON object`);
   return v;

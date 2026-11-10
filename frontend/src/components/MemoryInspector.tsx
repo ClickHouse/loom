@@ -2067,7 +2067,7 @@ function RenameForm({
       if (dryRun) setPreview(r);
       else onRenamed(r);
     } catch (e) {
-      toastError(`${dryRun ? "Preview" : "Rename"} failed`, e);
+      toastError(`${dryRun ? "Preview" : "Rename"} failed`, e, { read: dryRun });
     } finally {
       setBusy(null);
     }

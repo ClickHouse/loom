@@ -123,3 +123,11 @@ export async function apiErrorFromResponse(r: Response): Promise<ApiError> {
     retryAfter: Number(r.headers.get("Retry-After")) || 0,
   });
 }
+
+/** The line for a write that committed while only Loom's search copy of it lags
+ *  (`PUBLICATION_PENDING`, `server/core/pg_lease.py`). It names no verb (a delete answers it
+ *  too); the page may still show the old state, so it says what to do about that, and
+ *  nothing else: the server's words name its tables. Here, not in errorWords, so the toast
+ *  says it without the lazy wording chunk. */
+export const PUBLICATION_PENDING =
+  "Done, but lists and search have not caught up yet. Don't send it once more; reload in a moment to see the result.";

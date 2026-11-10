@@ -2,23 +2,18 @@
 // (docs/development/dashboard-design.md, errors). Kept out of lib/format.ts so the boot
 // chunk does not carry it: the toast viewport loads it soon after the shell paints, and
 // toastError falls back to its context alone if it cannot.
-import { ApiError } from "./errors";
+import { ApiError, PUBLICATION_PENDING } from "./errors";
 import { errorRequestId } from "./format";
 
 /** Sentences for the server's error codes (`server/core/errors.py` and the
  *  `HTTPException` details in `server/main.py`), kept only where the code says more than
  *  its category or status would. The server's own message rides along after the sentence
  *  (it states the cause): a sentence ending in ":" introduces it; one ending in "."
- *  precedes it. No sentence says to try again: `retryTail` owns that, from the body. */
-/** The write committed; only Loom's search copy of it lags (`server/core/pg_lease.py`). The
- *  page may still show the old state, so the line says what to do about that, and nothing
- *  else: the server's words name its tables. */
-export const PUBLICATION_PENDING =
-  "It was saved, but lists and search have not caught up yet. Don't send it once more; reload in a moment to see it.";
-
+ *  precedes it. No sentence says to try again: `retryTail` owns that, from the body and,
+ *  for the one code the dashboard makes itself, from the code. */
 export const ERROR_CODE_PREFIXES: Record<string, string> = {
   AUTH_INVALID: "Sign-in rejected:",
-  SIGNED_IN_ELSEWHERE: "You signed in afresh in another tab. Nothing was lost; this is safe to send once more.",
+  SIGNED_IN_ELSEWHERE: "You signed in afresh in another tab. Nothing was lost.",
   IDEMPOTENT_IN_PROGRESS: "This request is still running:",
   AUTH_INSUFFICIENT: "Your role doesn't allow this:",
   IDENTITY_INCOMPLETE: "This token is scoped — the request has to name the namespace:",
@@ -66,7 +61,7 @@ const UNVERIFIED_CODES = new Set(["AUTH_INSUFFICIENT", "POLICY_FORBIDDEN", "NAME
 const CATEGORY_SENTENCES: Record<string, string> = {
   auth: "Not allowed:",
   capacity: "Loom is busy:",
-  dependency: "A service Loom relies on didn't answer:",
+  dependency: "A service Loom relies on failed:",
   configuration: "This needs a change to Loom's setup:",
   internal: "Loom hit an internal error:",
 };
@@ -89,25 +84,29 @@ function sentenceForStatus(status: number): string {
 /** What to do next, from the body alone: whether resending can work and when. Silent when
  *  the server's own words already say it. */
 function retryTail(err: ApiError): string {
-  if (/\b(retry\w*|again|resend\w*)\b/i.test(err.serverMessage)) return "";
+  // Made by the dashboard (api.ts) before anything was sent: it carries no body.
+  if (err.code === "SIGNED_IN_ELSEWHERE") return "It is safe to send it once more.";
   const category = typeof err.detail.category === "string" ? err.detail.category : "";
   const retryable = err.detail.retryable;
+  // Busy or a dependency, yet not retryable: the server's mark for a write that may have
+  // landed before it failed (`handler_failure_detail`). It wins over a message that says to
+  // retry: the message was written for the error, the mark for this call.
+  if (retryable === false && err.detail.committed !== true && (category === "capacity" || category === "dependency"))
+    return "It may have been saved; check before trying again.";
+  if (/\b(retry\w*|again|resend\w*)\b/i.test(err.serverMessage)) return "";
   if (category === "configuration") return "Trying again won't help until that's changed.";
   const wait = Number(err.detail.retry_after_s ?? err.retryAfter);
   if (retryable === true) return wait > 0 ? `Try again in ${Math.ceil(wait)} s.` : "Try again in a moment.";
   // A body with no class (a proxy's answer) may still carry the header's wait.
   if (retryable === undefined && wait > 0) return `Try again in ${Math.ceil(wait)} s.`;
-  // Busy or a dependency, yet not retryable: the server's mark for a write that may have
-  // landed before it failed (`handler_failure_detail`), unless it says it did.
-  if (retryable === false && err.detail.committed !== true && (category === "capacity" || category === "dependency"))
-    return "It may have been saved; check before trying again.";
   return "";
 }
 
 function joinSentence(friendly: string, message: string): string {
   const msg = message.trim();
   if (!msg) return friendly.endsWith(":") ? friendly.slice(0, -1) + "." : friendly;
-  return `${friendly} ${msg}`;
+  // After a full stop the server's words start a sentence of their own.
+  return `${friendly} ${friendly.endsWith(".") ? asSentence(msg) : msg}`;
 }
 
 /** A server message set after a full stop: capitalised and closed. */

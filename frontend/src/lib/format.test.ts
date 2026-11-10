@@ -149,7 +149,7 @@ describe("humanizeError", () => {
           message: "namespace 'x' exceeded its rate limit",
           detail: { category: "capacity", retryable: true, retry_after_s: 3 },
         },
-        "Too many requests. namespace 'x' exceeded its rate limit. Try again in 3 s.",
+        "Too many requests. Namespace 'x' exceeded its rate limit. Try again in 3 s.",
       ],
       [
         "the wait comes from the Retry-After header when the body has none",
@@ -160,7 +160,7 @@ describe("humanizeError", () => {
           detail: { category: "dependency", retryable: true },
           retryAfter: 2,
         },
-        "A service Loom relies on didn't answer: the grant store did not answer. Try again in 2 s.",
+        "A service Loom relies on failed: the grant store did not answer. Try again in 2 s.",
       ],
       [
         "a refusal whose check could not run says so, not 'your role'",
@@ -170,7 +170,7 @@ describe("humanizeError", () => {
           message: "grants could not be read",
           detail: { category: "dependency", retryable: true },
         },
-        "Loom couldn't check your access just now. grants could not be read. Try again in a moment.",
+        "Loom couldn't check your access just now. Grants could not be read. Try again in a moment.",
       ],
       [
         "a real refusal names the role",
@@ -193,6 +193,16 @@ describe("humanizeError", () => {
         "Loom is busy right now. It may have been saved; check before trying again.",
       ],
       [
+        "a write the server marks unsafe to resend keeps that warning though its words say retry",
+        {
+          status: 503,
+          code: "BACKEND_UNAVAILABLE",
+          message: "the columns of t cannot be read yet; retry",
+          detail: { category: "dependency", retryable: false },
+        },
+        "A service Loom relies on failed: the columns of t cannot be read yet; retry. It may have been saved; check before trying again.",
+      ],
+      [
         "no retry tail when the server already says it",
         {
           status: 503,
@@ -200,7 +210,7 @@ describe("humanizeError", () => {
           message: "resending can extract the messages twice",
           detail: { category: "dependency", retryable: true },
         },
-        "A service Loom relies on didn't answer: resending can extract the messages twice",
+        "A service Loom relies on failed: resending can extract the messages twice",
       ],
       [
         "a migration not applied yet keeps the server's words and says retrying won't help",
@@ -233,7 +243,7 @@ describe("humanizeError", () => {
           message: "the write is committed; do not repeat it. Its ClickHouse rows follow shortly",
           detail: { category: "dependency", retryable: false, committed: true },
         },
-        "It was saved, but lists and search have not caught up yet. Don't send it once more; reload in a moment to see it.",
+        "Done, but lists and search have not caught up yet. Don't send it once more; reload in a moment to see the result.",
       ],
       [
         "a request still running names that, not a load problem",
@@ -248,7 +258,7 @@ describe("humanizeError", () => {
       [
         "a call raced by the same person's sign-in in another tab is safe to send once more",
         { status: 401, code: "SIGNED_IN_ELSEWHERE" },
-        "You signed in afresh in another tab. Nothing was lost; this is safe to send once more.",
+        "You signed in afresh in another tab. Nothing was lost. It is safe to send it once more.",
       ],
       [
         "a reused request key names the reuse, not 'already done'",
@@ -289,7 +299,7 @@ describe("humanizeError", () => {
           message: "writes against it are queued",
           detail: { category: "capacity", retryable: true },
         }),
-      ).toBe("Loom is busy right now. writes against it are queued. Try again in a moment.");
+      ).toBe("Loom is busy right now. Writes against it are queued. Try again in a moment.");
     });
 
     it("leaves retry advice to the tail: no code sentence says to try again", () => {

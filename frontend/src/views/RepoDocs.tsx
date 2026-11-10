@@ -78,7 +78,7 @@ export function RepoDocsList({
       } catch (e) {
         if (!live()) return;
         if (e instanceof ApiError && (e.status === 403 || e.status === 401)) setState({ kind: "refused" });
-        else setState({ kind: "error", message: humanizeError(e) });
+        else setState({ kind: "error", message: humanizeError(e, { read: true }) });
         return;
       }
       if (rows.length === 0) {

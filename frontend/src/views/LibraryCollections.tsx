@@ -287,7 +287,7 @@ export function LibraryCollections({
       {/* The namespace's documents still show: a note, not a second alert beside the list's. */}
       {!!error && (
         <p className="flex flex-wrap items-center gap-2 text-xs text-danger">
-          <span>Couldn't load collections: {humanizeError(error)}</span>
+          <span>Couldn't load collections: {humanizeError(error, { bare: true, read: true })}</span>
           <Button type="empty" htmlType="button" onClick={() => reload()}>
             Load collections again
           </Button>

@@ -1974,7 +1974,7 @@ export function HealthTab({ id }: { id: CodeId }) {
     <div className="space-y-6">
       {!!error && (
         <div className="text-xs text-text-muted" role="status">
-          {`Couldn't refresh the index status (${humanizeError(error)}); showing the last read.`}
+          {`Couldn't refresh the index status (${humanizeError(error, { bare: true, read: true })}); showing the last read.`}
         </div>
       )}
       <div className="text-xs text-text-muted">

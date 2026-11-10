@@ -37,3 +37,16 @@ describe("error toasts", () => {
     expect(calls).toEqual([]);
   });
 });
+
+describe("inline error lines", () => {
+  // A line that brings its own lead-in ("Couldn't load collections: …") words the error
+  // bare, or it reads "Couldn't load collections: Not found: …".
+  it("word the error bare after their own lead-in", () => {
+    const calls = Object.entries(SOURCES).flatMap(([path, text]) =>
+      [...text.matchAll(/[:(]\s*\$?\{humanizeError\(([^)]*)\)/g)]
+        .filter((m) => !/bare: true/.test(m[1]))
+        .map((m) => `${path}:${text.slice(0, m.index).split("\n").length}`),
+    );
+    expect(calls).toEqual([]);
+  });
+});

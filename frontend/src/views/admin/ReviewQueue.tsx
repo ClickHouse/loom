@@ -496,7 +496,7 @@ function ConflictsPanel() {
       if (!sameVisit) return;
       setReason("");
     } catch (e) {
-      toastError("Couldn't load more", e, { read: true });
+      toastError("Couldn't resolve the conflict", e);
     } finally {
       if (visit.current === myVisit) setBusy(false);
     }
@@ -1044,7 +1044,7 @@ function AutoResolvedPanel() {
       setRows((rs) => [...(rs ?? []), ...page.rows]);
       setCursor(page.next_cursor);
     } catch (e) {
-      if (mounted.current) toastError("Failed", e);
+      if (mounted.current) toastError("Couldn't load more", e, { read: true });
     } finally {
       loadingRef.current = false;
       if (mounted.current) setLoadingMore(false);

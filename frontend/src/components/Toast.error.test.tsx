@@ -65,7 +65,7 @@ describe("toastError", () => {
     );
     expect(
       await screen.findByText(
-        "It was saved, but lists and search have not caught up yet. Don't send it once more; reload in a moment to see it.",
+        "Done, but lists and search have not caught up yet. Don't send it once more; reload in a moment to see the result.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Delete failed/)).toBeNull();

@@ -93,7 +93,7 @@ export function useTrackerSources(org: string): {
       } catch (e) {
         if (!live()) return;
         if (isOpAbsent(e)) setStatus({ kind: "absent" });
-        else setStatus({ kind: "error", message: humanizeError(e) });
+        else setStatus({ kind: "error", message: humanizeError(e, { read: true }) });
       }
     },
     [org, may, nonce],

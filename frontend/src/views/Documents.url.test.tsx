@@ -123,7 +123,7 @@ describe("Library keeps the open document in its URL", () => {
     useStore.getState().bootView("knowledge");
     render(<Documents />);
     await settle();
-    expect(toastError).toHaveBeenCalledWith("Open failed", expect.any(Error));
+    expect(toastError).toHaveBeenCalledWith("Open failed", expect.any(Error), { read: true });
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(new URLSearchParams(location.search).get("doc")).toBe("docs/late.md");
   });

@@ -67,7 +67,7 @@ export function SessionBriefPanel({
     setError(null);
     getBrief({ org, namespace }, head.brief_key, { revision, full: true })
       .then((b) => live && setBody(b.found ? b : null))
-      .catch((e) => live && setError(humanizeError(e)));
+      .catch((e) => live && setError(humanizeError(e, { read: true })));
     return () => {
       live = false;
     };
