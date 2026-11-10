@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from server.auth.context import delegated_reach, named_claims, readable_named_claims
 from server.auth.personal_namespace import derive_personal_slug
+from server.auth.sharing import is_collection
 from server.core.errors import BackendUnavailableError
 from server.identity.app import caller_defaults
 from server.operations.base import Role
@@ -117,7 +118,8 @@ async def default_and_readable(auth: Any, org: str) -> tuple[str, list[str]]:
     so the default is that name, unless the token claims one. Any other mode
     takes the first memory namespace the gate lets the token WRITE, else the
     first it lets it READ, else "" (its calls must name a namespace), looking
-    at the namespace a delegated `*` token was made to save to, the home
+    at a list token's recorded `saves_to` and its list alone; for any other
+    token at the namespace a delegated `*` token was made to save to, the home
     subject's saved switcher pick, then the token's claims, then the home's
     grants, ranked (`_pick_default`).
 
@@ -150,38 +152,75 @@ async def _pick_default(
     auth: Any, org: str, home: str, claimed: list[str], admits: Admits, extra: list[str]
 ) -> str:
     """The first memory namespace `admits` lets the token WRITE, else the
-    first it may READ, else "". In order: the namespace a delegated `*` token
-    was made to save to (`_minted_home`), the home's saved switcher pick, the
-    token's claims (the home's own first), the home's grants ranked by role
-    tier then recency (its own first), then `extra`. Every step asks the
-    same `admits`, so no step can pick what another would refuse."""
+    first it may READ, else "". A token minted with a `saves_to` claim asks
+    only that namespace, then its own list in order: its owner's saved pick
+    never moves it, and the gate admits it nowhere else. Any other token, in
+    order: the namespace a delegated `*` token was made to save to
+    (`minted_home`), the home's saved switcher pick, the token's claims (the
+    home's own first), the home's grants ranked by role tier then recency (its
+    own first), then `extra`. Every step asks the same `admits`, so no step
+    can pick what another would refuse. A collection is shared reading: a
+    delegated token never saves there unasked, so it is no WRITER step's pick,
+    and at the READ step one counts only while the token may not write it (as
+    at mint, `token_saves_to`). A person's own sign-in may work in one."""
     from server.core.ch import get_client
 
-    ch = get_client()
     kinds = await _kinds_or_empty(org)
+    delegated = bool(auth and auth.creator)
+
+    def memory(names: list[str]) -> list[str]:
+        return [ns for ns in dict.fromkeys(names) if ns and is_memory_home(kinds, ns)]
+
+    def writable_homes(names: list[str]) -> list[str]:
+        return [ns for ns in names if not (delegated and is_collection(ns))]
+
+    async def read_home(names: list[str]) -> str:
+        for ns in names:
+            if not await admits(ns, Role.VIEWER):
+                continue
+            if delegated and is_collection(ns) and await admits(ns, Role.WRITER):
+                continue  # a default there would take its writes
+            return ns
+        return ""
+
+    recorded = auth.saves_to if auth else ""
+    if recorded:
+        # A token with the claim lists no `*` (`delegate`, `token_saves_to`).
+        own = memory([recorded, *auth.namespaces])
+        return await _first_admitted(writable_homes(own), admits, Role.WRITER) or await read_home(
+            own
+        )
+    ch = get_client()
     saved = await caller_defaults.saved_default(org, home, ch=ch)
-    early = [_minted_home(auth), saved, *_owner_first(claimed, home)]
-    early = [ns for ns in dict.fromkeys(early) if ns and is_memory_home(kinds, ns)]
-    pick = await _first_admitted(early, admits, Role.WRITER)
+    early = memory([minted_home(auth), saved, *_owner_first(claimed, home)])
+    pick = await _first_admitted(writable_homes(early), admits, Role.WRITER)
     if pick:
         return pick
     rows = await caller_defaults.ranked_grants(org, await _ranked_subjects(auth, org, home), ch=ch)
-    late = _owner_first([str(r.get("namespace") or "") for r in rows or []], home) + extra
-    late = [ns for ns in dict.fromkeys(late) if ns and is_memory_home(kinds, ns)]
-    return await _first_admitted(late, admits, Role.WRITER) or await _first_admitted(
-        early + late, admits, Role.VIEWER
+    late = memory(_owner_first([str(r.get("namespace") or "") for r in rows or []], home) + extra)
+    return await _first_admitted(writable_homes(late), admits, Role.WRITER) or await read_home(
+        early + late
     )
 
 
-def _minted_home(auth: Any) -> str:
+def minted_home(auth: Any) -> str:
     """Where a delegated `*` token was made to save: the namespace its claim
     names before `*` (as `service_accounts.create` mints a token with a home,
     and `admin/token.mint` when asked for that order). "" for any other token:
-    a bare `*` follows its owner's saved pick, and a list token keeps the order
-    below. Rolling upgrades: docs/architecture/rolling-upgrades.md, rule 35."""
+    a bare `*` follows its owner's saved pick, and a list token saves where its
+    `saves_to` claim says (`_pick_default`). A `*` token that may no longer
+    write its home falls back through the saved pick; a list token with the
+    claim does not. Rolling upgrades: docs/architecture/rolling-upgrades.md,
+    rule 35."""
     if auth is None or not auth.creator:  # auth off, or not a delegated token
         return ""
-    namespaces = auth.namespaces
+    return star_home(list(auth.namespaces))
+
+
+def star_home(namespaces: list[str]) -> str:
+    """The namespace a `*` claim names before `*`, "" for none: where such a token
+    saves when it may write there, also once a narrower parent turns the `*` into a
+    list. A mint refuses a collection there (`token_saves_to.saves_to_target`)."""
     return namespaces[0] if "*" in namespaces and namespaces[0] != "*" else ""
 
 
@@ -269,4 +308,6 @@ __all__ = [
     "home_namespace",
     "home_subject",
     "is_memory_home",
+    "minted_home",
+    "star_home",
 ]

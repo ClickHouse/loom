@@ -75,6 +75,9 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
                 None,
             )
 
+        async def query_all(self, sql, params=None):
+            return [{"namespace": "code-repo", "kind": "code"}] if "kind" in sql else []
+
         async def insert(self, table, rows, **kw):
             assert table == "loom.service_accounts"
             saved.extend(rows)
@@ -98,11 +101,13 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     nc.reset()
 
 
-def _mint(client: TestClient, headers, namespaces, roles=None, name=None):
+def _mint(client: TestClient, headers, namespaces, roles=None, name=None, saves_to=None):
     # A name is one live token's; each mint here takes a fresh one.
     body = {"name": name or f"t-{uuid.uuid4().hex[:8]}", "org": ORG, "namespaces": namespaces}
     if roles is not None:
         body["roles"] = roles
+    if saves_to is not None:
+        body["saves_to"] = saves_to
     return client.post("/v1/admin/token.mint", json=body, headers=headers)
 
 
@@ -406,7 +411,7 @@ def test_a_mint_refused_for_an_unread_code_registry_saves_no_token(
     from server.code.domain.index import repos
     from server.identity.app import namespace_kinds
 
-    async def kinds(org: str) -> dict[str, str]:
+    async def kinds(org: str, **_k: object) -> dict[str, str]:
         return {}
 
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
@@ -416,3 +421,54 @@ def test_a_mint_refused_for_an_unread_code_registry_saves_no_token(
     with pytest.raises(repos.RegistryUnread):  # the app's handler answers it 503
         _mint(client, _bearer(["org_admin"]), [PRIV], roles=["viewer"])
     assert client.saved == []
+
+
+def test_saves_to_is_a_writable_memory_namespace_of_the_list_and_answered(client) -> None:
+    from server.core.principals import COLLECTION_PREFIX
+    from server.identity.app import namespace_kinds
+
+    namespace_kinds.reset_cache()
+    client.grants.update(
+        {(ORG, "team", "ops@x"): Role.WRITER, (ORG, "code-repo", "ops@x"): Role.WRITER}
+    )
+    headers = _bearer(["org_admin"])
+    r = _mint(client, headers, ["clickgap-public", "team"], saves_to="team")
+    assert r.status_code == 200 and r.json()["saves_to"] == "team"
+    assert client.saved[-1]["saves_to"] == "team"
+    # Unset: the first writable memory entry; a repository is never a save target.
+    r = _mint(client, headers, ["code-repo", "team"])
+    assert r.json()["saves_to"] == "team"
+    for namespaces, saves_to in ((["code-repo", "team"], "code-repo"), (["team"], "other")):
+        r = _mint(client, headers, namespaces, saves_to=saves_to)
+        assert r.status_code == 422 and saves_to in r.json()["detail"]["message"]
+    # Beside `*`, the name before `*` is the record: no saves_to.
+    r = _mint(client, headers, ["team", "*"], saves_to="team")
+    assert r.status_code == 422
+    # A list token that writes only a collection records no target.
+    shared = f"{COLLECTION_PREFIX}shared"
+    client.grants[(ORG, shared, "ops@x")] = Role.WRITER
+    r = _mint(client, headers, [shared])
+    assert r.status_code == 200, r.json()
+    assert r.json()["saves_to"] == ""
+    # A list token that only reads records no target, and the answer names none.
+    r = _mint(client, headers, ["clickgap-public", "team"], roles=["viewer"])
+    assert r.status_code == 200, r.json()
+    assert r.json()["saves_to"] == ""
+    # A `*` token's home is answered only while it may write there; else it follows the
+    # pick, which moves, so the answer names none.
+    assert _mint(client, headers, ["team", "*"]).json()["saves_to"] == "team"
+    assert _mint(client, headers, ["*"]).json()["saves_to"] == ""
+    client.grants[(ORG, "docs", "ops@x")] = Role.VIEWER
+    r = _mint(client, headers, ["docs", "*"], roles=["viewer"])
+    assert r.status_code == 200, r.json()
+    assert r.json()["saves_to"] == ""
+    # A repository before `*` is never where its calls land.
+    assert _mint(client, headers, ["code-repo", "*"]).json()["saves_to"] == ""
+    # Nor is a collection: it is shared reading, never a token's home, so the mint refuses it.
+    col = f"{COLLECTION_PREFIX}team"
+    client.grants[(ORG, col, "ops@x")] = Role.WRITER
+    saved = len(client.saved)
+    r = _mint(client, headers, [col, "*"])
+    assert r.status_code == 422 and "collection" in r.json()["detail"]["message"]
+    assert len(client.saved) == saved
+    namespace_kinds.reset_cache()

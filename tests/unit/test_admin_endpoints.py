@@ -281,6 +281,9 @@ def test_token_mint_happy_path_when_auth_not_required(
                 return {"v": time.time_ns()}
             return None
 
+        async def query_all(self, sql: str, params: object = None) -> list[dict]:
+            return []  # the directory holds no kinds: every namespace is memory
+
         async def insert(self, table: str, rows: list[dict], **kw: object) -> None:
             saved.extend(rows)
 
@@ -309,6 +312,15 @@ def test_token_mint_happy_path_when_auth_not_required(
     assert body["roles"] == ["writer"] and body["ttl_seconds"] == 90 * 86400
     assert body["subject"].startswith("sa:alice-bot-")
     assert [row["sa_subject"] for row in saved] == [body["subject"]]
+    # A list token saves to its one writable entry, recorded on its row.
+    assert body["saves_to"] == saved[0]["saves_to"] == "personal-alice"
+    # A `*` token minted with auth off has no creator, so no home before `*`: it names none.
+    r = client.post(
+        "/v1/admin/token.mint",
+        json={"name": "alice-all", "org": "clickhouse", "namespaces": ["personal-alice", "*"]},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["saves_to"] == ""
 
 
 def test_customer_list_endpoint_removed(client: TestClient) -> None:

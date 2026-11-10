@@ -138,6 +138,10 @@ class TokenMintInput(BaseModel):
     consumer: str = Field("", max_length=64)
     # None: 90 days; 0: never expires.
     ttl_seconds: int | None = Field(None, ge=0, le=3650 * 86400)
+    # A token without `*`: where calls that name no namespace save, a memory namespace it
+    # lists and may write (422 otherwise); None: the parent token's when it may write
+    # there, else the first such one. Not beside `*`.
+    saves_to: str | None = Field(None, max_length=256)
 
     @model_validator(mode="after")
     def _namespaces_or_ns_roles(self) -> TokenMintInput:
@@ -407,5 +411,8 @@ class TokenMintOutput(BaseModel):
     ns_roles: dict[str, str] | None = None
     consumer: str = ""
     ttl_seconds: int | None  # None: never expires
+    # The namespace the token names for its saves while it may write there: a list token's
+    # recorded `saves_to`, or a `*` token's memory namespace before `*`; "" otherwise.
+    saves_to: str = ""
     # Body fields this route ignores (`subject`, `is_service_account`).
     ignored_args: list[str] = Field(default_factory=list)

@@ -136,6 +136,7 @@ def revoked_row(row: dict[str, Any], *, revoked_at: datetime, revoked_by: str) -
         "inherit_creator_grants": row["inherit_creator_grants"],
         "ns_roles": row["ns_roles"],
         "lineage": row["lineage"],
+        "saves_to": row["saves_to"],
     }
 
 

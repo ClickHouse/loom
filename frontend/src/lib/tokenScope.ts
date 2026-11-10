@@ -5,13 +5,15 @@
 // A token reads either everything its owner belongs to (a `*` claim: every namespace
 // and repository, now and after they join more, at their own role in each) or exactly
 // the namespaces it lists, in that order. A `*` token saves to the namespace named
-// before `*`; a list follows the order in `server/identity/app/caller_home.py`.
+// before `*`; a list saves where its mint recorded (`saves_to`,
+// `server/identity/app/token_saves_to.py`).
 //
 // A restricted repository is read only by a token that names it AND whose own subject
 // holds a direct grant; the mint writes that grant for each one named. The page lists
 // the restricted repositories a token would not read before the click instead of after
 // the 403.
 import type { CodeRepoSummary, MyNamespaceEntry, TokenEntry } from "../api";
+import { isCollectionName } from "./namespace";
 
 export interface ScopeRepo {
   repo: string;
@@ -69,7 +71,7 @@ export function everythingScope(mine: MyNamespaceEntry[] | null, repos: RepoFact
   };
 }
 
-type TokenClaim = Pick<TokenEntry, "namespaces" | "roles" | "ns_roles">;
+type TokenClaim = Pick<TokenEntry, "namespaces" | "roles" | "ns_roles" | "saves_to">;
 
 const WRITES = new Set(["writer", "admin"]);
 
@@ -80,11 +82,16 @@ export function describeTokenScope(
   {
     yours = true,
     writable,
+    writesAny = writable,
     label = (n) => n,
   }: {
     yours?: boolean;
-    /** The memory namespaces the viewer may write; unknown when absent. */
+    /** The memory namespaces the viewer may write that a token saves to (no collection);
+     *  unknown when absent. */
     writable?: readonly string[];
+    /** Every namespace the viewer may write, a collection included (a call may name one);
+     *  `writable` when absent. */
+    writesAny?: readonly string[];
     /** A namespace in words, e.g. a repository's as "repo · branch". */
     label?: (ns: string) => string;
   } = {},
@@ -100,11 +107,15 @@ export function describeTokenScope(
     // It writes through its owner's grants and its own one role: either one short of
     // writer, and it only reads.
     const tokenWrites = (t.roles || []).some((r) => WRITES.has(r));
-    if (!tokenWrites || (yours && writable?.length === 0)) return `${reads} · read-only`;
-    const pick = yours ? "the namespace you pick in Loom" : "the namespace its owner picks in Loom";
-    // Its home counts only while its owner may write there; else it follows the pick.
-    const saves = home && (!yours || !writable || writable.includes(home)) ? home : pick;
-    return `${reads} · saves to ${saves}`;
+    if (!tokenWrites || (yours && writesAny?.length === 0)) return `${reads} · read-only`;
+    // Its owner writes only namespaces a token never saves to unasked: a call may name one.
+    if (yours && writable?.length === 0) return `${reads} · saves nowhere by default`;
+    // Its home counts only while its owner may write there, and never a collection (shared
+    // reading: the mint refuses one); else it follows the pick (the server skips a picked
+    // collection too, which this line does not name).
+    if (home && !isCollectionName(home) && (!yours || !writable || writable.includes(home)))
+      return `${reads} · saves to ${home}`;
+    return `${reads} · ${whereYouWork(yours)}`;
   }
   const roles = t.ns_roles && Object.keys(t.ns_roles).length > 0 ? t.ns_roles : null;
   const distinct = new Set(ns.map((n) => roles?.[n] ?? ""));
@@ -112,7 +123,28 @@ export function describeTokenScope(
     roles && distinct.size > 1
       ? ns.map((n) => `${label(n)} (${roles[n]})`).join(", ")
       : `${ns.map(label).join(", ")}${roles ? ` (${roles[ns[0]]})` : ""}`;
-  // Where a list saves can follow its owner's pick, so the row names no namespace.
-  const writes = roles ? ns.some((n) => WRITES.has(roles[n] ?? "")) : (t.roles || []).some((r) => WRITES.has(r));
+  const writesIn = (n: string) => (roles ? WRITES.has(roles[n] ?? "") : (t.roles || []).some((r) => WRITES.has(r)));
+  const writes = ns.some(writesIn);
+  if (t.saves_to) {
+    // Recorded at mint, where the token could write. It writes through its owner's grants:
+    // once the owner may not write there, its calls land in the first memory namespace of
+    // its list the owner may write, never a collection (`caller_home._pick_default`), or
+    // nowhere.
+    if (!yours || !writable || writable.includes(t.saves_to))
+      return `reads only ${listed} · saves to ${label(t.saves_to)}`;
+    const next = ns.find((n) => writesIn(n) && writable.includes(n));
+    const lost = `can't write to ${label(t.saves_to)}`;
+    if (next) return `reads only ${listed} · saves to ${label(next)} now; ${lost}`;
+    // Still writes a listed namespace a call may name (a collection), or nothing at all.
+    const still = ns.some((n) => writesIn(n) && writesAny?.includes(n));
+    return `reads only ${listed} · ${still ? "saves nowhere by default now" : "read-only now"}; ${lost}`;
+  }
+  // No recorded target: minted before tokens recorded one (where it saves can follow its
+  // owner's pick), or one whose only writable entries are collections (a call names where it
+  // saves). The line names no namespace for either.
   return `reads only ${listed}${writes ? "" : " · read-only"}`;
 }
+
+// A token that records no target saves where its owner works on the dashboard.
+const whereYouWork = (yours: boolean) =>
+  `saves to ${yours ? "the namespace you pick in Loom" : "the namespace its owner picks in Loom"}`;

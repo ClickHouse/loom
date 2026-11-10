@@ -258,6 +258,27 @@ def test_token_create_sends_the_namespaces_in_flag_order(wire) -> None:
     ]
 
 
+def test_token_create_saves_to_is_the_list_target_or_the_name_before_star(wire) -> None:
+    argv = ["token", "create", "--name", "ci", "--namespace", "docs", "--namespace", "mine"]
+    assert cli.main([*argv, "--saves-to", "mine"]) == 0
+    assert wire.seen[0][2]["namespaces"] == ["docs", "mine"]
+    assert wire.seen[0][2]["saves_to"] == "mine"
+    wire.seen.clear()
+    # A `*` token records it as the namespace named before `*`.
+    assert cli.main(["token", "create", "--saves-to", "mine"]) == 0
+    assert wire.seen[0][2] == {"namespaces": ["mine", "*"], "ttl_days": None}
+    wire.seen.clear()
+    star = ["token", "create", "--namespace", "notes", "--namespace", "*", "--namespace", "mine"]
+    assert cli.main([*star, "--saves-to", "mine"]) == 0
+    assert wire.seen[0][2]["namespaces"] == ["mine", "notes", "*"]
+    assert "saves_to" not in wire.seen[0][2]
+    wire.seen.clear()
+    # A role named for it is moved with it, so the server still refuses a role beside `*`.
+    roled = ["token", "create", "--namespace-role", "mine=viewer", "--namespace", "*"]
+    assert cli.main([*roled, "--saves-to", "mine"]) == 0
+    assert wire.seen[0][2]["namespaces"] == [{"namespace": "mine", "role": "viewer"}, "*"]
+
+
 def test_token_list_and_revoke(wire) -> None:
     wire.body = {"rows": []}
     cli.main(["token", "list"])

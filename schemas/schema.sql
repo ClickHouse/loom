@@ -3774,7 +3774,8 @@ CREATE TABLE IF NOT EXISTS loom.service_accounts
     `client` LowCardinality(String) DEFAULT '',
     `inherit_creator_grants` Bool DEFAULT true,
     `ns_roles` String DEFAULT '{}',
-    `lineage` Array(String) DEFAULT []
+    `lineage` Array(String) DEFAULT [],
+    `saves_to` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY org

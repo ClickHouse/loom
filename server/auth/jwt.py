@@ -151,6 +151,9 @@ class AuthInfo:
     parent_subjects: tuple[str, ...] = ()
     parent_iats: tuple[int, ...] = ()
     creator: str = ""
+    # `saves_to` claim: where a list token's calls that name no namespace save,
+    # chosen at mint and read by `caller_home._pick_default`; '' = none recorded.
+    saves_to: str = ""
     # `sid` claim: the sign-in session (server/auth/oauth.py) an hour-long
     # access token belongs to. Revoking it ends every token of the session;
     # '' = a token minted outside a sign-in session.
@@ -251,6 +254,7 @@ def mint_token(
     parent_subjects: list[str] | None = None,
     parent_iats: list[int] | None = None,
     creator: str | None = None,
+    saves_to: str | None = None,
     issued_at: int | None = None,
 ) -> str:
     """Mint a JWT for service accounts, user onboarding, and tests.
@@ -271,7 +275,9 @@ def mint_token(
     verifiers pick the matching key during signing-key rotation.
     `parents` / `parent_subjects` / `parent_iats` / `creator` are the delegation claims
     `delegation.delegate` computes; a token minted from another token gets
-    them from there. `issued_at` (unix seconds; default now) is the `iat`:
+    them from there. `saves_to` is the namespace a list token saves to when a
+    call names none (`token_saves_to.saves_to_target`). `issued_at` (unix
+    seconds; default now) is the `iat`:
     a path that read the revocations before minting passes the time it took
     before that read, so a revocation that landed after it still postdates
     the token.
@@ -330,6 +336,8 @@ def mint_token(
         payload["parent_iats"] = list(parent_iats)
     if creator:
         payload["creator"] = creator
+    if saves_to:
+        payload["saves_to"] = saves_to
     if ttl_seconds is not None:
         payload["exp"] = now + ttl_seconds
     if secret is not None:
@@ -435,6 +443,7 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         parent_subjects=tuple(_str_list(decoded, "parent_subjects")),
         parent_iats=tuple(_parent_iats(decoded)),
         creator=_creator_claim(decoded),
+        saves_to=_optional_str_claim(decoded, "saves_to"),
         session_id=_optional_str_claim(decoded, "sid"),
         first_party=_bool_claim(decoded, "fps"),
         issued_at=_iat_of(decoded),
@@ -483,6 +492,7 @@ _NOT_FOR_END_USERS = (
     "read_scope",
     "read_user_id",
     "creator",
+    "saves_to",
     "parents",
 )
 

@@ -9,8 +9,9 @@ hundreds of ClickHouse statements and seconds of reads.
 
 Fail-open: an org whose directory cannot be read has no kinds but its configured
 repositories', and a namespace without a kind row counts as memory — the sweep can
-only narrow when the directory or the repository config says so. The cache mirrors
-`namespace_classification.restricted_set`: `_TTL_S` seconds per org.
+only narrow when the directory or the repository config says so. A check that must
+not pass on a guess (a token's mint-time save target) asks `fail_closed`: a 503. The
+cache mirrors `namespace_classification.restricted_set`: `_TTL_S` seconds per org.
 """
 
 from __future__ import annotations
@@ -18,6 +19,8 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Iterable
+
+from server.core.errors import BackendUnavailableError
 
 log = logging.getLogger(__name__)
 
@@ -38,9 +41,16 @@ def configured_kinds(org: str) -> dict[str, str]:
     return {r.namespace: "code" for r in config_entries() if r.org == org}
 
 
-async def kind_map(org: str) -> dict[str, str]:
+def _unreadable() -> BackendUnavailableError:
+    return BackendUnavailableError(
+        "namespace kinds could not be read; retry shortly", operation="kind_map"
+    )
+
+
+async def kind_map(org: str, *, fail_closed: bool = False) -> dict[str, str]:
     """`{namespace: kind}` for `org`, from the directory over `configured_kinds`; the
-    configured kinds alone when the directory is unreadable."""
+    configured kinds alone when the directory is unreadable, or, with `fail_closed`
+    (a check that must not pass on a guess), BackendUnavailableError."""
     now = time.monotonic()
     hit = _cache.get(org)
     if hit is not None and hit[0] > now:
@@ -49,6 +59,9 @@ async def kind_map(org: str) -> dict[str, str]:
 
     client = get_client()
     if getattr(client, "_client", "absent") is None:
+        # No connection yet: as unreadable as a failed read.
+        if fail_closed:
+            raise _unreadable()
         return configured_kinds(org)
     try:
         rows = await client.query_all(
@@ -59,7 +72,9 @@ async def kind_map(org: str) -> dict[str, str]:
             """,
             params={"org": org},
         )
-    except Exception as e:  # noqa: BLE001 — fail open: no kinds, no narrowing
+    except Exception as e:  # fail open (no kinds, no narrowing) unless the caller fails closed
+        if fail_closed:
+            raise _unreadable() from e
         if hit is not None:
             log.warning(
                 "namespace kind lookup failed for org %s; serving the last snapshot: %s", org, e

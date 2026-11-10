@@ -115,11 +115,27 @@ async def _token(args: argparse.Namespace) -> Any:
             return await agent.account.tokens()
         if args.action == "revoke":
             return await agent.account.revoke_token(args.name)
+        entries, saves_to = _token_target(args.entries or ["*"], args.saves_to)
         return await agent.account.create_token(
-            args.entries or "*", name=args.name, ttl_days=args.ttl_days
+            entries, name=args.name, ttl_days=args.ttl_days, saves_to=saves_to
         )
     finally:
         await agent.close()
+
+
+def _token_target(entries: list[Any], saves_to: str | None) -> tuple[Any, str | None]:
+    """The namespaces and `saves_to` a `token create` sends. A `*` token records
+    where it saves as the namespace named before `*`, so `--saves-to` moves that
+    name to the front; a list token sends it as `saves_to`."""
+    names = [e["namespace"] if isinstance(e, dict) else e for e in entries]
+    if "*" not in names:
+        return entries, saves_to
+    if saves_to:
+        # Moved, not rewritten: a role named for it stays, so the server still refuses a role
+        # beside "*" rather than mint the namespace at the caller's own role.
+        first = [e for e, n in zip(entries, names, strict=True) if n == saves_to] or [saves_to]
+        entries = [*first, *(e for e, n in zip(entries, names, strict=True) if n != saves_to)]
+    return (entries if entries != ["*"] else "*"), None
 
 
 def _role_entry(value: str) -> dict[str, str]:
@@ -139,6 +155,7 @@ namespace save (`saves_to`).
   loom token create                                  # everything you belong to
   loom token create --name ci --namespace-role support=writer --namespace docs
   loom token create --name nightly --namespace support --ttl-days 0   # never expires
+  loom token create --name notes --namespace handbook --namespace mine --saves-to mine
   loom token list
   loom token revoke --name ci
 """
@@ -181,6 +198,13 @@ def _token_parser(sub: Any) -> None:
         metavar="NS",
         help="a namespace at the most your sign-in can give there (repeatable); '*' reads "
         "everything you belong to, the default",
+    )
+    create.add_argument(
+        "--saves-to",
+        metavar="NS",
+        help="where calls that name no namespace save: a memory namespace it may write "
+        "(default: the parent token's when it may write there, else the first; with '*', "
+        "where you work unless named)",
     )
     create.add_argument(
         "--ttl-days", type=int, default=None, help="days it lives (default 90; 0: never expires)"

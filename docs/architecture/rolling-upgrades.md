@@ -385,8 +385,8 @@ schema. These rules keep that safe. The operator procedure is in
     step on N, so a step resumed across builds submits its mutation again; the
     statements are idempotent. No gate holds the rollout, and the mixed-version gate
     does not check this rule.
-35. **One token mint** (`service_accounts.create`, `caller_home._minted_home`,
-    `me_service_accounts.dev_caller`, `admin_routes.admin_token_mint`).
+35. **One token mint** (`service_accounts.create`, `caller_home.minted_home`,
+    `token_saves_to`, `me_service_accounts.dev_caller`, `admin_routes.admin_token_mint`).
     - _Where a token saves._ N sends a delegated token's unaddressed calls to the
       namespace its claim names before `*` when it may write there; N-1 sends them to the
       owner's saved pick, as for a bare `*` token. A token of that shape (one from
@@ -395,16 +395,34 @@ schema. These rules keep that safe. The operator procedure is in
       builds serve, depending on the replica; both are namespaces it may write, and the
       split ends with the rollout. After a rollback such a token follows the pick for
       the rest of its life.
+    - _Where a list token saves_ (`saves_to` claim and `loom.service_accounts.saves_to`,
+      migration `093_service_account_saves_to.sql`). N records the list token's target in
+      the token and its row, and sends its unaddressed calls there, then down its own list,
+      never to the owner's saved pick. N-1 ignores the claim: on an N-1 replica the token
+      follows the saved pick, as every list token did before, until the rollout ends. A
+      list mint N-1 serves drops `saves_to` (both mint routes ignore an unknown field) and
+      mints a token without the claim, which follows the saved pick for its life;
+      `service_accounts.create` answers where it saves under that rule, and
+      `admin/token.mint` answers no `saves_to`. A `*` token's home stays the name before
+      `*`, and one that may no longer write there still falls back through the saved
+      pick. On N a delegated token, with the claim or without, never saves to a collection
+      unasked (one it may only read can still be its default for reads,
+      `caller_home._pick_default`): a list token whose only writable entry is a collection
+      saves there by default on N-1 and nowhere by default on N, so its calls name where
+      they save. N-1 revoking a row writes `saves_to` empty: a revoked token saves nowhere.
     - _Mints refused by the other build, before anything is saved._ N-1 refuses `*` in a
       list, `namespaces: "*"` or none at all (`create_token()`, `loom token create`
       without `--namespace`) and a mint without a name (the dashboard's form with its
       Name left empty, `loom token create` without `--name`). N has no
-      `/v1/me/setup/mcp_config`, which N-1's dashboard calls. A retry once the rollout
-      ends works.
+      `/v1/me/setup/mcp_config`, which N-1's dashboard calls. N refuses `saves_to` beside
+      `*` and a collection before `*`, which N-1 mints (dropping `saves_to`). A retry once
+      the rollout ends works.
     - _A mint N-1 accepts._ A named list mint is saved by N-1, which answers without
       `saves_to`, `mcp_url`, `reads_everything`, `roles` and `clients`; N's dashboard
       fills those from the page (its own `/mcp`, the claim) and shows the token. A list
-      token N-1 mints gets no bound tracker record.
+      token N-1 mints gets no bound tracker record. N-1's dashboard posting a list mint to
+      N sends no `saves_to`, so N records the first writable memory entry, kept for the
+      token's life; N's answer names it, and the created dialog shows it.
     - _The list._ N-1 matches a token's maker by the exact subject, so a person signed in
       under another spelling of theirs neither sees nor revokes there a token made under
       the first, and N-1's dashboard lists a `*` token N minted by the names in its claim

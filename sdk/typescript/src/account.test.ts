@@ -87,7 +87,7 @@ describe("AccountClient", () => {
     const { loom, sent } = client(() => json(created));
     const namespaces: TokenNamespace[] = ["support", { namespace: "docs", role: "viewer" }];
     const role: GrantRole = "writer";
-    const options: CreateTokenOptions = { name: "ci", role, ttlDays: 0 };
+    const options: CreateTokenOptions = { name: "ci", role, ttlDays: 0, savesTo: "support" };
     const out = await loom.account.createToken(namespaces, options);
     expect(out).toEqual(created);
     expect(sent[0].method).toBe("POST");
@@ -97,6 +97,7 @@ describe("AccountClient", () => {
       namespaces: ["support", { namespace: "docs", role: "viewer" }],
       ttl_days: 0,
       role: "writer",
+      saves_to: "support",
     });
   });
 

@@ -1353,6 +1353,9 @@ export interface TokenEntry {
    *  (namespace -> "viewer"|"writer"|"admin"), each capped to the minter's
    *  grant. Empty for unscoped tokens (fall back to `roles`). */
   ns_roles?: Record<string, string>;
+  /** Where a list token saves, as minted; "" for a `*` token, one with no default target,
+   *  or one minted before tokens recorded it. Absent from the previous build's answer. */
+  saves_to?: string;
 }
 
 /** One namespace of a new token: a name, `*` (every namespace you belong to, now and
@@ -1391,6 +1394,8 @@ export async function createToken(opts: {
    *  read priority. */
   namespaces: TokenNamespace[];
   ttl_days: number | null;
+  /** A list's save target, one of its memory namespaces it writes; not sent with `*`. */
+  saves_to?: string;
 }): Promise<TokenCreated> {
   const r = await post<Partial<TokenCreated> & Pick<TokenCreated, "token" | "name" | "namespaces">>(
     "/v1/me/service_accounts.create",

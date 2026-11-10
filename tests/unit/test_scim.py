@@ -729,6 +729,7 @@ def _saved_token(
         "inherit_creator_grants": True,
         "ns_roles": '{"ns": "writer"}',
         "lineage": [created_by] if lineage is None else lineage,
+        "saves_to": "ns",
     }
 
 
