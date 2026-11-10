@@ -242,16 +242,16 @@ finished, and always counts again.
 
 `erasure.status` (and `erasure.request`'s answer) carries the receipt of the latest run's
 census. It is absent when the latest ledger row holds no census that counted every store: a
-run in progress, a run that failed before its census, a census that left a store
-uncounted, or a row written by a build that keeps no census:
+run in progress, a census that could not run or left a store uncounted, or a row written by
+a build that keeps no census:
 
 - `census`: every substrate the census counted and its count, zeros included. Keys are table
   names, `pg:<table>` for the Postgres authority, `objects.document_originals` for the
   document bucket in a namespace scope, and `provider_rebuild_copies` summed over a provider
-  rebuild's copies (counted deployment-wide when a copy has no org column). A count is the
-  rows the census counts as residue in this scope: live rows, or every row when the saga
-  purges or the table keeps no tombstone
-  ([the census rules](../../architecture/memory-architecture.md#erasure-saga)).
+  rebuild's copies, 0 when none exists (counted deployment-wide when a copy has no org
+  column). A count is the rows the census counts as residue in this scope: live rows, or
+  every row when the saga purges or the table keeps no tombstone ([the census
+  rules](../../architecture/memory-architecture.md#erasure-saga)).
   `objects.document_originals` counts a first listing page, so it reads as "at least".
 - `purge`: whether the saga deletes rows or tombstones them, as it runs. A single
   namespace's saga never purges. Without purge a tombstoned row keeps its bytes in its part

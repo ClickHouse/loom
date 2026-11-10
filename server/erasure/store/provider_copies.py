@@ -20,12 +20,11 @@ REBUILD_COPIES = "provider_rebuild_copies"
 
 
 def fold_census(per_table: dict[str, int]) -> dict[str, int]:
-    """A census with every rebuild copy's count summed under one key."""
+    """A complete census with every rebuild copy's count summed under one key, 0 when
+    there is none: a complete census always looked for them."""
     copy_key = f"loom.{_PREFIX}"
     out = {t: n for t, n in per_table.items() if not t.startswith(copy_key)}
-    copies = [n for t, n in per_table.items() if t.startswith(copy_key)]
-    if copies:
-        out[REBUILD_COPIES] = sum(copies)
+    out[REBUILD_COPIES] = sum(n for t, n in per_table.items() if t.startswith(copy_key))
     return out
 
 

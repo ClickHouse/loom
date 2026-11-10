@@ -60,13 +60,13 @@ async def test_the_rebuild_copies_fold_into_one_key() -> None:
         "pg:loom.memory_current": 0,
         REBUILD_COPIES: 3,
     }
-    assert fold_census({"loom.memory": 0}) == {"loom.memory": 0}
+    assert fold_census({"loom.memory": 0}) == {"loom.memory": 0, REBUILD_COPIES: 0}
 
 
 def test_a_complete_census_is_kept_whole_and_an_incomplete_one_not() -> None:
     complete = {"per_table": {"loom.memory": 0, "loom.chunks": 0}, "count": 0, "verified_at": _AT}
     columns = saga._verify_columns(complete)
-    assert json.loads(columns["census"]) == {"loom.memory": 0, "loom.chunks": 0}
+    assert json.loads(columns["census"]) == {"loom.memory": 0, "loom.chunks": 0, REBUILD_COPIES: 0}
     assert json.loads(columns["residue"]) == {}
     found = {"per_table": {"loom.memory": 2}, "count": 2, "verified_at": None}
     # A census that left a store uncounted keeps its residue as evidence, no receipt.
@@ -74,7 +74,7 @@ def test_a_complete_census_is_kept_whole_and_an_incomplete_one_not() -> None:
     # A complete census that found rows fails the saga, and its receipt says where.
     failed = {"per_table": {"loom.memory": 2, "loom.chunks": 0}, "count": 2, "verified_at": _AT}
     columns = saga._verify_columns(failed)
-    assert json.loads(columns["census"]) == {"loom.memory": 2, "loom.chunks": 0}
+    assert json.loads(columns["census"]) == {"loom.memory": 2, "loom.chunks": 0, REBUILD_COPIES: 0}
     assert json.loads(columns["residue"]) == {"loom.memory": 2}
 
 

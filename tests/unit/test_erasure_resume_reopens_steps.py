@@ -387,4 +387,8 @@ async def test_a_resume_always_runs_the_census_again(monkeypatch) -> None:
     done = {"memory.tombstone", "verify.residue"}
     out, seen = await _drive(monkeypatch, previously_completed=done, residue=None)
     assert seen["completed_at_entry"] == {"memory.tombstone"}
-    assert out.census == {} and out.verified_at is not None and out.purge is True
+    assert (
+        out.census == {"provider_rebuild_copies": 0}
+        and out.verified_at is not None
+        and out.purge is True
+    )
