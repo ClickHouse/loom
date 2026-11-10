@@ -2470,15 +2470,13 @@ class _CallResolver:
         for Python, two classes of the name are told apart by the import."""
         narrowed = self._member_rows(candidates, tname, bare)
         if len(narrowed) > 1 and self.python:
-            wide = narrowed
             narrowed = self._of(
-                wide, ("by class", tname), lambda: self._py_narrow_by_class(tname, wide)
+                narrowed, ("by class", tname), lambda: self._py_narrow_by_class(tname, narrowed)
             )
         if len(narrowed) > 1 and self.python:
-            near = narrowed
             anchor = self._py_anchor(receiver)
             narrowed = self._of(
-                near, ("nearest", anchor), lambda: self._py_nearest_module(near, anchor)
+                narrowed, ("nearest", anchor), lambda: self._py_nearest_module(narrowed, anchor)
             )
         if len(narrowed) != 1:
             return None
