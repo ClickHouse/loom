@@ -76,7 +76,7 @@ describe("HealthTab: a failed poll", () => {
       await act(async () => {
         vi.advanceTimersByTime(60_000);
       });
-      await waitFor(() => expect(screen.getByText(/Couldn't refresh the index status/)).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText(/couldn't refresh the index status/)).toBeInTheDocument());
       expect(screen.getByText(/generic profile/)).toBeInTheDocument();
       expect(screen.queryByText("Couldn't load index status")).toBeNull();
       // The sections read before keep their reads too.

@@ -53,6 +53,19 @@ describe("inline error lines", () => {
   });
 });
 
+describe("a bare error line in a template", () => {
+  // The line closes with its own full stop (and may carry a retry tail), so text after it
+  // reads "…in 3 s.; 2 messages are left".
+  it("ends the template", () => {
+    const calls = Object.entries(SOURCES).flatMap(([path, text]) =>
+      [...text.matchAll(/\$\{humanizeError\([^)]*bare: true[^)]*\)\}([^`])/g)].map(
+        (m) => `${path}:${text.slice(0, m.index).split("\n").length}`,
+      ),
+    );
+    expect(calls).toEqual([]);
+  });
+});
+
 describe("a stored error line", () => {
   // `const text = humanizeError(e)` or `setError(humanizeError(e))`, then "Audit failed:
   // ${text}" or "Couldn't load: {error}": the same double lead-in the two rules above catch
