@@ -564,7 +564,6 @@ def test_a_job_is_projected_again_only_from_a_durable_read(
     would bring it back through `adopt`."""
     from datetime import UTC, datetime
 
-    from server.core import pg
     from server.knowledge.app import ingest_jobs, ingest_run
     from server.knowledge.store import pg_jobs
 
