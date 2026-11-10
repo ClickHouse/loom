@@ -462,7 +462,7 @@ class AuthSettings(BaseModel):
         "open", and sign-in not delegated to OIDC (which closes them)."""
         return self.self_signup == "open" and self.oauth_login_provider != "oidc"
 
-    def open_signup_unnamed(self) -> bool:
+    def signup_open_without_trust_network(self) -> bool:
         """Self-signup is served but identity_provider does not name trust-network."""
         return self.self_signup_served() and self.identity_provider != "trust-network"
 

@@ -140,7 +140,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         dev_secret=settings.jwt_secret_is_dev_default(),
         allow_insecure=settings.allow_insecure,
         mcp_open=settings.mcp_auth_mode == "open",
-        open_signup=settings.open_signup_unnamed(),
+        open_signup_without_trust_network=settings.signup_open_without_trust_network(),
         weak_keys=weak_keys(),
     )
 

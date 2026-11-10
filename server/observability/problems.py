@@ -489,7 +489,7 @@ def _exposure_problems(settings: Any) -> list[Problem]:
             )
         )
     if reachable and settings.self_signup_served():
-        named = not settings.open_signup_unnamed()
+        named = not settings.signup_open_without_trust_network()
         out.append(
             Problem(
                 "insecure_bind_open_signup",

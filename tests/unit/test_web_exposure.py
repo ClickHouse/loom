@@ -30,7 +30,7 @@ def _bind(**over: object) -> None:
         "dev_secret": False,
         "allow_insecure": False,
         "mcp_open": False,
-        "open_signup": False,
+        "open_signup_without_trust_network": False,
         "weak_keys": [],
     }
     kw.update(over)
@@ -66,9 +66,9 @@ def test_open_self_signup_on_a_reachable_bind_needs_trust_network_named() -> Non
     reachable bind starts with it only when LOOM_IDENTITY_PROVIDER=trust-network
     says reachability is the access boundary."""
     with pytest.raises(InsecureBindRefused, match="LOOM_SELF_SIGNUP=open"):
-        _bind(open_signup=True)
-    _bind(open_signup=True, allow_insecure=True)
-    _bind(bind_host="127.0.0.1", open_signup=True)
+        _bind(open_signup_without_trust_network=True)
+    _bind(open_signup_without_trust_network=True, allow_insecure=True)
+    _bind(bind_host="127.0.0.1", open_signup_without_trust_network=True)
 
 
 @pytest.mark.parametrize(
@@ -105,7 +105,7 @@ def test_startup_passes_open_signup_unless_trust_network_is_named(
 
     with pytest.raises(InsecureBindRefused):
         asyncio.run(start())
-    assert seen["open_signup"] is expected
+    assert seen["open_signup_without_trust_network"] is expected
 
 
 def test_a_weak_root_key_on_a_reachable_bind_is_refused() -> None:
