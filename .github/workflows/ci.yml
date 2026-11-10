@@ -850,7 +850,6 @@ jobs:
           pytest -q
           tests/integration/test_pg_authority.py
           tests/integration/test_pg_durable_publish.py
-          tests/integration/test_restore_reconcile.py
           tests/integration/test_knowledge_pg_heads.py
           tests/integration/test_knowledge.py
           tests/integration/test_knowledge_upsert.py
@@ -928,6 +927,11 @@ jobs:
           tests/integration/test_pg_authority.py
           -k "not test_a_duplicate_never_resolves_to_a_canonical_outside_the_scope
           and not test_a_superseded_hit_never_names_a_successor_outside_the_scope"
+      # Last, on its own: `loom reconcile` acts on the whole database, every other test's
+      # rows included, so it runs after them all and in its file's order.
+      - name: pytest (loom reconcile drills)
+        if: ${{ !cancelled() }}
+        run: pytest -q -p no:randomly tests/integration/test_restore_reconcile.py
       - name: Upload server log on failure
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

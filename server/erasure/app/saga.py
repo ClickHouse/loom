@@ -265,22 +265,18 @@ async def run_erasure_detached(input: ErasureRequestInput) -> str:
     return erasure_id
 
 
-async def _steps_to_skip(
-    input: ErasureRequestInput,
-    row: RequestRow,
+async def _reopen_checkpointed_steps(
+    org: str,
     erasure_id: str,
     previously_completed: set[str],
     residue: Mapping[str, Any] | str | None,
     census_scope_type: str,
 ) -> set[str]:
-    """The checkpointed steps a run of the saga skips, its Postgres ledger row recorded.
-    The census always runs again: a run that stopped between it and the terminal row
-    left no census on the ledger, so a resume that skipped it would complete without one.
-    A step that owns a table the last census found rows in runs again."""
-    if pg.enabled():
-        # A saga a process of the previous build registered has no Postgres ledger row,
-        # and its Postgres steps would mark none (`steps_pg._mark_step`).
-        await erasure_pg_ledger.record(row)
+    """The checkpointed steps a run of the saga skips. The census always runs again: a
+    run that stopped between it and the terminal row left no census on the ledger, so a
+    resume that skipped it would complete without one. A step that owns a table the last
+    census found rows in runs again, and under Postgres its mark in the ledger row is
+    dropped (`pg_ledger.unmark_steps`)."""
     completed = set(previously_completed) - {"verify.residue"}
     reopened = erasure_census.steps_to_reopen(residue, census_scope_type) & completed
     if reopened:
@@ -292,9 +288,7 @@ async def _steps_to_skip(
         )
         completed -= reopened
         if pg.enabled() and reopened & PG_ONLY_STEPS:
-            await erasure_pg_ledger.unmark_steps(
-                input.org, erasure_id, sorted(reopened & PG_ONLY_STEPS)
-            )
+            await erasure_pg_ledger.unmark_steps(org, erasure_id, sorted(reopened & PG_ONLY_STEPS))
     return completed
 
 
@@ -317,12 +311,16 @@ async def run_saga(
     resume.
     """
     await pg.verify_deployment()  # a resumed saga too: refused before any step writes
+    if pg.enabled():
+        # A saga a process of the previous build registered has no Postgres ledger row,
+        # and its Postgres steps would mark none (`steps_pg._mark_step`).
+        await erasure_pg_ledger.record(row)
     steps: list[_ErasureStepResult] = []
     # What the census tail counts if a step fails before `verify.residue`:
     # the saga's scope, and whether it purges.
     census_scope_type = "user_id" if input.scope_type == "user_id" else "namespace"
-    completed = await _steps_to_skip(
-        input, row, erasure_id, previously_completed, residue, census_scope_type
+    completed = await _reopen_checkpointed_steps(
+        input.org, erasure_id, previously_completed, residue, census_scope_type
     )
     # Filled by the verify step; read back for the terminal row.
     verify: dict[str, Any] = {}
