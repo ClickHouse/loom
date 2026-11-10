@@ -83,6 +83,7 @@ and add the extension to `LANG_BY_EXTENSION` (`".rs": "rust"`). The wrapper impo
 
   A number that moves there changes what every namespace holds. Review it.
 
+- **The cost guard.** A parser added to `ingest_parse._PARSERS` needs a `SAMPLES` entry in `tests/unit/lane_walks.py`; `tests/unit/test_code_regex_cost.py` then times the lane over generated shapes and fails on a walk that is over linear.
 - **The stamp test.** `tests/unit/test_code_extractor_stamp.py` with the new module in
   `NON_EXTRACTOR_MODULES`.
 - **Retrieval.** For a lane that should answer `code.search` or `code.symbol` well, run the code-intelligence gate before and after. `make bench-code-intel-dry` checks the question set offline; `make bench-code-intel` runs it against a server with a real embedder, never the fake one ([running benchmarks](../benchmarks/running.md)).

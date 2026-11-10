@@ -564,7 +564,8 @@ def registry_cost(lang: str) -> list[tuple[str, float, float, int, int]]:
             out.append((name, small, float("inf"), bs, bs))
             continue
         big, bb, _ = cost(text, 4 * n)
-        if name in KNOWN_SLOW.get(lang, ()) or (big > 0.02 and big > 8 * small):
+        listed = name in KNOWN_SLOW.get(lang, ())
+        if (listed and big < 0.05) or (not listed and big > 0.02 and big > 8 * small):
             small = min(small, cost(text, n)[0], cost(text, n)[0])
             big = min(big, cost(text, 4 * n)[0], cost(text, 4 * n)[0])
         out.append((name, small, big, bs, bb))

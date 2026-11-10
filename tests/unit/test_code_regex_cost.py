@@ -296,7 +296,7 @@ def test_every_registered_lane_has_a_sample_that_reads_as_it() -> None:
     from server.code.app.index.ingest_parse import parse_for_ingest
     from tests.unit.lane_walks import KNOWN_SLOW, SAMPLES, SHAPES
 
-    assert set(SAMPLES) == set(_registered_lanes())
+    assert set(SAMPLES) == set(_registered_lanes()), "a lane needs a SAMPLES entry in lane_walks.py"
     assert set(KNOWN_SLOW) <= set(SAMPLES)
     shapes = {name for name, _text in SHAPES}
     assert all(set(listed) <= shapes for listed in KNOWN_SLOW.values())
