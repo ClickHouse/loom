@@ -901,9 +901,10 @@ def cancel_probe(st: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]
 
 
 def probe_line(row: dict[str, Any]) -> str:
-    """The cancel probe's verdict from its two counts. A call begun after the cut shows the
-    run went on; the disconnect is shown to stop the run only when no call began before
-    the cut either (so the tools were still to run)."""
+    """The cancel probe's verdict: a refusal, an answer that ended before the cut, or what
+    its two counts show. A call begun after the cut shows the run went on; the disconnect
+    is shown to stop the run only when no call began before the cut either (so the tools
+    were still to run)."""
     if "loom_calls_before_disconnect" not in row:
         return "cancel probe: saved by an older harness, not a result"
     before = row["loom_calls_before_disconnect"]
@@ -1087,7 +1088,8 @@ def main() -> None:
         "--cancel-after",
         type=float,
         default=1.0,
-        help="seconds into the probe's answer at which the client disconnects",
+        help="seconds into the probe's answer at which the client disconnects; lower it when"
+        " the probe reports that its tool calls began before the cut",
     )
     run.add_argument("--cancel-wait", type=float, default=20.0)
     run.add_argument(
