@@ -299,7 +299,9 @@ def world(monkeypatch: pytest.MonkeyPatch) -> World:
     async def pg_held_ids(org: str, ns: str, ids: list[str]) -> set[str]:
         return {i for i in ids if i in w.held}
 
-    async def pg_get(org: str, ns: str, ingestion_id: str) -> dict[str, Any] | None:
+    async def pg_get(
+        org: str, ns: str, ingestion_id: str, *, durable: bool = False
+    ) -> dict[str, Any] | None:
         job = w.held.get(ingestion_id)
         return None if job is None else job["row"]
 

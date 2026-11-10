@@ -20,7 +20,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, NamedTuple
 
-from server.core import pg_lease, rmt_carry
+from server.core import pg, pg_lease, rmt_carry
 from server.core.ch_writes import batched_insert_settings
 from server.core.error_summary import error_summary
 from server.core.hashing import hash_text
@@ -214,7 +214,8 @@ async def retire_decision_records(
     time, and clear each namespace's target as it lands. Here the delete is committed,
     whatever its writer's answer was; the retirement keeps a record whose writer the
     authority holds live, or written since. A namespace that fails stays owed and the
-    rest go on; the first error is returned for the delivery worker to count."""
+    rest go on, but a Postgres outage stops the rest (they stay owed); the first error is
+    returned: the delivery worker counts a refusal, and releases its claims on an outage."""
     by_ns: dict[tuple[str, str], list[OwedRecord]] = {}
     for owed in owing:
         org, namespace, _ = owed.delivery
@@ -226,7 +227,11 @@ async def retire_decision_records(
             # Drawn before the live read: a record written after it is above it, within
             # the hosts' clock skew, as every `next_version` is.
             version = next_version()
-            live = await pg_memory.live_decision_writers(org, namespace, keys)
+            # Read durably: a writer's absence retires its record. A lease spent before the
+            # read counts as the send's; one the standby wait ended is an outage.
+            pg_lease.check_lease(deadline)
+            live = await pg_memory.live_decision_writers(org, namespace, keys, durable=True)
+            pg_lease.check_lease_after_durable_read(deadline)
             with pg_lease.leased(deadline):
                 await tombstone_decision_records(
                     org, namespace, keys, version=version, ch=ch, live=live
@@ -244,6 +249,8 @@ async def retire_decision_records(
                 error_summary(e),
             )
             first = first or e
+            if isinstance(e, pg.PostgresUnavailableError):
+                break  # each namespace's durable read would wait out the same outage
     return first
 
 

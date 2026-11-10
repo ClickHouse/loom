@@ -4,12 +4,13 @@
 every statement goes through this module's pool, opened at boot (`open_pool`),
 or on first use in a process that has no boot (a CLI command), and closed at
 shutdown. Each connection pins `synchronous_commit = on` and a statement timeout, so no
-request holds a connection past its budget. A transaction's commit (`transaction`)
-drops the timeout and is acknowledged only as durably as the server's standby
-configuration allows (`server.core.pg_profile` checks that at boot); a single
-statement outside one commits under the timeout, which a stalled standby can outlast
-with a local commit, so it writes only what a failover may lose: a lease, a claim, a
-counter.
+request holds a connection past its budget. A commit is acknowledged only as durably as
+the server's standby configuration allows (`server.core.pg_profile` checks that at
+boot): the statement timeout does not cover its standby wait, which ends at the
+standbys' flush or at the client's command timeout, a cancel that leaves the commit on
+the primary alone and raises. `transaction` reports it `outcome_unknown`; a single
+statement outside one reports it as not committed, so it writes only what a failover
+may lose: a lease, a claim, a counter.
 
 A failure to reach Postgres answers 503 POSTGRES_UNAVAILABLE: with the authority
 down, writes and authoritative reads fail closed, never fall back to ClickHouse.
@@ -22,7 +23,7 @@ import json
 import logging
 import weakref
 from collections.abc import AsyncIterator, Mapping
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Any
 
 from server.core.error_summary import error_summary
@@ -239,12 +240,13 @@ _TRANSIENT_SQLSTATES = _RETRYABLE_SQLSTATES | _RESOURCE_SQLSTATES
 
 
 def is_outage(e: BaseException) -> bool:
-    """A lost or refused connection, or a retryable SQLSTATE. Not an InterfaceError: a
-    bad argument or a misuse of the connection fails the same way on a retry."""
+    """A lost or refused connection, a retryable SQLSTATE, or a server in recovery (a
+    demoted primary, `_in_recovery`). Not an InterfaceError: a bad argument or a misuse of
+    the connection fails the same way on a retry."""
     import asyncpg
 
     sqlstate = getattr(e, "sqlstate", None)
-    if sqlstate in _TRANSIENT_SQLSTATES:
+    if sqlstate in _TRANSIENT_SQLSTATES or _in_recovery(e):
         return True
     if isinstance(e, asyncpg.exceptions.ProtocolViolationError):
         return False  # 08P01: a retry repeats a protocol violation
@@ -256,6 +258,10 @@ def is_outage(e: BaseException) -> bool:
             asyncpg.exceptions.CannotConnectNowError,
             asyncpg.exceptions.AdminShutdownError,
             asyncpg.exceptions.CrashShutdownError,
+            # An unexpected driver state (a protocol caught mid-switch by a connection the
+            # server ended, a stale schema cache): never a caller's misuse, which is an
+            # InterfaceError.
+            asyncpg.exceptions.InternalClientError,
             # A result type a later migration changed under a prepared statement: the
             # retry prepares it again.
             asyncpg.exceptions.InvalidCachedStatementError,
@@ -263,17 +269,20 @@ def is_outage(e: BaseException) -> bool:
     )
 
 
-def _raise_if_unavailable(e: Exception, *, outcome_unknown: bool = False) -> None:
-    """503 POSTGRES_UNAVAILABLE for an error a retry may clear; a data or constraint
-    error, whose text quotes the row or the argument, as PostgresRefusedError; otherwise
-    the caller re-raises `e` as it is."""
+def _raise_if_unavailable(
+    e: Exception, *, outcome_unknown: bool = False, lost: bool = False
+) -> None:
+    """503 POSTGRES_UNAVAILABLE for an error a retry may clear, or any error once the
+    connection was `lost` (the driver's error then depends on when it noticed); a data
+    or constraint error, whose text quotes the row or the argument, as
+    PostgresRefusedError; otherwise the caller re-raises `e` as it is."""
     # The driver's own argument error lives in its private module: the public
     # `asyncpg.exceptions.DataError` is the server's SQLSTATE 22000.
     from asyncpg.exceptions._base import DataError as ClientDataError
 
     if isinstance(e, LoomServerError):
         return  # already the answer, a refusal raised in the block included
-    if is_outage(e):
+    if lost or is_outage(e):
         raise PostgresUnavailableError(
             "the commit's answer was lost" if outcome_unknown else "Postgres did not answer",
             outcome_unknown=outcome_unknown,
@@ -302,13 +311,33 @@ async def connection() -> AsyncIterator[Any]:
     except BaseException as e:
         if _read_only(e):
             # Left on a demoted primary: none of the pool's connections is handed out again.
-            conn.terminate()
+            _terminate(conn)
             await pool.expire_connections()
         elif _connection_lost(e):
-            conn.terminate()
+            _terminate(conn)
         raise
     finally:
         await _release(pool, conn)
+
+
+def _lost(conn: Any) -> bool:
+    """Whether the server or the network ended `conn`: closed, or detached from the
+    pool by the driver, which makes any call on it raise an InterfaceError."""
+    import asyncpg
+
+    try:
+        return bool(conn.is_closed())
+    except asyncpg.InterfaceError:
+        return True
+
+
+def _terminate(conn: Any) -> None:
+    """Close a pooled connection now. One whose connection was lost is already detached
+    from the pool, and a call on it would replace the block's error."""
+    import asyncpg
+
+    with suppress(asyncpg.InterfaceError):
+        conn.terminate()
 
 
 async def _release(pool: Any, conn: Any) -> None:
@@ -327,7 +356,16 @@ async def _release(pool: Any, conn: Any) -> None:
 
 
 def _read_only(e: BaseException) -> bool:
-    return "25006" in (getattr(e, "sqlstate", None), getattr(e.__cause__, "sqlstate", None))
+    """A statement refused by a server in recovery (a demoted primary): a write's 25006,
+    or a durable read's logical message, which cannot take an xid there (XX000)."""
+    return any(_in_recovery(x) for x in (e, e.__cause__) if x is not None)
+
+
+def _in_recovery(e: BaseException) -> bool:
+    sqlstate = getattr(e, "sqlstate", None)
+    return sqlstate == "25006" or (
+        sqlstate == "XX000" and "cannot assign TransactionIds during recovery" in str(e)
+    )
 
 
 def _connection_lost(e: BaseException) -> bool:
@@ -419,30 +457,50 @@ async def transaction() -> AsyncIterator[Any]:
             try:
                 yield conn
             except BaseException as e:
+                lost = _lost(conn)
                 await _rollback(conn, tx)
                 if isinstance(e, Exception):
-                    _raise_if_unavailable(e)
+                    _raise_if_unavailable(e, lost=lost)
                 raise
-            try:
-                # The commit waits for the synchronous standby. A server timeout would
-                # cancel that wait and commit locally with only a warning, reported as
-                # success; the client's command timeout cancels it the same way, reported
-                # as outcome_unknown.
-                await conn.execute("SET LOCAL statement_timeout = 0")
-            except Exception as e:
-                await _rollback(conn, tx)
-                _raise_if_unavailable(e)
-                raise
+            # The standby wait is outside the statement timeout (the module docstring).
             committing = True
             try:
                 await tx.commit()
             except Exception as e:
-                _raise_if_unavailable(e, outcome_unknown=True)
+                _raise_if_unavailable(e, outcome_unknown=True, lost=_lost(conn))
                 raise
     except asyncio.CancelledError as e:
         if committing:
             mark_commit_in_flight(e)
         raise
+
+
+# A transactional logical message: the commit that carries it writes WAL, so it waits
+# for the synchronous standbys even when the transaction wrote nothing else.
+_DURABLE_MESSAGE = "SELECT pg_logical_emit_message(true, 'loom.durable', '')"
+
+
+@asynccontextmanager
+async def durable_transaction() -> AsyncIterator[Any]:
+    """`transaction`, for a read of other sessions' commits whose rows go to ClickHouse:
+    once it returns, every row the block read is on the synchronous standbys. A row is
+    visible only after its own commit's standby wait ended (a cancelled wait leaves it on
+    the primary alone), so it was committed before this transaction's commit, which
+    writes a logical message and waits for the standbys. The read and the commit share
+    one connection: a failover in between fails the commit, never another primary's. A
+    cancelled wait raises (`outcome_unknown`): nothing read may be sent. A claim needs no
+    message: an UPDATE that claimed rows wrote WAL, and one that claimed none has nothing
+    to send."""
+    async with transaction() as conn:
+        yield conn
+        await conn.execute(_DURABLE_MESSAGE)
+
+
+async def check_durable_message() -> None:
+    """Write the logical message `durable_transaction` commits, in a transaction rolled
+    back so nothing waits for a standby: raises for a role that may not."""
+    async with rolled_back() as conn:
+        await conn.execute(_DURABLE_MESSAGE)
 
 
 @asynccontextmanager
@@ -460,7 +518,7 @@ async def rolled_back() -> AsyncIterator[Any]:
         try:
             yield conn
         except Exception as e:
-            _raise_if_unavailable(e)
+            _raise_if_unavailable(e, lost=_lost(conn))
             raise
         finally:
             await _rollback(conn, tx)
@@ -476,8 +534,8 @@ async def _rollback(conn: Any, tx: Any) -> None:
     """Roll back within `_RELEASE_TIMEOUT_S`, never hiding the error that ended the
     block: a statement still in flight is cancelled first, and one that does not finish
     in time leaves the connection to `_release`, which has a bound of its own."""
-    if conn.is_closed():
-        return
+    if _lost(conn):
+        return  # nothing to roll back; a detached one fails any call (`_terminate`)
     try:
         await asyncio.wait_for(tx.rollback(), _RELEASE_TIMEOUT_S)
     except Exception as e:  # noqa: BLE001 — the error that ended the block is raised

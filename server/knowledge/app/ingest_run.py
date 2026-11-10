@@ -790,7 +790,12 @@ async def _take(job: dict[str, Any]) -> dict[str, Any] | None:
         await pg_jobs.adopt(projected)
         held = projected
     elif projected is None or int(projected["version"]) < int(held["version"]):
-        await pg_jobs.project(held)
+        # Read again durably: a version only the primary holds (a save whose commit wait
+        # was cut off) projected to ClickHouse would come back through `adopt` after a
+        # failover lost it.
+        durable = await pg_jobs.get(*key, durable=True)
+        if durable is not None and int(durable["version"]) == int(held["version"]):
+            await pg_jobs.project(durable)
     if held["state"] not in OPEN_STATES:
         return held
     if await ingest_jobs.earlier_open(held):

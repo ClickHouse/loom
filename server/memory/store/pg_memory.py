@@ -35,7 +35,12 @@ from server.core.numbers import FLOAT32_MAX, float32
 from server.core.pg_lease import lease_deadline
 from server.memory.domain import lock as _lock
 from server.memory.domain.memory_types import is_embedded
-from server.memory.domain.redaction_lineage import REDACTED_VALUE, Version, later_copies
+from server.memory.domain.redaction_lineage import (
+    REDACTED_VALUE,
+    Version,
+    is_content_hash,
+    later_copies,
+)
 from server.memory.store.rows import (
     FIRST_VERSION_DEFAULTS,
     IdentityKey,
@@ -791,6 +796,20 @@ def embedded(row: Mapping[str, Any]) -> bool:
     return is_embedded(str(row.get("memory_type")), str(row.get("sensitivity") or ""))
 
 
+def newer_copy(head: Mapping[str, Any], row: Mapping[str, Any]) -> bool:
+    """Whether `head` is a newer copy of `row` (a pin, a touch, a status): live, embedded
+    (`embedded`, which a redacted row is not: a redaction keeps the hash) and of the same
+    content by hash, so `row`'s search document serves it. It is another commit than `row`'s: a
+    publisher reads it again durably before sending it."""
+    return (
+        int(head["version"]) > int(row["version"])
+        and head.get("tombstoned_at") is None
+        and embedded(head)
+        and is_content_hash(str(head.get("content_sha256") or ""))
+        and head.get("content_sha256") == row.get("content_sha256")
+    )
+
+
 async def complete(
     seqs: Sequence[tuple[str, str, int]], done: int, *, tokens: Sequence[int] | int = COMMIT_TOKEN
 ) -> None:
@@ -1216,6 +1235,16 @@ async def record_failure(
 # ---- reads -------------------------------------------------------------------
 
 
+async def _read(sql: str, *args: Any, durable: bool) -> list[Any]:
+    """`pg.fetch`, or with `durable` inside `pg.durable_transaction`, for rows that go
+    to ClickHouse when another session may have committed them: returned once the
+    synchronous standbys hold every row read."""
+    if not durable:
+        return await pg.fetch(sql, *args)
+    async with pg.durable_transaction() as conn:
+        return list(await conn.fetch(sql, *args))
+
+
 def _scope_sql(scope: Any, args: list[Any]) -> str:
     """The read scope (`identity.domain.read_scope`) as SQL over memory_current."""
     if not scope.narrowed:
@@ -1357,27 +1386,31 @@ async def settled_head_versions(keys: Sequence[IdentityKey]) -> dict[IdentityKey
 
 
 async def heads_by_keys(
-    keys: Sequence[IdentityKey], *, include_tombstoned: bool = False
+    keys: Sequence[IdentityKey], *, include_tombstoned: bool = False, durable: bool = False
 ) -> dict[IdentityKey, dict[str, Any]]:
     """The heads, expired ones included, of exact keys (a deleted one too with
-    `include_tombstoned`); a key with none is absent."""
+    `include_tombstoned`); a key with none is absent. `durable`: read for ClickHouse
+    (`_read`)."""
     keys = [k for k in keys if not pg.unstorable(k)]
     if not keys:
         return {}
     sql = _HEADS_BY_KEYS
     if not include_tombstoned:
         sql += " WHERE c.row->>'tombstoned_at' IS NULL"
-    rows = await pg.fetch(sql, *_key_arrays(keys))
+    rows = await _read(sql, *_key_arrays(keys), durable=durable)
     return {identity_key(r["row"]): decode_row(r["row"]) for r in rows}
 
 
-async def heads_owing(keys: Sequence[IdentityKey]) -> dict[IdentityKey, tuple[dict[str, Any], int]]:
+async def heads_owing(
+    keys: Sequence[IdentityKey], *, durable: bool = False
+) -> dict[IdentityKey, tuple[dict[str, Any], int]]:
     """The heads of exact keys, deleted ones included, each with the targets its own
-    delivery still owes (0 once settled); a key with none is absent."""
+    delivery still owes (0 once settled); a key with none is absent. `durable`: read for
+    ClickHouse (`_read`)."""
     keys = [k for k in keys if not pg.unstorable(k)]
     if not keys:
         return {}
-    rows = await pg.fetch(_HEADS_OWING, *_key_arrays(keys))
+    rows = await _read(_HEADS_OWING, *_key_arrays(keys), durable=durable)
     return {identity_key(r["row"]): (decode_row(r["row"]), int(r["owed"])) for r in rows}
 
 
@@ -1424,19 +1457,21 @@ async def erased_ids(org: str, namespace: str, memory_ids: Sequence[str]) -> set
 
 
 async def live_decision_writers(
-    org: str, namespace: str, keys: Sequence[str]
+    org: str, namespace: str, keys: Sequence[str], *, durable: bool = False
 ) -> list[tuple[str, str, str, str]]:
-    """(memory_key, agent, user_id, session_id) of each live decision head of these keys."""
+    """(memory_key, agent, user_id, session_id) of each live decision head of these keys.
+    `durable` for a record retirement, which acts on a writer's absence (`_read`)."""
     keys = [k for k in keys if not pg.unstorable(k)]  # Postgres holds no such key
     if not keys or pg.unstorable(org) or pg.unstorable(namespace):
         return []
-    rows = await pg.fetch(
+    rows = await _read(
         "SELECT memory_key, agent, user_id, session_id FROM loom.memory_current "
         "WHERE org = $1 AND namespace = $2 AND memory_key = ANY($3::text[]) "
         "AND row->>'memory_type' = 'decision' AND row->>'tombstoned_at' IS NULL",
         org,
         namespace,
         keys,
+        durable=durable,
     )
     return [(r["memory_key"], r["agent"], r["user_id"], r["session_id"]) for r in rows]
 

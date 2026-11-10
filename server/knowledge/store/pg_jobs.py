@@ -171,12 +171,20 @@ async def adopt(row: dict[str, Any]) -> None:
     )
 
 
-async def get(org: str, namespace: str, ingestion_id: str) -> dict[str, Any] | None:
+async def get(
+    org: str, namespace: str, ingestion_id: str, *, durable: bool = False
+) -> dict[str, Any] | None:
+    """The job as Postgres holds it. `durable`: read in `pg.durable_transaction()`, so a
+    version a cut-off commit left on the primary alone is not returned until the
+    standbys hold it (what a projection to ClickHouse sends)."""
     if not _storable(org, namespace):
         return None
-    raw = await pg.fetchval(
-        f"SELECT row FROM loom.knowledge_jobs WHERE {_KEY}", org, namespace, ingestion_id
-    )
+    sql = f"SELECT row FROM loom.knowledge_jobs WHERE {_KEY}"
+    if durable:
+        async with pg.durable_transaction() as conn:
+            raw = await conn.fetchval(sql, org, namespace, ingestion_id)
+    else:
+        raw = await pg.fetchval(sql, org, namespace, ingestion_id)
     return None if raw is None else _decode(raw)
 
 

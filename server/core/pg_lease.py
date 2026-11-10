@@ -17,7 +17,7 @@ import logging
 import time
 from collections.abc import Iterator
 
-from server.core import rmt_carry
+from server.core import pg, rmt_carry
 from server.core.error_summary import error_summary
 from server.core.errors import LoomServerError
 from server.settings import settings
@@ -57,6 +57,14 @@ def lease_deadline(lease_seconds: float, started: float) -> float:
 def check_lease(deadline: float) -> None:
     if time.monotonic() >= deadline:
         raise PublicationPending()
+
+
+def check_lease_after_durable_read(deadline: float) -> None:
+    """`check_lease` after a durable read (`pg.durable_transaction`), for a lease that was
+    live before it: one the read ended (its standby wait) is a Postgres outage, which a
+    pass releases uncounted, not a late send counted as the delivery's attempt."""
+    if time.monotonic() >= deadline:
+        raise pg.PostgresUnavailableError("the durable read outlasted the lease")
 
 
 @contextlib.contextmanager

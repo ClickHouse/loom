@@ -522,6 +522,62 @@ collapses into the first and a late one never outranks a newer write. Only the c
 token's holder clears a target, so an overtaken publisher cannot mark a newer claim's
 work done.
 
+### Only durable revisions are published
+
+A commit whose synchronous-standby wait was cancelled (a client timeout, a cancel) is
+committed on the primary alone and visible to every session there; a failover loses it
+and the new primary numbers another revision with its `seq`. So a row reaches
+ClickHouse only once the synchronous standbys hold it. A row becomes visible only after
+its own commit's standby wait ended, so a later commit that writes WAL and returns from
+its own wait covers every row its transaction read.
+
+- A claim of the delivery worker, the audit outbox or the knowledge delivery worker is
+  an UPDATE of the rows it claims, so its commit waits for the standbys (the statement
+  timeout does not cover a commit's standby wait); the client's command timeout cancels
+  a wait that outlasts it and raises, and nothing claimed is sent.
+- A writer's flush sends its own commits, which returned from their wait, and a
+  document built onto a newer copy of its row, which it reads again durably first; a
+  copy the durable read no longer finds goes to its `stale` list, for the delivery
+  worker to decide.
+- A key's head that is not the revision a delivery claimed (newer, redacted or gone),
+  and the live decision writers a record retirement keeps, are other sessions' commits.
+  They are read again in `pg.durable_transaction()`; its COMMIT carries a transactional
+  logical message (prefix `loom.durable`), so it waits for the standbys on the
+  connection that made the read. The document is built or settled from that read: a
+  copy (a pin, a touch) has a document built onto it; a delete, other content, a
+  redaction or an erasure settles the claimed document unsent.
+  The read is made durable on its own connection because the settling commit, on
+  another, could not cover it: after a failover it would mark the document done on a
+  primary where the claimed revision is the head again.
+- `decision.record` checks its writers this way after its record lands, and a delete of a
+  decision retires its record this way in its flush, so each waits for one more standby
+  round trip.
+- A knowledge job version ClickHouse lacks is projected again by the ingest run only when
+  `pg_jobs.get(..., durable=True)` returns the same version: one only the primary holds
+  would come back through `pg_jobs.adopt` after a failover lost it.
+
+The rule for any path: a ClickHouse send fed by a Postgres read sends only what the
+caller committed or claimed, or reads durably first. A decision that only changes
+Postgres state is covered by its commit when the transaction that commits it also made
+the read.
+`tests/unit/test_pg_durable_reads.py` pins every caller of a journal read with the reason
+it holds.
+
+The guarantee holds when a failover promotes a standby of the synchronous set holding
+the highest flush position, which a strict HA manager does
+([Postgres operations](../operations/postgres.md#self-hosted-postgres)). A manager that
+is not strict empties `synchronous_standby_names` when its standby drops; commits are
+then the primary's alone, as under `LOOM_PG_DURABILITY=local` with no standby named: a
+failover may lose acknowledged writes, ClickHouse may keep their rows, and the reconcile
+after a restore removes them.
+
+With the standby detached, a claim waits up to `LOOM_PG_STATEMENT_TIMEOUT_MS` plus one
+second and the pass ends as a Postgres outage does; a claim whose wait was cut keeps its
+rows leased until `LOOM_PG_DELIVERY_LEASE_SECONDS` ends after the standby is back, and
+searches in those namespaces wait for it at the barrier. A redaction or an erasure locking
+a claimed delivery waits behind that commit up to `LOOM_PG_COMMIT_LOCK_TIMEOUT_MS`, then
+answers its retryable 503, as its own commit would while the standby is down.
+
 ## Idempotency
 
 Under this authority an `Idempotency-Key` is a row of `loom.idempotency`, keyed by
@@ -1102,7 +1158,10 @@ the rules `ingestions.due` describes.
   `loom.knowledge_ingestions`, which reports and `knowledge.inspect` read. The insert is
   best effort: every version carries the whole row, so the next save repairs a version
   that did not land, and a run that finds ClickHouse behind a job's last version (an
-  ended job has no next save) projects it again. The originals sweep and a user
+  ended job has no next save) projects it again, from a durable read
+  ([only durable revisions are published](#only-durable-revisions-are-published)): a
+  version only the primary holds would otherwise come back through ClickHouse after a
+  failover lost it. The originals sweep and a user
   erasure's shared-originals check also read the open jobs' originals from Postgres
   (`owed_originals`), so a job whose projection has not landed keeps its original.
 - **Fencing.** A run takes its job under the deployment-wide lease on its id, as under

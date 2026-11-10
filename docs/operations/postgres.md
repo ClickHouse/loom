@@ -13,6 +13,8 @@ ClickHouse.
 
 - Postgres 16 or newer. No extension is needed.
 - A database and a role that owns it (Loom creates the `loom` schema in it).
+- The role may run `pg_logical_emit_message` (the public may by default; the boot refuses
+  otherwise and names the `GRANT`).
 - For `LOOM_PG_DURABILITY=synchronous` (the default): at least one synchronous standby
   in another failure domain, so an acknowledged write survives the loss of the primary.
 - `wal_level = logical` if the database will also feed a replication tool; Loom itself
@@ -87,12 +89,12 @@ synchronous_standby_names = 'FIRST 1 (loom_standby)'
 
 ## What the boot checks
 
-| Check      | Refuses to start when                                                                                                                   |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Connection | `LOOM_PG_DSN` is empty or Postgres does not answer                                                                                      |
-| Migrations | an applied file of `schemas/pg_migrations/` was edited, or one this build lacks is older than its last                                  |
-| Durability | with `LOOM_PG_DURABILITY=synchronous`, `synchronous_standby_names` is empty                                                             |
-| Authority  | the deployment recorded the ClickHouse authority, this ClickHouse holds memory under it, or this Postgres belongs to another deployment |
+| Check      | Refuses to start when                                                                                                                        |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Connection | `LOOM_PG_DSN` is empty or Postgres does not answer                                                                                           |
+| Migrations | an applied file of `schemas/pg_migrations/` was edited, or one this build lacks is older than its last                                       |
+| Durability | with `LOOM_PG_DURABILITY=synchronous`, `synchronous_standby_names` is empty; under any value, the role may not run `pg_logical_emit_message` |
+| Authority  | the deployment recorded the ClickHouse authority, this ClickHouse holds memory under it, or this Postgres belongs to another deployment      |
 
 A migration waits at most 5 s for a table lock and is tried five times; a boot that
 logs `Postgres migration <file> waited too long for a lock` four times and then fails
@@ -105,7 +107,13 @@ default. The boot warns when fewer standbys are attached than a commit waits for
 when its role cannot see `pg_stat_replication`. While they are not attached a commit
 waits for them, up to `LOOM_PG_STATEMENT_TIMEOUT_MS` plus one second, and then answers 503
 `POSTGRES_UNAVAILABLE` with `outcome_unknown`: the cancelled wait leaves the commit on
-the primary alone, and the delivery worker publishes it.
+the primary alone. The delivery worker publishes it to ClickHouse only once the standbys
+hold it, so a failover in between leaves nothing of it in ClickHouse
+([storage authority](../architecture/storage-authority.md#only-durable-revisions-are-published)).
+A publisher that sends another session's commit reads it again in a transaction that
+commits a transactional logical message with the prefix `loom.durable`, so a
+change-data-capture consumer of the database receives one per such read; the boot
+refuses a role that may not write one.
 
 `GET /v1/health` reports `storage_authority` and, under Postgres, `pg_ok`; with
 `?include=postgres` also a `postgres` block of `standby`, `parked_deliveries`,

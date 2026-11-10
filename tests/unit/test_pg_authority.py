@@ -847,7 +847,11 @@ async def test_boot_refuses_by_the_configured_durability(monkeypatch: pytest.Mon
     async def _fetchrow(sql: str, *args: object) -> dict[str, object]:
         return {"names": "", "sync": 0, "hidden": 0}
 
+    async def _message_allowed() -> None:
+        return None
+
     monkeypatch.setattr(pg_profile.pg, "fetchrow", _fetchrow)
+    monkeypatch.setattr(pg_profile.pg, "check_durable_message", _message_allowed)
     monkeypatch.setattr(settings, "pg_durability", "synchronous")
     with pytest.raises(pg_profile.DurabilityRefused):
         await pg_profile.check_durability()
@@ -1239,7 +1243,7 @@ def _fake_connection(monkeypatch: pytest.MonkeyPatch, tx: _FakeTx) -> None:
             return False
 
         async def execute(self, sql: str) -> None:
-            assert sql == "SET LOCAL statement_timeout = 0"  # the commit's own bound
+            raise AssertionError(f"the transaction ran {sql!r} of its own")
 
     @asynccontextmanager
     async def _connection():
@@ -1983,7 +1987,7 @@ async def test_a_refused_audit_row_fails_the_attempt_after_the_search_document_i
     monkeypatch.setattr("server.memory.store.insert_embedding_rows", _insert)
     monkeypatch.setattr("server.memory.store.index_late_rows", _no_late_rows)
 
-    async def _all_heads(claims: Any) -> Any:
+    async def _all_heads(claims: Any, deadline: float) -> Any:
         return claims
 
     monkeypatch.setattr(pg_delivery, "_still_heads", _all_heads)
@@ -2753,27 +2757,18 @@ async def test_a_cancel_while_the_connection_is_released_is_marked_only_after_th
     assert pg.may_have_committed(raised.value) is landed
 
 
-@pytest.mark.parametrize("at", ["start", "statement_timeout"])
 @pytest.mark.asyncio
-async def test_a_cancel_before_the_commit_is_not_marked(
-    monkeypatch: pytest.MonkeyPatch, at: str
-) -> None:
+async def test_a_cancel_before_the_commit_is_not_marked(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.core import pg
 
     class _Cancelled(_PgConn):
-        async def execute(self, *a: object) -> str:
-            if at == "statement_timeout":
-                raise asyncio.CancelledError()
-            return "SET"
-
         def transaction(self) -> Any:
             tx = super().transaction()
-            if at == "start":
 
-                async def _start() -> None:
-                    raise asyncio.CancelledError()
+            async def _start() -> None:
+                raise asyncio.CancelledError()
 
-                tx.start = _start
+            tx.start = _start
             return tx
 
     _pg_pool(monkeypatch, _Cancelled())
@@ -4182,7 +4177,10 @@ async def test_a_decision_record_is_judged_by_the_writers_the_authority_holds(
         async def execute(self, sql: str, params: Any = None, settings: Any = None) -> None:
             self.sent.append((sql, params, settings))
 
-    async def _writers(org: str, ns: str, keys: list[str]) -> list[tuple[str, str, str, str]]:
+    async def _writers(
+        org: str, ns: str, keys: list[str], *, durable: bool = False
+    ) -> list[tuple[str, str, str, str]]:
+        assert durable  # a retirement acts on a writer's absence
         return [("k", "a", "-", "-")]
 
     from server.core import rmt_carry
@@ -4954,7 +4952,8 @@ async def test_a_deleted_decisions_record_retires_where_it_is_published(
         events.append("drawn")
         return 42
 
-    async def _live(org: str, ns: str, keys: list[str]) -> list[Any]:
+    async def _live(org: str, ns: str, keys: list[str], *, durable: bool = False) -> list[Any]:
+        assert durable
         events.append("live")
         return [(keys[0], "a", "-", "-")]
 
@@ -4975,6 +4974,7 @@ async def test_a_deleted_decisions_record_retires_where_it_is_published(
     monkeypatch.setattr(pg_memory, "live_decision_writers", _live)
     monkeypatch.setattr(pg_memory, "complete", _complete)
     monkeypatch.setattr(pg_lease, "check_lease", lambda deadline: None)
+    monkeypatch.setattr(pg_lease, "check_lease_after_durable_read", lambda deadline: None)
     monkeypatch.setattr(pg_publish, "tombstone_decision_records", _records)
     owing = [owe("a", "k1", 1), owe("a", "k2", 2), owe("b", "k3", 3)]
     assert await pg_publish.retire_decision_records(owing, deadline=0.0, ch=object()) is None
@@ -5471,8 +5471,13 @@ async def test_a_search_document_is_built_only_while_the_head_serves_it(
         "unhashed": {**newer, "memory_key": "unhashed", "content_sha256": ""},
     }
 
-    async def _heads(keys: list[Any], *, include_tombstoned: bool) -> dict[Any, Any]:
+    reads: list[bool] = []
+
+    async def _heads(
+        keys: list[Any], *, include_tombstoned: bool, durable: bool = False
+    ) -> dict[Any, Any]:
         assert include_tombstoned
+        reads.append(durable)
         return {identity_key(h): h for h in heads.values()}
 
     monkeypatch.setattr(pg_memory, "heads_by_keys", _heads)
@@ -5481,8 +5486,9 @@ async def test_a_search_document_is_built_only_while_the_head_serves_it(
         for i, k in enumerate([*heads, "gone"])
     ]
     claims[-2] = replace(claims[-2], row={**claims[-2].row, "content_sha256": ""})
-    served = await pg_delivery._still_heads(claims)
+    served = await pg_delivery._still_heads(claims, time.monotonic() + 60)
     assert [(c.row["memory_key"], c.row["version"]) for c in served] == [("same", 1), ("copy", 2)]
+    assert reads == [False, True]  # the copy is another commit: read again durably
     assert served[1].row["status"] == "superseded"  # the head's own row, not the revision's
 
 
@@ -6922,3 +6928,128 @@ async def test_a_bulk_batch_writing_a_key_twice_owes_a_document_only_for_its_emb
     row = pg_memory.MEMORY_ROW | pg_memory.AUDIT_ROW
     doc = row | pg_memory.SEARCH_DOC
     assert seen == [[doc if both_embedded else row, doc]]
+
+
+@pytest.mark.asyncio
+async def test_a_connection_lost_in_a_transaction_is_503_not_the_drivers_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """asyncpg detaches a pooled connection's proxy when its connection is lost: the
+    terminate and is_closed calls on it raise InterfaceError, which must not replace the
+    outage the block raised."""
+    import asyncpg
+
+    from server.core import pg
+
+    class _Detached(_PgConn):
+        def terminate(self) -> None:
+            raise asyncpg.InterfaceError("connection has been released back to the pool")
+
+        def is_closed(self) -> bool:
+            raise asyncpg.InterfaceError("connection has been released back to the pool")
+
+    _pg_pool(monkeypatch, _Detached())
+    with pytest.raises(pg.PostgresUnavailableError) as raised:
+        async with pg.transaction():
+            raise asyncpg.exceptions.ConnectionDoesNotExistError("connection was closed")
+    assert raised.value.status_code == 503
+    assert isinstance(raised.value.__cause__, asyncpg.exceptions.ConnectionDoesNotExistError)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("closed", [True, False])
+@pytest.mark.parametrize("block", ["transaction", "rolled_back"])
+async def test_the_drivers_own_error_on_a_lost_connection_is_503(
+    monkeypatch: pytest.MonkeyPatch, closed: bool, block: str
+) -> None:
+    """The server ended the connection between two statements: which error the next one
+    raises depends on when the driver noticed. Its protocol caught mid-switch
+    (InternalClientError) is an outage either way; any error once the connection reads
+    closed is too."""
+    import asyncpg
+
+    from server.core import pg
+
+    class _Ended(_PgConn):
+        def is_closed(self) -> bool:
+            return closed
+
+    _pg_pool(monkeypatch, _Ended())
+    with pytest.raises(pg.PostgresUnavailableError) as raised:
+        async with getattr(pg, block)():
+            if closed:
+                raise asyncpg.InterfaceError("connection is closed")
+            raise asyncpg.exceptions.InternalClientError("cannot switch to state 15")
+    assert raised.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_a_commit_on_a_lost_connection_is_503_with_its_outcome_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncpg
+
+    from server.core import pg
+
+    class _Tx:
+        async def start(self) -> None:
+            return None
+
+        async def commit(self) -> None:
+            raise asyncpg.InterfaceError("connection is closed")
+
+        async def rollback(self) -> None:
+            return None
+
+    class _Ended(_PgConn):
+        def transaction(self) -> _Tx:
+            return _Tx()
+
+        def is_closed(self) -> bool:
+            return True
+
+    _pg_pool(monkeypatch, _Ended())
+    with pytest.raises(pg.PostgresUnavailableError) as raised:
+        async with pg.transaction():
+            pass
+    assert raised.value.status_code == 503
+    assert pg.may_have_committed(raised.value)
+
+
+@pytest.mark.asyncio
+async def test_a_durable_read_on_a_demoted_primary_is_the_read_only_outage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Its logical message cannot take an xid in recovery (XX000), which counts as the
+    demoted primary's 25006: the caller gets a 503 and the pool is expired."""
+    from server.core import pg
+
+    class _InRecovery(Exception):
+        sqlstate = "XX000"
+
+    class _Demoted(_PgConn):
+        async def execute(self, *a: object) -> str:
+            raise _InRecovery("cannot assign TransactionIds during recovery")
+
+    expired: list[bool] = []
+    conn = _Demoted()
+
+    class _Pool:
+        async def acquire(self, **_: float) -> _PgConn:
+            return conn
+
+        async def release(self, c: _PgConn, **_: float) -> None:
+            return None
+
+        async def expire_connections(self) -> None:
+            expired.append(True)
+
+    async def _pool() -> _Pool:
+        return _Pool()
+
+    monkeypatch.setattr(pg, "_pool_for_loop", _pool)
+    with pytest.raises(pg.PostgresUnavailableError):
+        async with pg.durable_transaction() as c:
+            await c.fetch("SELECT 1")
+    assert expired == [True] and conn.terminated
+    assert not pg.is_outage(_InRecovery("some other internal error"))
