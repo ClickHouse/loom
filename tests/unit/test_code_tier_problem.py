@@ -780,3 +780,38 @@ def test_rows_that_tie_but_read_differently_are_not_left_in_entry_order() -> Non
         orders.append([r["reason"] for r in rows])
     # sorted by what the lines say: the restricted one's place follows its reason only
     assert all(order == sorted(order) for order in orders)
+
+
+def test_a_kind_a_later_build_adds_reads_as_itself() -> None:
+    assert tier_health.reason("unknown") == tier_health.reason("") == "unclassified error"
+    assert tier_health.reason("newer_kind") == "newer_kind"
+
+
+def test_the_doctor_says_where_the_rest_are_when_it_names_only_some() -> None:
+    rows = tuple(
+        {
+            "org": "o",
+            "namespace": f"code-{i}",
+            "tier": "fetch",
+            "kind": "network",
+            "reason": "host unreachable",
+            "restricted": False,
+            "repo": f"o/r{i}",
+            "branch": "main",
+            "error": "",
+            "since": "s",
+            "failed_passes": 3,
+            "lag_commits": -1,
+            "fix": "Check DNS.",
+            "severity": "warn",
+        }
+        for i in range(7)
+    )
+    (p,) = [
+        p
+        for p in collect_problems(
+            settings, HealthState(code_tier_failures=rows, code_tier_names="all")
+        )
+        if p.code == "code_tier_failing"
+    ]
+    assert "and 2 more" in p.message and "code.repos and the repository page" in p.message

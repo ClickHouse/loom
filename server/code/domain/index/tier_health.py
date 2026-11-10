@@ -430,8 +430,10 @@ ERROR_LINE_CHARS = 200
 
 
 def reason(kind: str) -> str:
-    """The phrase for a failure of `kind`."""
-    return REASONS.get(kind, "unclassified error")
+    """The phrase for a failure of `kind`; a kind a later build adds reads as itself."""
+    if kind in ("", "unknown"):
+        return "unclassified error"
+    return REASONS.get(kind, kind)
 
 
 def error_line(kind: str, error: str) -> str:

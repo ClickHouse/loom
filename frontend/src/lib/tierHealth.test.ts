@@ -23,7 +23,8 @@ describe("failureSummary", () => {
     );
   });
 
-  it("reads an unmapped kind as unclassified", () => {
+  it("reads no kind as unclassified, and a kind it does not know as itself", () => {
     expect(kindWord("")).toBe("unclassified error");
+    expect(kindWord("newer_kind")).toBe("newer_kind");
   });
 });

@@ -935,8 +935,8 @@ def _code_tier_problems(st: HealthState) -> list[Problem]:
         return f"{entry} {line}{error}"
 
     if st.code_tier_names != "none":
-        # the named lines by entry; in a platform admin's view the restricted lines
-        # after them, in the anonymous answer's order
+        # within a severity, the named lines by entry; in a platform admin's view the
+        # restricted lines after them, in the anonymous answer's order
         def by_entry(r: Mapping[str, Any]) -> tuple[Any, ...]:
             hidden = bool(r["restricted"]) and st.code_tier_names != "all"
             return (
@@ -960,7 +960,7 @@ def _code_tier_problems(st: HealthState) -> list[Problem]:
             f"branch: {'; '.join(shown)}{tail}."
             + (
                 ""
-                if st.code_tier_names == "all"
+                if st.code_tier_names == "all" and not more
                 else " code.repos and the repository page name each entry."
             ),
             " ".join(fixes),

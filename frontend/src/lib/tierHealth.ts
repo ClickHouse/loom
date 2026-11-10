@@ -49,7 +49,8 @@ export function tierName(tier: string): string {
 }
 
 export function kindWord(kind: string): string {
-  return KIND_WORD[kind] ?? "unclassified error";
+  // a kind a later build adds reads as itself
+  return KIND_WORD[kind] ?? (kind && kind !== "unknown" ? kind : "unclassified error");
 }
 
 /** The failing tiers, in the order the server lists them; [] for a row without any. */
