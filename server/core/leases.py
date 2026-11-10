@@ -211,8 +211,8 @@ class Lease:
             if left <= 0:
                 break
             try:
-                # one attempt gets a twelfth of the TTL, so a call that hangs (a read past
-                # its deadline) leaves room for retries before half the TTL has passed
+                # one attempt gets a twelfth of the TTL, so a call that hangs leaves room
+                # for retries before half the TTL has passed
                 if not await asyncio.wait_for(self.renew(), min(left, self.ttl_s / 12)):
                     break
                 pause = self.ttl_s / 6
