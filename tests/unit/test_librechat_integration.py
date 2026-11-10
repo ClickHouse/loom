@@ -291,7 +291,6 @@ def test_the_cancel_probe_sorts_the_calls_by_when_they_began(monkeypatch):
 
     monkeypatch.setattr(q, "read_until", read_until)
     monkeypatch.setattr(q, "loom_calls", loom_calls)
-    monkeypatch.setattr(q.time, "sleep", lambda s: None)
     st = {"librechat": {"alice": {"agent_id": "a", "api_key": "k"}}, "librechat_url": "http://lc"}
     args = type("A", (), {"cancel_after": 0.5, "cancel_wait": 0.0, "ch_url": "http://ch"})()
     row = q.cancel_probe(st, args)
