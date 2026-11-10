@@ -253,8 +253,8 @@ upgraded with --reuse-values from a chart without the block has none. */}}
 - name: PGPASSWORD
   valueFrom:
     secretKeyRef:
-      name: {{ $pg.passwordSecret.name }}
-      key: {{ $pg.passwordSecret.key }}
+      name: {{ $pg.passwordSecret.name | quote }}
+      key: {{ $pg.passwordSecret.key | quote }}
 {{- end -}}
 {{- end }}
 
@@ -264,10 +264,10 @@ upgraded with --reuse-values from a chart without the block has none. */}}
 {{- if $pg.host -}}
 - name: pg-ca
   secret:
-    secretName: {{ $pg.caSecret.name }}
+    secretName: {{ $pg.caSecret.name | quote }}
     items:
-      - key: {{ $pg.caSecret.key }}
-        path: {{ $pg.caSecret.key }}
+      - key: {{ $pg.caSecret.key | quote }}
+        path: {{ $pg.caSecret.key | quote }}
 {{- end -}}
 {{- end }}
 

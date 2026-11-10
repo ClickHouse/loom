@@ -107,8 +107,10 @@ Replicas added past the chart's count by anything else are outside the sum.
 
 - Loom refuses to start when the service's `synchronous_standby_names` is empty. It
   starts with fewer standbys attached than it names, logging the WARNING
-  `Postgres durability: fewer synchronous standbys are attached than required`, and
-  commits wait until they are.
+  `Postgres durability: fewer synchronous standbys are attached than required`. A commit
+  then waits for them up to `LOOM_PG_STATEMENT_TIMEOUT_MS` plus one second, and answers
+  503 `POSTGRES_UNAVAILABLE` with `outcome_unknown`
+  ([what the boot checks](postgres.md#what-the-boot-checks)).
 - `GET /v1/health` reports `storage_authority: postgres` and `pg_ok`.
   `GET /v1/health?include=postgres` adds a `postgres` block with `standby: synchronous`;
   the block is missing whenever `pg_ok` is false, when the check's `SELECT 1` fails for

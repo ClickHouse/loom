@@ -53,7 +53,7 @@ postgres:
     name: ""
     key: ca.crt
   # LOOM_PG_DURABILITY: synchronous refuses to start when the server's
-  # synchronous_standby_names is empty.
+  # synchronous_standby_names is empty; local accepts commits the primary alone holds.
   durability: synchronous
   # LOOM_PG_POOL_MAX_SIZE: connections per Loom process, at least LOOM_PG_POOL_MIN_SIZE
   # (2 by default); a smaller pool fails at boot.
