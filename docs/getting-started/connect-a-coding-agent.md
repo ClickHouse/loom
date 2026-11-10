@@ -2,12 +2,12 @@
 
 This page connects Claude Code, Codex, Cursor or another MCP client to a running Loom
 server. Install the plugin (or wire the MCP entry), point it at the server, and work as
-usual. The next session starts with what the agent saved. What the plugin sends to Loom,
-and what conversation recording (the namespace owner's **Record conversations** switch on
-the Conversations page, `conversation.set_logging`; off by default) changes, is in [data
-handling](../features/integrations/claude-code.md#data-handling). To run a server
-yourself, start with the [quickstart](quickstart.md); to have your agent install a pinned
-release and prove it works, give it the latest release's
+usual. The next session starts with what the agent saved. What the plugin sends to Loom is
+in [data handling](../features/integrations/claude-code.md#data-handling). Conversation
+recording is off by default; the namespace owner turns it on with the **Record
+conversations** switch on the Conversations page (`conversation.set_logging`). To run a
+server yourself, start with the [quickstart](quickstart.md); to have your agent install a
+pinned release and prove it works, give it the latest release's
 `https://github.com/ClickHouse/loom/releases/latest/download/agent-setup.txt` ([Set up
 Loom with your coding agent](agent-setup.md)).
 
@@ -68,8 +68,8 @@ the plugin installed: an entry with the same name replaces the plugin's.
 In the dashboard, open **Settings → Tokens**, fill in the **New token** form (press **New
 token** first if a token exists) and press **Create token**, then choose your client
 (Cursor, VS Code, Cline, Windsurf, Zed or Claude Desktop) under **Connect**: the dialog
-shows the entry for its config file, with the token in it; other clients take the entry
-[MCP clients](../features/integrations/mcp-clients.md) shows. With the `loom` CLI
+shows the entry for its config file, with the token in it. For any other MCP client, copy
+the entry from [MCP clients](../features/integrations/mcp-clients.md). With the `loom` CLI
 installed (`pip install -e .` from a clone of the repository), one command writes the
 entry instead:
 

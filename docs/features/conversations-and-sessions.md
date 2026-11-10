@@ -20,7 +20,7 @@ extracted memory, and a brief never competes with facts in recall.
 on. The switch (`conversation_logging_enabled` on `loom.namespaces`) is off by default
 and fails closed: a namespace with no row is not
 recorded. The owner turns it on with `conversation.set_logging(enabled=true)` (admin) or
-the Recording toggle on the dashboard's Conversations page.
+the **Record conversations** switch on the dashboard's Conversations page.
 
 When logging is off the append is accepted and nothing is kept: the response says
 `stored: false, reason: "logging_disabled"`. A client cannot override the owner's choice.
