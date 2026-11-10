@@ -867,20 +867,13 @@ _HELD_LIST = (
 _HELD_MATCH = "(d.org, d.namespace, d.seq, d.lease_token) = (k.org, k.namespace, k.seq, k.token)"
 
 
-async def _lock_held(conn: Any, keys: tuple[list[Any], ...]) -> list[Any]:
+async def _lock_held(conn: Any, keys: tuple[list[Any], ...]) -> None:
     """Lock the deliveries these claims still hold, in seq order: a second completer of
-    one (a row and its search document landing apart) waits, then reads what is left.
-    Returns each one's targets, its token, and the milliseconds since its revision's
-    commit on Postgres's clock."""
-    return list(
-        await conn.fetch(
-            "SELECT d.targets, d.lease_token, "
-            "extract(epoch FROM clock_timestamp() - r.committed_at) * 1000 AS lag_ms "
-            "FROM loom.memory_deliveries d JOIN loom.memory_revisions r "
-            f"ON (r.org, r.namespace, r.seq) = (d.org, d.namespace, d.seq), {_HELD_LIST} "
-            f"WHERE {_HELD_MATCH} ORDER BY d.org, d.namespace, d.seq FOR UPDATE OF d",
-            *keys,
-        )
+    one (a row and its search document landing apart) waits, then reads what is left."""
+    await conn.execute(
+        f"SELECT 1 FROM loom.memory_deliveries d, {_HELD_LIST} WHERE {_HELD_MATCH} "
+        "ORDER BY d.org, d.namespace, d.seq FOR UPDATE OF d",
+        *keys,
     )
 
 
@@ -902,7 +895,16 @@ async def _complete_in(
     whose last search target this cleared, its projection lag and whether it was
     redelivered: the caller records them once the transaction commits."""
     keys = _held_keys(seqs, tokens)
-    locked = await _lock_held(conn, keys)
+    # `_lock_held`'s lock, with what is left of each delivery and the milliseconds since
+    # its revision's commit on Postgres's clock.
+    locked = await conn.fetch(
+        "SELECT d.targets, d.lease_token, "
+        "extract(epoch FROM clock_timestamp() - r.committed_at) * 1000 AS lag_ms "
+        "FROM loom.memory_deliveries d JOIN loom.memory_revisions r "
+        f"ON (r.org, r.namespace, r.seq) = (d.org, d.namespace, d.seq), {_HELD_LIST} "
+        f"WHERE {_HELD_MATCH} ORDER BY d.org, d.namespace, d.seq FOR UPDATE OF d",
+        *keys,
+    )
     # Deleted when nothing is left, else updated: one dead row per delivery, not two.
     await conn.execute(
         f"DELETE FROM loom.memory_deliveries d USING {_HELD_LIST} WHERE {_HELD_MATCH} "

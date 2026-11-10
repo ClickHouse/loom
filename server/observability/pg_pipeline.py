@@ -5,11 +5,10 @@
   (`pg_validation.admit`), by op, outcome and traffic class: the user-visible time
   from a write to its being searchable. It stops at the read's deadline
   (`outcome=deadline`: LOOM_PG_PROJECTION_WAIT_MS, or what a re-entrant pass has left):
-  a search then answers 503, a report that may skip it reads on.
-- `loom.pg.projection_lag_ms`: from a revision's commit to its last search target
-  landing, measured on Postgres's clock as the delivery clears and recorded once that commits
-  (`pg_memory.complete`),
-  by path: the writer's own flush or a redelivery.
+  the op answers 503 PROJECTION_BEHIND, a report that may skip the projection reads on.
+- `loom.pg.projection_lag_ms`: from a revision's commit transaction's start to its last
+  search target landing, on Postgres's clock as the delivery clears, recorded once that
+  commits (`pg_memory.complete`), by path: the writer's own flush or a redelivery.
 - `loom.pg.backlog` {source, state} and `loom.pg.oldest_pending_age_s` {source}: one
   reading per delivery pass, taken first in the pass by the worker that owns the source,
   exported only by the process holding the workers lease, dropped once older than two

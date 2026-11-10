@@ -54,8 +54,8 @@ async def admit(
         for namespace, through in sorted(behind.items()):
             await wait_searchable(org, namespace, through, deadline=deadline, owed=owed)
     except ProjectionBehindError:
-        # The wait reached its deadline: a search answers 503, a report that may skip
-        # the projection reads on.
+        # The wait reached its deadline: the op answers 503 PROJECTION_BEHIND, a report
+        # that may skip the projection reads on.
         pg_pipeline.record_search_wait("deadline", _ms_since(started))
         raise
     pg_pipeline.record_search_wait("passed", _ms_since(started))
