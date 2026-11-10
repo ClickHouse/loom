@@ -35,6 +35,7 @@ PAGE_SEGMENTS = frozenset(
         "conversations",
         "flow",
         "graph",
+        "help",
         "library",
         "memories",
         "profile",
