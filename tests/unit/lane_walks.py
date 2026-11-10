@@ -511,7 +511,7 @@ def walk_cost(name: str) -> tuple[float, float]:
 
     def cost(n: int) -> float:
         t = text(n)
-        with untraced():  # a full collection inside the call costs by the heap, not by t
+        with untraced():  # a full collection costs in proportion to the heap, not to the text
             t0 = time.process_time()  # CPU time: a loaded host stretches wall time, not this
             walk(t)
             return time.process_time() - t0
