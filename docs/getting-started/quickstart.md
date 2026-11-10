@@ -403,8 +403,8 @@ with the token in it. Then:
 1. Overwrite `~/.loom/config.json` with the dialog's `config.json` block plus the
    namespace the token saves to (`"namespace": "<namespace>"`): an `org` or `namespace` a
    single-user session left in the file outranks the token, and without one the plugin
-   writes to the token's first listed namespace, or `coding`. Add back any `code_repo` or
-   `agent` you had set.
+   writes to the token's first namespace other than `*`, or `coding`. Add back any
+   `code_repo` or `agent` you had set.
 2. Leave `LOOM_API_KEY` and the plugin's `token` option empty or set to the new token: the
    plugin reads both before that file
    ([configuration](../features/integrations/claude-code.md#configuration)).
