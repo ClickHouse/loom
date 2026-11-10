@@ -163,9 +163,17 @@ test.describe("a collection's path at 1400 px", () => {
     const select = page.getByRole("button", { name: "Show the documents of" });
     expect(Math.abs((await boxOf(path)).y - (await boxOf(select)).y)).toBeLessThan(16);
     // Cut on screen, whole as the link's name.
-    await expect(
-      path.getByRole("link", { name: "Customer interviews from the third quarter's discovery round" }),
-    ).toBeVisible();
+    const long = path.getByRole("link", { name: "Customer interviews from the third quarter's discovery round" });
+    await expect(long).toBeVisible();
+    // A cut title opens its whole text on keyboard focus; one that fits opens nothing.
+    await long.focus();
+    await expect(page.getByRole("tooltip")).toContainText(
+      "Customer interviews from the third quarter's discovery round",
+    );
+    await page.keyboard.press("Escape");
+    await path.getByRole("link", { name: /^Namespace / }).focus();
+    await page.waitForTimeout(800);
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
     const first = page.locator("main [data-doc-row]").first();
     await expect(first).toBeVisible();
     expect((await boxOf(first)).y).toBeLessThanOrEqual(300);

@@ -95,15 +95,17 @@ const PlaceLink = forwardRef<
   HTMLAnchorElement,
   { collection: string | null; onOpen: () => void; children: ReactNode } & Omit<
     ComponentPropsWithoutRef<"a">,
-    "href" | "onClick" | "children"
+    "href" | "children"
   >
->(function PlaceLink({ collection, onOpen, children, ...rest }, ref) {
+>(function PlaceLink({ collection, onOpen, children, onClick, ...rest }, ref) {
   return (
     <Link
       {...rest}
       ref={ref}
       href={navigationHref("knowledge", collection ? { collection } : {})}
-      onClick={(e: MouseEvent) => {
+      onClick={(e: MouseEvent<HTMLAnchorElement>) => {
+        // A wrapping tooltip's own handler (it closes the tip) runs first.
+        onClick?.(e);
         if (isModifiedClick(e)) return;
         e.preventDefault();
         onOpen();
