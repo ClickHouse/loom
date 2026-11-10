@@ -764,9 +764,8 @@ def test_has_email_finds_what_the_email_regex_finds() -> None:
     assert not has_email("x" * 65 + "@x.com")
 
 
-def _fastest[T](read: Callable[[T], object], arg: T) -> float:
-    """The fastest of three reads in CPU time: another process holding the CPU does not
-    count."""
+def _fastest_seconds[T](read: Callable[[T], object], arg: T) -> float:
+    """The fastest of three reads in CPU time: another process holding the CPU does not count."""
     times = []
     for _ in range(3):
         started = time.process_time()
@@ -785,8 +784,8 @@ def _fastest[T](read: Callable[[T], object], arg: T) -> float:
 def test_an_email_is_read_once_from_its_at(text: str) -> None:
     # A regex starting at every word boundary rescans up to 64 characters, and the domain
     # again, from each one: about a hundred times one pass over the text.
-    one_pass = _fastest(re.compile(r"[^\x00-\x7f]").search, text)
-    assert _fastest(has_email, text) < 20 * one_pass
+    one_pass = _fastest_seconds(re.compile(r"[^\x00-\x7f]").search, text)
+    assert _fastest_seconds(has_email, text) < 20 * one_pass
 
 
 def _read_escaped_quotes(n: int) -> None:
@@ -797,7 +796,7 @@ def _read_escaped_quotes(n: int) -> None:
 @pytest.mark.parametrize(("read", "n"), [(_read_long_runs, 50_000), (_read_escaped_quotes, 5_000)])
 def test_long_runs_are_read_in_linear_time(read: Callable[[int], None], n: int) -> None:
     # From n to 4n, a linear read takes about 4 times as long and a quadratic one 16 times.
-    assert _fastest(read, 4 * n) < 8 * _fastest(read, n)
+    assert _fastest_seconds(read, 4 * n) < 8 * _fastest_seconds(read, n)
 
 
 @pytest.mark.parametrize(

@@ -248,8 +248,7 @@ def _timed_out(signum: int, frame: object) -> None:
 
 
 def _fastest_seconds(read: Callable[[str], object], text: str) -> float:
-    """The fastest of three reads in CPU time: another process holding the CPU does not
-    count."""
+    """The fastest of three reads in CPU time: another process holding the CPU does not count."""
     times = []
     previous = signal.signal(signal.SIGALRM, _timed_out)
     try:
