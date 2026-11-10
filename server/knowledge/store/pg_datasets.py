@@ -23,7 +23,8 @@ from server.settings import settings
 # (`datasets_repo.dataset_row`) and as ISO text in `row`.
 TIME_COLUMNS = ("approved_at", "created_at", "updated_at")
 
-# A catalog row, inserted or written over its key's row when the WHERE that follows allows.
+# The approval's catalog row, inserted or written over its key's row when the WHERE
+# that follows allows.
 _WRITE = (
     "INSERT INTO loom.knowledge_datasets"
     " (org, namespace, source_uri, doc_version, dataset_id, snapshot_id, version, user_id, row)"
@@ -32,8 +33,19 @@ _WRITE = (
     " snapshot_id = EXCLUDED.snapshot_id, version = EXCLUDED.version,"
     " user_id = EXCLUDED.user_id, row = EXCLUDED.row"
 )
-# Over an older version only, as ReplacingMergeTree(version) decides.
-_UPSERT = f"{_WRITE} WHERE knowledge_datasets.version < EXCLUDED.version RETURNING 1"
+# Over an older version only, as ReplacingMergeTree(version) decides: every row in one
+# statement, returning the keys it wrote.
+_UPSERT = (
+    "INSERT INTO loom.knowledge_datasets"
+    " (org, namespace, source_uri, doc_version, dataset_id, snapshot_id, version, user_id, row)"
+    " SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::bigint[], $5::text[],"
+    " $6::bigint[], $7::bigint[], $8::text[], $9::jsonb[])"
+    " ON CONFLICT (org, namespace, source_uri, doc_version, dataset_id) DO UPDATE SET"
+    " snapshot_id = EXCLUDED.snapshot_id, version = EXCLUDED.version,"
+    " user_id = EXCLUDED.user_id, row = EXCLUDED.row"
+    " WHERE knowledge_datasets.version < EXCLUDED.version"
+    " RETURNING org, namespace, source_uri, doc_version, dataset_id"
+)
 # The approval: over the version of the row it read ($10), or no row, never a later one.
 _APPROVE = f"{_WRITE} WHERE knowledge_datasets.version <= $10 RETURNING 1"
 # The publishing job, held against an erasure's delete for the publish's transaction.
@@ -106,16 +118,22 @@ async def upsert(
     rows: Sequence[dict[str, Any]], *, job: tuple[str, str, str] | None = None
 ) -> list[dict[str, Any]]:
     """Commit each catalog row over an older version of its key (a newer one stays) and
-    return the rows written, the only ones to project. Every row is `storable`. `job` is
-    the (org, namespace, ingestion_id) of the ingest publishing them, held in
-    `loom.knowledge_jobs`: its row is read in the same transaction, and JobErased raised
-    with nothing written when an erasure deleted it. An erasure deletes jobs before
-    catalog rows, so one committed first leaves no job, and one that comes after waits
-    for this transaction and then deletes what it wrote."""
+    return the rows written, the only ones to project. Every row is `storable`, and no
+    two share a key (one statement writes a row once). `job` is the (org, namespace,
+    ingestion_id) of the ingest publishing them, held in `loom.knowledge_jobs`: its row
+    is read in the same transaction, and JobErased raised with nothing written when an
+    erasure deleted it. An erasure deletes jobs before catalog rows, so one committed
+    first leaves no job, and one that comes after waits for this transaction and then
+    deletes what it wrote."""
+    if not rows:
+        return []
+    args = [_args(r) for r in rows]
     async with pg.transaction() as conn:
         if job is not None and not await conn.fetchval(_JOB, *job):
             raise JobErased(job[2])
-        return [r for r in rows if await conn.fetchval(_UPSERT, *_args(r)) is not None]
+        written = await conn.fetch(_UPSERT, *(list(c) for c in zip(*args, strict=True)))
+    keys = {tuple(w.values()) for w in written}
+    return [r for r, a in zip(rows, args, strict=True) if tuple(a[:5]) in keys]
 
 
 async def at_version(
@@ -186,7 +204,7 @@ async def forget(
     if not uris or not _storable(org, namespace):
         return set()
     which = "doc_version < $4" if before else "doc_version = $4"
-    # In a transaction, so that a commit the standby's wait leaves unknown says so.
+    # In a transaction: a commit whose standby wait was cut off answers outcome_unknown.
     async with pg.transaction() as conn:
         gone = await conn.fetch(
             "DELETE FROM loom.knowledge_datasets WHERE org = $1 AND namespace = $2"

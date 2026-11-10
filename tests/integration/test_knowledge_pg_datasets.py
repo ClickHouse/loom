@@ -111,7 +111,9 @@ async def test_a_catalog_row_lands_only_over_an_older_version(
     assert read == first
     later = {**first, "snapshot_id": 2, "version": int(first["version"]) + 5}
     assert await pg_datasets.upsert([later]) == [later]
-    assert await pg_datasets.upsert([first]) == []  # an older version stays out
+    other = {**first, "dataset_id": "ds_other"}
+    # One statement: the older version stays out, a new key lands.
+    assert await pg_datasets.upsert([first, other]) == [other]
     (read,) = await pg_datasets.at_version(org, "docs", _URI, 100, dataset_id="ds_sales")
     assert read["snapshot_id"] == 2
 

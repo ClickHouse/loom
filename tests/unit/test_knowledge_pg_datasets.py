@@ -204,8 +204,10 @@ def test_a_catalog_row_round_trips_through_postgres_json_to_the_millisecond() ->
 class _Conn:
     """A Postgres connection answering the approval's head read and its writes."""
 
-    def __init__(self, head: dict[str, Any] | None, approved: bool = True) -> None:
-        self.head, self.approved = head, approved
+    def __init__(
+        self, head: dict[str, Any] | None, approved: bool = True, erased: bool = False
+    ) -> None:
+        self.head, self.approved, self.erased = head, approved, erased
 
     async def execute(self, *a: Any) -> None:
         return None
@@ -216,7 +218,7 @@ class _Conn:
     async def fetchval(self, sql: str, *a: Any) -> Any:
         if "INSERT" in sql:
             return 1 if self.approved else None
-        return None  # no erasure evidence
+        return self.erased or None  # the erasure evidence
 
     async def fetch(self, *a: Any) -> list[dict[str, Any]]:
         return [{"dataset_id": "ds_a"}]
@@ -240,16 +242,18 @@ def _transactions(monkeypatch: pytest.MonkeyPatch, conn: _Conn) -> list[str]:
 
 
 @pytest.mark.parametrize(
-    ("head", "approved"),
-    [({"version": 101, "deleted": False}, True), ({"version": 100, "deleted": True}, True),
-     (None, False)],
+    ("head", "approved", "erased"),
+    [({"version": 101, "deleted": False}, True, False),
+     ({"version": 100, "deleted": True}, True, False),
+     ({"version": 100, "deleted": False}, True, True),
+     (None, False, False)],
 )  # fmt: skip
 def test_a_refused_approval_rolls_back(
-    monkeypatch: pytest.MonkeyPatch, head: dict[str, Any] | None, approved: bool
+    monkeypatch: pytest.MonkeyPatch, head: dict[str, Any] | None, approved: bool, erased: bool
 ) -> None:
     """A refusal commits nothing, so its locks never wait for the standby: it answers
     `moved`, not a 503 whose outcome is unknown."""
-    ends = _transactions(monkeypatch, _Conn(head, approved))
+    ends = _transactions(monkeypatch, _Conn(head, approved, erased))
     new = {**_row("ds_a", 9), "doc_version": 100}
     assert asyncio.run(pg_datasets.approve(new, read=9, doc_id="d")) == "moved"
     assert ends == ["rollback"]
