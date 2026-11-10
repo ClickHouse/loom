@@ -6,6 +6,7 @@ when orphaned; the ingest worker skips deleted rows."""
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -58,6 +59,7 @@ class _CH:
                 "namespace": (params or {}).get("ns"),
                 "active": True,
                 "kind": "code",
+                "updated_at": datetime(2026, 1, 1),
             }
         return None
 

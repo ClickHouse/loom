@@ -17,6 +17,8 @@ export interface CollectionEntry {
   role: GrantRole;
   /** What it holds: its directory description; "" for none (and from a server a release behind). */
   description?: string;
+  /** What it is called on screen; "" for none (then its name is shown). */
+  title?: string;
 }
 
 export interface CollectionListPage {
@@ -35,16 +37,30 @@ export async function listCollections(
   return { collections: r.collections ?? [], next_cursor: r.next_cursor ?? null };
 }
 
+export interface CollectionCreated {
+  namespace: string;
+  parent: string;
+  /** False when the collection already existed: the caller's own by that name, or, with
+   *  `deriveName`, the one the title already names under that parent. */
+  created: boolean;
+  /** Its title; "" for none (and from a server a release behind). */
+  title?: string;
+}
+
+/** POST /v1/collection.create. With `deriveName` the server derives the name from the
+ *  title and `namespace` is only what a server a release behind creates. */
 export async function createCollection(
   org: string,
   namespace: string,
-  opts: { parent?: string; description?: string } = {},
-): Promise<{ namespace: string; parent: string; created: boolean }> {
+  opts: { parent?: string; description?: string; title?: string; deriveName?: boolean } = {},
+): Promise<CollectionCreated> {
   return post("/v1/collection.create", {
     org,
     namespace,
     parent: opts.parent ?? "",
     description: opts.description ?? "",
+    title: opts.title ?? "",
+    derive_name: opts.deriveName ?? false,
   });
 }
 

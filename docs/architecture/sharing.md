@@ -22,12 +22,28 @@ flowchart LR
   `loom.collections` naming its parent. `collection.create` makes one (the creator holds
   `admin`), `collection.move` puts it under another collection or detaches it,
   `collection.list` lists the ones the caller can read, each with the caller's role there
-  and its directory description (the dashboard's Library shows them), and
+  and its title and description (the dashboard's Library shows them), and
   `collection.delete` takes one out of the directory and the tree (its children become
   top-level) once a purging erasure of it has taken what it holds off disk
   (`namespace.delete` refuses a collection). A
   deleted collection's name is never used again, and no grant reaches it any more. A
   document lives in one collection and follows its grants from the moment it is written.
+- **A collection's name and its title.** The name is the address: grants, search scope,
+  audit and erasure key on it, so it is unique in the org and never reused. The title is
+  what people see; titles repeat. `collection.create` with `derive_name` takes a title
+  and derives the name (`server/identity/domain/collection_names.py`): the title's slug
+  (`col-q3-plans`), else the slug with a four-character suffix hashed from the request,
+  so a retry walks the same names. For a derived create, within one parent a title names
+  one collection (at the top level, one per creator): a create whose title one already
+  has answers it with `created: false`, which makes it safe to retry and a folder upload
+  safe to repeat. A create that names the collection keeps the title it is given, without
+  that check. A title is what people read, not an identity: two titles can look alike
+  (letters from different scripts do), and the address tells the collections apart; the
+  dashboard shows it beside a title that looks like another. The title sits in
+  `loom.namespaces.title`, beside the description: every writer of an existing directory
+  row copies the row whole, so a build that does not know the column keeps it. A name
+  already used answers `COLLECTION_NAME_TAKEN`, saying whether a deleted collection held
+  it, with a free name to use instead.
 - **Only grants open a collection**, and only one in the tree: a `col-` name that was
   deleted, or never created, admits no one but a platform admin. A collection is known by
   its name (`col-…`; the prefix is reserved: `namespace.register` and `namespace.restore`

@@ -38,6 +38,7 @@ export const ERROR_CODE_PREFIXES: Record<string, string> = {
   IDENTITY_INCOMPLETE: "This token is scoped, so the request has to name the namespace:",
   POLICY_FORBIDDEN: "Blocked by a policy:",
   TOKEN_NAME_TAKEN: "Name taken:",
+  COLLECTION_NAME_TAKEN: "Name taken:",
   NOT_FOUND: "Not found; it may have been deleted, or be somewhere you can't read:",
   RESOURCE_NOT_FOUND: "Not found; it may have been deleted, or be somewhere you can't read:",
   NAMESPACE_NOT_FOUND: "That namespace doesn't exist:",

@@ -43,10 +43,13 @@ export const WILDCARD_NAMESPACE = "*";
  *  letters, digits and hyphens, starting with a letter or digit. */
 export const NAMESPACE_NAME = /^[a-z0-9][a-z0-9-]{0,127}$/;
 
+/** A collection's name starts with this (server/core/principals.py COLLECTION_PREFIX). */
+export const COLLECTION_PREFIX = "col-";
+
 /** Whether `name` is a collection's name (`col-…`, server/auth/sharing.py), as a link may
  *  name one: anything else a link carries is not shown. */
 export function isCollectionName(name: string | null | undefined): name is string {
-  return !!name && name.startsWith("col-") && NAMESPACE_NAME.test(name);
+  return !!name && name.startsWith(COLLECTION_PREFIX) && NAMESPACE_NAME.test(name);
 }
 
 /** A name the dashboard may switch into: a real namespace, whatever its kind. */

@@ -82,6 +82,18 @@ class PreconditionFailedError(LoomServerError):
         super().__init__(message, current_sha256=current_sha256)
 
 
+class CollectionNameTakenError(LoomServerError):
+    """409 — no name could be had: the one asked for is used or was a deleted
+    collection's (`deleted`), or every name a title derives is taken; `suggestion` is
+    a free name when one was found, else ''."""
+
+    code = "COLLECTION_NAME_TAKEN"
+    status_code = 409
+
+    def __init__(self, message: str = "", *, deleted: bool = False, suggestion: str = "") -> None:
+        super().__init__(message, deleted=deleted, suggestion=suggestion)
+
+
 class SourceReplacedError(LoomServerError):
     """409 — the document source was removed and added again as another source
     during the call (a rotate's probe, a sync request); act on the current one."""

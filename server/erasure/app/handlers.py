@@ -19,7 +19,7 @@ from server.auth import context as auth_context
 from server.auth.jwt import AuthInfo
 from server.core import pg
 from server.core.errors import AuthInsufficientError
-from server.core.principals import personal_name
+from server.core.principals import COLLECTION_PREFIX, personal_name
 from server.erasure.api.erasure import (
     ErasureExportInput,
     ErasureExportOutput,
@@ -253,7 +253,6 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
     shown = erasure_exports.Shown(
         hidden=tuple(sorted(hidden)),
         collections=None if readable_collections is None else tuple(sorted(readable_collections)),
-        collection_prefix=sharing.COLLECTION_PREFIX,
     )
     mem_rows, mem_count, mem_trunc = await _export_memory(
         input.org,
@@ -450,7 +449,7 @@ async def _list_scope(org: str) -> tuple[str, dict[str, Any]] | None:
                 " OR NOT startsWith(scope_value, {col_prefix:String})"
                 " OR scope_value IN {col_readable:Array(String)})"
             )
-            params["col_prefix"] = sharing.COLLECTION_PREFIX
+            params["col_prefix"] = COLLECTION_PREFIX
             params["col_readable"] = await sharing.readable(auth, org)
         if hidden:
             where += " AND NOT (scope_type = 'namespace' AND scope_value IN {hidden:Array(String)})"

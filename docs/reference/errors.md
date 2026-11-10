@@ -388,6 +388,10 @@ Raised in `server/memory/app/bulk_rows.py`, `server/memory/app/update.py`, `serv
 
 HTTP 503, raised as `server.core.errors.CodedWidthMismatchError`. 503 — a vector in the write is not the width its `Quantized` column was created at, so ClickHouse would refuse the insert. Category `configuration`, retryable: no.
 
+#### `COLLECTION_NAME_TAKEN`
+
+HTTP 409, raised as `server.core.errors.CollectionNameTakenError`. 409 — no name could be had: the one asked for is used or was a deleted collection's (`deleted`), or every name a title derives is taken; `suggestion` is a free name when one was found, else ''. Category `input`, retryable: no.
+
 #### `CONFIG_DRIFT`
 
 Raised in `server/transport/model_maintenance.py`. Category `capacity`, retryable: yes.

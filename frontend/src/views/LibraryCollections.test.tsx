@@ -1,5 +1,6 @@
 // The Library shows the header's namespace or one of the collections the caller reads: a
 // tree with each one's description, a menu that shares or deletes it, and New collection.
+import { repeatedTitles } from "../lib/collections";
 import { act, cleanup, fireEvent, render, screen, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -67,6 +68,35 @@ async function settle() {
 }
 
 describe("collection names and order", () => {
+  it("shows a title in place of the name, and both where two collections share the title", () => {
+    const titled = entry("col-q3-plans", { title: "Q3 Plans", description: "Quarter plans" });
+    expect(collectionLabel(titled)).toBe("Q3 Plans · Quarter plans");
+    const rows = [entry("col-notes", { title: "Notes" }), entry("col-notes-ab12", { title: "notes" })];
+    const repeated = repeatedTitles(rows);
+    expect(rows.map((c) => collectionLabel(c, repeated))).toEqual(["Notes (col-notes)", "notes (col-notes-ab12)"]);
+  });
+
+  it("takes two titles that differ only by a character drawn as nothing for one, showing their addresses", () => {
+    const rows = [entry("col-fin", { title: "Finance" }), entry("col-fin-ab12", { title: "Finance\ufe0f" })];
+    expect(rows.map((c) => collectionLabel(c, repeatedTitles(rows)))).toEqual([
+      "Finance (col-fin)",
+      "Finance\ufe0f (col-fin-ab12)",
+    ]);
+  });
+
+  it("shows the addresses of titles that look alike but are two (a joiner between letters)", () => {
+    const rows = [entry("col-pay", { title: "Payroll" }), entry("col-pay-ab12", { title: "Pay\u200droll" })];
+    expect(rows.map((c) => collectionLabel(c, repeatedTitles(rows)))).toEqual([
+      "Payroll (col-pay)",
+      "Pay\u200droll (col-pay-ab12)",
+    ]);
+  });
+
+  it("orders siblings by what they show", () => {
+    const rows = [entry("col-a", { title: "Zeta" }), entry("col-z", { title: "Alpha" })];
+    expect(treeOrder(rows).map(({ c }) => c.namespace)).toEqual(["col-z", "col-a"]);
+  });
+
   it("says what a collection holds beside its name, and the user's own is My files", () => {
     expect(collectionLabel(entry("col-q3", { description: "Quarter plans" }))).toBe("col-q3 · Quarter plans");
     expect(collectionLabel(entry("col-bare"))).toBe("col-bare");

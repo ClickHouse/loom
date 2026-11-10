@@ -76,18 +76,21 @@ async def fetch(org: str, namespace: str, *, ch: _CHClient | None = None) -> dic
 
 
 async def children(
-    org: str, namespace: str, *, ch: _CHClient | None = None
+    org: str, namespace: str, *, owner: str = "", ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
-    """The live rows whose parent is `namespace`."""
+    """The live rows whose parent is `namespace`; with `owner`, only the ones it
+    created."""
     from server.core.ch import own_write_reads
 
     ch = ch or _default_client()
+    mine = " AND owner = {owner:String}"
     with own_write_reads():
         return await ch.query_all(
             f"""
             SELECT {", ".join(COLUMNS)}
             FROM loom.collections FINAL
             WHERE org = {{org:String}} AND parent = {{ns:String}} AND NOT deleted
+            {mine if owner else ""}
             """,
-            params={"org": org, "ns": namespace},
+            params={"org": org, "ns": namespace, "owner": owner},
         )

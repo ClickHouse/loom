@@ -157,8 +157,8 @@ async def warn_collection_named_namespaces() -> list[str]:
     """Log one WARNING naming the first 20 active namespaces that use a
     collection's reserved prefix (`col-`) without being one: a `col-` name not in
     the collection tree admits only a platform admin. Returns the names."""
-    from server.auth.sharing import COLLECTION_PREFIX
     from server.core.ch import get_client
+    from server.core.principals import COLLECTION_PREFIX
 
     try:
         rows = await get_client().query_all(

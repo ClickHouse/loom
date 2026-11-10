@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any, cast
 
 from server.core import pg
+from server.core.principals import COLLECTION_PREFIX
 from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store.rows import (
     AgentEventExportRow,
@@ -29,9 +30,6 @@ class Shown:
 
     hidden: tuple[str, ...] = ()
     collections: tuple[str, ...] | None = None
-    # `server.auth.sharing.COLLECTION_PREFIX`, which the handler passes (a store
-    # imports no auth module).
-    collection_prefix: str = "col-"
 
     def clause(self) -> tuple[str, dict[str, Any]]:
         sql = " AND namespace NOT IN {shown_hidden:Array(String)}"
@@ -41,7 +39,7 @@ class Shown:
                 " AND (NOT startsWith(namespace, {shown_prefix:String})"
                 " OR namespace IN {shown_collections:Array(String)})"
             )
-            params["shown_prefix"] = self.collection_prefix
+            params["shown_prefix"] = COLLECTION_PREFIX
             params["shown_collections"] = list(self.collections)
         return sql, params
 
@@ -117,7 +115,7 @@ async def export_memory_heads(
     if not include_tombstoned:
         where += " AND row->>'tombstoned_at' IS NULL"
     if shown.collections is not None:
-        args += [shown.collection_prefix, [n for n in shown.collections if not pg.unstorable(n)]]
+        args += [COLLECTION_PREFIX, [n for n in shown.collections if not pg.unstorable(n)]]
         where += " AND (NOT starts_with(namespace, $5) OR namespace = ANY($6::text[]))"
     rows = await pg.fetch(
         "SELECT org, namespace, agent, user_id, session_id, memory_id::text AS memory_id, "

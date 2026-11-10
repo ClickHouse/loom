@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { moveCollection, type CollectionEntry } from "../api";
+import { collectionTitle, distinctTitle, repeatedTitles } from "../lib/collections";
 import { humanizeError } from "../lib/errorWords";
 import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
@@ -34,13 +35,20 @@ export function MoveCollectionDialog({
   const [error, setError] = useState<string | null>(null);
   const target = parent === TOP ? "" : parent;
   const parentOf = useMemo(() => new Map(all.map((e) => [e.namespace, e.parent])), [all]);
+  // Titles where the caller reads the collection, names elsewhere.
+  const shown = useMemo(() => {
+    const byName = new Map(all.map((e) => [e.namespace, collectionTitle(e)]));
+    return (name: string) => byName.get(name) ?? name;
+  }, [all]);
+  const repeated = useMemo(() => repeatedTitles(parents), [parents]);
+  const self = collectionTitle(collection);
 
   const submit = async () => {
     setBusy(true);
     setError(null);
     try {
       await moveCollection(org, collection.namespace, target);
-      toast(target ? `Moved ${collection.namespace} into ${target}` : `${collection.namespace} is top-level`, "ok");
+      toast(target ? `Moved ${self} into ${shown(target)}` : `${self} is top-level`, "ok");
       onMoved();
       onClose();
     } catch (e) {
@@ -50,12 +58,7 @@ export function MoveCollectionDialog({
   };
 
   return (
-    <Modal
-      open
-      onOpenChange={(v) => !v && onClose()}
-      title={`Move ${collection.namespace}`}
-      className="w-full max-w-[480px]"
-    >
+    <Modal open onOpenChange={(v) => !v && onClose()} title={`Move ${self}`} className="w-full max-w-[480px]">
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -63,14 +66,14 @@ export function MoveCollectionDialog({
         }}
       >
         <div className="space-y-4">
-          <p className="text-sm text-text-muted">{moveEffect(collection.parent, target, parentOf)}</p>
+          <p className="text-sm text-text-muted">{moveEffect(collection.parent, target, parentOf, shown)}</p>
           <Select id="move-collection-parent" label="Inside" value={parent} onSelect={setParent} showSearch>
             <Select.Item value={TOP}>Top level</Select.Item>
             {parents
               .filter((c) => !under(c.namespace, collection.namespace, parentOf))
               .map((c) => (
                 <Select.Item key={c.namespace} value={c.namespace}>
-                  {c.namespace}
+                  {distinctTitle(c, repeated)}
                 </Select.Item>
               ))}
           </Select>
@@ -102,9 +105,9 @@ function under(name: string, root: string, parentOf: Map<string, string>): boole
 /** Who reaches the collection after the move: its own members always, the new parent's
  *  readers when it has one. The old parent's readers lose the access they had through it,
  *  unless the new parent sits under the old one. */
-function moveEffect(from: string, to: string, parentOf: Map<string, string>): string {
+function moveEffect(from: string, to: string, parentOf: Map<string, string>, shown: (name: string) => string): string {
   const keeps = !from || (!!to && under(to, from, parentOf));
-  const lose = keeps ? "" : ` Whoever reached it only through ${from} loses it.`;
-  const gain = to ? `Everyone who reaches ${to} reaches it too.` : "At the top, only its own members reach it.";
+  const lose = keeps ? "" : ` Whoever reached it only through ${shown(from)} loses it.`;
+  const gain = to ? `Everyone who reaches ${shown(to)} reaches it too.` : "At the top, only its own members reach it.";
   return gain + lose;
 }

@@ -1859,8 +1859,12 @@ export interface CodeVerifyCitationsOutput {
 
 export interface CollectionCreateInput {
   org: string;
-  /** The collection's name, also its namespace: 'col-' then lowercase letters, digits and '-'. */
-  namespace: string;
+  /** The collection's name, also its namespace ('col-' then lowercase letters, digits and '-'), ignored with `derive_name`. */
+  namespace?: string;
+  /** What the collection is called on screen (at most 200 characters, no control or invisible ones; titles repeat across the org); '' for none. */
+  title?: string;
+  /** Derive the name from `title`, not `namespace`; a title used under the parent (top level: the caller's own) answers that one. Default false. */
+  derive_name?: boolean;
   /** The collection it sits in and inherits grants from; '' for a top-level one. */
   parent?: string;
   /** What the collection holds, shown beside its name (at most 2000 characters); '' for none. */
@@ -1872,6 +1876,8 @@ export interface CollectionCreateOutput {
   /** The collection it sits in; '' for a top-level one. */
   parent: string;
   created: boolean;
+  /** The collection's title; '' for none. */
+  title?: string;
 }
 
 export interface CollectionDeleteInput {
@@ -1902,10 +1908,11 @@ export interface CollectionEntry {
   personal: boolean;
   role: string;
   description?: string;
+  title?: string;
 }
 
 export interface CollectionListOutput {
-  /** The collections the caller can read on this page, by name, with the caller's role and the collection's description. */
+  /** The collections the caller can read on this page, by name, with the caller's role and the collection's title and description. */
   collections: CollectionEntry[];
   /** Pass as `cursor` for the next page; none on the last. */
   next_cursor?: string | null;

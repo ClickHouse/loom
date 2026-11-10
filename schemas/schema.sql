@@ -3277,6 +3277,7 @@ CREATE TABLE IF NOT EXISTS loom.namespaces
     `namespace` String,
     `owner_email` String,
     `description` String DEFAULT '',
+    `title` String DEFAULT '',
     `tags` Array(LowCardinality(String)) DEFAULT [],
     `active` Bool DEFAULT true,
     `auto_promote_enabled` Bool DEFAULT false,

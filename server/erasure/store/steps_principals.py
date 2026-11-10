@@ -85,7 +85,7 @@ async def retire_personal_collection_by_user(
         "loom.namespaces",
         "org = {org:String} AND namespace = {ns:String} AND active",
         # `updated_at` is the directory's version: newer than the row's own.
-        "false AS active, '' AS owner_email, '' AS description, "
+        "false AS active, '' AS owner_email, '' AS description, '' AS title, "
         "greatest(updated_at + 1, toDateTime(now())) AS updated_at",
         {"org": org, "ns": personal_name(org, "user:" + user_id)},
         ch,
