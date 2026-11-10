@@ -1,7 +1,6 @@
 import { joinNamespace, cancelNamespaceRequest, leaveNamespace, type JoinResponse } from "../api";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
-import { humanizeError } from "./errorWords";
 
 /**
  * One join, one wording.
@@ -53,7 +52,7 @@ export async function joinTarget(t: JoinTarget, role: JoinRole = "viewer"): Prom
     }
     return res;
   } catch (e) {
-    toast(humanizeError(e), "error");
+    toastError(`Couldn't join ${t.label}`, e);
     return null;
   }
 }
@@ -73,7 +72,7 @@ export async function withdrawTarget(t: JoinTarget): Promise<boolean> {
     toast(`Request withdrawn for ${t.label}`, "ok");
     return true;
   } catch (e) {
-    toast(humanizeError(e), "error");
+    toastError(`Couldn't withdraw the request for ${t.label}`, e);
     return false;
   }
 }
@@ -93,7 +92,7 @@ export async function leaveTarget(t: JoinTarget): Promise<boolean> {
     toast(`Left ${t.label}`, "ok");
     return true;
   } catch (e) {
-    toast(humanizeError(e), "error");
+    toastError(`Couldn't leave ${t.label}`, e);
     return false;
   }
 }

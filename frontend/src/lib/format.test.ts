@@ -16,7 +16,7 @@ import {
   truncate,
   sentenceCase,
 } from "./format";
-import { ERROR_CODE_PREFIXES, humanizeError } from "./errorWords";
+import { ERROR_CODE_PREFIXES, errorLine, humanizeError } from "./errorWords";
 
 describe("displaySubject", () => {
   it("shows a dash for nothing", () => {
@@ -52,6 +52,13 @@ describe("humanizeError", () => {
     expect(humanizeError("")).toBe(fault);
     expect(humanizeError(new TypeError("Cannot read properties of undefined (reading 'x')"))).toBe(fault);
     expect(humanizeError(new DOMException("the operation is insecure", "SecurityError"))).toBe(fault);
+    expect(humanizeError({ code: 1 })).toBe(fault);
+  });
+
+  it("passes the parser's words through for text the person supplied", () => {
+    expect(humanizeError(new SyntaxError("Unexpected token } in JSON at position 12"))).toBe(
+      "Unexpected token } in JSON at position 12",
+    );
   });
 
   it("reads a timed-out call as Loom not answering, and a cancelled one as cancelled", () => {
@@ -76,8 +83,10 @@ describe("humanizeError", () => {
     const lost =
       "Lost connection to Loom mid-request. The work may still have committed on the server — re-check the list before retrying.";
     expect(humanizeError(new TypeError("Failed to fetch"))).toBe(lost);
-    // A read lost nothing: no "may still have committed".
-    expect(humanizeError(new TypeError("Failed to fetch"), { bare: true })).toBe("Lost connection to Loom.");
+    // A read lost nothing: no "may still have committed". A caller's own lead-in alone
+    // keeps the warning, since most of those are writes.
+    expect(humanizeError(new TypeError("Failed to fetch"), { read: true })).toBe("Lost connection to Loom.");
+    expect(humanizeError(new TypeError("Failed to fetch"), { bare: true })).toBe(lost);
     expect(humanizeError("fetch failed")).toBe(lost);
     expect(humanizeError("Load failed")).toBe(lost);
     expect(humanizeError("NetworkError when attempting to fetch resource.")).toBe(lost);
@@ -203,7 +212,28 @@ describe("humanizeError", () => {
         "Not accepted (BAD_SHA).",
       ],
       ["an unknown status names no cause", { status: 418 }, "Couldn't do that."],
-      ["a proxy's 503 with no body", { status: 503 }, "Loom didn't answer in time."],
+      ["a proxy's 503 with no body names no timeout", { status: 503 }, "Loom didn't answer."],
+      ["a 504 is a timeout", { status: 504 }, "Loom didn't answer in time."],
+      [
+        "a proxy's 503 with a Retry-After says when",
+        { status: 503, retryAfter: 5 },
+        "Loom didn't answer. Try again in 5 s.",
+      ],
+      [
+        "a committed write whose search copy lags reads as saved, with no doubt cast",
+        {
+          status: 503,
+          code: "PUBLICATION_PENDING",
+          message: "the write is committed; do not repeat it. Its ClickHouse rows follow shortly",
+          detail: { category: "dependency", retryable: false, committed: true },
+        },
+        "Saved. It shows up in lists and search shortly; don't send it again.",
+      ],
+      [
+        "a reused request key names the reuse, not 'already done'",
+        { status: 409, code: "IDEMPOTENT_CONFLICT", message: "Idempotency-Key reused with different body" },
+        "This request key was already used for a different request: Idempotency-Key reused with different body",
+      ],
       [
         "a FastAPI 422",
         { status: 422, code: "VALIDATION_FAILED", message: "namespace: field required" },
@@ -463,5 +493,16 @@ describe("restoreText", () => {
     expect(restoreText("2026-10-05 11:00:00")).toBe("1 day left to restore");
     expect(restoreText("2026-10-17 06:00:00")).toBe("13 days left to restore");
     expect(restoreText(null)).toBe("in grace window");
+  });
+});
+
+describe("errorLine", () => {
+  it("closes the reason before the request id, and words a lost read as a read", () => {
+    expect(
+      errorLine(
+        new ApiError({ status: 409, code: "PRECONDITION_FAILED", message: "the upload expired", requestId: "r1" }),
+      ),
+    ).toBe("the upload expired. Request id r1.");
+    expect(errorLine(new TypeError("Failed to fetch"))).toBe("Lost connection to Loom.");
   });
 });

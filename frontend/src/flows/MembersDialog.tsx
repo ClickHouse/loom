@@ -216,7 +216,10 @@ export function MembersDialog({
     if (ok === targets.length) {
       toast(targets.length > 1 ? `${verb} ${subject} on ${ok} branches` : `${verb} ${subject}`, "ok");
     } else {
-      toast(`${verb} ${subject} on ${ok} of ${targets.length} branches — ${humanizeError(firstError)}`, "error");
+      toast(
+        `${verb} ${subject} on ${ok} of ${targets.length} branches — ${humanizeError(firstError, { bare: true })}`,
+        "error",
+      );
     }
     setBusy(null);
     load();

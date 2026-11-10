@@ -23,7 +23,7 @@ export const ERROR_CODE_PREFIXES: Record<string, string> = {
   CHAR_LIMIT_EXCEEDED: "Too long:",
   PAYLOAD_TOO_LARGE: "Too large:",
   UNSUPPORTED_FILE: "Loom can't read this file type:",
-  IDEMPOTENT_CONFLICT: "Already done — a request with this key was processed before.",
+  IDEMPOTENT_CONFLICT: "This request key was already used for a different request:",
   BLACKLISTED: "Blocked by a privacy filter:",
   BLOB_GONE: "The original file is no longer stored, so it can't be downloaded or extracted.",
   RATE_LIMITED: "Too many requests.",
@@ -51,6 +51,10 @@ export const ERROR_CODE_PREFIXES: Record<string, string> = {
 /** Upgrade in progress: says when it works again, so it takes no tail. */
 const SCHEMA_PENDING = "Loom is being upgraded and this isn't ready yet. It works again once the upgrade finishes.";
 
+/** The write committed and its copy for search follows (`server/core/pg_lease.py`): a
+ *  success said late, so no cause and no retry advice. */
+const PUBLICATION_PENDING = "Saved. It shows up in lists and search shortly; don't send it again.";
+
 /** Refusals whose check could not run answer with category `dependency` (server
  *  `unverified_class`): the caller may well be allowed, so no sentence about roles. */
 const UNVERIFIED_CODES = new Set(["AUTH_INSUFFICIENT", "POLICY_FORBIDDEN", "NAMESPACE_NOT_ACCESSIBLE"]);
@@ -75,7 +79,8 @@ function sentenceForStatus(status: number): string {
   if (status === 400 || status === 422) return "Not accepted:";
   if (status === 413) return "Too large:";
   if (status === 429) return "Too many requests.";
-  if (status >= 502 && status <= 504) return "Loom didn't answer in time:";
+  if (status === 504) return "Loom didn't answer in time:";
+  if (status === 502 || status === 503) return "Loom didn't answer:";
   if (status >= 500) return "Loom hit a server error:";
   return "Couldn't do that:";
 }
@@ -87,13 +92,13 @@ function retryTail(err: ApiError): string {
   const category = typeof err.detail.category === "string" ? err.detail.category : "";
   const retryable = err.detail.retryable;
   if (category === "configuration") return "Trying again won't help until that's changed.";
-  if (retryable === true) {
-    const wait = Number(err.detail.retry_after_s ?? err.retryAfter);
-    return wait > 0 ? `Try again in ${Math.ceil(wait)} s.` : "Try again in a moment.";
-  }
+  const wait = Number(err.detail.retry_after_s ?? err.retryAfter);
+  if (retryable === true) return wait > 0 ? `Try again in ${Math.ceil(wait)} s.` : "Try again in a moment.";
+  // A body with no class (a proxy's answer) may still carry the header's wait.
+  if (retryable === undefined && wait > 0) return `Try again in ${Math.ceil(wait)} s.`;
   // Busy or a dependency, yet not retryable: the server's mark for a write that may have
-  // landed before it failed (`handler_failure_detail`).
-  if (retryable === false && (category === "capacity" || category === "dependency"))
+  // landed before it failed (`handler_failure_detail`), unless it says it did.
+  if (retryable === false && err.detail.committed !== true && (category === "capacity" || category === "dependency"))
     return "It may have been saved; check before trying again.";
   return "";
 }
@@ -118,7 +123,7 @@ function withTail(text: string, tail: string): string {
 
 const LOST_CONNECTION =
   "Lost connection to Loom mid-request. The work may still have committed on the server — re-check the list before retrying.";
-/** The same, for a caller that read rather than wrote (`bare`): nothing can have committed. */
+/** The same, for a caller that only read (`read`): nothing can have committed. */
 const LOST_CONNECTION_READ = "Lost connection to Loom.";
 const TIMED_OUT = "Loom didn't answer in time. It may still finish; check before trying again.";
 
@@ -131,6 +136,8 @@ export interface HumanizeOptions {
   /** Leave out the lead-in sentence: the caller supplies its own ("Couldn't delete x:"),
    *  so the line does not read "Couldn't delete x: Couldn't do that: …". */
   bare?: boolean;
+  /** The call only read, so a lost connection cannot have left a write behind. */
+  read?: boolean;
 }
 
 /** One readable line for any thrown value. An `ApiError` maps by server code, then by its
@@ -147,14 +154,17 @@ export function humanizeError(err: unknown, opts: HumanizeOptions = {}): string 
   // never reached the server" from "the server said no" — and warn that
   // the server may have committed the work even though we lost the response.
   if (/^(failed to fetch|fetch failed|load failed|networkerror)\b/i.test(raw)) {
-    return opts.bare ? LOST_CONNECTION_READ : LOST_CONNECTION;
+    return opts.read ? LOST_CONNECTION_READ : LOST_CONNECTION;
   }
-  // A DOMException is not an Error in every engine, so the name is read off the object.
-  const name = typeof err === "object" && "name" in err ? String(err.name) : "Error";
+  // A DOMException is not an Error in every engine, so the name is read off the object;
+  // a thrown object with no name is not something the dashboard worded.
+  const name = typeof err === "string" ? "Error" : typeof err === "object" && "name" in err ? String(err.name) : "";
   // Every call is bounded (`AbortSignal.timeout`, api.ts): a slow server, not a bug here.
   if (name === "TimeoutError") return TIMED_OUT;
   if (name === "AbortError") return "Cancelled.";
-  if (!raw || name !== "Error") return DASHBOARD_FAULT;
+  // A plain Error carries the dashboard's own words; a SyntaxError, the parser's on text
+  // or a file the person supplied (a policy's JSON, a snapshot file).
+  if (!raw || (name !== "Error" && name !== "SyntaxError")) return DASHBOARD_FAULT;
   const m = /^([A-Z][A-Z_]+):?\s*(.*)$/s.exec(raw);
   if (!m) return raw;
   const friendly = ERROR_CODE_PREFIXES[m[1]];
@@ -190,6 +200,7 @@ function humanizeApiError(err: ApiError, bare: boolean): string {
   )
     return "Your session ended — sign in again.";
   if (err.code === "SCHEMA_PENDING") return SCHEMA_PENDING;
+  if (err.code === "PUBLICATION_PENDING" || err.detail.committed === true) return PUBLICATION_PENDING;
   const lead = leadFor(err);
   let text: string;
   if (err.serverMessage && bare) {
@@ -208,5 +219,6 @@ function humanizeApiError(err: ApiError, bare: boolean): string {
  *  carried one, the request id, since the sentence may ask the reader to send it. */
 export function errorLine(err: unknown): string {
   const rid = errorRequestId(err);
-  return rid ? `${humanizeError(err, { bare: true })} Request id ${rid}.` : humanizeError(err, { bare: true });
+  const text = humanizeError(err, { bare: true, read: true });
+  return rid ? `${/[.!?]$/.test(text) ? text : `${text}.`} Request id ${rid}.` : text;
 }

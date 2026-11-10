@@ -40,6 +40,35 @@ describe("toastError", () => {
     expect(await screen.findByText("Couldn't save: the upload expired")).toBeInTheDocument();
   });
 
+  it("keeps the may-have-committed warning on a write that lost its connection", async () => {
+    render(<ToastViewport />);
+    act(() => toastError("Save failed", new TypeError("Failed to fetch")));
+    expect(
+      await screen.findByText(
+        "Save failed: Lost connection to Loom mid-request. The work may still have committed on the server — re-check the list before retrying.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("says a committed write was saved, not that it failed", async () => {
+    render(<ToastViewport />);
+    act(() =>
+      toastError(
+        "Save failed",
+        new ApiError({
+          status: 503,
+          code: "PUBLICATION_PENDING",
+          message: "the write is committed; do not repeat it",
+          detail: { category: "dependency", retryable: false, committed: true },
+        }),
+      ),
+    );
+    expect(
+      await screen.findByText("Saved. It shows up in lists and search shortly; don't send it again."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Save failed/)).toBeNull();
+  });
+
   it("stays up longer for a longer line, at most 20 s", async () => {
     vi.useFakeTimers();
     render(<ToastViewport />);

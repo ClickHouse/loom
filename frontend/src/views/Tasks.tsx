@@ -837,7 +837,7 @@ export function Tasks() {
               )}
               {refreshError !== null && rowsError === null && (
                 <div className="mb-2 text-xs text-text-muted" role="status">
-                  {`Couldn't refresh the tasks (${humanizeError(refreshError)}); showing the last read.`}
+                  {`Couldn't refresh the tasks (${humanizeError(refreshError, { bare: true, read: true })}); showing the last read.`}
                 </div>
               )}
               {emptyInbox && (

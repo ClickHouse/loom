@@ -531,7 +531,7 @@ export function Explorer() {
           });
         })
         .catch((e) => {
-          if (!ctl.signal.aborted) announce(expandFailure(entity, humanizeError(e)));
+          if (!ctl.signal.aborted) announce(expandFailure(entity, humanizeError(e, { bare: true, read: true })));
         })
         .finally(() => {
           if (!ctl.signal.aborted) setExpanding(null);

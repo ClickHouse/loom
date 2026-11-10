@@ -516,7 +516,7 @@ function RepositoriesHome({
       toast(`Retired ${out.repo} @ ${out.branch} · its rows are purging in the background`, "ok");
       onChanged();
     } catch (e) {
-      toast(humanizeError(e), "error");
+      toastError(`Couldn't retire ${b.namespace}`, e);
     }
   };
   /** The links a repository holds now, primary first. */
@@ -547,7 +547,7 @@ function RepositoriesHome({
         await setCodeRepoAccess(b.org, b.namespace, classification, join_policy, opening ? b.namespace : "");
         done += 1;
       } catch (e) {
-        toastError(`${b.namespace}`, e);
+        toastError(b.namespace, e);
       }
     }
     if (done)
@@ -3090,7 +3090,7 @@ export function AccessTab({
       );
       load();
     } catch (err) {
-      toast(humanizeError(err), "error");
+      toastError(`Couldn't decide ${g.subject}'s request`, err);
     } finally {
       setBusy(null);
     }
@@ -3557,7 +3557,7 @@ export function AccessTab({
                   );
                   onRetired?.();
                 } catch (err) {
-                  toast(humanizeError(err), "error");
+                  toastError("Couldn't retire the repository", err);
                 } finally {
                   setBusy(null);
                 }
