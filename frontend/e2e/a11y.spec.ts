@@ -639,6 +639,12 @@ for (const [width, touch] of [
       const list = await order.boundingBox();
       const down = await order.getByRole("button", { name: "Move team-research-notes down" }).boundingBox();
       expect((down?.x ?? 0) + (down?.width ?? 0)).toBeLessThanOrEqual((list?.x ?? 0) + (list?.width ?? 0));
+      if (!touch) {
+        // A real drag by the grip: the second row takes the first place.
+        const rows = order.getByRole("listitem");
+        await rows.nth(1).locator("[draggable]").dragTo(rows.nth(0));
+        await expect(rows.nth(0)).toContainText("shared-handbook");
+      }
     });
   });
 }
