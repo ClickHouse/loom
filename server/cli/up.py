@@ -500,7 +500,7 @@ def print_connect(
     print(_curl_snippet(base_url, org, namespace, with_token=with_token))
     print(
         "\n  …or with the Python SDK"
-        " (pip install clickhouse-loom, or from a clone: pip install ./sdk/python):"
+        " (pip install clickhouse-loom; from a clone: pip install ./sdk/python):"
     )
     print(_sdk_snippet(base_url, org, namespace, with_token=with_token))
     print("\n  Wire Claude Code (MCP, coding toolset):")

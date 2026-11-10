@@ -11,9 +11,12 @@ import pytest
 from loom.sync import _CLIENT_ATTRS
 
 from tests.unit.markdown_links import anchors, links
+from tests.unit.tracked_files import tracked
 
 ROOT = Path(__file__).resolve().parents[2]
 SDK_ROOT = ROOT / "sdk" / "python"
+# Tracked files and the directories that hold them, as a link into the repository names them.
+TRACKED = {str(p) for f in tracked() for p in [Path(f), *Path(f).parents] if str(p) != "."}
 README = (SDK_ROOT / "README.md").read_text()
 PROJECT = tomllib.loads((SDK_ROOT / "pyproject.toml").read_text())["project"]
 
@@ -34,8 +37,20 @@ def test_readme_lists_every_agent_client() -> None:
     assert sorted(listed) == sorted(_CLIENT_ATTRS)
 
 
-def test_readme_installs_the_published_package() -> None:
-    assert re.search(rf"^pip install {re.escape(PROJECT['name'])}$", README, re.M)
+@pytest.mark.parametrize(
+    ("sdk", "install", "name"),
+    [
+        ("python", "pip install", PROJECT["name"]),
+        (
+            "typescript",
+            "npm install",
+            json.loads((ROOT / "sdk" / "typescript" / "package.json").read_text())["name"],
+        ),
+    ],
+)
+def test_the_readme_installs_the_published_package(sdk: str, install: str, name: str) -> None:
+    readme = (ROOT / "sdk" / sdk / "README.md").read_text()
+    assert re.search(rf"^{install} {re.escape(name)}$", readme, re.M)
 
 
 def test_the_first_example_compiles_as_a_module() -> None:
@@ -47,25 +62,18 @@ def test_the_first_example_compiles_as_a_module() -> None:
     assert "asyncio.run(" in example
 
 
-def test_the_typescript_readme_installs_the_published_package() -> None:
-    ts_root = SDK_ROOT.parent / "typescript"
-    name = json.loads((ts_root / "package.json").read_text())["name"]
-    readme = (ts_root / "README.md").read_text()
-    assert re.search(rf"^npm install {re.escape(name)}$", readme, re.M)
-
-
 @pytest.mark.parametrize("sdk", ["python", "typescript"])
 def test_the_package_readme_links_resolve_on_the_registry(sdk: str) -> None:
     """The README is the package's page on PyPI or npm, where a relative link has
     nothing to resolve against: every link is absolute or an in-page anchor, and one
     to a file of this repository names `main` and a path, and an anchor, that exist."""
-    targets = links(SDK_ROOT.parent / sdk / "README.md")
+    targets = links(ROOT / "sdk" / sdk / "README.md")
     assert [t for t in targets if not re.match(r"https?://|#", t)] == []
     in_repo = re.compile(r"https://github\.com/ClickHouse/loom/(?:blob|tree)/([^/]+)/([^#]+)#?(.*)")
     for target in targets:
         if m := in_repo.fullmatch(target):
             ref, path, anchor = m.groups()
             dest = ROOT / path
-            assert ref == "main" and dest.exists(), target
+            assert ref == "main" and path.rstrip("/") in TRACKED, target
             if anchor and dest.suffix == ".md":
                 assert anchor.lower() in anchors(dest), target
