@@ -192,7 +192,8 @@ def test_a_pattern_costs_linear_time(name: str, pattern: re.Pattern) -> None:
 # A run after a prefix the pattern spells: a pattern that splits a run of spaces k ways
 # costs N**k, and one that searches on from each repeated keyword to a closer that never
 # comes costs N**2. The sizes grow 4 times a step and a run stops at the first step that
-# grows more than 8 times, so a cubic pattern stops at 8,000 characters, not hours later.
+# grows more than 8 times, confirmed at the next size, so a cubic pattern is reported at
+# 8,000 characters and timed no further than 32,000, not hours later.
 _SIZES = (500, 2_000, 8_000, 32_000)
 _PREFIXES = ("a", "- a", "a:a", "a = a", "export default a", "'a", "# a")
 _SEPS = ("", " a", "a=", "a(", "a ", "#a ")  # after an opener: `*a=`, `@if(`, `{#if `
@@ -228,18 +229,33 @@ def _slow(cost: Callable[[int], float]) -> tuple[int, float, float] | None:
             # Timers jitter on a loaded host: the best of three runs of each counts.
             small = min(small, cost(n // 4), cost(n // 4))
             big = min(big, cost(n), cost(n))
-            if _over(small, big) and (big > _BOUND_S / 32 or _over(big, _best(cost, 4 * n))):
+            # A load spike can outlast the reruns at one size, but it does not grow again
+            # at the next, where a pattern over linear grows over 8 times again. A step
+            # over a thirty-second of the bound fails at once: each run at 4n of a cubic
+            # one then costs under 4 s, and the first run that is not over ends the check.
+            if _over(small, big) and (
+                big > _BOUND_S / 32 or all(_over(big, cost(4 * n)) for _ in range(3))
+            ):
                 return n, round(small, 4), round(big, 4)
         small = big
     return None
 
 
-def _best(cost: Callable[[int], float], n: int) -> float:
-    """The best of three times at n, the size past a step that looked over linear. A load
-    spike that outlasts the reruns at one size does not grow again at the next, and a
-    pattern over linear grows over 8 times again. A step already over a thirty-second of
-    the bound fails without this run, which keeps a cubic pattern's run there under 4 s."""
-    return min(cost(n) for _ in range(3))
+def test_a_step_over_linear_fails_only_once_the_next_size_confirms_it() -> None:
+    def linear(n: int) -> float:
+        return n * 1e-7
+
+    spikes = iter([0.0101] * 3)  # three runs at 32,000 characters, each a load spike
+
+    def spiked(n: int) -> float:
+        return next(spikes, linear(n)) if n == 32_000 else linear(n)
+
+    assert _slow(linear) is None
+    assert _slow(spiked) is None
+    # quadratic: over the thirty-second at once, and under it, confirmed at 32,000
+    assert _slow(lambda n: (n / 1000) ** 2 * 1e-3) == (8_000, 0.004, 0.064)
+    assert _slow(lambda n: (n / 1000) ** 2 * 5e-4) == (8_000, 0.002, 0.032)
+    assert _slow(lambda n: (n / 2000) ** 3 * 1e-3) == (8_000, 0.001, 0.064)  # cubic
 
 
 @pytest.mark.parametrize("name,pattern", _ALL, ids=[n for n, _ in _ALL])
