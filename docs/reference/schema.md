@@ -1,9 +1,9 @@
 # Schema reference
 
 Loom keeps its ClickHouse state in the `loom` and `loom_telemetry` databases. Under the
-Postgres memory authority, Postgres holds live memory and knowledge state, the rows the
-[storage authority table](../architecture/storage-authority.md#why-two-stores) lists for
-it (`schemas/pg_migrations/`). The shape of the ClickHouse databases is defined by the
+Postgres memory authority, Postgres holds live memory and knowledge state, in the tables
+[storage authority](../architecture/storage-authority.md#the-tables) lists
+(`schemas/pg_migrations/`). The shape of the ClickHouse databases is defined by the
 numbered migrations in `schemas/migrations/`; `schemas/schema.sql` is the result of
 applying all of them, dumped from a live server. The table at the end of this page is
 generated from `schema.sql`.

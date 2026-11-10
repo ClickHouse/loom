@@ -1,10 +1,10 @@
 # ClickHouse
 
-Under the default ClickHouse authority, durable Loom state lives in ClickHouse, in the
-`loom` and `loom_telemetry` databases. The exceptions are the live memory and knowledge
-state the [Postgres memory authority](storage-authority.md#why-two-stores) holds in
-Postgres, and the bytes of uploaded document originals a deployment keeps in an
-S3-compatible bucket (`LOOM_DOCUMENT_OBJECT_STORE=s3`). The canonical schema is
+Durable Loom state lives in ClickHouse (the `loom` and `loom_telemetry` databases),
+except what the [Postgres memory authority](storage-authority.md#why-two-stores) holds
+and document bytes kept in an S3 bucket. Under that authority, Postgres holds live
+memory and knowledge state; with `LOOM_DOCUMENT_OBJECT_STORE=s3`, the bucket holds the
+bytes of uploaded originals. The canonical schema is
 [`schemas/schema.sql`](../../schemas/schema.sql), dumped from a server with every
 migration applied. The generated [schema reference](../reference/schema.md) lists every
 table with its engine, keys, TTL and indexes. This page covers the table families, how
@@ -14,7 +14,7 @@ Loom uses engines, indexes and views, and how migrations run.
 
 | Goals                                                                                     | Non-goals                                                                                   |
 | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| One engine for every plane under the default ClickHouse authority.                        | Cross-table transactions. A primary row lands first; derived rows follow.                   |
+| One engine for every plane (default authority), so a read never joins across stores.      | Cross-table transactions. A primary row lands first; derived rows follow.                   |
 | Every row names its tenant, writer (`actor`) and content (`content_sha256`).              | Transaction-time history on every table. The version mirror covers `loom.memory`.           |
 | Mutable state as append-only versions: a write is an INSERT, a read is deterministic.     | In-place updates on the request path. Updates are new versions or batched background folds. |
 | Nothing that holds memory content expires unless its writer or the operator asked for it. | Default retention on facts, documents, conversations or the graph.                          |
