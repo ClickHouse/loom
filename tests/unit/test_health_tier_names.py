@@ -1,7 +1,7 @@
 """`/v1/health` answers anyone, so its `code_tier_failing` problem names each failing
 entry that is not restricted (repository@branch, org and namespace) and its error
-only to a platform admin's token without per-namespace roles; any other caller, or a token that does not verify, reads the reasons and fixes
-without the entries."""
+only to a platform admin's token without per-namespace roles; any other caller, or a
+token that does not verify, reads the reasons and fixes without the entries."""
 
 from __future__ import annotations
 
@@ -78,8 +78,14 @@ def test_a_scoped_token_is_no_platform_admin(client: TestClient) -> None:
 
 @pytest.mark.parametrize(
     "headers",
-    [{}, {"Authorization": "Bearer not-a-token"}, "writer"],
-    ids=["anonymous", "bad-token", "writer"],
+    [
+        {},
+        {"Authorization": "Bearer not-a-token"},
+        {"Authorization": "Bearer a.b"},
+        {"Authorization": "Basic b3BzOng="},
+        "writer",
+    ],
+    ids=["anonymous", "bad-token", "two-part-token", "other-scheme", "writer"],
 )
 def test_any_other_caller_reads_the_reason_without_the_entry(
     client: TestClient, headers: Any

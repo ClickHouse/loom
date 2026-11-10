@@ -116,7 +116,7 @@ class HealthState:
     # (anonymous `/v1/health`), `unrestricted` (a platform admin's: no admin role
     # reads a restricted namespace) or `all` (the doctor, run on the host with the
     # deployment's own credentials).
-    code_tier_names: str = "none"
+    code_tier_names: Literal["none", "unrestricted", "all"] = "none"
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     # Saved keys take precedence over the environment, including explicit empty keys.
     saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)

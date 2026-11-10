@@ -625,3 +625,35 @@ async def test_an_entry_whose_classification_cannot_be_read_counts_as_restricted
 
     monkeypatch.setattr("server.identity.app.namespace_classification.is_restricted", unreadable)
     assert await recorder._restricted("o", "code-a") is True
+
+
+def test_a_restriction_made_since_the_snapshot_hides_the_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorder._FAILING = (
+        recorder.FailingTier("o", "code-a", _failing_with(LOCKED), 0, "o/a", "main", False),
+    )
+    monkeypatch.setattr(
+        "server.identity.app.namespace_classification.is_restricted_cached",
+        lambda org, ns: ns == "code-a",
+    )
+    (row,) = recorder.problem_rows(T0 + timedelta(hours=3)) or ()
+    assert row["restricted"] is True
+
+
+def test_cmakes_error_line_is_the_one_that_says_what_failed() -> None:
+    out = (
+        "-- Configuring incomplete\n"
+        "CMake Error at cmake/tools.cmake:30 (message):\n"
+        "  Compiler GNU is not supported\n"
+        "Call Stack (most recent call first):\n"
+        ">> cmake configure failed"
+    )
+    assert tier_health.error_line("cmake", out) == "Compiler GNU is not supported"
+    no_reason = "CMake Error at CMakeLists.txt:1 (project):\nCall Stack (most recent call first):\n"
+    assert tier_health.error_line("cmake", no_reason + ">> cmake configure failed") == (
+        "CMake Error at CMakeLists.txt:1 (project):"
+    )
+    assert tier_health.error_line("cmake", "clang: not found\n>> cmake configure failed") == (
+        "clang: not found"
+    )

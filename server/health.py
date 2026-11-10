@@ -48,10 +48,10 @@ async def _otel_unindexed_for_health(ch_ok: bool) -> tuple[str, ...] | None:
         return None
 
 
-def _sees_every_entry(request: Request) -> bool:
-    """Whether the caller's bearer token verifies as a platform admin's, who may read
-    every code-index entry. No token, or one that does not verify, is an anonymous
-    caller: `/v1/health` refuses no one."""
+def _is_platform_admin(request: Request) -> bool:
+    """Whether the caller's bearer token verifies as a platform admin's, who reads
+    each code-index entry that is not restricted. No token, or one that does not
+    verify, is an anonymous caller: `/v1/health` refuses no one."""
     from server.auth.bearer import bearer_token
     from server.auth.jwt import TokenError, verify_token
     from server.operations.base import Role
@@ -71,7 +71,7 @@ def _health_provider_fields(
     ch_ok: bool,
     otel_metrics_unindexed: tuple[str, ...] | None = None,
     *,
-    sees_every_entry: bool = False,
+    platform_admin: bool = False,
 ) -> dict[str, object]:
     """The provider block of `/v1/health` plus the shared problem list and the
     `status` derived from it.
@@ -143,7 +143,7 @@ def _health_provider_fields(
             carry_pinned=tuple(rmt_carry.pinned_overdue()),
             refused_configuration=provider_runtime.refused_configuration(),
             code_tier_failures=tier_health.problem_rows(),
-            code_tier_names="unrestricted" if sees_every_entry else "none",
+            code_tier_names="unrestricted" if platform_admin else "none",
         ),
     )
     return {
@@ -382,11 +382,11 @@ async def health(request: Request, response: Response, include: str = "") -> dic
 
     requested = {s.strip() for s in include.split(",") if s.strip()}
     ch_ok, ch_error = await _ping_clickhouse()
-    sees_every_entry = _sees_every_entry(request)
+    platform_admin = _is_platform_admin(request)
     prov = _health_provider_fields(
-        ch_ok, await _otel_unindexed_for_health(ch_ok), sees_every_entry=sees_every_entry
+        ch_ok, await _otel_unindexed_for_health(ch_ok), platform_admin=platform_admin
     )
-    if sees_every_entry:
+    if platform_admin:
         # the answer names entries a caller without the token may not read
         response.headers["Cache-Control"] = "no-store"
     if not ch_ok:

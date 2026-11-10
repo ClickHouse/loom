@@ -355,7 +355,8 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
         )
     if kind == "git_lock":
         return (
-            "Another git process holds a lock in the entry's checkout (often index.lock): "
+            "Another git process holds a lock in the checkout or mirror the error names "
+            "(often index.lock): "
             "let it finish, or delete the lock file the error names once no git process "
             "runs there. Start no shell or agent session inside a checkout under the code "
             "repos root: a `git status` there takes the same lock."
@@ -395,12 +396,22 @@ def reason(kind: str) -> str:
 def error_line(kind: str, error: str) -> str:
     """The line of a recorded error that says why, redacted, its last
     `ERROR_LINE_CHARS` kept: the line the kind's pattern matched (for `cmake` and
-    `harness`, whose line is only a marker, the line before it), else the last line,
+    `harness`, whose line is only a marker, the line that says what failed), else the last line,
     where git's `fatal:` and the exception sit."""
     lines = [s.strip() for s in redact(error).splitlines() if s.strip()]
     patterns = [pattern for k, pattern in _KINDS if k == kind]
     at = next((i for i, s in enumerate(lines) if any(p.search(s) for p in patterns)), None)
-    if at is not None and kind in ("cmake", "harness") and at > 0:
+    if at is not None and kind == "cmake":
+        # CMake's own error: the line after `CMake Error at …` says what, unless it is
+        # the call stack's heading; the line above the marker when CMake printed none
+        error_at = next((i for i in range(at) if lines[i].startswith("CMake Error")), None)
+        if error_at is None:
+            at = max(at - 1, 0)
+        elif error_at + 1 < at and not lines[error_at + 1].startswith("Call Stack"):
+            at = error_at + 1
+        else:
+            at = error_at
+    elif at is not None and kind == "harness" and at > 0:
         at -= 1
     line = lines[-1 if at is None else at] if lines else ""
     # a long line keeps its end, where a tool's message puts the cause

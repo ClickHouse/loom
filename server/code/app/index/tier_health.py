@@ -207,6 +207,7 @@ def problem_rows(now: datetime | None = None) -> tuple[dict[str, Any], ...] | No
     """The failing tiers past the warn threshold, as the `code_tier_failing` health
     problem reads them (plain rows: the problem collector imports no code plane), errors
     first, then by entry. None until this process first read the records."""
+    from server.identity.app.namespace_classification import is_restricted_cached
     from server.settings import settings
 
     snap = _FAILING
@@ -234,8 +235,10 @@ def problem_rows(now: datetime | None = None) -> tuple[dict[str, Any], ...] | No
                     "failed_passes": f.health.failed_passes,
                     "lag_commits": f.lag_commits,
                     "reason": tier_health.reason(f.health.kind),
-                    # only a reader who may see the entry reads these three
-                    "restricted": f.restricted,
+                    # read again here: a restriction made since the snapshot holds now,
+                    # and a snapshot kept through failed refreshes cannot hold it open
+                    "restricted": f.restricted or is_restricted_cached(f.org, f.namespace),
+                    # only a reader who may see the entry reads repo, branch and error
                     "repo": f.repo,
                     "branch": f.branch,
                     "error": tier_health.error_line(f.health.kind, f.health.error),
