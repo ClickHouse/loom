@@ -38,9 +38,10 @@ export interface AssistantCitation {
 }
 
 /** How far an answer rests on what Loom holds: `supported` (a citation verified),
- *  `unsupported` (a citation failed, or it cites nothing although its calls found citable
- *  rows), `unchecked` (its checks could not say; also a value this SDK does not know, or
- *  none from an older server) or `none` (no claim: a greeting, an abstention). */
+ *  `unsupported` (a citation failed, or it cites nothing although a citable call found rows
+ *  or ran and found nothing), `unchecked` (its checks could not say; also a value this SDK
+ *  does not know, or none from an older server) or `none` (no claim: a greeting, an
+ *  abstention). */
 export type AssistantSupport = "supported" | "unsupported" | "unchecked" | "none";
 
 /** The whole answer; `runId` is the `run_id` of its ledger rows. */

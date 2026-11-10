@@ -80,7 +80,7 @@ class RunCalls:
 
     returned: frozenset[str]
     failed: bool
-    ran: frozenset[str] = frozenset()
+    ran: frozenset[str]
 
 
 async def run_calls(

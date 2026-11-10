@@ -50,9 +50,9 @@ def support_of(
     text: str,
     returned: frozenset[str] | None,
     failed: bool,
+    ran: frozenset[str],
     citable: frozenset[str],
     no_data: frozenset[str],
-    ran: frozenset[str] = frozenset(),
 ) -> str:
     """The answer's support. `codes` are its citations' codes; `returned` the ops whose calls
     found data (None when its calls could not be read); `failed` whether a call failed;

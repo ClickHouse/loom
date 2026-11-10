@@ -2,8 +2,8 @@
 for an answer that cites nothing, what its own tool calls found (`ledger.run_calls`).
 
 The calls ran before the model wrote the text, but their ledger rows land in the background
-(and a call may land on another replica): the run is read once and, unless that read
-already decides the answer is unsupported, once more after the rows' usual delay.
+(and a call may land on another replica): the run is read once and, unless a citable op's
+call already found data, once more after the rows' usual delay.
 """
 
 from __future__ import annotations
@@ -32,19 +32,17 @@ async def answer_support(
 ) -> str:
     """The answer's support: `supported`, `unsupported`, `unchecked` or `none`."""
     citation_codes = [c.code for c in checked]
-    returned: frozenset[str] | None = frozenset()
-    failed = False
-    ran: frozenset[str] = frozenset()
+    calls: ledger.RunCalls | None = ledger.RunCalls(frozenset(), False, frozenset())
     if not citation_codes and text.strip() and not rule.is_abstention(text):
-        returned, failed, ran = await _calls(org, run_id, subject)
+        calls = await _calls(org, run_id, subject)
     return rule.support_of(
         citation_codes,
         text=text,
-        returned=returned,
-        failed=failed,
+        returned=calls.returned if calls else None,
+        failed=calls.failed if calls else False,
+        ran=calls.ran if calls else frozenset(),
         citable=ASSISTANT_CITABLE_OPS,
         no_data=ASSISTANT_NO_NAMESPACE_DATA_OPS,
-        ran=ran,
     )
 
 
@@ -53,13 +51,11 @@ async def _wait(seconds: float) -> None:
     await asyncio.sleep(seconds)
 
 
-async def _calls(
-    org: str, run_id: str, subject: str
-) -> tuple[frozenset[str] | None, bool, frozenset[str]]:
-    """(the ops whose calls found data, whether a call failed, the ops whose calls ran); the
-    first is None when the run cannot be read (no run id, a failed read)."""
+async def _calls(org: str, run_id: str, subject: str) -> ledger.RunCalls | None:
+    """The answer's calls; None when the run cannot be read (no run id, a failed read, past
+    the bound)."""
     if not run_id:
-        return None, False, frozenset()
+        return None
     try:
         async with asyncio.timeout(_CALLS_S):
             calls = await ledger.run_calls(org, run_id, subject)
@@ -69,8 +65,8 @@ async def _calls(
                 calls = await ledger.run_calls(org, run_id, subject)
     except TimeoutError:
         log.warning("reading an answer's tool calls ran past %s s", _CALLS_S)
-        return None, False, frozenset()
+        return None
     except Exception as e:  # noqa: BLE001 — a check that cannot run never fails an answer
         log.warning("reading an answer's tool calls failed: %s", e)
-        return None, False, frozenset()
-    return calls.returned, calls.failed, calls.ran
+        return None
+    return calls

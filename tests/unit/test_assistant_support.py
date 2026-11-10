@@ -30,8 +30,16 @@ def _support(
     returned: frozenset[str] | None = frozenset(),
     failed: bool = False,
 ) -> str:
+    # Every op that found data ran.
+    ran = returned or frozenset()
     return rule.support_of(
-        codes or [], text=text, returned=returned, failed=failed, citable=CITABLE, no_data=NO_DATA
+        codes or [],
+        text=text,
+        returned=returned,
+        failed=failed,
+        ran=ran,
+        citable=CITABLE,
+        no_data=NO_DATA,
     )
 
 
@@ -313,21 +321,30 @@ def test_an_uncited_answer_reads_its_calls_again_until_a_citable_op_found_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The summary's row is in; the search's lands late: the second read decides.
-    first = ledger.RunCalls(frozenset({"namespace.summary"}), False)
-    second = ledger.RunCalls(frozenset({"namespace.summary", "memory.search"}), False)
+    first = ledger.RunCalls(
+        frozenset({"namespace.summary"}), False, frozenset({"namespace.summary"})
+    )
+    second = ledger.RunCalls(
+        frozenset({"namespace.summary", "memory.search"}),
+        False,
+        frozenset({"namespace.summary", "memory.search"}),
+    )
     asked = _calls(monkeypatch, first, second)
     assert _answer([], "Deploys freeze on Fridays.") == "unsupported"
     assert asked == ["r1", "r1"]
 
 
 def test_a_first_read_that_decides_is_not_read_again(monkeypatch: pytest.MonkeyPatch) -> None:
-    asked = _calls(monkeypatch, ledger.RunCalls(frozenset({"memory.search"}), False))
+    asked = _calls(
+        monkeypatch,
+        ledger.RunCalls(frozenset({"memory.search"}), False, frozenset({"memory.search"})),
+    )
     assert _answer([], "Deploys freeze on Fridays.") == "unsupported"
     assert asked == ["r1"]
 
 
 def test_a_greeting_that_read_nothing_has_no_label(monkeypatch: pytest.MonkeyPatch) -> None:
-    empty = ledger.RunCalls(frozenset(), False)
+    empty = ledger.RunCalls(frozenset(), False, frozenset())
     _calls(monkeypatch, empty, empty)
     assert _answer([], "Hello! What would you like to know?") == "none"
 
@@ -371,7 +388,9 @@ def test_a_second_read_that_hangs_after_uncitable_data_leaves_the_answer_uncheck
     async def first_then_hang(*_: Any) -> ledger.RunCalls:
         reads.append(1)
         if len(reads) == 1:
-            return ledger.RunCalls(frozenset({"namespace.summary"}), False)
+            return ledger.RunCalls(
+                frozenset({"namespace.summary"}), False, frozenset({"namespace.summary"})
+            )
         await asyncio.Event().wait()
         raise AssertionError("unreachable")
 

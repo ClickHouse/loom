@@ -168,7 +168,7 @@ async def _no_wait(_seconds: float) -> None:
 async def _found_nothing(*_: Any) -> Any:
     from server.assistant.store.ledger import RunCalls
 
-    return RunCalls(frozenset(), False)
+    return RunCalls(frozenset(), False, frozenset())
 
 
 def test_an_answer_runs_the_seeded_agent_with_its_own_token(world: _World) -> None:
