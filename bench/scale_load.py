@@ -15,7 +15,8 @@ Two shapes:
 
 - `single`: every key in one org and one namespace;
 - `zipf`: `--tenants` namespaces over `--orgs` orgs, sized by a Zipf law of exponent 1
-  (tenant `t` of `T` holds about `1 / ((t + 1) ln T)` of the rows).
+  (tenant `t` of `T` holds `ln((t + 2) / (t + 1)) / ln(T + 1)` of the rows, about
+  `1 / ((t + 1.5) ln T)`).
 
 Each key gets 1 to 4 versions (2.4 on average, the harness's choice);
 the head is the newest. `created_at` spreads over `--months` months, so the memory
@@ -153,12 +154,23 @@ def own_stores(ch: Any) -> None:
     """Refuse to touch a ClickHouse that holds any org's memory but the harness's own
     (`scale-…`): the harness loads, optimizes and rewrites the recorded authority."""
     other = ch.query(
-        "SELECT count() FROM loom.memory WHERE NOT startsWith(org, 'scale-') "
-        "AND org NOT IN ('shape')"
+        "SELECT count() FROM loom.memory WHERE NOT startsWith(org, 'scale-')"
     ).result_rows[0][0]
     if other:
         raise SystemExit(
             f"this ClickHouse holds {other} memory rows of other orgs: point the harness "
+            "only at stores of its own"
+        )
+
+
+async def own_pg_stores(pg: Any) -> None:
+    """`own_stores` for the Postgres authority's tables: no head of another org."""
+    other = await pg.fetchval(
+        "SELECT count(*) FROM loom.memory_current WHERE org NOT LIKE 'scale-%'"
+    )
+    if other:
+        raise SystemExit(
+            f"this Postgres holds {other} memory heads of other orgs: point the harness "
             "only at stores of its own"
         )
 
@@ -259,6 +271,7 @@ async def _load_pg(args: argparse.Namespace) -> None:
     t0 = time.monotonic()
     done = 0
     pg = await asyncpg.connect(pg_dsn(env))
+    await own_pg_stores(pg)
     cols = (
         "org",
         "namespace",
@@ -464,7 +477,10 @@ def _error_code(r: httpx.Response) -> str:
 
 
 def _outcomes(path: str, body: dict[str, Any]) -> list[str]:
-    """What a write did: a new row, a no-op, a duplicate, an unchecked entry."""
+    """What a write did, as tags: `memory.set` gets one (a new row, a no-op or a
+    duplicate); a `memory.bulk_set` entry that wrote a row is `written`, and may also be
+    `duplicate` (stored as a duplicate), `merged` or `unchecked` (written without its
+    check), so a bulk call's tags can outnumber its entries."""
     if path.endswith("memory.set"):
         if body.get("noop"):
             return ["noop"]
@@ -570,16 +586,27 @@ def flush_logs(ch: Any, attempts: int = 10) -> None:
             time.sleep(5)
 
 
-def op_reads(ch: Any, op: str, since: float, until: float, calls: int) -> dict[str, Any]:
+def op_reads(
+    ch: Any, op: str, since: float, until: float, calls: int, *, flushes: bool = False
+) -> dict[str, Any]:
     """What the op's ClickHouse statements read and the CPU they used in the window, per
-    call sent (refused calls' statements included), and the largest statement's memory."""
+    call sent (refused calls' statements included), and the largest statement's memory.
+    `flushes`: also the publication batch's statements in the window (under the Postgres
+    authority a write's inserts are sent by it, tagged `pg_batch.flush`, not by the op)."""
     r = ch.query(
         "SELECT count(), sum(read_bytes), max(memory_usage), countIf(type != 'QueryFinish'), "
         "sum(ProfileEvents['OSCPUVirtualTimeMicroseconds']) "
-        "FROM system.query_log WHERE type != 'QueryStart' AND startsWith(log_comment, {op:String}) "
+        "FROM system.query_log WHERE type != 'QueryStart' "
+        "AND (startsWith(log_comment, {op:String}) "
+        "OR ({flushes:Bool} AND startsWith(log_comment, 'pg_batch.flush'))) "
         "AND event_time_microseconds BETWEEN fromUnixTimestamp64Micro({a:Int64}) "
         "AND fromUnixTimestamp64Micro({b:Int64})",
-        parameters={"op": op + " ", "a": int(since * 1e6), "b": int(until * 1e6)},
+        parameters={
+            "op": op + " ",
+            "flushes": flushes,
+            "a": int(since * 1e6),
+            "b": int(until * 1e6),
+        },
     ).result_rows[0]
     n = max(1, calls)
     return {
@@ -759,7 +786,15 @@ def measure(args: argparse.Namespace) -> None:
         flush_logs(ch)
         ops[op]["new_parts_per_s"] = new_parts_per_s(ch, t0, t1)
         ops[op]["calls_sent"] = len(calls)
-        ops[op]["clickhouse"] = op_reads(ch, op, t0, t1, len(calls))
+        writes = op in ("memory.set", "memory.bulk_set")
+        ops[op]["clickhouse"] = op_reads(
+            ch,
+            op,
+            t0,
+            t1,
+            len(calls),
+            flushes=writes and env.get("LOOM_STORAGE_AUTHORITY") == "postgres",
+        )
         ops[op]["host_load_1m"] = round(os.getloadavg()[0], 1)
         print(op, json.dumps(ops[op]), flush=True)
         _save(args.out, result)  # after each op, so a run cut short keeps what it measured
@@ -820,12 +855,16 @@ def fleet(args: argparse.Namespace) -> None:
     urls = [u.strip() for u in args.base_url.split(",") if u.strip()]
     rng = random.Random()
     samples: list[dict[str, Any]] = []
+    sample_errors: list[str] = []
     stop = threading.Event()
 
     def sample() -> None:
         sampler = ch_client(env)
         while not stop.is_set():
-            samples.append(_partition_sample(sampler))
+            try:
+                samples.append(_partition_sample(sampler))
+            except Exception as e:  # noqa: BLE001 — a missed sample is counted, not fatal
+                sample_errors.append(type(e).__name__)
             stop.wait(1.0)
 
     async def drive_open_loop() -> tuple[list[float], Counter[str], int, float]:
@@ -911,6 +950,8 @@ def fleet(args: argparse.Namespace) -> None:
         "new_parts_per_s": parts_per_s,
         "max_parts_in_a_partition": peak,
         "max_merges_in_flight": max((smp["merges"] for smp in samples), default=0),
+        "samples": len(samples),
+        "samples_failed": len(sample_errors),
         "limits": limits,
         "after": _partition_sample(ch),
         "host_load_1m": round(os.getloadavg()[0], 1),
@@ -1069,6 +1110,7 @@ def set_authority(args: argparse.Namespace) -> None:
     if args.to == "postgres":
 
         async def record(pg: Any) -> None:
+            await own_pg_stores(pg)
             await pg.execute("DELETE FROM loom.authority")
             await pg.execute(
                 "INSERT INTO loom.authority (authority, epoch, deployment_id) "

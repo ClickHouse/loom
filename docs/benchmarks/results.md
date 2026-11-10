@@ -1034,17 +1034,20 @@ the time a service sits idle:
 | Op                            | CPU per call (ms) | Per million calls |
 | ----------------------------- | ----------------: | ----------------: |
 | `memory.get`                  |           5 to 16 |    $0.22 to $0.68 |
-| `memory.set`                  |        131 to 215 |      $5.4 to $8.9 |
+| `memory.set`                  |               215 |              $8.9 |
 | `memory.search`               |        108 to 182 |      $4.5 to $7.6 |
-| `memory.bulk_set`, 20 entries |    1,272 to 1,761 |        $53 to $73 |
+| `memory.bulk_set`, 20 entries |             1,761 |               $73 |
 
-The ranges span the two authorities' runs; the lower `bulk_set` figure is the Postgres
-run's, where every call was refused. A `set` and a `search` scan their scope, so their
-CPU grows with it, as their bytes do (below). Postgres's compute is the instance's and
-was not metered per call. In the Postgres run ClickHouse stalled (inserts past their
-deadline, reads timing out): every `bulk_set` and 18 of 200 `set` calls were refused
-while writes waited for their ClickHouse flush; the server's log has no admission waits
-(no `ADMISSION_CONTENDED` and no admission timeout).
+The read ranges span the two authorities' runs. The write rows are the ClickHouse
+authority's: under Postgres a write's ClickHouse inserts are sent by the publication
+batch, whose statements are not tagged with the op, so that run's write figures leave
+them out. A `set` and a `search` scan their scope, so their CPU grows with it, as their
+bytes do (below). Postgres's compute is the instance's and was not metered per call. In
+the Postgres run ClickHouse stalled, inserts past their deadline and reads timing out:
+of 200 `set` calls, 10 were answered 504 `BACKEND_TIMEOUT`, 2 were 503
+`POSTGRES_UNAVAILABLE` and 6 passed the harness's 120 s client timeout; 32 of 200
+`search` calls were 503 `PROJECTION_BEHIND`; and all 20 `bulk_set` calls were refused
+(13 `PUBLICATION_PENDING`, 7 `PROJECTION_BEHIND`).
 
 **Ops**, p50 / p99 in ms at concurrency 5, 400 calls each (40 for `memory.bulk_set`, 20
 entries a call), with the calls refused:
@@ -1069,16 +1072,17 @@ Under Postgres `memory.set` made 3.4 new parts a second per memory table at 250k
 **The vector leg** (the statement of `memory.search` that ranks the scope's vectors,
 codes-first), searched one call at a time:
 
-| Scope                                           | Namespace rows | Parts | Read (MiB) | p50 (ms) |
-| ----------------------------------------------- | -------------: | ----: | ---------: | -------: |
-| single, 250k                                    |        250,903 |    59 |        185 |      312 |
-| the same after `OPTIMIZE TABLE … FINAL`         |        250,903 |    14 |        165 |      160 |
-| single, 500k                                    |        527,628 |    69 |        283 |      300 |
-| zipf, the largest namespace, one agent and user |         15,166 |    54 |         52 |      117 |
-| zipf, the third namespace, one agent and user   |          6,285 |    53 |         43 |       69 |
+| Scope                                           |     Namespace rows | Parts | Read (MiB) | p50 (ms) |
+| ----------------------------------------------- | -----------------: | ----: | ---------: | -------: |
+| single, 250k                                    | 253,303 to 277,628 |    59 |        185 |      312 |
+| the same after `OPTIMIZE TABLE … FINAL`         |            277,628 |    14 |        165 |      160 |
+| single, 500k                                    |    527,628 or more |    69 |        283 |      300 |
+| zipf, the largest namespace, one agent and user |             15,166 |    54 |         52 |      117 |
+| zipf, the third namespace, one agent and user   |              6,285 |    53 |         43 |       69 |
 
-In the single shape the scope is the namespace, and the leg reads 0.56 to 0.78 KB per
-row of it. After the `OPTIMIZE`, `memory.search` p50 fell from 671 to 392 ms at 250k. In the zipf
+In the single shape the scope is the namespace, and the leg reads about 0.56 to 0.77 KB
+per row of it (the 250k run recorded its rows before the measures and after the
+`OPTIMIZE`, not at the first search; the 500k rows are the load's). After the `OPTIMIZE`, `memory.search` p50 fell from 671 to 392 ms at 250k. In the zipf
 shape the scope is one agent's and one user's rows, about 1/400 of the namespace's: a
 scope of a few dozen rows still reads tens of MiB, a granule of every part of its
 partitions.
@@ -1156,7 +1160,16 @@ $B --env .env.pg erase --base-url <server> --user <org>/<user> --org <org> --out
 $B --env .env.pg pg --dead-fraction 0.2 --dump-org <org> --out pg-store.json                # zipf
 $B authority --to clickhouse                     # stop it; start the ClickHouse-authority server
 $B measure --base-url <server> --shape single --out ch.json
-$B optimize --base-url <server> --shape single --out optimize.json
+$B --env .env.pg authority --to postgres         # stop it; start the Postgres-authority server
+$B --env .env.pg optimize --base-url <server> --shape single --out optimize.json
+# The cost runs and the fleet: empty memory tables, ClickHouse capped at 4 GiB, Postgres
+# shared_buffers 256 MB.
+$B load-ch --shape single --rows 20000 --batch 20000 && $B --env .env.pg load-pg
+$B --env .env.pg authority --to postgres         # start the Postgres-authority server
+$B --env .env.pg measure --base-url <server> --shape single --calls 200 --vector-reps 10 --out cost-pg.json
+$B authority --to clickhouse                     # stop it; start the ClickHouse-authority server
+$B measure --base-url <server> --shape single --calls 200 --vector-reps 10 --out cost-ch.json
+$B --env .env.pg authority --to postgres         # stop it; start two Postgres-authority servers
 $B --env .env.pg fleet --base-url <server>,<server> --rate 15 --seconds 40 --out fleet.json
 ```
 

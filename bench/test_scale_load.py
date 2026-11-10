@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import httpx
-
 from typing import Any
+
+import httpx
 
 from bench.scale_load import _error_code, _outcomes, _pct, _summary, op_reads, tenant_sql
 
@@ -77,6 +77,7 @@ class _Ch:
 
     def query(self, sql: str, parameters: dict[str, Any]) -> _Rows:
         assert parameters["op"] == "memory.set "
+        self.flushes = parameters["flushes"]
         return _Rows(self.row)
 
 
@@ -90,6 +91,10 @@ def test_op_reads_divides_by_the_calls_sent() -> None:
         "failed_statements": 2,
         "clickhouse_cpu_ms_per_call": 150.0,
     }
+    # under the Postgres authority a write also counts the publication batch's statements
+    fake = _Ch([0, 0, 0, 0, 0])
+    op_reads(fake, "memory.set", 0.0, 1.0, 1, flushes=True)
+    assert fake.flushes is True
     # no call sent: the window's totals, not a division by zero
     assert (
         op_reads(_Ch([0, None, None, 0, None]), "memory.set", 0.0, 1.0, 0)[
