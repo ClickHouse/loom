@@ -84,6 +84,9 @@ const CATEGORY_SENTENCES: Record<string, string> = {
   internal: "Loom hit an internal error:",
 };
 
+/** The lead-in for a status that says nothing about why. */
+const UNKNOWN_STATUS = "Couldn't do that:";
+
 /** When the body carried no code we know, the HTTP status still says what
  *  kind of failure it was, without naming a cause. */
 function sentenceForStatus(status: number): string {
@@ -104,9 +107,6 @@ function categoryOf(err: ApiError): string {
   return typeof err.detail.category === "string" ? err.detail.category : "";
 }
 
-/** The lead-in for a status that says nothing about why. */
-const UNKNOWN_STATUS = "Couldn't do that:";
-
 /** What to do next, from the body alone: whether resending can work and when. Silent when
  *  the server's own words already say it. */
 function retryTail(err: ApiError, read: boolean): string {
@@ -116,7 +116,8 @@ function retryTail(err: ApiError, read: boolean): string {
   const retryable = err.detail.retryable;
   // A write that may have landed (lib/errors.ts mayHaveSaved) says so; it wins over a
   // message that says to retry: the message was written for the error, the mark for this
-  // call. A caller that only read (a dry run too) is told it can go again instead.
+  // call. A read (a dry run too) gets no such warning; for an unreadable answer or a busy
+  // dependency it is told it can go again.
   if (mayHaveSaved(err)) {
     if (!read) return MAY_HAVE_SAVED;
     if (

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { installStaleChunkReload, STALE_CHUNK_RETRY_WINDOW_MS } from "./staleChunk";
+import { installStaleChunkReload, STALE_CHUNK_RETRY_WINDOW_MS, WORDING_CHUNK } from "./staleChunk";
 
 function setup(t0 = 1_000_000) {
   const target = new EventTarget();
@@ -31,6 +31,11 @@ function setup(t0 = 1_000_000) {
 }
 
 describe("installStaleChunkReload", () => {
+  it("names the wording chunk after a module that exists", () => {
+    // The build names a lazy chunk after its module; a rename here must rename the file too.
+    expect(Object.keys(import.meta.glob("./*.ts"))).toContain(`./${WORDING_CHUNK}.ts`);
+  });
+
   it("leaves the error wording's chunk to its own fallback, with no reload", () => {
     const { reload, fire } = setup();
     const e = fire("/assets/errorWords-BsRZ_TNd.js");

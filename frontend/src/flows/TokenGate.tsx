@@ -238,7 +238,8 @@ function PasswordGate({ onLogin, reason = null }: TokenGateProps) {
       setToken(r.token);
       onLogin();
     } catch (e) {
-      setErr(humanizeError(e));
+      // A sign-in leaves nothing behind to check: trying again is the next step.
+      setErr(humanizeError(e, { read: true }));
       setErrRequestId(errorRequestId(e));
     } finally {
       setBusy(false);

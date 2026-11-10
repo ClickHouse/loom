@@ -148,7 +148,7 @@ describe("TokenGate", () => {
       await userEvent.type(screen.getByLabelText("Email or namespace"), "alice@example.com");
       await userEvent.type(screen.getByLabelText("Password"), "a-password");
       await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
-      expect(await screen.findByRole("alert")).toHaveTextContent("Loom didn't answer in time.");
+      expect(await screen.findByRole("alert")).toHaveTextContent(/^Loom didn't answer in time\.$/);
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(fetchMock.mock.calls[0][0]).toBe("/v1/auth/login");
     });
