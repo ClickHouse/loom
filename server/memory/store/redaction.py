@@ -497,6 +497,20 @@ async def key_derivative_scrubs(
     ]
 
 
+async def redacted_since(after: datetime, *, ch: _CHClient | None = None) -> list[dict[str, Any]]:
+    """The versions a redaction scrubbed in ClickHouse after `after`: (org, memory_id,
+    version, redaction_reason), oldest redaction first. A scan of the history mirror, for
+    `loom reconcile` after a Postgres restore."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        "SELECT org, toString(memory_id) AS memory_id, version, redaction_reason "
+        "FROM loom.memory_versions WHERE redacted_at > {after:DateTime} "
+        "ORDER BY redacted_at, org, memory_id, version",
+        params={"after": after.replace(microsecond=0)},
+    )
+    return [dict(r) for r in rows]
+
+
 __all__ = [
     "REDACTED_VALUE",
     "Scrub",
@@ -504,5 +518,6 @@ __all__ = [
     "set_chunk_count",
     "profile_keys_built_from",
     "redact_versions",
+    "redacted_since",
     "run_scrubs",
 ]

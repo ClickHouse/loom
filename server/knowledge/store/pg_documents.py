@@ -572,3 +572,85 @@ async def publication_may_land(org: str, namespace: str, source_uri: str) -> boo
             pg.insert_bound_s(),
         )
     )
+
+
+async def hold_for_republish(after: datetime) -> int:
+    """Owe again every head committed after `after` (its row, and the retirement of the
+    older versions a restored ClickHouse may serve), as deliveries held parked and marked
+    `pg_lease.HELD_BY_RECONCILE`, merged into one the head still owes. Returns how many."""
+    done = await pg.execute(
+        "INSERT INTO loom.knowledge_deliveries AS d (org, namespace, source_uri, version, "
+        "user_id, row, targets, lease_until, fenced_until, last_error) "
+        f"SELECT org, namespace, source_uri, version, user_id, row, {DOCUMENT_ROW | RETIRE_OLDER}, "
+        "'infinity', now(), $2 FROM loom.knowledge_heads WHERE committed_at > $1 "
+        "ON CONFLICT (org, namespace, source_uri, version) DO UPDATE SET "
+        "targets = d.targets | EXCLUDED.targets, lease_until = 'infinity', "
+        "fenced_until = GREATEST(d.fenced_until, now()), last_error = EXCLUDED.last_error, "
+        "settled = false, attempts = 0",
+        after,
+        pg_lease.HELD_BY_RECONCILE,
+    )
+    return int(done.split()[-1])
+
+
+async def head_page(after: tuple[str, str, str] | None, limit: int) -> list[dict[str, Any]]:
+    """Up to `limit` heads, deleted ones included, in key order after `after` (org,
+    namespace, source_uri): each one's key and version."""
+    args: list[Any] = [limit]
+    where = ""
+    if after is not None:
+        args += list(after)
+        where = "WHERE (org, namespace, source_uri) > ($2, $3, $4)"
+    rows = await pg.fetch(
+        f"SELECT org, namespace, source_uri, version FROM loom.knowledge_heads {where} "
+        "ORDER BY org, namespace, source_uri LIMIT $1",
+        *args,
+    )
+    return [dict(r) for r in rows]
+
+
+async def hold_heads(keys: Sequence[tuple[str, str, str]]) -> int:
+    """Owe these heads again, as `hold_for_republish` does for a window."""
+    if not keys:
+        return 0
+    done = await pg.execute(
+        "INSERT INTO loom.knowledge_deliveries AS d (org, namespace, source_uri, version, "
+        "user_id, row, targets, lease_until, fenced_until, last_error) "
+        f"SELECT h.org, h.namespace, h.source_uri, h.version, h.user_id, h.row, "
+        f"{DOCUMENT_ROW | RETIRE_OLDER}, 'infinity', now(), $4 FROM loom.knowledge_heads h "
+        "JOIN unnest($1::text[], $2::text[], $3::text[]) AS k(org, namespace, source_uri) "
+        "USING (org, namespace, source_uri) "
+        "ON CONFLICT (org, namespace, source_uri, version) DO UPDATE SET "
+        "targets = d.targets | EXCLUDED.targets, lease_until = 'infinity', "
+        "fenced_until = GREATEST(d.fenced_until, now()), last_error = EXCLUDED.last_error, "
+        "settled = false, attempts = 0",
+        [k[0] for k in keys],
+        [k[1] for k in keys],
+        [k[2] for k in keys],
+        pg_lease.HELD_BY_RECONCILE,
+    )
+    return int(done.split()[-1])
+
+
+async def held_sources() -> list[dict[str, Any]]:
+    """(org, namespace, source_uri) of each live head `hold_for_republish` and
+    `hold_heads` hold: a deleted one has no chunks to build again."""
+    rows = await pg.fetch(
+        "SELECT DISTINCT d.org, d.namespace, d.source_uri FROM loom.knowledge_deliveries d "
+        "JOIN loom.knowledge_heads h USING (org, namespace, source_uri) "
+        "WHERE d.lease_until = 'infinity' AND d.last_error = $1 AND NOT h.deleted "
+        "ORDER BY d.org, d.namespace, d.source_uri",
+        pg_lease.HELD_BY_RECONCILE,
+    )
+    return [dict(r) for r in rows]
+
+
+async def release_held() -> int:
+    """Make every delivery marked `HELD_BY_RECONCILE` due now (`hold_for_republish`'s and
+    the heads-behind hold's); returns how many."""
+    done = await pg.execute(
+        "UPDATE loom.knowledge_deliveries SET lease_until = now(), last_error = '' "
+        "WHERE lease_until = 'infinity' AND last_error = $1",
+        pg_lease.HELD_BY_RECONCILE,
+    )
+    return int(done.split()[-1])

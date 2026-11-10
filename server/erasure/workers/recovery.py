@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, TypedDict
 
+from server.core.error_summary import error_summary
 from server.core.errors import caller_text
 from server.erasure.domain.failure_reason import (
     ABANDONED_REASON_PREFIX,
@@ -53,6 +54,10 @@ class RecoveryResult:
     completed: int = 0
     failed_permanently: int = 0
     errors: list[RecoveryError] = field(default_factory=list)
+    # Under Postgres: erasures copied into loom.erasure_ledger from ClickHouse's ledger,
+    # and ledger rows past LOOM_ERASURE_LEDGER_DAYS swept.
+    ledger_copied: int = 0
+    ledger_swept: int = 0
 
 
 async def run_pass(cfg: RecoveryConfig | None = None) -> RecoveryResult:
@@ -99,11 +104,14 @@ async def run_pass(cfg: RecoveryConfig | None = None) -> RecoveryResult:
             except Exception as e:  # noqa: BLE001 — the next pass retries this abandonment
                 _note_abandon_failure(row, e, result)
 
+        await _keep_pg_ledger(result, cfg)
         rec.outcome = {
             "scanned": result.scanned,
             "resumed": result.resumed,
             "completed": result.completed,
             "failed_permanently": result.failed_permanently,
+            "ledger_copied": result.ledger_copied,
+            "ledger_swept": result.ledger_swept,
         }
 
     if result.scanned:
@@ -115,6 +123,27 @@ async def run_pass(cfg: RecoveryConfig | None = None) -> RecoveryResult:
             result.failed_permanently,
         )
     return result
+
+
+async def _keep_pg_ledger(result: RecoveryResult, cfg: RecoveryConfig) -> None:
+    """Under Postgres, `loom.erasure_ledger` kept whole: the erasures only ClickHouse
+    records copied in (`pg_ledger.backfill`), then rows past their days swept."""
+    from server.core import pg
+    from server.erasure.store import pg_ledger
+
+    if not pg.enabled():
+        return
+    # Apart: a copy that keeps failing (it reads ClickHouse) must not stop the sweep.
+    try:
+        result.ledger_copied = await pg_ledger.backfill(cfg.batch_size * 100)
+    except Exception as e:  # noqa: BLE001 — the sagas' recovery above must not fail on it
+        log.warning("erasure_recovery: the ledger copy failed: %s", error_summary(e))
+        pass_context.note_failure(e, "erasure.ledger")
+    try:
+        result.ledger_swept = await pg_ledger.sweep(cfg.batch_size * 100)
+    except Exception as e:  # noqa: BLE001 — the sagas' recovery above must not fail on it
+        log.warning("erasure_recovery: the ledger sweep failed: %s", error_summary(e))
+        pass_context.note_failure(e, "erasure.ledger")
 
 
 async def _recover_one(
@@ -284,6 +313,7 @@ async def _abandon(
         },
         request_id=erasure_id,
     )
+    abandoned_at = datetime.now(UTC).replace(tzinfo=None)
     await checkpoint(
         row=request_row_template(
             erasure_id=erasure_id,
@@ -296,10 +326,20 @@ async def _abandon(
         steps_completed=sorted(completed),
         current_step=len(completed),
         failure_reason=reason,
-        completed_at=datetime.now(UTC).replace(tzinfo=None),
+        completed_at=abandoned_at,
         extra=verify,
     )
     result.failed_permanently += 1
+    from server.core import pg
+
+    if pg.enabled():
+        from server.erasure.store import pg_ledger
+
+        # After the checkpoint, as it is the record; a miss is copied by `backfill`.
+        try:
+            await pg_ledger.abandon(str(row["org"]), erasure_id, abandoned_at)
+        except Exception as e:  # noqa: BLE001 — `pg_ledger.backfill` copies it next pass
+            pass_context.note_failure(e, "erasure.ledger")
 
 
 __all__ = ["RecoveryConfig", "RecoveryResult", "run_pass"]

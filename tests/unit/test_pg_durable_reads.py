@@ -32,12 +32,13 @@ _NOT_READS = {
         "embedded", "newer_copy", "commit_versions", "complete", "complete_each", "hand_over",
         "claim_due", "defer_audits", "release", "renew", "sweep_settled", "claim_outbox",
         "drop_outbox", "fail_outbox", "sweep_erasure_evidence", "record_failure", "redact",
-        "fold_usage",
+        "fold_usage", "republish_targets", "hold_for_republish", "hold", "release_held",
     },
     "pg_documents": {
         "refuse_unstorable_keys", "encode_row", "decode_row", "commit", "complete",
         "complete_own", "drop_unbacked", "claim_due", "failed", "release", "drop_version",
         "sweep_erasure_evidence", "sweep_settled", "keep_text", "restore_text",
+        "hold_for_republish", "hold_heads", "release_held",
     },
     # Writes, each in its own transaction, and the ClickHouse projection; `take` commits
     # the token it returns.
@@ -60,6 +61,8 @@ _CALLERS = {
     "server/knowledge/app/ingest_run.py": "a job is projected from a durable read or its own "
     "save; a run's read under its token decides a save, which commits",
     "server/knowledge/app/inspect.py": "a report to the caller; sends nothing",
+    "server/knowledge/app/restore_reconcile.py": "the reconcile's heads and held sources "
+    "decide holds and print commands; a held head reaches ClickHouse through a claim",
     "server/knowledge/app/pg_serving.py": "filters what a knowledge search serves; sends nothing",
     "server/knowledge/store/blobs.py": "keeps originals a commit owes; deletes none of them",
     "server/knowledge/store/documents.py": "reads beside the writer's own commit; "
@@ -79,6 +82,8 @@ _CALLERS = {
     "server/memory/app/pg_admission.py": "the barrier and the admission; a write commits",
     "server/memory/app/pg_delivery.py": "a head that is not the claimed revision is read again "
     "durably, and the document built or settled from that read",
+    "server/memory/app/restore_reconcile.py": "the reconcile's heads decide holds, its "
+    "redactions run through a commit; a held revision reaches ClickHouse through a claim",
     "server/memory/app/restore.py": "the outcome of the caller's own commit",
     "server/memory/app/search/pg_validation.py": "filters what a search serves; sends nothing",
     "server/memory/app/sensitivity_sweep.py": "closes facts only of a version ClickHouse holds",

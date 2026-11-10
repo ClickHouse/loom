@@ -71,6 +71,7 @@
  "embedding_retry_attempts",
  "embedding_retry_max_wait_s",
  "erasure_export_conversation_max_bytes",
+ "erasure_ledger_days",
  "extraction_defer_agents",
  "extraction_policy_max_namespaces",
  "extraction_queue_lease_seconds",

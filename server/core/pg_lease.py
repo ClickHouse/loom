@@ -24,6 +24,10 @@ from server.settings import settings
 
 log = logging.getLogger(__name__)
 
+# The `last_error` of a delivery `loom reconcile` holds parked until the erasures it
+# predates ran again (memory's and knowledge's alike).
+HELD_BY_RECONCILE = "held by loom reconcile"
+
 
 class PublicationPending(LoomServerError):
     """503: the write is committed and the delivery worker publishes its rows; it is

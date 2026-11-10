@@ -13,6 +13,7 @@ from typing import Any
 from server.cli._apply import add_apply_flags
 from server.cli._ch import run_connected
 from server.core.error_summary import error_summary
+from server.erasure.domain.failure_reason import REPLAY_PENDING_REASON
 
 
 def _bucket_client_installed() -> bool:
@@ -621,6 +622,12 @@ async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
     for row in rows:
         if completed:
             rc = max(rc, await _re_verify_completed(ch, row, resume=bool(args.resume)))
+            continue
+        if row.get("failure_reason") == REPLAY_PENDING_REASON:
+            # A `loom reconcile` replay that did not finish: a census of its scope counts
+            # the user's writes made after the erasure, and a resume would delete them.
+            print(f"  {row['id']} {row['org']}/{row['scope_type']}: {REPLAY_PENDING_REASON}")
+            rc = 1
             continue
         scope_type, scope_value, purge, _external = _re_verify_scope(row)
         names = scope_value if isinstance(scope_value, list) else [scope_value]

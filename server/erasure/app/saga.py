@@ -34,6 +34,7 @@ from server.erasure.app import backends as erasure_backends
 from server.erasure.app.backends import ErasureBackendError, ExternalEraseBackend, StubBackend
 from server.erasure.app.saga_steps import (
     NAMESPACE_STEPS,
+    PG_ONLY_STEPS,
     USER_STEPS,
     ErasureStepError,
     _step_verify_residue,
@@ -48,6 +49,7 @@ from server.erasure.domain.scopes import (
 from server.erasure.store import census as erasure_census
 from server.erasure.store import ledger as erasure_ledger
 from server.erasure.store import mutations as erasure_mutations
+from server.erasure.store import pg_ledger as erasure_pg_ledger
 from server.erasure.store.provider_copies import fold_census
 from server.erasure.store.rows import CheckpointRow, RequestRow, VerifyColumns, census_kept
 from server.memory.app import webhooks
@@ -190,12 +192,24 @@ async def begin_erasure(
         attempts=1,
     )
 
-    await checkpoint(
-        row=row,
-        status="in_progress",
-        steps_completed=[],
-        current_step=0,
-    )
+    if pg.enabled():
+        # First, so a ClickHouse restore cannot lose an erasure ClickHouse never recorded.
+        await erasure_pg_ledger.record(row)
+    try:
+        await checkpoint(
+            row=row,
+            status="in_progress",
+            steps_completed=[],
+            current_step=0,
+        )
+    except Exception:
+        if pg.enabled():
+            # The request fails: its open ledger row goes, or a reconcile after a
+            # ClickHouse restore would find it and run an erasure its caller was told had
+            # failed. Not marked ended: the insert may have landed, and a saga the
+            # recovery worker then resumes records the row again (`run_saga`).
+            await _forget_ledger_row(input.org, erasure_id)
+        raise
 
     await audit.emit(
         event_type="erasure.started",
@@ -251,6 +265,33 @@ async def run_erasure_detached(input: ErasureRequestInput) -> str:
     return erasure_id
 
 
+async def _reopen_checkpointed_steps(
+    org: str,
+    erasure_id: str,
+    previously_completed: set[str],
+    residue: Mapping[str, Any] | str | None,
+    census_scope_type: str,
+) -> set[str]:
+    """The checkpointed steps a run of the saga skips. The census always runs again: a
+    run that stopped between it and the terminal row left no census on the ledger, so a
+    resume that skipped it would complete without one. A step that owns a table the last
+    census found rows in runs again, and under Postgres its mark in the ledger row is
+    dropped (`pg_ledger.unmark_steps`)."""
+    completed = set(previously_completed) - {"verify.residue"}
+    reopened = erasure_census.steps_to_reopen(residue, census_scope_type) & completed
+    if reopened:
+        log.warning(
+            "erasure %s: re-opening %s — the last census found rows in tables these "
+            "checkpointed steps own",
+            erasure_id,
+            sorted(reopened),
+        )
+        completed -= reopened
+        if pg.enabled() and reopened & PG_ONLY_STEPS:
+            await erasure_pg_ledger.unmark_steps(org, erasure_id, sorted(reopened & PG_ONLY_STEPS))
+    return completed
+
+
 async def run_saga(
     *,
     input: ErasureRequestInput,
@@ -270,22 +311,17 @@ async def run_saga(
     resume.
     """
     await pg.verify_deployment()  # a resumed saga too: refused before any step writes
+    if pg.enabled():
+        # A saga a process of the previous build registered has no Postgres ledger row,
+        # and its Postgres steps would mark none (`steps_pg._mark_step`).
+        await erasure_pg_ledger.record(row)
     steps: list[_ErasureStepResult] = []
-    # The census always runs again: a run that stopped between it and the terminal row
-    # left no census on the ledger, so a resume that skipped it would complete without one.
-    completed = set(previously_completed) - {"verify.residue"}
     # What the census tail counts if a step fails before `verify.residue`:
     # the saga's scope, and whether it purges.
     census_scope_type = "user_id" if input.scope_type == "user_id" else "namespace"
-    reopened = erasure_census.steps_to_reopen(residue, census_scope_type) & completed
-    if reopened:
-        log.warning(
-            "erasure %s: re-opening %s — the last census found rows in tables these "
-            "checkpointed steps own",
-            erasure_id,
-            sorted(reopened),
-        )
-        completed -= reopened
+    completed = await _reopen_checkpointed_steps(
+        input.org, erasure_id, previously_completed, residue, census_scope_type
+    )
     # Filled by the verify step; read back for the terminal row.
     verify: dict[str, Any] = {}
     census_scope_value: str | Sequence[str] = input.scope_value
@@ -416,6 +452,8 @@ async def run_saga(
         completed_at=completed_at,
         extra=_verify_columns(verify),
     )
+    if pg.enabled():
+        await _complete_ledger_row(input.org, erasure_id, completed_at)
 
     await audit.emit(
         event_type="erasure.completed",
@@ -447,6 +485,39 @@ async def run_saga(
         purge=census_purge,
         steps_completed=sorted(completed),
     )
+
+
+async def _forget_ledger_row(org: str, erasure_id: str) -> None:
+    """The open Postgres ledger row of a request that failed before its first checkpoint,
+    deleted; never raises, since the request's own error is what it reports."""
+    try:
+        await erasure_pg_ledger.forget(org, erasure_id)
+    except Exception as e:  # noqa: BLE001 — the request already fails with its own error
+        log.warning(
+            "erasure %s: ledger row of a failed request not closed: %s",
+            erasure_id,
+            error_summary(e),
+        )
+
+
+async def _complete_ledger_row(org: str, erasure_id: str, completed_at: datetime) -> None:
+    """The Postgres ledger row marked completed, tried three times. A row left open is
+    copied completed from ClickHouse's ledger by the recovery pass (`pg_ledger.backfill`),
+    and a reconcile after a ClickHouse restore that finds the restored row completed
+    completes it (`replay.requeue`)."""
+    for attempt in range(3):
+        try:
+            await erasure_pg_ledger.complete(org, erasure_id, completed_at)
+            return
+        except Exception as e:  # noqa: BLE001 — the erasure is done; the pass copies the state
+            log.warning(
+                "erasure %s: ledger row not completed (attempt %d): %s",
+                erasure_id,
+                attempt + 1,
+                error_summary(e),
+            )
+            if attempt < 2:
+                await asyncio.sleep(0.5 * (attempt + 1))
 
 
 async def _census_tail(

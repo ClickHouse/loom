@@ -193,6 +193,8 @@ record and writes `loom.memory` directly ([rolling upgrades](../architecture/rol
 
 ## Backup
 
-Back up Postgres with the provider's or the manager's tooling, together with
-ClickHouse ([backup and recovery](backup-and-recovery.md)). A restored pair must record
-the same deployment id and epoch; a Postgres from another deployment refuses to start.
+Back up Postgres with the provider's or the manager's tooling, and ClickHouse with its
+own. A restore is of one store, followed by `loom reconcile`, which runs again in it
+what the other records past the restore point ([restoring one
+store](backup-and-recovery.md#restoring-one-store)). A Postgres from another deployment
+refuses to start.
