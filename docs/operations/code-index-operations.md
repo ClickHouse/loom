@@ -847,7 +847,8 @@ that is wrong or gone). The note is written once, counts no passes, is never a
 answer does not flag those modules. It reflects the last run that built modules: a pass
 that builds nothing leaves it, and the next run that builds without such a failure
 clears it, so it comes back when a module that still cannot fetch its dependency next
-changes. A module that fails for any other reason still fails the tier, and its record
+changes. Under `entry-lock --tier go`, which sees only its command's exit and output, a
+clean exit with no such failure clears it. A module that fails for any other reason still fails the tier, and its record
 names the unreachable ones too.
 
 The record is read where each reader already looks:

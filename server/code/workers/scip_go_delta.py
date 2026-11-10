@@ -208,10 +208,10 @@ async def _has_commit(checkout: Path, sha: str) -> bool:
     return proc.returncode == 0
 
 
-async def _modules_failing(repo: CodeRepo, cfg: RepoConfig) -> bool:
-    """The tier's record holds a module that would not build (kind `module`, classified
-    from the whole error) or one whose dependency cannot be fetched: a pass that builds
-    nothing leaves it as it is."""
+async def _kept_when_nothing_built(repo: CodeRepo, cfg: RepoConfig) -> bool:
+    """Whether a pass that builds nothing leaves the tier's record as it is: it holds a
+    module that would not build (kind `module`) or a module whose dependency cannot be
+    fetched (`unavailable`). Any other record such a pass clears."""
     from server.code.domain.index import tier_health
 
     raw = await repo.get_state(cfg.org, cfg.namespace, tier_health.state_key(PRODUCER))
@@ -222,15 +222,16 @@ async def _modules_failing(repo: CodeRepo, cfg: RepoConfig) -> bool:
 
 
 async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResult) -> bool:
-    """False when it built nothing while a module failure is recorded (`run_tier` then
-    keeps the record); True otherwise."""
+    """False when `run_tier` must keep the tier's record: the pass built nothing while a
+    module failure or an `unavailable` note stands, or it just noted one. True
+    otherwise."""
     target = await compiler_target(repo, cfg)
     if not target:
         result.skipped.append(f"{cfg.namespace}: git_head not seeded")
         return False
     scip_commit = await repo.get_state(cfg.org, cfg.namespace, WATERMARK) or ""
     if target == scip_commit:
-        return not await _modules_failing(repo, cfg)  # compiler tier is current
+        return not await _kept_when_nothing_built(repo, cfg)  # compiler tier is current
     checkout, bare, missing = await asyncio.to_thread(_resolve_paths, cfg)
     if missing:
         result.skipped.append(f"{cfg.namespace}: {missing}")
@@ -244,7 +245,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResu
         if not modules:
             logger.info("code_scip_go_delta: %s no Go change in window", cfg.namespace)
             await repo.set_state(cfg.org, cfg.namespace, WATERMARK, target)
-            return not await _modules_failing(repo, cfg)
+            return not await _kept_when_nothing_built(repo, cfg)
     else:
         modules = []  # first run: the runner walks every go.mod
 
