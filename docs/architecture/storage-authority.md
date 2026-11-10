@@ -1068,12 +1068,16 @@ a restore) is refused (422), so only an erasure removes it.
 the listed documents) read ClickHouse, so they can miss a commit it does not have yet.
 The report reads the namespace's unsettled deliveries once (a delivery whose row landed
 but whose older chunk versions are not retired yet counts). Any owed or parked delivery
-is counted in `skipped` (`documents.projection: …`); a Postgres that does not answer is
-named there instead (`documents.projection: POSTGRES_UNAVAILABLE: …`, covering the
-memory sections too, which then do not wait) and not asked again in the call. Either
-makes `listed_complete` false. A listed row is kept only while `get_many_by_uris` serves
-it at the version ClickHouse listed, live; a document rewritten or deleted in Postgres
-since leaves the listing, counted in `skipped` (`listed.heads: …`).
+is counted in `skipped` (`documents.projection: …`). When the deliveries read, the job
+comparison or the listing check gets no answer, the first to do so adds
+`documents.projection: POSTGRES_UNAVAILABLE: …` (covering the memory sections too,
+which then do not wait), and Postgres is not asked again in the call; the job sections
+say so under their own name when their jobs were not compared. An owed or parked
+delivery or the outage makes `listed_complete` false; the job lines do not. An outage
+the memory sections' own wait finds first is named `projection: …`. A listed row is
+kept only while `get_many_by_uris` serves it at the version ClickHouse listed, live; a
+document rewritten or deleted in Postgres since leaves the listing, counted in
+`skipped` (`listed.heads: …`).
 
 An erasure's `pg_knowledge.delete` step, after `pg_memory.delete`, runs on a connection
 of its own in one transaction:
@@ -1161,9 +1165,22 @@ the rules `ingestions.due` describes.
   ended job has no next save) projects it again, from a durable read
   ([only durable revisions are published](#only-durable-revisions-are-published)): a
   version only the primary holds would otherwise come back through ClickHouse after a
-  failover lost it. The originals sweep and a user
-  erasure's shared-originals check also read the open jobs' originals from Postgres
-  (`owed_originals`), so a job whose projection has not landed keeps its original.
+  failover lost it. `knowledge.inspect` compares the versions of up to 1,000 of the
+  namespace's open jobs and its 1,000 most recently saved non-pending ones with
+  ClickHouse's, each read in its partial index's order, and counts in `skipped` the
+  jobs ClickHouse holds at an older version or not at all
+  (`ingestions.projection: <n> ingestion job(s) …`): the ingestion sections and the
+  listed jobs may miss those or show them at an older state. When either read finds
+  more than its page, `ingestions.projection: at most … were compared …` says the
+  comparison stopped short; otherwise every live job was compared. ClickHouse is read
+  at the default consistency, as the job sections read it: on one server or a
+  replicated cluster (one replica per Loom process) a lag can only overcount, while
+  where reads may reach another replica a section can show a job older than the
+  comparison found. When the comparison failed, `ingestions.projection: <reason>: …`
+  says nothing was compared (`POSTGRES_UNAVAILABLE` when Postgres did not answer). The
+  originals sweep and a user erasure's shared-originals check also read the open jobs'
+  originals from Postgres (`owed_originals`), so a job whose projection has not landed
+  keeps its original.
 - **Fencing.** A run takes its job under the deployment-wide lease on its id, as under
   ClickHouse, and the take raises the job's `lease_token`. Each read of the job the run
   acts on, and each save, names that token: one that finds another token stops the run

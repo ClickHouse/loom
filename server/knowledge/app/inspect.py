@@ -17,14 +17,17 @@ namespace's viewers by id; the decision rows are memory rows and are read inside
 request's scope, and the audit, which reads every user's rows, is not run under a scope
 narrowed to one user or session. A section that cannot be read is named in `skipped`
 and its fields stay null or empty; a store that is down fails the call, as any read does,
-but a Postgres authority that does not answer is named in `skipped` once and not asked
-again in the call.
+but a Postgres authority that does not answer is named in `skipped` and not asked again
+in the call (when that is before or at the job comparison, the comparison names it under
+its own section too).
 
 Under the Postgres authority the document rows ClickHouse holds can trail the heads
 Postgres commits: `skipped` counts the namespace's commits ClickHouse does not have yet
 (owed and parked), and a listed document is kept only while `knowledge.get` serves it at
 the version read (that read drops a head an older build purged, as `knowledge.get`
-does). Either makes `listed_complete` false.
+does). Either makes `listed_complete` false. The job rows can trail Postgres's jobs too:
+`skipped` counts the compared jobs ClickHouse holds older or not at all
+(`ingestions.projection`).
 """
 
 from __future__ import annotations
@@ -63,6 +66,7 @@ from server.knowledge.api.models_inspect import (
     MemoryFindingRef,
     SourceJobs,
 )
+from server.knowledge.app import ingest_jobs
 from server.knowledge.app.ingest_run import JOB_LEASE_S
 from server.knowledge.domain.ingest_states import OPEN_STATES
 from server.knowledge.store import documents as documents_repo
@@ -74,11 +78,13 @@ from server.settings import settings
 
 log = logging.getLogger(__name__)
 
-# The `skipped` names, under the Postgres authority, of a document section that may miss
-# what the authority committed, and of the listed rows it dropped (`<n> document(s) …`):
-# the dashboard keys on these prefixes (DocumentInspection.tsx `documentsMayBeShort`).
+# `skipped` names the dashboard keys on (DocumentInspection.tsx `documentsMayBeShort`,
+# `jobsMayBeOlder`): what a section read under the Postgres authority may miss.
 DOCUMENTS_PROJECTION = "documents.projection"
 LISTED_HEADS = "listed.heads"
+INGESTIONS_PROJECTION = "ingestions.projection"
+# The one `ingestions.projection` line the dashboard does not note: the comparison's bound.
+JOBS_BOUNDED = f"{INGESTIONS_PROJECTION}: at most "
 
 SOURCE_OP = "knowledge.inspect"
 # namespace.audit's checks on memory rows that may belong in documents.
@@ -527,9 +533,52 @@ class _Inspect:
                 "them or still count older versions"
             )
 
+    async def unprojected_jobs(self) -> None:
+        """Under Postgres, the namespace's jobs whose latest version ClickHouse does not
+        hold: the ingestion sections and the listed jobs read ClickHouse, so they may show
+        an older state, and `skipped` says how many, or that nothing was compared."""
+        if not pg.enabled():
+            return
+        if self.authority_down:
+            self.jobs_not_compared("POSTGRES_UNAVAILABLE")
+            return
+        i = self.inp
+        # Not `guarded`: an outage is `down()`, said once and not asked again.
+        try:
+            behind, more = await ingest_jobs.unprojected(i.org, i.namespace)
+        except pg.PostgresUnavailableError:
+            self.down()
+            self.jobs_not_compared("POSTGRES_UNAVAILABLE")
+            return
+        except BACKEND_NOT_NOW:
+            raise
+        except Exception as exc:  # noqa: BLE001 — a read-only report; the job sections stand as read
+            log.warning("knowledge.inspect %s skipped: %s", INGESTIONS_PROJECTION, exc)
+            self.jobs_not_compared(type(exc).__name__)
+            return
+        if behind:
+            self.skipped.append(
+                f"{INGESTIONS_PROJECTION}: {behind} ingestion job(s) whose latest state "
+                "ClickHouse does not hold yet; the ingestion sections and the listed jobs "
+                "may miss them or show an older state"
+            )
+        if more:
+            self.skipped.append(
+                f"{JOBS_BOUNDED}{ingest_jobs.UNPROJECTED_PAGE} open jobs and at most "
+                f"{ingest_jobs.UNPROJECTED_PAGE} of the most recently saved non-pending ones "
+                "were compared with ClickHouse"
+            )
+
+    def jobs_not_compared(self, reason: str) -> None:
+        self.skipped.append(
+            f"{INGESTIONS_PROJECTION}: {reason}: the jobs were not compared with ClickHouse's "
+            "copy; the ingestion sections and the listed jobs may miss jobs or show an older "
+            "state"
+        )
+
     def down(self) -> None:
         """The Postgres authority did not answer: said, and not asked again in this call
-        (`served` and the memory sections' wait read `authority_down`)."""
+        (every later Postgres read of the report reads `authority_down`)."""
         self.documents_whole = False
         self.authority_down = True
         self.skipped.append(
@@ -941,6 +990,7 @@ async def handle_knowledge_inspect(input: KnowledgeInspectInput) -> KnowledgeIns
         chunks, findings = ChunkTotals(), []
         for code in _CHECKS:
             run.rules.skip(code, "the embedder could not be built")
+    await run.unprojected_jobs()
     ingestions, ingest_findings = await run.ingestions()
     extraction, incomplete = await run.extraction()
     if incomplete is not None:

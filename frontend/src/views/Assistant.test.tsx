@@ -1789,6 +1789,77 @@ describe("Assistant: documents", () => {
     expect(within(result).queryByText(/Some documents may be missing/)).toBeNull();
   });
 
+  it.each([
+    [
+      "ingestions.projection: 2 ingestion job(s) whose latest state ClickHouse does not hold yet; the ingestion sections and the listed jobs may miss them or show an older state",
+      true,
+    ],
+    [
+      "ingestions.projection: at most 1000 open jobs and at most 1000 of the most recently saved non-pending ones were compared with ClickHouse",
+      false,
+    ],
+    [
+      "ingestions.projection: ValueError: the jobs were not compared with ClickHouse's copy; the ingestion sections and the listed jobs may miss jobs or show an older state",
+      true,
+    ],
+  ])(
+    "says job states may be older for a count of jobs behind or a comparison that did not run (%s)",
+    async (line, older) => {
+      inspectKnowledge.mockResolvedValueOnce({ ...KNOWLEDGE, skipped: [line] });
+      render(<Assistant />);
+      const result = await pickDocuments();
+      const note = within(result).queryByText(
+        "Some jobs may be missing or show an older state: their latest saves may not be shown here yet.",
+      );
+      expect(note !== null).toBe(older);
+      expect(within(result).queryByText("Some listed jobs may be missing or show an older state.") !== null).toBe(
+        older,
+      );
+    },
+  );
+
+  const OUTAGE =
+    "documents.projection: POSTGRES_UNAVAILABLE: the Postgres authority did not answer; the document sections and the memory sections read what ClickHouse holds, which may miss committed writes";
+
+  it.each([
+    ["before the job comparison", true],
+    ["after the job comparison", false],
+  ])("says job states may be older for an outage %s only when the jobs were not compared", async (_when, before) => {
+    inspectKnowledge.mockResolvedValueOnce({
+      ...KNOWLEDGE,
+      listed_complete: false,
+      skipped: [
+        OUTAGE,
+        ...(before
+          ? [
+              "ingestions.projection: POSTGRES_UNAVAILABLE: the jobs were not compared with ClickHouse's copy; the ingestion sections and the listed jobs may miss jobs or show an older state",
+            ]
+          : []),
+      ],
+    });
+    render(<Assistant />);
+    const result = await pickDocuments();
+    expect(within(result).queryByText(/^Some jobs may be missing or show an older state/) !== null).toBe(before);
+    expect(within(result).queryByText("Some listed jobs may be missing or show an older state.") !== null).toBe(before);
+  });
+
+  it("says nothing of older job states where no job count or listed job was read", async () => {
+    inspectKnowledge.mockResolvedValueOnce({
+      ...KNOWLEDGE,
+      ingestions: { ...KNOWLEDGE.ingestions, sources: null },
+      skipped: [
+        "ingestions: TimeoutError",
+        "listed.jobs: TimeoutError",
+        "ingestions.projection: 2 ingestion job(s) whose latest state ClickHouse does not hold yet; the ingestion sections and the listed jobs may miss them or show an older state",
+      ],
+    });
+    render(<Assistant />);
+    const result = await pickDocuments();
+    expect(within(result).getByText("The ingestion jobs could not be read.")).toBeInTheDocument();
+    expect(within(result).queryByText(/Some jobs may be missing or show an older state/)).toBeNull();
+    expect(within(result).queryByText("Some listed jobs may be missing or show an older state.")).toBeNull();
+  });
+
   it("says a listing whose check failed was not checked, not that it was cut", async () => {
     // The server lists every ClickHouse row when its check against Postgres fails.
     inspectKnowledge.mockResolvedValueOnce({

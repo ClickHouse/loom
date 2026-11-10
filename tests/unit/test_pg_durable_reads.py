@@ -55,7 +55,8 @@ _STORES = {
 _CALLERS = {
     "server/health.py": "counts for the health report; sends nothing",
     "server/knowledge/app/ingest_jobs.py": "a job's status to the caller and the worker's "
-    "queue; a job reaches ClickHouse from `ingest_run._take`'s durable read or a save",
+    "queue, and the versions knowledge.inspect compares (sends nothing); a job reaches "
+    "ClickHouse from `ingest_run._take`'s durable read or a save",
     "server/knowledge/app/ingest_run.py": "a job is projected from a durable read or its own "
     "save; a run's read under its token decides a save, which commits",
     "server/knowledge/app/inspect.py": "a report to the caller; sends nothing",

@@ -773,7 +773,10 @@ documents and every finding's samples.
   last job ended), listed newest first in `without_document_listed`. `worker_enabled` and
   `extractor_configured` are this server's settings (`LOOM_KNOWLEDGE_INGEST_ENABLED`,
   `LOOM_DOCUMENT_EXTRACTOR_URL` or `LOOM_DOCUMENT_EXTRACTORS_JSON`); the jobs show what
-  the deployment did.
+  the deployment did. Under the Postgres authority these counts and the listed jobs read
+  ClickHouse's copy of each job, and `skipped` counts the compared jobs whose latest
+  state that copy does not hold yet
+  ([storage authority](../architecture/storage-authority.md#ingestion-jobs)).
 - **`extraction`**: the live documents an extraction published, how many are incomplete,
   and per capability the artifact's `coverage.lost` names (`sql_structure`, `exact_keys`,
   ...), the documents that lost it.
@@ -834,8 +837,11 @@ documents and every finding's samples.
 - **`memory_findings`**: `namespace.audit`'s `oversized_values` and `episodic_blobs`,
   memory rows that may belong in documents, cited by code and count. `mentor.brief`
   reports the same shape for one agent as `documents_as_memories`.
-- **`skipped`**: each section that could not be read, as `section: reason`. Its fields
-  are null or empty, not zero.
+- **`skipped`**: each section that could not be read or was read in part, as
+  `section: reason`; an unread section's fields are null or empty, not zero. Under the
+  Postgres authority it also says what a section that was read may miss (storage authority:
+  [documents](../architecture/storage-authority.md#knowledge-documents),
+  [jobs](../architecture/storage-authority.md#ingestion-jobs)).
 
 Documents and their jobs are the namespace's under any read scope, as every `knowledge.*`
 read serves them (`knowledge.ingest_status` answers any job of the namespace by id).

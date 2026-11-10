@@ -993,6 +993,49 @@ async def test_inspect_says_what_clickhouse_does_not_hold_and_lists_only_served_
     assert got["content"] == "# Moved\nNew."
 
 
+async def test_inspect_counts_a_job_whose_latest_version_clickhouse_does_not_hold(
+    call: Any, pg_conn: Any, org: str, ns: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A job saved in Postgres whose projection did not land is counted in `skipped`:
+    knowledge.inspect's ingestion sections read ClickHouse's older copy."""
+    from datetime import UTC, datetime, timedelta
+
+    from server.knowledge.store import ingestions, pg_jobs
+
+    later = datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=6)  # no worker takes it
+    row = ingestions.ingestion_row(
+        org=org,
+        namespace=ns,
+        ingestion_id=str(uuid.uuid4()),
+        source_uri="repo://behind.sql",
+        upload_id=str(uuid.uuid4()),
+        sha256="a" * 64,
+        state="pending",
+        next_attempt_at=later,
+    )
+    await pg_jobs.insert(row)
+    before = await call("knowledge.inspect", {"sample_limit": 10})
+    assert not [s for s in before["skipped"] if s.startswith("ingestions.projection")]
+
+    async def lost(*_: object, **__: object) -> None:
+        raise TimeoutError("the projection did not land")
+
+    taken = await pg_jobs.take(org, ns, row["ingestion_id"])
+    assert taken is not None
+    with monkeypatch.context() as m:
+        m.setattr(ingestions, "insert_ingestion", lost)
+        saved = ingestions.ingestion_row(row, state="failed", stage="parse")
+        assert await pg_jobs.save(saved, taken[0]) == "saved"
+
+    after = await call("knowledge.inspect", {"sample_limit": 10})
+    assert (
+        "ingestions.projection: 1 ingestion job(s) whose latest state ClickHouse does not "
+        "hold yet; the ingestion sections and the listed jobs may miss them or show an "
+        "older state"
+    ) in after["skipped"]
+    assert after["ingestions"]["pending"] == 1  # ClickHouse's older copy
+
+
 async def _live_versions(org: str, ns: str, uri: str) -> set[int]:
     """The chunk versions of the source ClickHouse reads as live."""
     from server.core.ch import get_client
