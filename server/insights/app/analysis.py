@@ -64,17 +64,16 @@ log = logging.getLogger(__name__)
 # The ClickHouse codes a statement's own shape causes, answered as a 422 that
 # quotes ClickHouse: a refused table, column or function, bad SQL, a missing
 # name, a type error, a cap.
-_ACCESS_DENIED = boundary.ACCESS_DENIED
 _AUTHENTICATION_FAILED = 516
 _TOO_MANY_SIMULTANEOUS_QUERIES = 202
 _STATEMENT_CODES = frozenset(
     {
-        _ACCESS_DENIED,
+        boundary.ACCESS_DENIED,
         1,  # UNSUPPORTED_METHOD
         6,  # CANNOT_PARSE_TEXT
         10,  # NOT_FOUND_COLUMN_IN_BLOCK
         16,  # NO_SUCH_COLUMN_IN_TABLE
-        36,  # BAD_ARGUMENTS
+        boundary.BAD_ARGUMENTS,
         42,  # NUMBER_OF_ARGUMENTS_DOESNT_MATCH
         43,  # ILLEGAL_TYPE_OF_ARGUMENT
         44,  # ILLEGAL_COLUMN
@@ -619,7 +618,7 @@ async def _probe() -> tuple[str, bool, str]:
         try:
             admitted = await store.count_rows(t.name, password=_password(), extra=reserved())
         except Exception as e:
-            if error_code(e) == _ACCESS_DENIED:
+            if error_code(e) == boundary.ACCESS_DENIED:
                 return f"{boundary.ANALYST_USER} lacks its grants on {t.name}", True, ""
             if _no_answer(e):
                 raise
@@ -644,7 +643,7 @@ async def _probe() -> tuple[str, bool, str]:
         try:
             await store.read_refused(shown, password=_password(), extra=reserved())
         except Exception as e:  # a refusal (497) is the expected answer
-            if error_code(e) == _ACCESS_DENIED:
+            if error_code(e) == boundary.ACCESS_DENIED:
                 continue
             if _no_answer(e):
                 raise  # no answer about the grant

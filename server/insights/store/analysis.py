@@ -23,7 +23,6 @@ log = logging.getLogger(__name__)
 # ClickHouse's answer to a read of a setting nobody set: an unsigned read of a
 # table under Loom's scope policy, or a profile with no version stamp yet.
 UNKNOWN_SETTING = 115
-_ACCESS_DENIED = 497
 
 
 class _AnalystClient(_CHClient, Protocol):
@@ -212,7 +211,7 @@ async def analyst_user_absent(*, ch: _CHClient | None = None) -> bool:
             {"user": boundary.ANALYST_USER},
         )
     except Exception as e:
-        if error_code(e) == _ACCESS_DENIED:
+        if error_code(e) == boundary.ACCESS_DENIED:
             return False  # a user without access management cannot tell
         raise  # no answer: the caller must not draw on a guess
     return row is not None and int(row["n"]) == 0
@@ -224,7 +223,7 @@ async def can_manage_access(*, ch: _CHClient | None = None) -> bool:
     try:
         await ch.query_one("SELECT count() AS n FROM system.users")
     except Exception as e:
-        if error_code(e) == _ACCESS_DENIED:
+        if error_code(e) == boundary.ACCESS_DENIED:
             return False  # a user without access management cannot
         raise  # no answer: the caller cannot tell, and must not guess
     return True
