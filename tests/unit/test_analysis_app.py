@@ -539,7 +539,7 @@ def test_ch_setups_analyst_line_advises_the_printed_sql_only_where_no_fix_fits(
     line = capsys.readouterr().out.strip()
     assert line.startswith("· loom_analyst (insights.query): not written (")
     assert ("--print-analyst-sql" in line) is advised
-    assert ("Drop the loom_analyst user" in line) is own_fix
+    assert ("DROP USER IF EXISTS loom_analyst" in line) is own_fix
 
 
 def test_a_replica_whose_first_setup_could_not_run_answers_overloaded(
@@ -1079,7 +1079,7 @@ def test_a_write_clickhouse_refuses_is_a_kept_finding_and_not_done(
         (
             _CLOUD_PASSWORD_REFUSAL,
             "Code 36 (BAD_ARGUMENTS): the password does not meet the server's password policy",
-            "Drop the loom_analyst user if it exists",
+            "`DROP USER IF EXISTS loom_analyst`",
         ),
         (
             "Code: 497. DB::Exception: loom: Not enough privileges. (ACCESS_DENIED) (version 1)",

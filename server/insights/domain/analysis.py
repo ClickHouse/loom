@@ -610,8 +610,8 @@ def wrap_statement(sql: str, limit: int) -> str:
 
 _PASSWORD_FIX = (
     "Loom draws a password with a lower and an upper case letter, a digit and a symbol; "
-    f"a stored one that lacks any of them is refused. Drop the {ANALYST_USER} user if it "
-    "exists, then delete the row in loom.analysis_secrets (loom is LOOM_CH_DATABASE): "
+    f"a stored one that lacks any of them is refused. Run `DROP USER IF EXISTS {ANALYST_USER}`, "
+    "then `DELETE FROM loom.analysis_secrets WHERE id = 0` (loom is LOOM_CH_DATABASE): "
     "the next setup draws a new pair (Loom's own where its server user has access "
     "management, else `loom ch-setup`). Rules that ask for more refuse a new pair too: on "
     "a self-managed server, relax its password_complexity rules."
