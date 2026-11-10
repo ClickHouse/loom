@@ -749,17 +749,19 @@ def test_an_unreachable_docker_daemon_is_named_before_any_pull(
     assert not Path(installer_env["LOOM_INSTALL_DIR"]).exists()  # nor any file written
 
 
-# A curl that writes an installer creating ~/.loom to its `-o FILE`, or to stdout when it
-# has none or `-o -`; the failing one then answers a 404 for `install.sh`, having written
+# A curl that writes an installer creating ~/.loom to its `-o FILE` (or, with `-O`, the
+# URL's file name), or to stdout when it has neither or `-o -`; the failing one then answers a 404 for `install.sh`, having written
 # the file anyway (the worst case: a copy left by an earlier attempt), and serves any other
 # file.
 _WORKING_CURL = """#!/bin/sh
 out=
 url=
+save=
 while [ $# -gt 0 ]; do
-  case $1 in -o) out=$2 ;; http*|…*) url=$1 ;; esac
+  case $1 in -o) out=$2 ;; -*O) save=1 ;; http*|…*) url=$1 ;; esac
   shift
 done
+[ -n "$save" ] && [ -z "$out" ] && out=${url##*/}
 installer='mkdir -p "$HOME/.loom"; echo "$@" >"$HOME/.loom/args"; env | grep ^LOOM_ >"$HOME/.loom/env" || :'
 if [ -z "$out" ] || [ "$out" = - ]; then echo "$installer"; else echo "$installer" >"$out"; fi
 """
@@ -813,6 +815,19 @@ _RUN_STEP = re.compile(
     r"&&\s*(?P<env>(?:LOOM_\w+=\S*\s+)*)sh\s+\S*loom-install\.sh(?P<args>(?:\s+(?!&&)\S+)*)"
 )
 _INSTALLS = _documented_installs()
+
+
+def _inspect_then_install() -> tuple[str, str]:
+    """The inspect path's checks followed by its install step, the next code block on the
+    same page, as a reader runs them once the checks look right."""
+    ((page, checks),) = [(p, e) for p, e in _INSTALLS if _INSPECT in e]
+    text = (ROOT / page).read_text(encoding="utf-8")
+    after = text[text.index("sha256sum -c") :]
+    install = re.search(r"^```[^\n]*\n(.*?)^```", after[after.index("```") + 3 :], re.M | re.S)
+    assert install, page
+    return page, checks + "\n" + re.sub(r"\\\n\s*", " ", install[1]).strip()
+
+
 # The inspect path's downloads and checks; the reader installs from the bundle in a
 # separate step, so for it the failing case checks only that `install.sh` is not piped.
 _INSPECT = "sha256sum -c"
@@ -855,3 +870,14 @@ def test_a_documented_install_runs_the_installer_and_cleans_up(
     assert (tmp_path / ".loom" / "args").read_text().split() == run["args"].split(), example
     passed = (tmp_path / ".loom" / "env").read_text().splitlines()
     assert all(v in passed for v in run["env"].split()), (example, passed)
+
+
+def test_the_inspect_path_installs_from_the_checked_bundle(tmp_path: Path) -> None:
+    """With downloads that work, the inspect checks and then the install step run the
+    saved installer with the bundle and its checksum."""
+    page, script = _inspect_then_install()
+    result = _run_install(script, tmp_path, _WORKING_CURL)
+    assert result.returncode == 0, (page, script, result)
+    passed = (tmp_path / ".loom" / "env").read_text().splitlines()
+    assert f"LOOM_INSTALL_BUNDLE={tmp_path}/loom-stack.tar.gz" in passed, passed
+    assert f"LOOM_INSTALL_CHECKSUM={tmp_path}/loom-stack.tar.gz.sha256" in passed, passed
