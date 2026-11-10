@@ -538,6 +538,17 @@ def diff(
             and t in described
             for t, cols in tables.items()
         )
+        # A feature column the source lacks reads its type's default: the statements
+        # that read it answer as for a row without it instead of failing, and the
+        # feature stays absent (`has_column` is False for a default).
+        for table, wanted in tables.items():
+            have = described.get(table)
+            if have is None:
+                continue
+            for col, fam in wanted.items():
+                if col not in have and col not in rep.aliased.get(table, {}):
+                    rep.defaulted.setdefault(table, {})[col] = default_expr(fam)
+                    rep.columns[table] = list(have)
     rep.ok = not rep.missing_tables and not rep.missing_columns and not rep.type_mismatches
     return rep
 

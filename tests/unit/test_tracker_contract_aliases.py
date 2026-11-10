@@ -15,6 +15,7 @@ import server.tracker.app.contract as ct
 import server.tracker.store.source as src
 from server.tracker.domain import contract as rc
 from server.tracker.store.source import contract_reports as reports
+from tests.unit.clickhouse_local import CLICKHOUSE, run
 from tests.unit.test_tracker_sources import _full_schema
 
 DB = "qa_intelligence"
@@ -302,3 +303,63 @@ def test_a_tracker_without_pr_test_types_or_src_components_serves_them_empty() -
     sql = rep.rewrite(f"SELECT test_types, src_components FROM {DB}.github_prs FINAL", DB)
     assert "CAST([] AS Array(String)) AS test_types" in sql
     assert "CAST([] AS Array(String)) AS src_components" in sql
+
+
+def test_a_tracker_without_the_bisect_columns_serves_them_empty() -> None:
+    described = _full_schema()
+    del described["github_prs"]["diff"]
+    del described["github_prs"]["affected_file_paths"]
+    rep = rc.diff("qa", DB, described)
+    assert rep.ok, rep.summary()
+    assert rep.defaulted["github_prs"] == {
+        "diff": "''",
+        "affected_file_paths": "CAST([] AS Array(String))",
+    }
+    assert rep.features["bisect"] is False and not rep.capabilities()["bisect"]
+    assert not rep.has_column("github_prs", "affected_file_paths")
+    assert "defaulted github_prs.{diff, affected_file_paths}" in rep.summary()
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_the_pr_file_reads_run_on_a_tracker_without_the_bisect_columns(monkeypatch) -> None:
+    """The reads that name `affected_file_paths` and `diff`, run on ClickHouse against a
+    `github_prs` without either column: each answers as for a PR that touched no file."""
+    from tests.unit.test_tracker_sources import ORG, PUB, REPO, _with_sources
+
+    _with_sources(monkeypatch)
+    monkeypatch.setattr(
+        "server.tracker.store.source.base.settings.tracker_live_serve", True, raising=False
+    )
+    described = _full_schema()
+    del described["github_prs"]["diff"]
+    del described["github_prs"]["affected_file_paths"]
+    # read beside the contract's columns, as the live table holds them
+    described["github_prs"].update({"is_reverted": "UInt8", "backport_required": "UInt8"})
+    cols = ", ".join(f"`{c}` {t}" for c, t in described["github_prs"].items())
+    setup = [
+        f"CREATE DATABASE {DB}",
+        f"CREATE TABLE {DB}.github_prs ({cols}) ENGINE = ReplacingMergeTree ORDER BY source_id",
+        f"INSERT INTO {DB}.github_prs (source_id, pr_number, number, title, is_private,"
+        f" is_merged, created_at) VALUES ('{REPO}#5', 5, 5, 'a fix', 0, 1, now64(3))",
+    ]
+    reports.reset_for_tests()
+    src.reset_cache_for_tests()
+    monkeypatch.setattr(ct, "_enforce", True)
+
+    async def query_rows(sql, params=None, *, credential="qa", **kw):
+        if "system.columns" in sql:
+            return [
+                {"table": t, "name": c, "type": ty}
+                for t, tcols in described.items()
+                for c, ty in tcols.items()
+            ]
+        return run(setup, sql, params or {})
+
+    monkeypatch.setattr("server.tracker.store.source.qa_intel.query_rows", query_rows)
+    monkeypatch.setattr("server.tracker.domain.sources.credential_configured", lambda c: True)
+    s = src.TrackerSource(ORG, PUB)
+    assert await s.pr_files(ORG, PUB, [5]) == {5: []}
+    assert await s.prs_touching_paths(ORG, PUB, ["src/a.cpp"]) == []
+    change = await s.pr_change(ORG, PUB, 5)
+    assert change is not None and change["files"] == [] and change["hunk_contexts"] == []

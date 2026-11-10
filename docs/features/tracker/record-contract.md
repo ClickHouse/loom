@@ -273,7 +273,9 @@ namespace.
 
 ### Feature columns
 
-Optional columns on required tables, reported present or absent:
+Optional columns on required tables, reported present or absent. A feature column the
+source lacks is a default (see [Aliases](#aliases)): the statements that read it answer as
+for a row without it, and the feature and the capability it unlocks stay absent.
 
 | Feature      | Columns                                             | Unlocks                                                                   |
 | ------------ | --------------------------------------------------- | ------------------------------------------------------------------------- |
