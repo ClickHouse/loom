@@ -748,45 +748,77 @@ def test_an_unreachable_docker_daemon_is_named_before_any_pull(
     assert not Path(installer_env["LOOM_INSTALL_DIR"]).exists()  # nor any file written
 
 
-# A command that names the installer's URL and pipes it into a shell: quoted or
-# not, across a `\` line break, after `-o -`, into `sudo`, `bash`, `dash` or
-# `zsh`. A URL held in a variable is out of its reach.
-_PIPED_INSTALLER = re.compile(
-    r"install\.sh['\"]?\s*(?:-o\s*-\s*)?(?:\\\n\s*)?\\?\|\s*(?:\w+=\S*\s+)*(?:sudo\s+)?(?:ba|da|z)?sh\b"
-)
+# After `install.sh`, a pipe into a shell (`sh`, `bash`, `/bin/sh`, through `sudo`).
+_PIPE_TO_SHELL = re.compile(r"\|\s*(?:\S+\s+)*?(?:\S*/)?(?:ba|da|z)?sh\b")
+# A download run as `sh -c "$(curl …)"`.
+_SHELL_OF_DOWNLOAD = re.compile(r"sh\s+-c\s+[\"']?\$\(")
+
+
+def _runs_a_download(line: str) -> bool:
+    after = line.split("install.sh", 1)[1]
+    return bool(_PIPE_TO_SHELL.search(after) or _SHELL_OF_DOWNLOAD.search(line))
 
 
 def test_no_tracked_file_pipes_the_installer_into_sh() -> None:
-    """Piped into `sh`, a failed download runs as an empty script and exits 0;
-    every command a user is shown saves the script first."""
+    """A line that names `install.sh` and hands the download to a shell runs an
+    empty script and exits 0 when the download fails; every command a user is
+    shown saves the script first. A `\\` line break joins two lines into one."""
     listed = subprocess.run(
         ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, text=True, check=True
     ).stdout.split("\0")
     piped = []
+    own = str(Path(__file__).relative_to(ROOT))  # holds the examples below
     for name in filter(None, listed):
-        path = ROOT / name
-        if path == Path(__file__) or not path.is_file():
+        if name == own:
             continue
         try:
-            text = path.read_text()
-        except UnicodeDecodeError:
-            continue  # a binary file
-        if _PIPED_INSTALLER.search(text):
+            text = (ROOT / name).read_text()
+        except (UnicodeDecodeError, IsADirectoryError, FileNotFoundError):
+            continue  # a binary file, a submodule, a file deleted in the work tree
+        lines = re.sub(r"\\\n\s*", " ", text).splitlines()
+        if any("install.sh" in line and _runs_a_download(line) for line in lines):
             piped.append(name)
     assert piped == []
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        "curl -fsSL https://x/install.sh | sh",
+        "curl -fsSL 'https://x/install.sh' | sudo -E bash",
+        "curl https://x/install.sh -fsSL | /bin/sh -s -- --bundled",
+        'curl -fsSL "https://x/install.sh" | LOOM_SKIP_START=1 sh',
+        "`curl -fsSL …/install.sh \\| sh`",
+        'sh -c "$(curl -fsSL https://x/install.sh)"',
+    ],
+)
+def test_the_guard_flags_a_piped_install(line: str) -> None:
+    assert _runs_a_download(line)
+
+
+def test_the_guard_passes_the_saved_install() -> None:
+    assert not _runs_a_download(
+        "curl -fsSL https://x/install.sh -o loom-install.sh && sh loom-install.sh"
+    )
+    assert not _runs_a_download("sha256sum install.sh | sha256sum -c")
+
+
 def test_the_documented_one_liner_fails_on_a_failed_download(tmp_path: Path) -> None:
-    """The README's command, with a curl that answers a 404 as `curl -f` does: the
-    line exits with curl's code and runs no installer."""
+    """The README's command, with a curl that writes an installer and then answers
+    a 404 as `curl -f` does: the line exits with curl's code and the installer
+    never runs."""
     (line,) = [
         line for line in (ROOT / "README.md").read_text().splitlines() if "install.sh" in line
     ]
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     curl = bin_dir / "curl"
+    # Writes a script that would create ~/.loom to its -o path, then fails.
     curl.write_text(
-        "#!/bin/sh\necho 'curl: (22) The requested URL returned error: 404' >&2\nexit 22\n"
+        "#!/bin/sh\n"
+        'while [ $# -gt 0 ]; do [ "$1" = -o ] && printf \'mkdir "$HOME/.loom"\\n\' >"$2"; shift; done\n'
+        "echo 'curl: (22) The requested URL returned error: 404' >&2\n"
+        "exit 22\n"
     )
     curl.chmod(0o755)
     result = subprocess.run(
@@ -798,4 +830,5 @@ def test_the_documented_one_liner_fails_on_a_failed_download(tmp_path: Path) -> 
     )
     assert result.returncode == 22, result
     assert "404" in result.stderr
+    assert (tmp_path / "loom-install.sh").is_file()
     assert not (tmp_path / ".loom").exists()
