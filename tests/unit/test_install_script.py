@@ -763,22 +763,44 @@ _FAILING_CURL = (
 exit 22
 """
 )
-_CODE = re.compile(r"^```[^\n]*\n(.*?)^```|`([^`\n]+)`", re.MULTILINE | re.DOTALL)
+_CODE = re.compile(r"^[ \t]*```[^\n]*\n(.*?)^[ \t]*```|`([^`\n]+)`", re.MULTILINE | re.DOTALL)
 
 
 def _documented_installs() -> list[tuple[str, str]]:
-    """(page, command) for every command a tracked page shows that downloads
-    `install.sh`, with each `\\` line continuation joined and a `<placeholder>` filled."""
+    """(page, script) for every command a tracked page shows that downloads
+    `install.sh`: its example's lines up to and including it, as a reader pastes
+    them, with each `\\` continuation joined and a `<placeholder>` filled."""
     found = []
     for name in tracked():
         if not name.endswith(".md"):
             continue
         for block, span in _CODE.findall((ROOT / name).read_text(encoding="utf-8")):
-            for line in re.sub(r"\\\n\s*", " ", block or span).splitlines():
-                command = re.sub(r"<[^>]*>", "x", line.strip().replace("\\|", "|"))
-                if "curl" in command and "install.sh" in command:
-                    found.append((name, command))
+            # A blank line separates examples a block shows side by side.
+            for example in re.split(r"\n\s*\n", re.sub(r"\\\n\s*", " ", block or span)):
+                lines = [
+                    re.sub(r"<[^>]*>", "x", line.strip().replace("\\|", "|"))
+                    for line in example.splitlines()
+                ]
+                for i, line in enumerate(lines):
+                    if "curl" in line and "install.sh" in line:
+                        found.append((name, "\n".join(lines[: i + 1])))
     return found
+
+
+def _run_install(script: str, tmp_path: Path, curl_script: str) -> subprocess.CompletedProcess[str]:
+    """`script` under `sh -e` in an empty home, with `curl_script` as curl."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    curl = bin_dir / "curl"
+    curl.write_text(curl_script)
+    curl.chmod(0o755)
+    return subprocess.run(
+        ["sh", "-ec", script],
+        cwd=tmp_path,
+        env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "HOME": str(tmp_path)},
+        capture_output=True,
+        text=True,
+    )
 
 
 def test_the_pages_show_install_commands() -> None:
@@ -786,51 +808,27 @@ def test_the_pages_show_install_commands() -> None:
     assert {"README.md", "docs/getting-started/quickstart.md"} <= pages
 
 
-@pytest.mark.parametrize(("page", "command"), _documented_installs())
+@pytest.mark.parametrize(("page", "script"), _documented_installs())
 def test_a_documented_install_stops_on_a_failed_download(
-    page: str, command: str, tmp_path: Path
+    page: str, script: str, tmp_path: Path
 ) -> None:
     """Piped into a shell, a download that fails runs what curl wrote and exits 0;
     every install command a page shows exits with curl's error and runs nothing."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    curl = bin_dir / "curl"
-    curl.write_text(_FAILING_CURL)
-    curl.chmod(0o755)
-    (tmp_path / "loom-agent-setup").mkdir()  # agent setup's work directory
-    result = subprocess.run(
-        ["sh", "-c", command],
-        cwd=tmp_path,
-        env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "HOME": str(tmp_path)},
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode != 0, (page, command, result)
+    result = _run_install(script, tmp_path, _FAILING_CURL)
+    assert result.returncode != 0, (page, script, result)
     assert "404" in result.stderr
-    assert not (tmp_path / ".loom").exists(), (page, command)
+    assert not (tmp_path / ".loom").exists(), (page, script)
 
 
-@pytest.mark.parametrize(("page", "command"), _documented_installs())
+@pytest.mark.parametrize(("page", "script"), _documented_installs())
 def test_a_documented_install_runs_the_installer_and_cleans_up(
-    page: str, command: str, tmp_path: Path
+    page: str, script: str, tmp_path: Path
 ) -> None:
     """With a download that works, a command that runs the installer runs it and
     removes its saved copy; the inspect path's download alone runs nothing."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    curl = bin_dir / "curl"
-    curl.write_text(_WORKING_CURL)
-    curl.chmod(0o755)
-    (tmp_path / "loom-agent-setup").mkdir()
-    result = subprocess.run(
-        ["sh", "-c", command],
-        cwd=tmp_path,
-        env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "HOME": str(tmp_path)},
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, (page, command, result)
-    runs = "&&" in command  # the inspect path downloads and stops
+    result = _run_install(script, tmp_path, _WORKING_CURL)
+    assert result.returncode == 0, (page, script, result)
+    runs = "&&" in script.splitlines()[-1]  # the inspect path downloads and stops
     saved = [*tmp_path.glob("loom-install.sh"), *tmp_path.glob("loom-agent-setup/loom-install.sh")]
-    assert (tmp_path / ".loom").exists() == runs, (page, command)
-    assert bool(saved) != runs, (page, command, saved)
+    assert (tmp_path / ".loom").exists() == runs, (page, script)
+    assert bool(saved) != runs, (page, script, saved)
