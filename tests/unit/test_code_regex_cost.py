@@ -223,7 +223,8 @@ def _over(small: float, big: float) -> bool:
 
 
 def _slow(cost: Callable[[int], float]) -> tuple[int, float, float] | None:
-    """(n, the time at n / 4, the time at n) where the text first grows over linear.
+    """(n, the time at n / 4, the time at n) where the text first grows over linear, from
+    the pair that grew least.
 
     Each step times n / 4 and n back to back, so a load spike that lasts a few runs
     slows both alike; a step that looks over linear is timed twice more that way and
@@ -234,7 +235,8 @@ def _slow(cost: Callable[[int], float]) -> tuple[int, float, float] | None:
         if _over(*pairs[0]):
             pairs += [(cost(n // 4), cost(n)) for _ in range(2)]
             if all(_over(small, big) for small, big in pairs):
-                return n, round(min(p[0] for p in pairs), 4), round(min(p[1] for p in pairs), 4)
+                small, big = min(pairs, key=lambda p: p[1] / max(p[0], 1e-9))  # the mildest
+                return n, round(small, 4), round(big, 4)
     return None
 
 
@@ -257,7 +259,7 @@ def test_slow_tells_a_load_spike_from_a_step_over_linear() -> None:
 
     assert _slow(quadratic) == (8_000, 0.004, 0.064)
     # every call after the 8,000 step's first n / 4 slowed: still over linear
-    assert _slow(spiked(quadratic, range(3, 8))) == (8_000, 0.004, 0.64)
+    assert _slow(spiked(quadratic, range(3, 8))) == (8_000, 0.04, 0.64)
     # a spike on the 8,000 step's n / 4 hides that step; the 32,000 one reports it
     assert _slow(spiked(quadratic, range(2, 3))) == (32_000, 0.064, 1.024)
     assert _slow(lambda n: (n / 2000) ** 3 * 2.5e-4) == (8_000, 0.0003, 0.016)  # cubic
