@@ -1060,8 +1060,8 @@ def erase(args: argparse.Namespace) -> None:
                     "scope_value": json.dumps({"namespaces": nss, "purge": True}),
                     "requester": "scale-bench",
                     "purge": True,
-                    # Loom's own stores only: these private stores have no external
-                    # backend, so the org saga runs the steps the user saga does.
+                    # Skips the external backends' steps, which on these private stores
+                    # are unconfigured stubs that erase nothing.
                     "external": False,
                 },
             )

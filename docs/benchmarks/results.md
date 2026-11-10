@@ -1104,8 +1104,8 @@ authority's run:
 | ClickHouse | one user               |    113 |     186 | 504 `BACKEND_TIMEOUT` (a write past 60 s)     |
 | ClickHouse | an org's 10 namespaces | 52,071 |     236 | failed: `memory.tombstone` read past its 30 s |
 
-The org erasures ran with `external: false` (Loom's own stores only); these stores have no
-external backend, so they ran the steps the user erasures did. During the ClickHouse runs the erasure's mutations of `memory_embeddings` held the server:
+The org erasures ran with `external: false`, which skips the external backends' steps; on
+these stores those are unconfigured stubs that erase nothing. During the ClickHouse runs the erasure's mutations of `memory_embeddings` held the server:
 a `count()` over 19,941 rows took 153 s and a `system.mutations` lookup 184 s.
 
 **Postgres** at zipf 200k (200,000 heads, 480,000 revisions as loaded):
