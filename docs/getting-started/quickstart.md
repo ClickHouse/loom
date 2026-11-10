@@ -272,7 +272,9 @@ docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --p
 
 The dashboard then opens on **Sign up**, and every SDK and MCP call needs a token. The identity
 modes are in [Identities and namespaces](../concepts/identities-and-namespaces.md#identity-modes).
-Before making the server reachable by a team, follow the
+Naming `trust-network` is also what lets a non-loopback `LOOM_BIND_HOST` start with
+sign-up open, so anyone who reaches the port can then sign up. Before making the server
+reachable by a team, follow the
 [deployment guide](../operations/deployment.md#identity-modes) for operator access and
 [TLS](../operations/deployment.md#proxy-and-tls).
 

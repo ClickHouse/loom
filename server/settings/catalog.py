@@ -388,7 +388,8 @@ class AuthSettings(BaseModel):
 
     # Browser self-signup: "off" (endpoint 404s) or "open"
     # (/v1/auth/self-signup mints JWTs scoped to the requested namespace).
-    # A non-loopback bind refuses "open" unless identity_provider is "trust-network".
+    # A non-loopback bind refuses served sign-up (`self_signup_served`) unless
+    # identity_provider is "trust-network" or allow_insecure is set.
     self_signup: Literal["off", "open"] = "off"
     # Default org for self-signed tokens.
     self_signup_org: str = "dev"
@@ -457,8 +458,8 @@ class AuthSettings(BaseModel):
         return self
 
     def self_signup_served(self) -> bool:
-        """Whether the self-signup routes mint tokens: open, and sign-in not
-        delegated to OIDC (which closes them)."""
+        """Whether /v1/auth/self-signup and agent sign-up are open: "open", and
+        sign-in not delegated to OIDC (which closes them)."""
         return self.self_signup == "open" and self.oauth_login_provider != "oidc"
 
     def open_signup_unnamed(self) -> bool:

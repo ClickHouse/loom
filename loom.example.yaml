@@ -757,8 +757,9 @@ settings:
   # workload_exchanges_per_agent: 300
 
   # Browser self-signup: "off" (endpoint 404s) or "open" (/v1/auth/self-signup mints
-  # JWTs scoped to the requested namespace). A non-loopback bind refuses "open" unless
-  # identity_provider is "trust-network". [restart]
+  # JWTs scoped to the requested namespace). A non-loopback bind refuses served sign-up
+  # (`self_signup_served`) unless identity_provider is "trust-network" or allow_insecure
+  # is set. [restart]
   # self_signup: "off"
 
   # Default org for self-signed tokens. [restart]

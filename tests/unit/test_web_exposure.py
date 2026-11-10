@@ -291,6 +291,9 @@ def test_health_reports_open_self_signup_on_a_reachable_bind(
         )
 
     assert signup().severity == "error"
+    monkeypatch.setattr(settings, "identity_provider", "gateway")
+    assert signup().severity == "error"
+    monkeypatch.setattr(settings, "identity_provider", "")
     monkeypatch.setattr(settings, "allow_insecure", True)
     assert signup().severity == "warn"
     monkeypatch.setattr(settings, "allow_insecure", False)
