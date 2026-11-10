@@ -902,9 +902,9 @@ def cancel_probe(st: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]
 
 def probe_line(row: dict[str, Any]) -> str:
     """The cancel probe's verdict: a refusal, an answer that ended before the cut, or what
-    its two counts show. A call begun after the cut shows the run went on; the disconnect
-    is shown to stop the run only when no call began before the cut either (so the tools
-    were still to run)."""
+    its two counts show. A call begun after the cut shows the run went on. No call on
+    either side shows it only when the cut came after the run reached the agents API,
+    which the probe cannot see: raise `--cancel-after` if it may have come before."""
     if "loom_calls_before_disconnect" not in row:
         return "cancel probe: saved by an older harness, not a result"
     before = row["loom_calls_before_disconnect"]
@@ -918,7 +918,7 @@ def probe_line(row: dict[str, Any]) -> str:
     elif before:
         verdict = "inconclusive: its tool calls began before the cut"
     else:
-        verdict = "the disconnect stopped the run"
+        verdict = "no Loom call on either side of the cut"
     return f"cancel probe: {verdict} ({before} Loom calls before the cut, {after} after)"
 
 

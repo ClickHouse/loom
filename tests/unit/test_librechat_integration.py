@@ -244,7 +244,7 @@ _PROBE = {
 @pytest.mark.parametrize(
     ("row", "verdict"),
     [
-        ({}, "the disconnect stopped the run (0 Loom calls"),
+        ({}, "no Loom call on either side of the cut (0 Loom calls"),
         ({"loom_calls_after_disconnect": 1}, "the run went on after the disconnect"),
         (
             {"loom_calls_before_disconnect": 1, "loom_calls_after_disconnect": 1},
@@ -259,7 +259,7 @@ _PROBE = {
         ({"ended_before_cut": True, "error": "HTTP 403: no"}, "refused: HTTP 403: no"),
     ],
 )
-def test_the_cancel_probe_passes_only_when_no_call_began_before_or_after_the_cut(row, verdict):
+def test_the_cancel_probe_verdicts(row, verdict):
     assert f"cancel probe: {verdict}" in _qualify().report([{**_PROBE, **row}], "m")
 
 

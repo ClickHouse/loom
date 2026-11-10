@@ -82,7 +82,7 @@ agent in the UI. It is not Loom authorization; the token on each call is.
   the connection stops the run: in one probe, disconnecting before the agent's first tool
   call left no Loom call in the next 20 s. The probe (`run --cancel-probe`) disconnects
   `--cancel-after` seconds (1) into the answer and sorts the Loom calls by whether they
-  began before or after the cut; `probe_line` in `qualify.py` says which outcomes pass.
+  began before or after the cut; `probe_line` in `qualify.py` says what each outcome shows.
 
 ## What LibreChat stores
 
