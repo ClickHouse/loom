@@ -2,9 +2,8 @@
 
 This page connects Claude Code, Codex, Cursor or another MCP client to a running Loom
 server. Install the plugin (or wire the MCP entry), point it at the server, and work as
-usual. What the agent saves, the next session starts with; the session's transcript is
-kept once the namespace's owner turns on **Recording** on the dashboard's Conversations
-page
+usual. The next session starts with what the agent saved; the session's transcript is kept
+once the namespace's owner turns on **Recording** on the dashboard's Conversations page
 ([recording](../features/conversations-and-sessions.md#recording-is-the-owners-choice)),
 which is off by default. To run a server yourself, start with the
 [quickstart](quickstart.md); to have your agent install a pinned release and prove it
@@ -66,8 +65,8 @@ the plugin installed: an entry with the same name replaces the plugin's.
 
 ## Cursor and other MCP clients
 
-In the dashboard, **Settings → Tokens → Create token**, then choose the client under
-**Connect**: the dialog shows the entry for its config file, with the token in it. With the
+In the dashboard, **Settings → Tokens → New token**, fill in the form and press **Create
+token**, then choose the client under **Connect**: the dialog shows the entry for its config file, with the token in it. With the
 `loom` CLI installed (`pip install -e .` from a clone of the repository), one command writes
 the entry instead:
 

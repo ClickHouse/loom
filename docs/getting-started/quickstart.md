@@ -382,17 +382,18 @@ capture at the end) and skills on top of the MCP tools:
 
 ```bash
 claude plugin marketplace add ClickHouse/loom
-claude plugin install loom@loom \
-  --config server_url=http://localhost:7777 \
-  --config token="$LOOM_API_KEY"
+claude plugin install loom@loom
 ```
 
 Without the plugin, add the MCP entry directly:
 
 ```bash
-claude mcp add --transport http loom "http://localhost:7777/mcp?toolset=coding" \
-  -H "Authorization: Bearer $LOOM_API_KEY" -s user
+claude mcp add --transport http loom "http://localhost:7777/mcp?toolset=coding" -s user
 ```
+
+Both reach a single-user server on this machine with no token. With auth on, pass
+`--config server_url=<url> --config token="$LOOM_API_KEY"` to `claude plugin install`,
+or add `-H "Authorization: Bearer $LOOM_API_KEY"` to `claude mcp add`.
 
 `loom install --client <name>` writes the MCP entry for Claude Desktop, Claude Code,
 Codex, Cursor, VS Code, Cline, Windsurf and Zed; with no flag it wires every client it
