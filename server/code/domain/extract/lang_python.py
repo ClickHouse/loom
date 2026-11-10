@@ -318,6 +318,7 @@ def parse_python(path: str, source: bytes) -> ParsedFile:
 
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # a joined member repeats its module: a long module times many members is a copy each
+# not a setting: it bounds what a crafted file costs, and changing it changes the stored rows
 _MAX_SPEC_CHARS = 256
 
 

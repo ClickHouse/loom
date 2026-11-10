@@ -59,6 +59,7 @@ _MAX_DOC = 2000
 _FILE_MODULES = ("mod.rs", "lib.rs", "main.rs")
 _MAX_CANDIDATES_PER_USE = 12
 # a leaf's path repeats every prefix above it: a long prefix times many leaves is a copy each
+# not a setting: it bounds what a crafted file costs, and changing it changes the stored rows
 _MAX_USE_CHARS = 256
 
 

@@ -47,6 +47,7 @@ VENDOR_SEGMENTS: frozenset[str] = frozenset({
 MAX_MANIFESTS = 200
 # a file can serve every entry point: each is a facet on it, so a manifest of 1 MiB of them
 # must not give every module hundreds of thousands
+# not a setting: it bounds what a crafted file costs, and changing it changes the stored rows
 MAX_ENTRY_POINTS = 10_000
 MAX_ROOTS = 64  # a tree of fixture packages (pip's tests/data) must not make every probe a scan
 

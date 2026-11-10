@@ -102,9 +102,12 @@ _SOURCE_EXTS: tuple[str, ...] = (
 _DECLARING = {"add_library", "add_executable", "function", "macro", "option", "add_test"}
 # A `${VAR}` use repeats every entry of VAR: without a cap, uses times entries facets.
 # Sources stop being added once a file has this many facets.
+# not a setting: it bounds what a crafted file costs, and changing it changes the stored rows
 _MAX_FACETS = 10_000
 _SOURCE_SKIP = frozenset({"TYPE", "BASE_DIRS", "FILES", "HEADERS"})
-_MAX_SOURCE_CHARS = 4096  # a path no longer than a file system takes: each facet copies it
+# a path no longer than a file system takes: each facet copies it
+# not a setting: it bounds what a crafted file costs, and changing it changes the stored rows
+_MAX_SOURCE_CHARS = 4096
 
 
 def is_cmake_path(path: str) -> bool:
