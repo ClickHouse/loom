@@ -397,7 +397,9 @@ With auth on, the plugin takes its token from the first of `LOOM_API_KEY`, its t
 option, `~/.loom/config.json` and `~/.loom/token`
 ([configuration](../features/integrations/claude-code.md#configuration)). The MCP entry
 needs `-H "Authorization: Bearer $LOOM_API_KEY"`. For a server on another machine, pass
-`--config server_url=<url>` to `claude plugin install`.
+`--config server_url=<url>` to `claude plugin install`. A session that ran while the
+server was single-user saved that identity in `~/.loom/config.json`; after turning auth
+on, delete its `token`, `org` and `namespace`.
 
 `loom install --client <name>` writes the MCP entry for Claude Desktop, Claude Code,
 Codex, Cursor, VS Code, Cline, Windsurf and Zed; with no flag it wires every client it
