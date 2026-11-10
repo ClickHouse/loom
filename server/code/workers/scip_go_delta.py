@@ -39,7 +39,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from server.code.app.index import tier_health
 from server.code.app.index.compiler_tier import (
     BaseUnknown,
     TierDegraded,
@@ -59,10 +58,11 @@ from server.code.app.index.gitrepo import (
     nul_fields,
 )
 from server.code.app.index.sandbox import tool_mounts
+from server.code.app.index.tier_health import settle_unavailable
 from server.code.app.index.untrusted_files import read_delta
 from server.code.domain.index.tier_health import (
-    dependency_unavailable,
     module_failures,
+    split_module_failures,
     without_module_failures,
 )
 from server.core.paths import SCIP_HARNESS_DIR
@@ -281,16 +281,12 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResu
     )
     # The rest is applied. A module whose dependency cannot be fetched from this host is
     # noted once and does not fail the tier; one that would not build for another reason
-    # fails it.
-    broken = [line for line in failed if not dependency_unavailable(line)]
+    # fails it. A standing note clears only once its modules are built.
+    broken, unreachable = split_module_failures(failed)
     if broken:
         raise TierDegraded("; ".join(broken))
-    if failed:
-        await tier_health.record_unavailable(
-            repo, cfg.org, cfg.namespace, PRODUCER, "; ".join(failed)
-        )
-        return False  # the note stands: no success record clears it
-    return True
+    built = set(modules) if modules else None  # a full run covers every module
+    return await settle_unavailable(repo, cfg.org, cfg.namespace, PRODUCER, unreachable, built)
 
 
 def _bin_dirs() -> list[str]:

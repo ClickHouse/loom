@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { failureSummary, kindWord, type TierHealth } from "./tierHealth";
+import { failureSummary, failingTiers, kindWord, unavailableTiers, type TierHealth } from "./tierHealth";
 
 const row = (over: Partial<TierHealth>): TierHealth => ({
   tier: "clang_full",
@@ -26,5 +26,15 @@ describe("failureSummary", () => {
   it("reads no kind as unclassified, and a kind it does not know as itself", () => {
     expect(kindWord("")).toBe("unclassified error");
     expect(kindWord("newer_kind")).toBe("newer_kind");
+  });
+});
+
+describe("unavailableTiers", () => {
+  it("lists the tiers that left out a dependency, never as failing", () => {
+    const note = row({ state: "unavailable", kind: "dependency_unavailable" });
+    const failing = row({ tier: "clang" });
+    expect(unavailableTiers([note, failing])).toEqual([note]);
+    expect(failingTiers([note, failing])).toEqual([failing]);
+    expect(kindWord(note.kind)).toBe("dependency unavailable");
   });
 });

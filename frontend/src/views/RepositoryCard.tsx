@@ -438,8 +438,9 @@ function branchRow(b: CodeRepoSummary, actions: CodeActions, busy: boolean): Tab
   };
 }
 
-/** Each failing tier of a branch the person reads: which tier, since when, how far behind,
- *  the error kind and the fix — what an operator needs without opening the API. */
+/** Each failing tier of a branch the person reads (which tier, since when, how far behind,
+ *  the error kind and the fix), then each tier that left out what it cannot fetch here,
+ *  with its fix: what an operator needs without opening the API. */
 function TierFailures({ facet }: { facet: CodeFacet }) {
   const rows = facet.branches.flatMap((b) => failingTiers(b.tier_health).map((t) => ({ b, t })));
   const notes = facet.branches.flatMap((b) => unavailableTiers(b.tier_health).map((t) => ({ b, t })));

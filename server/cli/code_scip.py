@@ -274,10 +274,16 @@ async def _record_tier(
 ) -> None:
     """`entry-lock --tier`: the command's exit as the tier's health record, its error
     the end of the command's output. The Go harness exits 0 when a module would not
-    build: the module lines in the kept tail fail the record as the worker's do."""
+    build: the module lines in the kept tail fail the record as the worker's do, and
+    those whose dependency cannot be fetched from here are noted, as the worker notes
+    them. Which modules the command covered is not known, so it never clears a note."""
     from server.code.app.index import tier_health
     from server.code.app.index.compiler_tier import BASE_UNKNOWN_EXIT
-    from server.code.domain.index.tier_health import module_failures, without_module_failures
+    from server.code.domain.index.tier_health import (
+        module_failures,
+        split_module_failures,
+        without_module_failures,
+    )
     from server.code.store.index import CodeRepo
 
     if rc == BASE_UNKNOWN_EXIT:
@@ -290,8 +296,14 @@ async def _record_tier(
         if rc != 0:
             text = without_module_failures(text)
             error = f"harness exit {rc}: {text}" if text else f"harness exit {rc}"
-        elif modules := module_failures(text):
-            error = "; ".join(modules)
+        else:
+            broken, unreachable = split_module_failures(module_failures(text))
+            if broken:
+                error = "; ".join(broken)
+            elif not await tier_health.settle_unavailable(
+                CodeRepo(), org, ns, tier, unreachable, set()
+            ):
+                return  # noted, or a standing note this run cannot clear
     await tier_health.record(CodeRepo(), org, ns, tier, error)
 
 

@@ -841,16 +841,20 @@ A Go module whose dependencies this host cannot fetch (Go reports a private
 repository, often the repository's own modules through a vanity import path) is not a
 failure: the Go tier indexes the rest and records the tier `unavailable`, kind
 `dependency_unavailable`, with the fix (set `LOOM_CODE_SCIP_GO_PRIVATE` and give the
-tier's user a git credential for that host). The note is written once, counts no
-passes, is never a `code_tier_failing` problem, and stays until a run builds those
-modules. A module that fails for any other reason still fails the tier.
+tier's user a git credential for that host; Go says the same of a path or version
+that is wrong or gone). The note is written once, counts no passes, is never a
+`code_tier_failing` problem and is not in `as_of.failing_tiers`, so an agent's code
+answer does not flag those modules. It stays until a run builds every module it names;
+a run that covers other modules, or one under `entry-lock --tier`, leaves it. A module
+that fails for any other reason still fails the tier.
 
 The record is read where each reader already looks:
 
 - an agent's code answers carry it in `as_of.failing_tiers`
   ([freshness](../features/code-index/freshness.md#the-as_of-block));
 - `code.index_status` and `code.repos` return it in `tier_health`, and the dashboard's
-  repository card shows the failing tier, since when, how far behind and the fix;
+  repository card shows the failing tier, since when, how far behind and the fix, and
+  any `unavailable` tier with its fix;
 - once a tier has failed `LOOM_CODE_TIER_FAILING_WARN_PASSES` passes in a row or for
   `LOOM_CODE_TIER_FAILING_WARN_HOURS`, it is the `code_tier_failing` problem in
   `/v1/health`, the dashboard banner and `loom doctor`

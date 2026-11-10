@@ -151,6 +151,23 @@ def dependency_unavailable(line: str) -> bool:
     return bool(_DEPENDENCY_UNAVAILABLE.search(line))
 
 
+def split_module_failures(lines: list[str]) -> tuple[list[str], list[str]]:
+    """The module failure lines that fail the tier, and those whose dependency cannot be
+    fetched from here; each sorted, so the same failures read the same every run (the
+    harness runs modules in parallel)."""
+    broken = sorted(line for line in lines if not dependency_unavailable(line))
+    unreachable = sorted(line for line in lines if dependency_unavailable(line))
+    return broken, unreachable
+
+
+_NOTED_MODULE = re.compile(r"(?:^|; )([^\s;:]+): go mod download failed")
+
+
+def noted_modules(health: TierHealth) -> set[str]:
+    """The modules an `unavailable` record names (as far as its kept text names them)."""
+    return set(_NOTED_MODULE.findall(health.error))
+
+
 def recovered(tier: str, now: datetime) -> TierHealth:
     return TierHealth(tier=tier, state="ok", last_ok_at=_iso(now))
 
@@ -387,7 +404,9 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
             "repository, often this repository's own through a vanity import path): they "
             "are left out of the compiler tier and the rest is indexed. To index them, set "
             "LOOM_CODE_SCIP_GO_PRIVATE to that module path and give the tier's user a git "
-            "credential for its host (a credential helper or ~/.netrc in its HOME)."
+            "credential for its host (a credential helper or ~/.netrc in its HOME). Go "
+            "says the same of a required module path or version that is wrong or gone: "
+            "check the path first if the module is not private."
         )
     if kind == "file_refused" and "(code_scip_delta_max_nodes)" in text:
         return (

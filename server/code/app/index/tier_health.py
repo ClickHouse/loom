@@ -106,6 +106,26 @@ async def record_unavailable(
     return new
 
 
+async def settle_unavailable(
+    repo: CodeRepo, org: str, ns: str, tier: str, unreachable: list[str], built: set[str] | None
+) -> bool:
+    """After a run whose other modules built: note the `unreachable` module lines, or,
+    with none, whether a standing note may be cleared. It clears only once the run built
+    every module the note names (`built`: the modules the run covered, None for all);
+    a run that covered others leaves it. True when the caller may record success."""
+    if unreachable:
+        await record_unavailable(repo, org, ns, tier, "; ".join(unreachable))
+        return False
+    try:
+        prev = tier_health.parse(tier, await repo.get_state(org, ns, tier_health.state_key(tier)))
+    except Exception as e:  # noqa: BLE001 — a health record never fails the pass it describes
+        logger.warning("tier health %s/%s %s not read: %s", org, ns, tier, e)
+        return False
+    if prev is None or prev.state != "unavailable" or built is None:
+        return True
+    return tier_health.noted_modules(prev) <= built
+
+
 async def forget(repo: CodeRepo, org: str, ns: str, tiers: tuple[str, ...]) -> None:
     """Drop the records of `tiers` on an entry that no longer runs them. One state read
     per tier; a write only where a record is left."""
