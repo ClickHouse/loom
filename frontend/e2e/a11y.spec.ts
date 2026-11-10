@@ -638,7 +638,8 @@ for (const [width, touch] of [
       // The arrows stay inside the list, wrapped under the name where the row is narrow.
       const list = await order.boundingBox();
       const down = await order.getByRole("button", { name: "Move team-research-notes down" }).boundingBox();
-      expect((down?.x ?? 0) + (down?.width ?? 0)).toBeLessThanOrEqual((list?.x ?? 0) + (list?.width ?? 0));
+      if (!list || !down) throw new Error("the search order or its Move down button has no box");
+      expect(down.x + down.width).toBeLessThanOrEqual(list.x + list.width);
       if (!touch) {
         // A real drag by the grip: the second row takes the first place.
         const rows = order.getByRole("listitem");

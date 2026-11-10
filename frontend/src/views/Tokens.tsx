@@ -421,6 +421,8 @@ function TokenForm({
   const [newNs, setNewNs] = useState("");
   const [addingNs, setAddingNs] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
+  // The last move of the search order, said to a screen reader (`moveTo`).
+  const [moved, setMoved] = useState("");
 
   // Once per org; an answer for an org the page has left is dropped.
   useAbortableEffect(
@@ -495,7 +497,6 @@ function TokenForm({
   };
   // The order the ticked namespaces are searched in: moved by drag, or by a row's arrows.
   const label = nsLabeler(repoInfo);
-  const [moved, setMoved] = useState("");
   const moveTo = (ns: string, to: number) => {
     const from = selectedNs.indexOf(ns);
     const at = Math.max(0, Math.min(selectedNs.length - 1, to));
@@ -706,7 +707,7 @@ function TokenForm({
           <p className="text-xs text-text-muted">
             {selectedNs.length === 0
               ? "Tick the namespaces this token reads. Nothing else, whatever you join later."
-              : `${selectedNs.length} ticked, and nothing else, whatever you join later. Number 1 is searched first: drag a row, or use its arrows, to change the order.`}
+              : `${selectedNs.length} ticked, and nothing else, whatever you join later. Number 1 is searched first: drag a row by its grip, or use its arrows, to change the order.`}
           </p>
         </fieldset>
       )}
