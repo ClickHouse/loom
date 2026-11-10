@@ -274,8 +274,8 @@ namespace.
 ### Feature columns
 
 Optional columns on required tables, reported present or absent. A feature column the
-source lacks is a default (see [Aliases](#aliases)): the statements that read it answer as
-for a row without it, and the feature and the capability it unlocks stay absent.
+source lacks reads its alias, or else a default (see [Aliases](#aliases)): the statements
+that read it answer as for a row without it, and the feature stays absent.
 
 | Feature      | Columns                                             | Unlocks                                                                   |
 | ------------ | --------------------------------------------------- | ------------------------------------------------------------------------- |
@@ -303,6 +303,7 @@ alias with no columns of its own is a **default** (`defaulted`): every row reads
 | `github_prs`                                     | `upstream_pr_number`                                                                         | `ifNull(toUInt32(metadata.original_pr_number.:Int64), 0)`, else `0`        |
 | `github_prs`                                     | `review_requests_test`                                                                       | `NULL`                                                                     |
 | `github_prs`                                     | `test_types`, `src_components`                                                               | `[]`                                                                       |
+| `github_prs`                                     | `merged_at`                                                                                  | `if(is_merged = 1, closed_at, toDateTime64(0, 3))`                         |
 | `github_prs`, `core_incidents`                   | `severity_level`                                                                             | `''`                                                                       |
 | `qa_bugs` (the answer route's cross-source view) | `severity_level`, `has_test`                                                                 | `severity`; `toUInt8(metadata.has_test.:Bool)`, else `NULL`                |
 

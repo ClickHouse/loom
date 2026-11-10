@@ -152,9 +152,8 @@ it: previously recorded observations in the triage columns of an `issue_number`
 `affected_file_paths`, the contract's `bisect` feature) are scanned for the frames. With
 no frame, the scan is bounded by the issue's rarest patterns
 (`LOOM_TRACKER_BISECT_SCOPE_PATTERNS`) and its component's directories
-(`LOOM_TRACKER_BISECT_COMPONENT_DIRS`). Without a tracker, or with one whose PRs carry no
-changed files (no `bisect` feature), bisect reads the repository's own PR history. It
-does not reproduce the issue or verify the triage observations; it
+(`LOOM_TRACKER_BISECT_COMPONENT_DIRS`). Without a tracker, bisect reads the repository's
+own PR history. It does not reproduce the issue or verify the triage observations; it
 ranks PRs for an engineer or testing agent to investigate. The full flow is in
 [history and PRs](../code-index/history-and-prs.md#bisect-candidates-codebisect_candidates).
 

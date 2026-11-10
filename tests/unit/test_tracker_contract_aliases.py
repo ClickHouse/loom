@@ -137,6 +137,8 @@ def test_every_alias_names_only_columns_the_contract_lacks_and_reads_families_it
     families = {"String", "UInt", "Int", "Float", "DateTime", "UUID", "JSON"}
     for table, cols in rc.ALIASES.items():
         contract_cols = {**rc.REQUIRED.get(table, {}), **rc.OPTIONAL.get(table, {})}
+        for feature in rc.FEATURES.values():
+            contract_cols.update(feature.get(table, {}))
         for col, aliases in cols.items():
             if table in rc.REQUIRED or table in rc.OPTIONAL:
                 assert col in contract_cols, f"{table}.{col} is not a contract column"
@@ -320,29 +322,23 @@ def test_a_tracker_without_the_bisect_columns_serves_them_empty() -> None:
     assert "defaulted github_prs.{diff, affected_file_paths}" in rep.summary()
 
 
-@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
-@pytest.mark.asyncio
-async def test_the_pr_file_reads_run_on_a_tracker_without_the_bisect_columns(monkeypatch) -> None:
-    """The reads that name `affected_file_paths` and `diff`, run on ClickHouse against a
-    `github_prs` without either column: each answers as for a PR that touched no file."""
-    from tests.unit.test_tracker_sources import ORG, PUB, REPO, _with_sources
+def _source_on_clickhouse(monkeypatch, described: rc.Described, rows: list[str]):
+    """A tracker source whose `github_issues` and `github_prs` are tables on clickhouse-local
+    with the columns `described` names, holding `rows`; every read goes through the
+    contract check and `_rows`' rewrite."""
+    from tests.unit.test_tracker_sources import ORG, PUB, _with_sources
 
     _with_sources(monkeypatch)
     monkeypatch.setattr(
         "server.tracker.store.source.base.settings.tracker_live_serve", True, raising=False
     )
-    described = _full_schema()
-    del described["github_prs"]["diff"]
-    del described["github_prs"]["affected_file_paths"]
-    # read beside the contract's columns, as the live table holds them
-    described["github_prs"].update({"is_reverted": "UInt8", "backport_required": "UInt8"})
-    cols = ", ".join(f"`{c}` {t}" for c, t in described["github_prs"].items())
-    setup = [
-        f"CREATE DATABASE {DB}",
-        f"CREATE TABLE {DB}.github_prs ({cols}) ENGINE = ReplacingMergeTree ORDER BY source_id",
-        f"INSERT INTO {DB}.github_prs (source_id, pr_number, number, title, is_private,"
-        f" is_merged, created_at) VALUES ('{REPO}#5', 5, 5, 'a fix', 0, 1, now64(3))",
-    ]
+    setup = [f"CREATE DATABASE {DB}"]
+    for table in ("github_issues", "github_prs"):
+        cols = ", ".join(f"`{c}` {t}" for c, t in described[table].items())
+        setup.append(
+            f"CREATE TABLE {DB}.{table} ({cols}) ENGINE = ReplacingMergeTree ORDER BY source_id"
+        )
+    setup += rows
     reports.reset_for_tests()
     src.reset_cache_for_tests()
     monkeypatch.setattr(ct, "_enforce", True)
@@ -358,8 +354,95 @@ async def test_the_pr_file_reads_run_on_a_tracker_without_the_bisect_columns(mon
 
     monkeypatch.setattr("server.tracker.store.source.qa_intel.query_rows", query_rows)
     monkeypatch.setattr("server.tracker.domain.sources.credential_configured", lambda c: True)
-    s = src.TrackerSource(ORG, PUB)
+    return src.TrackerSource(ORG, PUB)
+
+
+def _live_prs(described: rc.Described) -> rc.Described:
+    # read beside the contract's columns, as the live table holds them
+    described["github_prs"].update({"is_reverted": "UInt8", "backport_required": "UInt8"})
+    return described
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_the_pr_file_reads_run_on_a_tracker_without_the_bisect_columns(monkeypatch) -> None:
+    """The reads that name `affected_file_paths` and `diff`, run on ClickHouse against a
+    `github_prs` without either column: each answers as for a PR that touched no file."""
+    from tests.unit.test_tracker_sources import ORG, PUB, REPO
+
+    described = _live_prs(_full_schema())
+    del described["github_prs"]["diff"]
+    del described["github_prs"]["affected_file_paths"]
+    s = _source_on_clickhouse(
+        monkeypatch,
+        described,
+        [
+            f"INSERT INTO {DB}.github_prs (source_id, pr_number, number, title, is_private,"
+            f" is_merged, created_at) VALUES ('{REPO}#5', 5, 5, 'a fix', 0, 1, now64(3))"
+        ],
+    )
     assert await s.pr_files(ORG, PUB, [5]) == {5: []}
     assert await s.prs_touching_paths(ORG, PUB, ["src/a.cpp"]) == []
     change = await s.pr_change(ORG, PUB, 5)
     assert change is not None and change["files"] == [] and change["hunk_contexts"] == []
+
+
+def test_a_tracker_without_merged_at_reads_a_merged_prs_close() -> None:
+    described = _full_schema()
+    del described["github_prs"]["merged_at"]
+    rep = rc.diff("qa", DB, described)
+    assert rep.ok, rep.summary()
+    assert rep.aliased["github_prs"]["merged_at"] == (
+        "if(is_merged = 1, closed_at, toDateTime64(0, 3))"
+    )
+    assert "merged_at" not in rep.defaulted.get("github_prs", {})
+    assert rep.features["merge_time"] is False
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_a_merge_window_read_finds_a_merged_pr_without_merged_at(monkeypatch) -> None:
+    """`backport_wanted_prs` filters on `merged_at`: through the alias, a source without the
+    column still answers with the PR merged (closed) in the window, and not the one closed
+    unmerged."""
+    from datetime import UTC, datetime, timedelta
+
+    from tests.unit.test_tracker_sources import ORG, PUB, REPO
+
+    described = _live_prs(_full_schema())
+    del described["github_prs"]["merged_at"]
+    insert = (
+        f"INSERT INTO {DB}.github_prs (source_id, pr_number, number, title, is_private,"
+        " is_merged, backport_required, created_at, closed_at) VALUES"
+    )
+    s = _source_on_clickhouse(
+        monkeypatch,
+        described,
+        [
+            f"{insert} ('{REPO}#5', 5, 5, 'a fix', 0, 1, 1, now64(3), now64(3)),"
+            f" ('{REPO}#6', 6, 6, 'not merged', 0, 0, 1, now64(3), now64(3))"
+        ],
+    )
+    since = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)
+    assert await s.backport_wanted_prs(ORG, PUB, since=since) == [5]
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_the_vector_read_skips_a_tracker_without_embeddings(monkeypatch) -> None:
+    """A defaulted `embedding` is an empty vector, which the zero-vector filter skips: the
+    vector leg answers no neighbour rather than failing."""
+    from tests.unit.test_tracker_sources import ORG, PUB, REPO
+
+    described = _live_prs(_full_schema())
+    del described["github_issues"]["embedding"]
+    del described["github_prs"]["embedding"]
+    insert = (
+        f"INSERT INTO {DB}.github_issues (source_id, number, title, is_private, created_at) VALUES"
+    )
+    s = _source_on_clickhouse(
+        monkeypatch,
+        described,
+        [f"{insert} ('{REPO}#7', 7, 'a crash', 0, now64(3)), ('{REPO}#8', 8, 'b', 0, now64(3))"],
+    )
+    assert await s.similar_vector(ORG, PUB, number=7, before=None) == []
