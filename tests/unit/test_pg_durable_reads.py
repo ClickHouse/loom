@@ -51,6 +51,7 @@ _STORES = {
 _CALLERS = {
     "server/health.py": "counts for the health report; sends nothing",
     "server/knowledge/app/inspect.py": "a report to the caller; sends nothing",
+    "server/knowledge/app/pg_serving.py": "filters what a knowledge search serves; sends nothing",
     "server/knowledge/store/blobs.py": "keeps originals a commit owes; deletes none of them",
     "server/knowledge/store/documents.py": "reads beside the writer's own commit; "
     "the worker's sends are its durable claims",
