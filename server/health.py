@@ -463,17 +463,16 @@ async def _backlog() -> dict[str, dict[str, Any]]:
             "knowledge": await pg_documents.backlog(cap),
         }
         _backlog_cache["at"] = now
-    age = now - _backlog_cache["at"]
-    readings = {s: (r, age) for s, r in _backlog_cache["value"].items()}
+    age = round(now - _backlog_cache["at"], 1)
     return {
         source: {
             "pending": r.pending,
             "parked": r.parked,
             "oldest_age_s": r.oldest_age_s,
             "capped": r.capped,
-            "reading_age_s": round(age, 1),
+            "reading_age_s": age,
         }
-        for source, (r, age) in readings.items()
+        for source, r in _backlog_cache["value"].items()
     }
 
 
