@@ -7,9 +7,9 @@ npm install @clickhouse/loom
 ```
 
 The SDK's version is the server release's. A release not yet on npm installs from its
-assets ([installing from a GitHub Release](https://github.com/ClickHouse/loom/blob/main/docs/development/release-process.md#installing-from-a-github-release)). From the root of a clone, build it with
-`npm --prefix sdk/typescript ci && npm --prefix sdk/typescript run build`, then
-`npm install ./sdk/typescript`.
+assets ([installing from a GitHub Release](https://github.com/ClickHouse/loom/blob/main/docs/development/release-process.md#installing-from-a-github-release)). For a clone at `<clone>`, build it with
+`npm --prefix <clone>/sdk/typescript ci && npm --prefix <clone>/sdk/typescript run build`,
+then run `npm install <clone>/sdk/typescript` in your project.
 
 Node ≥ 20 (uses the platform `fetch`). Zero runtime dependencies.
 
@@ -18,9 +18,8 @@ Node ≥ 20 (uses the platform `fetch`). Zero runtime dependencies.
 ```ts
 import { Datapack } from "@clickhouse/loom";
 
-// the server and credential come from LOOM_BASE_URL and LOOM_API_KEY, else
-// http://localhost:7777 with no token (The credential, below)
-const pack = new Datapack("acme", "support", {
+// server and credential: see "The credential" below
+const pack = new Datapack("dev", "local", {
   consumer: "support-bot", // the label every ledger row carries
 });
 const bot = pack.agent("assistant");

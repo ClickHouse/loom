@@ -18,9 +18,9 @@ The SDK's version is the server release's
 ([supported versions](../operations/supported-versions.md)). A release not yet on npm
 installs from its assets
 ([installing from a GitHub Release](../development/release-process.md#installing-from-a-github-release)).
-From the root of a clone, build it with
-`npm --prefix sdk/typescript ci && npm --prefix sdk/typescript run build`, then
-`npm install ./sdk/typescript`.
+For a clone at `<clone>`, build it with
+`npm --prefix <clone>/sdk/typescript ci && npm --prefix <clone>/sdk/typescript run build`,
+then run `npm install <clone>/sdk/typescript` in your project.
 
 The package ships ESM and CommonJS builds with their own declaration files and
 imports no Node built-in when it loads; signing in loads `node:fs` and the
