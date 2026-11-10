@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from loom.sync import _CLIENT_ATTRS
 
-from tests.unit.test_doc_links import _anchors, _links
+from tests.unit.markdown_links import anchors, links
 
 SDK_ROOT = Path(__file__).resolve().parents[2] / "sdk" / "python"
 README = (SDK_ROOT / "README.md").read_text()
@@ -56,17 +56,14 @@ def test_the_typescript_readme_installs_the_published_package() -> None:
 @pytest.mark.parametrize("sdk", ["python", "typescript"])
 def test_the_package_readme_links_resolve_on_the_registry(sdk: str) -> None:
     """The README is the package's page on PyPI or npm, where a relative link has
-    nothing to resolve against: every link is absolute, and one into this
-    repository names a path that exists."""
-    targets = _links(SDK_ROOT.parent / sdk / "README.md")
+    nothing to resolve against: every link is absolute, and one to a file of this
+    repository on `main` names a path, and an anchor, that exist."""
+    targets = links(SDK_ROOT.parent / sdk / "README.md")
     assert [t for t in targets if not re.match(r"https?://|#", t)] == []
-    repo = "https://github.com/ClickHouse/loom/"
+    in_repo = re.compile(r"https://github\.com/ClickHouse/loom/(?:blob|tree)/main/([^#]+)#?(.*)")
     for target in targets:
-        if target.startswith(repo):
-            path, _, anchor = re.sub(r"^(?:blob|tree)/main/", "", target[len(repo) :]).partition(
-                "#"
-            )
-            dest = SDK_ROOT.parents[1] / path
+        if m := in_repo.fullmatch(target):
+            dest = SDK_ROOT.parents[1] / m[1]
             assert dest.exists(), target
-            if anchor and dest.suffix == ".md":
-                assert anchor.lower() in _anchors(dest), target
+            if m[2] and dest.suffix == ".md":
+                assert m[2].lower() in anchors(dest), target
