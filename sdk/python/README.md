@@ -17,8 +17,8 @@ installs it from a clone.
 
 ## Use
 
-Against a personal install on this machine (`http://localhost:7777`, the `dev/local`
-namespace, no token):
+Against a [personal install](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/quickstart.md)
+on this machine (`http://localhost:7777`, the `dev/local` namespace, no token):
 
 ```python
 import asyncio

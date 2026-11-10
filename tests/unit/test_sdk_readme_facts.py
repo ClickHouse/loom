@@ -10,6 +10,8 @@ from pathlib import Path
 import pytest
 from loom.sync import _CLIENT_ATTRS
 
+from tests.unit.test_doc_links import _anchors
+
 SDK_ROOT = Path(__file__).resolve().parents[2] / "sdk" / "python"
 README = (SDK_ROOT / "README.md").read_text()
 PROJECT = tomllib.loads((SDK_ROOT / "pyproject.toml").read_text())["project"]
@@ -62,5 +64,10 @@ def test_the_package_readme_links_resolve_on_the_registry(sdk: str) -> None:
     repo = "https://github.com/ClickHouse/loom/"
     for target in targets:
         if target.startswith(repo):
-            path = re.sub(r"^(?:blob|tree)/main/", "", target[len(repo) :]).split("#")[0]
-            assert (SDK_ROOT.parents[1] / path).exists(), target
+            path, _, anchor = re.sub(r"^(?:blob|tree)/main/", "", target[len(repo) :]).partition(
+                "#"
+            )
+            dest = SDK_ROOT.parents[1] / path
+            assert dest.exists(), target
+            if anchor and dest.suffix == ".md":
+                assert anchor.lower() in _anchors(dest), target
