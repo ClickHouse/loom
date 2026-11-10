@@ -48,7 +48,8 @@ describe("Help", () => {
     const heading = await screen.findByRole("heading", { name: "Revoke and rotate" });
     expect(helpPage).toHaveBeenCalledWith("guides/tokens-and-grants.md");
     expect(heading).toHaveAttribute("id", "revoke-and-rotate");
-    expect(heading.scrollIntoView).toHaveBeenCalled();
+    // The scroll runs in an effect after the render that draws the heading.
+    await waitFor(() => expect(heading.scrollIntoView).toHaveBeenCalled());
   });
 
   it("follows a link to another page without leaving the view", async () => {
