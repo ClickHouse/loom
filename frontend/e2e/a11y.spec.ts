@@ -633,7 +633,7 @@ for (const [width, touch] of [
       await page.getByRole("checkbox", { name: "Read shared-handbook" }).click();
       const order = page.getByRole("list", { name: "Search order" });
       await expect(order.getByRole("listitem")).toHaveCount(2);
-      await page.waitForTimeout(300); // the toast and row entry animations, before axe
+      await page.waitForTimeout(300); // the rows' entry animation, before axe
       expect(await violations(page)).toEqual([]);
       const name = order.getByText("team-research-notes", { exact: true });
       expect((await boxOf(name)).width).toBeGreaterThanOrEqual(140);
@@ -644,9 +644,9 @@ for (const [width, touch] of [
       if (touch) {
         // On a touch screen no grip shows, the hint names the arrows, and an arrow moves a row.
         await expect(order.locator("[draggable]")).toHaveCount(0);
-        // The arrows are the way here: each is a 44 px touch target.
-        const arrow = await boxOf(order.getByRole("button", { name: "Move team-research-notes down" }));
-        expect(Math.min(arrow.width, arrow.height)).toBeGreaterThanOrEqual(44);
+        // The arrows are the way here: each enabled one is a 44 px touch target.
+        const up = await boxOf(order.getByRole("button", { name: "Move shared-handbook up" }));
+        for (const arrow of [down, up]) expect(Math.min(arrow.width, arrow.height)).toBeGreaterThanOrEqual(44);
         await expect(page.getByText(/Use a row's arrows to change the order/)).toBeVisible();
         await order.getByRole("button", { name: "Move team-research-notes down" }).tap();
         await expect(order.getByRole("listitem").nth(0)).toContainText("shared-handbook");
