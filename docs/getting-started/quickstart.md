@@ -365,7 +365,8 @@ async def main():
 asyncio.run(main())
 ```
 
-The SDK reads its credential from `api_key=`, then `LOOM_API_KEY`, then `~/.loom/token`.
+Where the SDK finds its server and credential is in
+[Python SDK → Credentials](../reference/python-sdk.md#credentials).
 The TypeScript SDK is `npm install @clickhouse/loom`.
 
 The client surfaces are in the [Python SDK](../reference/python-sdk.md) and

@@ -31,6 +31,7 @@ async def main() -> None:
         await agent.memory.set("deploy_window", "Deploy Tue/Thu, never Friday")
         got = await agent.memory.get("deploy_window")  # by key
         hits = await agent.memory.search("when do we deploy")  # by meaning
+        assert got is not None
         print(got["value"], [hit.memory_key for hit in hits])
 
 
@@ -42,7 +43,8 @@ your account's org and namespace. Either sign in once with
 `python -m loom login --server <url>` (or `loom.login(url)` in a notebook), approving on
 any browser with your password or SSO, and every `Agent` pointed at that server uses that
 session and refreshes it; or pass a token from **Settings → Tokens**, or one your
-operator mints, as `api_key=` or `LOOM_API_KEY`, the right choice for CI and services.
+operator mints, as `api_key=` or `LOOM_API_KEY`. A token is the right choice for CI and
+services.
 
 The `Agent` exposes 28 client modules: `client`, `account`, `deployment`, `assistant`, `memory`, `working_memory`, `knowledge`, `conversations`, `profile`, `context`, `facts`, `learnings`, `conflicts`, `blacklist`, `grants`, `erasure`, `cost`, `audit`, `namespaces`, `procedure`, `run`, `tasks`, `policy`, `decision`, `calibration`, `briefs`, `code`, `tracker`. Each of the named ones is the hand-written layer over a wire-op group on the Loom server (`account`, `deployment` and `assistant` cover the routes outside the op registry: service accounts, MCP setup, model settings, worker health, the assistant's streamed chat); `client` holds every served op as a generated method (below).
 
