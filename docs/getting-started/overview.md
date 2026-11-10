@@ -112,7 +112,7 @@ Two or more answers in the right-hand column mean Loom is probably the wrong too
 | You need                                          | For                                                                                                        |
 | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | ClickHouse (OSS to evaluate, Cloud in production) | Everything. See [ClickHouse requirements](../operations/deployment.md#clickhouse-requirements).            |
-| Postgres (optional)                               | Live memory and knowledge document heads under the [Postgres memory authority](../operations/postgres.md). |
+| Postgres 16+ (optional)                           | Live memory and knowledge document heads under the [Postgres memory authority](../operations/postgres.md). |
 | Docker with Compose 2.20 or later                 | The released local stack (one-line installer) and server image.                                            |
 | Python 3.12+                                      | Contributor-only `loom up`, server development and operator CLI work.                                      |
 | An embedding provider                             | Real retrieval: OpenAI, Gemini, or the local CPU embedder the released stack uses.                         |
