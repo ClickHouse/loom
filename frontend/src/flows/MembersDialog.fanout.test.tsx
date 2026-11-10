@@ -121,7 +121,7 @@ describe("MembersDialog approves a requester on every waiting branch at once", (
     ]);
   });
 
-  it("names what failed: nothing approved reads as a refusal, part of a fan-out ends with the server's words", async () => {
+  it("says a refusal of every branch as one failure", async () => {
     const refused = () =>
       new ApiError({ status: 403, code: "AUTH_INSUFFICIENT", message: "admin needed", detail: { category: "auth" } });
     vi.mocked(api.approveGrant).mockRejectedValueOnce(refused());
