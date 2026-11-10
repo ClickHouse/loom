@@ -10,17 +10,24 @@ and under an absolute bound. Composite texts, a prefix the pattern spells, a run
 or of one keyword with an opener, and a closing character, catch the patterns whose
 optional parts split one run every way or that search on from each keyword. A pattern
 only ever used with `fullmatch` is anchored with `\\A`, so the searches here cost what
-its use does."""
+its use does. The lanes' own walks over a file (`lane_walks.py`) are timed the same way, each in
+a child process with a deadline."""
 
 from __future__ import annotations
 
 import importlib
+import json
+import pathlib
 import pkgutil
 import re
+import subprocess
+import sys
 import time
 from collections.abc import Callable
 
 import pytest
+
+from tests.unit.lane_walks import WALKS
 
 _PACKAGES = ("server.code.domain.extract", "server.code.app.index")
 _N = 50_000
@@ -129,7 +136,7 @@ def _units(p: re.Pattern) -> list[str]:
     words = _words(src)
     out = list(_UNITS)
     for w in words:
-        out += [w + " ", w + "\n", w + "(", w + " {", w]
+        out += [w + " ", w + "\n", w + "(", w + " {", w + "=[", w]
     for o in _openers(p):
         out += [o, o + "a", o + "a(", o + "a ", o + " ", "a" + o]
     return list(dict.fromkeys(out))
@@ -184,7 +191,7 @@ def test_a_pattern_costs_linear_time(name: str, pattern: re.Pattern) -> None:
 # comes costs N**2. The sizes grow 4 times a step and a run stops at the first step that
 # grows more than 8 times, so a cubic pattern stops at 8,000 characters, not hours later.
 _SIZES = (500, 2_000, 8_000, 32_000)
-_PREFIXES = ("a", "- a", "a:a", "a = a", "export default a", "'a")
+_PREFIXES = ("a", "- a", "a:a", "a = a", "export default a", "'a", "# a")
 _SEPS = ("", " a", "a=", "a(", "a ", "#a ")  # after an opener: `*a=`, `@if(`, `{#if `
 
 
@@ -233,3 +240,33 @@ def test_a_run_after_a_prefix_costs_linear_time(name: str, pattern: re.Pattern) 
         if (got := _slow(cost)) is not None:
             slow.append((pre, unit, end, *got))
     assert not slow, f"{name}: (prefix, unit, end, n, n/4 s, n s) {slow}"
+
+
+# The lanes' own walks over a file: a slice, a count from the top or a rescan per line,
+# heading or site is quadratic, and a backtracking match holds the GIL so a thread
+# timer cannot stop it. Each walk runs in a child process that dumps its stack and exits
+# when it overruns, so a regression fails here instead of hanging the suite.
+_WALK_BOUND_S = 5.0  # well above a linear walk at 4N, far below a quadratic one
+_WALK_DEADLINE_S = 60
+
+
+_WALK_CHILD = f"""
+import faulthandler, json, sys
+faulthandler.dump_traceback_later({_WALK_DEADLINE_S}, exit=True)
+from tests.unit.lane_walks import walk_cost
+print(json.dumps(walk_cost(sys.argv[1])))
+"""
+
+
+@pytest.mark.parametrize("name", [w[0] for w in WALKS])
+def test_a_lane_walk_costs_linear_time(name: str) -> None:
+    done = subprocess.run(
+        [sys.executable, "-c", _WALK_CHILD, name],
+        capture_output=True,
+        text=True,
+        timeout=_WALK_DEADLINE_S * 2,
+        cwd=pathlib.Path(__file__).resolve().parents[2],
+    )
+    assert done.returncode == 0, done.stderr[-4000:]
+    small, big = json.loads(done.stdout)
+    assert big < _WALK_BOUND_S and (big < _FLOOR_S or big < _RATIO * small), (name, small, big)

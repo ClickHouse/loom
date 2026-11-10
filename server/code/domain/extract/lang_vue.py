@@ -50,6 +50,7 @@ from server.code.domain.extract.lang_python import module_scope
 from server.code.domain.extract.lang_typescript import LANG_JS, LANG_TS, parse_typescript_text
 from server.code.domain.extract.lang_typescript_imports import import_bindings
 from server.code.domain.extract.lang_typescript_refs import reference_edges
+from server.code.domain.extract.text_lines import line_at, newline_offsets
 from server.code.domain.extract.treesitter import ParsedFile, Symbol
 
 KIND_COMPONENT_SIGNATURE = "component"
@@ -239,9 +240,9 @@ def macro_symbols(pf: ParsedFile, component: str) -> list[Symbol]:
         nodes = list(args.named_children) if args is not None else []
         if targs is not None:
             nodes.extend(targs.named_children)
-        stack = nodes
+        stack = nodes[::-1]  # reversed, popped from the end: a pop(0) per node is quadratic
         while stack:
-            n = stack.pop(0)
+            n = stack.pop()
             if n.type == "pair":
                 k = n.child_by_field_name("key")
                 if k is not None:
@@ -262,7 +263,7 @@ def macro_symbols(pf: ParsedFile, component: str) -> list[Symbol]:
                 "satisfies_expression",
                 "parenthesized_expression",
             ):
-                stack[:0] = list(n.named_children)
+                stack.extend(reversed(n.named_children))
         return names
 
     def visit(n: Any) -> None:
@@ -319,8 +320,10 @@ def template_sites(
     base = block.body_start
     out: list[tuple[int, str, str]] = []
 
+    newlines = newline_offsets(body)
+
     def line_of(offset: int) -> int:
-        return base + body.count("\n", 0, offset)
+        return base - 1 + line_at(newlines, offset)
 
     for m in _TAG_RE.finditer(body):
         text = m.group(1)

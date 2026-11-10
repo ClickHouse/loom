@@ -6,6 +6,7 @@ from server.code.domain.extract.lang_markdown import (
     doc_reference_edges,
     doc_reference_sites,
     markdown_chunks,
+    markdown_units,
     parse_markdown,
     sections_of,
 )
@@ -111,3 +112,33 @@ def test_reference_edges_read_backticked_names_once_each() -> None:
         ("Commit", "Ledger::durable", "reads", 0.7),
         ("Glossary", "Ledger::TypeOK", "reads", 0.7),
     ], "an ambiguous bare name binds nothing; a qualified mention picks its suffix"
+
+
+def test_a_long_qualified_name_is_cut_and_stays_distinct() -> None:
+    # Every section's qualified name repeats its ancestors' titles.
+    text = "# " + "x" * 600 + "\n## " + "y" * 600 + "\n### a\n### b\n"
+    syms, _inc, _refs, _pre = markdown_units("a.md", text)
+    names = [s.qualified_name for s in syms]
+    assert [len(n) for n in names] == [603, 1000, 1000, 1000]
+    assert names[1].startswith("a::" + "x" * 600 + "::y") and len(set(names)) == 4
+
+
+def test_closing_hashes_come_off_and_a_heading_of_hashes_keeps_one() -> None:
+    secs, _ = sections_of("## Title ##\n# #\n")
+    assert [s.title for s in secs] == ["Title", "#"]
+
+
+def test_long_headings_that_differ_after_the_cut_stay_distinct() -> None:
+    text = "# t\n## " + "a" * 1000 + "x\n## " + "a" * 1000 + "y\n"
+    syms, _inc, _refs, _pre = markdown_units("a.md", text)
+    assert len({s.qualified_name for s in syms}) == 3
+    assert all(len(s.name) == 1000 for s in syms[1:])
+
+
+def test_a_long_heading_path_is_cut_in_a_continued_chunk() -> None:
+    text = "# " + "x" * 600 + "\n## " + "y" * 600 + "\n" + "word\n\n" * 400
+    chunks = markdown_chunks(parse_markdown("a.md", text.encode()), max_chars=200)
+    cont = [c.content.split("\n", 1)[0] for c in chunks if "(cont.)" in c.content]
+    assert cont and all(
+        line == "<!-- " + ("x" * 600 + " › " + "y" * 600)[:1000] + " (cont.) -->" for line in cont
+    )

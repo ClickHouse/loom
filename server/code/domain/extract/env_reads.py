@@ -16,7 +16,8 @@ from __future__ import annotations
 import re
 
 from server.code.domain.extract.lang_sql_model import Facet
-from server.code.domain.extract.treesitter import ParsedFile, line_of
+from server.code.domain.extract.text_lines import line_at, newline_offsets
+from server.code.domain.extract.treesitter import ParsedFile
 
 FACET_KIND = "env_var"
 
@@ -52,6 +53,7 @@ def env_facets(pf: ParsedFile) -> list[Facet]:
 
 def _collect(text: str, regexes: tuple[re.Pattern[str], ...], *, destructure: bool) -> list[Facet]:
     seen: set[tuple[str, int]] = set()
+    newlines = newline_offsets(text)
 
     def add(name: str, line: int) -> None:
         # `process.env.npm_config_x` style lower-case reads are tool internals
@@ -60,10 +62,10 @@ def _collect(text: str, regexes: tuple[re.Pattern[str], ...], *, destructure: bo
 
     for rx in regexes:
         for m in rx.finditer(text):
-            add(m.group(1), line_of(text, m.start()))
+            add(m.group(1), line_at(newlines, m.start()))
     if destructure:
         for m in _JS_DESTRUCTURE_RE.finditer(text):
-            line = line_of(text, m.start())
+            line = line_at(newlines, m.start())
             for part in m.group(1).split(","):
                 name = part.split(":")[0].split("=")[0].strip()
                 if re.fullmatch(_NAME, name):

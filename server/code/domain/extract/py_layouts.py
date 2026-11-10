@@ -239,11 +239,8 @@ def roots_from_manifest(path: str, text: str) -> list[str]:
         cp = _ini(text)
         if cp is not None and cp.has_option("pytest", "pythonpath"):
             out.extend(_join(base, p) for p in _as_list(cp.get("pytest", "pythonpath")))
-    seen: list[str] = []
-    for r in out:
-        if r not in seen and ".." not in r.split("/"):
-            seen.append(r)
-    return seen
+    # ordered and deduplicated by a dict: a list's `in` per root is quadratic
+    return list(dict.fromkeys(r for r in out if ".." not in r.split("/")))
 
 
 def conftest_roots(present: Iterable[str]) -> list[str]:
@@ -258,8 +255,7 @@ def conftest_roots(present: Iterable[str]) -> list[str]:
         d = _dir(p)
         if (f"{d}/__init__.py" if d else "__init__.py") in paths:
             continue
-        if d not in out:
-            out.append(d)
+        out.append(d)  # one conftest.py per directory: no duplicates
     return out
 
 
@@ -344,11 +340,17 @@ def _ini_entry_points(path: str, text: str, section: str) -> list[EntryPoint]:
 
 def _setup_py_entry_points(path: str, text: str) -> list[EntryPoint]:
     out: list[EntryPoint] = []
-    for m in _SETUP_EP_RE.finditer(text):
+    # Each search and line count goes on from the last list's end: from the top, or into a
+    # list already scanned, an unclosed list costs the rest of the file per match.
+    j, counted, line = 0, 0, 1
+    while (m := _SETUP_EP_RE.search(text, j)) is not None:
         group = m.group(1)
         depth, j = 1, m.end()
         while j < len(text) and depth:
-            depth += {"[": 1, "]": -1}.get(text[j], 0)
+            if text[j] == "[":
+                depth += 1
+            elif text[j] == "]":
+                depth -= 1
             j += 1
         for sm in _SETUP_STR_RE.finditer(text, m.end(), j):
             item = sm.group(1)
@@ -357,8 +359,9 @@ def _setup_py_entry_points(path: str, text: str) -> list[EntryPoint]:
             name, value = (s.strip() for s in item.split("=", 1))
             tgt = _target(value)
             if name and tgt:
-                out.append(EntryPoint(name, group, tgt[0], tgt[1], path,
-                                      text.count("\n", 0, sm.start()) + 1))
+                line += text.count("\n", counted, sm.start())
+                counted = sm.start()
+                out.append(EntryPoint(name, group, tgt[0], tgt[1], path, line))
     if not out and "[console_scripts]" in text:
         out = _ini_entry_points(path, text, "")
     return out
@@ -389,7 +392,7 @@ def layout_from_texts(texts: dict[str, str], present: Iterable[str]) -> Layout:
     """The roots and entry points of a checkout from its manifests' texts
     ({path: text}) and its path set. A manifest under a vendored tree is a
     root for that tree's own files only (`Layout.roots_for`)."""
-    roots: list[str] = []
+    roots: dict[str, None] = {}  # ordered and deduplicated: a list's `in` per root is quadratic
     eps: list[EntryPoint] = []
     notes: dict[str, str] = {}
     # shallow manifests first: the repository's own before a fixture package's
@@ -400,14 +403,10 @@ def layout_from_texts(texts: dict[str, str], present: Iterable[str]) -> Layout:
         if not text.strip():
             notes[p] = "empty"
             continue
-        for r in roots_from_manifest(p, text):
-            if r not in roots:
-                roots.append(r)
+        roots.update(dict.fromkeys(roots_from_manifest(p, text)))
         eps.extend(entry_points_from_manifest(p, text))
-    for r in conftest_roots(present):
-        if r not in roots:
-            roots.append(r)
-    return Layout(tuple(roots[:MAX_ROOTS]), tuple(eps), tuple(manifests), notes)
+    roots.update(dict.fromkeys(conftest_roots(present)))
+    return Layout(tuple(roots)[:MAX_ROOTS], tuple(eps), tuple(manifests), notes)
 
 
 # ---------------------------------------------------------------------------

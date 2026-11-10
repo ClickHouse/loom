@@ -4,7 +4,9 @@ pytest trees — and a file the parser fails on stays a text chunk."""
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 import time
 
 import pytest
@@ -382,3 +384,54 @@ def test_python_two_and_a_bom_still_parse_to_symbols():
     assert [s.name for s in bom.symbols] == ["f"] and bom.includes == ["os"]
     py2 = parse_file("py2.py", b"print 'x'\n\n\ndef g(y):\n    print y\n    return y\n")
     assert [s.name for s in py2.symbols] == ["g"]
+
+
+def test_the_layout_is_read_off_the_event_loop(monkeypatch):
+    # A manifest is repository text up to its cap: reading it must not hold the loop.
+    threads = []
+
+    async def text(_repo, _org, _ns, _path):
+        return "setup()"
+
+    def layout(texts, present):
+        threads.append(threading.current_thread())
+        return pl.Layout()
+
+    monkeypatch.setitem(ingest_resolve._LIVE_PATHS_CACHE, ("o", "n"), (time.monotonic(), set()))
+    monkeypatch.setattr(ingest_resolve, "_PY_LAYOUT_CACHE", {})
+    monkeypatch.setattr(ingest_resolve, "_package_json_text", text)
+    monkeypatch.setattr(pl, "layout_from_texts", layout)
+    asyncio.run(ingest_resolve._py_layout(None, "o", "n", {"setup.py"}))  # type: ignore[arg-type]
+    assert threads and threads[0] is not threading.main_thread()
+
+
+def test_files_that_miss_the_layout_cache_at_once_share_one_read(monkeypatch):
+    calls = []
+
+    async def text(_repo, _org, _ns, _path):
+        return "setup()"
+
+    def layout(texts, present):
+        calls.append(1)
+        return pl.Layout()
+
+    monkeypatch.setitem(ingest_resolve._LIVE_PATHS_CACHE, ("o", "n"), (time.monotonic(), set()))
+    monkeypatch.setattr(ingest_resolve, "_PY_LAYOUT_CACHE", {})
+    monkeypatch.setattr(ingest_resolve, "_package_json_text", text)
+    monkeypatch.setattr(pl, "layout_from_texts", layout)
+
+    async def three():
+        misses = [ingest_resolve._py_layout(None, "o", "n", {"setup.py"}) for _ in range(3)]  # type: ignore[arg-type]
+        return await asyncio.gather(*misses)
+
+    assert len(asyncio.run(three())) == 3
+    assert calls == [1]
+
+
+def test_a_list_inside_an_unclosed_entry_point_list_is_read_once():
+    text = 'setup(entry_points={"console_scripts": ["a=m:f",\n"gui_scripts": ["g=m:h"]})\n'
+    eps = pl.entry_points_from_manifest("setup.py", text)
+    assert [(e.name, e.group, e.line) for e in eps] == [
+        ("a", "console_scripts", 1),
+        ("g", "console_scripts", 2),
+    ]

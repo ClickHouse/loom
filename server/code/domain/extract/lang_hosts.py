@@ -28,6 +28,7 @@ over its host paths, never by a heal.
 
 from __future__ import annotations
 
+import bisect
 import posixpath
 import re
 from dataclasses import dataclass, field
@@ -97,7 +98,7 @@ _GH_EXPR_RE = re.compile(r"\$\{\{(?:(?!\$\{\{).)*?\}\}")  # stops at the next `$
 _JINJA_RE = re.compile(r"\{\{(?:(?!\{\{).)*?\}\}")  # stops at the next `{{`: linear
 
 _DOCKER_INSTR_RE = re.compile(r"^\s*(?P<instr>[A-Za-z]+)(?:\s+(?P<rest>.*))?$")
-_DOCKER_FLAG_RE = re.compile(r"^--[\w-]+(=\S*)?\s+")
+_DOCKER_FLAGS_RE = re.compile(r"^(?:--[\w-]++(?:=\S*+)?\s++)*+")
 _DOCKER_HEREDOC_RE = re.compile(r"<<-?\s*['\"]?(?P<tag>\w+)['\"]?")
 _DOCKER_JSON_SH_RE = re.compile(
     r"""^\[\s*"(?:/bin/)?(?:ba)?sh"\s*,\s*"-c"\s*,\s*"(?P<cmd>.*)"\s*\]$"""
@@ -355,8 +356,7 @@ def _docker_shell_text(instr: str, first: str) -> str | None:
         if cut < 0:
             return None
         first = first[cut + 3 :]
-    while (f := _DOCKER_FLAG_RE.match(first)) is not None:
-        first = first[f.end() :]
+    first = _DOCKER_FLAGS_RE.sub("", first, count=1)  # all at once: a slice per flag is quadratic
     jm = _DOCKER_JSON_SH_RE.match(first.strip())
     if jm:
         return jm.group("cmd").replace('\\"', '"')
@@ -377,7 +377,7 @@ def dockerfile_islands(lines: list[str]) -> tuple[list[HostIsland], list[Symbol]
     while i < n:
         instr, body, last = _docker_instruction(lines, i)
         if not instr or not instr.isupper():
-            i += 1
+            i = last + 1  # past its continuation rows: one row at a time is quadratic
             continue
         start, i = i, last
         if instr == "FROM":
@@ -403,7 +403,8 @@ def dockerfile_islands(lines: list[str]) -> tuple[list[HostIsland], list[Symbol]
         i += 1
     symbols: list[Symbol] = []
     for name, start, sig in stages:
-        end = next((f for f in froms if f > start), n)
+        k = bisect.bisect_right(froms, start)
+        end = froms[k] if k < len(froms) else n
         while end > start + 1 and not lines[end - 1].strip():
             end -= 1
         symbols.append(
@@ -502,6 +503,8 @@ def jenkins_islands(text: str) -> list[HostIsland]:
     """`sh '…'`, `sh \"…\"`, `sh '''…'''`, `sh(script: \"\"\"…\"\"\")`."""
     out: list[HostIsland] = []
     pos = 0
+    # counted on from the last step: a count from the top per step is quadratic
+    counted, line_base = 0, 1
     while True:
         m = _JENKINS_SH_RE.search(text, pos)
         if not m:
@@ -512,7 +515,9 @@ def jenkins_islands(text: str) -> list[HostIsland]:
         if end < 0:
             break
         body = text[start:end]
-        line = text.count("\n", 0, start) + 1
+        line_base += text.count("\n", counted, start)
+        counted = start
+        line = line_base
         if len(q) == 3:
             rows = body.split("\n")
             if rows and not rows[0].strip():

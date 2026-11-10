@@ -113,3 +113,8 @@ def test_chunks_cover_the_file() -> None:
         for ln in range(c.start_line, c.end_line + 1):
             seen[ln] += 1
     assert all(x <= 1 for x in seen) and sum(seen) >= n - 3
+
+
+def test_a_line_break_before_the_parenthesis_counts_for_later_commands() -> None:
+    cmds = commands("set\n(A b)\nadd_library(x a.cpp)\n")
+    assert [(c.name, c.start_line) for c in cmds] == [("set", 1), ("add_library", 3)]

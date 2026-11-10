@@ -95,6 +95,18 @@ def test_an_inline_template_attributes_to_its_class() -> None:
     assert (4, "app-icon", "selector", "src.app.tag.component::TagComponent") in sites
 
 
+def test_two_classes_with_the_same_inline_template_keep_their_own_lines() -> None:
+    src = (
+        b"@Component({\n  template: `<app-icon />`,\n})\nexport class A {}\n"
+        b"@Component({\n  template: `<app-icon />`,\n})\nexport class B {}\n"
+    )
+    sites = inline_template_sites(parse_file("src/app/two.component.ts", src))
+    assert [(line, cls) for line, _n, _k, cls in sites] == [
+        (2, "src.app.two.component::A"),
+        (6, "src.app.two.component::B"),
+    ]
+
+
 def test_an_empty_manifest_read_is_not_cached() -> None:
     import asyncio
 

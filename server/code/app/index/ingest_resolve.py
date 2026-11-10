@@ -52,14 +52,23 @@ async def _py_layout(repo: CodeRepo, org: str, ns: str, present: set[str]) -> An
     now = time.monotonic()
     if hit is not None and now - hit[0] < settings.code_ingest_sibling_text_ttl_s:
         return hit[1]
-    manifests = sorted(
-        (p for p in present if pl.is_manifest_path(p)), key=lambda p: (p.count("/"), p)
-    )[: pl.MAX_MANIFESTS]
-    texts = {p: await _package_json_text(repo, org, ns, p) for p in manifests}
-    layout = pl.layout_from_texts({p: t for p, t in texts.items() if t}, present)
-    if all(t or _oversize(org, ns, p, PACKAGE_JSON_MAX_BYTES) for p, t in texts.items()):
-        _PY_LAYOUT_CACHE[(org, ns)] = (now, layout)
-    return layout
+
+    async def _read() -> Any:
+        manifests = sorted(
+            (p for p in present if pl.is_manifest_path(p)), key=lambda p: (p.count("/"), p)
+        )[: pl.MAX_MANIFESTS]
+        texts = {p: await _package_json_text(repo, org, ns, p) for p in manifests}
+        # off the event loop: the manifests are repository text, up to their cap each; the
+        # live set is copied here, since `_live_paths` adds to it while the thread reads
+        layout = await asyncio.to_thread(
+            pl.layout_from_texts, {p: t for p, t in texts.items() if t}, frozenset(present)
+        )
+        if all(t or _oversize(org, ns, p, PACKAGE_JSON_MAX_BYTES) for p, t in texts.items()):
+            _PY_LAYOUT_CACHE[(org, ns)] = (now, layout)
+        return layout
+
+    # One read for every file that misses the cache at once, not a thread each.
+    return await single_flight(("py_layout", org, ns), _read)
 
 
 async def _py_roots_for(

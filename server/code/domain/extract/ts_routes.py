@@ -23,14 +23,18 @@ Pure: regexes over the source; the file's path supplies the convention.
 
 from __future__ import annotations
 
-import bisect
 import posixpath
 import re
 
 from server.code.domain.extract.lang_sql_model import Facet
+from server.code.domain.extract.text_lines import line_at, newline_offsets
 from server.code.domain.extract.treesitter import ParsedFile
 
 FACET_KIND = "http_route"
+# not a setting: changing it renames the stored route facets it cuts (py_routes cuts at 200 too)
+_MAX_NAME = 200
+# not a setting: a controller prefix is cut to this before it joins every route of its class
+_MAX_PATH = 2 * _MAX_NAME
 # Each body stops at the next `@Controller(` / `.route(`: an unclosed one is not read to
 # the end of the file again from every opener before it.
 _CONTROLLER_RE = re.compile(
@@ -86,12 +90,10 @@ def route_facets(pf: ParsedFile) -> list[Facet]:
     text = pf.source.decode("utf-8", "replace")
     out: list[Facet] = []
     seen: set[tuple[str, int]] = set()
-    newlines = [m.start() for m in re.finditer("\n", text)]
-
-    def line_of(offset: int) -> int:  # by bisection: a count from the top per route is quadratic
-        return bisect.bisect_left(newlines, offset) + 1
+    newlines = newline_offsets(text)
 
     def add(name: str, line: int, conf: float) -> None:
+        name = name[:_MAX_NAME]
         if (name, line) in seen:
             return
         seen.add((name, line))
@@ -102,21 +104,21 @@ def route_facets(pf: ParsedFile) -> list[Facet]:
     m = _PAGES_API_RE.search(pf.path)
     if m:
         d = _DEFAULT_EXPORT_RE.search(text)
-        line = line_of(d.start()) if d else 1
+        line = line_at(newlines, d.start()) if d else 1
         add(f"ANY {_url_join('/api', _file_route(m.group(1)))}", line, 0.9)
     m = _APP_ROUTE_RE.search(pf.path)
     if m:
         route = _file_route(m.group(1))
         if m.group(2) == "route":
             for h in _APP_HANDLER_RE.finditer(text):
-                add(f"{h.group(1) or h.group(2)} {route}", line_of(h.start()), 0.9)
+                add(f"{h.group(1) or h.group(2)} {route}", line_at(newlines, h.start()), 0.9)
         else:
             d = _DEFAULT_EXPORT_RE.search(text)
-            add(f"PAGE {route}", line_of(d.start()) if d else 1, 0.9)
+            add(f"PAGE {route}", line_at(newlines, d.start()) if d else 1, 0.9)
     controllers = list(_CONTROLLER_RE.finditer(text))
     closes = _brace_closes(text) if controllers else {}
     for k, c in enumerate(controllers):
-        prefix = c.group(1) or c.group(2) or ""
+        prefix = (c.group(1) or c.group(2) or "").lstrip("/")[:_MAX_PATH]
         # a class body ends at its `}`, and no later than the next controller: an unclosed
         # one is not read again for every controller before it
         stop = controllers[k + 1].start() if k + 1 < len(controllers) else len(text)
@@ -125,12 +127,12 @@ def route_facets(pf: ParsedFile) -> list[Facet]:
         body = text[body_start:body_end] if body_start >= 0 else ""
         for r in _ROUTE_DECORATOR_RE.finditer(body):
             method = r.group(1).upper()
-            line = line_of(body_start + r.start())
+            line = line_at(newlines, body_start + r.start())
             add(f"{method} {_url_join(prefix, r.group(2) or '')}", line, 1.0)
     for r in _REGISTRATION_RE.finditer(text):
-        add(f"{r.group(1).upper()} {r.group(2)}", line_of(r.start()), 1.0)
+        add(f"{r.group(1).upper()} {r.group(2)}", line_at(newlines, r.start()), 1.0)
     for r in _FASTIFY_ROUTE_RE.finditer(text):
-        add(f"{r.group(1).upper()} {r.group(2)}", line_of(r.start()), 1.0)
+        add(f"{r.group(1).upper()} {r.group(2)}", line_at(newlines, r.start()), 1.0)
     return out
 
 

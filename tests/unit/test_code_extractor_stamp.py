@@ -235,6 +235,9 @@ NON_EXTRACTOR_MODULES: dict[str, str] = {
         "add facets to rows that never carried them, so Python files gain them by "
         "`loom code backfill --paths-file`"
     ),
+    "text_lines.py": (
+        "the line of an offset, for the route, environment, template and dbt lanes outside the stamp"
+    ),
     "ts_routes.py": (
         "HTTP route facets for TypeScript/JavaScript files: file-system, "
         "decorator and registration routers become `http_route` facet rows, dispatched from "

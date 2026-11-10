@@ -292,3 +292,27 @@ def test_a_router_naming_its_class_in_its_arguments_keeps_its_prefix() -> None:
         'bp = Blueprint("UserBlueprint", __name__, url_prefix="/u")\n'
     )
     assert [m.group(1) for m in _PREFIX_DECL_RE.finditer(src)] == ["r", "bp"]
+
+
+def test_a_methods_list_with_a_bracket_inside_gives_the_default_method() -> None:
+    # The list's scan stops at the next opener, so one search cannot run to the file's end.
+    src = b'@app.route("/a", methods=["GET", ("POST")])\ndef a(): pass\n'
+    facets = py_facets(parse_python("svc/a.py", src))
+    assert [f.name for f in facets if f.kind == "http_route"] == ["GET /a"]
+
+
+def test_a_router_prefix_is_cut_however_it_grows() -> None:
+    # A route name keeps 200 characters; a prefix joined into every route must not grow.
+    from server.code.domain.extract.py_routes import _prefixes
+
+    repeated = "a.include_router(r, prefix='/aaaaaaaaaa')\n" * 100
+    declared = "r = APIRouter(prefix='/" + "a" * 1000 + "')\n"
+    assert len(_prefixes(repeated)["r"]) == 400
+    assert len(_prefixes(declared)["r"]) == 400
+
+
+def test_a_call_holding_its_own_opener_is_read_from_the_inner_one() -> None:
+    # The arguments stop at the next same call, so a search cannot run on to the file's end.
+    src = b'import starlette.routing\nroutes = [Route("/a",  # was Route("/old"\n  methods=["POST"])]\n'
+    facets = py_facets(parse_python("svc/app.py", src))
+    assert [f.name for f in facets if f.kind == "http_route"] == ["POST /old"]
