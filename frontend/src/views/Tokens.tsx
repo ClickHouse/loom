@@ -218,9 +218,9 @@ export function TokensSection({
   );
 }
 
-/** The ticked namespaces as one ordered list: number 1 is searched first. Each row moves
- *  by drag, or by its Move up and Move down buttons for keyboard and screen readers; its
- *  role is at most the person's own. */
+/** The ticked namespaces as one ordered list: number 1 is searched first. Each row moves by
+ *  its Move up and Move down buttons, and on a fine pointer (`touch` false) by dragging its
+ *  grip; its role is at most the person's own. */
 function SearchOrder({
   order,
   label,
@@ -229,6 +229,7 @@ function SearchOrder({
   grant,
   onRole,
   onMove,
+  touch,
 }: {
   order: string[];
   label: (ns: string) => string;
@@ -237,9 +238,10 @@ function SearchOrder({
   grant: (ns: string) => GrantRole;
   onRole: (ns: string, r: GrantRole) => void;
   onMove: (ns: string, to: number) => void;
+  /** A touch screen: no grip, since HTML drag does not start there. */
+  touch: boolean;
 }) {
   const titleId = useId();
-  const touch = useMedia(COARSE_POINTER);
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<number | null>(null);
   // A move can disable the arrow that was pressed (the row reached an end): focus then
@@ -535,6 +537,7 @@ function TokenForm({
       useStore.getState().setMyNamespaces(fresh);
       setRows(fresh);
       setSelectedNs((prev) => [...prev.filter((x) => x !== ns), ns]);
+      setMoved("");
       setNsRole((m) => ({ ...m, [ns]: "admin" }));
       setNewNs("");
       toast(`Created ${ns}; you are its admin`, "ok");
@@ -681,6 +684,7 @@ function TokenForm({
           )}
           {selectedNs.length > 0 && (
             <SearchOrder
+              touch={touch}
               order={selectedNs}
               label={label}
               isRepo={(ns) => eligibleRepos.some((r) => r.namespace === ns)}

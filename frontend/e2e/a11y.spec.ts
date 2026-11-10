@@ -631,7 +631,7 @@ for (const [width, touch] of [
       await page.getByRole("checkbox", { name: "Read shared-handbook" }).click();
       const order = page.getByRole("list", { name: "Search order" });
       await expect(order.getByRole("listitem")).toHaveCount(2);
-      await page.waitForTimeout(300);
+      await page.waitForTimeout(300); // the toast and row entry animations, before axe
       expect(await violations(page)).toEqual([]);
       const name = order.getByText("team-research-notes", { exact: true });
       expect((await name.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(140);
@@ -645,6 +645,7 @@ for (const [width, touch] of [
         await expect(order.locator("[draggable]")).toHaveCount(0);
         await expect(page.getByText(/use a row's arrows to change the order/)).toBeVisible();
       } else {
+        await expect(page.getByText(/drag a row by its grip, or use its arrows, to change the order/)).toBeVisible();
         // A real drag by the grip: the second row takes the first place.
         const rows = order.getByRole("listitem");
         await rows.nth(1).locator("[draggable]").dragTo(rows.nth(0));
