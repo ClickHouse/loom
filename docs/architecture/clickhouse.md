@@ -2,8 +2,8 @@
 
 Durable Loom state lives in ClickHouse, except document bytes kept in an S3-compatible
 bucket and, under the Postgres memory authority, live memory and knowledge state in
-Postgres. Postgres then also holds every idempotency key, and keeps its own copy of the
-erasure ledger and the recorded authority; the
+Postgres. Postgres then also holds every idempotency key, and keeps its own erasure
+ledger and a copy of the recorded authority; the
 [storage authority](storage-authority.md#the-tables) page lists its tables. Loom's
 ClickHouse databases are `loom` and `loom_telemetry`. The canonical ClickHouse schema is
 [`schemas/schema.sql`](../../schemas/schema.sql), dumped from a server with every
