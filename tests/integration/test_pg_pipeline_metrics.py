@@ -1,8 +1,10 @@
 """The publication pipeline's backlog reads against the real Postgres queues
 (`pg_memory.backlog`, `pg_memory.outbox_backlog`, `pg_documents.backlog`).
 
-The queues are shared by every test in the job, so each case counts at least its own
-rows and checks the cap and the parked count on them; the rows it adds are removed."""
+The queues are shared by every test in the job, so each case backdates its own row
+(the oldest age then reaches it whatever else is owed) and counts its parked row by
+the drop when it is removed (no worker touches a parked row); the rows it adds are
+removed."""
 
 from __future__ import annotations
 
@@ -66,16 +68,24 @@ async def test_the_memory_backlog_counts_pending_and_parked_deliveries(org_call:
 
     try:
         await owe("now() + interval '1 minute'")
+        await pg.execute(
+            "UPDATE loom.memory_revisions SET committed_at = committed_at - interval '1 hour' "
+            "WHERE org = $1 AND namespace = $2 AND seq = $3",
+            org,
+            ns,
+            seq,
+        )
         due = await pg_memory.backlog(1_000_000)
-        assert due.pending >= 1 and due.oldest_age_s is not None and not due.capped
+        assert due.pending >= 1 and not due.capped
+        assert due.oldest_age_s is not None and due.oldest_age_s >= 3600  # this row's age
         assert (await pg_memory.backlog(1)).capped  # one counted reaches a cap of one
         await owe("'infinity'")
-        parked = await pg_memory.backlog(1_000_000)
-        assert parked.parked >= 1
+        parked = (await pg_memory.backlog(1_000_000)).parked
     finally:
         await pg.execute(
             "DELETE FROM loom.memory_deliveries WHERE org = $1 AND namespace = $2", org, ns
         )
+    assert parked - (await pg_memory.backlog(1_000_000)).parked == 1
 
 
 async def test_the_outbox_backlog_counts_due_and_parked_rows(org_call: Any) -> None:
@@ -87,42 +97,57 @@ async def test_the_outbox_backlog_counts_due_and_parked_rows(org_call: Any) -> N
     try:
         await pg.execute(
             "INSERT INTO loom.audit_outbox (org, namespace, row_hash, audit, due_at) "
-            "VALUES ($1, $2, $3, '{}'::jsonb, now() - interval '30 seconds')",
+            "VALUES ($1, $2, $3, '{}'::jsonb, now() - interval '1 hour')",
             org,
             ns,
             row_hash,
         )
         due = await pg_memory.outbox_backlog(1_000_000)
-        assert due.pending >= 1 and due.oldest_age_s is not None and due.oldest_age_s >= 0
+        assert due.pending >= 1
+        assert due.oldest_age_s is not None and due.oldest_age_s >= 3600  # this row's age
         await pg.execute("UPDATE loom.audit_outbox SET due_at = 'infinity' WHERE org = $1", org)
-        assert (await pg_memory.outbox_backlog(1_000_000)).parked >= 1
+        parked = (await pg_memory.outbox_backlog(1_000_000)).parked
     finally:
         await pg.execute("DELETE FROM loom.audit_outbox WHERE org = $1", org)
+    assert parked - (await pg_memory.outbox_backlog(1_000_000)).parked == 1
 
 
-async def test_the_knowledge_backlog_counts_pending_deliveries(org_call: Any) -> None:
+async def test_the_knowledge_backlog_counts_pending_and_parked_deliveries(org_call: Any) -> None:
     from server.core import pg
     from server.knowledge.store import pg_documents
 
     org, call = org_call
     ns = f"pl-{uuid.uuid4().hex[:8]}"
     await call("knowledge.add", {"namespace": ns, "source_uri": "kb://p", "content": "a note"})
-    try:
+
+    async def owe(lease: str) -> None:
         await pg.execute(
             "INSERT INTO loom.knowledge_deliveries AS d (org, namespace, source_uri, version, "
             "user_id, row, targets, lease_until, fenced_until) "
-            "SELECT org, namespace, source_uri, version, user_id, row, 1, "
-            "now() + interval '1 minute', now() FROM loom.knowledge_heads "
-            "WHERE org = $1 AND namespace = $2 "
+            f"SELECT org, namespace, source_uri, version, user_id, row, 1, {lease}, now() "
+            "FROM loom.knowledge_heads WHERE org = $1 AND namespace = $2 "
             "ON CONFLICT (org, namespace, source_uri, version) DO UPDATE SET settled = false, "
-            "targets = 1, lease_until = now() + interval '1 minute'",
+            f"targets = 1, lease_until = {lease}",
+            org,
+            ns,
+        )
+
+    try:
+        await owe("now() + interval '1 minute'")
+        await pg.execute(
+            "UPDATE loom.knowledge_heads SET committed_at = committed_at - interval '1 hour' "
+            "WHERE org = $1 AND namespace = $2",
             org,
             ns,
         )
         due = await pg_documents.backlog(1_000_000)
-        assert due.pending >= 1 and due.oldest_age_s is not None
+        assert due.pending >= 1
+        assert due.oldest_age_s is not None and due.oldest_age_s >= 3600  # this row's age
         assert (await pg_documents.backlog(1)).capped
+        await owe("'infinity'")
+        parked = (await pg_documents.backlog(1_000_000)).parked
     finally:
         await pg.execute(
             "DELETE FROM loom.knowledge_deliveries WHERE org = $1 AND namespace = $2", org, ns
         )
+    assert parked - (await pg_documents.backlog(1_000_000)).parked == 1

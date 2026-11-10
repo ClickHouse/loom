@@ -451,10 +451,10 @@ async def _backlog() -> dict[str, dict[str, Any]]:
     from server.knowledge.store import pg_documents
     from server.memory.store import pg_memory
     from server.observability import pg_pipeline
-    from server.observability.otel_probes import _census_reads_here
+    from server.observability.otel_probes import census_reads_here
 
     now = time.monotonic()
-    readings = pg_pipeline.fresh_readings() if _census_reads_here() else {}
+    readings = pg_pipeline.fresh_readings() if census_reads_here() else {}
     if len(readings) < len(pg_pipeline.SOURCES):
         at = _backlog_cache["at"]
         if at is None or now - at >= settings.pg_backlog_health_cache_seconds:

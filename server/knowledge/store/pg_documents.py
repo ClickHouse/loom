@@ -498,12 +498,12 @@ async def backlog(cap: int) -> pg_pipeline.Backlog:
     parked, and the age of the oldest owed one by its head's commit."""
     row = await pg.fetchrow(
         "SELECT (SELECT count(*) FROM (SELECT 1 FROM loom.knowledge_deliveries "
-        "  WHERE NOT settled AND lease_until <> 'infinity' LIMIT $1) p) AS pending, "
+        "  WHERE NOT settled AND lease_until < 'infinity' LIMIT $1) p) AS pending, "
         "(SELECT count(*) FROM (SELECT 1 FROM loom.knowledge_deliveries "
         "  WHERE lease_until = 'infinity' AND NOT settled LIMIT $1) k) AS parked, "
         "(SELECT extract(epoch FROM clock_timestamp() - min(h.committed_at)) "
         "  FROM (SELECT org, namespace, source_uri FROM loom.knowledge_deliveries "
-        "    WHERE NOT settled AND lease_until <> 'infinity' ORDER BY lease_until LIMIT $1) d "
+        "    WHERE NOT settled AND lease_until < 'infinity' ORDER BY lease_until LIMIT $1) d "
         "  JOIN loom.knowledge_heads h USING (org, namespace, source_uri)) AS oldest",
         cap,
     )

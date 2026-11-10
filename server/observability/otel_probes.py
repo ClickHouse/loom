@@ -110,7 +110,7 @@ def _probe_state() -> dict[str, Any]:
 _INVARIANTS_CACHE: dict[str, Any] = {"at": 0.0, "value": None}
 
 
-def _census_reads_here() -> bool:
+def census_reads_here() -> bool:
     """A whole-table census is a reading of the deployment,
     not of the process; the process holding the supervisor lease takes it.
     Every other process (a sibling web worker, a pure web replica, an
@@ -125,23 +125,23 @@ def _census_reads_here() -> bool:
 
 
 def _census_only(probe: Callable[[], Any]) -> Callable[[], Any]:
-    """Wrap a census probe so it runs only where `_census_reads_here()`;
+    """Wrap a census probe so it runs only where `census_reads_here()`;
     elsewhere it returns None, which the gauge cache renders as "no
     observation" (never 0). The predicate rides along as `reads_here`, so
     the cache stops exporting the moment this process gives up the lease."""
 
     @functools.wraps(probe)
     def _run() -> Any:
-        return probe() if _census_reads_here() else None
+        return probe() if census_reads_here() else None
 
-    setattr(_run, "reads_here", _census_reads_here)  # noqa: B010 — a function declares no field
+    setattr(_run, "reads_here", census_reads_here)  # noqa: B010 — a function declares no field
     return _run
 
 
 def _probe_invariants_cached() -> dict[str, Any]:
     from server.settings import settings
 
-    if not _census_reads_here():
+    if not census_reads_here():
         return {}
     ttl = float(settings.otel_invariants_probe_s)
     now_m = time.monotonic()

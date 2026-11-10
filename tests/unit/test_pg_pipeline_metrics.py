@@ -7,8 +7,11 @@ from typing import Any
 
 import pytest
 
+from server.core.errors import NotFoundError
+from server.core.pg import PostgresUnavailableError
 from server.observability import pg_pipeline
 from server.settings import settings
+from tests.unit.clock_fake import ManualClock
 
 
 class _Instrument:
@@ -25,13 +28,13 @@ class _Instrument:
 def test_a_backlog_reading_is_dropped_after_two_export_periods(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    now = [1000.0]
+    clock = ManualClock(t=1000.0)
     monkeypatch.setattr(pg_pipeline, "_readings", {})  # not the module's own
-    monkeypatch.setattr(pg_pipeline.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(pg_pipeline, "time", clock)
     monkeypatch.setattr(settings, "otel_metrics_export_interval_s", 60)
     pg_pipeline.set_backlog("memory", pg_pipeline.Backlog(3, 0, 1.5))
     assert pg_pipeline.fresh_backlog()["memory"].pending == 3
-    now[0] += 121
+    clock.advance(121)
     assert "memory" not in pg_pipeline.fresh_backlog()
 
 
@@ -163,7 +166,7 @@ def test_health_reads_the_backlog_itself_off_the_lease_holder(
 
     reads: list[str] = []
     reading = _readings_of(reads)
-    monkeypatch.setattr(otel_probes, "_census_reads_here", lambda: False)
+    monkeypatch.setattr(otel_probes, "census_reads_here", lambda: False)
     monkeypatch.setattr(pg_memory, "backlog", reading("memory"))
     monkeypatch.setattr(pg_memory, "outbox_backlog", reading("audit_outbox"))
     monkeypatch.setattr(pg_documents, "backlog", reading("knowledge"))
@@ -187,7 +190,7 @@ def test_health_on_the_lease_holder_answers_its_fresh_readings_without_reading(
     async def never(cap: int) -> Any:
         raise AssertionError("read the backlog although the lease holder's is fresh")
 
-    monkeypatch.setattr(otel_probes, "_census_reads_here", lambda: True)
+    monkeypatch.setattr(otel_probes, "census_reads_here", lambda: True)
     monkeypatch.setattr(pg_pipeline, "_readings", {})
     for source in pg_pipeline.SOURCES:
         pg_pipeline.set_backlog(source, pg_pipeline.Backlog(3, 0, 1.0))
@@ -220,7 +223,7 @@ def test_the_backlog_gauges_export_only_on_the_lease_holder(
     pg_pipeline.set_backlog("memory", pg_pipeline.Backlog(2, 1, 5.0))
     pg_pipeline.register(_Meter())
     for here, expected in ((False, 0), (True, 2)):
-        monkeypatch.setattr(otel_probes, "_census_reads_here", lambda here=here: here)
+        monkeypatch.setattr(otel_probes, "census_reads_here", lambda here=here: here)
         assert len(gauges["loom.pg.backlog"](None)) == expected
 
 
@@ -236,3 +239,33 @@ def test_a_backlog_read_that_fails_leaves_the_pass_publishing(
     monkeypatch.setattr(pg_memory, "backlog", down)
     asyncio.run(pg_delivery._read_backlog())  # raises nothing
     assert "backlog not read" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "error, code",
+    [
+        (NotFoundError("x"), "RESOURCE_NOT_FOUND"),
+        (PostgresUnavailableError("x"), "POSTGRES_UNAVAILABLE"),
+        (KeyError("x"), "INTERNAL_ERROR"),
+    ],
+)
+def test_an_mcp_failure_counts_under_the_code_it_answers(
+    monkeypatch: pytest.MonkeyPatch, error: Exception, code: str
+) -> None:
+    """As HTTP labels it: a refusal's, a named 5xx's, or INTERNAL_ERROR."""
+    from server.observability import otel
+    from server.transport import mcp_outcome
+
+    seen: list[dict[str, Any]] = []
+    monkeypatch.setattr(otel, "record_op", lambda *a, **k: seen.append(k))
+    monkeypatch.setattr(mcp_outcome, "_emit_mcp_event", lambda *a, **k: None)
+
+    class _Op:
+        name = "memory.delete"
+        idempotent = True
+
+    mcp_outcome._handler_failed(
+        error, 9, "loom_memory_delete", _Op(), {}, None, None, "rid", None, rl_ns="n", elapsed_ms=3
+    )
+    (call,) = [k for k in seen if k.get("success") is False]
+    assert call["transport"] == "mcp" and call["error_code"] == code

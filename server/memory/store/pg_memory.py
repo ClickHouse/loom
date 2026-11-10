@@ -1114,13 +1114,13 @@ async def backlog(cap: int) -> pg_pipeline.Backlog:
     ones; and the age of the oldest of the first."""
     row = await pg.fetchrow(
         "SELECT (SELECT count(*) FROM (SELECT 1 FROM loom.memory_deliveries "
-        f"  WHERE NOT settled AND lease_until <> 'infinity' AND targets & {SEARCHED} <> 0 "
+        f"  WHERE NOT settled AND lease_until < 'infinity' AND targets & {SEARCHED} <> 0 "
         "  LIMIT $1) p) AS pending, "
         "(SELECT count(*) FROM (SELECT 1 FROM loom.memory_deliveries "
         "  WHERE lease_until = 'infinity' AND NOT settled LIMIT $1) k) AS parked, "
         "(SELECT extract(epoch FROM clock_timestamp() - min(r.committed_at)) "
         "  FROM (SELECT org, namespace, seq FROM loom.memory_deliveries "
-        f"    WHERE NOT settled AND lease_until <> 'infinity' AND targets & {SEARCHED} <> 0 "
+        f"    WHERE NOT settled AND lease_until < 'infinity' AND targets & {SEARCHED} <> 0 "
         "    ORDER BY lease_until LIMIT $1) d "
         "  JOIN loom.memory_revisions r USING (org, namespace, seq)) AS oldest",
         cap,
@@ -1133,18 +1133,18 @@ async def backlog(cap: int) -> pg_pipeline.Backlog:
 
 async def outbox_backlog(cap: int) -> pg_pipeline.Backlog:
     """The audit outbox's rows, for the pipeline gauges: due or waiting (up to `cap`),
-    parked, and the age of the oldest waiting one by its due time."""
+    parked, and how long the oldest one past due has been."""
     row = await pg.fetchrow(
         "SELECT (SELECT count(*) FROM (SELECT 1 FROM loom.audit_outbox "
-        "  WHERE due_at <> 'infinity' LIMIT $1) p) AS pending, "
+        "  WHERE due_at < 'infinity' LIMIT $1) p) AS pending, "
         "(SELECT count(*) FROM (SELECT 1 FROM loom.audit_outbox "
         "  WHERE due_at = 'infinity' LIMIT $1) k) AS parked, "
         "(SELECT extract(epoch FROM clock_timestamp() - min(due_at)) FROM loom.audit_outbox "
-        "  WHERE due_at <> 'infinity' AND due_at <= now()) AS oldest",
+        "  WHERE due_at <= now()) AS oldest",
         cap,
     )
     pending = int(row["pending"])
-    oldest = None if row["oldest"] is None else max(0.0, float(row["oldest"]))
+    oldest = None if row["oldest"] is None else float(row["oldest"])
     parked = int(row["parked"])
     return pg_pipeline.Backlog(pending, parked, oldest, capped=max(pending, parked) >= cap)
 

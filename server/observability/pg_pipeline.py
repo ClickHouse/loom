@@ -33,7 +33,6 @@ _inserts: Any = None
 _insert_rows: Any = None
 
 SOURCES = ("memory", "audit_outbox", "knowledge")
-TABLES = frozenset({"memory", "memory_embeddings", "audit_log"})
 
 
 @dataclass(frozen=True)
@@ -53,12 +52,9 @@ _lock = threading.Lock()
 
 
 def set_backlog(source: str, reading: Backlog) -> None:
-    """Publish a source's reading for the gauges. Never raises."""
-    try:
-        with _lock:
-            _readings[source] = (reading, time.monotonic())
-    except Exception:  # noqa: BLE001 — telemetry must never fail the caller
-        pass
+    """Publish a source's reading for the gauges."""
+    with _lock:
+        _readings[source] = (reading, time.monotonic())
 
 
 def fresh_readings() -> dict[str, tuple[Backlog, float]]:
@@ -113,13 +109,14 @@ def record_projection_lag(lag_ms: float, *, redelivered: bool) -> None:
 
 
 def record_insert(table: str, rows: int) -> None:
-    """One ClickHouse insert a publisher made. Never raises."""
+    """One ClickHouse insert of `table` (memory, memory_embeddings or audit_log). Never
+    raises."""
     try:
-        attrs = {"table": table if table in TABLES else "other"}
+        attrs = {"table": table}
         if _inserts is not None:
             _inserts.add(1, attributes=attrs)
         if _insert_rows is not None:
-            _insert_rows.add(max(0, int(rows)), attributes=attrs)
+            _insert_rows.add(rows, attributes=attrs)
     except Exception:  # noqa: BLE001 — telemetry must never fail a publish
         pass
 
@@ -156,7 +153,7 @@ def register(meter: Any) -> None:
     def _backlog(_options: Any) -> Any:
         from opentelemetry.metrics import Observation
 
-        if not otel_probes._census_reads_here():
+        if not otel_probes.census_reads_here():
             return []
         out = []
         for source, r in fresh_backlog().items():
@@ -167,7 +164,7 @@ def register(meter: Any) -> None:
     def _oldest(_options: Any) -> Any:
         from opentelemetry.metrics import Observation
 
-        if not otel_probes._census_reads_here():
+        if not otel_probes.census_reads_here():
             return []
         return [
             Observation(r.oldest_age_s, {"source": source})
@@ -178,7 +175,7 @@ def register(meter: Any) -> None:
     def _ages(_options: Any) -> Any:
         from opentelemetry.metrics import Observation
 
-        if not otel_probes._census_reads_here():
+        if not otel_probes.census_reads_here():
             return []
         return [Observation(age, {"source": s}) for s, age in _reading_ages().items()]
 

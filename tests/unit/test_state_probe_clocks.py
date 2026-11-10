@@ -184,7 +184,7 @@ def test_census_scope_process_keeps_every_process_reading(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(settings, "otel_census_scope", "process")
     monkeypatch.setattr(leader, "_CURRENT", None)
-    assert otel_probes._census_reads_here() is True
+    assert otel_probes.census_reads_here() is True
     assert otel_probes._census_only(lambda: {"k": 1})() == {"k": 1}
 
 
