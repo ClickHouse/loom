@@ -2,13 +2,11 @@
 
 This page connects Claude Code, Codex, Cursor or another MCP client to a running Loom
 server. Install the plugin (or wire the MCP entry), point it at the server, and work as
-usual. The next session starts with what the agent saved. What the plugin sends to Loom is
-listed in [data handling](../features/integrations/claude-code.md#data-handling); the
-session's transcript is kept only while the namespace's **Record conversations** switch on
-the dashboard's Conversations page is on, which it is not by default
-([recording](../features/conversations-and-sessions.md#recording-is-the-owners-choice)).
-To run a server yourself, start with the [quickstart](quickstart.md); to have your agent
-install a pinned release and prove it works, give it the latest release's
+usual. The next session starts with what the agent saved. What the plugin sends to Loom,
+and what the namespace's conversation recording (off by default) changes, is in [data
+handling](../features/integrations/claude-code.md#data-handling). To run a server
+yourself, start with the [quickstart](quickstart.md); to have your agent install a pinned
+release and prove it works, give it the latest release's
 `https://github.com/ClickHouse/loom/releases/latest/download/agent-setup.txt` ([Set up
 Loom with your coding agent](agent-setup.md)).
 
@@ -37,9 +35,8 @@ claude plugin install loom@loom \
 Both `--config` values are optional; without them Claude Code asks once. Start a new
 session. Loom's session primer arrives at the top, and from then on:
 
-- the hooks send what [data handling](../features/integrations/claude-code.md#data-handling)
-  lists, among it tool observations and the session's last turns for extraction, and the
-  transcript while **Record conversations** is on;
+- the hooks send Loom what [data handling](../features/integrations/claude-code.md#data-handling)
+  lists;
 - the `loom-memory`, `loom-code`, `loom-session` and other skills tell Claude when to save
   a fact, when to search, and how to use the code index;
 - `loom_search`, `loom_memory_set` and the code tools are available as MCP tools.
@@ -94,7 +91,7 @@ command writes.
 2. Tell the agent something durable, for example "our deploy window is Tuesday and
    Thursday only". In a new session, ask "when can we deploy?". The answer comes from Loom.
 3. Open the dashboard (`<server>/`). The saved fact is there, and the session's
-   conversation too while **Record conversations** is on; you can correct or delete either.
+   conversation too while conversation recording is on; you can correct or delete either.
 
 `loom doctor --client` adds the local wiring checks when you have the CLI.
 

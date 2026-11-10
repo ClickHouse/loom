@@ -396,12 +396,13 @@ asks for the plugin's settings, keep the default server URL and leave the token 
 
 With auth on, create a token in **Settings → Tokens** and choose **Claude Code** under
 **Connect**: the dialog shows the setup for the plugin and for a `claude mcp add` entry,
-with the token in it. Its `~/.loom/config.json` replaces any single-user identity a plugin
-session saved there; the plugin reads `LOOM_API_KEY` before that file
-([configuration](../features/integrations/claude-code.md#configuration)), so a
-`LOOM_API_KEY` in Claude Code's environment must hold the new token or be unset. Remove a
-`claude mcp add` entry made without a token (`claude mcp remove loom -s user`) before
-running the dialog's command, which refuses a name that exists.
+with the token in it. Overwrite `~/.loom/config.json` with the dialog's contents: an `org`
+or `namespace` a single-user session left in it outranks the token. The plugin reads
+`LOOM_API_KEY` and its `token` option before that file
+([configuration](../features/integrations/claude-code.md#configuration)), so both must
+hold the new token or be empty. Remove a `claude mcp add` entry made without a token
+(`claude mcp remove loom -s user`) before running the dialog's command, which refuses a
+name that exists.
 
 `loom install --client <name>` writes the MCP entry for Claude Desktop, Claude Code,
 Codex, Cursor, VS Code, Cline, Windsurf and Zed; with no flag it wires every client it
