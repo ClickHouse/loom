@@ -22,6 +22,9 @@ log = logging.getLogger(__name__)
 
 # Past the ledger's flush interval and the batched-insert wait, the slack of one insert.
 _INSERT_SLACK_S = 0.2  # not a setting: a fraction of one ClickHouse insert
+# Both reads and the wait between them: past it the answer is unchecked, and its slot and
+# its last event are not held on a slow ClickHouse.
+_CALLS_S = 3.0  # not a setting: a fraction of the citation checks' bound
 
 
 async def support(checked: list[Checked], text: str, *, org: str, run_id: str, subject: str) -> str:
@@ -47,11 +50,15 @@ async def _calls(org: str, run_id: str, subject: str) -> tuple[frozenset[str] | 
     if not run_id:
         return None, False
     try:
-        calls = await ledger.run_calls(org, run_id, subject)
-        if not calls.returned & ASSISTANT_CITABLE_OPS:
-            delay = FLUSH_INTERVAL_S + settings.ch_batched_insert_wait_max_ms / 1000
-            await asyncio.sleep(delay + _INSERT_SLACK_S)
+        async with asyncio.timeout(_CALLS_S):
             calls = await ledger.run_calls(org, run_id, subject)
+            if not calls.returned & ASSISTANT_CITABLE_OPS:
+                delay = FLUSH_INTERVAL_S + settings.ch_batched_insert_wait_max_ms / 1000
+                await asyncio.sleep(delay + _INSERT_SLACK_S)
+                calls = await ledger.run_calls(org, run_id, subject)
+    except TimeoutError:
+        log.warning("reading an answer's tool calls ran past %s s", _CALLS_S)
+        return None, False
     except Exception as e:  # noqa: BLE001 — a check that cannot run never fails an answer
         log.warning("reading an answer's tool calls failed: %s", e)
         return None, False

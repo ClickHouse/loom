@@ -202,13 +202,13 @@ def _read(event: dict[str, Any], reading: _Reading) -> str:
     return text
 
 
-SUPPORTS = ("supported", "unsupported", "unchecked", "none")
+_SUPPORTS = ("supported", "unsupported", "unchecked", "none")
 
 
 def _support(value: Any) -> str:
     """The answer's support as the server sent it; an unknown or missing value is
     `unchecked`."""
-    return value if isinstance(value, str) and value in SUPPORTS else "unchecked"
+    return value if isinstance(value, str) and value in _SUPPORTS else "unchecked"
 
 
 def _int(value: Any) -> int:

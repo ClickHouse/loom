@@ -265,6 +265,11 @@ def test_an_assistant_op_records_how_many_rows_it_found() -> None:
     # Other ops, and a call with no op name, carry none.
     assert "out_hits" not in project_result(hits, op_name="memory.bulk_get")
     assert "out_hits" not in project_result(hits)
+    # A presence answer finds only where the symbol is present.
+    absent = {"definitions": [], "presence": [{"verdict": "absent"}, {"verdict": "unknown"}]}
+    assert project_result(absent, op_name="code.symbol")["out_hits"] == "0"
+    present = {"definitions": [], "presence": [{"verdict": "present"}, {"verdict": "absent"}]}
+    assert project_result(present, op_name="code.symbol")["out_hits"] == "1"
     # A get's miss is its found flag, kept as it was.
     miss = project_result({"found": False, "tags": []}, op_name="memory.get")
     assert miss["out_found"] == "false" and "out_hits" not in miss

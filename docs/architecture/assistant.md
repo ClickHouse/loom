@@ -247,7 +247,7 @@ that applies wins:
 
 | `support`     | When                                                                                                                                                                                                                                                                                                                                                 |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `none`        | The answer has no text; or it cites nothing and either says the abstention sentence the agent's instructions give ("Nothing stored in Loom answers this.", in any case or emphasis) or none of its calls found data. A greeting, a capability reply and an abstention make no claim.                                                                 |
+| `none`        | The answer has no text; or it cites nothing and either says the abstention sentence the agent's instructions give ("Nothing stored in Loom answers this.", in any case or emphasis) or none of its calls found data and none failed. A greeting, a capability reply and an abstention make no claim.                                                 |
 | `supported`   | A citation verified.                                                                                                                                                                                                                                                                                                                                 |
 | `unsupported` | A citation failed for a reason of its own (its key was not returned to this answer, its document or section is not there, its statement did not run in this answer); or it cites nothing although a call of an op whose rows it could cite found data.                                                                                               |
 | `unchecked`   | Otherwise: its checks could not say (a read failed or ran past its bound, no run id, memory reads not recorded, code citations, past the 50 checked), or it cites nothing and what found data has no citation form (counts and findings: `namespace.summary`, `memory.inspect` and the other ops outside `ASSISTANT_CITABLE_OPS`), or a call failed. |
@@ -261,7 +261,9 @@ it found nothing. The answer's calls are read by its run, its caller's subject a
 consumer `loom-assistant`, with no namespace filter: a code call is ledgered under the
 code namespace and a refused call under the sentinel. The rows land in the background,
 so an uncited answer's calls are read once more after the ledger's flush interval and
-the batched-insert wait, unless the first read already found a citable op's data.
+the batched-insert wait, unless the first read already found a citable op's data; both
+reads together are bounded at three seconds, past which the answer is `unchecked`. A
+presence answer of `code.symbol` finds only where the symbol is present.
 
 The rule reads no wording beyond the abstention sentence, and accepts these residuals:
 

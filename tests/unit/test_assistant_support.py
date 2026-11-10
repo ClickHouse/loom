@@ -285,6 +285,18 @@ def test_calls_that_cannot_be_read_leave_an_uncited_answer_unchecked(
     assert asked == []
 
 
+def test_a_run_read_that_hangs_leaves_an_uncited_answer_unchecked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def hang(*_: Any) -> ledger.RunCalls:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    monkeypatch.setattr(app_support.ledger, "run_calls", hang)
+    monkeypatch.setattr(app_support, "_CALLS_S", 0.05)
+    assert _answer([], "Deploys freeze on Fridays.") == "unchecked"
+
+
 def _event(operation: str, args: dict[str, str], **kw: Any) -> str:
     """One `loom.agent_events` row, by default a successful call of the answer's run."""
     cols = {

@@ -7,14 +7,6 @@ import { IconButton } from "../../components/IconButton";
 import { PopoverTrigger } from "../../components/ui/Menu";
 import { useStore } from "../../lib/state";
 
-/**
- * One finished answer's label and citations, as the server checked them against Loom with
- * the answer's token. The label follows the answer's `support` (server/assistant/domain/
- * support.py): an answer that makes no claim, such as a greeting or an abstention, has none.
- * A verified memory or document opens where the dashboard shows it; an unverified citation
- * says why.
- */
-
 interface Label {
   text: string;
   why: string;
@@ -70,6 +62,13 @@ export function supportLabel(support: Support, citations: Citation[]): Label | n
       };
 }
 
+/**
+ * One finished answer's label and citations, as the server checked them against Loom with
+ * the answer's token. The label follows the answer's `support` (server/assistant/domain/
+ * support.py): an answer that makes no claim, such as a greeting or an abstention, has none.
+ * A verified memory or document opens where the dashboard shows it; an unverified citation
+ * says why.
+ */
 export function Sources({ citations, support, answer }: { citations: Citation[]; support: Support; answer: number }) {
   const inspect = useStore((s) => s.inspect);
   const openDocument = useStore((s) => s.openDocument);
