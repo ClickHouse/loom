@@ -14,8 +14,10 @@ function setup(t0 = 1_000_000) {
   };
   let t = t0;
   installStaleChunkReload(win, storage, () => t);
-  const fire = () => {
-    const e = new Event("vite:preloadError", { cancelable: true });
+  const fire = (chunk = "/assets/Code-abc123.js") => {
+    const e = Object.assign(new Event("vite:preloadError", { cancelable: true }), {
+      payload: new Error(`Failed to fetch dynamically imported module: ${chunk}`),
+    });
     win.dispatchEvent(e);
     return e;
   };
@@ -29,6 +31,13 @@ function setup(t0 = 1_000_000) {
 }
 
 describe("installStaleChunkReload", () => {
+  it("leaves the error wording's chunk to its own fallback, with no reload", () => {
+    const { reload, fire } = setup();
+    const e = fire("/assets/errorWords-BsRZ_TNd.js");
+    expect(reload).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
+  });
+
   it("reloads once and suppresses the error on a missing chunk", () => {
     const { reload, fire } = setup();
     const e = fire();

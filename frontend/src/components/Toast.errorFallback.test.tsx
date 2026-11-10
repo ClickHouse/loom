@@ -40,7 +40,7 @@ it("keeps a write's timeout and unreadable-answer warnings when the wording cann
   expect(await screen.findByText("Load failed.")).toBeInTheDocument();
 });
 
-it("says nothing was saved for a refusal over the deployment's setup, and stays up to be read", async () => {
+it("gives a refusal over the deployment's setup no may-have-saved warning, and stays up to be read", async () => {
   vi.useFakeTimers();
   render(<ToastViewport />);
   toastError(

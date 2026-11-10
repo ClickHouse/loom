@@ -1,8 +1,14 @@
 // How the dashboard words a failure: one line that says what happened and what to do
 // (docs/development/dashboard-design.md, errors). Kept out of lib/format.ts so the boot
 // chunk does not carry it: the toast viewport loads it soon after the shell paints, and
-// toastError falls back to its context alone if it cannot.
-import { ApiError, isLostConnection, LOST_CONNECTION, PUBLICATION_PENDING, TIMED_OUT } from "./errors";
+// toastError falls back to its context alone if it cannot (lib/staleChunk.ts reloads for
+// no failure of this chunk). The order a line is built in:
+//   1. the code's own sentence, where it says more than its category or status;
+//   2. the body's category, unless `input` (the server's word for any other 4xx);
+//   3. the HTTP status;
+// then the server's words, then one tail from the body: when it can go again, that it may
+// have saved (a write; `read` drops it), or that only a change to the setup helps.
+import { ApiError, isLostConnection, LOST_CONNECTION, MAY_HAVE_SAVED, PUBLICATION_PENDING, TIMED_OUT } from "./errors";
 import { errorRequestId } from "./format";
 
 /** Sentences for the server's error codes (`server/core/errors.py` and the
@@ -10,7 +16,8 @@ import { errorRequestId } from "./format";
  *  its category or status would. The server's own message rides along after the sentence
  *  (it states the cause): a sentence ending in ":" introduces it; one ending in "."
  *  precedes it. No sentence says to try again: `retryTail` owns that, from the body and,
- *  for the one code the dashboard makes itself, from the code. */
+ *  for the codes the dashboard makes itself (SIGNED_IN_ELSEWHERE, ANSWER_UNREADABLE), from
+ *  the code. */
 export const ERROR_CODE_PREFIXES: Record<string, string> = {
   AUTH_INVALID: "Sign-in rejected:",
   SIGNED_IN_ELSEWHERE: "You signed in afresh in another tab. Nothing was lost.",
@@ -88,7 +95,7 @@ function sentenceForStatus(status: number): string {
 function retryTail(err: ApiError, read: boolean): string {
   // Made by the dashboard (api.ts) from a 401 that came before any handler ran: no body.
   if (err.code === "SIGNED_IN_ELSEWHERE") return "It is safe to send it once more.";
-  const mayHaveLanded = read ? "Try again in a moment." : "It may have been saved; check before trying again.";
+  const mayHaveLanded = read ? "Try again in a moment." : MAY_HAVE_SAVED;
   // Made by the dashboard (api.ts readJson): the answer was ok, only its body unreadable.
   if (err.code === "ANSWER_UNREADABLE") return mayHaveLanded;
   const category = typeof err.detail.category === "string" ? err.detail.category : "";
@@ -209,6 +216,8 @@ function humanizeApiError(err: ApiError, bare: boolean, read: boolean): string {
   )
     return "Your session ended — sign in again.";
   if (err.code === "PUBLICATION_PENDING") return PUBLICATION_PENDING;
+  // The server's words for it carry only the request id, which the line's caller shows.
+  if (err.code === "INTERNAL_ERROR") return withTail(ERROR_CODE_PREFIXES.INTERNAL_ERROR, retryTail(err, read));
   const lead = leadFor(err);
   let text: string;
   if (err.serverMessage && bare) {

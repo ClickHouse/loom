@@ -20,6 +20,9 @@ export function installStaleChunkReload(
   now: () => number = Date.now,
 ): void {
   win.addEventListener("vite:preloadError", (event: Event) => {
+    // The error wording's chunk has its own fallback (Toast.tsx toastError): a reload for it
+    // would lose the page, and the fallback toast with it.
+    if (/errorWords/.test(preloadErrorText(event))) return;
     let last = 0;
     try {
       last = Number(storage?.getItem(KEY) ?? 0) || 0;
@@ -43,4 +46,10 @@ function safeSessionStorage(): Storage | null {
   } catch {
     return null;
   }
+}
+
+/** The failed import's own words, which name the chunk's file. */
+function preloadErrorText(event: Event): string {
+  const payload = (event as Event & { payload?: unknown }).payload;
+  return payload instanceof Error ? payload.message : String(payload ?? "");
 }

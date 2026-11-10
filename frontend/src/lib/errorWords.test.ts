@@ -147,7 +147,12 @@ describe("humanizeError", () => {
       ],
       [
         "an internal error on a write may have left the write behind",
-        { status: 500, code: "INTERNAL_ERROR", message: "", detail: { category: "internal", retryable: false } },
+        {
+          status: 500,
+          code: "INTERNAL_ERROR",
+          message: "internal error; request_id=abc",
+          detail: { category: "internal", retryable: false },
+        },
         "Loom hit an internal error. If it keeps happening, send the request id to your operator. It may have been saved; check before trying again.",
       ],
       [

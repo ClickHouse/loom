@@ -143,6 +143,9 @@ export function isLostConnection(text: string): boolean {
   return /^(failed to fetch|fetch failed|load failed|networkerror|network error)\b/i.test(text);
 }
 
+/** The tail for a write a failure may have left behind. */
+export const MAY_HAVE_SAVED = "It may have been saved; check before trying again.";
+
 /** The line for a call the dashboard stopped waiting for: a write may still finish. */
 export const TIMED_OUT = "Loom didn't answer in time. It may still finish; check before trying again.";
 
@@ -159,6 +162,6 @@ export function writeWarning(err: unknown): string {
     err.detail.category !== "configuration" &&
     (err.code === "ANSWER_UNREADABLE" || (err.status >= 500 && err.detail.retryable !== true))
   )
-    return "It may have been saved; check before trying again.";
+    return MAY_HAVE_SAVED;
   return "";
 }
