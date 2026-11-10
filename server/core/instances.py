@@ -208,7 +208,7 @@ async def tick(ch: Any, *, leader: bool) -> None:
         try:
             await _on_beat(ch)
         except Exception as e:  # noqa: BLE001 — a missed read must not stop the loop
-            log.warning("instance beat read failed: %s", e)
+            log.warning("instance beat read failed: %s: %s", type(e).__name__, e)
     await deployment_config.check(ch)
     if leader and live is not None:
         await deployment_config.publish(ch, live=live, published_by=_label)
