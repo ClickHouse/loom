@@ -271,8 +271,34 @@ def test_a_cancel_row_without_its_counts_is_not_read_as_a_pass():
         "loom_calls": 1,
         "loom_calls_after_disconnect": 0,
     }
-    with pytest.raises(KeyError):
+    with pytest.raises(SystemExit, match="older harness"):
         _qualify().report([old], "m")
+
+
+def test_the_cancel_probe_sorts_the_calls_by_when_they_began(monkeypatch):
+    # A call's row is stamped when it ends: one begun before the cut and ended after it
+    # counts before the cut, and one begun after it counts after.
+    q = _qualify()
+    seen = {}
+
+    async def read_until(url, body, headers, cut_s):
+        seen["cut_s"] = cut_s
+        seen["cut_at"] = q.time.time()
+        return False, ""
+
+    def loom_calls(ch_url, subject, since, until):
+        cut_ms = seen["cut_at"] * 1000
+        return [{"started_ms": cut_ms - 100}, {"started_ms": cut_ms + 5000}]
+
+    monkeypatch.setattr(q, "read_until", read_until)
+    monkeypatch.setattr(q, "loom_calls", loom_calls)
+    monkeypatch.setattr(q.time, "sleep", lambda s: None)
+    st = {"librechat": {"alice": {"agent_id": "a", "api_key": "k"}}, "librechat_url": "http://lc"}
+    args = type("A", (), {"cancel_after": 0.5, "cancel_wait": 0.0, "ch_url": "http://ch"})()
+    row = q.cancel_probe(st, args)
+    assert seen["cut_s"] == 0.5
+    assert row["loom_calls_before_disconnect"] == 1 and row["loom_calls_after_disconnect"] == 1
+    assert "the run went on after the disconnect" in q.probe_line(row)
 
 
 def _patched_client(monkeypatch, q, transport):
@@ -723,29 +749,3 @@ def test_seed_writes_each_documents_revision_after_its_first_write(monkeypatch):
     # Every document is written before any revision of one.
     first = {b["source_uri"]: i for i, b in reversed(list(enumerate(docs)))}
     assert docs.index(next(b for b in docs if b["content"] == writes[-1])) > max(first.values())
-
-
-def test_the_cancel_probe_sorts_the_calls_by_when_they_began(monkeypatch):
-    # A call's row is stamped when it ends: one begun before the cut and ended after it
-    # counts before the cut, and one begun after it counts after.
-    q = _qualify()
-    seen = {}
-
-    async def read_until(url, body, headers, cut_s):
-        seen["cut_s"] = cut_s
-        seen["cut_at"] = q.time.time()
-        return False, ""
-
-    def loom_calls(ch_url, subject, since, until):
-        cut_ms = seen["cut_at"] * 1000
-        return [{"started_ms": cut_ms - 100}, {"started_ms": cut_ms + 5000}]
-
-    monkeypatch.setattr(q, "read_until", read_until)
-    monkeypatch.setattr(q, "loom_calls", loom_calls)
-    monkeypatch.setattr(q.time, "sleep", lambda s: None)
-    st = {"librechat": {"alice": {"agent_id": "a", "api_key": "k"}}, "librechat_url": "http://lc"}
-    args = type("A", (), {"cancel_after": 0.5, "cancel_wait": 0.0, "ch_url": "http://ch"})()
-    row = q.cancel_probe(st, args)
-    assert seen["cut_s"] == 0.5
-    assert row["loom_calls_before_disconnect"] == 1 and row["loom_calls_after_disconnect"] == 1
-    assert "the run went on after the disconnect" in q.probe_line(row)

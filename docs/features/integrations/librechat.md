@@ -139,7 +139,8 @@ orgs, mints a token per person, revokes one, and scores each answer:
   and a version written next to it is the row's current version.
 - **tool calls:** the `mcp` rows Loom ledgered under the person's subject during the answer.
 - **latency and time to first token:** end to end, and to the first streamed delta, which
-  is the model's one-line preamble before its first tool call, not the answer.
+  for the harness's own agent (`setup`) is the model's one-line preamble before its first
+  tool call, not the answer; Loom's agent (`setup-bridge`) writes none.
 
 | Target (LibreChat path)                                 | Value         | Measured on v0.8.8, 14 cases, `claude-haiku-4-5-20251001`                 |
 | ------------------------------------------------------- | ------------- | ------------------------------------------------------------------------- |
