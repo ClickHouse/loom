@@ -387,7 +387,7 @@ def test_a_split_deployment_whose_workers_hold_the_lease_reports_no_absence(
         ({"LOOM_BACKGROUND_WORKERS": "off"}, "Start the workers container", "to run them here"),
         # Every replica runs auto in the deployment and stands aside: no container to start.
         ({"LOOM_DEPLOYMENT": "1"}, "workers_leader.reason", "workers container"),
-        # A branch server runs its own workers, never joins the deployment.
+        # A branch server runs none under auto and never joins the deployment.
         ({}, "On a shared one, check the deployment's workers process", "LOOM_DEPLOYMENT=1"),
     ],
 )

@@ -627,10 +627,8 @@ def _deployment_problems(settings: Any, state: HealthState) -> list[Problem]:
 
 
 _RUN_HERE = "On a ClickHouse no deployment uses, set LOOM_BACKGROUND_WORKERS=on to run them here."
-_ON_UNSEEN = "A process with LOOM_BACKGROUND_WORKERS=on takes no lease and does not show here."
-_NO_AUTO_RUNS = (
-    "No process holds a live workers lease, so no auto process runs the background workers: "
-    f"extraction and consolidation wait. {_ON_UNSEEN}"
+_ON_NOT_COUNTED = (
+    "A process with LOOM_BACKGROUND_WORKERS=on takes no lease, so this check cannot see it."
 )
 _START_WORKERS = "Start the workers container (or a replica with LOOM_BACKGROUND_WORKERS=auto)."
 _WHY_NO_LEASE = (
@@ -651,14 +649,17 @@ def _lease_absent(settings: Any, holder_live: bool | None) -> Problem | None:
         if outside:
             msg = (
                 "No process holds a live workers lease, and LOOM_BACKGROUND_WORKERS=auto runs "
-                f"none outside the deployment (LOOM_DEPLOYMENT unset). {_ON_UNSEEN}"
+                f"none outside the deployment (LOOM_DEPLOYMENT unset). {_ON_NOT_COUNTED}"
             )
             fix = (
                 f"{_RUN_HERE} On a shared one, check the deployment's workers process; do not "
                 "run them from this one."
             )
         else:
-            msg = _NO_AUTO_RUNS
+            msg = (
+                "No process holds a live workers lease, so no auto process runs the background "
+                f"workers: extraction and consolidation wait. {_ON_NOT_COUNTED}"
+            )
             fix = f"{_START_WORKERS} {_WHY_NO_LEASE}" if off else _WHY_NO_LEASE
         return Problem("workers_lease_absent", "warn", msg, fix, source="workers")
     if outside:

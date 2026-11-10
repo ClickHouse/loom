@@ -97,7 +97,7 @@ def newer_build(name: str) -> int:
 
 
 def _mode_reason(mode: str) -> str:
-    if settings.auto_outside_deployment():
+    if mode == "off" and settings.auto_outside_deployment():
         return "LOOM_BACKGROUND_WORKERS=auto outside the deployment (no LOOM_DEPLOYMENT=1): off"
     return f"LOOM_BACKGROUND_WORKERS={mode}"
 
