@@ -365,6 +365,26 @@ describe("humanizeError", () => {
       ).toBe("Loom is busy right now: writes against it are queued. Try again in a moment.");
     });
 
+    it("joins a plain CODE: detail string after a caller's lead-in with a dash, as an ApiError", () => {
+      expect(humanizeError(new Error("AUTH_INVALID: token expired"), { bare: true })).toBe(
+        "Sign-in rejected — token expired.",
+      );
+    });
+
+    it("leaves a read's retry advice to the server's words when they already give it", () => {
+      expect(
+        humanizeError(
+          new ApiError({
+            status: 503,
+            code: "BACKEND_UNAVAILABLE",
+            message: "the columns of t cannot be read yet; retry",
+            detail: { category: "dependency", retryable: false },
+          }),
+          { read: true },
+        ),
+      ).toBe("A service Loom relies on failed: the columns of t cannot be read yet; retry.");
+    });
+
     it("leaves retry advice to the tail: no code sentence says to try again", () => {
       for (const [code, sentence] of Object.entries(ERROR_CODE_PREFIXES)) {
         expect(sentence, code).not.toMatch(/retry|again|resend/i);

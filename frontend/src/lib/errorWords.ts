@@ -120,16 +120,15 @@ function retryTail(err: ApiError, read: boolean): string {
   const category = categoryOf(err);
   const retryable = err.detail.retryable;
   // A write the server marks unsafe to resend says so, even when its message says to retry;
-  // a read is told it can go again.
-  if (mayHaveSaved(err)) {
-    if (!read) return MAY_HAVE_SAVED;
-    if (
-      err.code === "ANSWER_UNREADABLE" ||
-      (retryable === false && (category === "capacity" || category === "dependency"))
-    )
-      return "Try again in a moment.";
-  }
+  // a read is told it can go again, unless the server's words already say so.
+  if (mayHaveSaved(err) && !read) return MAY_HAVE_SAVED;
   if (/\b(retry\w*|again|resend\w*)\b/i.test(err.serverMessage)) return "";
+  if (
+    mayHaveSaved(err) &&
+    (err.code === "ANSWER_UNREADABLE" ||
+      (retryable === false && (category === "capacity" || category === "dependency")))
+  )
+    return "Try again in a moment.";
   if (category === "configuration") return "Trying again won't help until that's changed.";
   const wait = Number(err.detail.retry_after_s ?? err.retryAfter);
   if (retryable === true) return wait > 0 ? `Try again in ${Math.ceil(wait)} s.` : "Try again in a moment.";
@@ -143,6 +142,13 @@ function joinSentence(friendly: string, message: string): string {
   if (!msg) return friendly.endsWith(":") ? friendly.slice(0, -1) + "." : friendly;
   // The server's words close the line, whatever introduced them.
   return `${friendly} ${asSentence(msg)}`;
+}
+
+/** A code's sentence and the server's words after a caller's own "…:": a dash where the
+ *  sentence would end in a second colon. */
+function bareJoin(sentence: string, message: string): string {
+  const msg = asSentence(message);
+  return sentence.endsWith(":") ? `${sentence.slice(0, -1)} — ${msg}` : `${sentence} ${msg}`;
 }
 
 /** A server message closed with a full stop, and otherwise left as written, since its first
@@ -205,7 +211,8 @@ export function humanizeError(err: unknown, opts: HumanizeOptions = {}): string 
   if (!m) return raw;
   const friendly = ERROR_CODE_PREFIXES[m[1]];
   if (!friendly) return raw;
-  return joinSentence(friendly, m[2] ?? "");
+  const detail = m[2] ?? "";
+  return opts.bare && detail.trim() ? bareJoin(friendly, detail) : joinSentence(friendly, detail);
 }
 
 /** The server's words (server/auth/bearer.py) for a call sent after the session ended in
@@ -243,10 +250,8 @@ function humanizeApiError(err: ApiError, bare: boolean, read: boolean): string {
   const lead = own ?? CATEGORY_SENTENCES[categoryOf(err)] ?? sentenceForStatus(err.status);
   let text: string;
   if (err.serverMessage && bare) {
-    // The caller's lead-in replaces a generic one; a code's sentence stays, joined by a dash
-    // where it would end in a second colon.
-    const msg = asSentence(err.serverMessage);
-    text = !own ? msg : own.endsWith(":") ? `${own.slice(0, -1)} — ${msg}` : `${own} ${msg}`;
+    // The caller's lead-in replaces a generic one; a code's sentence stays.
+    text = own ? bareJoin(own, err.serverMessage) : asSentence(err.serverMessage);
   } else if (err.serverMessage) text = joinSentence(lead, err.serverMessage);
   // With no message the code is all the server said: kept for support, never the sentence.
   // A generic lead-in says little, so the code goes with it; after a caller's own lead-in a
