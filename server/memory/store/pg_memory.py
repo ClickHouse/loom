@@ -49,6 +49,7 @@ from server.memory.store.rows import (
     identity_key,
     parse_memory_value,
 )
+from server.observability import pg_pipeline
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -824,7 +825,8 @@ async def complete(
     if not seqs:
         return
     async with pg.transaction() as conn:
-        await _complete_in(conn, seqs, done, tokens)
+        searchable = await _complete_in(conn, seqs, done, tokens)
+    _record_lags(searchable)
 
 
 async def complete_each(landed: Sequence[tuple[tuple[str, str, int], int]]) -> None:
@@ -836,10 +838,12 @@ async def complete_each(landed: Sequence[tuple[tuple[str, str, int], int]]) -> N
         by_done.setdefault(done, []).append(seq)
     if not by_done:
         return
+    searchable: list[tuple[float, bool]] = []
     async with pg.transaction() as conn:
         await _lock_held(conn, _held_keys([seq for seq, _ in landed], COMMIT_TOKEN))
         for done, seqs in by_done.items():
-            await _complete_in(conn, seqs, done, COMMIT_TOKEN)
+            searchable += await _complete_in(conn, seqs, done, COMMIT_TOKEN)
+    _record_lags(searchable)
 
 
 async def hand_over(seqs: Sequence[tuple[str, str, int]]) -> None:
@@ -885,11 +889,22 @@ async def _complete_in(
     seqs: Sequence[tuple[str, str, int]],
     done: int,
     tokens: Sequence[int] | int,
-) -> None:
+) -> list[tuple[float, bool]]:
     """`complete` in the caller's transaction, the deliveries locked first (a lock the
-    transaction already holds is taken again at no cost)."""
+    transaction already holds is taken again at no cost). Returns, for each revision
+    whose last search target this cleared, its projection lag and whether it was
+    redelivered: the caller records them once the transaction commits."""
     keys = _held_keys(seqs, tokens)
-    await _lock_held(conn, keys)
+    # `_lock_held`'s lock, with what is left of each delivery and the milliseconds since
+    # its revision's commit on Postgres's clock.
+    locked = await conn.fetch(
+        "SELECT d.targets, d.lease_token, "
+        "extract(epoch FROM clock_timestamp() - r.committed_at) * 1000 AS lag_ms "
+        "FROM loom.memory_deliveries d JOIN loom.memory_revisions r "
+        f"ON (r.org, r.namespace, r.seq) = (d.org, d.namespace, d.seq), {_HELD_LIST} "
+        f"WHERE {_HELD_MATCH} ORDER BY d.org, d.namespace, d.seq FOR UPDATE OF d",
+        *keys,
+    )
     # Deleted when nothing is left, else updated: one dead row per delivery, not two.
     await conn.execute(
         f"DELETE FROM loom.memory_deliveries d USING {_HELD_LIST} WHERE {_HELD_MATCH} "
@@ -906,6 +921,17 @@ async def _complete_in(
         *keys,
         done,
     )
+    searchable = []
+    for r in locked:  # a revision whose last search target this cleared
+        owed = int(r["targets"])
+        if owed & SEARCHED and not owed & ~done & SEARCHED:
+            searchable.append((float(r["lag_ms"]), int(r["lease_token"]) != COMMIT_TOKEN))
+    return searchable
+
+
+def _record_lags(searchable: Sequence[tuple[float, bool]]) -> None:
+    for lag_ms, redelivered in searchable:
+        pg_pipeline.record_projection_lag(lag_ms, redelivered=redelivered)
 
 
 @dataclass(frozen=True)
@@ -1092,6 +1118,41 @@ async def renew(claims: Sequence[Claimed]) -> list[Claimed]:
         for c in claims
         if (c.org, c.namespace, c.seq) in owed
     ]
+
+
+async def backlog(cap: int) -> pg_pipeline.Backlog:
+    """The memory deliveries owed, for the pipeline gauges: those a search waits for (a
+    memory row or a search document owed, not parked), counted up to `cap`; the parked
+    ones; and the age of the oldest of the first."""
+    row = await pg.fetchrow(
+        "SELECT (SELECT count(*) FROM (SELECT 1 FROM loom.memory_deliveries "
+        f"  WHERE NOT settled AND lease_until < 'infinity' AND targets & {SEARCHED} <> 0 "
+        "  LIMIT $1) p) AS pending, "
+        "(SELECT count(*) FROM (SELECT 1 FROM loom.memory_deliveries "
+        "  WHERE lease_until = 'infinity' AND NOT settled LIMIT $1) k) AS parked, "
+        "(SELECT extract(epoch FROM clock_timestamp() - min(r.committed_at)) "
+        "  FROM (SELECT org, namespace, seq FROM loom.memory_deliveries "
+        f"    WHERE NOT settled AND lease_until < 'infinity' AND targets & {SEARCHED} <> 0 "
+        "    ORDER BY lease_until LIMIT $1) d "
+        "  JOIN loom.memory_revisions r USING (org, namespace, seq)) AS oldest",
+        cap + 1,  # one past the cap says the count stopped
+    )
+    return pg_pipeline.backlog_from(row, cap)
+
+
+async def outbox_backlog(cap: int) -> pg_pipeline.Backlog:
+    """The audit outbox's rows, for the pipeline gauges: due or waiting (up to `cap`),
+    parked, and how long the oldest one past due has been."""
+    row = await pg.fetchrow(
+        "SELECT (SELECT count(*) FROM (SELECT 1 FROM loom.audit_outbox "
+        "  WHERE due_at < 'infinity' LIMIT $1) p) AS pending, "
+        "(SELECT count(*) FROM (SELECT 1 FROM loom.audit_outbox "
+        "  WHERE due_at = 'infinity' LIMIT $1) k) AS parked, "
+        "(SELECT extract(epoch FROM clock_timestamp() - min(due_at)) FROM loom.audit_outbox "
+        "  WHERE due_at <= now()) AS oldest",
+        cap + 1,  # one past the cap says the count stopped
+    )
+    return pg_pipeline.backlog_from(row, cap)
 
 
 async def parked_count() -> int:

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from collections.abc import Awaitable
 from typing import Any, cast
 
@@ -417,24 +418,61 @@ async def _pg_ok() -> bool:
 
 
 async def _postgres_block() -> dict[str, object]:
-    """How commits are acknowledged (`pg_profile.standby_now`), and the deliveries, audit
+    """How commits are acknowledged (`pg_profile.standby_now`); the deliveries, audit
     rows and knowledge document deliveries ClickHouse kept refusing past the attempt cap;
-    each None when unread."""
+    and each source's backlog (`_backlog`); each None when unread."""
     from server.core import pg_profile
     from server.knowledge.store import pg_documents
     from server.memory.store import pg_memory
 
-    standby, deliveries, audits, documents = await asyncio.gather(
+    standby, deliveries, audits, documents, backlog = await asyncio.gather(
         _bounded(pg_profile.standby_now(), None),
         _bounded(pg_memory.parked_count(), None),
         _bounded(pg_memory.parked_audits_count(), None),
         _bounded(pg_documents.parked_count(), None),
+        _bounded(_backlog(), None),
     )
     return {
         "standby": standby,
         "parked_deliveries": deliveries,
         "parked_audits": audits,
         "parked_knowledge_deliveries": documents,
+        "backlog": backlog,
+    }
+
+
+_backlog_cache: dict[str, Any] = {"at": None, "value": None}
+
+
+async def _backlog() -> dict[str, dict[str, Any]]:
+    """Each source's delivery backlog (`pg_pipeline`) with the reading's age: this
+    process's own reading, kept LOOM_PG_BACKLOG_HEALTH_CACHE_SECONDS (the delivery
+    workers' readings live in the process that runs them, by default not this one).
+    Its counts stop at LOOM_PG_BACKLOG_COUNT_CAP (`capped`); the block's `parked_*`
+    fields count in full."""
+    from server.knowledge.store import pg_documents
+    from server.memory.store import pg_memory
+
+    now = time.monotonic()
+    at = _backlog_cache["at"]
+    if at is None or now - at >= settings.pg_backlog_health_cache_seconds:
+        cap = settings.pg_backlog_count_cap
+        _backlog_cache["value"] = {
+            "memory": await pg_memory.backlog(cap),
+            "audit_outbox": await pg_memory.outbox_backlog(cap),
+            "knowledge": await pg_documents.backlog(cap),
+        }
+        _backlog_cache["at"] = now
+    age = round(now - _backlog_cache["at"], 1)
+    return {
+        source: {
+            "pending": r.pending,
+            "parked": r.parked,
+            "oldest_age_s": r.oldest_age_s,
+            "capped": r.capped,
+            "reading_age_s": age,
+        }
+        for source, r in _backlog_cache["value"].items()
     }
 
 

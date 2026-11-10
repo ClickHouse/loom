@@ -8,12 +8,16 @@ not the ingest worker runs. Idle under the ClickHouse authority.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from server.core import pg
+from server.core.error_summary import error_summary
 from server.settings import settings
 from server.workers import pass_context
 from server.workers.status import record_pass
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -35,6 +39,7 @@ async def run_pass() -> KnowledgeDeliveryResult:
         pass_context.mark_idle()
         return result
     with record_pass("knowledge_pg_delivery") as rec:
+        await _read_backlog()
         result.claimed, result.published, result.failed = await publish_due(
             settings.pg_delivery_batch_rows
         )
@@ -56,3 +61,17 @@ async def run_pass() -> KnowledgeDeliveryResult:
     ):
         pass_context.mark_idle()
     return result
+
+
+async def _read_backlog() -> None:
+    """The knowledge backlog for the pipeline gauges, first in the pass so a pass that
+    fails on ClickHouse still takes it."""
+    from server.knowledge.store import pg_documents
+    from server.observability import pg_pipeline
+
+    try:
+        pg_pipeline.set_backlog(
+            "knowledge", await pg_documents.backlog(settings.pg_backlog_count_cap)
+        )
+    except Exception as e:  # noqa: BLE001 — the pass's publishes must not wait on a gauge
+        log.warning("knowledge_pg_delivery: backlog not read: %s", error_summary(e))

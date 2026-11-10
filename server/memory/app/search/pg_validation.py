@@ -24,6 +24,7 @@ from server.memory.app.search.telemetry import record_page
 from server.memory.app.set_chunks import set_chunk_identities
 from server.memory.domain.search_types import hit_row_key
 from server.memory.store import pg_memory
+from server.observability import pg_pipeline
 from server.settings import settings
 
 if TYPE_CHECKING:
@@ -39,15 +40,30 @@ async def admit(
     """Wait until these namespaces' (all the org's when None) revisions through their
     current generations have the `owed` targets in ClickHouse, no longer than
     LOOM_PG_PROJECTION_WAIT_MS (and `cap_s`, a re-entrant pass's time left); whether
-    anything was behind, which the rest of the search then reads sequentially."""
+    anything was behind, which the rest of the search then reads sequentially. A wait is
+    recorded in `loom.pg.search_wait_ms` under the op the request invoked."""
     if not pg.enabled():
         return False
     behind = await pg_memory.unsearchable_through(org, namespaces, owed)
+    if not behind:
+        return False
+    started = time.monotonic()
     wait_s = settings.pg_projection_wait_ms / 1000
-    deadline = time.monotonic() + (wait_s if cap_s is None else min(wait_s, cap_s))
-    for namespace, through in sorted(behind.items()):
-        await wait_searchable(org, namespace, through, deadline=deadline, owed=owed)
-    return bool(behind)
+    deadline = started + (wait_s if cap_s is None else min(wait_s, cap_s))
+    try:
+        for namespace, through in sorted(behind.items()):
+            await wait_searchable(org, namespace, through, deadline=deadline, owed=owed)
+    except ProjectionBehindError:
+        # The wait reached its deadline: the op answers 503 PROJECTION_BEHIND, a report
+        # that may skip the projection reads on.
+        pg_pipeline.record_search_wait("deadline", _ms_since(started))
+        raise
+    pg_pipeline.record_search_wait("passed", _ms_since(started))
+    return True
+
+
+def _ms_since(started: float) -> float:
+    return (time.monotonic() - started) * 1000
 
 
 # The wait's name in a report's `skipped` lines and, for audit and validate, coverage.

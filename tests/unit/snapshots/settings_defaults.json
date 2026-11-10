@@ -965,6 +965,8 @@
  "pg_admission_help_rows": 20,
  "pg_admission_recent_vectors": 4096,
  "pg_admission_rounds": 3,
+ "pg_backlog_count_cap": 10000,
+ "pg_backlog_health_cache_seconds": 10.0,
  "pg_commit_lock_timeout_ms": 2000,
  "pg_delivery_batch_rows": 500,
  "pg_delivery_enabled": true,

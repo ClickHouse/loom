@@ -206,6 +206,40 @@ value inside the healthy range rather than no rows.
 Signals that say what to scale (web replicas, provider quota, workers container, or
 ClickHouse) are in [failure and recovery](../architecture/failure-and-recovery.md).
 
+### Pipeline SLOs
+
+Under the Postgres authority a write answers at its commit and becomes searchable once its
+memory row and search document are in ClickHouse
+([storage authority](../architecture/storage-authority.md#publication)). A search that
+finds earlier writes not yet there waits for them, up to `LOOM_PG_PROJECTION_WAIT_MS`
+(default 2000 ms), and answers 503 `PROJECTION_BEHIND` past it.
+
+| Objective                                   | Target                                                                                                            | Signal                                                                        |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| A read waits for earlier writes             | p99 below half `LOOM_PG_PROJECTION_WAIT_MS`, and none ending in `deadline` outside an outage (the op answers 503) | `loom.pg.search_wait_ms` by `outcome`                                         |
+| A write is in ClickHouse                    | p99 below half `LOOM_PG_PROJECTION_WAIT_MS`, so a read's wait has the other half                                  | `loom.pg.projection_lag_ms{path="flush"}`                                     |
+| Nothing waits past a stopped writer's lease | oldest pending below twice `LOOM_PG_REQUEST_LEASE_SECONDS` plus `LOOM_PG_DELIVERY_IDLE_INTERVAL_SECONDS`          | `loom.pg.oldest_pending_age_s{source="memory"}`                               |
+| No lag errors outside an outage             | 0                                                                                                                 | `loom.requests{loom.error_code="PROJECTION_BEHIND" or "PUBLICATION_PENDING"}` |
+| Nothing ClickHouse keeps refusing           | 0 outside a restore reconcile's hold                                                                              | `loom.pg.backlog{state="parked"}`                                             |
+
+A search's worst wait under a writer that stopped before publishing is its lease
+(`LOOM_PG_REQUEST_LEASE_SECONDS`): a waiting search publishes an expired delivery itself.
+That is above the default wait, so it shows as `outcome="deadline"`, not as a latency.
+Readiness does not depend on any of these: every replica reads the same Postgres, so a
+lag-driven readiness check would take every replica out of rotation at once.
+
+Every process that runs the delivery workers exports the whole deployment's backlog, and
+several may at once, so read the backlog gauges with `max`, not `sum`.
+
+Alerts:
+
+| Signal                                            | Alert when                      | Means                                                                                                                                                                     | First step                                                                                       |
+| ------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `loom.pg.search_wait_ms{outcome="deadline"}` rate | above 0 for 5 minutes           | a read waited out the deadline: the op answers 503 `PROJECTION_BEHIND`, a report reads on                                                                                 | ClickHouse reachability, then `loom.pg.backlog` and the `pg_delivery` worker's passes            |
+| `loom.pg.oldest_pending_age_s{source="memory"}`   | above the target for 10 minutes | the delivery worker is not keeping up, or ClickHouse refuses                                                                                                              | `GET /v1/health?include=postgres` → `postgres.backlog`, the `pg_delivery` worker status          |
+| `loom.pg.backlog{state="parked"}`                 | above 0                         | a delivery ClickHouse kept refusing, or one a restore reconcile holds (its `last_error` says which)                                                                       | the delivery's `last_error` ([storage authority](../architecture/storage-authority.md#delivery)) |
+| no `loom.pg.backlog` point from any process       | for 3 export periods            | the reading stopped: the backlog read fails, no delivery pass starts, or the time between two passes' starts (a pass and the interval after it) passes two export periods | the `backlog not read` warning in the `pg_delivery` and `knowledge_pg_delivery` workers' logs    |
+
 ### Integrity invariants
 
 Each of these gauges should read 0 forever. They are computed by the process holding

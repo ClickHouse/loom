@@ -4992,6 +4992,15 @@ settings:
   # reads on and names `projection` in `skipped`. [restart]
   # pg_projection_wait_ms: 2000
 
+  # The most deliveries one backlog reading counts per source (`loom.pg.backlog`,
+  # health's `postgres.backlog`); past it the reading stops counting and says so
+  # (`capped`). [restart]
+  # pg_backlog_count_cap: 10000
+
+  # Seconds each process keeps its own backlog reading for `GET
+  # /v1/health?include=postgres`. [restart]
+  # pg_backlog_health_cache_seconds: 10.0
+
   # Seconds the writing request holds its revisions' delivery; past it, the delivery
   # worker or a waiting admission in the namespace publishes them instead. [restart]
   # pg_request_lease_seconds: 5

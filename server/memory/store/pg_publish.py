@@ -36,6 +36,7 @@ from server.memory.store.pg_memory import (
 from server.memory.store.records import tombstone_decision_records
 from server.memory.store.rows import identity_key, next_version
 from server.memory.store.sql import _SEQUENTIAL
+from server.observability import pg_pipeline
 
 log = logging.getLogger(__name__)
 
@@ -298,6 +299,7 @@ async def insert_audit_rows(
     claim = rmt_carry.under_lease(start_by) if start_by is not None else contextlib.nullcontext()
     with claim:
         await ch.insert("loom.audit_log", rows, settings=batched_insert_settings())
+        pg_pipeline.record_insert("audit_log", len(rows))
 
 
 def document_id(row: Mapping[str, Any]) -> tuple[Any, ...]:

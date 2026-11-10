@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from server.core.ch import get_client
 from server.core.ch_writes import batched_insert_settings
 from server.core.hashing import sha256_value
+from server.observability import pg_pipeline
 from server.observability.instance import stamp_row
 
 log = logging.getLogger(__name__)
@@ -131,6 +132,7 @@ async def emit_strict(
         consumer=consumer,
     )
     await get_client().insert("loom.audit_log", [row], settings=batched_insert_settings())
+    pg_pipeline.record_insert("audit_log", 1)
     return str(row["row_hash"])
 
 
@@ -148,6 +150,7 @@ async def emit_many(
     try:
         rows = [audit_row(event_type, org, namespace, actor, s) for s in subjects]
         await get_client().insert("loom.audit_log", rows, settings=batched_insert_settings())
+        pg_pipeline.record_insert("audit_log", len(rows))
     except Exception as e:  # fail open: an audit write never fails the op it records
         log.exception("audit.emit_many failed for event_type=%s: %s", event_type, e)
 

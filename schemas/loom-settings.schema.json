@@ -5445,6 +5445,18 @@
           "type": "integer",
           "description": "Passes a writer that reads its heads again makes when a key's head keeps changing between its read and its commit. Past them a write request answers 503 ADMISSION_CONTENDED; memory.consolidate and a background writer leave the keys for their next pass."
         },
+        "pg_backlog_count_cap": {
+          "default": 10000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "The most deliveries one backlog reading counts per source (`loom.pg.backlog`, health's `postgres.backlog`); past it the reading stops counting and says so (`capped`)."
+        },
+        "pg_backlog_health_cache_seconds": {
+          "default": 10.0,
+          "minimum": 0,
+          "type": "number",
+          "description": "Seconds each process keeps its own backlog reading for `GET /v1/health?include=postgres`."
+        },
         "pg_commit_lock_timeout_ms": {
           "default": 2000,
           "minimum": 1,

@@ -123,6 +123,9 @@ def init_domain_metrics(meter: Any) -> None:
         _init_cost_instruments(meter)
         _init_worker_instruments(meter)
         _init_auth_instruments(meter)
+        from server.observability import pg_pipeline
+
+        pg_pipeline.register(meter)
         _initialized = True
         log.info("loom domain metrics initialized")
     except Exception as e:  # noqa: BLE001 — metrics init must not stop startup

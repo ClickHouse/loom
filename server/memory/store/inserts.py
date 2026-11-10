@@ -8,6 +8,7 @@ from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.store.rows import MEMORY_PERSISTED_COLS
+from server.observability import pg_pipeline
 
 
 def check_memory_rows(rows: Sequence[Mapping[str, Any]]) -> None:
@@ -62,6 +63,7 @@ async def insert_memory_versions(
         [dict(r) for r in rows],
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
+    pg_pipeline.record_insert("memory", len(rows))
     return len(rows)
 
 
@@ -87,3 +89,4 @@ async def insert_embedding_rows(
         rows,
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
+    pg_pipeline.record_insert("memory_embeddings", len(rows))
