@@ -72,6 +72,8 @@ def test_a_key_with_whitespace_is_split_before_it_is_stemmed() -> None:
     setup = _setup(*(_row("s1", key) for key in _SPACED))
     params = {**_params(per_key=3, limit=10), "stems": key_match_query_stems("communication style")}
     assert run(setup, key_match_precheck_sql(), params) == [{"any_key": 1}]
+    alone = _setup(_row("s1", "communication style"))
+    assert run(alone, key_match_precheck_sql(), params) == [{"any_key": 1}]
     assert sorted(r["memory_key"] for r in run(setup, _SQL, params)) == sorted(_SPACED)
     component = key_match_component_sql("e.org = {org:String} AND e.tombstoned_at IS NULL")
     rows = run(setup, component, {**params, "pool_keys": list(_SPACED)})
