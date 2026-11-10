@@ -211,8 +211,8 @@ call.
 
 ## The same agent in TypeScript
 
-The TypeScript SDK (`npm install @clickhouse/loom`, see its
-[reference](../reference/typescript-sdk.md#install)) has the same identity
+The TypeScript SDK (`@clickhouse/loom`,
+[installing it](../reference/typescript-sdk.md#install)) has the same identity
 model and session, with shorter verb names. It has no run helper; runs go through the
 typed `call`.
 
