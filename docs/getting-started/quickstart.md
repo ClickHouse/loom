@@ -284,7 +284,7 @@ when auth is turned on.
 - **Dashboard:** **Settings → Tokens → New token**. By default the token reads everything
   you belong to and saves to the namespace you are in. _Only these namespaces_ limits it to
   the ones you tick (none at first); the ticked ones are searched in the order listed, and
-  you drag a row by its grip or use its arrows to change it. The result shows the token once, with the
+  you change it with a row's arrows, or on a desktop by dragging the row's grip. The result shows the token once, with the
   setup for your MCP client or a script.
 - **CLI, as the operator:** run it inside the server container, which holds the signing
   secret:

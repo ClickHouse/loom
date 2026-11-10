@@ -26,6 +26,7 @@ import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal } from "../components/ui/Modal";
 import { IconButton } from "../components/IconButton";
 import { isMemoryNamespace } from "../lib/namespace";
+import { useMedia } from "../lib/useMedia";
 import {
   CLIENTS,
   configPreviewText,
@@ -238,6 +239,7 @@ function SearchOrder({
   onMove: (ns: string, to: number) => void;
 }) {
   const titleId = useId();
+  const touch = useMedia(COARSE_POINTER);
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<number | null>(null);
   // A move can disable the arrow that was pressed (the row reached an end): focus then
@@ -284,27 +286,30 @@ function SearchOrder({
               className={`flex flex-wrap items-center gap-2 px-2 py-1.5 text-sm ${over === i && dragging !== ns ? "bg-surface" : ""} ${dragging === ns ? "opacity-60" : ""}`}
             >
               {/* Only the grip drags, so a press on the role or an arrow stays a press and the
-                  name can be selected; the whole row is what moves under the pointer. */}
-              <span
-                className="cursor-grab text-text-muted"
-                aria-hidden="true"
-                draggable
-                onDragStart={(e) => {
-                  setDragging(ns);
-                  e.dataTransfer.effectAllowed = "move";
-                  e.dataTransfer.setData("text/plain", ns);
-                  const row = e.currentTarget.closest("li");
-                  if (row) e.dataTransfer.setDragImage(row, 16, 16);
-                }}
-                onDragEnd={() => {
-                  setDragging(null);
-                  setOver(null);
-                }}
-              >
-                <Icon name="dots-vertical-double" size="sm" />
-              </span>
+                  name can be selected. A touch screen starts no HTML drag: there the arrows
+                  are the way, and no grip promises otherwise. */}
+              {!touch && (
+                <span
+                  className="cursor-grab text-text-muted"
+                  aria-hidden="true"
+                  draggable
+                  onDragStart={(e) => {
+                    setDragging(ns);
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setData("text/plain", ns);
+                    const row = e.currentTarget.closest("li");
+                    if (row) e.dataTransfer.setDragImage(row, 16, 16);
+                  }}
+                  onDragEnd={() => {
+                    setDragging(null);
+                    setOver(null);
+                  }}
+                >
+                  <Icon name="dots-vertical-double" size="sm" />
+                </span>
+              )}
               <span className="w-5 shrink-0 text-right tabular text-text-muted">{i + 1}</span>
-              {/* At least 10rem for the name: on a phone the role and arrows wrap under it. */}
+              {/* A 10rem basis for the name: on a phone the role and arrows wrap under it. */}
               <span className="font-mono min-w-0 flex-1 basis-40 truncate">{label(ns)}</span>
               {repo ? (
                 <span className="text-xs text-text-muted shrink-0">read-only</span>
@@ -352,6 +357,9 @@ function SearchOrder({
     </div>
   );
 }
+
+/** A touch screen: HTML drag and drop does not start there. */
+const COARSE_POINTER = "(pointer: coarse)";
 
 type RepoInfo = Record<string, { repo: string; branch: string; classification?: string }>;
 
@@ -420,6 +428,7 @@ function TokenForm({
   const [nsRole, setNsRole] = useState<Record<string, GrantRole>>({});
   const [newNs, setNewNs] = useState("");
   const [addingNs, setAddingNs] = useState(false);
+  const touch = useMedia(COARSE_POINTER);
   const [loadFailed, setLoadFailed] = useState(false);
   // The last move of the search order, said to a screen reader (`moveTo`).
   const [moved, setMoved] = useState("");
@@ -707,7 +716,7 @@ function TokenForm({
           <p className="text-xs text-text-muted">
             {selectedNs.length === 0
               ? "Tick the namespaces this token reads. Nothing else, whatever you join later."
-              : `${selectedNs.length} ticked, and nothing else, whatever you join later. Number 1 is searched first: drag a row by its grip, or use its arrows, to change the order.`}
+              : `${selectedNs.length} ticked, and nothing else, whatever you join later. Number 1 is searched first: ${touch ? "use a row's arrows" : "drag a row by its grip, or use its arrows,"} to change the order.`}
           </p>
         </fieldset>
       )}

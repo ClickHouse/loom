@@ -640,7 +640,11 @@ for (const [width, touch] of [
       const down = await order.getByRole("button", { name: "Move team-research-notes down" }).boundingBox();
       if (!list || !down) throw new Error("the search order or its Move down button has no box");
       expect(down.x + down.width).toBeLessThanOrEqual(list.x + list.width);
-      if (!touch) {
+      if (touch) {
+        // A touch screen starts no HTML drag: no grip offers one, and the hint names the arrows.
+        await expect(order.locator("[draggable]")).toHaveCount(0);
+        await expect(page.getByText(/use a row's arrows to change the order/)).toBeVisible();
+      } else {
         // A real drag by the grip: the second row takes the first place.
         const rows = order.getByRole("listitem");
         await rows.nth(1).locator("[draggable]").dragTo(rows.nth(0));

@@ -277,12 +277,12 @@ describe("the token form", () => {
     expect(order()).toEqual(["ns-a", "ns-b", "ns-c"]);
     expect(screen.getByRole("button", { name: "Move ns-c up" })).toHaveFocus();
     expect(screen.getByRole("status")).toHaveTextContent("ns-c moved to 3 of 3");
-    // A tick empties the line, so the next move is announced even when its words repeat.
+    // A tick empties the line, so a later move with the same words is announced again.
     await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
     expect(screen.getByRole("status")).toHaveTextContent("");
     await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
     await userEvent.click(screen.getByRole("button", { name: "Move ns-c up" }));
-    await userEvent.click(screen.getByRole("button", { name: "Move ns-c up" }));
+    expect(screen.getByRole("status")).toHaveTextContent("ns-c moved to 1 of 3");
     expect((await create()).namespaces.map((n) => (typeof n === "string" ? n : n.namespace))).toEqual([
       "ns-c",
       "ns-a",
