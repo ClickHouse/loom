@@ -910,7 +910,8 @@ def _code_tier_problems(st: HealthState) -> list[Problem]:
     each tier with its reason, failed passes, since when and how far behind, and the
     fix of each kind. `/v1/health` answers anyone and an entry may be restricted, so
     only a reader who may see every entry (`code_tier_named`) reads which entry each
-    line is (repository@branch and namespace) and its error's first line; `code.repos`
+    line is (repository@branch, org and namespace) and the error line that says why
+    (`tier_health.error_line`); `code.repos`
     and the repository page name them to whoever may read them. Its severity is the
     worst row's."""
     rows = st.code_tier_failures or ()

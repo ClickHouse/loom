@@ -1,6 +1,6 @@
 """`/v1/health` answers anyone, so its `code_tier_failing` problem names each failing
-entry (repository@branch and namespace) and its error only to a platform admin's
-token; any other caller, or a token that does not verify, reads the reasons and fixes
+entry (repository@branch, org and namespace) and its error only to a platform
+admin's token without per-namespace roles; any other caller, or a token that does not verify, reads the reasons and fixes
 without the entries."""
 
 from __future__ import annotations
@@ -88,3 +88,12 @@ def test_any_other_caller_reads_the_reason_without_the_entry(
     assert "clang_full: git lock held, 4 failed passes" in message
     assert cache != "no-store"
     assert not any(s in message for s in ("o/a", "code-a", "/srv", "ToolOutputError"))
+
+
+def test_an_admin_token_that_cannot_be_checked_reads_no_entry(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the revocation list is not loaded: the token may be revoked, so it names nothing
+    monkeypatch.setattr("server.auth.revocation.loaded", lambda: False)
+    message, cache = _tier_message(client, _bearer(["platform_admin"]))
+    assert "code-a" not in message and cache != "no-store"

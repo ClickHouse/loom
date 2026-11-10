@@ -549,5 +549,28 @@ def test_the_error_line_is_the_one_that_says_why() -> None:
     health = _failing_with(cmake)
     # the record starts mid-line; the kind's own line is the one shown
     assert tier_health.error_line(health.kind, health.error) == ">> cmake configure failed"
-    health = _failing_with("y" * 700 + "\nsomething broke\nlast words")
-    assert tier_health.error_line(health.kind, health.error) == "something broke"
+    # cut, with no line of its kind: the last whole line, where the error sits
+    health = _failing_with("y" * 700 + "\n  File x.py, line 3\nValueError: broke")
+    assert tier_health.error_line(health.kind, health.error) == "ValueError: broke"
+    # cut inside the line its kind matched: that line still names the cause
+    health = _failing_with("z" * 700 + " Unable to create '/c/.git/index.lock': File exists.")
+    assert health.kind == "git_lock"
+    assert tier_health.error_line(health.kind, health.error).endswith("File exists.")
+    # one cut line and no kind: that line, not nothing
+    health = _failing_with("w" * 900)
+    assert tier_health.error_line(health.kind, health.error) == "…" + "w" * 199
+    # not cut: the first line
+    assert tier_health.error_line("unknown", "ToolOutputError: boom\nmore") == (
+        "ToolOutputError: boom"
+    )
+
+
+def test_the_dashboard_says_each_kind_as_the_server_does() -> None:
+    import re
+    from pathlib import Path
+
+    ts = Path("frontend/src/lib/tierHealth.ts").read_text()
+    block = ts[ts.index("const KIND_WORD") : ts.index("};", ts.index("const KIND_WORD"))]
+    words = dict(re.findall(r'^\s+(\w+): "([^"]+)",$', block, re.MULTILINE))
+    assert words.pop("unknown") == tier_health.reason("unknown")
+    assert words == tier_health.REASONS

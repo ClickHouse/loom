@@ -381,7 +381,7 @@ REASONS: dict[str, str] = {
     "harness": "indexer failed",
     "module": "module failed to build",
 }
-# The first line of an error, as far as a status line shows it.
+# How much of an error's line a status line shows.
 ERROR_LINE_CHARS = 200
 
 
@@ -391,17 +391,18 @@ def reason(kind: str) -> str:
 
 
 def error_line(kind: str, error: str) -> str:
-    """The line of a recorded error that says why, redacted and cut to
-    `ERROR_LINE_CHARS`: the line the kind's pattern matched, else the first whole line
-    (the record keeps the end of the output, so a record cut to `ERROR_CHARS` starts
-    mid-line)."""
+    """The line of a recorded error that says why, redacted, its last
+    `ERROR_LINE_CHARS` kept: the line the kind's pattern matched, else the first line, or
+    the last whole one when the record was cut to `ERROR_CHARS` (it keeps the end of
+    the output, where git's `fatal:` and the exception sit, and starts mid-line)."""
     lines = [s.strip() for s in redact(error).splitlines() if s.strip()]
-    if len(error) >= ERROR_CHARS:
-        lines = lines[1:]
     patterns = [pattern for k, pattern in _KINDS if k == kind]
     line = next((s for s in lines if any(p.search(s) for p in patterns)), "")
-    line = line or next(iter(lines), "")
-    return line if len(line) <= ERROR_LINE_CHARS else line[: ERROR_LINE_CHARS - 1] + "…"
+    if not line and lines:
+        whole = lines[1:] if len(error) >= ERROR_CHARS and len(lines) > 1 else lines
+        line = whole[-1] if len(error) >= ERROR_CHARS else whole[0]
+    # a long line keeps its end, where a tool's message puts the cause
+    return line if len(line) <= ERROR_LINE_CHARS else "…" + line[-(ERROR_LINE_CHARS - 1) :]
 
 
 def severity(
