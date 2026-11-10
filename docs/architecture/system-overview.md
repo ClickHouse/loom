@@ -2,13 +2,13 @@
 
 Loom is a Python server (a FastAPI application plus a supervisor of background workers)
 and ClickHouse, with Postgres as an option for live memory. Under
-`LOOM_STORAGE_AUTHORITY=postgres`, Postgres holds live memory and knowledge document heads
-([storage authority](storage-authority.md)). Loom is stateful: everything it knows is
-stored in those stores, including facts and their vectors, documents, conversations, the
-entity graph, the code index, tasks, audit, cost and erasure progress. The server
-processes keep no durable state of their own, so any number of them can serve the same
-stores and a request can land on any of them. The few pieces of state kept outside those
-stores are listed under [Deployment topology](#deployment-topology).
+`LOOM_STORAGE_AUTHORITY=postgres`, Postgres holds live memory and knowledge document
+heads ([storage authority](storage-authority.md)). Loom is stateful: everything it knows
+is stored there, including facts and their vectors, documents, conversations, the entity
+graph, the code index, tasks, audit, cost and erasure progress. The server processes
+keep no durable state of their own, so any number of them can serve the same deployment
+and a request can land on any of them. The few pieces of state kept outside those stores
+are listed under [Deployment topology](#deployment-topology).
 
 The storage layout is in [ClickHouse](clickhouse.md).
 
