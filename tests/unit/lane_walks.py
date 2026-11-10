@@ -194,6 +194,12 @@ def _lane_includes(text: str) -> object:
     return asyncio.run(_resolve_simple_lane_includes(Repo(), "o", "n", pf))  # type: ignore[arg-type]
 
 
+def _python_parse(text: str) -> object:
+    from server.code.domain.extract.lang_python import parse_python
+
+    return parse_python("a.py", text.encode()).includes
+
+
 def _wanted(lane: str) -> Callable[[str], object]:
     """The import probe of one lane over a file's specifiers, one per line."""
 
@@ -295,6 +301,7 @@ WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("pr-body-unclosed-comments", _pr_body, _run("", "<!--")),
     ("markdown-lane-includes", _lane_includes, _numbered("[a](x{}.md)\n")),
     ("python-imports", _wanted("python"), _numbered("m{}\n")),
+    ("python-import-statements", _python_parse, _numbered("import m{}\n")),
     ("typescript-imports", _wanted("typescript"), _numbered("./m{}\n")),
     ("rust-uses", _wanted("rust"), _numbered("crate::m{}\n")),
     ("rust-long-use", _wanted("rust"), _run("", "a::")),

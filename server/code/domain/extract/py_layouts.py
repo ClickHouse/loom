@@ -192,9 +192,10 @@ def _pyproject_roots(base: str, data: dict[str, Any]) -> list[str]:
 
 
 def _squeezed_names(text: str) -> str:
-    """Each line with the whitespace runs before its first `=` / `:` cut to one space, its
-    indent kept: configparser's option pattern rescans such a run from every character
-    before it, inside one regex call that holds the GIL. What is read here is unchanged: no
+    """Each line with the whitespace runs inside its text before its first `=` / `:` cut to
+    one space and the run right before the delimiter dropped, its indent kept: configparser's
+    option pattern rescans such a run from every character before it, inside one regex call
+    that holds the GIL. What is read here is unchanged: no
     section or option name read holds a space, nor a `package_dir` name."""
     out: list[str] = []
     for line in text.split("\n"):
@@ -455,19 +456,19 @@ def module_entry_facets(pf: ParsedFile, layout: Layout | None, *, ordinal: int =
     attribute is not a module-level definition (0.8)."""
     if layout is None or not layout.entry_points or not pf.path.endswith(".py"):
         return []
-    from server.code.domain.extract.lang_python import _module_files, _roots_for, module_scope
+    from server.code.domain.extract.lang_python import module_files, module_scope, roots_for
 
     scope = module_scope(pf.path)
     by_name = {s.qualified_name: s for s in pf.symbols}
     # the entry points whose `import_candidates("", module, layout.roots)` hold this path:
-    # under each root it tries, the path is one of `_module_files` of a stem
+    # under each root it tries, the path is one of `module_files` of a stem
     hits: dict[int, EntryPoint] = {}
-    for root in _roots_for("", layout.roots):
+    for root in roots_for("", layout.roots):
         prefix = f"{root}/" if root else ""
         if not pf.path.startswith(prefix):
             continue
         rest = pf.path[len(prefix):]
-        for suffix in _module_files(""):
+        for suffix in module_files(""):
             if rest.endswith(suffix):
                 hits.update(layout.entry_points_by_stem.get(rest[: -len(suffix)], ()))
     out: list[Facet] = []

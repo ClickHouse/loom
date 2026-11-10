@@ -219,8 +219,11 @@ async def _resolve_py_includes(repo: CodeRepo, org: str, ns: str, pf: ParsedFile
 
     specs = list(pf.includes)
     live = await _live_paths(repo, org, ns, pf)
-    roots = await _py_roots_for(repo, org, ns, pf, live) if live is not None else ()
-    present = await _present_for(repo, org, ns, pf, py_lane.wanted_paths(pf.path, specs, roots))
+    roots: tuple[str, ...] = ()
+    if live is not None:
+        roots, present = await _py_roots_for(repo, org, ns, pf, live), live
+    else:  # the candidates are the probe's input only: with the live set they go unread
+        present = await _present_for(repo, org, ns, pf, py_lane.wanted_paths(pf.path, specs))
     pf.includes = [
         p for p in py_lane.resolve_imports(pf.path, specs, present, roots) if p != pf.path
     ]
@@ -693,7 +696,7 @@ async def _resolve_package_exports(
         if complete
         else await repo.live_paths_present(org, ns, list(dict.fromkeys(manifests)))
     )
-    out: list[str] = []
+    out: dict[str, None] = {}  # ordered and deduplicated: a list's `in` per hit is quadratic
     for spec in pending:
         pkg_dir = next(
             (d for d in _registry_dirs(reg, spec) if f"{d}/package.json" in live_manifests),
@@ -711,9 +714,9 @@ async def _resolve_package_exports(
             else set(await repo.live_paths_present(org, ns, cands[:64]))
         )
         hit = next((c for c in cands if c in found), None)
-        if hit and hit not in out:
-            out.append(hit)
-    return out
+        if hit:
+            out[hit] = None
+    return list(out)
 
 
 _BARREL_CACHE: TtlCache[tuple[str, str, str], tuple[str, ...]] = TtlCache(

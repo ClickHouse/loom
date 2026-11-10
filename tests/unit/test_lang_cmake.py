@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from server.code.domain.extract import lang_cmake
 from server.code.domain.extract.lang_cmake import (
     cmake_chunks,
     cmake_external_edges,
@@ -123,7 +124,7 @@ def test_a_line_break_before_the_parenthesis_counts_for_later_commands() -> None
 def test_a_files_source_facets_stop_at_the_cap() -> None:
     text = "set(S " + " ".join(f"s{i}.c" for i in range(400)) + ")\n"
     text += "".join(f"add_library(t{i} ${{S}})\n" for i in range(30))
-    assert len(cmake_units("CMakeLists.txt", text).facets) == 10_000
+    assert len(cmake_units("CMakeLists.txt", text).facets) == lang_cmake._MAX_FACETS
 
 
 def test_a_function_ends_at_the_first_end_on_a_later_line() -> None:

@@ -264,9 +264,7 @@ def parse_python(path: str, source: bytes) -> ParsedFile:
             # every module an import names is a specifier the
             # ingest resolves against the live paths (`a.b`, `.m`, `..pkg.mod`);
             # `from m import x` also names the submodule `m.x` when x is one
-            for spec in import_specs(child, source):
-                if spec and spec not in pf.includes:
-                    pf.includes.append(spec)
+            pf.includes.extend(import_specs(child, source))
             return
         if t in _MODULE_GUARDS:
             # module-level guards (if __name__ == ..., try / except ImportError)
@@ -275,6 +273,8 @@ def parse_python(path: str, source: bytes) -> ParsedFile:
             return
 
     walk(tree.root_node, ())
+    # distinct, in first-seen order: a list's `in` per specifier is quadratic
+    pf.includes = list(dict.fromkeys(s for s in pf.includes if s))
     # the module's constants, type aliases and `__all__`
     # join the defs and classes; a declaration beside its implementation folds
     taken = {s.name for s in pf.symbols if s.qualified_name.count("::") == 1}
@@ -500,7 +500,7 @@ def _package_of(from_path: str, level: int) -> str | None:
     return d
 
 
-def _roots_for(from_path: str, extra: tuple[str, ...] | list[str] = ()) -> list[str]:
+def roots_for(from_path: str, extra: tuple[str, ...] | list[str] = ()) -> list[str]:
     """Where an absolute specifier may start, nearest first as `sys.path`
     reads it: the importer's own directory and each ancestor (a test that
     imports its neighbours, a script beside its helpers), the repository
@@ -521,7 +521,7 @@ def _roots_for(from_path: str, extra: tuple[str, ...] | list[str] = ()) -> list[
     return list(out)
 
 
-def _module_files(stem: str) -> tuple[str, ...]:
+def module_files(stem: str) -> tuple[str, ...]:
     """The files a module stem may be, in the interpreter's order, then the
     stubs (a stub-only module — a C extension's `.pyi` — is the one
     definition the index has)."""
@@ -549,15 +549,15 @@ def import_candidates(
             return []
         stem = f"{base}/{rel}" if base and rel else (base or rel)
         if rel:
-            cands = list(_module_files(stem))
+            cands = list(module_files(stem))
         else:
             cands = [f"{stem}/__init__.py" if stem else "__init__.py",
                      f"{stem}/__init__.pyi" if stem else "__init__.pyi"]
         return [c for c in cands if c != from_path]
     out: dict[str, None] = {}  # ordered and deduplicated: a list's `in` per path is quadratic
-    for root in _roots_for(from_path, roots):
+    for root in roots_for(from_path, roots):
         stem = f"{root}/{rel}" if root else rel
-        out.update(dict.fromkeys(_module_files(stem)))
+        out.update(dict.fromkeys(module_files(stem)))
     out.pop(from_path, None)
     return list(out)
 
@@ -601,7 +601,7 @@ def first_present_candidate(
     from server.code.domain.extract.py_layouts import is_vendored
 
     explicit = set(roots)  # a manifest's root stands whatever it holds
-    for root in _roots_for(from_path, roots):
+    for root in roots_for(from_path, roots):
         if (
             root and root not in explicit and not is_vendored(root)
             and from_path.startswith(root + "/") and f"{root}/__init__.py" in present

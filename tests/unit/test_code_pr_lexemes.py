@@ -123,3 +123,19 @@ def test_pr_history_row_writes_every_persisted_column() -> None:
         files=["src/a.cpp"],
         merged_at=datetime(2026, 9, 1, tzinfo=UTC),
     )["linked_issues"] == [116268, 118729]
+
+
+def test_html_comments_are_dropped_as_the_lazy_pattern_did() -> None:
+    import re
+
+    lazy = re.compile(r"<!--.*?-->", re.S)
+    for body in (
+        "a<!--x-->b<!--y-->c",
+        "a<!-->b-->c",
+        "a<!---->b",
+        "a<!---b",
+        "a<!--x-->b<!--open",
+    ):
+        assert strip_pr_template(body) == "\n".join(
+            s for s in lazy.sub(" ", body).splitlines() if s.strip()
+        ), body
