@@ -633,7 +633,6 @@ for (const [width, touch] of [
       await page.getByRole("checkbox", { name: "Read shared-handbook" }).click();
       const order = page.getByRole("list", { name: "Search order" });
       await expect(order.getByRole("listitem")).toHaveCount(2);
-      await page.waitForTimeout(300); // the rows' entry animation, before axe
       expect(await violations(page)).toEqual([]);
       const name = order.getByText("team-research-notes", { exact: true });
       expect((await boxOf(name)).width).toBeGreaterThanOrEqual(140);

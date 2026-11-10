@@ -398,17 +398,18 @@ describe("the token form", () => {
       .getAllByRole("listitem")
       .map((li) => li.textContent?.match(/ns-[abc]/)?.[0]);
     expect(order).toEqual(["ns-c", "ns-a", "ns-b"]);
-    // Downward too, and a drop on its own place changes nothing.
-    const now = () => within(screen.getByRole("list", { name: "Search order" })).getAllByRole("listitem");
     expect(screen.getByRole("status")).toHaveTextContent("ns-c moved to 1 of 3");
+    const now = () => within(screen.getByRole("list", { name: "Search order" })).getAllByRole("listitem");
+    const names = () => now().map((li) => li.textContent?.match(/ns-[abc]/)?.[0]);
+    // Downward too.
     fireEvent.dragStart(grip(now()[0]), { dataTransfer: data });
     fireEvent.dragOver(now()[2], { dataTransfer: data });
     fireEvent.drop(now()[2], { dataTransfer: data });
-    const before = now().map((li) => li.textContent?.match(/ns-[abc]/)?.[0]);
+    expect(names()).toEqual(["ns-a", "ns-b", "ns-c"]);
+    // A drop on its own place changes nothing.
     fireEvent.dragStart(grip(now()[1]), { dataTransfer: data });
     fireEvent.drop(now()[1], { dataTransfer: data });
-    expect(now().map((li) => li.textContent?.match(/ns-[abc]/)?.[0])).toEqual(before);
-    expect(now().map((li) => li.textContent?.match(/ns-[abc]/)?.[0])).toEqual(["ns-a", "ns-b", "ns-c"]);
+    expect(names()).toEqual(["ns-a", "ns-b", "ns-c"]);
     fireEvent.dragStart(grip(now()[2]), { dataTransfer: data });
     fireEvent.dragOver(now()[0], { dataTransfer: data });
     fireEvent.drop(now()[0], { dataTransfer: data });
