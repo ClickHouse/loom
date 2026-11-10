@@ -1583,7 +1583,7 @@
           "default": 180,
           "minimum": 1,
           "type": "integer",
-          "description": "Largest compiler-tier delta file the server reads, in MiB; a larger one fails the entry's pass. It bounds the pass's work and the path text kept (code-index-operations.md)."
+          "description": "Largest compiler-tier delta file the server reads, in MiB; a larger one fails the entry's pass. It bounds the work of an entry's pass and the path text kept (code-index-operations.md)."
         },
         "code_scip_delta_interval_seconds": {
           "default": 300,

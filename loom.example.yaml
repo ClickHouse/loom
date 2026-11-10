@@ -1298,7 +1298,7 @@ settings:
   # code_scip_delta_timeout_seconds: 3600
 
   # Largest compiler-tier delta file the server reads, in MiB; a larger one fails the
-  # entry's pass. It bounds the pass's work and the path text kept
+  # entry's pass. It bounds the work of an entry's pass and the path text kept
   # (code-index-operations.md). [live]
   # code_scip_delta_file_max_mb: 180
 

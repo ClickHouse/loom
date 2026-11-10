@@ -48,9 +48,10 @@ PATH_BYTES = 4096
 # Whitespace between JSON values, skipped at once
 _WS = re.compile(r"[ \t\r\n]*")
 # Most characters one value's text, and one round's, may hold: it bounds the read
-# buffer. Not a setting. A real file entry has about 32 characters per counted byte,
-# so for one this cap binds near 2,000,000 counted bytes, before the round budget's
-# default; the largest measured holds about 600,000.
+# buffer. A real file entry has about 32 characters per counted byte, so for one this
+# cap binds near 2,000,000 counted bytes, before the round budget's default; the
+# largest measured holds about 600,000.
+# not a setting: it bounds the read buffer, not the work; the round budget is the knob.
 _MAX_CHARS = 64_000_000
 _COUNTED = (b"{", b"[", b",")
 # A value that ends, or a decode error that falls, this close to the end of the text read
@@ -106,19 +107,20 @@ class _Values:
         self._at += 1
         return c
 
-    def _refused(self, nodes: int) -> FileRefused:
-        """The refusal for the cap the value passed: a setting, or the fixed text cap."""
+    def _refused(self, nodes: int, entry: int) -> FileRefused:
+        """The refusal for the cap file entry `entry` passed: a setting, or the fixed text
+        cap. It names the entry: the one file to look at."""
         if nodes > self._max_nodes:
             return FileRefused(
-                f"{self._path}: one value holds more than {self._max_nodes} `{{`/`[`/`,` "
-                "bytes (code_scip_delta_round_max_nodes)"
+                f"file entry {entry}: {self._path}: one value holds more than "
+                f"{self._max_nodes} `{{`/`[`/`,` bytes (code_scip_delta_round_max_nodes)"
             )
         return FileRefused(
-            f"{self._path}: one value holds more than {_MAX_CHARS} characters "
-            "(a fixed cap, not a setting)"
+            f"file entry {entry}: {self._path}: one value holds more than {_MAX_CHARS} "
+            "characters (a fixed cap, not a setting)"
         )
 
-    def span(self, *, entry: bool = False) -> tuple[int, int, int]:
+    def span(self, *, entry: int | None = None) -> tuple[int, int, int]:
         """Read past the next JSON value: where it starts and ends in the text and its
         counted bytes; refused when it holds more than the round's counted bytes or
         characters. Only a file entry can be that large; any other value is invalid."""
@@ -141,9 +143,9 @@ class _Values:
                 raise ValueError("delta invalid: not JSON") from None
             nodes = _counted(text, start, end)
             if nodes > self._max_nodes or end - start > _MAX_CHARS:
-                if not entry:
+                if entry is None:
                     raise ValueError("delta invalid: a value outside `files` is over a round's cap")
-                raise self._refused(nodes)
+                raise self._refused(nodes, entry)
             if not cut:
                 self._at = end
                 return start, end, nodes
@@ -160,9 +162,9 @@ class _Values:
         except ValueError:
             raise ValueError("delta invalid: not JSON") from None
 
-    def text(self) -> tuple[str, int]:
+    def text(self, entry: int) -> tuple[str, int]:
         """The next file entry's text and its counted bytes."""
-        start, end, nodes = self.span(entry=True)
+        start, end, nodes = self.span(entry=entry)
         return self._text[start:end], nodes
 
     def at_end(self) -> bool:
@@ -304,9 +306,9 @@ class DeltaFile:
                     continue
                 for index, _ in enumerate(_array(values)):
                     if index != current[at]:
-                        values.span(entry=True)  # checked by the first read; not applied
+                        values.span(entry=index)  # checked by the first read; not applied
                         continue
-                    entry = _entry(values.text()[0], index)
+                    entry = _entry(values.text(index)[0], index)
                     if entry.path != self.paths[index]:  # the entry the plan admitted
                         raise FileRefused(f"{self._path} changed while it was read")
                     batch.append(entry)
@@ -400,10 +402,7 @@ def _parse(values: _Values) -> _Parsed:
             out.deleted = [_deleted_path(values.value()) for _ in _array(values)]
         elif key == "files":
             for index, _ in enumerate(_array(values)):
-                try:
-                    text, nodes = values.text()
-                except FileRefused as e:  # say which entry: the one file to look at
-                    raise FileRefused(f"file entry {index}: {e}") from None
+                text, nodes = values.text(index)
                 out.paths.append(_entry(text, index).path)
                 out.nodes.append(nodes)
                 out.chars.append(len(text))
