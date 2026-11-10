@@ -10,10 +10,10 @@ and under an absolute bound. Composite texts, a prefix the pattern spells, a run
 or of one keyword with an opener, and a closing character, catch the patterns whose
 optional parts split one run every way or that search on from each keyword. A pattern
 only ever used with `fullmatch` is anchored with `\\A`, so the searches here cost what
-its use does. The lanes' own walks over a file (`lane_walks.py`) are timed the same way, each in
-a child process with a deadline. A class guard runs every registered lane parser over
-generated shapes in a child process with a deadline and a memory limit; `KNOWN_SLOW` lists
-the shapes still to fix."""
+its use does. The lanes' own walks over a file (`lane_walks.py`) are timed at N and 4N
+with the cyclic collector off, each in a child process with a deadline. A class guard runs
+every registered lane parser over generated shapes the same way, in a child process with a
+deadline and a memory limit; `KNOWN_SLOW` lists the shapes still to fix."""
 
 from __future__ import annotations
 
@@ -247,8 +247,9 @@ def test_a_run_after_a_prefix_costs_linear_time(name: str, pattern: re.Pattern) 
 # The lanes' own walks over a file: a slice, a count from the top or a rescan per line,
 # heading or site is quadratic, and a backtracking match holds the GIL so a thread
 # timer cannot stop it. Each walk runs in a child process that dumps its stack and exits
-# when it overruns, so a regression fails here instead of hanging the suite.
-_WALK_BOUND_S = 5.0  # well above a linear walk at 4N, far below a quadratic one
+# when it overruns, so a regression fails here instead of hanging the suite. Only the
+# growth from N to 4N is judged: a linear walk at 4N takes seconds on a slow runner, and
+# a quadratic one 16 times its time at N, or the deadline.
 _WALK_DEADLINE_S = 60
 
 
@@ -271,7 +272,7 @@ def test_a_lane_walk_costs_linear_time(name: str) -> None:
     )
     assert done.returncode == 0, done.stderr[-4000:]
     small, big = json.loads(done.stdout)
-    assert big < _WALK_BOUND_S and (big < _FLOOR_S or big < _RATIO * small), (name, small, big)
+    assert big < _FLOOR_S or big < _RATIO * small, (name, small, big)
 
 
 # The class guard: every lane parser in the ingest's registry, over generated shapes (runs

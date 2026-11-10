@@ -6,8 +6,25 @@ per-lane timing (`registry_cost`) and the shapes still over linear (`KNOWN_SLOW`
 
 from __future__ import annotations
 
+import gc
 import time
 from collections.abc import Callable
+
+
+def cpu_seconds(run: Callable[[], object]) -> float:
+    """The CPU time `run` takes with the cyclic collector off. A full collection walks every
+    live object of the process, so one that lands inside a timed call adds a step that
+    depends on the heap, not on the text: at a few thousand characters it alone turns 4
+    times the text into 8 times the time. The collector's cost is linear overall, so
+    leaving it out hides no growth of the walk's own."""
+    gc.collect()
+    gc.disable()
+    try:
+        t0 = time.process_time()  # CPU time: a loaded host stretches wall time, not this
+        run()
+        return time.process_time() - t0
+    finally:
+        gc.enable()
 
 
 def _markdown(text: str) -> object:
@@ -509,9 +526,7 @@ def walk_cost(name: str) -> tuple[float, float]:
 
     def cost(n: int) -> float:
         t = text(n)
-        t0 = time.process_time()  # CPU time: a loaded host stretches wall time, not this
-        walk(t)
-        return time.process_time() - t0
+        return cpu_seconds(lambda: walk(t))
 
     return min(cost(_WALK_N) for _ in range(3)), min(cost(4 * _WALK_N) for _ in range(3))
 
@@ -693,10 +708,9 @@ def registry_cost(lang: str) -> list[tuple[str, float, float, int, int]]:
     def cost(text: Callable[[int], str], n: int) -> tuple[float, int, str]:
         source = (head + text(n)).encode()
         parsed[:] = [0.0, 0]
-        t0 = time.process_time()  # CPU time, as in `walk_cost`
-        pf = _extract(path, source)
-        took = time.process_time() - t0 - parsed[0]
-        return took, int(parsed[1]), str(getattr(pf, "lang", ""))
+        got: list[object] = []
+        took = cpu_seconds(lambda: got.append(_extract(path, source))) - parsed[0]
+        return took, int(parsed[1]), str(getattr(got[0], "lang", ""))
 
     cost(lambda n: "a\n", 1)  # the first file of a lane loads its grammar and imports
     out = []
