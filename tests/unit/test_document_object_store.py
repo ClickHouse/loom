@@ -1594,7 +1594,7 @@ def test_a_failed_saga_keeps_its_table_counts_when_the_bucket_cannot_be_listed(
     assert verify["per_table"] == {"loom.chunks": 2} and verify["count"] == 2
     assert "verified_at" not in verify  # the bucket went uncounted
     # The failed checkpoint keeps those counts.
-    assert saga._verify_columns(verify)["residue_count"] == 2
+    assert saga._verify_columns(verify, saga._census(verify))["residue_count"] == 2
 
 
 def test_an_evidence_census_keeps_the_table_counts_when_postgres_or_the_bucket_is_down(

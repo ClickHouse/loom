@@ -362,6 +362,7 @@ async def run_saga(
             await _census_tail(
                 input.org, census_scope_type, census_scope_value, verify, purge=census_purge
             )
+            census = _census(verify)
             completed_at = datetime.now(UTC).replace(tzinfo=None)
             await checkpoint(
                 row=row,
@@ -370,7 +371,7 @@ async def run_saga(
                 current_step=len(completed),
                 failure_reason=reason,
                 completed_at=completed_at,
-                extra=_verify_columns(verify),
+                extra=_verify_columns(verify, census),
             )
             await audit.emit(
                 event_type="erasure.failed",
@@ -394,7 +395,7 @@ async def run_saga(
                 residue_count=int(verify.get("count") or 0),
                 residue={t: n for t, n in (verify.get("per_table") or {}).items() if n},
                 verified_at=verify.get("verified_at"),
-                census=_census(verify),
+                census=census,
                 purge=census_purge,
                 failure_reason=reason[:512],
                 steps_completed=sorted(completed),
@@ -402,14 +403,9 @@ async def run_saga(
     # After the census and before the checkpoint: a crash in between reopens the saga,
     # which announces again under the same event id. The event names the erasure only,
     # never the user or a key.
-    erased_namespaces: list[str] | None = None  # a user's erasure: every namespace
-    if input.scope_type != "user_id":
-        erased_namespaces = (
-            [census_scope_value]
-            if isinstance(census_scope_value, str)
-            else list(census_scope_value)
-        )
-    await webhooks.announce_erasure(input.org, erased_namespaces, erasure_id)
+    await webhooks.announce_erasure(
+        input.org, _erased_namespaces(input.scope_type, census_scope_value), erasure_id
+    )
     completed_at = datetime.now(UTC).replace(tzinfo=None)
     census = _census(verify)
     await checkpoint(
@@ -418,7 +414,7 @@ async def run_saga(
         steps_completed=sorted(completed),
         current_step=99,
         completed_at=completed_at,
-        extra=_verify_columns(verify),
+        extra=_verify_columns(verify, census),
     )
 
     await audit.emit(
@@ -494,7 +490,7 @@ def verify_columns_from_output(out: ErasureRequestOutput | None) -> VerifyColumn
     }
 
 
-def _verify_columns(verify: dict[str, Any]) -> VerifyColumns:
+def _verify_columns(verify: dict[str, Any], census: dict[str, int] | None) -> VerifyColumns:
     """erasure_requests columns from the verify holder; empty when no census ran (the
     census tail raised), or when it found nothing and left a store uncounted
     (`census_kept`)."""
@@ -506,8 +502,15 @@ def _verify_columns(verify: dict[str, Any]) -> VerifyColumns:
         "residue": json.dumps(
             {t: n for t, n in (verify.get("per_table") or {}).items() if n}, sort_keys=True
         ),
-        "census": _census_column(_census(verify)),
+        "census": _census_column(census),
     }
+
+
+def _erased_namespaces(scope_type: str, scope_value: str | Sequence[str]) -> list[str] | None:
+    """The namespaces an erasure webhook names; None for a user's erasure (every one)."""
+    if scope_type == "user_id":
+        return None
+    return [scope_value] if isinstance(scope_value, str) else list(scope_value)
 
 
 def _census_column(census: dict[str, int] | None) -> str:
