@@ -541,11 +541,11 @@ its own wait covers every row its transaction read.
   worker to decide.
 - A key's head that is not the revision a delivery claimed (newer, redacted or gone),
   and the live decision writers a record retirement keeps, are other sessions' commits.
-  They are read again in `pg.durable_transaction()`, whose COMMIT carries a
-  transactional logical message (prefix `loom.durable`) so that it waits for the
-  standbys on the connection that read the rows, and decided from that read: a copy (a
-  pin, a touch) has a document built onto it; a delete, other content, a redaction or an
-  erasure settles the claimed document unsent.
+  They are read again in `pg.durable_transaction()`; its COMMIT carries a transactional
+  logical message (prefix `loom.durable`), so it waits for the standbys on the
+  connection that made the read. The document is built or settled from that read: a
+  copy (a pin, a touch) has a document built onto it; a delete, other content, a
+  redaction or an erasure settles the claimed document unsent.
   The read is made durable on its own connection because the settling commit, on
   another, could not cover it: after a failover it would mark the document done on a
   primary where the claimed revision is the head again.
@@ -555,7 +555,8 @@ its own wait covers every row its transaction read.
 
 The rule for any path: a ClickHouse send fed by a Postgres read sends only what the
 caller committed or claimed, or reads durably first. A decision that only changes
-Postgres state is covered by the commit that records it.
+Postgres state is covered by its commit when the transaction that commits it also made
+the read.
 `tests/unit/test_pg_durable_reads.py` pins every caller of a journal read with the reason
 it holds.
 

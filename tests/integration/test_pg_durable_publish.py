@@ -170,8 +170,9 @@ async def test_a_commit_on_the_primary_alone_reaches_clickhouse_once_the_standby
     short_waits: None,
     ch_client: Any,
 ) -> None:
-    """A write whose commit wait the server cut off is on the primary alone: no claim
-    takes it while the standby lacks it, and a search publishes it once it holds it."""
+    """A write whose commit wait the server cut off is on the primary alone: a claim of
+    it raises while the standby lacks it, so no pass sends it, and a search publishes it
+    once the standby holds it."""
     from server.core import pg
     from server.memory.store import pg_memory
 

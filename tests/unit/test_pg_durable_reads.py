@@ -420,7 +420,7 @@ def test_boot_refuses_a_role_that_may_not_write_the_message(
         asyncio.run(pg_profile.check_durability())
 
 
-def test_a_lease_clickhouse_spent_before_the_durable_read_counts(
+def test_a_lease_spent_before_the_durable_read_counts_as_the_attempt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A lease gone before the durable read is the send's own (PublicationPending,
