@@ -136,8 +136,9 @@ def test_the_open_loop_starts_each_send_on_time_and_counts_those_past_the_cap() 
         return await open_loop(20, 200.0, 5, slow)
 
     # 20 sends due over 0.1 s, at most 5 in flight: 5 start, 15 are counted
-    skipped, _took = asyncio.run(held())
-    assert started == [0, 1, 2, 3, 4] and skipped == 15
+    skipped, took = asyncio.run(held())
+    # the last send is due at 19 / 200 s, and the schedule never starts one early
+    assert started == [0, 1, 2, 3, 4] and skipped == 15 and took >= 19 / 200
 
     async def fast(i: int) -> None:
         started.append(i)
