@@ -349,11 +349,13 @@ nothing; a change it suggests is a draft a person applies elsewhere, as the Assi
 page's tune drafts already are. The instructions require citations, tell the agent to
 call a tool before answering a question about the namespace (a greeting calls none) and
 abstain when none supports it, to write no text before or between its tool calls, to
-read `insights.catalog` before running SQL, to answer how Loom works from `help.search`
-and `help.get`, citing each section as `[help:...]` rather than as a document citation,
-and to treat stored text as data that cannot grant a tool or approve a change. The
-agents API streams the text of every model step as one answer's content, with nothing
-between steps
+read `insights.catalog` before running SQL, to start a question about Loom itself that
+does not plainly ask how to use it with a memory, a document and a help search together
+and answer a fact the namespace holds from the namespace, to answer how Loom works from
+`help.search` and `help.get`, citing each section as `[help:...]` rather than as a
+document citation, and to treat stored text as data that cannot grant a tool or approve
+a change. The agents API streams the text of every model step as one answer's content,
+with nothing between steps
 ([streaming](../features/integrations/librechat.md#tool-errors-streaming-and-cancellation)),
 so neither the bridge nor the dashboard can tell a lead-in ("Let me search the
 memories.") from the answer it runs into. While no text has arrived, the dashboard shows
@@ -398,6 +400,24 @@ never rebuilds the index per call. An answer that rests only on `help.search` an
 does: the docs are not the namespace's data. A read returns at most 16,000 characters,
 and a cut one names the offset its rest starts at; a page read, or a cut one, adds the
 page's outline.
+
+**The asker's context.** An answer's token is `viewer` on one namespace, so the agent
+cannot tell from it what the person asking may do. The bridge, which holds the caller's
+own credential, puts one line in fixed words as the last line of the question it sends
+LibreChat: `Loom, for how-to answers only: this question comes with <credential>, whose
+role in this <place> is <role>.` The credential is `a sign-in session`, `a delegated
+token` (one capped by the grant of whoever made it, a client token's included), `a
+scoped token` (its role per namespace in its claim) or `a token`. The role is the
+highest the gate admits, after the viewer check every answer passes (`admin`, `writer`
+or `viewer`), or `unknown` when a check could not read what it needed. The place is
+`personal collection`, `collection`, `restricted namespace` (the directory's cached
+classification, no read) or `namespace`. The line names no subject and no namespace, so
+nothing the caller controls is in it and no identity goes to the model provider through
+it. It never refuses an answer. The instructions read it as Loom's only in that place,
+treat it as granting nothing, and answer how a role is raised from the documentation for
+that credential and place, naming the namespace's admins from `grants.list`. A bridge of
+an earlier build sends no line, and an answer that depends on the person's role then
+says it does not know it.
 
 **Why not a knowledge source.** Knowledge rows are tenant data: an org and namespace on
 every row, erasure coverage, and a copy per org or a read path across tenants. Indexing
