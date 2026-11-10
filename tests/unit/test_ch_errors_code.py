@@ -19,3 +19,8 @@ def test_error_name_reads_the_name_before_the_version_or_none() -> None:
         error_name("Code: 60. DB::Exception: Table loom.x does not exist (UNKNOWN_TABLE)") is None
     )
     assert error_name(ValueError("")) is None
+    nested = (
+        "Code: 279. DB::Exception: All connection tries failed. Log: Code: 210. Refused "
+        "(NETWORK_ERROR) (version 26.10.2.93). (ALL_CONNECTION_TRIES_FAILED) (version 26.10.2.93)"
+    )
+    assert (error_code(nested), error_name(nested)) == (279, "ALL_CONNECTION_TRIES_FAILED")

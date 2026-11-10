@@ -174,9 +174,10 @@ def error_code(e: BaseException | str) -> int | None:
 
 def error_name(e: BaseException | str) -> str | None:
     """The error name a ClickHouse server error carries before its version, as
-    `(BAD_ARGUMENTS) (version …)`, or None."""
-    m = _ERROR_NAME.search(str(e))
-    return m.group(1) if m else None
+    `(BAD_ARGUMENTS) (version …)`, or None. A nested message ends with the outer
+    exception's name, the one `error_code` reads the code of."""
+    names = _ERROR_NAME.findall(str(e))
+    return names[-1] if names else None
 
 
 def is_replica_bound_error(e: BaseException) -> bool:
