@@ -448,9 +448,8 @@ async def _live_text(repo: CodeRepo, org: str, ns: str, path: str, max_bytes: in
             blob = None
         if blob is not None:
             if not blob:
-                _EMPTY_VERDICTS.put(
-                    at_commit, True
-                )  # a fact at this commit, unlike an unindexed file
+                # a fact at this commit, unlike an unindexed file
+                _EMPTY_VERDICTS.put(at_commit, True)
             return blob.decode("utf-8", "replace")
     in_chunks = (org, ns, path, max_bytes)
     if _EMPTY_VERDICTS.get(in_chunks) is not None:

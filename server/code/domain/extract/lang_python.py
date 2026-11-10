@@ -315,6 +315,8 @@ def parse_python(path: str, source: bytes) -> ParsedFile:
 # ---------------------------------------------------------------------------
 
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# a joined member repeats its module: a long module times many members is a copy each
+_MAX_SPEC_CHARS = 256
 
 
 def _dotted(node: Any, source: bytes) -> str:
@@ -367,7 +369,7 @@ def import_specs(node: Any, source: bytes) -> list[str]:
                 (x for x in c.named_children if x.type == "dotted_name"), None
             )
             member = _dotted(name, source) if name is not None else ""
-        if member and _IDENT_RE.match(member):
+        if member and _IDENT_RE.match(member) and len(module) + len(member) < _MAX_SPEC_CHARS:
             out.append(join_spec(module, member))
     return out
 

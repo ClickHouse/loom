@@ -270,3 +270,51 @@ def test_a_lane_walk_costs_linear_time(name: str) -> None:
     assert done.returncode == 0, done.stderr[-4000:]
     small, big = json.loads(done.stdout)
     assert big < _WALK_BOUND_S and (big < _FLOOR_S or big < _RATIO * small), (name, small, big)
+
+
+# The class guard: every lane parser the ingest registers, over generated shapes (runs of
+# one character, repeated names, unclosed openers, entries times uses), each lane in a
+# child process with a deadline. A new lane, or a walk added to one without a cost walk
+# of its own, is timed here. `KNOWN_SLOW` holds the shapes still over linear, to fix.
+_REGISTRY_CHILD = f"""
+import faulthandler, json, sys
+faulthandler.dump_traceback_later({_WALK_DEADLINE_S * 3}, exit=True)
+from tests.unit.lane_walks import registry_cost
+print(json.dumps(registry_cost(sys.argv[1])))
+"""
+
+
+def _registered_lanes() -> list[str]:
+    from server.code.app.index.ingest_parse import _PARSERS
+
+    return sorted(_PARSERS)
+
+
+def test_every_registered_lane_has_a_sample() -> None:
+    from tests.unit.lane_walks import KNOWN_SLOW, SAMPLES
+
+    assert set(SAMPLES) == set(_registered_lanes())
+    assert set(KNOWN_SLOW) <= set(SAMPLES)
+
+
+@pytest.mark.parametrize("lang", _registered_lanes())
+def test_a_registered_lane_costs_linear_time(lang: str) -> None:
+    from tests.unit.lane_walks import KNOWN_SLOW
+
+    done = subprocess.run(
+        [sys.executable, "-c", _REGISTRY_CHILD, lang],
+        capture_output=True,
+        text=True,
+        timeout=_WALK_DEADLINE_S * 6,
+        cwd=pathlib.Path(__file__).resolve().parents[2],
+    )
+    assert done.returncode == 0, done.stderr[-4000:]
+    slow = {
+        shape: (round(small, 3), round(big, 3))
+        for shape, small, big in json.loads(done.stdout)
+        if big > _BOUND_S or (big > _FLOOR_S / 2 and big > _RATIO * small)
+    }
+    row, known = KNOWN_SLOW.get(lang, ("", ()))
+    new = {shape: t for shape, t in slow.items() if shape not in known}
+    assert not new, f"{lang}: (N s, 4N s) per shape {new}"
+    assert not known or set(known) & set(slow), f"{lang}: {row} runs within budget; drop it"

@@ -316,3 +316,9 @@ def test_a_call_holding_its_own_opener_is_read_from_the_inner_one() -> None:
     src = b'import starlette.routing\nroutes = [Route("/a",  # was Route("/old"\n  methods=["POST"])]\n'
     facets = py_facets(parse_python("svc/app.py", src))
     assert [f.name for f in facets if f.kind == "http_route"] == ["POST /old"]
+
+
+def test_a_member_of_a_module_longer_than_a_spec_is_not_joined() -> None:
+    long = ".".join(["a"] * 200)
+    pf = parse_python("x.py", f"from {long} import b, c\nfrom m import d\n".encode())
+    assert pf.includes == [long, "m", "m.d"]

@@ -58,6 +58,8 @@ KIND_MACRO = "macro"
 _MAX_DOC = 2000
 _FILE_MODULES = ("mod.rs", "lib.rs", "main.rs")
 _MAX_CANDIDATES_PER_USE = 12
+# a leaf's path repeats every prefix above it: a long prefix times many leaves is a copy each
+_MAX_USE_CHARS = 256
 
 
 @lru_cache(maxsize=1)
@@ -266,7 +268,9 @@ def _use_paths(arg: Any, source: bytes) -> list[str]:
         lst = arg.child_by_field_name("list")
         out: list[str] = []
         for item in lst.named_children if lst is not None else []:
-            out.extend(f"{prefix}::{p}" if prefix else p for p in _use_paths(item, source))
+            for p in _use_paths(item, source):
+                if len(prefix) + len(p) < _MAX_USE_CHARS:
+                    out.append(f"{prefix}::{p}" if prefix else p)
         return out
     if t == "use_list":
         out = []

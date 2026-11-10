@@ -206,6 +206,12 @@ def _python_parse(text: str) -> object:
     return parse_python("a.py", text.encode()).includes
 
 
+def _rust_parse(text: str) -> object:
+    from server.code.domain.extract.lang_rust import parse_rust
+
+    return parse_rust("src/lib.rs", text.encode()).includes
+
+
 def _wanted(lane: str) -> Callable[[str], object]:
     """The import probe of one lane over a file's specifiers, one per line."""
 
@@ -314,6 +320,16 @@ WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("markdown-lane-includes", _lane_includes, _numbered("[a](x{}.md)\n")),
     ("python-imports", _wanted("python"), _numbered("m{}\n")),
     ("python-import-statements", _python_parse, _numbered("import m{}\n")),
+    (
+        "python-long-module-members",
+        _python_parse,
+        lambda n: "from " + "a." * (n // 4) + "a import " + _numbered("b{},")(n // 2) + "c\n",
+    ),
+    (
+        "rust-long-use-prefix",
+        _rust_parse,
+        lambda n: "use " + "a::" * (n // 6) + "a::{" + _numbered("b{},")(n // 2) + "c};\n",
+    ),
     ("typescript-imports", _wanted("typescript"), _numbered("./m{}\n")),
     ("rust-uses", _wanted("rust"), _numbered("crate::m{}\n")),
     ("rust-long-use", _wanted("rust"), _run("", "a::")),
@@ -352,3 +368,160 @@ def walk_cost(name: str) -> tuple[float, float]:
         return time.perf_counter() - t0
 
     return min(cost(_WALK_N) for _ in range(3)), min(cost(4 * _WALK_N) for _ in range(3))
+
+
+# The class guard: every registered lane parser (`ingest_parse._PARSERS`) over generated
+# shapes, so a walk added without a cost walk of its own is timed too. (path, header) per
+# lane; the header makes a content-detected lane (a manifest, a template, a TLC config)
+# read as that lane.
+SAMPLES: dict[str, tuple[str, str]] = {
+    "cpp": ("a.cpp", ""),
+    "python": ("a.py", ""),
+    "shell": ("a.sh", ""),
+    "typescript": ("a.ts", ""),
+    "javascript": ("a.js", ""),
+    "rust": ("src/a.rs", ""),
+    "prisma": ("a.prisma", ""),
+    "go": ("a.go", "package a\n"),
+    "java": ("A.java", ""),
+    "vue": ("a.vue", ""),
+    "svelte": ("a.svelte", ""),
+    "astro": ("a.astro", ""),
+    "angular_template": ("a.component.html", ""),
+    "proto": ("a.proto", ""),
+    "gotemplate": ("chart/templates/a.yaml", "{{ .Values.a }}\n"),
+    "hcl": ("a.tf", ""),
+    "k8s": ("a.yaml", "apiVersion: v1\nkind: ConfigMap\n"),
+    "jsonnet": ("a.jsonnet", ""),
+    "tla": ("a.tla", "---- MODULE a ----\n"),
+    "tla_config": ("a.cfg", "INIT Init\n"),
+    "flatbuffers": ("a.fbs", ""),
+    "cmake": ("CMakeLists.txt", ""),
+    "doc": ("a.md", ""),
+}
+
+_CHARS = " \t\na({[<\"'`#/*\\$:-=|.,;"
+_REPEATED = (
+    "a ",
+    "a\n",
+    "a(\n",
+    "a.a",
+    "a::",
+    "a/",
+    "import a\n",
+    "use a;\n",
+    '#include "a"\n',
+    "include(a)\n",
+    "`abc`\n",
+    "[a](a)\n",
+    "{{ a }}",
+    "<a/>",
+    "a: a\n",
+    "- a\n",
+    "a = a\n",
+    "def a(): pass\n",
+    "class A {}\n",
+    "function(a)\n",
+    "@a\n",
+    "# a\n",
+)
+_OPENERS = ("(", "{", "[", "<a>", "<!--", "/*", "{{", '"""', "${", "{%", "`", "'", '"')
+
+
+def _fan_out(entry: str, use: str, head: str = "", mid: str = "\n") -> Callable[[int], str]:
+    """n/2 characters of entries, then n/2 of uses."""
+    return lambda n: head + _run("", entry)(n // 2) + mid + _run("", use)(n // 2)
+
+
+SHAPES: list[tuple[str, Callable[[int], str]]] = [
+    *((f"run {c!r}", _run("", c)) for c in _CHARS),
+    *((f"names {u!r}", _run("", u)) for u in _REPEATED),
+    *((f"unclosed {o!r}", _run("", o)) for o in _OPENERS),
+    *((f"unclosed {o!r} words", _run("", o + "a ")) for o in _OPENERS),
+    ("fan-out list", _fan_out("a,", "a ")),
+    ("fan-out variable", _fan_out("a.c ", "${S} ", "set(S ", ")\n")),
+    ("fan-out members", _fan_out("a,", "m.a\n", "from m import ")),
+    ("fan-out definitions", _fan_out("def a(): pass\n", "a()\n")),
+]
+
+
+def _extract(path: str, source: bytes) -> object:
+    """What the ingest derives from one file without the store: the parse, its chunks
+    and facets, its local edges. A walk that raises costs what it ran."""
+    from server.code.app.index.ingest_chunks import _chunks_for
+    from server.code.app.index.ingest_parse import parse_for_ingest
+    from server.code.domain.extract.edges_treesitter import extract_edges_and_misses
+
+    pf, err = parse_for_ingest(path, source)
+    if pf is None:
+        return err
+    for step in (
+        lambda: _chunks_for(pf, path, source, 6000),
+        lambda: extract_edges_and_misses(pf, {}, None),
+    ):
+        try:
+            step()
+        except Exception:  # noqa: BLE001 — the guard times walks; a crash is another test's
+            pass
+    return pf
+
+
+_REGISTRY_N = 2_500
+
+
+def registry_cost(lang: str) -> list[tuple[str, float, float]]:
+    """(shape, the time at N, the time at 4N) per shape for one lane, the best of three
+    when the first pair looks over linear. The tree-sitter parse is not counted: its
+    error recovery has its own CPU deadline (`bounded_parse`); the walks after it have
+    none."""
+    from server.code.domain.extract import bounded_parse
+
+    path, head = SAMPLES[lang]
+    real = bounded_parse.parse
+    in_parse = [0.0]
+
+    def timed(*args: object) -> object:
+        t0 = time.perf_counter()
+        try:
+            return real(*args)
+        finally:
+            in_parse[0] += time.perf_counter() - t0
+
+    bounded_parse.parse = timed  # type: ignore[assignment]
+
+    def cost(text: Callable[[int], str], n: int) -> float:
+        source = (head + text(n)).encode()
+        in_parse[0] = 0.0
+        t0 = time.perf_counter()
+        _extract(path, source)
+        return time.perf_counter() - t0 - in_parse[0]
+
+    out = []
+    for name, text in SHAPES:
+        small, big = cost(text, _REGISTRY_N), cost(text, 4 * _REGISTRY_N)
+        if big > 0.02 and big > 8 * small:
+            small = min(small, cost(text, _REGISTRY_N), cost(text, _REGISTRY_N))
+            big = min(big, cost(text, 4 * _REGISTRY_N), cost(text, 4 * _REGISTRY_N))
+        out.append((name, small, big))
+    return out
+
+
+# lane -> (its ledger row, the shapes still over linear there). An entry is work to do,
+# not an exemption: the guard fails once none of its shapes is slow, so it is removed.
+KNOWN_SLOW: dict[str, tuple[str, tuple[str, ...]]] = {
+    # edges_treesitter resolve: `_py_is_method` over every same-named definition per call
+    "python": ("CODE-RX24", ("fan-out definitions",)),
+    # lang_rust._doc_above walks back over every earlier item per item
+    "rust": (
+        "CODE-RX23",
+        (
+            "run '|'",
+            "names 'a(\\n'",
+            "unclosed '<!--'",
+            "unclosed '${'",
+            "unclosed '{%'",
+            "unclosed '(' words",
+            "unclosed '[' words",
+        ),
+    ),
+}
