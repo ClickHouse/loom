@@ -114,6 +114,7 @@ export function errorToastMs(msg: string): number {
 }
 
 const MAX_STACK = 4;
+const WORDING_WARM_MS = 1500;
 const DURATION_MS: Record<ToastKind, number> = { ok: 3500, info: 3500, error: 8000 };
 
 const KIND_ICON: Record<ToastKind, { name: IconName; color: string }> = {
@@ -136,6 +137,15 @@ export function keepOpenOnToasts(e: Event): boolean {
  *  silences it. */
 export function ToastViewport({ pinned = null }: { pinned?: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
+
+  // Load the error wording soon after the shell paints, so an error toast never fetches
+  // it: in a tab opened before a redeploy that fetch would miss and reload the page.
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      import("../lib/errorWords").catch(() => {});
+    }, WORDING_WARM_MS);
+    return () => window.clearTimeout(t);
+  }, []);
 
   const dismiss = useCallback((id: number) => {
     setItems((prev) => prev.filter((x) => x.id !== id));
