@@ -495,7 +495,7 @@ export function useMemoryListRead({
             setRefreshing(false);
             // Say so inline — an empty list that is really a failed read looked like "no
             // memories yet".
-            setLoadError({ text: humanizeError(e), requestId: errorRequestId(e) });
+            setLoadError({ text: humanizeError(e, { read: true }), requestId: errorRequestId(e) });
             setEntries([]);
           }
         }

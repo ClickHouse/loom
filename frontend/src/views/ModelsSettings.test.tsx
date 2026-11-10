@@ -158,3 +158,13 @@ describe("Failed reads and writes", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("A reset whose connection dropped", () => {
+  it("keeps the warning that the reset may have gone through", async () => {
+    vi.mocked(resetModelConfiguration).mockRejectedValue(new TypeError("Failed to fetch"));
+    render(<ModelsSettings />);
+    fireEvent.click(await screen.findByRole("button", { name: "Use environment configuration" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm environment configuration" }));
+    expect(await screen.findByText(/Couldn't reset model settings: .*may still have committed/)).toBeInTheDocument();
+  });
+});

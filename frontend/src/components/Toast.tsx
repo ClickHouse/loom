@@ -92,7 +92,8 @@ export function toast(msg: string, kind: ToastKind = "ok", opts: ToastOpts = {})
  *  most 20 s, and hovering or focusing it holds it. */
 export function toastError(context: string, err: unknown): void {
   const rid = errorRequestId(err);
-  // The wording loads on the first error, not with the shell (the boot chunk's budget).
+  // The wording is a lazy chunk (the boot chunk's budget), loaded by the viewport soon
+  // after paint; this import then resolves at once.
   const detail = rid ? { detail: `request id ${rid}` } : {};
   import("../lib/errorWords")
     .then(({ humanizeError }) => {

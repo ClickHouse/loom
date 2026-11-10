@@ -50,11 +50,11 @@ describe("toastError", () => {
     ).toBeInTheDocument();
   });
 
-  it("says a committed write was saved, not that it failed", async () => {
+  it("says a committed write went through, not that it failed, for a delete too", async () => {
     render(<ToastViewport />);
     act(() =>
       toastError(
-        "Save failed",
+        "Delete failed",
         new ApiError({
           status: 503,
           code: "PUBLICATION_PENDING",
@@ -64,9 +64,16 @@ describe("toastError", () => {
       ),
     );
     expect(
-      await screen.findByText("Saved. It shows up in lists and search shortly; don't send it again."),
+      await screen.findByText("Done. Lists and search catch up shortly; don't send it again."),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/Save failed/)).toBeNull();
+    expect(screen.queryByText(/Delete failed/)).toBeNull();
+    expect(screen.queryByText(/Saved/)).toBeNull();
+  });
+
+  it("adds only the code when a coded refusal carries no message", async () => {
+    render(<ToastViewport />);
+    act(() => toastError("Pin failed", new ApiError({ status: 422, code: "BAD_SHA" })));
+    expect(await screen.findByText("Pin failed: error code BAD_SHA.")).toBeInTheDocument();
   });
 
   it("stays up longer for a longer line, at most 20 s", async () => {

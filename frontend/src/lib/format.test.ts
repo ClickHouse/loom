@@ -66,6 +66,10 @@ describe("humanizeError", () => {
       "Loom didn't answer in time. It may still finish; check before trying again.",
     );
     expect(humanizeError(new DOMException("signal is aborted without reason", "AbortError"))).toBe("Cancelled.");
+    // A read that timed out left nothing behind to check.
+    expect(humanizeError(new DOMException("signal timed out", "TimeoutError"), { read: true })).toBe(
+      "Loom didn't answer in time.",
+    );
   });
 
   it("swaps a known code prefix for its sentence and keeps the detail", () => {
@@ -179,12 +183,12 @@ describe("humanizeError", () => {
       [
         "an internal error takes no retry advice: a read failed the same way",
         { status: 500, code: "INTERNAL_ERROR", message: "", detail: { category: "internal", retryable: false } },
-        "Loom hit an internal error. If it keeps happening, send the request id to your operator (INTERNAL_ERROR).",
+        "Loom hit an internal error. If it keeps happening, send the request id to your operator.",
       ],
       [
         "a busy write that may have landed says to check first",
         { status: 503, code: "OVERLOADED", message: "", detail: { category: "capacity", retryable: false } },
-        "Loom is busy right now (OVERLOADED). It may have been saved; check before trying again.",
+        "Loom is busy right now. It may have been saved; check before trying again.",
       ],
       [
         "no retry tail when the server already says it",
@@ -227,7 +231,22 @@ describe("humanizeError", () => {
           message: "the write is committed; do not repeat it. Its ClickHouse rows follow shortly",
           detail: { category: "dependency", retryable: false, committed: true },
         },
-        "Saved. It shows up in lists and search shortly; don't send it again.",
+        "Done. Lists and search catch up shortly; don't send it again.",
+      ],
+      [
+        "a request still running names that, not a load problem",
+        {
+          status: 503,
+          code: "IDEMPOTENT_IN_PROGRESS",
+          message: "a request with this idempotency key is still running; retry once it answers",
+          detail: { category: "capacity", retryable: true },
+        },
+        "This request is still running: a request with this idempotency key is still running; retry once it answers",
+      ],
+      [
+        "a call raced by the same person's sign-in in another tab is safe to send once more",
+        { status: 401, code: "SIGNED_IN_ELSEWHERE" },
+        "You signed in afresh in another tab. Nothing was lost; this is safe to send once more.",
       ],
       [
         "a reused request key names the reuse, not 'already done'",
@@ -504,5 +523,7 @@ describe("errorLine", () => {
       ),
     ).toBe("the upload expired. Request id r1.");
     expect(errorLine(new TypeError("Failed to fetch"))).toBe("Lost connection to Loom.");
+    // A write's inline line keeps the warning that it may have landed.
+    expect(errorLine(new TypeError("Failed to fetch"), { read: false })).toMatch(/may still have committed/);
   });
 });

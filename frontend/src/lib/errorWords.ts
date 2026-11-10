@@ -1,6 +1,7 @@
 // How the dashboard words a failure: one line that says what happened and what to do
 // (docs/development/dashboard-design.md, errors). Kept out of lib/format.ts so the boot
-// chunk does not carry it: the shell's error toast loads it when an error is shown.
+// chunk does not carry it: the toast viewport loads it soon after the shell paints, and
+// toastError falls back to its context alone if it cannot.
 import { ApiError } from "./errors";
 import { errorRequestId } from "./format";
 
@@ -11,7 +12,8 @@ import { errorRequestId } from "./format";
  *  precedes it. No sentence says to try again: `retryTail` owns that, from the body. */
 export const ERROR_CODE_PREFIXES: Record<string, string> = {
   AUTH_INVALID: "Sign-in rejected:",
-  SIGNED_IN_ELSEWHERE: "Another tab signed in as someone else; reload this page.",
+  SIGNED_IN_ELSEWHERE: "You signed in afresh in another tab. Nothing was lost; this is safe to send once more.",
+  IDEMPOTENT_IN_PROGRESS: "This request is still running:",
   AUTH_INSUFFICIENT: "Your role doesn't allow this:",
   IDENTITY_INCOMPLETE: "This token is scoped — the request has to name the namespace:",
   POLICY_FORBIDDEN: "Blocked by a policy:",
@@ -53,7 +55,7 @@ const SCHEMA_PENDING = "Loom is being upgraded and this isn't ready yet. It work
 
 /** The write committed and its copy for search follows (`server/core/pg_lease.py`): a
  *  success said late, so no cause and no retry advice. */
-const PUBLICATION_PENDING = "Saved. It shows up in lists and search shortly; don't send it again.";
+const PUBLICATION_PENDING = "Done. Lists and search catch up shortly; don't send it again.";
 
 /** Refusals whose check could not run answer with category `dependency` (server
  *  `unverified_class`): the caller may well be allowed, so no sentence about roles. */
@@ -126,6 +128,7 @@ const LOST_CONNECTION =
 /** The same, for a caller that only read (`read`): nothing can have committed. */
 const LOST_CONNECTION_READ = "Lost connection to Loom.";
 const TIMED_OUT = "Loom didn't answer in time. It may still finish; check before trying again.";
+const TIMED_OUT_READ = "Loom didn't answer in time.";
 
 /** Shown for anything thrown that is not a plain `Error`: the dashboard words its own
  *  refusals as plain Errors, while a TypeError, an AbortError or a library's own class
@@ -160,10 +163,11 @@ export function humanizeError(err: unknown, opts: HumanizeOptions = {}): string 
   // a thrown object with no name is not something the dashboard worded.
   const name = typeof err === "string" ? "Error" : typeof err === "object" && "name" in err ? String(err.name) : "";
   // Every call is bounded (`AbortSignal.timeout`, api.ts): a slow server, not a bug here.
-  if (name === "TimeoutError") return TIMED_OUT;
+  if (name === "TimeoutError") return opts.read ? TIMED_OUT_READ : TIMED_OUT;
   if (name === "AbortError") return "Cancelled.";
   // A plain Error carries the dashboard's own words; a SyntaxError, the parser's on text
-  // or a file the person supplied (a policy's JSON, a snapshot file).
+  // or a file the person supplied (a policy's JSON, a snapshot file). A server answer that
+  // is not JSON is an ApiError instead (api.ts readJson), so it never lands here.
   if (!raw || (name !== "Error" && name !== "SyntaxError")) return DASHBOARD_FAULT;
   const m = /^([A-Z][A-Z_]+):?\s*(.*)$/s.exec(raw);
   if (!m) return raw;
@@ -210,15 +214,19 @@ function humanizeApiError(err: ApiError, bare: boolean): string {
     text = own ? `${own.replace(/:$/, ".")} ${asSentence(err.serverMessage)}` : err.serverMessage;
   } else if (err.serverMessage) text = joinSentence(lead, err.serverMessage);
   // With no message the code is all the server said: kept for support, never the sentence.
-  else if (err.code) text = `${lead.replace(/[:.]$/, "")} (${err.code}).`;
+  // A generic lead-in says little, so the code goes with it (or alone, after a caller's own
+  // lead-in); a code's own sentence already says it all.
+  else if (err.code && !codeSentence(err))
+    text = bare ? `error code ${err.code}.` : `${lead.replace(/[:.]$/, "")} (${err.code}).`;
   else text = joinSentence(lead, "");
   return withTail(text, retryTail(err));
 }
 
-/** An inline "Couldn't load …:" line's reason: the bare words and, when the failure
- *  carried one, the request id, since the sentence may ask the reader to send it. */
-export function errorLine(err: unknown): string {
+/** An inline line's reason ("Couldn't load …:"): the bare words and, when the failure
+ *  carried one, the request id, since the sentence may ask the reader to send it. A read's
+ *  by default; a write's line passes `read: false`, so a lost connection keeps its warning. */
+export function errorLine(err: unknown, opts: { read?: boolean } = {}): string {
   const rid = errorRequestId(err);
-  const text = humanizeError(err, { bare: true, read: true });
+  const text = humanizeError(err, { bare: true, read: opts.read ?? true });
   return rid ? `${/[.!?]$/.test(text) ? text : `${text}.`} Request id ${rid}.` : text;
 }
