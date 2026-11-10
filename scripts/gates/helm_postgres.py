@@ -115,7 +115,7 @@ def main() -> None:
     off = sets("networkPolicy.enabled=false", *EVERYTHING)
     eks = ("-f", str(CHART / "values-eks.yaml"))
     assert web_policies(render(*CLOUD, *off)) == web_policies(render(*eks, *off)), "policy off"
-    check_unconfigured(render(*sets(*EVERYTHING)), "defaults")
+    check_unconfigured(render(*sets("networkPolicy.enabled=true", *EVERYTHING)), "defaults")
     check_unconfigured(render(*eks, *sets(*EVERYTHING)), "eks")
     # Without the block, these names are the documented way to set the authority.
     render(*eks, *sets("env.LOOM_PG_DSN=x", "extraEnv[0].name=PGPASSWORD", "extraEnv[0].value=x"))
@@ -131,7 +131,7 @@ def main() -> None:
         refused(
             f"set {field} through postgres.*, not settingsFile", *sets(f"settingsFile.{field}=x")
         )
-    for port in ("0", "70000", "5432?x"):
+    for port in ("0", "05432", "70000", "5432?x"):
         refused("postgres.port must be a port number", "--set-string", f"postgres.port={port}")
     refused(
         "postgres.host needs postgres.passwordSecret.name", *sets("postgres.passwordSecret.name=")

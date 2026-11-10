@@ -96,7 +96,7 @@ spec:
         {{- end }}
         {{- $pg := include "loom.postgres" . | fromYaml }}
         {{- if $pg.host }}
-        - port: {{ $pg.port }}
+        - port: {{ int $pg.port }}
         {{- end }}
     # The EKS Pod Identity agent, which hands out this service account's credentials.
     - to:

@@ -9,7 +9,8 @@ itself is in [Kubernetes](kubernetes.md), the authority in
 
 The overlay `deploy/helm/loom/values-clickhouse-cloud.yaml` layers on the EKS one. It is for
 a deployment on an empty ClickHouse: the authority is chosen at a deployment's first boot,
-and a ClickHouse that already holds memory keeps the ClickHouse authority.
+and on a ClickHouse that already holds memory the pods refuse to start, as no migration
+moves memory from the ClickHouse authority to Postgres.
 
 ## The services
 
@@ -41,7 +42,7 @@ openssl x509 -inform DER -in root.der -out root.pem
 ```
 
 Check the bundle against the chain the server sends, trusting nothing but the bundle, as
-the driver does (OpenSSL 3; `-no-CAstore` is new there):
+the driver does (`-no-CAstore` needs OpenSSL 3):
 
 ```bash
 openssl verify -no-CApath -no-CAstore -CAfile roots.pem -untrusted chain.pem \

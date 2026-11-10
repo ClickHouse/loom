@@ -184,7 +184,7 @@ LOOM_KEEP_ALIVE_S: {{ .Values.keepAliveSeconds | quote }}
 # The Postgres memory authority (postgres.*). The DSN holds no password: the driver
 # reads PGPASSWORD (loom.pgEnv), and verify-full checks the server against the CA.
 LOOM_STORAGE_AUTHORITY: postgres
-LOOM_PG_DSN: {{ printf "postgres://%s@%s:%v/%s?sslmode=verify-full&sslrootcert=/etc/loom/pg-ca/%s" $pg.user $pg.host $pg.port $pg.database $pg.caSecret.key | quote }}
+LOOM_PG_DSN: {{ printf "postgres://%s@%s:%v/%s?sslmode=verify-full&sslrootcert=/etc/loom/pg-ca/%s" $pg.user $pg.host (int $pg.port) $pg.database $pg.caSecret.key | quote }}
 LOOM_PG_DURABILITY: {{ $pg.durability | quote }}
 LOOM_PG_POOL_MAX_SIZE: {{ $pg.poolMaxSize | quote }}
 {{- end }}
@@ -241,7 +241,7 @@ upgraded with --reuse-values from a chart without the block has none. */}}
 {{- range $field := list "host" "database" "user" }}
 {{- if not (regexMatch "^[A-Za-z0-9._-]+$" (toString (get $pg $field))) }}{{ fail (printf "postgres.%s goes into the DSN as written: letters, digits, '.', '_' and '-' only" $field) }}{{ end }}
 {{- end -}}
-{{- if not (and (regexMatch "^[0-9]+$" (toString $pg.port)) (ge (int $pg.port) 1) (le (int $pg.port) 65535)) }}{{ fail "postgres.port must be a port number, 1 to 65535" }}{{ end -}}
+{{- if not (and (regexMatch "^[1-9][0-9]*$" (toString $pg.port)) (le (int $pg.port) 65535)) }}{{ fail "postgres.port must be a port number, 1 to 65535" }}{{ end -}}
 {{- end -}}
 {{- toYaml $pg -}}
 {{- end }}
