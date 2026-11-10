@@ -750,8 +750,10 @@ def test_an_unreachable_docker_daemon_is_named_before_any_pull(
 
 
 # curl's own save flags: `-o FILE`, `--output FILE`, or `-O` / a short-flag group
-# ending in `o FILE` or holding `O`. A FILE of `-` is stdout, not a save.
-_SAVES = re.compile(r"\s(?:-[A-Za-z]*o|--output)\s*(?!-(?![\w.]))[\w.~/$\"'{}-]|\s-[A-Za-z]*O\b")
+# ending in `o FILE` or holding `O`. A FILE of `-` or under /dev/ is a stream, not a save.
+_SAVES = re.compile(
+    r"\s(?:-[A-Za-z]*o|--output)\s*(?!-(?![\w.])|/dev/)[\w.~/$\"'{}-]|\s-[A-Za-z]*O\b"
+)
 # Where a shell command ends and the next one, or a substitution, begins.
 _COMMAND_BREAK = re.compile(r"\\?\||&&|;|\$\(|<\(")
 # Installed dependencies, which hold other projects' install lines.
@@ -767,8 +769,8 @@ def _unsaved_download(line: str) -> bool:
 def test_every_installer_download_is_saved_first() -> None:
     """A downloaded installer handed straight to a shell (`curl … | sh`,
     `sh -c "$(curl …)"`, `bash <(curl …)`) runs as an empty script and exits 0 when
-    the download fails; every tracked line that fetches `install.sh` saves it to a file
-    first. A `\\` line break joins two lines into one."""
+    the download fails; on every tracked line that names `install.sh`, each curl
+    command saves its download to a file first (the docs fetch with curl only). A `\\` line break joins two lines into one."""
     own = Path(__file__).resolve().relative_to(ROOT).as_posix()  # holds the examples below
     unsaved = []
     for name in tracked():
@@ -795,6 +797,7 @@ def test_every_installer_download_is_saved_first() -> None:
         "curl https://x/install.sh -o - | sh",
         "curl https://x/install.sh -o -|sh",
         "curl -fsSL https://x/install.sh | sh -o errexit",
+        "curl -fsSL https://x/install.sh -o /dev/stdout | sh",
     ],
 )
 def test_an_unsaved_download_is_flagged(line: str) -> None:
