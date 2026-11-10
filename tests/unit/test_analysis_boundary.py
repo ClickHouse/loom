@@ -396,7 +396,7 @@ def test_a_prefix_probe_with_no_answer_raises() -> None:
         (180, None, "There is no settings profile", "Code 180", False),
     ],
 )
-def test_a_refusal_reads_as_its_code_name_and_known_cause(
+def test_a_clickhouse_error_reads_as_its_code_name_and_known_cause(
     code: int, name: str | None, text: str, cause: str, own_fix: bool
 ) -> None:
     shown, fix = boundary.error_cause(code, name, text)

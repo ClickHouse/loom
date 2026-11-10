@@ -608,7 +608,7 @@ resends after 5 s, as does a statement that finds ClickHouse short of memory. No
 serves on a check that has not passed; past three probe intervals with no answer,
 `/v1/health` and `loom doctor` name it while the replica keeps answering `OVERLOADED`.
 `/v1/health` answers without a token, so the problem it shows is Loom's own text: a
-ClickHouse refusal shows as its code and error name, with what it means for a cause Loom
+ClickHouse error shows as its code and error name, with what it means for a cause Loom
 knows (a password the server's rules refuse, a missing privilege); the password gets its
 own fix, every other cause the default, and an error without a code shows its kind. The
 driver's text and the names of policies and databases go to the server log, and the 503
