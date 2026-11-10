@@ -458,6 +458,10 @@ async def reprobe() -> None:
             _probe_failed(f"checking for row policies {_LOOM_DID_NOT_WRITE} failed", e)
             return
         detail = f"{detail}; the repair or its re-check did not finish: {error_line(e)}"
+        if error_code(e) is not None:  # ClickHouse refused it: health names why, and the fix
+            cause, fix = shown_refusal(e)
+            _set_problem(f"{problem}; its repair was refused: {cause}", detail.lstrip("; "), fix)
+            return
     _set_problem(problem, detail.lstrip("; "))
 
 
@@ -504,12 +508,8 @@ def _probe_failed(what: str, e: BaseException) -> None:
         _set_problem(f"{what}: {e}")
         return
     if not _no_answer(e):
-        code = error_code(e)
-        if code is None:
-            _set_problem(f"{what}: {error_kind(e)}", error_line(e))
-        else:
-            cause, fix = boundary.refusal_cause(code, error_name(e), str(e))
-            _set_problem(f"{what}: {cause}", error_line(e), fix)
+        cause, fix = shown_refusal(e)
+        _set_problem(f"{what}: {cause}", error_line(e), fix)
         return
     kind = error_kind(e)
     if kind != _unreached_kind:
@@ -559,6 +559,15 @@ async def _canary_reads(secrets_: tuple[bytes, str]) -> bool:
         if _no_answer(e):
             raise  # no answer about the key
         return False  # a refused login, a refused or capped read: the key is not in force
+
+
+def shown_refusal(e: BaseException) -> tuple[str, str]:
+    """(cause, fix) of an error in words `/v1/health` may show: ClickHouse's
+    code, error name and known cause (`refusal_cause`), or the error's kind."""
+    code = error_code(e)
+    if code is None:
+        return error_kind(e), ""
+    return boundary.refusal_cause(code, error_name(e), str(e))
 
 
 def _set_problem(problem: str, detail: str = "", fix: str = "") -> None:
@@ -621,7 +630,7 @@ async def _probe() -> tuple[str, bool, str]:
                 raise
             # A cap the count hit: no policy narrows the reserved scope to nothing.
             return (
-                f"{t.name}'s count in the reserved scope failed ({error_kind(e)}): "
+                f"{t.name}'s count in the reserved scope failed ({shown_refusal(e)[0]}): "
                 f"{boundary.ANALYST_USER} may have no scope policy on it",
                 True,
                 error_line(e),
@@ -644,7 +653,11 @@ async def _probe() -> tuple[str, bool, str]:
                 continue
             if _no_answer(e):
                 raise  # no answer about the grant
-            return f"{boundary.ANALYST_USER} was not refused {shown} ({error_kind(e)})", False, ""
+            return (
+                f"{boundary.ANALYST_USER} was not refused {shown} ({shown_refusal(e)[0]})",
+                False,
+                error_line(e),
+            )
         return f"{boundary.ANALYST_USER} may read {shown}: its grants are too wide", True, ""
     if await store.own_version(_names(), password=_password(), extra={}) > boundary.ENTITY_VERSION:
         # A newer build's entities: the allowlist checks below are its to make.
@@ -809,6 +822,7 @@ __all__ = [
     "analysis_state",
     "entity_statements",
     "handle_insights_catalog",
+    "shown_refusal",
     "handle_insights_query",
     "provision",
     "start_probe_loop",

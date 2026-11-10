@@ -25,6 +25,11 @@ from server.observability import problems
 
 SECRETS = (bytes(range(32)), "pw")
 NAMES = boundary.SettingNames("SQL_")
+_CLOUD_PASSWORD_REFUSAL = (
+    "Received ClickHouse exception, code: 36, server response: Code: 36. DB::Exception: "
+    "Invalid password. The password should: contain at least 1 uppercase character, "
+    "contain at least 1 special character. (BAD_ARGUMENTS) (version 26.10.2.93 (official build))"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -513,9 +518,10 @@ def test_a_standing_problem_is_logged_once(
         # A refusal Loom wrote names its own next step.
         (app.SetupRefused(app.NOT_MIGRATED), False),
         (RuntimeError("Code: 497. DB::Exception: Not enough privileges"), True),
+        (RuntimeError(_CLOUD_PASSWORD_REFUSAL), False),
     ],
 )
-def test_ch_setups_analyst_line_advises_the_printed_sql_only_for_errors_loom_did_not_word(
+def test_ch_setups_analyst_line_advises_the_printed_sql_only_where_no_fix_fits(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     error: Exception,
@@ -532,6 +538,7 @@ def test_ch_setups_analyst_line_advises_the_printed_sql_only_for_errors_loom_did
     line = capsys.readouterr().out.strip()
     assert line.startswith("· loom_analyst (insights.query): not written (")
     assert ("--print-analyst-sql" in line) is advised
+    assert ("Drop the loom_analyst user" in line) is ("Invalid password" in str(error))
 
 
 def test_a_replica_whose_first_setup_could_not_run_answers_overloaded(
@@ -576,7 +583,7 @@ def test_an_unavailable_answer_names_no_cause(monkeypatch: pytest.MonkeyPatch, r
         (
             # An answer that is neither a refusal nor a passing fault.
             "Code: 60. DB::Exception: Unknown table",
-            f"{boundary.ANALYST_USER} was not refused memory.value (RuntimeError)",
+            f"{boundary.ANALYST_USER} was not refused memory.value (Code 60)",
             False,
         ),
     ],
@@ -599,7 +606,7 @@ def test_an_unrefused_probe_is_named_by_the_column_not_the_sql(
         return [], [], [("leaked",)]
 
     monkeypatch.setattr(app.store, "run_statement", run)
-    assert asyncio.run(app._probe()) == (expected, repairable, "")
+    assert asyncio.run(app._probe()) == (expected, repairable, answer or "")
 
 
 class _FailingRead:
@@ -772,7 +779,32 @@ def test_a_finding_whose_repair_fails_is_kept(monkeypatch: pytest.MonkeyPatch, r
     monkeypatch.setattr(app, "_write_under_lease", write)
     asyncio.run(app.reprobe())
     ready_now, problem, _ = app.analysis_state()
-    assert ready_now is False and problem == "loom_analyst holds grants outside the allowlist"
+    assert ready_now is False
+    assert problem == (
+        "loom_analyst holds grants outside the allowlist; its repair was refused: "
+        "Code 497: a privilege the statement needs is missing"
+    )
+
+
+def test_a_repair_the_password_rules_refuse_shows_their_fix(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    async def write() -> tuple[str, str]:
+        raise RuntimeError(_CLOUD_PASSWORD_REFUSAL)
+
+    monkeypatch.setattr(app.store, "sealed_secrets", _returns(None))
+    monkeypatch.setattr(
+        app, "_probe", _returns(("loom_analyst holds grants outside the allowlist", True, "g"))
+    )
+    monkeypatch.setattr(app.store, "can_manage_access", _returns(True))
+    monkeypatch.setattr(app, "_write_under_lease", write)
+    asyncio.run(app.reprobe())
+    _, problem, fix = app.analysis_state()
+    assert problem.endswith(
+        "its repair was refused: Code 36 (BAD_ARGUMENTS): the password does not meet the "
+        "server's password policy"
+    )
+    assert "Drop the loom_analyst user if it exists" in fix
 
 
 def _clean_ran(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1060,13 +1092,6 @@ def test_a_write_clickhouse_refuses_is_a_kept_finding_and_not_done(
         assert asyncio.run(app.provision()) is False
         ready_now, problem, _ = app.analysis_state()
         assert ready_now is False and problem.startswith("writing or probing loom_analyst failed")
-
-
-_CLOUD_PASSWORD_REFUSAL = (
-    "Received ClickHouse exception, code: 36, server response: Code: 36. DB::Exception: "
-    "Invalid password. The password should: contain at least 1 uppercase character, "
-    "contain at least 1 special character. (BAD_ARGUMENTS) (version 26.10.2.93 (official build))"
-)
 
 
 @pytest.mark.parametrize(
