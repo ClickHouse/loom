@@ -425,6 +425,14 @@ _REPEATED = (
     "@a\n",
     "# a\n",
 )
+_NUMBERED = (
+    "import m{}\n",
+    "use m{};\n",
+    "`a{}`\n",
+    "a{}()\n",
+    "[a](a{}.md)\n",
+    '#include "a{}.h"\n',
+)
 _OPENERS = ("(", "{", "[", "<a>", "<!--", "/*", "{{", '"""', "${", "{%", "`", "'", '"')
 
 
@@ -444,6 +452,9 @@ SHAPES: list[tuple[str, Callable[[int], str]]] = [
     ("fan-out variable", _fan_out("a.c ", "${S} ", "set(S ", ")\nadd_library(t ", ")\n")),
     ("fan-out members", _fan_out("a,", "m.a\n", "from m import ")),
     ("fan-out definitions", _fan_out("def a(): pass\n", "a()\n")),
+    # distinct names: a dedupe by a list's `in` or a scan per name is linear on one name
+    *((f"numbered {u!r}", _numbered(u)) for u in _NUMBERED),
+    ("numbered sources", lambda n: "add_library(t " + _numbered("a{}.c ")(n) + ")\n"),
 ]
 
 
@@ -540,6 +551,7 @@ def registry_cost(lang: str) -> list[tuple[str, float, float, int, int]]:
         took = time.perf_counter() - t0 - parsed[0]
         return took, int(parsed[1]), str(getattr(pf, "lang", ""))
 
+    cost(lambda n: "a\n", 1)  # the first file of a lane loads its grammar and imports
     out = []
     for name, text in SHAPES:
         small, bs, read_as = cost(text, _REGISTRY_N)
@@ -558,7 +570,13 @@ def registry_cost(lang: str) -> list[tuple[str, float, float, int, int]]:
 
 # lane -> the shapes still over linear there, each a follow-up fix. The guard fails once
 # a listed shape runs within budget, so the entry goes with its fix.
-_TEMPLATE_LITERALS = ("run '`'", "names '`abc`\\n'", "unclosed '`'", "unclosed '`' words")
+_TEMPLATE_LITERALS = (
+    "run '`'",
+    "names '`abc`\\n'",
+    "unclosed '`'",
+    "unclosed '`' words",
+    "numbered '`a{}`\\n'",
+)
 KNOWN_SLOW: dict[str, tuple[str, ...]] = {
     "typescript": _TEMPLATE_LITERALS,
     "javascript": _TEMPLATE_LITERALS,

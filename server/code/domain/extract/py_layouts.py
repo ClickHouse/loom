@@ -109,7 +109,9 @@ class Layout:
         the entry points it serves by its own stems, not by every entry point's candidates."""
         out: dict[str, list[tuple[int, EntryPoint]]] = {}
         for i, ep in enumerate(self.entry_points):
-            out.setdefault(ep.module.strip().replace(".", "/"), []).append((i, ep))
+            module = ep.module.strip()
+            if module and not module.startswith("."):  # `_TARGET_RE` gives neither
+                out.setdefault(module.replace(".", "/"), []).append((i, ep))
         return out
 
 

@@ -294,10 +294,12 @@ def _registered_lanes() -> list[str]:
 
 def test_every_registered_lane_has_a_sample_that_reads_as_it() -> None:
     from server.code.app.index.ingest_parse import parse_for_ingest
-    from tests.unit.lane_walks import KNOWN_SLOW, SAMPLES
+    from tests.unit.lane_walks import KNOWN_SLOW, SAMPLES, SHAPES
 
     assert set(SAMPLES) == set(_registered_lanes())
     assert set(KNOWN_SLOW) <= set(SAMPLES)
+    shapes = {name for name, _text in SHAPES}
+    assert all(set(listed) <= shapes for listed in KNOWN_SLOW.values())
     for path, head, lang in SAMPLES.values():
         pf, _err = parse_for_ingest(path, (head + "a\n").encode())
         assert pf is not None and pf.lang == lang, path
@@ -315,9 +317,14 @@ def test_a_registered_lane_costs_linear_time(lang: str) -> None:
         cwd=pathlib.Path(__file__).resolve().parents[2],
     )
     assert done.returncode == 0, done.stderr[-4000:]
+    from tests.unit.lane_walks import SHAPES
+
     known = KNOWN_SLOW.get(lang, ())
+    timed = json.loads(done.stdout)
+    # a shape that reads as another lane is that lane's: most must read as this one
+    assert len(timed) >= len(SHAPES) // 2 and set(known) <= {t[0] for t in timed}, lang
     slow, linear, reparsed = {}, set(), {}
-    for shape, small, big, parsed_small, parsed_big in json.loads(done.stdout):
+    for shape, small, big, parsed_small, parsed_big in timed:
         if big > _BOUND_S or (big > _FLOOR_S / 2 and big > _RATIO * small):
             slow[shape] = (round(small, 3), round(big, 3))
         if big < _FLOOR_S / 2 and big < 4 * small:

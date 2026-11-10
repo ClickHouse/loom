@@ -177,3 +177,16 @@ def test_a_leaf_is_joined_while_its_path_stays_under_256_characters() -> None:
     fits, over = "a" * 249, "b" * 250
     pf = parse_rust("src/lib.rs", f"use {fits}::{{cccc}};\nuse {over}::{{cccc}};\n".encode())
     assert pf.includes == [f"{fits}::cccc"]
+
+
+def test_nested_use_lists_name_each_leaf_under_its_full_path() -> None:
+    src = b"use a::{b::{c, d as e, f::*}, self, g};\nuse {h, i::{j}};\n"
+    assert parse_rust("src/x.rs", src).includes == [
+        "a::b::c",
+        "a::b::d",
+        "a::b::f",
+        "a::self",
+        "a::g",
+        "h",
+        "i::j",
+    ]
