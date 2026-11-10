@@ -398,9 +398,9 @@ With auth on, create a token in **Settings → Tokens** and choose **Claude Code
 **Connect**: the dialog shows the setup for the plugin and for a `claude mcp add` entry,
 with the token in it. Then:
 
-1. Overwrite `~/.loom/config.json` with the dialog's `config.json` block, adding back any
-   `code_repo` or `agent` you had set: an `org` or `namespace` a single-user session left
-   in the file outranks the token.
+1. Overwrite `~/.loom/config.json` with the dialog's `config.json` block: an `org` or
+   `namespace` a single-user session left in the file outranks the token. Add back any
+   `code_repo` or `agent` you had set.
 2. Leave `LOOM_API_KEY` and the plugin's `token` option empty or set to the new token: the
    plugin reads both before that file
    ([configuration](../features/integrations/claude-code.md#configuration)).

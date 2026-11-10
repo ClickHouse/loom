@@ -5,9 +5,9 @@ server. Install the plugin (or wire the MCP entry), point it at the server, and 
 usual. The next session starts with what the agent saved. What the plugin sends to Loom is
 in [data handling](../features/integrations/claude-code.md#data-handling). Conversation
 recording is off by default; the namespace owner turns it on with the **Record
-conversations** switch on the Conversations page (`conversation.set_logging`). To run a
-server yourself, start with the [quickstart](quickstart.md); to have your agent install a
-pinned release and prove it works, give it the latest release's
+conversations** switch on the Conversations page, or with `conversation.set_logging`. To
+run a server yourself, start with the [quickstart](quickstart.md); to have your agent
+install a pinned release and prove it works, give it the latest release's
 `https://github.com/ClickHouse/loom/releases/latest/download/agent-setup.txt` ([Set up
 Loom with your coding agent](agent-setup.md)).
 
