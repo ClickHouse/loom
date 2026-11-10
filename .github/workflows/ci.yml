@@ -794,6 +794,10 @@ jobs:
       # Stock Postgres with one synchronous standby (dev/ci_start_postgres.sh).
       LOOM_STORAGE_AUTHORITY: postgres
       LOOM_PG_DSN: postgres://loom:loomdev@localhost:5432/loom
+      # An org's own Postgres with pg_clickhouse, reading the SQL surface
+      # (dev/ci_start_pg_clickhouse.sh); the image tag pins the extension release.
+      LOOM_PGCH_DSN: postgres://app:appdev@127.0.0.1:5433/app
+      LOOM_PGCH_VERSION: "0.11.0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -815,6 +819,10 @@ jobs:
         env:
           LOOM_PG_IMAGE: postgres:${{ matrix.postgres }}
         run: bash dev/ci_start_postgres.sh
+      - name: Start Postgres with pg_clickhouse
+        env:
+          LOOM_PGCH_POSTGRES: ${{ matrix.postgres }}
+        run: bash dev/ci_start_pg_clickhouse.sh
       - name: Apply migrations
         run: python -m server.core.schema.migrate
       # The service in front of Loom that signs a token per end user, so the isolation
@@ -832,7 +840,7 @@ jobs:
           echo "control plane never became healthy"
           tail -100 server.log
           exit 1
-      - name: pytest (Postgres authority, memory, knowledge and isolation)
+      - name: pytest (Postgres authority, memory, knowledge, isolation and the SQL surface)
         run: >-
           pytest -q
           tests/integration/test_pg_authority.py
@@ -870,6 +878,8 @@ jobs:
           tests/integration/test_blacklist.py
           tests/integration/test_idempotency.py
           tests/integration/test_erasure.py
+          tests/integration/test_sql_surface_live_ch.py
+          tests/integration/test_pg_clickhouse_live_ch.py
       # The tenant-isolation gates again, against a second server that enforces auth:
       # the Postgres read paths (heads by key and by id, narrowed scopes) see real tokens.
       # They run whether or not the memory suites passed (`!cancelled()`).

@@ -106,6 +106,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [Store an investigation agent's memory](docs/guides/investigation-agent-memory.md): An investigation agent produces several kinds of state, and Loom has a plane for each.
 - [Optimize a namespace from its audit](docs/guides/optimize-namespace.md): A writer that uses `memory.set` as an object store (JSON blobs under hash keys, leases as memories, documents as claims) leaves every table consistent and recall useless.
 - [Tune Loom's performance](docs/guides/performance-tuning.md): Every lever on this page is a setting or a request field.
+- [Query Loom from Postgres](docs/guides/query-from-postgres.md): This guide reads a tenant's memories, conversations and usage from the org's own Postgres, where they can be joined with the application's tables.
 - [Tokens and grants](docs/guides/tokens-and-grants.md): Every call carries one JWT.
 - [Trace and resume long agent runs](docs/guides/trace-and-resume.md): A long run (process 300 files, crawl a repository, work through a plan) can stop part way: a crash, a full context window, a deploy, a pause.
 - [Use Loom without the dashboard](docs/guides/without-the-dashboard.md): Everything the `/me` dashboard does can be done from a terminal, a script or an agent's shell.
