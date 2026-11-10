@@ -1014,15 +1014,15 @@ its setup and, where the harness recorded it, its build.
 as JSON in Postgres), from the main runs (single 250k and 500k, zipf 200k), each
 the first size its run recorded; later snapshots in the artifact and the 20,000-key runs
 carry somewhat more per row, from parts with few rows. The "Per key" column is the single
-250k run's, with 2.4 versions a key:
+250k Postgres run's bytes of each table divided by its keys:
 
 | Store      | Table               | Bytes                                           | Per key |
 | ---------- | ------------------- | ----------------------------------------------- | ------: |
 | ClickHouse | `memory_embeddings` | 13,170 to 13,212 per row                        |  13,210 |
-| ClickHouse | `memory`            | 90 (single) to 163 (zipf) per head after merges |      92 |
+| ClickHouse | `memory`            | 90 (single) to 163 (zipf) per head after merges |      91 |
 | ClickHouse | `memory_versions`   | 107 to 110 per version                          |     264 |
 | Postgres   | `memory_current`    | 1,594 to 1,623 per head                         |   1,623 |
-| Postgres   | `memory_revisions`  | 2,149 to 2,150 per revision                     |   5,160 |
+| Postgres   | `memory_revisions`  | 2,149 to 2,150 per revision                     |   5,136 |
 
 **Cost per million memories**, at list prices ([ClickHouse Cloud
 pricing](https://clickhouse.com/pricing), AWS us-east-1). Storage: 13.6 GB in ClickHouse
@@ -1144,7 +1144,7 @@ reads:
    vector table held the server's reads past their deadlines.
 3. **One Postgres primary**, at 100M to 1B keys: 6.8 KB a key is 680 GB at 100M and
    6.8 TB at 1B. At the rates above, from tables in the page cache, a vacuum pass over 1B
-   heads (1.6 TB) is near an hour and over their revisions (5.2 TB) over an hour, longer
+   heads (1.6 TB) is near an hour and over their revisions (5.1 TB) over an hour, longer
    from disk; a one-org copy at 39 MB/s is half an hour for an org of 10M keys.
 4. **ClickHouse storage**: 13.6 KB a key is 1.4 TB at 100M and 13.6 TB at 1B, nearly
    all of it vectors.
