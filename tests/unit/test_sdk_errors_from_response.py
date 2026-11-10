@@ -131,6 +131,7 @@ _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
     "SCHEMA_PENDING": SchemaPending,
     "CODED_WIDTH_MISMATCH": CodedWidthMismatch,
     "POLICY_FORBIDDEN": AuthInsufficient,
+    "ASSISTANT_SELF_CALL": AuthInsufficient,
     "EMBED_TIMEOUT": BackendUnavailable,  # a 503 with no SDK class: mapped by status
     "GRANT_BUSY": BackendUnavailable,
     "NO_SIGNING_KEY": BackendUnavailable,  # a 503 with no SDK class: mapped by status

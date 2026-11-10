@@ -25,8 +25,9 @@ from server.assistant.api.models import MAX_HISTORY, MAX_MESSAGE_CHARS, Assistan
 from server.assistant.app import citations, service
 from server.auth.authz import check_authorized
 from server.auth.delegation import delegate
-from server.auth.jwt import AuthInfo
+from server.auth.jwt import AuthInfo, new_jti
 from server.core.errors import (
+    AssistantSelfCallError,
     AssistantUnavailableError,
     AssistantUpstreamError,
     AuthInsufficientError,
@@ -134,6 +135,20 @@ def refuse_org_wide(auth: AuthInfo) -> None:
         )
 
 
+# Every answer token's id starts with this, so a token delegated from one names it among
+# its parents: that is how a descendant is told from the caller's own token.
+ANSWER_JTI_PREFIX = "assistant-answer-"
+
+
+def refuse_self_call(auth: AuthInfo) -> None:
+    """ASSISTANT_SELF_CALL for an answer's own token (consumer `loom-assistant`) or any
+    token delegated from one: calls go one way, so an answer never asks the assistant."""
+    if auth.consumer == ASSISTANT_CONSUMER or any(
+        p.startswith(ANSWER_JTI_PREFIX) for p in auth.parents
+    ):
+        raise AssistantSelfCallError("an assistant answer's token cannot ask the assistant")
+
+
 async def authorize(auth: AuthInfo, org: str, namespace: str) -> None:
     """The refusals that need no model spend read: no assistant here, a token that may
     not ask, a caller without `viewer`. A caller's rate-limit buckets are drawn after
@@ -143,6 +158,7 @@ async def authorize(auth: AuthInfo, org: str, namespace: str) -> None:
             "no LibreChat is configured for the assistant (LOOM_ASSISTANT_LIBRECHAT_URL)"
         )
     refuse_org_wide(auth)
+    refuse_self_call(auth)
     if request_read_narrowed(auth):
         raise AuthInsufficientError(
             "a token whose reads are narrower than its namespace cannot ask the assistant"
@@ -203,7 +219,9 @@ async def answer_token(auth: AuthInfo, org: str, namespace: str) -> str:
         is_service_account=auth.is_service_account,
         ends_with_session=True,
     )
-    return delegated.mint(auth.subject, consumer=ASSISTANT_CONSUMER)
+    return delegated.mint(
+        auth.subject, consumer=ASSISTANT_CONSUMER, jti=f"{ANSWER_JTI_PREFIX}{new_jti()}"
+    )
 
 
 def _take_slot(org: str, namespace: str) -> int:
@@ -440,11 +458,13 @@ async def ask(auth: AuthInfo, org: str, namespace: str, messages: Any) -> Answer
 
 
 __all__ = [
+    "ANSWER_JTI_PREFIX",
     "ASSISTANT_OP",
     "Answer",
     "Ticket",
     "authorize",
     "refuse_org_wide",
+    "refuse_self_call",
     "admitted_messages",
     "answer_token",
     "ask",

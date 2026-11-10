@@ -385,6 +385,14 @@ class AssistantUnavailableError(LoomServerError):
     status_code = 503
 
 
+class AssistantSelfCallError(LoomServerError):
+    """An assistant answer's own token, or a token delegated from one, asked the
+    assistant: the assistant never calls itself (docs/architecture/assistant.md)."""
+
+    code = "ASSISTANT_SELF_CALL"
+    status_code = 403
+
+
 class AssistantUpstreamError(LoomServerError):
     """LibreChat could not give this answer: it was unreachable, refused the
     request, ended the answer with an error, or ran past the answer's limit. The
@@ -434,6 +442,7 @@ CLASS_BY_CODE: dict[str, tuple[ErrorCategory, bool]] = {
     "RATE_LIMITED": ("capacity", True),
     "AUTH_INVALID": ("auth", False),
     "AUTH_INSUFFICIENT": ("auth", False),
+    "ASSISTANT_SELF_CALL": ("auth", False),
     "POLICY_FORBIDDEN": ("auth", False),
     "NAMESPACE_NOT_ACCESSIBLE": ("auth", False),
     "ORG_MISMATCH": ("auth", False),

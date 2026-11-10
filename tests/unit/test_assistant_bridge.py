@@ -16,6 +16,7 @@ import pytest
 from server.assistant.app import bridge, service
 from server.auth.jwt import AuthInfo
 from server.core.errors import (
+    AssistantSelfCallError,
     AssistantUnavailableError,
     AssistantUpstreamError,
     AuthInsufficientError,
@@ -26,6 +27,7 @@ from server.core.errors import (
 )
 from server.llm.customer import ModelCallsDisabled
 from server.observability import cost_accumulator
+from server.observability.consumer import ASSISTANT_CONSUMER
 from server.observability.run_context import current_ledger_run
 from server.operations.base import Role
 from server.settings import settings
@@ -106,7 +108,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
         return w.over_cap
 
     class _Delegated:
-        def mint(self, subject: str, *, consumer: str | None = None) -> str:
+        def mint(self, subject: str, *, consumer: str | None = None, jti: str | None = None) -> str:
             w.delegated["minted"] = (subject, consumer)
             return "answer-token"
 
@@ -1103,3 +1105,96 @@ def test_the_op_gives_its_slot_back_when_charging_fails(
     with pytest.raises(RuntimeError):
         asyncio.run(bridge.ask(_caller(), ORG, NS, QUESTION))
     assert bridge._running == {}
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        # An answer's own token, and a token delegated from one (its parent's id).
+        {"consumer": ASSISTANT_CONSUMER},
+        {"parents": ("assistant-answer-0f3c",), "parent_subjects": ("alice",), "parent_iats": (1,)},
+    ],
+    ids=["answer-token", "delegated-child"],
+)
+def test_an_answer_token_or_its_child_cannot_ask_the_chat_route(
+    client: Any, world: _World, monkeypatch: pytest.MonkeyPatch, token: dict[str, Any]
+) -> None:
+    from server.assistant.app import routes
+
+    monkeypatch.setattr(routes, "verify_bearer_header", lambda *_a, **_k: _caller(**token))
+    http, rows = client
+    r = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
+    assert r.status_code == 403
+    assert r.json()["detail"]["code"] == "ASSISTANT_SELF_CALL"
+    # Refused before LibreChat is called, and ledgered as a refused answer.
+    assert world.librechat_body == {}
+    (row,) = rows
+    assert row["op_name"] == "assistant.ask" and row["success"] is False
+    assert row["error_code"] == "ASSISTANT_SELF_CALL"
+
+
+def test_an_answer_token_carries_the_id_its_children_are_told_by(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    minted: dict[str, Any] = {}
+
+    class _Delegated:
+        def mint(self, subject: str, *, consumer: str | None = None, jti: str | None = None) -> str:
+            minted.update(subject=subject, consumer=consumer, jti=jti)
+            return "answer-token"
+
+    async def delegate(*_a: Any, **_k: Any) -> _Delegated:
+        return _Delegated()
+
+    monkeypatch.setattr(bridge, "delegate", delegate)
+    asyncio.run(bridge.answer_token(_caller(), ORG, NS))
+    assert minted["consumer"] == ASSISTANT_CONSUMER
+    assert str(minted["jti"]).startswith(bridge.ANSWER_JTI_PREFIX)
+    # A child names it among its parents, and is refused for it.
+    child = _caller(parents=(minted["jti"],), parent_subjects=("alice",), parent_iats=(1,))
+    with pytest.raises(AssistantSelfCallError):
+        bridge.refuse_self_call(child)
+    bridge.refuse_self_call(_caller())  # the caller's own token asks
+
+
+def test_assistant_ask_over_mcp_on_another_toolset_refuses_an_answer_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.transport.mcp_call as mcp_call
+    import server.transport.mcp_outcome as mcp_outcome
+    from tests.unit.mcp_probe import serve_probe
+
+    serve_probe(monkeypatch)
+    rows: list[tuple[Any, dict[str, Any]]] = []
+    monkeypatch.setattr(mcp_outcome, "_emit_mcp_event", lambda *a, **k: rows.append((a, k)))
+    monkeypatch.setattr(settings, "assistant_librechat_url", "http://librechat:3080")
+    answer = _caller(org="acme", namespaces=("n",), consumer=ASSISTANT_CONSUMER)
+    params = {
+        "name": "loom_assistant_ask",
+        "arguments": {"org": "acme", "namespace": "n", "question": "hi"},
+    }
+    # The default listing, not the assistant toolset (which never lists assistant.ask).
+    out = asyncio.run(mcp_call._call_tool(1, params, auth=answer))
+    result = out["result"]
+    assert result["isError"] is True
+    assert result["structuredContent"]["code"] == "ASSISTANT_SELF_CALL"
+    # Ledgered as the op's refused call.
+    ((args, kw),) = rows
+    assert args[0] == "assistant.ask" and kw["success"] is False
+    assert kw["error_code"] == "ASSISTANT_SELF_CALL"
+
+
+def test_an_answer_token_acting_for_someone_is_still_refused(
+    client: Any, world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.assistant.app import routes
+
+    # A trusted caller's answer token naming another subject keeps its consumer.
+    bearer = _caller(subject="trusted-ui", consumer=ASSISTANT_CONSUMER)
+    monkeypatch.setattr(routes, "verify_bearer_header", lambda *_a, **_k: bearer)
+    monkeypatch.setattr(settings, "trusted_callers", "trusted-ui")
+    http, rows = client
+    headers = {**HEADERS, "X-Loom-On-Behalf-Of": "bob"}
+    r = http.post(ROUTE, headers=headers, json={"messages": QUESTION})
+    assert (r.status_code, r.json()["detail"]["code"]) == (403, "ASSISTANT_SELF_CALL")
+    assert world.librechat_body == {} and rows[0]["error_code"] == "ASSISTANT_SELF_CALL"
