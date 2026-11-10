@@ -49,8 +49,8 @@ def forget_header(org: str, ns: str, path: str) -> None:
 
 def include_candidates(from_path: str, include: str) -> list[str]:
     """Indexed paths an include target may name, nearest first: relative to
-    the includer's directory, then to each ancestor directory, up to
-    `MAX_ANCESTOR_DIRS` of them (`<Processors/Chunk.h>` from
+    the includer's directory, then to each ancestor directory, `MAX_ANCESTOR_DIRS`
+    directories in all (`<Processors/Chunk.h>` from
     `src/Processors/Transforms/X.cpp` is `src/Processors/Chunk.h`), then the target
     itself."""
     inc = include.strip().lstrip("/")

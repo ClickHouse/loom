@@ -314,9 +314,9 @@ def bind_sites(
     return edges
 
 
-# not a setting: the ancestor directories a specifier is tried under, nearest first, before
-# the repository root; each adds one candidate per import, so a deep path multiplies a
-# file's candidates
+# not a setting: the directories a specifier is tried under, the file's own and its nearest
+# ancestors, before the repository root; each adds one candidate per import, so a deep path
+# multiplies a file's candidates
 MAX_ANCESTOR_DIRS = 32
 
 
@@ -324,7 +324,7 @@ def ancestor_candidates(from_path: str, spec: str) -> list[str]:
     """The repository paths a root-relative specifier may name when the
     lane's include root is unknown (protobuf's `-I` roots, a chart's
     template directory): the importing file's directory + spec, then each
-    ancestor directory + spec, up to `MAX_ANCESTOR_DIRS` of them, then the bare
+    ancestor directory + spec, `MAX_ANCESTOR_DIRS` directories in all, then the bare
     spec — nearest first, duplicates dropped."""
     spec = spec.strip().lstrip("/")
     if not spec:
@@ -335,8 +335,8 @@ def ancestor_candidates(from_path: str, spec: str) -> list[str]:
 
 @functools.lru_cache(maxsize=256)
 def ancestor_dirs(from_path: str) -> tuple[str, ...]:
-    """The file's directory and its ancestors, nearest first, up to `MAX_ANCESTOR_DIRS`
-    of them, the root left out; read once per file, not per import."""
+    """The file's directory and its ancestors, nearest first, `MAX_ANCESTOR_DIRS` of them
+    at most counting the file's own, the root left out; read once per file."""
     parts = from_path.split("/")[:-1]
     depths = range(len(parts), max(len(parts) - MAX_ANCESTOR_DIRS, 0), -1)
     return tuple("/".join(parts[:depth]) for depth in depths)
