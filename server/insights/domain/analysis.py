@@ -612,7 +612,8 @@ _PASSWORD_FIX = (
     "Loom draws a password with a lower and an upper case letter, a digit and a symbol; "
     f"a stored one that lacks any of them is refused. Drop the {ANALYST_USER} user if it "
     "exists, then delete the row in loom.analysis_secrets (loom is LOOM_CH_DATABASE): "
-    "the next probe draws a new pair. Rules that ask for more refuse a new pair too: "
+    "the next setup draws a new pair (Loom's own where its server user has access "
+    "management, else `loom ch-setup`). Rules that ask for more refuse a new pair too: "
     "relax the server's password_complexity rules."
 )
 

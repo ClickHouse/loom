@@ -458,10 +458,6 @@ async def reprobe() -> None:
             _probe_failed(f"checking for row policies {_LOOM_DID_NOT_WRITE} failed", e)
             return
         detail = f"{detail}; the repair or its re-check did not finish: {error_line(e)}"
-        if error_code(e) is not None:  # ClickHouse refused it: health names why, and the fix
-            cause, fix = shown_refusal(e)
-            _set_problem(f"{problem}; its repair was refused: {cause}", detail.lstrip("; "), fix)
-            return
     _set_problem(problem, detail.lstrip("; "))
 
 
@@ -822,8 +818,8 @@ __all__ = [
     "analysis_state",
     "entity_statements",
     "handle_insights_catalog",
-    "shown_refusal",
     "handle_insights_query",
     "provision",
+    "shown_refusal",
     "start_probe_loop",
 ]

@@ -779,32 +779,7 @@ def test_a_finding_whose_repair_fails_is_kept(monkeypatch: pytest.MonkeyPatch, r
     monkeypatch.setattr(app, "_write_under_lease", write)
     asyncio.run(app.reprobe())
     ready_now, problem, _ = app.analysis_state()
-    assert ready_now is False
-    assert problem == (
-        "loom_analyst holds grants outside the allowlist; its repair was refused: "
-        "Code 497: a privilege the statement needs is missing"
-    )
-
-
-def test_a_repair_the_password_rules_refuse_shows_their_fix(
-    monkeypatch: pytest.MonkeyPatch, ready: None
-) -> None:
-    async def write() -> tuple[str, str]:
-        raise RuntimeError(_CLOUD_PASSWORD_REFUSAL)
-
-    monkeypatch.setattr(app.store, "sealed_secrets", _returns(None))
-    monkeypatch.setattr(
-        app, "_probe", _returns(("loom_analyst holds grants outside the allowlist", True, "g"))
-    )
-    monkeypatch.setattr(app.store, "can_manage_access", _returns(True))
-    monkeypatch.setattr(app, "_write_under_lease", write)
-    asyncio.run(app.reprobe())
-    _, problem, fix = app.analysis_state()
-    assert problem.endswith(
-        "its repair was refused: Code 36 (BAD_ARGUMENTS): the password does not meet the "
-        "server's password policy"
-    )
-    assert "Drop the loom_analyst user if it exists" in fix
+    assert ready_now is False and problem == "loom_analyst holds grants outside the allowlist"
 
 
 def _clean_ran(monkeypatch: pytest.MonkeyPatch) -> None:
