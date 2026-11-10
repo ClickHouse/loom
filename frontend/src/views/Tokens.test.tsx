@@ -260,6 +260,8 @@ describe("the token form", () => {
     expect(screen.queryByText(/Number 1 is searched first/)).toBeNull();
     await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
     expect(screen.getByText(/to change the order/)).toBeInTheDocument();
+    // The reorder hint is the list's description, so a screen reader hears it on the list.
+    expect(order).toHaveAccessibleDescription(/^Number 1 is searched first\. Drag a row by its grip/);
   });
 
   it("only these: every tick can be taken back, and then nothing is created", async () => {

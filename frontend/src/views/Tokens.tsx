@@ -243,6 +243,7 @@ function SearchOrder({
   touch: boolean;
 }) {
   const titleId = useId();
+  const hintId = useId();
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<number | null>(null);
   // Focus goes back to the pressed arrow after every move (a row moved down is re-inserted,
@@ -267,7 +268,21 @@ function SearchOrder({
       <div id={titleId} className="section-label mb-1">
         Search order
       </div>
-      <ol aria-labelledby={titleId} className="rounded-md border border-border bg-surface-2 divide-y divide-border">
+      {order.length > 1 && (
+        <p id={hintId} className="mb-1 text-xs text-text-muted">
+          Number 1 is searched first.{" "}
+          {touch
+            ? "Use a row's arrows to change the order."
+            : "Drag a row by its grip, or use its arrows, to change the order."}
+        </p>
+      )}
+      <ol
+        // biome-ignore lint/a11y/noRedundantRoles: WebKit drops list semantics from an unstyled list without it.
+        role="list"
+        aria-labelledby={titleId}
+        aria-describedby={order.length > 1 ? hintId : undefined}
+        className="rounded-md border border-border bg-surface-2 divide-y divide-border"
+      >
         {order.map((ns, i) => {
           const repo = isRepo(ns);
           return (
@@ -582,16 +597,11 @@ function TokenForm({
   const nothingListed = mine !== null && eligibleNs.length === 0 && eligibleRepos.length === 0;
   // Not before the memberships load: the form would describe a token it cannot know.
   const canCreate = rows !== null && (reach === "everything" || selectedNs.length > 0);
-  // What the ticked list means, and with two or more rows how to reorder it.
-  const reorderHint = touch
-    ? "Use a row's arrows to change the order."
-    : "Drag a row by its grip, or use its arrows, to change the order.";
+  // What the ticked list means; how to reorder it sits under the list itself.
   const listHint =
     selectedNs.length === 0
       ? "Tick the namespaces this token reads; it reads nothing else, whatever you join later."
-      : `${selectedNs.length} ticked, and nothing else, whatever you join later.${
-          selectedNs.length > 1 ? ` Number 1 is searched first. ${reorderHint}` : ""
-        }`;
+      : `${selectedNs.length} ticked, and nothing else, whatever you join later.`;
 
   return (
     <section
