@@ -54,7 +54,8 @@ Turns are stored only when the namespace has conversation logging on.
    ```
 
 5. Turn on conversation logging for the namespace (the dashboard's **Record
-   conversations** switch or `conversation.set_logging`). Until then the server accepts the turns and stores none.
+   conversations** switch or `conversation.set_logging`). Until then the server accepts
+   the turns and stores none.
 
 | Variable                     | Default                 | Meaning                                                                                         |
 | ---------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------- |
