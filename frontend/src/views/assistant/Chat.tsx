@@ -44,10 +44,11 @@ const REFUSAL_LEAD: Record<string, string> = {
 };
 
 function refusalText(e: unknown): string {
-  if (!(e instanceof ApiError)) return humanizeError(e);
+  // An answer only reads (Loom stores none of it): nothing is left to check before asking again.
+  if (!(e instanceof ApiError)) return humanizeError(e, { read: true });
   const lead = REFUSAL_LEAD[e.code];
   // Any other code is worded whole by humanizeError, its retry advice included.
-  if (!lead) return humanizeError(e);
+  if (!lead) return humanizeError(e, { read: true });
   const said = (e.serverMessage || e.code).replace(/\.$/, "");
   const retry = e.detail.retry_after_s;
   return typeof retry === "number" && retry > 0

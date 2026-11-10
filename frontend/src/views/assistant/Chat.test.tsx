@@ -190,6 +190,22 @@ describe("AssistantChat", () => {
     expect(alert.textContent?.match(/Try again/g)).toHaveLength(1);
   });
 
+  it("words a server error before the stream as a read: nothing may have been saved", async () => {
+    answers.push(
+      refusal(500, {
+        code: "INTERNAL_ERROR",
+        message: "internal error; request_id=r5",
+        category: "internal",
+        retryable: false,
+      }),
+    );
+    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    await ask("Who owns billing?");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Loom hit an internal error.");
+    expect(alert).not.toHaveTextContent(/may have been saved/);
+  });
+
   it("shows an error event after part of the answer, and keeps that part", async () => {
     const s = sse();
     answers.push(() => s);
