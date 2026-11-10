@@ -153,8 +153,10 @@ export function writeWarning(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
   if (isLostConnection(raw)) return LOST_CONNECTION;
   if (name === "TimeoutError") return TIMED_OUT;
+  // A refusal for the deployment's setup came before anything was written.
   if (
     err instanceof ApiError &&
+    err.detail.category !== "configuration" &&
     (err.code === "ANSWER_UNREADABLE" || (err.status >= 500 && err.detail.retryable !== true))
   )
     return "It may have been saved; check before trying again.";

@@ -46,7 +46,7 @@ export function ThreadActions({
     if (!ok) return;
     const r = await deleteEveryAgent(identity, thread);
     if (r.error) {
-      const why = humanizeError(r.error);
+      const why = humanizeError(r.error, { bare: true });
       const rest = r.left ? `; ${r.left} messages are left` : "";
       toast(r.parts ? `Deleted part of "${name}", then failed: ${why}${rest}` : `Delete failed: ${why}`, "error");
     } else if (r.left) toast(`Deleted part of "${name}"; ${r.left} messages are left`, "info");

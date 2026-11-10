@@ -150,7 +150,8 @@ export interface HumanizeOptions {
 /** One readable line for any thrown value. An `ApiError` maps by server code, then by its
  *  category, then by HTTP status, and says whether trying again can help — the raw
  *  response body never reaches the screen. Plain `CODE: detail` strings and bare network
- *  errors map too; a dashboard bug reads as one; any other value is shown as its text. */
+ *  errors map too; a plain Error or a SyntaxError shows its own words; anything else reads as
+ *  the dashboard's own fault. */
 export function humanizeError(err: unknown, opts: HumanizeOptions = {}): string {
   if (!err) return DASHBOARD_FAULT;
   if (err instanceof ApiError) return humanizeApiError(err, opts.bare === true, opts.read === true);

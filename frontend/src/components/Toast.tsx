@@ -110,7 +110,8 @@ export function toastError(context: string, err: unknown, opts: { read?: boolean
     // context alone still says what failed.
     .catch(() => {
       const warning = opts.read ? "" : writeWarning(err);
-      toast(warning ? `${context}: ${warning}` : `${context}.`, "error", detail);
+      const msg = warning ? `${context}: ${warning}` : `${context}.`;
+      toast(msg, "error", { ...detail, durationMs: errorToastMs(msg) });
     });
 }
 

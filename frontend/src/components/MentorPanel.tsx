@@ -18,7 +18,7 @@ import { canCall } from "../lib/canCall";
 import { humanizeError } from "../lib/errorWords";
 import { Loading, Panel, SectionHeading } from "./ui";
 import { useFold } from "../lib/folds";
-import { toast } from "./Toast";
+import { toastError } from "./Toast";
 
 /**
  * "Mentor" — the owner's view of what the store tells an agent working in
@@ -145,9 +145,8 @@ export function MentorPanel({ identity }: { identity: Identity }) {
       setResult(r);
     } catch (e) {
       if (scopeRef.current !== started) return;
-      const text = humanizeError(e, { read: true });
-      setError(text);
-      toast(`Mentor brief failed: ${text}`, "error");
+      setError(humanizeError(e, { bare: true, read: true }));
+      toastError("Mentor brief failed", e, { read: true });
     } finally {
       setRunning(false);
     }

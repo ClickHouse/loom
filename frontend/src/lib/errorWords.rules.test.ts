@@ -40,3 +40,16 @@ describe("inline error lines", () => {
     expect(calls).toEqual([]);
   });
 });
+
+describe("a stored error line", () => {
+  // `const text = humanizeError(e)` then "Audit failed: ${text}": the same double lead-in
+  // the two rules above catch inline, one step removed.
+  it("is not put after a lead-in of its own", () => {
+    const calls = Object.entries(SOURCES).flatMap(([path, text]) =>
+      [...text.matchAll(/const (\w+) = humanizeError\(([^)]*)\)/g)]
+        .filter((m) => !/bare: true/.test(m[2]) && new RegExp(`:\\s*\\$?\\{${m[1]}\\}`).test(text))
+        .map((m) => `${path}:${text.slice(0, m.index).split("\n").length}`),
+    );
+    expect(calls).toEqual([]);
+  });
+});
