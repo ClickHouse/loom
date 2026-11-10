@@ -391,11 +391,13 @@ Without the plugin, add the MCP entry directly:
 claude mcp add --transport http loom "http://localhost:7777/mcp?toolset=coding" -s user
 ```
 
-Both reach a single-user server on this machine with no token: when Claude Code asks for
-the plugin's settings, keep the default server URL and leave the token empty. With auth
-on, the plugin reads the token step 3 saved, and `claude mcp add` needs `-H
-"Authorization: Bearer $LOOM_API_KEY"`; for a server on another machine, pass `--config
-server_url=<url>` to `claude plugin install`.
+Both reach a single-user server on this machine without a token of yours: when Claude Code
+asks for the plugin's settings, keep the default server URL and leave the token empty.
+With auth on, the plugin takes its token from the first of `LOOM_API_KEY`, its token
+option, `~/.loom/config.json` and `~/.loom/token`
+([configuration](../features/integrations/claude-code.md#configuration)), and `claude mcp
+add` needs `-H "Authorization: Bearer $LOOM_API_KEY"`; for a server on another machine,
+pass `--config server_url=<url>` to `claude plugin install`.
 
 `loom install --client <name>` writes the MCP entry for Claude Desktop, Claude Code,
 Codex, Cursor, VS Code, Cline, Windsurf and Zed; with no flag it wires every client it
