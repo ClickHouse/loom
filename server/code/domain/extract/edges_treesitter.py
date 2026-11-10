@@ -3688,7 +3688,7 @@ def extract_edges_and_misses(
                         cpp and factory is None and "." not in name and _names_a_class(bare)
                         and _ctor_site(line, name, _argc(child.child_by_field_name("arguments")))
                     ):
-                        misses.append(_miss_of(caller, name, bare, line))
+                        misses.append(resolver.miss(caller, name, bare, line))
             elif cpp and child.type in _CTOR_NODE_TYPES:
                 for line, written, argc in _ctor_sites_of_node(child, source):
                     _ctor_site(line, written, argc)
@@ -3701,9 +3701,6 @@ def extract_edges_and_misses(
             caller, written, argc, line, path=pf.path,
             local=local_by_name.get(bare, []), name_table=name_table, declared=declared,
         )
-
-    def _miss_of(caller: Symbol, name: str, bare: str, line: int) -> CallMiss:
-        return resolver.miss(caller, name, bare, line)
 
     resolver = _CallResolver(pf, name_table, local_by_name, callee_returns, lane_context, chains)
     if header is not None and pf.lang == "cpp" and resolver.typer is not None:
