@@ -14,8 +14,8 @@ a token scanner with brace tracking reads it without a tree-sitter grammar:
     bind_sites` — scalars, `map<>` keys and `google.protobuf.*` name nothing;
   * `import "a/b.proto"` is a raw include specifier; the import root is
     protoc's `-I`, unknown to the index, so the candidates are the file's
-    directory and every ancestor + the specifier (`lane_units.
-    ancestor_candidates`), settled against the namespace's live paths.
+    directory and its nearest ancestors, then the root, + the specifier
+    (`lane_units.ancestor_candidates`), settled against the namespace's live paths.
 
 `ParsedFile.tree` stays None: chunks come from `lane_units.span_chunks`,
 edges from the sites. Outside the extractor stamp with the other lanes.

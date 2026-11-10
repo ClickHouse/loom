@@ -2055,6 +2055,11 @@ def _override_edges(
     return out
 
 
+def _declaration_file(qualified_name: str) -> bool:
+    """Is this a definition in a `.d.ts` declaration file (module scope ending `.d`)?"""
+    return qualified_name.split("::", 1)[0].endswith(".d")
+
+
 def prefer_implementation(
     candidates: list[tuple[str, str, str]],
 ) -> list[tuple[str, str, str]]:
@@ -2063,7 +2068,7 @@ def prefer_implementation(
     type of the implementation, not a second definition — when both are
     candidates, the implementation alone remains. A name every candidate
     declares in `.d.ts` files keeps them all (a types-only package)."""
-    impl = [c for c in candidates if not c[1].split("::", 1)[0].endswith(".d")]
+    impl = [c for c in candidates if not _declaration_file(c[1])]
     return impl if impl and len(impl) < len(candidates) else candidates
 
 
@@ -2741,7 +2746,7 @@ class _CallResolver:
             return self._of(rows, ("suffix", owner, name), lambda: [
                 c for c in rows if c[1].endswith(f"::{owner}::{name}")
             ])
-        return self._by_member(rows).get((owner, name), [])
+        return self._by_member(rows).get((owner, name), _NO_ROWS)
 
     def _local_rows(self, bare: str) -> dict[str, Symbol]:
         """The file's first definition of `bare` per qualified name."""
@@ -3350,7 +3355,7 @@ class _CallResolver:
                 n, first = k, kept
         if self.script and n > 1:
             impl = self._of(pool, ("implementations",), lambda: [
-                c for c in pool if not c[1].split("::", 1)[0].endswith(".d")
+                c for c in pool if not _declaration_file(c[1])
             ])
             k, kept = self._without(impl, skip)
             if k and k < n:

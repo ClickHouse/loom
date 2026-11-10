@@ -187,8 +187,8 @@ async def _resolve_lane_includes(repo: CodeRepo, org: str, ns: str, pf: ParsedFi
         await _resolve_py_includes(repo, org, ns, pf)
         return
     if pf.lang in LANE_UNIT_LANGS:
-        # A proto import's root is protoc's `-I`, unknown here — the file's directory
-        # and every ancestor + the specifier are probed
+        # A proto import's root is protoc's `-I`, unknown here — the file's directory and
+        # its nearest ancestors (`MAX_ANCESTOR_DIRS` in all), then the root, + the specifier
         unit_lane = _lane_module(pf.lang)
         specs = list(pf.includes)
         present = await _present_for(
@@ -791,8 +791,9 @@ async def _barrel_targets_of(repo: CodeRepo, org: str, ns: str, path: str) -> tu
 
 async def _resolve_simple_lane_includes(repo: CodeRepo, org: str, ns: str, pf: ParsedFile) -> None:
     """An EXTENDS'd module, an included schema, an add_subdirectory, a doc's relative
-    link — the includer's directory first, then each ancestor (the C++ ladder), kept
-    when the namespace holds the file."""
+    link — the includer's directory first, then its nearest ancestors (the C++ ladder,
+    `MAX_ANCESTOR_DIRS` directories in all), then the root, kept when the namespace holds
+    the file."""
     wanted = _probes(lambda s: include_candidates(pf.path, s), pf.includes)
     present: set[str] = set()
     if wanted:
