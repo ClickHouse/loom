@@ -103,7 +103,15 @@ steps:
    caller is not refused for its access token, which a refresh replaces every hour: its
    answer's token ends at sign-out instead), an org whose model calls an admin
    switched off (`org.set_model_calls`), and a namespace over its assistant budget or
-   running its most concurrent answers ([Model and cost](#model-and-cost)).
+   running its most concurrent answers ([Model and cost](#model-and-cost)). A refusal a
+   client words for its reader carries `detail.reason`: `ASSISTANT_UNAVAILABLE` names
+   `not_configured` (no LibreChat), `auth_off`, `starting` (this process has not set the
+   service up yet, or is setting it up again) or `failing` (its last try failed; the setup
+   loop retries), and `AUTH_INSUFFICIENT` names `org_wide`, `narrowed` or
+   `token_expires_soon` (with `left_s`). Where an assistant is configured,
+   `/v1/health/ready` reports an `assistant` check, never required (a deployment whose
+   assistant is down still serves the rest), whose reason is `starting` or `failing`; a
+   missing check means none is configured.
 2. Delegate the answer's token from the caller's (`server/auth/delegation.py`
    `delegate`): `viewer` on the request's namespace alone, minted for the caller's own
    subject with consumer `loom-assistant` and an id starting with `assistant-answer-`

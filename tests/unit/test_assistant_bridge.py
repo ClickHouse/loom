@@ -243,27 +243,36 @@ def test_a_refusals_body_is_never_read(world: _World) -> None:
 
 
 @pytest.mark.parametrize(
-    ("change", "refusal"),
+    ("change", "refusal", "reason"),
     [
-        ({"librechat": ""}, AssistantUnavailableError),
-        ({"answering": None}, AssistantUnavailableError),
-        ({"auth": {"org": "*"}}, AuthInsufficientError),
-        ({"auth": {"read_scope": "own_user"}}, AuthInsufficientError),
+        ({"librechat": ""}, AssistantUnavailableError, "not_configured"),
+        ({"answering": None}, AssistantUnavailableError, "starting"),
+        ({"auth": {"org": "*"}}, AuthInsufficientError, "org_wide"),
+        ({"auth": {"read_scope": "own_user"}}, AuthInsufficientError, "narrowed"),
         # Pinned to one end user with no `read_scope`: narrowed all the same.
-        ({"auth": {"read_user_id": "u1"}}, AuthInsufficientError),
-        ({"auth": {"expires_at": int(time.time()) + 30}}, AuthInsufficientError),
-        ({"denied": True}, AuthInsufficientError),
-        ({"switched_off": True}, ModelCallsDisabled),
-        ({"over_cap": True}, RateLimitedError),
+        ({"auth": {"read_user_id": "u1"}}, AuthInsufficientError, "narrowed"),
+        (
+            {"auth": {"expires_at": int(time.time()) + 30}},
+            AuthInsufficientError,
+            "token_expires_soon",
+        ),
+        ({"denied": True}, AuthInsufficientError, None),
+        ({"switched_off": True}, ModelCallsDisabled, None),
+        ({"over_cap": True}, RateLimitedError, None),
     ],
 )
 def test_what_the_bridge_refuses_before_calling_librechat(
-    world: _World, monkeypatch: pytest.MonkeyPatch, change: dict[str, Any], refusal: type
+    world: _World,
+    monkeypatch: pytest.MonkeyPatch,
+    change: dict[str, Any],
+    refusal: type,
+    reason: str | None,
 ) -> None:
     if "librechat" in change:
         monkeypatch.setattr(settings, "assistant_librechat_url", change["librechat"])
     if "answering" in change:
         monkeypatch.setattr(service, "_answering", change["answering"])
+        monkeypatch.setattr(service, "_ready", None)  # before the first setup try
     world.denied = change.get("denied", False)
     world.switched_off = change.get("switched_off", False)
     world.over_cap = change.get("over_cap", False)
@@ -272,9 +281,11 @@ def test_what_the_bridge_refuses_before_calling_librechat(
         await bridge.authorize(auth, ORG, NS)  # as the route and assistant.ask call them
         await bridge.open_answer(auth, ORG, NS)
 
-    with pytest.raises(refusal):
+    with pytest.raises(refusal) as refused:
         asyncio.run(ask(_caller(**change.get("auth", {}))))
     assert world.librechat_body == {} and "minted" not in world.delegated
+    # A reason a client can branch on, in the refusal's detail (none for the others).
+    assert refused.value.to_detail().get("reason") == reason
 
 
 def test_the_cap_check_is_the_assistants_share_and_fails_closed(world: _World) -> None:
@@ -1216,3 +1227,49 @@ def test_an_answer_token_acting_for_someone_is_still_refused(
     r = http.post(ROUTE, headers=headers, json={"messages": QUESTION})
     assert (r.status_code, r.json()["detail"]["code"]) == (403, "ASSISTANT_SELF_CALL")
     assert world.librechat_body == {} and rows[0]["error_code"] == "ASSISTANT_SELF_CALL"
+
+
+def test_a_short_lived_tokens_refusal_says_how_long_it_has_left(world: _World) -> None:
+    with pytest.raises(AuthInsufficientError) as refused:
+        asyncio.run(bridge.authorize(_caller(expires_at=int(time.time()) + 30), ORG, NS))
+    detail = refused.value.to_detail()
+    assert detail["reason"] == "token_expires_soon" and 0 <= detail["left_s"] <= 30
+
+
+@pytest.mark.parametrize(
+    ("ready", "problem", "reason"),
+    [
+        (None, "", "starting"),
+        (False, "setting up the assistant again: LibreChat refused the stored key", "starting"),
+        (False, "setting up the assistant in LibreChat failed: connection refused", "failing"),
+    ],
+)
+def test_a_process_not_set_up_says_whether_it_is_starting_or_failing(
+    monkeypatch: pytest.MonkeyPatch, ready: bool | None, problem: str, reason: str
+) -> None:
+    monkeypatch.setattr(service, "_ready", ready)
+    monkeypatch.setattr(service, "_problem", problem)
+    assert service.unready_reason() == reason
+    check = service.readiness_check()
+    assert (check.ok, check.reason) == (False, reason)
+
+
+def test_a_process_set_up_is_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(service, "_ready", True)
+    monkeypatch.setattr(service, "_problem", "")
+    check = service.readiness_check()
+    assert (check.ok, check.reason) == (True, "")
+
+
+def test_the_chat_route_with_auth_off_says_so(client: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.assistant.app import routes
+
+    monkeypatch.setattr(routes, "verify_bearer_header", lambda *_a, **_k: None)
+    monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: False)
+    http, _rows = client
+    r = http.post(ROUTE, headers={"X-Loom-Namespace": NS}, json={"messages": QUESTION})
+    assert r.status_code == 503
+    assert (r.json()["detail"]["code"], r.json()["detail"]["reason"]) == (
+        "ASSISTANT_UNAVAILABLE",
+        "auth_off",
+    )

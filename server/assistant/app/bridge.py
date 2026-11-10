@@ -134,7 +134,8 @@ def refuse_org_wide(auth: AuthInfo) -> None:
     """An org-wide (`*`) token cannot ask: an answer reads one org."""
     if auth.org == "*":
         raise AuthInsufficientError(
-            "an org-wide token cannot ask the assistant: an answer reads one org"
+            "an org-wide token cannot ask the assistant: an answer reads one org",
+            reason="org_wide",
         )
 
 
@@ -158,20 +159,24 @@ async def authorize(auth: AuthInfo, org: str, namespace: str) -> None:
     these, and the cost checks after them (`open_answer`)."""
     if not settings.assistant_librechat_url:
         raise AssistantUnavailableError(
-            "no LibreChat is configured for the assistant (LOOM_ASSISTANT_LIBRECHAT_URL)"
+            "no LibreChat is configured for the assistant (LOOM_ASSISTANT_LIBRECHAT_URL)",
+            reason="not_configured",
         )
     refuse_org_wide(auth)
     refuse_self_call(auth)
     if request_read_narrowed(auth):
         raise AuthInsufficientError(
-            "a token whose reads are narrower than its namespace cannot ask the assistant"
+            "a token whose reads are narrower than its namespace cannot ask the assistant",
+            reason="narrowed",
         )
     if auth.expires_at is not None and not (auth.session_id and auth.first_party):
         left = auth.expires_at - int(time.time())
         if left < int(settings.assistant_answer_ttl_s):
             raise AuthInsufficientError(
                 f"the token expires in {max(left, 0)} s, sooner than an answer may run "
-                f"({int(settings.assistant_answer_ttl_s)} s)"
+                f"({int(settings.assistant_answer_ttl_s)} s)",
+                reason="token_expires_soon",
+                left_s=max(left, 0),
             )
     try:
         await check_authorized(auth, Role.VIEWER, org, namespace)
@@ -188,7 +193,8 @@ async def _afford(org: str, namespace: str) -> tuple[str, str]:
     answering = service.answering()
     if answering is None:
         raise AssistantUnavailableError(
-            "the assistant is not set up in this web process yet: /v1/health names a failed try"
+            "the assistant is not set up in this web process yet: /v1/health names a failed try",
+            reason=service.unready_reason(),
         )
     if await switched_off(org):
         raise ModelCallsDisabled(f"model calls are switched off for org {org!r}")

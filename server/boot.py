@@ -830,6 +830,11 @@ def register_readiness_checks(ch: Any) -> None:
     # replica at once, and an LB with no ready backend would cut off the
     # /v1/admin/models routes that finish it (the middleware keeps them open).
     readiness.register("model_work_gate", model_work_gate.readiness_check, required=False)
+    # Only where an assistant is configured: a missing check means none is.
+    if settings.assistant_librechat_url:
+        from server.assistant.app import service as assistant_service
+
+        readiness.register("assistant", assistant_service.readiness_check, required=False)
     if settings.ready_requires_mirrors:
         readiness.register("mirrors", mirrors.readiness_check, ttl_s=5.0)
 

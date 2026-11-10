@@ -30,7 +30,7 @@ import yaml
 
 from server.assistant.domain import definition as agent_definition
 from server.assistant.store import service as store
-from server.core import leases, paths
+from server.core import leases, paths, readiness
 from server.core.ch import set_query_tag, statement_timeout
 from server.core.ch_errors import error_line
 from server.core.errors import error_kind
@@ -69,6 +69,26 @@ def assistant_state() -> tuple[bool | None, str]:
     return _ready, _problem
 
 
+# A problem the setup loop wrote while it sets the service up again, not a failed try.
+_SETTING_UP_AGAIN = "setting up the assistant again"
+
+
+def unready_reason() -> str:
+    """Why this process cannot answer yet, in one word a client can branch on:
+    "starting" before the first try or while the service is set up again, "failing"
+    after a try that failed (the setup loop keeps retrying)."""
+    if _ready is None or _problem.startswith(_SETTING_UP_AGAIN):
+        return "starting"
+    return "failing"
+
+
+def readiness_check() -> readiness.CheckResult:
+    """The `assistant` check of `/v1/health/ready`: reported, never required (a deployment
+    whose assistant is down still serves everything else). Its reason is
+    `unready_reason()`."""
+    return readiness.result(_ready is True, unready_reason())
+
+
 def answering() -> tuple[str, str] | None:
     """(agent id, agents API key) once this process set the service up, else None."""
     return _answering
@@ -80,7 +100,7 @@ def forget_answering(why: str) -> None:
     the row another replica may have written or repairs it."""
     global _answering, _ready, _problem
     _answering = None
-    _ready, _problem = False, f"setting up the assistant again: {why}"
+    _ready, _problem = False, f"{_SETTING_UP_AGAIN}: {why}"
     if _loop is None or _loop.done():
         start_setup_loop()
 

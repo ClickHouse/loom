@@ -75,7 +75,9 @@ def _bearer(request: Request) -> AuthInfo:
     if auth is None:
         if not settings.auth_actually_required():
             # Each answer reads under a token delegated from the caller's.
-            raise AssistantUnavailableError("the assistant answers as its caller: it needs auth on")
+            raise AssistantUnavailableError(
+                "the assistant answers as its caller: it needs auth on", reason="auth_off"
+            )
         raise missing_bearer()
     return auth
 
