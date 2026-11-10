@@ -172,12 +172,17 @@ test.describe("a collection's path at 1400 px", () => {
     );
     await page.keyboard.press("Escape");
     await path.getByRole("link", { name: /^Namespace / }).focus();
-    await page.waitForTimeout(800);
     await expect(page.getByRole("tooltip")).toHaveCount(0);
     const first = page.locator("main [data-doc-row]").first();
     await expect(first).toBeVisible();
     expect((await boxOf(first)).y).toBeLessThanOrEqual(300);
     const inside = page.getByRole("region", { name: /Collections/ });
     expect((await boxOf(inside)).y).toBeGreaterThan((await boxOf(first)).y);
+    // Enter on the cut title opens its collection, and no tooltip is left over the page.
+    await long.focus();
+    await expect(page.getByRole("tooltip")).toBeVisible();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/collection=col-interviews/);
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
   });
 });

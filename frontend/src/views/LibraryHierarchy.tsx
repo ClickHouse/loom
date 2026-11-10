@@ -104,7 +104,7 @@ const PlaceLink = forwardRef<
       ref={ref}
       href={navigationHref("knowledge", collection ? { collection } : {})}
       onClick={(e: MouseEvent<HTMLAnchorElement>) => {
-        // A wrapping tooltip's own handler (it closes the tip) runs first.
+        // A wrapping tooltip trigger's handler runs too (it closes the tip), as Radix expects.
         onClick?.(e);
         if (isModifiedClick(e)) return;
         e.preventDefault();
