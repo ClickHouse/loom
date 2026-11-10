@@ -73,7 +73,7 @@ _STATEMENT_CODES = frozenset(
         6,  # CANNOT_PARSE_TEXT
         10,  # NOT_FOUND_COLUMN_IN_BLOCK
         16,  # NO_SUCH_COLUMN_IN_TABLE
-        boundary.BAD_ARGUMENTS,
+        36,  # BAD_ARGUMENTS
         42,  # NUMBER_OF_ARGUMENTS_DOESNT_MATCH
         43,  # ILLEGAL_TYPE_OF_ARGUMENT
         44,  # ILLEGAL_COLUMN
@@ -568,7 +568,8 @@ async def _canary_reads(secrets_: tuple[bytes, str]) -> bool:
 def _set_problem(problem: str, detail: str = "", fix: str = "") -> None:
     """Record the probe's answer. `problem` is Loom's own text, which
     `/v1/health` shows without a token; `detail` (a driver's text, the names
-    of policies or databases) goes only to the log."""
+    of policies or databases) goes only to the log; `fix`, Loom's own text too,
+    replaces health's default fix ('' keeps it)."""
     global _ready, _problem, _fix, _unreached_kind, _unreached_since
     _unreached_kind, _unreached_since = "", 0.0  # the probe ran: no answer logs again
     _fix = fix

@@ -32,6 +32,10 @@ from server.core.sql_literal import sql_string
 # back its narrower grants over N's (`needs_rewrite`).
 ENTITY_VERSION = 2
 
+# ClickHouse error codes this plane branches on.
+BAD_ARGUMENTS = 36
+ACCESS_DENIED = 497
+
 ANALYST_USER = "loom_analyst"
 POLICY_NAME = "loom_analyst_scope"
 CAPS_PROFILE = "loom_analyst_caps"
@@ -604,15 +608,12 @@ def wrap_statement(sql: str, limit: int) -> str:
     return f"SELECT * FROM (\n{body}\n) LIMIT {int(limit) + 1}"
 
 
-BAD_ARGUMENTS = 36
-ACCESS_DENIED = 497
-
 _PASSWORD_FIX = (
     "Loom draws a password with a lower and an upper case letter, a digit and a symbol; "
     f"a stored one that lacks any of them is refused. Drop the {ANALYST_USER} user if it "
     "exists, then delete the row in loom.analysis_secrets (loom is LOOM_CH_DATABASE): "
     "the next probe draws a new pair. Rules that ask for more refuse a new pair too: "
-    f"relax them for {ANALYST_USER}."
+    "relax the server's password_complexity rules."
 )
 
 
