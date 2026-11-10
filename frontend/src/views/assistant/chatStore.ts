@@ -222,7 +222,8 @@ export function newConversation(): void {
 export function resetChat(owner: Owner | null): void {
   controller?.abort();
   controller = null;
-  useChat.setState({ owner, ...blank, answering: false, refused: null });
+  // A refusal's reason was about the owner's token: it goes with them.
+  useChat.setState({ owner, ...blank, answering: false, refused: null, hint: null });
   useDock.setState({ working: false });
 }
 

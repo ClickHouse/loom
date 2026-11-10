@@ -555,7 +555,12 @@ describe("AssistantChat", () => {
   it("names the op an answer may have invented in its label", async () => {
     const s = sse();
     answers.push(() => s);
-    render(<AssistantChat namespace="team" blocked={null} />);
+    render(
+      <>
+        <AssistantChat namespace="team" blocked={null} />
+        <p id="loom-assistant-status" role="status" />
+      </>,
+    );
     await ask("How do I pin a memory?");
     const cited = [{ kind: "memory", text: "[memory:a/b/c@v3]", verified: true, reason: "", ref: "a/b/c", anchor: "" }];
     await act(async () => {
@@ -565,8 +570,11 @@ describe("AssistantChat", () => {
       );
       s.done();
     });
-    expect(await screen.findByTestId("assistant-support")).toHaveTextContent(
-      "Couldn't confirm: it names memory.frobnicate, which this Loom neither serves nor documents",
+    const label = "Couldn't confirm: it names memory.frobnicate, which this Loom neither serves nor documents";
+    expect(await screen.findByTestId("assistant-support")).toHaveTextContent(label);
+    // Said with the end of the answer, too.
+    await waitFor(() =>
+      expect(document.getElementById("loom-assistant-status")).toHaveTextContent(`The answer is complete. ${label}.`),
     );
   });
 

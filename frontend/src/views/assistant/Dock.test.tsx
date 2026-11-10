@@ -202,6 +202,37 @@ describe("reasons, worded per reader", () => {
     await waitFor(() => expect(screen.queryByTestId("assistant-unavailable")).not.toBeInTheDocument());
   });
 
+  it("a route refusal that says setting up is read again, and goes once readiness reads ready", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    signIn("viewer");
+    show();
+    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" }));
+    await askIt("Who owns billing?");
+    expect(await unavailable()).toHaveTextContent("Setting up — usually under a minute. This updates on its own.");
+    const reads = paths.filter((p) => p === "/v1/health/ready").length;
+    await act(async () => {
+      vi.advanceTimersByTime(READINESS_POLL_MS + 10);
+    });
+    await waitFor(() => expect(paths.filter((p) => p === "/v1/health/ready").length).toBeGreaterThan(reads));
+    await waitFor(() => expect(screen.queryByTestId("assistant-unavailable")).not.toBeInTheDocument());
+    expect(useChat.getState().hint).toBeNull();
+  });
+
+  it("a token-bound refusal's reason goes when the owner changes", async () => {
+    signIn("viewer");
+    show();
+    chat.push(refusal(403, { code: "AUTH_INSUFFICIENT", message: "narrowed", reason: "narrowed" }));
+    await askIt("Who owns billing?");
+    expect(await unavailable()).toHaveAttribute("data-reason", "narrowed");
+    act(() =>
+      useStore.setState({
+        whoami: { authenticated: true, subject: "bob", org: "acme", namespaces: ["team"], roles: ["VIEWER"] },
+      }),
+    );
+    await waitFor(() => expect(screen.queryByTestId("assistant-unavailable")).not.toBeInTheDocument());
+    expect(useChat.getState().hint).toBeNull();
+  });
+
   it("auth off, decided without a request, and nothing stored", async () => {
     mode.authOff = true;
     signIn("platform");
@@ -1054,6 +1085,39 @@ describe("a turn stored while it answered", () => {
     act(() => window.dispatchEvent(new StorageEvent("storage", { key: "loom_assistant_c_c1" })));
     expect(await screen.findByText("Answer 1")).toBeInTheDocument();
     expect(screen.queryByText(OTHER_TAB, { selector: "p:not(#loom-assistant-status)" })).toBeNull();
+  });
+});
+
+describe("an answer's unknown names", () => {
+  it("are kept with the turn: the label shows again when the conversation opens after a reload", async () => {
+    signIn("viewer");
+    show();
+    const cited = [{ kind: "memory", text: "[memory:a/b/c@v3]", verified: true, reason: "", ref: "a/b/c", anchor: "" }];
+    chat.push(
+      () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(c) {
+              const send = (o: unknown) => c.enqueue(enc.encode(`data: ${JSON.stringify(o)}\n\n`));
+              send({ choices: [{ delta: { content: "Call `memory.frobnicate` [memory:a/b/c@v3]." } }] });
+              send({ object: "loom.citations", choices: [], citations: cited, support: "unsupported", unknown_names: ["memory.frobnicate"] });
+              c.enqueue(enc.encode("data: [DONE]\n\n"));
+              c.close();
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+    );
+    const label = "Couldn't confirm: it names memory.frobnicate, which this Loom neither serves nor documents";
+    const user = await askIt("How do I pin a memory?");
+    expect(await screen.findByTestId("assistant-support")).toHaveTextContent(label);
+    await waitFor(() => expect(useChat.getState().answering).toBe(false));
+    // A reload: the page's state goes, the stored conversation stays.
+    act(() => resetChat(alice));
+    expect(screen.queryByTestId("assistant-support")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "History" }));
+    await user.click(screen.getByRole("button", { name: "How do I pin a memory?" }));
+    expect(await screen.findByTestId("assistant-support")).toHaveTextContent(label);
   });
 });
 

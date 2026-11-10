@@ -262,3 +262,17 @@ for (const width of [360, 400]) {
     });
   });
 }
+
+// The styles.css rule that makes the launcher 32 px below xl overrides Click UI's button
+// padding only while its layer comes after Click UI's: a fine pointer at 1100 px shows it.
+test("below xl, under a fine pointer, the launcher is a 32 px icon", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await installApi(page);
+  await page.goto("/memories");
+  await expect(page.locator("main h1").first()).toBeVisible();
+  await expect(launcher(page)).toBeVisible();
+  const box = await launcher(page).boundingBox();
+  expect(Math.round(box?.width ?? 0)).toBe(32);
+  expect(Math.round(box?.height ?? 0)).toBe(32);
+  await expect(launcher(page).getByText("Assistant", { exact: true })).toBeHidden();
+});

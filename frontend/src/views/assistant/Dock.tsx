@@ -139,16 +139,23 @@ export function DockBody() {
     const ctl = new AbortController();
     void readReadiness(ctl.signal).then((r) => {
       if (ctl.signal.aborted) return;
-      useChat.setState({ readiness: r });
+      // A route's refusal that said setting up or failing is what readiness now says (as
+      // Try again does): readiness reports the setup from here on.
+      const h = useChat.getState().hint;
+      const stale = h?.kind === "starting" || h?.kind === "failing";
+      useChat.setState({ readiness: r, ...(stale ? { hint: null } : {}) });
       setChecking(false);
     });
     return () => ctl.abort();
   }, [open, readTick]);
+  // The setup is in progress or failing by readiness or by the route's refusal: read again.
+  const settingUp = (k?: string) => k === "starting" || k === "failing";
+  const polling = open && (settingUp(readiness?.kind) || settingUp(hint?.kind));
   useEffect(() => {
-    if (!open || !(readiness?.kind === "starting" || readiness?.kind === "failing")) return;
+    if (!polling) return;
     const t = setInterval(() => setReadTick((n) => n + 1), READINESS_POLL_MS);
     return () => clearInterval(t);
-  }, [open, readiness?.kind]);
+  }, [polling]);
 
   // The reason shown, first match: the token's claims, the route's refusal, readiness.
   const claim = claimReason();
