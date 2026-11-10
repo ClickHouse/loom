@@ -12,7 +12,6 @@ keywords = [
   "loom",
   "clickhouse",
   "mcp",
-  "mcp-server",
   "agent-memory",
   "long-term-memory",
   "ai-agents",
