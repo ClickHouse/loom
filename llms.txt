@@ -20,7 +20,7 @@ Start with docs/index.md (the map). A coding agent installing Loom: follow docs/
 - [Backup and recovery](docs/operations/backup-and-recovery.md): A Loom backup is a ClickHouse backup, plus the document bucket while any catalog row names an object in it, and under the Postgres authority a backup of Postgres too.
 - [ClickHouse Cloud and Managed Postgres](docs/operations/clickhouse-cloud.md): This guide runs Loom on Kubernetes over two managed services: ClickHouse Cloud for projections, vectors, history and analytics, and ClickHouse Managed Postgres as the memory authority.
 - [Code index operations](docs/operations/code-index-operations.md): The code index runs only when an operator enables its workers and configures repositories.
-- [Deployment](docs/operations/deployment.md): Loom is one server image plus ClickHouse, with the document extractor service as an image of its own (container images).
+- [Deployment](docs/operations/deployment.md): Loom is one server image plus ClickHouse, and Postgres under the Postgres memory authority, with the document extractor service as an image of its own (container images).
 - [Kubernetes](docs/operations/kubernetes.md): `deploy/helm/loom` runs Loom as N identical replicas on Kubernetes: one Deployment of web pods over one ClickHouse service, each pod a full replica.
 - [Maintenance](docs/operations/maintenance.md): Every command here is a `loom` subcommand; run it inside the container that has the deployment's environment (`docker exec loom-server loom …`, or `loom-workers` in a split deployment).
 - [Monitoring](docs/operations/monitoring.md): This page says what to watch.

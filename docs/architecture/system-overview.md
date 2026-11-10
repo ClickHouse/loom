@@ -3,8 +3,8 @@
 Loom is a Python server (a FastAPI application plus a supervisor of background workers)
 and ClickHouse, with Postgres as an option for live memory. Under
 `LOOM_STORAGE_AUTHORITY=postgres`, Postgres holds live memory and the head of every
-knowledge document ([storage authority](storage-authority.md)). Loom is
-stateful: everything it knows is stored there, including facts and their vectors,
+knowledge document ([storage authority](storage-authority.md)). Loom is stateful:
+everything it knows is stored in those stores, including facts and their vectors,
 documents, conversations, the entity graph, the code index, tasks, audit, cost and
 erasure progress. The server processes keep no durable state of their own, so any number
 of them can serve the same stores and a request can land on any of them. The few pieces
@@ -345,13 +345,13 @@ flowchart LR
   erasure checkpoints, the blacklist version, the idempotency cache) and uploaded document
   originals live in ClickHouse, the bytes of those written with
   `LOOM_DOCUMENT_OBJECT_STORE=s3` in an S3-compatible bucket instead. Under the Postgres
-  authority, the idempotency cache lives in Postgres instead. A new Loom with the same ClickHouse
-  (and Postgres, under that authority), env config and `LOOM_JWT_SECRET`, and that bucket
-  while rows name objects in it, gets every feature back.
+  authority, the idempotency cache lives in Postgres instead. A new Loom with the same
+  ClickHouse (and Postgres, under that authority), env config and `LOOM_JWT_SECRET`, and
+  that bucket while rows name objects in it, gets every feature back.
 - **State outside ClickHouse and Postgres.** The code plane's git mirrors under
-  `var/code_repos` (a cache: a host without them re-clones) and the rate-limit buckets on the `loom-shared`
-  volume, neither the system of record; and, while any catalog row names an object in it,
-  `LOOM_DOCUMENT_S3_BUCKET`, holding the bytes of those originals.
+  `var/code_repos` (a cache: a host without them re-clones) and the rate-limit buckets on
+  the `loom-shared` volume, neither the system of record; and, while any catalog row
+  names an object in it, `LOOM_DOCUMENT_S3_BUCKET`, holding the bytes of those originals.
 - **Two containers, one image.** `dev/docker-compose.cloud.yml` runs `loom-server`
   (`LOOM_BACKGROUND_WORKERS=off`) and `loom-workers` (`auto`: it runs the workers while it
   holds the lease), so a long worker pass never shares an event loop with requests.
@@ -377,10 +377,11 @@ and joins between memory and its telemetry without a sync job. Hybrid retrieval 
 SQL next to the data. A separate vector store would add a second consistency domain,
 dual writes and fusion across network hops.
 
-Under the Postgres memory authority, Postgres holds live memory, knowledge document heads
-and their revision journal, and a delivery worker brings each revision into ClickHouse,
-which keeps the vectors, the search legs, the history and the analytics. A backup then
-covers both stores ([storage authority](storage-authority.md#why-two-stores)).
+Under the Postgres memory authority, Postgres holds live memory and its revision journal,
+and knowledge document heads; a delivery worker brings each revision into ClickHouse,
+which keeps the vectors, the search legs, the history and the analytics
+([storage authority](storage-authority.md)). A backup then covers both stores
+([backup and recovery](../operations/backup-and-recovery.md#under-the-postgres-authority)).
 
 **Cost:** no transactional row updates. Mutable tables are `ReplacingMergeTree` read with
 `FINAL`, so every write path carries every column forward
