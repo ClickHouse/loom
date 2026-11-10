@@ -3046,7 +3046,7 @@ class _CallResolver:
         the directory of a package this file imports is that package's."""
         if not self.go or not receiver or "." in receiver or receiver in self.go_aliases:
             return None
-        dirs = self._go_dirs_imported()
+        dirs = self._imported_package_dirs()
         if not dirs:
             return None
         found = self._of(candidates, ("clause in dirs", bare, receiver), lambda: [
@@ -3057,7 +3057,7 @@ class _CallResolver:
             return found[0][0], found[0][1], IMPORT_BOUND_CONFIDENCE
         return None
 
-    def _go_dirs_imported(self) -> set[str]:
+    def _imported_package_dirs(self) -> set[str]:
         """The repository directories this file's imports place, read once per file."""
         return self._once(("go dirs",), lambda: {d for d in self.go_packages.values() if d})
 
@@ -3131,7 +3131,7 @@ class _CallResolver:
             # (`clickhouse.Dynamic` for …/clickhouse-go/v2, whose path element
             # says clickhouse_go): the imported repository directory whose
             # clause is the alias, or nothing — never every package's Dynamic
-            clauses = {f"{d}.{alias}::" for d in self._go_dirs_imported()}
+            clauses = {f"{d}.{alias}::" for d in self._imported_package_dirs()}
             heads = self._of(candidates, ("heads",), lambda: {
                 q[1].partition("::")[0] + "::" for q in candidates if "::" in q[1]
             })

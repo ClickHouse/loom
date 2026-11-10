@@ -73,39 +73,38 @@ class PathsTable:
     """One config's `paths` with the directory its targets are relative to."""
     base: str  # baseUrl resolved against the config dir, or the config dir
     patterns: dict[str, list[str]] = field(default_factory=dict)
-    # the wildcard patterns by head, then tail (to the pattern's place in `patterns`),
-    # with the tail lengths each head holds, the head lengths shortest first and the
-    # patterns in order; built at the first lookup, once `patterns` is filled
-    _heads: dict[str, tuple[dict[str, int], list[int]]] | None = field(
-        default=None, init=False, repr=False, compare=False
+    # (the wildcard patterns by head, then tail, to the pattern's place in `patterns`, with
+    # the tail lengths each head holds; the head lengths shortest first; the patterns in
+    # order), built in one assignment at the first lookup, once `patterns` is filled
+    _index: tuple[dict[str, tuple[dict[str, int], list[int]]], list[int], list[str]] | None = (
+        field(default=None, init=False, repr=False, compare=False)
     )
-    _head_lengths: list[int] = field(default_factory=list, init=False, repr=False, compare=False)
-    _names: list[str] = field(default_factory=list, init=False, repr=False, compare=False)
 
     def best(self, spec: str) -> tuple[str, str] | None:
         """(pattern, `*` binding) of the pattern the compiler picks for `spec`: an exact
         one, else the matching wildcard with the longest head, the first written on a
         tie; None when none matches. One lookup per head and tail length the table
-        holds, instead of a match against every pattern."""
+        holds that fits the spec, instead of a match against every pattern."""
         if spec in self.patterns and "*" not in spec:
             return spec, ""
-        if self._heads is None:
+        if self._index is None:
             by_head: dict[str, dict[str, int]] = {}
             for order, pat in enumerate(self.patterns):
                 if "*" in pat:
                     head, _, tail = pat.partition("*")
                     by_head.setdefault(head, {}).setdefault(tail, order)
-            self._heads = {
-                h: (tails, sorted({len(t) for t in tails})) for h, tails in by_head.items()
-            }
-            self._head_lengths = sorted({len(h) for h in by_head})
-            self._names = list(self.patterns)
+            self._index = (
+                {h: (tails, sorted({len(t) for t in tails})) for h, tails in by_head.items()},
+                sorted({len(h) for h in by_head}),
+                list(self.patterns),
+            )
+        heads, head_lengths, names = self._index
         # the head lengths a prefix of the spec can have, longest first
-        fits = bisect.bisect_right(self._head_lengths, len(spec))
-        for n in reversed(self._head_lengths[:fits]):
-            if spec[:n] not in self._heads:
+        fits = bisect.bisect_right(head_lengths, len(spec))
+        for n in reversed(head_lengths[:fits]):
+            if spec[:n] not in heads:
                 continue
-            tails, lengths = self._heads[spec[:n]]
+            tails, lengths = heads[spec[:n]]
             rest = spec[n:]
             orders = [
                 tails[rest[len(rest) - k :]]
@@ -113,7 +112,7 @@ class PathsTable:
                 if rest[len(rest) - k :] in tails
             ]
             if orders:
-                pat = self._names[min(orders)]
+                pat = names[min(orders)]
                 return pat, rest[: len(rest) - len(pat.partition("*")[2])]
         return None
 

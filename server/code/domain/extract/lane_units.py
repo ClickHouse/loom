@@ -315,7 +315,8 @@ def bind_sites(
 
 
 # not a setting: the ancestor directories a specifier is tried under, nearest first, before
-# the repository root; each costs every import the path's length again
+# the repository root; each adds one candidate per import, so a deep path multiplies a
+# file's candidates
 MAX_ANCESTOR_DIRS = 32
 
 

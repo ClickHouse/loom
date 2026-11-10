@@ -160,7 +160,7 @@ def client_dialect(ancestors: list[Any], source: bytes, seen: dict[tuple[int, in
     runs from the root to the literal's parent, kept by the walk: a node's `parent`
     is found from the root down, so reading it per literal is quadratic in a deep tree.
     `seen` keeps each callee's dialect for the file's next literals."""
-    for cur in ancestors[: -_ANCESTOR_DEPTH - 1 : -1]:
+    for cur in reversed(ancestors[-_ANCESTOR_DEPTH:]):
         if cur.type == "call_expression":
             fn = cur.child_by_field_name("function")
             if fn is None:
