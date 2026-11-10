@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { violations } from "./axe";
-import { boxOf, installApi, ROUTES } from "./fixtures";
+import { boxOf, installApi, MIN_TARGET_PX, ROUTES } from "./fixtures";
 
 // axe-core on the rendered dashboard (e2e/axe.ts): every route at desktop and phone width,
 // and the shell's dialog and menu open. Any violation fails. Contrast is only measurable
@@ -645,7 +645,8 @@ for (const [width, touch] of [
         await expect(order.locator("[draggable]")).toHaveCount(0);
         // The arrows are the way here: each enabled one is a 44 px touch target.
         const up = await boxOf(order.getByRole("button", { name: "Move shared-handbook up" }));
-        for (const arrow of [down, up]) expect(Math.min(arrow.width, arrow.height)).toBeGreaterThanOrEqual(44);
+        for (const arrow of [down, up])
+          expect(Math.min(arrow.width, arrow.height)).toBeGreaterThanOrEqual(MIN_TARGET_PX);
         await expect(page.getByText(/Use a row's arrows to change the order/)).toBeVisible();
         await order.getByRole("button", { name: "Move team-research-notes down" }).tap();
         await expect(order.getByRole("listitem").nth(0)).toContainText("shared-handbook");
