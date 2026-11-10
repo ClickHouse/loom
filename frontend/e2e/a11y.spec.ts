@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { violations } from "./axe";
-import { installApi, ROUTES } from "./fixtures";
+import { boxOf, installApi, MIN_TARGET_PX, ROUTES } from "./fixtures";
 
 // axe-core on the rendered dashboard (e2e/axe.ts): every route at desktop and phone width,
 // and the shell's dialog and menu open. Any violation fails. Contrast is only measurable
@@ -601,3 +601,62 @@ test("reduced motion stops Click UI's dialog animation", async ({ page }) => {
   await expect(dialog).toBeVisible();
   expect(await dialog.evaluate((el) => getComputedStyle(el).animationName)).toBe("none");
 });
+
+// The token form's search order: the ticked namespaces as one ordered list, moved by drag or
+// by arrows. Axe-clean at both widths; on a touch phone each name keeps room to be read,
+// the role and arrows wrapping under it.
+for (const [width, touch] of [
+  [1400, false],
+  [375, true],
+] as const) {
+  test.describe(`the token form's search order at ${width} px`, () => {
+    test.use({ viewport: { width, height: 900 }, hasTouch: touch });
+    test("is axe-clean, keeps names readable, and moves rows by grip or, on touch, by arrows only", async ({
+      page,
+    }) => {
+      const row = (namespace: string, role: string) => ({
+        namespace,
+        role,
+        status: "active",
+        visibility: "private",
+        kind: "memory",
+        description: "",
+        joined_at: "2026-01-01T00:00:00Z",
+        is_new: false,
+      });
+      await installApi(page, {
+        mine: [row("bench", "admin"), row("team-research-notes", "writer"), row("shared-handbook", "viewer")],
+      });
+      await page.goto("/settings");
+      await page.getByRole("radio", { name: "Only these namespaces" }).click();
+      await page.getByRole("checkbox", { name: "Read team-research-notes" }).click();
+      await page.getByRole("checkbox", { name: "Read shared-handbook" }).click();
+      const order = page.getByRole("list", { name: "Search order" });
+      await expect(order.getByRole("listitem")).toHaveCount(2);
+      expect(await violations(page)).toEqual([]);
+      const name = order.getByText("team-research-notes", { exact: true });
+      expect((await boxOf(name)).width).toBeGreaterThanOrEqual(140);
+      // The arrows stay inside the list, wrapped under the name where the row is narrow.
+      const list = await boxOf(order);
+      const down = await boxOf(order.getByRole("button", { name: "Move team-research-notes down" }));
+      expect(down.x + down.width).toBeLessThanOrEqual(list.x + list.width);
+      if (touch) {
+        // On a touch screen no grip shows, the hint names the arrows, and an arrow moves a row.
+        await expect(order.locator("[draggable]")).toHaveCount(0);
+        // The arrows are the way here: each enabled one is a 44 px touch target.
+        const up = await boxOf(order.getByRole("button", { name: "Move shared-handbook up" }));
+        for (const arrow of [down, up])
+          expect(Math.min(arrow.width, arrow.height)).toBeGreaterThanOrEqual(MIN_TARGET_PX);
+        await expect(page.getByText(/Use a row's arrows to change the order/)).toBeVisible();
+        await order.getByRole("button", { name: "Move team-research-notes down" }).tap();
+        await expect(order.getByRole("listitem").nth(0)).toContainText("shared-handbook");
+      } else {
+        await expect(page.getByText(/Drag a row by its grip, or use its arrows, to change the order/)).toBeVisible();
+        // A real drag by the grip: the second row takes the first place.
+        const rows = order.getByRole("listitem");
+        await rows.nth(1).locator("[draggable]").dragTo(rows.nth(0));
+        await expect(rows.nth(0)).toContainText("shared-handbook");
+      }
+    });
+  });
+}

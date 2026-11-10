@@ -273,6 +273,9 @@ test("a restricted repository is picked by repository and branch in the token fo
   await expect(repo).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "Read acme/private branch 26.8" })).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "Read code-acme-private" })).toHaveCount(0);
+  // Nothing is ticked at first: the namespace the page is on is picked like any other.
+  await expect(page.getByRole("checkbox", { name: "Read team-private" })).not.toBeChecked();
+  await page.getByRole("checkbox", { name: "Read team-private" }).click();
   await page.getByRole("checkbox", { name: "Read team-public" }).click();
   await page.getByRole("checkbox", { name: "Read acme/private branch master" }).click();
   await shot(page, "21-settings-token-with-a-restricted-repository");

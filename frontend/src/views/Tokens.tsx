@@ -26,6 +26,7 @@ import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal } from "../components/ui/Modal";
 import { IconButton } from "../components/IconButton";
 import { isMemoryNamespace } from "../lib/namespace";
+import { COARSE_POINTER, useMedia } from "../lib/useMedia";
 import {
   CLIENTS,
   configPreviewText,
@@ -217,6 +218,165 @@ export function TokensSection({
   );
 }
 
+/** The ticked namespaces as one ordered list: number 1 is searched first. Each row moves by
+ *  its Move up and Move down buttons, and, where the pointer is not coarse and two or more
+ *  rows are listed, by dragging its grip; its role is at most the person's own. */
+function SearchOrder({
+  order,
+  label,
+  isRepo,
+  role,
+  grant,
+  onRole,
+  onMove,
+  touch,
+}: {
+  order: string[];
+  label: (ns: string) => string;
+  isRepo: (ns: string) => boolean;
+  role: (ns: string) => GrantRole;
+  grant: (ns: string) => GrantRole;
+  onRole: (ns: string, r: GrantRole) => void;
+  onMove: (ns: string, to: number) => void;
+  /** A touch screen: no grip, since a long-press drag is not what a touch user expects; the
+   *  arrows move the rows. */
+  touch: boolean;
+}) {
+  const titleId = useId();
+  const hintId = useId();
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [over, setOver] = useState<number | null>(null);
+  // Focus goes back to the pressed arrow after every move (a row moved down is re-inserted,
+  // which drops focus), or to the row's other arrow when the pressed one is now disabled.
+  const arrows = useRef(new Map<string, HTMLButtonElement | null>());
+  const focusAfter = useRef<string | null>(null);
+  useEffect(() => {
+    const key = focusAfter.current;
+    focusAfter.current = null;
+    if (key) arrows.current.get(key)?.focus();
+  }, [order]);
+  const move = (ns: string, i: number, by: -1 | 1) => {
+    const to = i + by;
+    const atEnd = to === 0 || to === order.length - 1;
+    const pressed = by === -1 ? "up" : "down";
+    const other = by === -1 ? "down" : "up";
+    focusAfter.current = `${ns}:${atEnd ? other : pressed}`;
+    onMove(ns, to);
+  };
+  return (
+    <div>
+      <div id={titleId} className="section-label mb-1">
+        Search order
+      </div>
+      {order.length > 1 && (
+        <p id={hintId} className="mb-1 text-xs text-text-muted">
+          Number 1 is searched first.{" "}
+          {touch
+            ? "Use a row's arrows to change the order."
+            : "Drag a row by its grip, or use its arrows, to change the order."}
+        </p>
+      )}
+      <ol
+        // biome-ignore lint/a11y/noRedundantRoles: WebKit drops list semantics from an unstyled list without it.
+        role="list"
+        aria-labelledby={titleId}
+        aria-describedby={order.length > 1 ? hintId : undefined}
+        className="rounded-md border border-border bg-surface-2 divide-y divide-border"
+      >
+        {order.map((ns, i) => {
+          const repo = isRepo(ns);
+          return (
+            // biome-ignore lint/a11y/noNoninteractiveElementInteractions: a drop target for a dragged row; its Move up and Move down buttons are the keyboard path
+            <li
+              key={ns}
+              onDragOver={(e) => {
+                if (dragging === null) return;
+                e.preventDefault();
+                setOver(i);
+              }}
+              onDragLeave={(e) => {
+                // A move between the row's own parts is no leave.
+                if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver((o) => (o === i ? null : o));
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (dragging !== null) onMove(dragging, i);
+                setDragging(null);
+                setOver(null);
+              }}
+              className={`flex flex-wrap items-center gap-2 px-2 py-1.5 text-sm ${over === i && dragging !== ns ? "bg-surface" : ""} ${dragging === ns ? "opacity-60" : ""}`}
+            >
+              {/* Only the grip drags, so a press on the role or an arrow stays a press and the name can be selected. */}
+              {!touch && order.length > 1 && (
+                <span
+                  className="cursor-grab text-text-muted"
+                  aria-hidden="true"
+                  draggable
+                  onDragStart={(e) => {
+                    setDragging(ns);
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setData("text/plain", ns);
+                    const row = e.currentTarget.closest("li");
+                    if (row) e.dataTransfer.setDragImage(row, 16, 16);
+                  }}
+                  onDragEnd={() => {
+                    setDragging(null);
+                    setOver(null);
+                  }}
+                >
+                  <Icon name="dots-vertical-double" size="sm" />
+                </span>
+              )}
+              <span className="w-5 shrink-0 text-right tabular text-text-muted">{i + 1}</span>
+              {/* A 10rem basis for the name: on a phone the role and arrows wrap under it. */}
+              <span className="font-mono min-w-0 flex-1 basis-40 truncate">{label(ns)}</span>
+              {repo ? (
+                <span className="text-xs text-text-muted shrink-0">read-only</span>
+              ) : (
+                <Tip content={`At most your own role (${ROLE_LABELS[grant(ns)]})`}>
+                  <div className="w-28 shrink-0">
+                    <Select
+                      triggerProps={{ "aria-label": `Role on ${ns}` }}
+                      value={role(ns)}
+                      onSelect={(r) => {
+                        if (isGrantRole(r)) onRole(ns, r);
+                      }}
+                    >
+                      {rolesUpTo(grant(ns)).map((r) => (
+                        <Select.Item key={r} value={r}>
+                          {ROLE_LABELS[r]}
+                        </Select.Item>
+                      ))}
+                    </Select>
+                  </div>
+                </Tip>
+              )}
+              <IconButton
+                ref={(el) => {
+                  arrows.current.set(`${ns}:up`, el);
+                }}
+                icon="arrow-up"
+                label={`Move ${label(ns)} up`}
+                disabled={i === 0}
+                onClick={() => move(ns, i, -1)}
+              />
+              <IconButton
+                ref={(el) => {
+                  arrows.current.set(`${ns}:down`, el);
+                }}
+                icon="arrow-down"
+                label={`Move ${label(ns)} down`}
+                disabled={i === order.length - 1}
+                onClick={() => move(ns, i, 1)}
+              />
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
 type RepoInfo = Record<string, { repo: string; branch: string; classification?: string }>;
 
 /** Repository and branch per code namespace, from code.repos. `code.repos` only when the
@@ -278,16 +438,18 @@ function TokenForm({
   // and the restricted repositories (by repo name) added to it.
   const [homeEdited, setHomeEdited] = useState<string | null>(null);
   const [restrictedRepos, setRestrictedRepos] = useState<Set<string>>(() => new Set());
-  // Only these: `selectedNs` order = read priority (index 0 = searched first, and where it
-  // saves when it may write there). nsRole is the role per namespace, capped at your grant.
+  // Only these: `selectedNs` order = read priority (index 0 is searched first); where it
+  // saves is the server's rule. nsRole is the role per namespace, capped at your grant.
   const [selectedNs, setSelectedNs] = useState<string[]>([]);
   const [nsRole, setNsRole] = useState<Record<string, GrantRole>>({});
   const [newNs, setNewNs] = useState("");
   const [addingNs, setAddingNs] = useState(false);
+  const touch = useMedia(COARSE_POINTER);
   const [loadFailed, setLoadFailed] = useState(false);
+  // The last move of the search order, said to a screen reader (`moveTo`).
+  const [moved, setMoved] = useState("");
 
-  // Once per identity; an answer for an org or namespace the page has left is dropped.
-  // The first answer ticks the page's namespace for "Only these" when nothing is ticked.
+  // Once per org; an answer for an org the page has left is dropped.
   useAbortableEffect(
     async (_signal, live) => {
       let all: MyNamespaceEntry[];
@@ -300,19 +462,14 @@ function TokenForm({
       if (!live()) return;
       setLoadFailed(false);
       setRows(all);
-      const active = all.filter((r) => r.status !== "pending");
-      const seed = active.find((r) => r.namespace === identity.namespace && r.kind !== "code");
-      if (!seed) return;
-      setSelectedNs((prev) => (prev.length > 0 ? prev : [seed.namespace]));
-      setNsRole((prev) =>
-        Object.keys(prev).length > 0 ? prev : { [seed.namespace]: grantRoleOf(active, seed.namespace) },
-      );
     },
-    [identity.org, identity.namespace],
+    [identity.org],
   );
 
   const eligibleNs = useMemo(() => (mine ?? []).filter((n) => n.kind !== "code"), [mine]);
   const eligibleRepos = useMemo(() => (mine ?? []).filter((n) => n.kind === "code"), [mine]);
+  // A repository is read-only: the list says so and the request sends viewer.
+  const isRepo = (ns: string) => eligibleRepos.some((r) => r.namespace === ns);
   const repoInfo = useRepoInfo(mine ?? storedMine);
   const repoGroups = useMemo(() => {
     const by = new Map<string, { repo: string; restricted: boolean; rows: { namespace: string; branch: string }[] }>();
@@ -336,7 +493,7 @@ function TokenForm({
   const writableMemory = eligibleNs
     .filter((n) => isMemoryNamespace(n.namespace, mine) && writes(grantRoleOf(mine, n.namespace)))
     .map((n) => n.namespace);
-  const listedWrites = selectedNs.some((ns) => isMemoryNamespace(ns, mine) && writes(nsRole[ns] ?? "viewer"));
+  const listedWrites = selectedNs.some((ns) => isMemoryNamespace(ns, mine) && writes(nsRole[ns]));
   const everythingHome =
     homeEdited && writableMemory.includes(homeEdited)
       ? homeEdited
@@ -355,6 +512,8 @@ function TokenForm({
   );
 
   const toggleNs = (ns: string) => {
+    // A move after a tick says its line again, even when the words are the same.
+    setMoved("");
     if (selectedNs.includes(ns)) {
       setSelectedNs((prev) => prev.filter((x) => x !== ns));
       setNsRole(({ [ns]: _, ...rest }) => rest);
@@ -363,13 +522,15 @@ function TokenForm({
       setNsRole((m) => ({ ...m, [ns]: grantRoleOf(mine, ns) }));
     }
   };
-  const setPriority = (ns: string, pos: number) => {
-    setSelectedNs((prev) => {
-      const without = prev.filter((x) => x !== ns);
-      const idx = Math.max(0, Math.min(without.length, pos - 1));
-      without.splice(idx, 0, ns);
-      return without;
-    });
+  const label = nsLabeler(repoInfo);
+  // The order the ticked namespaces are searched in: moved by drag, or by a row's arrows.
+  const moveTo = (ns: string, to: number) => {
+    const from = selectedNs.indexOf(ns);
+    if (from < 0 || from === to) return;
+    const next = selectedNs.filter((x) => x !== ns);
+    next.splice(to, 0, ns);
+    setSelectedNs(next);
+    setMoved(`${label(ns)} moved to ${to + 1} of ${next.length}`);
   };
 
   // A namespace of its own for a bot: register it (the server makes you its admin), then
@@ -391,6 +552,7 @@ function TokenForm({
       useStore.getState().setMyNamespaces(fresh);
       setRows(fresh);
       setSelectedNs((prev) => [...prev.filter((x) => x !== ns), ns]);
+      setMoved("");
       setNsRole((m) => ({ ...m, [ns]: "admin" }));
       setNewNs("");
       toast(`Created ${ns}; you are its admin`, "ok");
@@ -418,7 +580,7 @@ function TokenForm({
       // Ordered = read priority; repositories are read-only.
       namespaces = selectedNs.map((ns) => ({
         namespace: ns,
-        role: eligibleRepos.some((r) => r.namespace === ns) ? "viewer" : (nsRole[ns] ?? grantRoleOf(mine, ns)),
+        role: isRepo(ns) ? "viewer" : nsRole[ns],
       }));
     }
     setBusy(true);
@@ -435,6 +597,11 @@ function TokenForm({
   const nothingListed = mine !== null && eligibleNs.length === 0 && eligibleRepos.length === 0;
   // Not before the memberships load: the form would describe a token it cannot know.
   const canCreate = rows !== null && (reach === "everything" || selectedNs.length > 0);
+  // What the ticked list means; how to reorder it is the list's own description (SearchOrder).
+  const listHint =
+    selectedNs.length === 0
+      ? "Tick the namespaces this token reads; it reads nothing else, whatever you join later."
+      : `${selectedNs.length} ticked, and nothing else, whatever you join later.`;
 
   return (
     <section
@@ -475,60 +642,23 @@ function TokenForm({
         <fieldset className="space-y-3">
           <legend className="sr-only">Namespaces this token reads</legend>
           <div className="max-h-48 overflow-y-auto rounded-md border border-border bg-surface-2 divide-y divide-border">
-            {eligibleNs.map((n) => {
-              const pos = selectedNs.indexOf(n.namespace);
-              const isOn = pos >= 0;
-              const grant = grantRoleOf(mine, n.namespace);
-              return (
-                <div key={n.namespace} className="flex items-center gap-2 px-3 py-1.5 text-sm">
-                  <Checkbox
-                    checked={isOn}
-                    onCheckedChange={() => toggleNs(n.namespace)}
-                    aria-label={`Read ${n.namespace}`}
-                  />
-                  <Tip content="Search order (1 = searched first)">
-                    <div className="w-16 shrink-0">
-                      <Select
-                        triggerProps={{ "aria-label": `Search order for ${n.namespace}` }}
-                        value={isOn ? String(pos + 1) : ""}
-                        placeholder="–"
-                        disabled={!isOn}
-                        onSelect={(value) => setPriority(n.namespace, Number(value))}
-                      >
-                        {selectedNs.map((_, i) => (
-                          <Select.Item key={i} value={String(i + 1)}>
-                            {i + 1}
-                          </Select.Item>
-                        ))}
-                      </Select>
-                    </div>
-                  </Tip>
-                  <span className="font-mono flex-1 truncate">{n.namespace}</span>
-                  <Tip content={`At most your own role (${grant})`}>
-                    <div className="w-28 shrink-0">
-                      <Select
-                        triggerProps={{ "aria-label": `Role on ${n.namespace}` }}
-                        value={isOn ? (nsRole[n.namespace] ?? grant) : grant}
-                        disabled={!isOn}
-                        onSelect={(r) => {
-                          if (isGrantRole(r)) setNsRole((m) => ({ ...m, [n.namespace]: r }));
-                        }}
-                      >
-                        {rolesUpTo(grant).map((r) => (
-                          <Select.Item key={r} value={r}>
-                            {ROLE_LABELS[r]}
-                          </Select.Item>
-                        ))}
-                      </Select>
-                    </div>
-                  </Tip>
-                </div>
-              );
-            })}
+            {eligibleNs.map((n) => (
+              <div key={n.namespace} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+                <Checkbox
+                  checked={selectedNs.includes(n.namespace)}
+                  onCheckedChange={() => toggleNs(n.namespace)}
+                  aria-label={`Read ${n.namespace}`}
+                />
+                <span className="font-mono flex-1 truncate">{n.namespace}</span>
+                <span className="text-xs text-text-muted shrink-0">
+                  Your role: {ROLE_LABELS[grantRoleOf(mine, n.namespace)]}
+                </span>
+              </div>
+            ))}
           </div>
           {repoGroups.length > 0 && (
             <div>
-              <div className="text-xs font-medium text-text-muted mb-1">Repositories (read-only)</div>
+              <div className="section-label mb-1">Repositories (read-only)</div>
               <div className="max-h-56 overflow-y-auto rounded-md border border-border bg-surface-2 divide-y divide-border">
                 {repoGroups.map((grp) => {
                   const onCount = grp.rows.filter((n) => selectedNs.includes(n.namespace)).length;
@@ -572,6 +702,21 @@ function TokenForm({
               </div>
             </div>
           )}
+          {selectedNs.length > 0 && (
+            <SearchOrder
+              touch={touch}
+              order={selectedNs}
+              label={label}
+              isRepo={isRepo}
+              role={(ns) => nsRole[ns]}
+              grant={(ns) => grantRoleOf(mine, ns)}
+              onRole={(ns, r) => setNsRole((m) => ({ ...m, [ns]: r }))}
+              onMove={moveTo}
+            />
+          )}
+          <p className="sr-only" role="status">
+            {moved}
+          </p>
           <div className="flex gap-2">
             <div className="min-w-0 flex-1">
               <TextField
@@ -592,9 +737,7 @@ function TokenForm({
               Create namespace
             </Button>
           </div>
-          <p className="text-xs text-text-muted">
-            {selectedNs.length} ticked, and nothing else, whatever you join later. Search order 1 is searched first.
-          </p>
+          <p className="text-xs text-text-muted">{listHint}</p>
         </fieldset>
       )}
 
@@ -692,7 +835,9 @@ function createdScope(c: TokenCreated, writesAnywhere: boolean, label: (ns: stri
     ? `Reads everything you belong to, including namespaces you join later${
         c.restricted_namespaces.length ? `, plus ${c.restricted_namespaces.map(label).join(", ")}` : ""
       }.`
-    : `Reads only ${named.join(", ")}.`;
+    : named.length > 1
+      ? `Reads only these, searched in this order: ${named.map((n, i) => `${i + 1}. ${n}`).join(", ")}.`
+      : `Reads only ${named.join(", ")}.`;
   const roles = Object.values(c.ns_roles);
   // A `*` token writes only with a writing role of its own and a namespace its owner writes.
   const readOnly = c.reads_everything

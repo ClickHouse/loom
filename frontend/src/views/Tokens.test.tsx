@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor, within } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CodeRepoSummary, MyNamespaceEntry, TokenEntry, TokenCreated, WhoAmI } from "../api";
@@ -37,6 +37,7 @@ vi.mock("../api", async (importOriginal) => {
     listCodeRepos: vi.fn(async (): Promise<CodeRepoSummary[]> => []),
     listBlacklist: vi.fn(async () => ({ rows: [] })),
     createToken: vi.fn(async () => created()),
+    registerNamespace: vi.fn(async () => ({ registered: true })),
   };
 });
 import { createToken, listCodeRepos, listMine } from "../api";
@@ -157,7 +158,8 @@ describe("the token form", () => {
   it("only these: the ticked list in search order with a role each", async () => {
     render(<Setup />);
     await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
-    await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-c" }, WAIT));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-a" }, WAIT));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-c" }));
     await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
     await userEvent.click(screen.getByRole("checkbox", { name: "Read org/x branch main" }));
     // The server picks from the saved pick, which the page cannot see: the form states the rule.
@@ -209,6 +211,7 @@ describe("the token form", () => {
       "Read acme/private branch 26.8",
     ]);
     expect(screen.queryByRole("checkbox", { name: "Read code-acme-private" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read team-private" }));
     await userEvent.click(screen.getByRole("checkbox", { name: "Read team-public" }));
     await userEvent.click(screen.getByRole("checkbox", { name: "Read acme/private branch master" }));
     expect((await create()).namespaces).toEqual([
@@ -218,10 +221,211 @@ describe("the token form", () => {
     ]);
   }, 20_000);
 
-  it("only these with nothing writable says it saves nowhere", async () => {
+  it("only these: nothing is ticked at first, the page's namespace and the personal one included", async () => {
+    const mine = [row("personal-a"), ...ROWS];
+    vi.mocked(listMine).mockResolvedValue(mine);
+    useStore.setState({ myNamespaces: mine, identity: { org: ORG, namespace: "ns-b", agent: "loom-ui" } });
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    const personal = await screen.findByRole("checkbox", { name: "Read personal-a" }, WAIT);
+    expect(personal).not.toBeChecked();
+    for (const ns of ["ns-a", "ns-b", "ns-c"]) {
+      expect(screen.getByRole("checkbox", { name: `Read ${ns}` })).not.toBeChecked();
+    }
+    expect(screen.queryByRole("list", { name: "Search order" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Create token/ })).toBeDisabled();
+    expect(screen.getByText(/Tick the namespaces this token reads/)).toBeInTheDocument();
+  });
+
+  it("only these: each row shows your role, and the ordered list offers roles up to it", async () => {
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await screen.findByRole("checkbox", { name: "Read ns-b" }, WAIT);
+    const name = screen.getAllByText("ns-b").find((el) => el.tagName === "SPAN") as HTMLElement;
+    expect(name.parentElement).toHaveTextContent("Your role: Writer");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
+    const options = await openOptions(/^Role on ns-b$/);
+    expect(within(options).getByText("Writer")).toBeInTheDocument();
+    expect(within(options).getByText("Viewer")).toBeInTheDocument();
+    expect(within(options).queryByText("Admin")).not.toBeInTheDocument();
+  });
+
+  it("only these: one ticked namespace offers nothing to reorder", async () => {
     render(<Setup />);
     await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
     await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-a" }, WAIT));
+    const order = screen.getByRole("list", { name: "Search order" });
+    expect(order.querySelector("[draggable]")).toBeNull();
+    expect(screen.queryByText(/to change the order/)).toBeNull();
+    expect(screen.queryByText(/Number 1 is searched first/)).toBeNull();
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
+    expect(screen.getByText(/to change the order/)).toBeInTheDocument();
+    // The reorder hint is the list's description, so a screen reader hears it on the list.
+    expect(order).toHaveAccessibleDescription(/^Number 1 is searched first\. Drag a row by its grip/);
+  });
+
+  it("only these: every tick can be taken back, and then nothing is created", async () => {
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-a" }, WAIT));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-a" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
+    expect(screen.queryByRole("list", { name: "Search order" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Create token/ })).toBeDisabled();
+  });
+
+  it("only these: the arrows reorder the list, and the token carries the order shown", async () => {
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    for (const ns of ["ns-a", "ns-b", "ns-c"]) {
+      await userEvent.click(await screen.findByRole("checkbox", { name: `Read ${ns}` }, WAIT));
+    }
+    const order = () =>
+      within(screen.getByRole("list", { name: "Search order" }))
+        .getAllByRole("listitem")
+        .map((li) => li.textContent?.match(/ns-[abc]/)?.[0]);
+    expect(order()).toEqual(["ns-a", "ns-b", "ns-c"]);
+    // The first row cannot go up, the last cannot go down.
+    expect(screen.getByRole("button", { name: "Move ns-a up" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Move ns-c down" })).toBeDisabled();
+    const up = screen.getByRole("button", { name: "Move ns-c up" });
+    await userEvent.click(up);
+    expect(order()).toEqual(["ns-a", "ns-c", "ns-b"]);
+    expect(up).toHaveFocus();
+    await userEvent.click(up);
+    expect(order()).toEqual(["ns-c", "ns-a", "ns-b"]);
+    // At the top its Move up is gone; focus moves to its Move down, not to the page.
+    expect(screen.getByRole("button", { name: "Move ns-c down" })).toHaveFocus();
+    expect(screen.getByRole("status")).toHaveTextContent("ns-c moved to 1 of 3");
+    const down = screen.getByRole("button", { name: "Move ns-c down" });
+    await userEvent.click(down);
+    // A row moved down is re-inserted: focus still lands back on the arrow pressed.
+    expect(screen.getByRole("button", { name: "Move ns-c down" })).toHaveFocus();
+    // And at the bottom its Move down is gone; focus moves to its Move up.
+    await userEvent.click(down);
+    expect(order()).toEqual(["ns-a", "ns-b", "ns-c"]);
+    expect(screen.getByRole("button", { name: "Move ns-c up" })).toHaveFocus();
+    expect(screen.getByRole("status")).toHaveTextContent("ns-c moved to 3 of 3");
+    // A tick empties the line, so a later move with the same words is announced again.
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
+    expect(screen.getByRole("status")).toHaveTextContent("");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
+    await userEvent.click(screen.getByRole("button", { name: "Move ns-c up" }));
+    expect(screen.getByRole("status")).toHaveTextContent("ns-c moved to 1 of 3");
+    expect((await create()).namespaces.map((n) => (typeof n === "string" ? n : n.namespace))).toEqual([
+      "ns-c",
+      "ns-a",
+      "ns-b",
+    ]);
+  });
+
+  it("only these: a role is picked in the ordered list and sent with the namespace", async () => {
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-a" }, WAIT));
+    await pickOption(/^Role on ns-a$/, /^Viewer$/);
+    expect((await create()).namespaces).toEqual([{ namespace: "ns-a", role: "viewer" }]);
+  });
+
+  it("the result of a list token names its namespaces in the order they are searched", async () => {
+    vi.mocked(createToken).mockResolvedValueOnce(
+      created({
+        namespaces: ["ns-c", "ns-a"],
+        ns_roles: { "ns-c": "viewer", "ns-a": "admin" },
+        reads_everything: false,
+        saves_to: "ns-a",
+      }),
+    );
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-c" }, WAIT));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-a" }));
+    await create();
+    expect(await screen.findByTestId("minted-token-scope", undefined, WAIT)).toHaveTextContent(
+      "Reads only these, searched in this order: 1. ns-c, 2. ns-a. Saves to ns-a.",
+    );
+  });
+
+  it("only these: a namespace created here joins the order last and clears the status", async () => {
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-a" }, WAIT));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
+    await userEvent.click(screen.getByRole("button", { name: "Move ns-b up" }));
+    expect(screen.getByRole("status")).toHaveTextContent("ns-b moved to 1 of 2");
+    vi.mocked(listMine).mockResolvedValue([...ROWS, row("nightly-bot")]);
+    invalidateShared();
+    await userEvent.type(screen.getByLabelText("New namespace name"), "nightly-bot");
+    await userEvent.click(screen.getByRole("button", { name: "Create namespace" }));
+    const order = screen.getByRole("list", { name: "Search order" });
+    await waitFor(() => expect(within(order).getAllByRole("listitem")).toHaveLength(3), WAIT);
+    expect(within(order).getAllByRole("listitem")[2]).toHaveTextContent("nightly-bot");
+    expect(screen.getByRole("status")).toHaveTextContent("");
+  });
+
+  it("only these on a touch screen: no grip to drag, and the hint names the arrows", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((q: string) => ({
+        matches: q === "(pointer: coarse)",
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-a" }, WAIT));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
+    const order = screen.getByRole("list", { name: "Search order" });
+    expect(order.querySelector("[draggable]")).toBeNull();
+    expect(screen.getByText(/Use a row's arrows to change the order/)).toBeInTheDocument();
+  });
+
+  it("only these: a row dragged onto another takes its place", async () => {
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    for (const ns of ["ns-a", "ns-b", "ns-c"]) {
+      await userEvent.click(await screen.findByRole("checkbox", { name: `Read ${ns}` }, WAIT));
+    }
+    const items = within(screen.getByRole("list", { name: "Search order" })).getAllByRole("listitem");
+    const data = { effectAllowed: "", setData: vi.fn(), getData: vi.fn(), setDragImage: vi.fn() };
+    const grip = (li: HTMLElement) => li.querySelector("[draggable]") as HTMLElement;
+    // Only the grip drags: a press on the row's role or arrows stays a press.
+    expect(items[0]).not.toHaveAttribute("draggable");
+    fireEvent.dragStart(grip(items[2]), { dataTransfer: data });
+    fireEvent.dragOver(items[0], { dataTransfer: data });
+    fireEvent.drop(items[0], { dataTransfer: data });
+    const order = within(screen.getByRole("list", { name: "Search order" }))
+      .getAllByRole("listitem")
+      .map((li) => li.textContent?.match(/ns-[abc]/)?.[0]);
+    expect(order).toEqual(["ns-c", "ns-a", "ns-b"]);
+    expect(screen.getByRole("status")).toHaveTextContent("ns-c moved to 1 of 3");
+    const now = () => within(screen.getByRole("list", { name: "Search order" })).getAllByRole("listitem");
+    const names = () => now().map((li) => li.textContent?.match(/ns-[abc]/)?.[0]);
+    // Downward too.
+    fireEvent.dragStart(grip(now()[0]), { dataTransfer: data });
+    fireEvent.dragOver(now()[2], { dataTransfer: data });
+    fireEvent.drop(now()[2], { dataTransfer: data });
+    expect(names()).toEqual(["ns-a", "ns-b", "ns-c"]);
+    // A drop on its own place changes nothing.
+    fireEvent.dragStart(grip(now()[1]), { dataTransfer: data });
+    fireEvent.drop(now()[1], { dataTransfer: data });
+    expect(names()).toEqual(["ns-a", "ns-b", "ns-c"]);
+    fireEvent.dragStart(grip(now()[2]), { dataTransfer: data });
+    fireEvent.dragOver(now()[0], { dataTransfer: data });
+    fireEvent.drop(now()[0], { dataTransfer: data });
+    expect((await create()).namespaces.map((n) => (typeof n === "string" ? n : n.namespace))).toEqual([
+      "ns-c",
+      "ns-a",
+      "ns-b",
+    ]);
+  });
+
+  it("only these with nothing writable says it saves nowhere", async () => {
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await screen.findByRole("checkbox", { name: "Read ns-a" }, WAIT);
     expect(screen.getByRole("button", { name: /Create token/ })).toBeDisabled();
     await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-c" }));
     expect(screen.getByTestId("token-saves-nowhere")).toHaveTextContent("Nowhere: it only reads.");
