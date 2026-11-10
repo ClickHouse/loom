@@ -1100,7 +1100,13 @@ describe("an answer's unknown names", () => {
             start(c) {
               const send = (o: unknown) => c.enqueue(enc.encode(`data: ${JSON.stringify(o)}\n\n`));
               send({ choices: [{ delta: { content: "Call `memory.frobnicate` [memory:a/b/c@v3]." } }] });
-              send({ object: "loom.citations", choices: [], citations: cited, support: "unsupported", unknown_names: ["memory.frobnicate"] });
+              send({
+                object: "loom.citations",
+                choices: [],
+                citations: cited,
+                support: "unsupported",
+                unknown_names: ["memory.frobnicate"],
+              });
               c.enqueue(enc.encode("data: [DONE]\n\n"));
               c.close();
             },
