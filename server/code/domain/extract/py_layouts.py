@@ -196,7 +196,7 @@ def _pyproject_roots(base: str, data: dict[str, Any]) -> list[str]:
 def _squeezed_names(text: str) -> str:
     """Each line's text before its first `=` / `:` with its whitespace runs squeezed, indent
     kept: configparser's option pattern rescans such a run from every character before it,
-    in one regex call that holds the GIL. No name read here holds a space."""
+    in one regex call that holds the GIL. No name or value read here holds a whitespace run."""
     out: list[str] = []
     for line in text.split("\n"):
         cut = min((i for i in (line.find("="), line.find(":")) if i >= 0), default=len(line))

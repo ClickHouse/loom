@@ -1,6 +1,8 @@
 """The lanes' walks over a file, each with the text of about n characters it walks: the
 shapes `test_code_regex_cost.py` times in a child process, kept apart so the child imports
-only these and not every pattern the module-level scan loads."""
+only these and not every pattern the module-level scan loads. Also the class guard's data:
+a sample per registered lane parser (`SAMPLES`), the generated shapes (`SHAPES`), the
+per-lane timing (`registry_cost`) and the shapes still over linear (`KNOWN_SLOW`)."""
 
 from __future__ import annotations
 
