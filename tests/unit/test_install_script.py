@@ -750,19 +750,27 @@ def test_an_unreachable_docker_daemon_is_named_before_any_pull(
 
 
 # A curl that writes an installer creating ~/.loom to its `-o FILE`, or to stdout when it
-# has none or `-o -`; the failing one then answers a 404 as `curl -f` does.
+# has none or `-o -`; the failing one then answers a 404 for `install.sh` as `curl -f`
+# does, and serves any other file.
 _WORKING_CURL = """#!/bin/sh
 out=
-while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done
+url=
+while [ $# -gt 0 ]; do
+  case $1 in -o) out=$2 ;; http*|…*) url=$1 ;; esac
+  shift
+done
 installer='mkdir -p "$HOME/.loom"'
 if [ -z "$out" ] || [ "$out" = - ]; then echo "$installer"; else echo "$installer" >"$out"; fi
 """
 _FAILING_CURL = (
     _WORKING_CURL
-    + """echo 'curl: (22) The requested URL returned error: 404' >&2
+    + """case $url in *install.sh) ;; *) exit 0 ;; esac
+echo 'curl: (22) The requested URL returned error: 404' >&2
 exit 22
 """
 )
+# `&& sh FILE`, maybe after environment assignments: the step that runs the installer.
+_RUNS_INSTALLER = re.compile(r"&&\s*(?:\w+=\S*\s+)*sh\s")
 _CODE = re.compile(r"^[ \t]*```[^\n]*\n(.*?)^[ \t]*```|`([^`\n]+)`", re.MULTILINE | re.DOTALL)
 
 
@@ -803,12 +811,15 @@ def _run_install(script: str, tmp_path: Path, curl_script: str) -> subprocess.Co
     )
 
 
+_INSTALLS = _documented_installs()
+
+
 def test_the_pages_show_install_commands() -> None:
-    pages = {page for page, _ in _documented_installs()}
+    pages = {page for page, _ in _INSTALLS}
     assert {"README.md", "docs/getting-started/quickstart.md"} <= pages
 
 
-@pytest.mark.parametrize(("page", "script"), _documented_installs())
+@pytest.mark.parametrize(("page", "script"), _INSTALLS)
 def test_a_documented_install_stops_on_a_failed_download(
     page: str, script: str, tmp_path: Path
 ) -> None:
@@ -816,11 +827,11 @@ def test_a_documented_install_stops_on_a_failed_download(
     every install command a page shows exits with curl's error and runs nothing."""
     result = _run_install(script, tmp_path, _FAILING_CURL)
     assert result.returncode != 0, (page, script, result)
-    assert "404" in result.stderr
+    assert "404" in result.stderr, (page, script, result.stderr)
     assert not (tmp_path / ".loom").exists(), (page, script)
 
 
-@pytest.mark.parametrize(("page", "script"), _documented_installs())
+@pytest.mark.parametrize(("page", "script"), _INSTALLS)
 def test_a_documented_install_runs_the_installer_and_cleans_up(
     page: str, script: str, tmp_path: Path
 ) -> None:
@@ -828,7 +839,7 @@ def test_a_documented_install_runs_the_installer_and_cleans_up(
     removes its saved copy; the inspect path's download alone runs nothing."""
     result = _run_install(script, tmp_path, _WORKING_CURL)
     assert result.returncode == 0, (page, script, result)
-    runs = "&&" in script.splitlines()[-1]  # the inspect path downloads and stops
+    runs = bool(_RUNS_INSTALLER.search(script.splitlines()[-1]))  # the inspect path only saves
     saved = [*tmp_path.glob("loom-install.sh"), *tmp_path.glob("loom-agent-setup/loom-install.sh")]
     assert (tmp_path / ".loom").exists() == runs, (page, script)
     assert bool(saved) != runs, (page, script, saved)
