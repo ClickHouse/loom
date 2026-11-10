@@ -115,7 +115,7 @@ Start with docs/index.md (the map). A coding agent installing Loom: follow docs/
 ## Architecture
 
 - [Assistant design](docs/architecture/assistant.md): This page is the design of Loom's assistant, which answers questions about what a namespace holds and how it is used, with a citation for every claim.
-- [ClickHouse](docs/architecture/clickhouse.md): Durable Loom state lives in ClickHouse, except the live memory and knowledge state the Postgres memory authority holds and document bytes kept in an S3-compatible bucket.
+- [ClickHouse](docs/architecture/clickhouse.md): Durable Loom state lives in ClickHouse, except the live memory and knowledge state that Postgres holds under the Postgres memory authority, and document bytes kept in an S3-compatible bucket.
 - [Code index architecture](docs/architecture/code-index-architecture.md): This page is the inside view of the code index: how files become chunks, symbols and edges, and how the two tiers stay current.
 - [Document extraction](docs/architecture/document-extraction.md): An uploaded original is parsed into one shape, the extraction artifact, by an extractor service: a separate process with its own dependencies, never the Loom server.
 - [Failure and recovery](docs/architecture/failure-and-recovery.md): The primary write and every access decision fail closed.
@@ -127,7 +127,7 @@ Start with docs/index.md (the map). A coding agent installing Loom: follow docs/
 - [Server layout](docs/architecture/server-layout.md): `server/` is organised by domain.
 - [Sharing knowledge](docs/architecture/sharing.md): A collection is a namespace that only grants open.
 - [Storage authority: Postgres for live memory, ClickHouse for search](docs/architecture/storage-authority.md): Loom runs with one of two memory authorities, chosen per deployment by `LOOM_STORAGE_AUTHORITY`.
-- [System overview](docs/architecture/system-overview.md): Loom is a Python server (a FastAPI application plus a supervisor of background workers) and ClickHouse, with Postgres as an option.
+- [System overview](docs/architecture/system-overview.md): Loom is a Python server (a FastAPI application plus a supervisor of background workers) and ClickHouse, with Postgres as an option for live memory and knowledge state.
 
 ## Benchmarks
 
