@@ -252,4 +252,12 @@ def problem_rows(now: datetime | None = None) -> tuple[dict[str, Any], ...] | No
                     "severity": level,
                 }
             )
-    return tuple(sorted(rows, key=lambda r: (r["severity"] != "error", r["org"], r["namespace"])))
+    # errors first, then by what the line itself says, never by which entry it is: the
+    # anonymous answer lists the rows in this order, and an order by entry would place
+    # a restricted entry among the ones a platform admin sees named
+    return tuple(
+        sorted(
+            rows,
+            key=lambda r: (r["severity"] != "error", r["tier"], r["since"], -r["failed_passes"]),
+        )
+    )

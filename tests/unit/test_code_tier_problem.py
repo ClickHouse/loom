@@ -354,7 +354,7 @@ def test_a_failing_tier_never_makes_the_deployment_degraded() -> None:
     assert derive_status(True, [tier, Problem("jwt_secret_empty", "error", "m", "f")]) == "degraded"
 
 
-def test_problem_rows_put_the_errors_first() -> None:
+def test_problem_rows_put_the_errors_first_and_never_order_by_entry() -> None:
     recorder._FAILING = (
         recorder.FailingTier(
             "o", "code-a", _failing(4), 5, "o/r", "main", False
@@ -728,3 +728,35 @@ def test_restricted_entries_come_after_the_named_ones() -> None:
         if p.code == "code_tier_failing"
     ]
     assert p.message.index("b/b@main") < p.message.index("a restricted entry's")
+
+
+def test_the_anonymous_order_does_not_place_a_restricted_entry() -> None:
+    """Three entries alike but for their names: the anonymous answer lists them in an
+    order that does not follow org or namespace, so it cannot be matched against the
+    named view to bound where the restricted one sits."""
+
+    def snapshot(names: list[str]) -> tuple[dict[str, Any], ...]:
+        recorder._FAILING = tuple(
+            recorder.FailingTier(
+                "o", ns, _failing_with(LOCKED, passes), 0, f"o/{ns}", "main", ns == "code-b"
+            )
+            for ns, passes in zip(names, (4, 5, 6), strict=True)
+        )
+        return recorder.problem_rows(T0 + timedelta(hours=3)) or ()
+
+    def message(rows: Any, names: str) -> str:
+        (p,) = [
+            p
+            for p in collect_problems(
+                settings, HealthState(code_tier_failures=rows, code_tier_names=names)
+            )
+            if p.code == "code_tier_failing"
+        ]
+        return p.message
+
+    # the same lines with the names swapped read the same anonymously
+    a = message(snapshot(["code-a", "code-b", "code-c"]), "none")
+    b = message(snapshot(["code-c", "code-b", "code-a"]), "none")
+    assert a == b
+    admin = message(snapshot(["code-a", "code-b", "code-c"]), "unrestricted")
+    assert admin.index("o/code-a@") < admin.index("o/code-c@") < admin.index("a restricted entry's")

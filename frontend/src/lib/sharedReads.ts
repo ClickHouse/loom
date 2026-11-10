@@ -83,8 +83,8 @@ export function sharedHealth(): Promise<Record<string, unknown> | null> {
   return shared("health", 60_000, async () => {
     // A stalled server times out like any other request: the rejection is not
     // cached and every consumer catches it.
-    // The page's own person's token rides along: a platform admin's answer names the
-    // entry of each failing code-index tier (another tab may have stored another's).
+    // Send the page owner's token, if the stored one is theirs, so a platform admin's
+    // answer names each failing code-index entry.
     const headers = ownsToken(storedToken()) ? authHeader() : {};
     const r = await fetch("/v1/health", { headers, signal: boundedSignal() });
     // `ok` is absent on some hand-rolled responses (tests); only an explicit
