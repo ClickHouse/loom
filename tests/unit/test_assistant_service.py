@@ -71,10 +71,10 @@ def test_a_version_names_one_definition() -> None:
     defn = service.current_definition()
     body = {k: v for k, v in defn.agent_body().items() if k != "model"}
     digest = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:16]
-    assert {defn.version: digest} == {6: DEFINITION_DIGEST}
+    assert {defn.version: digest} == {7: DEFINITION_DIGEST}
 
 
-DEFINITION_DIGEST = "d98a75cf7b1dfca3"
+DEFINITION_DIGEST = "e096b38e3060dd0b"
 
 
 class _Row:

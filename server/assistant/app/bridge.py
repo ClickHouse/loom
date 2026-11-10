@@ -24,8 +24,10 @@ import httpx
 from server.assistant.api.models import MAX_HISTORY, MAX_MESSAGE_CHARS, AssistantCitation
 from server.assistant.app import citations, service, support
 from server.assistant.domain.support import UNCHECKED
+from server.auth import sharing
 from server.auth.authz import check_authorized
 from server.auth.delegation import delegate
+from server.auth.directory import directory
 from server.auth.jwt import AuthInfo, new_jti
 from server.core.errors import (
     AssistantSelfCallError,
@@ -79,6 +81,9 @@ class Ticket:
     slot: int
     # The caller's subject: its answer's tool calls are ledgered under it.
     subject: str
+    # Loom's line about the caller's credential (`asker_line`), the last line of the
+    # question LibreChat is sent; empty sends the question as written.
+    asker: str = ""
 
     def release(self) -> None:
         """Give the answer's slot back; a second call does nothing."""
@@ -155,10 +160,11 @@ def refuse_self_call(auth: AuthInfo) -> None:
         raise AssistantSelfCallError("an assistant answer's token cannot ask the assistant")
 
 
-async def authorize(auth: AuthInfo, org: str, namespace: str) -> None:
+async def authorize(auth: AuthInfo, org: str, namespace: str) -> str:
     """The refusals that need no model spend read: no assistant here, a token that may
     not ask, a caller without `viewer`. A caller's rate-limit buckets are drawn after
-    these, and the cost checks after them (`open_answer`)."""
+    these, and the cost checks after them (`open_answer`). Answers the caller's
+    `asker_line`."""
     if not settings.assistant_librechat_url:
         raise AssistantUnavailableError(
             "no LibreChat is configured for the assistant (LOOM_ASSISTANT_LIBRECHAT_URL)",
@@ -187,6 +193,64 @@ async def authorize(auth: AuthInfo, org: str, namespace: str) -> None:
             raise
         log.debug("assistant refused: %s", e)
         raise AuthInsufficientError(f"the caller cannot read {namespace!r} in {org!r}") from e
+    return await asker_line(auth, org, namespace)
+
+
+async def asker_line(auth: AuthInfo, org: str, namespace: str) -> str:
+    """One line, in fixed words, of what the caller asks with: the kind of credential, the
+    role the gate gives it here and the kind of namespace. The agent reads it to answer
+    "how do I…" for this caller; it carries no subject or name, and grants nothing (the
+    answer's token decides every read). Run after the viewer check, it never refuses an
+    answer: a check that cannot run gives the role as unknown."""
+    try:
+        role = await _gate_role(auth, org, namespace)
+        place = _place(org, namespace)
+    except Exception as e:  # noqa: BLE001 — the line never refuses an answer
+        log.warning("the assistant could not tell the caller's role: %s", e)
+        role, place = "unknown", "namespace"
+    return (
+        f"Loom, for how-to answers only: this question comes with {_credential(auth)}, "
+        f"whose role in this {place} is {role}."
+    )
+
+
+def _credential(auth: AuthInfo) -> str:
+    """What decides the caller's role, most specific first: a dashboard or `loom login`
+    session, a token capped by the grant of the person who made it, a token whose claim
+    names its role per namespace, or another token."""
+    if auth.session_id and auth.first_party:
+        return "a sign-in session"
+    if auth.creator:
+        return "a delegated token"
+    if auth.has_ns_roles():
+        return "a scoped token"
+    return "a token"
+
+
+async def _gate_role(auth: AuthInfo, org: str, namespace: str) -> str:
+    """The highest role the gate gives the caller here: viewer already passed; `unknown`
+    when a check is refused for a read that failed, not for the role."""
+    for role in (Role.ADMIN, Role.WRITER):
+        try:
+            await check_authorized(auth, role, org, namespace)
+        except PermissionError as e:
+            if getattr(e, "unverified", False):
+                return "unknown"
+            continue
+        return role.name.lower()
+    return "viewer"
+
+
+def _place(org: str, namespace: str) -> str:
+    """The kind of namespace, which decides who can change a role in it: by name for a
+    collection, then the directory's cached classification (no read)."""
+    if sharing.is_personal(namespace):
+        return "personal collection"
+    if sharing.is_collection(namespace):
+        return "collection"
+    if directory().is_restricted_cached(org, namespace):
+        return "restricted namespace"
+    return "namespace"
 
 
 async def _afford(org: str, namespace: str) -> tuple[str, str]:
@@ -249,7 +313,7 @@ def _take_slot(org: str, namespace: str) -> int:
     return slot
 
 
-async def open_answer(auth: AuthInfo, org: str, namespace: str) -> Ticket:
+async def open_answer(auth: AuthInfo, org: str, namespace: str, asker: str = "") -> Ticket:
     """After `authorize` and the caller's rate-limit buckets: the cost refusals, the
     answer's slot and its token, run before anything streams, so a refused request is an
     HTTP error. The stream gives the slot back; so does `Ticket.release` on a refusal
@@ -261,7 +325,16 @@ async def open_answer(auth: AuthInfo, org: str, namespace: str) -> Ticket:
     except BaseException:
         _give_back(org, namespace, slot)
         raise
-    return Ticket(org, namespace, agent_id, api_key, token, slot, auth.subject)
+    return Ticket(org, namespace, agent_id, api_key, token, slot, auth.subject, asker)
+
+
+def _with_asker(messages: list[dict[str, str]], asker: str) -> list[dict[str, str]]:
+    """`messages` with Loom's asker line as the last line of the question (the last
+    message), after the person's own words; every earlier turn as the caller sent it."""
+    if not asker:
+        return messages
+    *earlier, question = messages
+    return [*earlier, {**question, "content": f"{question['content']}\n\n{asker}"}]
 
 
 def _give_back(org: str, namespace: str, slot: int) -> None:
@@ -283,7 +356,7 @@ async def stream(
     ends with their `loom.citations` event, then `[DONE]`."""
     body = {
         "model": ticket.agent_id,
-        "messages": messages,
+        "messages": _with_asker(messages, ticket.asker),
         "stream": True,
         "stream_options": {"include_usage": True},
         # The answer's token: the agent's MCP server sends it back as its bearer.
@@ -469,8 +542,8 @@ def error_event(e: LoomServerError) -> bytes:
 async def ask(auth: AuthInfo, org: str, namespace: str, messages: Any) -> Answer:
     """One whole answer, for `assistant.ask`."""
     kept = admitted_messages(messages)
-    await authorize(auth, org, namespace)
-    ticket = await open_answer(auth, org, namespace)
+    asker = await authorize(auth, org, namespace)
+    ticket = await open_answer(auth, org, namespace, asker)
     answer = Answer()
     try:
         async for _ in stream(ticket, kept, answer):

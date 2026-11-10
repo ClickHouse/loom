@@ -450,6 +450,24 @@ def test_the_chat_route_answers_whole_and_ledgers_its_spend(client: Any) -> None
     assert row["cost"] > 0
 
 
+def test_the_chat_route_closes_the_question_with_the_asker_line(
+    world: _World, client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bridge, "_place", lambda org, ns: "namespace")
+    http, _ = client
+    history = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "Hello."}]
+    r = http.post(ROUTE, headers=HEADERS, json={"messages": [*history, *QUESTION]})
+    assert r.status_code == 200
+    sent = world.librechat_body["messages"]
+    assert sent[:2] == history
+    # The test's gate admits every role.
+    assert sent[2]["content"] == (
+        "How many memories?\n\n"
+        "Loom, for how-to answers only: this question comes with a token, whose role in this "
+        "namespace is admin."
+    )
+
+
 def test_the_chat_route_streams_the_agents_chunks(client: Any) -> None:
     http, rows = client
     r = http.post(ROUTE, headers=HEADERS, json={"stream": True, "messages": QUESTION})

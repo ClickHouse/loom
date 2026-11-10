@@ -238,7 +238,7 @@ async def chat_completions(request: Request) -> Any:
         row.org, row.namespace = org, namespace
         messages = bridge.admitted_messages(payload.get("messages"))
         await check_acted_for(auth, org)
-        await bridge.authorize(auth, org, namespace)
+        asker = await bridge.authorize(auth, org, namespace)
         await _classify(auth, org, namespace, payload)
         # Drawn once the caller is authorized and before any cost check, as the op
         # transport draws them; the org's in-flight slot too, before a token is minted.
@@ -250,7 +250,7 @@ async def chat_completions(request: Request) -> Any:
             traffic_class=current_traffic_class(),
         )
         slots.enter_context(tenant_slots.hold(org))
-        ticket = await bridge.open_answer(auth, org, namespace)
+        ticket = await bridge.open_answer(auth, org, namespace, asker)
     except (LoomServerError, HTTPException, PermissionError) as e:
         slots.close()
         refused = _refusal(e)
