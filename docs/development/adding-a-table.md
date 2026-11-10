@@ -1,6 +1,6 @@
 # Add a ClickHouse table or column
 
-Loom's durable state is ClickHouse tables in the `loom` database. The schema changes only through numbered, additive migrations, because two builds serve the same schema during a deploy. Each rule below is held by a test. [ClickHouse](../architecture/clickhouse.md) explains the table families.
+Loom's ClickHouse state is tables in the `loom` and `loom_telemetry` databases; under the Postgres memory authority, live memory and knowledge state are in Postgres ([storage authority](../architecture/storage-authority.md#the-tables)). The ClickHouse schema changes only through numbered, additive migrations, because two builds serve the same schema during a deploy. Each rule below is held by a test. [ClickHouse](../architecture/clickhouse.md) explains the table families.
 
 ```mermaid
 flowchart TD

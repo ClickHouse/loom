@@ -16,7 +16,7 @@ engines, indexes and views, and how migrations run.
 
 | Goals                                                                                     | Non-goals                                                                                   |
 | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| One engine for every plane (default authority), so a read never joins across stores.      | Cross-table transactions. A primary row lands first; derived rows follow.                   |
+| One engine for every plane (ClickHouse authority), so a read never joins across stores.   | Cross-table transactions. A primary row lands first; derived rows follow.                   |
 | Every row names its tenant, writer (`actor`) and content (`content_sha256`).              | Transaction-time history on every table. The version mirror covers `loom.memory`.           |
 | Mutable state as append-only versions: a write is an INSERT, a read is deterministic.     | In-place updates on the request path. Updates are new versions or batched background folds. |
 | Nothing that holds memory content expires unless its writer or the operator asked for it. | Default retention on facts, documents, conversations or the graph.                          |
