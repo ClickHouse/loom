@@ -324,3 +324,4 @@ def test_a_member_is_joined_while_the_spec_stays_under_256_characters() -> None:
     assert pf.includes == [fits, f"{fits}.cccc", over]
     rel = parse_python("x.py", f"from . import {'d' * 254}\n".encode())
     assert rel.includes == [".", "." + "d" * 254]
+    assert parse_python("x.py", f"from . import {'d' * 255}\n".encode()).includes == ["."]

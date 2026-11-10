@@ -11,7 +11,9 @@ or of one keyword with an opener, and a closing character, catch the patterns wh
 optional parts split one run every way or that search on from each keyword. A pattern
 only ever used with `fullmatch` is anchored with `\\A`, so the searches here cost what
 its use does. The lanes' own walks over a file (`lane_walks.py`) are timed the same way, each in
-a child process with a deadline."""
+a child process with a deadline. A class guard runs every registered lane parser over
+generated shapes in a child process with a deadline and a memory limit; `KNOWN_SLOW` lists
+the shapes still to fix."""
 
 from __future__ import annotations
 
