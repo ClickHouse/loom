@@ -333,13 +333,14 @@ def use_candidates(from_path: str, use_path: str) -> list[str]:
         return []
     head, rest = segs[0], segs[1:]
     if head == "crate":
-        base = root
+        bases: tuple[str, ...] = (root,)
     elif head in {"self", "super"}:
         base = here if posixpath.basename(from_path) in _FILE_MODULES else from_path[:-3]
         for s in segs:
             if s == "super":
                 base = posixpath.dirname(base)
         rest = [s for s in segs if s not in {"self", "super"}]
+        bases = (base,)
     else:
         # `use foo::bar` may name a sibling module `foo` of the current
         # module, or the crate root's `foo` (2018 edition path resolution)
@@ -348,7 +349,7 @@ def use_candidates(from_path: str, use_path: str) -> list[str]:
         else:
             base = from_path[:-3]
         rest = segs
-    bases = (base,) if head in {"crate", "self", "super"} else (base, root)
+        bases = (base, root)
     # the deepest stems up to the cap only: a long path has one per segment
     out: dict[str, None] = {}
     for b in bases:

@@ -526,8 +526,8 @@ _REGISTRY_N = 5_000
 def registry_cost(lang: str) -> list[tuple[str, float, float, int, int]]:
     """(shape, the time at N, the time at 4N, the bytes tree-sitter parsed at N and at 4N)
     per shape the lane reads as its own (a manifest shape can read as a template), the
-    best of three for a listed shape or one that looks over linear. The parses' time is
-    not counted, since each has its own CPU deadline (`bounded_parse`); the bytes they
+    best of three for a listed shape that looks linear or an unlisted one that looks over
+    linear. The parses' time is not counted, since each has its own CPU deadline (`bounded_parse`); the bytes they
     read are returned, so a walk that parses the file again per block is still seen."""
     from server.code.domain.extract import bounded_parse
 
