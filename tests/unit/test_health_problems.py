@@ -363,6 +363,81 @@ def test_worker_lease_absent_is_info_and_explains_off_by_design(
     )
 
 
+def test_a_split_deployment_whose_workers_hold_the_lease_reports_no_absence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The web container runs no workers by design; a workers container holds a fresh lease.
+    web = _settings(
+        monkeypatch,
+        LOOM_EMBEDDING_MODEL="fake-ngram-1024",
+        LOOM_LLM_PROVIDER="fake",
+        LOOM_BACKGROUND_WORKERS="off",
+    )
+    held_elsewhere = HealthState(worker_lease_held=False, worker_lease_holder_live=True, env={})
+    assert "workers_lease_absent" not in _codes(collect_problems(web, held_elsewhere))
+
+
+@pytest.mark.parametrize(
+    ("env", "in_fix", "not_in_fix"),
+    [
+        # A web replica: start the workers container.
+        ({"LOOM_BACKGROUND_WORKERS": "off"}, "Start the workers container", "to run them here"),
+        # Every replica runs auto in the deployment and stands aside: no container to start.
+        ({"LOOM_DEPLOYMENT": "1"}, "workers_leader.reason", "workers container"),
+        # A branch server runs its own workers, never joins the deployment.
+        ({}, "On a shared one, check the deployment's workers process", "LOOM_DEPLOYMENT=1"),
+    ],
+)
+def test_no_live_workers_lease_anywhere_is_a_warning(
+    monkeypatch: pytest.MonkeyPatch, env: dict[str, str], in_fix: str, not_in_fix: str
+) -> None:
+    s = _settings(
+        monkeypatch, LOOM_EMBEDDING_MODEL="fake-ngram-1024", LOOM_LLM_PROVIDER="fake", **env
+    )
+    nobody = HealthState(worker_lease_held=False, worker_lease_holder_live=False, env={})
+    p = _by_code(collect_problems(s, nobody), "workers_lease_absent")
+    assert p.severity == "warn" and "No process holds a live workers lease" in p.message
+    assert in_fix in p.fix and not_in_fix not in p.fix
+
+
+def test_a_branch_server_beside_a_live_deployment_lease_reports_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    branch = _settings(
+        monkeypatch, LOOM_EMBEDDING_MODEL="fake-ngram-1024", LOOM_LLM_PROVIDER="fake"
+    )
+    live = HealthState(worker_lease_held=False, worker_lease_holder_live=True, env={})
+    assert "workers_lease_absent" not in _codes(collect_problems(branch, live))
+
+
+def test_a_web_replica_without_a_lease_read_is_told_to_start_the_workers_container(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    web = _settings(
+        monkeypatch,
+        LOOM_EMBEDDING_MODEL="fake-ngram-1024",
+        LOOM_LLM_PROVIDER="fake",
+        LOOM_BACKGROUND_WORKERS="off",
+    )
+    p = _by_code(
+        collect_problems(web, HealthState(worker_lease_held=False, env={})), "workers_lease_absent"
+    )
+    assert p.severity == "info" and p.fix.startswith("Start the workers container")
+
+
+def test_a_branch_server_without_a_lease_read_is_told_to_run_its_own_workers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    branch = _settings(
+        monkeypatch, LOOM_EMBEDDING_MODEL="fake-ngram-1024", LOOM_LLM_PROVIDER="fake"
+    )
+    p = _by_code(
+        collect_problems(branch, HealthState(worker_lease_held=False, env={})),
+        "workers_lease_absent",
+    )
+    assert p.severity == "info" and "set LOOM_BACKGROUND_WORKERS=on to run them here" in p.fix
+
+
 def test_problems_are_sorted_worst_first_and_serialise(monkeypatch: pytest.MonkeyPatch) -> None:
     s = _settings(monkeypatch, LOOM_EMBEDDING_MODEL="fake-ngram-1024", LOOM_LLM_PROVIDER="fake")
     problems = collect_problems(

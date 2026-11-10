@@ -12,7 +12,8 @@ The live rows give the rate limiter its replica count (the hosts of serving
 rows), the workers lease the newer builds contending for it
 (`leader.newer_build`) and the leader the configurations still in service
 (`deployment_config.publish`). Each beat also compares this process with the
-published snapshot (`deployment_config.check`).
+published snapshot (`deployment_config.check`) and runs the `on_beat` read (the
+workers lease, `leader.read_holder`).
 
 Where the server has a Keeper the table is KeeperMap, one key per process that
 the leader sweeps an hour after it stops beating; elsewhere it is a
@@ -28,7 +29,7 @@ import os
 import socket
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from functools import cache
 from typing import Any
@@ -56,7 +57,12 @@ def _no_lease() -> str:
     return ""
 
 
+async def _no_read(_ch: Any) -> None:
+    pass
+
+
 _workers_lease: Callable[[], str] = _no_lease
+_on_beat: Callable[[Any], Awaitable[None]] = _no_read
 _pruned_at = -math.inf  # monotonic counts from boot: a fresh host prunes at once
 # (monotonic read time, the live rows of this deployment); None = never read.
 _live: tuple[float, list[dict[str, Any]]] | None = None
@@ -189,15 +195,20 @@ async def _prune(ch: Any) -> None:
 
 
 async def tick(ch: Any, *, leader: bool) -> None:
-    """One beat: write the row, read the live ones, compare this process with the
-    published configuration and, on the leader, publish this one when the
-    deployment has moved to it. Never raises."""
+    """One beat: write the row, read the live ones, read what `on_beat` reads
+    (the workers lease), compare this process with the published configuration and, on
+    the leader, publish this one when the deployment has moved to it. Never raises."""
     live: list[dict[str, Any]] | None = None
     try:
         await beat(ch)
         live = await read_live(ch)
     except Exception as e:  # noqa: BLE001 — a missed beat must not stop the loop
         log.warning("instance heartbeat failed: %s", e)
+    if live is not None:  # the beat reached ClickHouse
+        try:
+            await _on_beat(ch)
+        except Exception as e:  # noqa: BLE001 — a missed read must not stop the loop
+            log.warning("instance beat read failed: %s", e)
     await deployment_config.check(ch)
     if leader and live is not None:
         await deployment_config.publish(ch, live=live, published_by=_label)
@@ -231,13 +242,15 @@ async def start(
     *,
     label: str,
     workers_lease: Callable[[], str] = _no_lease,
+    on_beat: Callable[[Any], Awaitable[None]] = _no_read,
 ) -> asyncio.Task[None]:
     """Beat and check once before the process serves, then on a timer. `label`
     is the process's LOOM_INSTANCE_LABEL; `workers_lease` says, at each beat,
-    the lease it contends for ('' when none)."""
-    global _label, _workers_lease
+    the lease it contends for ('' when none); `on_beat` is a read each beat runs."""
+    global _label, _workers_lease, _on_beat
     _label = label
     _workers_lease = workers_lease
+    _on_beat = on_beat
     with query_tag(QUERY_TAG):
         await tick(ch, leader=is_leader())
     return asyncio.create_task(_loop(ch, is_leader), name="loom-instance-heartbeat")
@@ -261,9 +274,10 @@ async def stop(ch: Any) -> None:
 
 
 def _reset_for_tests() -> None:
-    global _live, _pruned_at
+    global _live, _pruned_at, _on_beat
     _live = None
     _pruned_at = -math.inf
+    _on_beat = _no_read
 
 
 __all__ = [

@@ -267,13 +267,14 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 
 ### No worker runs at all
 
-- **Check:** `/v1/health?include=workers` → `workers_leader` on each process. All but
-  one report `workers_lease_absent` (expected); one must hold the lease. A
+- **Check:** `/v1/health?include=workers` → `workers_leader` on each process; one must
+  hold the lease. `workers_lease_absent` at warn means no process holds a live one. A
   `workers_lease_unreachable` problem names why a process could not ask ClickHouse;
   `workers_lease_given_up` that its workers child kept failing to start.
 - **Fix:** run every replica with `LOOM_BACKGROUND_WORKERS=auto` and `LOOM_DEPLOYMENT=1`; a
-  process with `off` never runs them, and one outside the deployment runs its own. During
-  an upgrade an older build leaves the lease to a live newer one.
+  process with `off` never runs them, and one outside the deployment runs none under
+  `auto`. Set `on` only on a ClickHouse no deployment uses: it runs its own copy and takes
+  no lease. During an upgrade an older build leaves the lease to a live newer one.
 
 ## Host
 

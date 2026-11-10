@@ -246,3 +246,55 @@ def test_the_boot_beat_and_the_stop_carry_the_heartbeat_tag() -> None:
 
     assert asyncio.run(_boot_and_stop()) == ""
     assert tags and set(tags) == {instances.QUERY_TAG}
+
+
+def test_a_failing_beat_read_is_logged_once_and_the_beat_goes_on(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    checked: list[bool] = []
+
+    async def fails(_ch: Any) -> None:
+        raise RuntimeError("Code: 999. Keeper unavailable")
+
+    async def quiet(*_: Any, **__: Any) -> Any:
+        return []
+
+    async def check(_ch: Any) -> None:
+        checked.append(True)
+
+    monkeypatch.setattr(instances, "_on_beat", fails)
+    monkeypatch.setattr(instances, "beat", quiet)
+    monkeypatch.setattr(instances, "read_live", quiet)
+    monkeypatch.setattr(dc, "check", check)
+    with caplog.at_level("WARNING"):
+        asyncio.run(instances.tick(object(), leader=False))
+    assert checked == [True]
+    assert sum("beat read failed" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_a_beat_that_missed_clickhouse_runs_no_beat_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    reads: list[bool] = []
+
+    async def read(_ch: Any) -> None:
+        reads.append(True)
+
+    async def down(*_: Any, **__: Any) -> Any:
+        raise RuntimeError("Code: 210. Connection refused")
+
+    async def quiet(*_: Any, **__: Any) -> Any:
+        return None
+
+    monkeypatch.setattr(instances, "_on_beat", read)
+    monkeypatch.setattr(instances, "beat", down)
+    monkeypatch.setattr(dc, "check", quiet)
+    asyncio.run(instances.tick(object(), leader=False))
+    assert reads == []
+
+
+def test_the_lifespan_reads_the_workers_lease_on_each_beat() -> None:
+    # The other lifespan wiring tests read the source too: running the lifespan needs a server.
+    import inspect
+
+    from server import main
+
+    assert "on_beat=_leader.read_holder" in inspect.getsource(main.lifespan)

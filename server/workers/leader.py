@@ -53,6 +53,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 from server.core import deployment_config, instances, readiness
+from server.core.leases import has_live_holder
 from server.core.schema.migrate_lease import (
     KeeperLock,
     LeaseConfig,
@@ -96,7 +97,7 @@ def newer_build(name: str) -> int:
 
 
 def _mode_reason(mode: str) -> str:
-    if mode == "off" and settings.background_workers == "auto":
+    if settings.auto_outside_deployment():
         return "LOOM_BACKGROUND_WORKERS=auto outside the deployment (no LOOM_DEPLOYMENT=1): off"
     return f"LOOM_BACKGROUND_WORKERS={mode}"
 
@@ -358,6 +359,25 @@ async def shutdown(lease: SupervisorLease, supervisor: Any) -> None:
 _CURRENT: WorkersLease | None = None
 
 
+# The last read of the lease row: (monotonic time, some process holds it live).
+_holder_read: tuple[float, bool] | None = None
+
+
+async def read_holder(ch: Any) -> None:
+    """Record whether some process holds the workers lease and its renewal has
+    not lapsed, on the store's clock. Run on each instance beat."""
+    global _holder_read
+    _holder_read = (time.monotonic(), await has_live_holder(LEASE_NAME, ch=ch))
+
+
+def holder_live() -> bool | None:
+    """The last `read_holder` answer while it is as recent as a live instance
+    row, else None."""
+    if _holder_read is None or time.monotonic() - _holder_read[0] > instances.live_window_s():
+        return None
+    return _holder_read[1]
+
+
 def set_current(lease: WorkersLease) -> None:
     global _CURRENT
     _CURRENT = lease
@@ -392,10 +412,12 @@ __all__ = [
     "current",
     "decide_supervisor",
     "drain_timeout_s",
+    "holder_live",
     "keep_lease",
     "lease_config",
     "leads_deployment",
     "newer_build",
+    "read_holder",
     "set_current",
     "shutdown",
 ]

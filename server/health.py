@@ -122,6 +122,7 @@ def _health_provider_fields(
             worker_lease_held=bool(lease.held) if lease else None,
             worker_lease_error=lease.error if lease else "",
             worker_lease_given_up=lease.given_up if lease else "",
+            worker_lease_holder_live=_leader.holder_live(),
             instance_label=_instance.instance_label(),
             otel_metrics_unindexed=otel_metrics_unindexed,
             revocation_age_s=revocation.snapshot_age_seconds(),

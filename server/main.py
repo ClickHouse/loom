@@ -192,6 +192,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         _leader.leads_deployment,
         label=_instance_mod.instance_label() or "",
         workers_lease=_leader.advertised_lease,
+        on_beat=_leader.read_holder,
     )
 
     from server.core.background import register_buffer_drainer

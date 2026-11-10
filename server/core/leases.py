@@ -336,16 +336,28 @@ async def cluster_lease(name: str, *, ttl_s: float, **options: Any) -> AsyncIter
         yield lease
 
 
+async def _live_holder_name(name: str, ch: Any) -> str | None:
+    """Who holds `name` with a renewal that has not lapsed, on the store's clock."""
+    row = await _client(ch).query_one(LOCK_HOLDER, {"name": name})
+    return None if row is None or row["stale"] else str(row["holder"])
+
+
 async def held_by(name: str, holder: str, *, ch: Any = None) -> bool:
     """Whether `holder` holds `name` now, on the store's clock: a third party's
     fence for work a holder hands off. LeaseUnavailable when the store cannot answer."""
     try:
-        row = await _client(ch).query_one(LOCK_HOLDER, {"name": name})
+        live = await _live_holder_name(name, ch)
     except Exception as e:
         # The driver's text can carry a statement or the server's address: logged only.
         log.warning("lease %s: the holder read failed: %s: %s", name, type(e).__name__, e)
         raise LeaseUnavailable("the lease store did not answer", operation=name) from e
-    return row is not None and str(row["holder"]) == holder and not row["stale"]
+    return live == holder
+
+
+async def has_live_holder(name: str, *, ch: Any = None) -> bool:
+    """Whether some holder keeps `name` with a renewal that has not lapsed, on
+    the store's clock."""
+    return await _live_holder_name(name, ch) is not None
 
 
 # Releases run under a shield, kept referenced until they finish.
@@ -445,6 +457,7 @@ __all__ = [
     "LeaseUnavailable",
     "cluster_lease",
     "default_holder",
+    "has_live_holder",
     "held_by",
     "holding",
     "key_exists",
