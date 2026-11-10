@@ -1054,7 +1054,7 @@ entries a call), with the calls refused:
 
 | Setup        | Authority  | `memory.get` | `memory.set` | `memory.bulk_set` (batched read) | `memory.search` | Refused      |
 | ------------ | ---------- | -----------: | -----------: | -------------------------------: | --------------: | ------------ |
-| single, 250k | Postgres   |     28 / 140 |  406 / 7,282 |                  21,614 / 41,906 |     697 / 2,446 | 1 bulk (503) |
+| single, 250k | Postgres   |     29 / 140 |  406 / 7,282 |                  21,614 / 41,906 |     697 / 2,446 | 1 bulk (503) |
 | single, 250k | ClickHouse |     38 / 273 |  464 / 1,520 |                  22,104 / 57,220 |     739 / 2,703 | none         |
 | single, 500k | ClickHouse |  115 / 1,839 |  619 / 6,758 |                          not run |         not run | none         |
 | zipf, 200k   | Postgres   |     93 / 559 |  454 / 4,861 |                    2,284 / 6,126 |     347 / 1,849 | 8 bulk (503) |
