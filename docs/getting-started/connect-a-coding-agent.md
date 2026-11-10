@@ -65,10 +65,11 @@ the plugin installed: an entry with the same name replaces the plugin's.
 
 ## Cursor and other MCP clients
 
-In the dashboard, **Settings → Tokens → New token**, fill in the form and press **Create
-token**, then choose the client under **Connect**: the dialog shows the entry for its
-config file, with the token in it. With the `loom` CLI installed (`pip install -e .` from
-a clone of the repository), one command writes the entry instead:
+In the dashboard, open **Settings → Tokens**, fill in the **New token** form (press **New
+token** first if a token exists) and press **Create token**, then choose the client under
+**Connect**: the dialog shows the entry for its config file, with the token in it. With
+the `loom` CLI installed (`pip install -e .` from a clone of the repository), one command
+writes the entry instead:
 
 ```bash
 loom install --client cursor --server-url https://loom.example.com --token "$LOOM_API_KEY"

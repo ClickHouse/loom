@@ -392,18 +392,12 @@ claude mcp add --transport http loom "http://localhost:7777/mcp?toolset=coding" 
 ```
 
 Both reach a single-user server on this machine without a token of yours: when Claude Code
-asks for the plugin's settings, keep the default server URL and leave the token empty. The
-first session saves that single-user identity in `~/.loom/config.json`.
+asks for the plugin's settings, keep the default server URL and leave the token empty.
 
-With auth on:
-
-- Save your token where the plugin reads it, as **Settings → Tokens** shows for Claude Code:
-  `~/.loom/config.json` holding `{"url": "http://localhost:7777", "token": "<token>"}`
-  (mode 600). It replaces the single-user identity an earlier session saved there; left in
-  place, the plugin keeps writing to `dev/local` as that identity
-  ([configuration](../features/integrations/claude-code.md#configuration)).
-- A `claude mcp add` entry needs `-H "Authorization: Bearer $LOOM_API_KEY"`.
-- For a server on another machine, the file's `url` names it.
+With auth on, create a token in **Settings → Tokens** and choose **Claude Code** under
+**Connect**: the dialog shows the setup for the plugin and for a `claude mcp add` entry,
+with the token in it. Its `~/.loom/config.json` replaces the single-user identity the
+plugin's first session saved there.
 
 `loom install --client <name>` writes the MCP entry for Claude Desktop, Claude Code,
 Codex, Cursor, VS Code, Cline, Windsurf and Zed; with no flag it wires every client it
