@@ -120,15 +120,20 @@ async def test_an_orgs_postgres_joins_its_tenants_memories(ch: Any, pg: Any) -> 
             f"SELECT c.email, m.org, m.memory_key, m.value, m.value_withheld, "
             f"m.content_sha256 IS NULL AS hash_withheld "
             f"FROM {schema}.accounts AS c JOIN {schema}.sql_v1_memories AS m "
-            f"ON m.user_id = c.loom_user_id ORDER BY c.email, m.memory_key"
+            f"ON m.user_id = c.loom_user_id WHERE m.status = 'active' "
+            f"ORDER BY c.email, m.memory_key"
         )
         assert [tuple(r) for r in joined] == [
             ("alice@example.com", org, "pin", None, "sensitive", True),
             ("alice@example.com", org, "team", "alice works on the support team", "", False),
             ("bob@example.com", org, "team", "bob works on the research team", "", False),
         ]
-        usage = await app.fetchval(f"SELECT count(*) FROM {schema}.sql_v1_usage_daily")
-        assert usage == 0
+        # The guide's spend query, as written: the fresh org has no ledger rows.
+        spend = await app.fetch(
+            f"SELECT day, sum(upstream_cost_usd) AS spend FROM {schema}.sql_v1_usage_daily "
+            "WHERE day >= (now() AT TIME ZONE 'UTC')::date - 30 GROUP BY day ORDER BY day"
+        )
+        assert spend == []
         # The role's setting reached the session the reader logged in with.
         assert await app.fetchval("SHOW pg_clickhouse.session_settings") == _SESSION
 
