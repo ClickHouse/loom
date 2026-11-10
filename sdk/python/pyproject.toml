@@ -1,14 +1,25 @@
 [project]
 name = "clickhouse-loom"
 version = "1.1.0"
-description = "Python SDK for Loom — shared-production agent memory, knowledge, conflict, and observability plane on ClickHouse."
+description = "Python SDK for Loom, a self-hosted MCP server that gives AI agents shared long-term memory, document search and a code index on ClickHouse."
 requires-python = ">=3.11"
 license = "Apache-2.0"
 # A copy of the repository LICENSE: hatch cannot reach files above this directory.
 license-files = ["LICENSE"]
 readme = "README.md"
 authors = [{ name = "ClickHouse, Inc." }]
-keywords = ["loom", "clickhouse", "agent", "memory", "mcp", "llm", "ai"]
+keywords = [
+  "loom",
+  "clickhouse",
+  "mcp",
+  "mcp-server",
+  "agent-memory",
+  "long-term-memory",
+  "ai-agents",
+  "document-search",
+  "code-search",
+  "llm",
+]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
@@ -40,6 +51,7 @@ aws = ["pyjwt[crypto]>=2.8", "boto3>=1.28"]
 
 [project.urls]
 Homepage = "https://github.com/ClickHouse/loom"
+Documentation = "https://github.com/ClickHouse/loom/blob/main/docs/reference/python-sdk.md"
 Repository = "https://github.com/ClickHouse/loom"
 Issues = "https://github.com/ClickHouse/loom/issues"
 

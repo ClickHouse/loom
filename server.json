@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.ClickHouse/loom",
   "title": "Loom",
-  "description": "Shared long-term memory and code intelligence for AI agents, self-hosted on ClickHouse.",
+  "description": "Shared memory, document search and code intelligence for AI agents, self-hosted on ClickHouse.",
   "version": "1.1.0",
   "websiteUrl": "https://github.com/ClickHouse/loom",
   "repository": {
@@ -54,6 +54,8 @@
         "code-intelligence",
         "code-search",
         "knowledge-base",
+        "document-search",
+        "mcp-server",
         "clickhouse",
         "claude-code",
         "codex"
