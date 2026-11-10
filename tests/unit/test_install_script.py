@@ -750,8 +750,9 @@ def test_an_unreachable_docker_daemon_is_named_before_any_pull(
 
 
 # A curl that writes an installer creating ~/.loom to its `-o FILE`, or to stdout when it
-# has none or `-o -`; the failing one then answers a 404 for `install.sh` as `curl -f`
-# does, and serves any other file.
+# has none or `-o -`; the failing one then answers a 404 for `install.sh`, having written
+# the file anyway (the worst case: a copy left by an earlier attempt), and serves any other
+# file.
 _WORKING_CURL = """#!/bin/sh
 out=
 url=
@@ -793,15 +794,15 @@ def _documented_installs() -> list[tuple[str, str]]:
 
 
 def _run_install(script: str, tmp_path: Path, curl_script: str) -> subprocess.CompletedProcess[str]:
-    """`script` under `sh -e`, in an empty home with `curl_script` as curl: a failing
-    command stops it, and an `&&` chain that ends the example sets its exit status."""
+    """`script` as a terminal runs pasted lines, each after the last whatever it
+    returned, in an empty home with `curl_script` as curl."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     curl = bin_dir / "curl"
     curl.write_text(curl_script)
     curl.chmod(0o755)
     return subprocess.run(
-        ["sh", "-ec", script],
+        ["sh", "-c", script],
         cwd=tmp_path,
         env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "HOME": str(tmp_path)},
         capture_output=True,
@@ -809,9 +810,13 @@ def _run_install(script: str, tmp_path: Path, curl_script: str) -> subprocess.Co
     )
 
 
+# `[LOOM_VAR=value …] sh FILE [ARG …]` up to the next `&&`: the step that runs the installer.
+_RUN_STEP = re.compile(
+    r"&&\s*(?P<env>(?:LOOM_\w+=\S*\s+)*)sh\s+\S*loom-install\.sh(?P<args>(?:\s+(?!&&)\S+)*)"
+)
 _INSTALLS = _documented_installs()
-# The inspect path checks a downloaded bundle by hand before it installs from it.
-_INSPECT = "LOOM_INSTALL_BUNDLE="
+# The inspect path downloads and checks a bundle; the reader installs from it after.
+_INSPECT = "sha256sum -c"
 
 
 def test_the_pages_show_install_commands() -> None:
@@ -844,12 +849,10 @@ def test_a_documented_install_runs_the_installer_and_cleans_up(
     assert result.returncode == 0, (page, example, result)
     assert (tmp_path / ".loom").exists(), (page, example)
     assert list(tmp_path.rglob("loom-install.sh")) == [], (page, example)
-    # Every installer flag and LOOM_* assignment the command gives reaches the
-    # installer, not curl: the docs' curl commands take short flags only.
-    command = example.splitlines()[-1]
-    args = (tmp_path / ".loom" / "args").read_text().split()
+    # What the command gives the installer reaches it: the words after the saved file,
+    # and the LOOM_* assignments before `sh`.
+    run = _RUN_STEP.search(example.splitlines()[-1])
+    assert run, (page, example)
+    assert (tmp_path / ".loom" / "args").read_text().split() == run["args"].split(), example
     passed = (tmp_path / ".loom" / "env").read_text().splitlines()
-    for flag in re.findall(r"(?<!\S)--[a-z][\w-]*", command):
-        assert flag in args, (example, flag, args)
-    for assignment in re.findall(r"(?<!\S)LOOM_\w+=\S*", command):
-        assert assignment in passed, (example, assignment, passed)
+    assert all(v in passed for v in run["env"].split()), (example, passed)

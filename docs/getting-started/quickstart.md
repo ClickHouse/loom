@@ -73,6 +73,8 @@ curl -fLO https://github.com/ClickHouse/loom/releases/latest/download/loom-stack
 curl -fL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh
 sha256sum -c loom-stack.tar.gz.sha256
 tar -tzf loom-stack.tar.gz
+
+# after reading what the checks and the listing print:
 LOOM_INSTALL_BUNDLE="$PWD/loom-stack.tar.gz" \
   LOOM_INSTALL_CHECKSUM="$PWD/loom-stack.tar.gz.sha256" sh loom-install.sh
 ```
