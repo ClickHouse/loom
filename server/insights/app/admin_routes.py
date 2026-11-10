@@ -843,10 +843,8 @@ async def admin_token_mint(
     if info is not None:
         creator = info.subject
     else:
-        # Auth off: a valid bearer names the owner, in its own org; else the
-        # single user. The token list reads the same owner, so a token minted
-        # in `self_signup_org`, the org the Tokens page lists, is listed there
-        # and revocable.
+        # Auth off: a valid bearer names the owner, in its own org; else the single
+        # user, the owner the Tokens page lists in `self_signup_org`.
         bearer = tokens.dev_bearer(request)
         refuse_foreign_org(bearer, input.org, "mint a token for")
         creator = bearer.subject if bearer is not None else auth_off_subject()

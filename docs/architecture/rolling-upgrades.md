@@ -408,11 +408,12 @@ schema. These rules keep that safe. The operator procedure is in
       under another spelling of theirs neither sees nor revokes there a token made under
       the first, and N-1's dashboard lists a `*` token N minted by the names in its claim
       (it reads every namespace all the same).
-    - _Who owns an auth-off token._ With auth off and no bearer, N saves a token under
-      the single user `you` and N-1 under `dev`; the Tokens page lists the tokens whose
-      owner is its build's. A token stays valid either way. One owned by `dev` is listed
-      with `GET /v1/me/service_accounts?subject=dev&org=<its org>` and revoked by
-      `service_accounts.revoke` with the same `subject` and `org`.
+    - _Who owns an auth-off token._ With auth off and no bearer, N saves a dashboard
+      token as the single user `you` in `self_signup_org`, and N-1 as `dev` in `default`;
+      each build's Tokens page lists its own owner's. A token stays valid either way. One
+      N-1 saved is listed with `GET /v1/me/service_accounts?subject=dev&org=default` and
+      revoked by `service_accounts.revoke` with the same `subject` and `org` (a
+      `token.mint` token, with the org it named).
 36. **The memory a cached `code.ask` answer quoted** (`loom.code_answers.memory_namespace`
     and `memory_keys`, migration `086_code_answer_memory_scope.sql`): N-1 writes an
     answer without them, and a tombstone N-1 writes of an entry N stamped (a stale entry,
