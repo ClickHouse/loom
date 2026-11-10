@@ -589,9 +589,9 @@ function TokenForm({
   const listHint =
     selectedNs.length === 0
       ? "Tick the namespaces this token reads. Nothing else, whatever you join later."
-      : selectedNs.length === 1
-        ? "1 ticked, and nothing else, whatever you join later. Number 1 is searched first."
-        : `${selectedNs.length} ticked, and nothing else, whatever you join later. Number 1 is searched first. ${reorderHint}`;
+      : `${selectedNs.length} ticked, and nothing else, whatever you join later.${
+          selectedNs.length > 1 ? ` Number 1 is searched first. ${reorderHint}` : ""
+        }`;
 
   return (
     <section

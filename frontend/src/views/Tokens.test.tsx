@@ -257,6 +257,7 @@ describe("the token form", () => {
     const order = screen.getByRole("list", { name: "Search order" });
     expect(order.querySelector("[draggable]")).toBeNull();
     expect(screen.queryByText(/to change the order/)).toBeNull();
+    expect(screen.queryByText(/Number 1 is searched first/)).toBeNull();
     await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
     expect(screen.getByText(/to change the order/)).toBeInTheDocument();
   });
