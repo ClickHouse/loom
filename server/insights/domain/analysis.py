@@ -604,10 +604,13 @@ def wrap_statement(sql: str, limit: int) -> str:
     return f"SELECT * FROM (\n{body}\n) LIMIT {int(limit) + 1}"
 
 
+BAD_ARGUMENTS = 36
+ACCESS_DENIED = 497
+
 _PASSWORD_FIX = (
     "Loom draws a password with a lower and an upper case letter, a digit and a symbol; "
-    "a stored one that lacks any of them is refused. Drop the loom_analyst user if it "
-    "exists, then delete the analysis_secrets row in Loom's database (LOOM_CH_DATABASE): "
+    f"a stored one that lacks any of them is refused. Drop the {ANALYST_USER} user if it "
+    "exists, then delete the row in loom.analysis_secrets (loom is LOOM_CH_DATABASE): "
     "the next probe draws a new pair. Rules that ask for more refuse a new pair too."
 )
 
@@ -617,8 +620,8 @@ def refusal_cause(code: int, name: str | None, text: str) -> tuple[str, str]:
     known cause, what it means. Never the message `text`, which can quote a
     policy; '' is health's default fix."""
     shown = f"Code {code} ({name})" if name else f"Code {code}"
-    if code == 36 and "Invalid password" in text:
+    if code == BAD_ARGUMENTS and "Invalid password" in text:
         return f"{shown}: the password does not meet the server's password policy", _PASSWORD_FIX
-    if code == 497:
+    if code == ACCESS_DENIED:
         return f"{shown}: a privilege the statement needs is missing", ""
     return shown, ""

@@ -64,7 +64,7 @@ log = logging.getLogger(__name__)
 # The ClickHouse codes a statement's own shape causes, answered as a 422 that
 # quotes ClickHouse: a refused table, column or function, bad SQL, a missing
 # name, a type error, a cap.
-_ACCESS_DENIED = 497
+_ACCESS_DENIED = boundary.ACCESS_DENIED
 _AUTHENTICATION_FAILED = 516
 _TOO_MANY_SIMULTANEOUS_QUERIES = 202
 _STATEMENT_CODES = frozenset(

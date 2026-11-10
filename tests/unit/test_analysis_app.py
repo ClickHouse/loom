@@ -1088,7 +1088,7 @@ _CLOUD_PASSWORD_REFUSAL = (
             "Code 180 (THERE_IS_NO_PROFILE)",
             "server log",
         ),
-        ("connection reset by peer", "RuntimeError", "server log"),
+        ("unexpected answer", "RuntimeError", "server log"),
     ],
 )
 def test_a_refused_write_names_clickhouse_code_and_its_fix(
