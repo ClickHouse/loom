@@ -217,7 +217,7 @@ class Lease:
                     break
                 pause = self.ttl_s / 6
             except Exception as e:  # noqa: BLE001 — retried until half the TTL has passed
-                log.warning("lease %s: renewal failed (%s)", self.name, e)
+                log.warning("lease %s: renewal failed: %s: %s", self.name, type(e).__name__, e)
                 pause = self.ttl_s / 12
         self.lost = True
         log.error("lease %s lost: another process may hold it now", self.name)
