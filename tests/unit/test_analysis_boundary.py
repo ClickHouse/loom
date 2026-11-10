@@ -379,3 +379,26 @@ def test_a_prefix_probe_with_no_answer_raises() -> None:
 
     with pytest.raises(TimeoutError):
         asyncio.run(store.setting_prefix(ch=_Down()))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("code", "name", "text", "cause", "own_fix"),
+    [
+        (
+            36,
+            "BAD_ARGUMENTS",
+            "Invalid password. The password should: ...",
+            "password policy",
+            True,
+        ),
+        (36, "BAD_ARGUMENTS", "Unknown format", "Code 36 (BAD_ARGUMENTS)", False),
+        (497, "ACCESS_DENIED", "Not enough privileges", "a privilege the statement needs", False),
+        (180, None, "There is no settings profile", "Code 180", False),
+    ],
+)
+def test_a_clickhouse_error_reads_as_its_code_name_and_known_cause(
+    code: int, name: str | None, text: str, cause: str, own_fix: bool
+) -> None:
+    shown, fix = boundary.error_cause(code, name, text)
+    assert cause in shown and text not in shown
+    assert bool(fix) is own_fix

@@ -435,18 +435,22 @@ def _write_analyst() -> None:
     deployment whose server user cannot (one with access management writes it
     at boot)."""
     from server.cli._ch import run_connected
-    from server.insights.app.analysis import SetupRefused, rewrite
+    from server.insights.app.analysis import SetupRefused, rewrite, shown_cause
 
     try:
         run_connected(lambda _ch: rewrite())
     except Exception as e:  # noqa: BLE001 — insights.query is optional; the rest of setup stands
         line = error_line(e)
-        # A refusal Loom wrote names its own next step.
-        advice = (
-            ""
-            if isinstance(e, SetupRefused)
-            else "; have an admin run the SQL `loom ch-setup --print-analyst-sql` prints"
-        )
+        if isinstance(e, SetupRefused):
+            advice = ""  # a refusal Loom wrote names its own next step
+        else:
+            # The printed SQL carries the same password, so a cause with its own fix replaces it.
+            _, fix = shown_cause(e)
+            advice = (
+                f"; {fix}"
+                if fix
+                else "; have an admin run the SQL `loom ch-setup --print-analyst-sql` prints"
+            )
         print(f"· loom_analyst (insights.query): not written ({line}){advice}")
         return
     print("· loom_analyst (insights.query): written")

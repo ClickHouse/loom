@@ -29,6 +29,7 @@ from server.core.ch import query_tag_var, statement_timeout
 from server.core.ch_errors import (
     error_code,
     error_line,
+    error_name,
     is_connection_failure,
     is_passing_state,
     is_transient_network_error,
@@ -63,17 +64,16 @@ log = logging.getLogger(__name__)
 # The ClickHouse codes a statement's own shape causes, answered as a 422 that
 # quotes ClickHouse: a refused table, column or function, bad SQL, a missing
 # name, a type error, a cap.
-_ACCESS_DENIED = 497
 _AUTHENTICATION_FAILED = 516
 _TOO_MANY_SIMULTANEOUS_QUERIES = 202
 _STATEMENT_CODES = frozenset(
     {
-        _ACCESS_DENIED,
+        boundary.ACCESS_DENIED,
         1,  # UNSUPPORTED_METHOD
         6,  # CANNOT_PARSE_TEXT
         10,  # NOT_FOUND_COLUMN_IN_BLOCK
         16,  # NO_SUCH_COLUMN_IN_TABLE
-        36,  # BAD_ARGUMENTS
+        boundary.BAD_ARGUMENTS,
         42,  # NUMBER_OF_ARGUMENTS_DOESNT_MATCH
         43,  # ILLEGAL_TYPE_OF_ARGUMENT
         44,  # ILLEGAL_COLUMN
@@ -106,7 +106,7 @@ _STATEMENT_CODES = frozenset(
 
 
 class SetupRefused(RuntimeError):
-    """A refusal Loom wrote, safe to show as is; any other error shows as its kind."""
+    """A refusal Loom wrote, safe to show as is; `shown_cause` words any other error."""
 
 
 _WRITE_LEASE = "analysis.entities"
@@ -121,15 +121,16 @@ _setting_names: boundary.SettingNames | None = None
 # probe got no answer (the op answers OVERLOADED); False = a finding.
 _ready: bool | None = None
 _problem = ""
+_fix = ""  # the finding's own fix, or '' for health's default
 
 # Statements each org is running on this replica, so one org's slow
 # statements cannot take the analyst user's whole share of ClickHouse.
 _running: dict[str, int] = {}
 
 
-def analysis_state() -> tuple[bool | None, str]:
-    """(ready, why not) for health and `loom doctor`."""
-    return _ready, _problem
+def analysis_state() -> tuple[bool | None, str, str]:
+    """(ready, why not, its own fix or '' for health's default) for health."""
+    return _ready, _problem, _fix
 
 
 def _password() -> str:
@@ -502,7 +503,8 @@ def _probe_failed(what: str, e: BaseException) -> None:
         _set_problem(f"{what}: {e}")
         return
     if not _no_answer(e):
-        _set_problem(f"{what}: {error_kind(e)}", error_line(e))
+        cause, fix = shown_cause(e)
+        _set_problem(f"{what}: {cause}", error_line(e), fix)
         return
     kind = error_kind(e)
     if kind != _unreached_kind:
@@ -554,12 +556,23 @@ async def _canary_reads(secrets_: tuple[bytes, str]) -> bool:
         return False  # a refused login, a refused or capped read: the key is not in force
 
 
-def _set_problem(problem: str, detail: str = "") -> None:
+def shown_cause(e: BaseException) -> tuple[str, str]:
+    """(cause, fix) of an error in words `/v1/health` may show: ClickHouse's
+    code, error name and known cause (`error_cause`), or the error's kind."""
+    code = error_code(e)
+    if code is None:
+        return error_kind(e), ""
+    return boundary.error_cause(code, error_name(e), str(e))
+
+
+def _set_problem(problem: str, detail: str = "", fix: str = "") -> None:
     """Record the probe's answer. `problem` is Loom's own text, which
     `/v1/health` shows without a token; `detail` (a driver's text, the names
-    of policies or databases) goes only to the log."""
-    global _ready, _problem, _unreached_kind, _unreached_since
+    of policies or databases) goes only to the log; `fix`, Loom's own text too,
+    replaces health's default fix ('' keeps it)."""
+    global _ready, _problem, _fix, _unreached_kind, _unreached_since
     _unreached_kind, _unreached_since = "", 0.0  # the probe ran: no answer logs again
+    _fix = fix
     scrubbed = _scrubbed(problem)
     changed = scrubbed != _problem
     _problem = scrubbed
@@ -606,13 +619,14 @@ async def _probe() -> tuple[str, bool, str]:
         try:
             admitted = await store.count_rows(t.name, password=_password(), extra=reserved())
         except Exception as e:
-            if error_code(e) == _ACCESS_DENIED:
+            if error_code(e) == boundary.ACCESS_DENIED:
                 return f"{boundary.ANALYST_USER} lacks its grants on {t.name}", True, ""
             if _no_answer(e):
                 raise
             # A cap the count hit: no policy narrows the reserved scope to nothing.
+            cause, _ = shown_cause(e)
             return (
-                f"{t.name}'s count in the reserved scope failed ({error_kind(e)}): "
+                f"{t.name}'s count in the reserved scope failed with {cause}: "
                 f"{boundary.ANALYST_USER} may have no scope policy on it",
                 True,
                 error_line(e),
@@ -631,11 +645,16 @@ async def _probe() -> tuple[str, bool, str]:
         try:
             await store.read_refused(shown, password=_password(), extra=reserved())
         except Exception as e:  # a refusal (497) is the expected answer
-            if error_code(e) == _ACCESS_DENIED:
+            if error_code(e) == boundary.ACCESS_DENIED:
                 continue
             if _no_answer(e):
                 raise  # no answer about the grant
-            return f"{boundary.ANALYST_USER} was not refused {shown} ({error_kind(e)})", False, ""
+            cause, _ = shown_cause(e)
+            return (
+                f"{boundary.ANALYST_USER} was not refused {shown}: {cause}",
+                False,
+                error_line(e),
+            )
         return f"{boundary.ANALYST_USER} may read {shown}: its grants are too wide", True, ""
     if await store.own_version(_names(), password=_password(), extra={}) > boundary.ENTITY_VERSION:
         # A newer build's entities: the allowlist checks below are its to make.
@@ -802,5 +821,6 @@ __all__ = [
     "handle_insights_catalog",
     "handle_insights_query",
     "provision",
+    "shown_cause",
     "start_probe_loop",
 ]

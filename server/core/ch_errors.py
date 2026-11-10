@@ -150,6 +150,7 @@ def strip_quantized_setting(sql: str) -> str:
 
 
 _SERVER_CODE = re.compile(r"Code: (\d+)\.")
+_ERROR_NAME = re.compile(r"\(([A-Z][A-Z0-9_]*)\) \(version ")
 
 
 _DRIVER_PREFIX = re.compile(r"^Received ClickHouse exception, code: \d+, server response: ")
@@ -171,6 +172,14 @@ def error_code(e: BaseException | str) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def error_name(e: BaseException | str) -> str | None:
+    """The error name a ClickHouse server error carries before its version, as
+    `(BAD_ARGUMENTS) (version …)`, or None. A nested message ends with the outer
+    exception's name, the one `error_code` reads the code of."""
+    names = _ERROR_NAME.findall(str(e))
+    return names[-1] if names else None
+
+
 def is_replica_bound_error(e: BaseException) -> bool:
     if not isinstance(e, DatabaseError):
         return False
@@ -183,6 +192,7 @@ def is_replica_bound_error(e: BaseException) -> bool:
 __all__ = [
     "QUANTIZED_SETTING",
     "error_code",
+    "error_name",
     "is_connection_failure",
     "is_passing_state",
     "is_shared_memory_limit",

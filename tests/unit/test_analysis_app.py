@@ -21,9 +21,15 @@ from server.core.ratelimit import op_class_for
 from server.insights.api.models_analysis import InsightsQueryInput
 from server.insights.app import analysis as app
 from server.insights.domain import analysis as boundary
+from server.observability import problems
 
 SECRETS = (bytes(range(32)), "pw")
 NAMES = boundary.SettingNames("SQL_")
+_CLOUD_PASSWORD_REFUSAL = (
+    "Received ClickHouse exception, code: 36, server response: Code: 36. DB::Exception: "
+    "Invalid password. The password should: contain at least 1 uppercase character, "
+    "contain at least 1 special character. (BAD_ARGUMENTS) (version 26.10.2.93 (official build))"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -39,6 +45,7 @@ def ready(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app, "_setting_names", NAMES)
     monkeypatch.setattr(app, "_ready", True)
     monkeypatch.setattr(app, "_problem", "")
+    monkeypatch.setattr(app, "_fix", "")
     monkeypatch.setattr(app, "_running", {})
     monkeypatch.setattr(app.store, "target_database", lambda: "`loom`")
 
@@ -182,7 +189,7 @@ def test_a_foreign_permissive_policy_stops_the_repair(
     monkeypatch.setattr(app.store, "write_entities", write)
     asyncio.run(app.reprobe())
     assert not written
-    ready_now, problem = app.analysis_state()
+    ready_now, problem, _ = app.analysis_state()
     assert ready_now is False
     _named_in_the_log_only(caplog, problem, "bi_scope ON memory")
 
@@ -506,18 +513,20 @@ def test_a_standing_problem_is_logged_once(
 
 
 @pytest.mark.parametrize(
-    ("error", "advised"),
+    ("error", "advised", "own_fix"),
     [
         # A refusal Loom wrote names its own next step.
-        (app.SetupRefused(app.NOT_MIGRATED), False),
-        (RuntimeError("Code: 497. DB::Exception: Not enough privileges"), True),
+        (app.SetupRefused(app.NOT_MIGRATED), False, False),
+        (RuntimeError("Code: 497. DB::Exception: Not enough privileges"), True, False),
+        (RuntimeError(_CLOUD_PASSWORD_REFUSAL), False, True),
     ],
 )
-def test_ch_setups_analyst_line_advises_the_printed_sql_only_for_errors_loom_did_not_word(
+def test_ch_setups_analyst_line_advises_the_printed_sql_only_where_no_fix_fits(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     error: Exception,
     advised: bool,
+    own_fix: bool,
 ) -> None:
     from server.cli import _ch, ch_setup
 
@@ -530,6 +539,7 @@ def test_ch_setups_analyst_line_advises_the_printed_sql_only_for_errors_loom_did
     line = capsys.readouterr().out.strip()
     assert line.startswith("· loom_analyst (insights.query): not written (")
     assert ("--print-analyst-sql" in line) is advised
+    assert ("DROP USER IF EXISTS loom_analyst" in line) is own_fix
 
 
 def test_a_replica_whose_first_setup_could_not_run_answers_overloaded(
@@ -574,7 +584,7 @@ def test_an_unavailable_answer_names_no_cause(monkeypatch: pytest.MonkeyPatch, r
         (
             # An answer that is neither a refusal nor a passing fault.
             "Code: 60. DB::Exception: Unknown table",
-            f"{boundary.ANALYST_USER} was not refused memory.value (RuntimeError)",
+            f"{boundary.ANALYST_USER} was not refused memory.value: Code 60",
             False,
         ),
     ],
@@ -597,7 +607,7 @@ def test_an_unrefused_probe_is_named_by_the_column_not_the_sql(
         return [], [], [("leaked",)]
 
     monkeypatch.setattr(app.store, "run_statement", run)
-    assert asyncio.run(app._probe()) == (expected, repairable, "")
+    assert asyncio.run(app._probe()) == (expected, repairable, answer or "")
 
 
 class _FailingRead:
@@ -769,7 +779,7 @@ def test_a_finding_whose_repair_fails_is_kept(monkeypatch: pytest.MonkeyPatch, r
     monkeypatch.setattr(app.store, "can_manage_access", _returns(True))
     monkeypatch.setattr(app, "_write_under_lease", write)
     asyncio.run(app.reprobe())
-    ready_now, problem = app.analysis_state()
+    ready_now, problem, _ = app.analysis_state()
     assert ready_now is False and problem == "loom_analyst holds grants outside the allowlist"
 
 
@@ -788,7 +798,7 @@ def test_a_probe_with_no_answer_stops_serving_but_is_resent(
     monkeypatch.setattr(app, "_probe", _failing_probe(TimeoutError("read timed out")))
     asyncio.run(app.reprobe())
     asyncio.run(app.reprobe())
-    assert app.analysis_state() == (None, "")
+    assert app.analysis_state() == (None, "", "")
     assert sum("got no answer" in r.message for r in caplog.records) == 1  # once per kind
     with pytest.raises(OverloadedError):
         asyncio.run(app.handle_insights_query(_query()))
@@ -813,7 +823,7 @@ def test_no_answer_for_three_intervals_is_named_but_still_resent(
     monkeypatch.setattr(app.time, "monotonic", monotonic)
     for _ in range(3):
         asyncio.run(app.reprobe())
-    ready_now, problem = app.analysis_state()
+    ready_now, problem, _ = app.analysis_state()
     assert ready_now is None and "no answer for three intervals" in problem
     with pytest.raises(OverloadedError):
         asyncio.run(app.handle_insights_query(_query()))
@@ -830,7 +840,7 @@ def test_a_proxys_own_status_is_no_answer(monkeypatch: pytest.MonkeyPatch, ready
 
     monkeypatch.setattr(app.store, "run_statement", run)
     asyncio.run(app.reprobe())
-    assert app.analysis_state() == (None, "")
+    assert app.analysis_state() == (None, "", "")
 
 
 def test_a_refusal_loom_wrote_during_a_repair_is_the_problem(
@@ -849,7 +859,7 @@ def test_a_refusal_loom_wrote_during_a_repair_is_the_problem(
     monkeypatch.setattr(app.store, "sealed_secrets", _returns("not-a-sealed-value"))
     monkeypatch.setattr(app, "_opened", lambda _: None)
     asyncio.run(app.reprobe())
-    ready_now, problem = app.analysis_state()
+    ready_now, problem, _ = app.analysis_state()
     assert ready_now is False and "does not open with LOOM_JWT_SECRET" in problem
 
 
@@ -868,19 +878,22 @@ def test_a_first_boot_with_no_answer_about_the_user_is_no_finding(
 
     monkeypatch.setattr(app.store, "_default_client", lambda: _Ch())
     asyncio.run(app.provision())
-    assert app.analysis_state() == (None, "")
+    assert app.analysis_state() == (None, "", "")
 
 
 @pytest.mark.parametrize(
-    "error",
+    ("error", "cause"),
     [
-        "Code: 159. DB::Exception: Timeout exceeded",
-        "Code: 158. DB::Exception: Limit for rows to read exceeded",
-        "Code: 241. DB::Exception: Memory limit (for query) exceeded",
+        (
+            "Code: 159. DB::Exception: Timeout exceeded. (TIMEOUT_EXCEEDED) (version 26.10.2.93)",
+            "with Code 159 (TIMEOUT_EXCEEDED):",
+        ),
+        ("Code: 158. DB::Exception: Limit for rows to read exceeded", "with Code 158:"),
+        ("Code: 241. DB::Exception: Memory limit (for query) exceeded", "with Code 241:"),
     ],
 )
 def test_a_capped_reserved_scope_count_is_a_finding(
-    monkeypatch: pytest.MonkeyPatch, ready: None, error: str
+    monkeypatch: pytest.MonkeyPatch, ready: None, error: str, cause: str
 ) -> None:
     # A count that hits a cap was not narrowed to nothing by a scope policy.
     async def run(sql: str, **_: Any) -> Any:
@@ -890,7 +903,7 @@ def test_a_capped_reserved_scope_count_is_a_finding(
 
     monkeypatch.setattr(app.store, "run_statement", run)
     problem, repairable, _ = asyncio.run(app._probe())
-    assert "count in the reserved scope failed" in problem and repairable
+    assert f"count in the reserved scope failed {cause}" in problem and repairable
 
 
 def test_a_canary_read_with_no_answer_raises(monkeypatch: pytest.MonkeyPatch, ready: None) -> None:
@@ -953,7 +966,7 @@ def test_a_recheck_that_does_not_finish_after_a_repair_keeps_the_finding(
     monkeypatch.setattr(app.store, "can_manage_access", _returns(True))
     monkeypatch.setattr(app, "_write_under_lease", _returns(("", "")))
     asyncio.run(app.reprobe())
-    ready_now, problem = app.analysis_state()
+    ready_now, problem, _ = app.analysis_state()
     assert ready_now is False and problem == "memory admits rows in the reserved scope"
     assert any("re-check did not finish" in r.message for r in caplog.records)
 
@@ -1056,8 +1069,69 @@ def test_a_write_clickhouse_refuses_is_a_kept_finding_and_not_done(
     monkeypatch.setattr(app.store, "write_entities", refuse)
     for _ in range(2):  # every run records the same finding
         assert asyncio.run(app.provision()) is False
-        ready_now, problem = app.analysis_state()
+        ready_now, problem, _ = app.analysis_state()
         assert ready_now is False and problem.startswith("writing or probing loom_analyst failed")
+
+
+@pytest.mark.parametrize(
+    ("raised", "shown", "fix_names"),
+    [
+        (
+            _CLOUD_PASSWORD_REFUSAL,
+            "Code 36 (BAD_ARGUMENTS): the password does not meet the server's password policy",
+            "`DROP USER IF EXISTS loom_analyst`",
+        ),
+        (
+            "Code: 497. DB::Exception: loom: Not enough privileges. (ACCESS_DENIED) (version 1)",
+            "Code 497 (ACCESS_DENIED): a privilege the statement needs is missing",
+            "access management",
+        ),
+        (
+            "Code: 180. DB::Exception: There is no settings profile `loom_analyst_caps` in "
+            "`user directories`. (THERE_IS_NO_PROFILE) (version 1)",
+            "Code 180 (THERE_IS_NO_PROFILE)",
+            "server log",
+        ),
+        (
+            "Code: 36. DB::Exception: Unknown format. (BAD_ARGUMENTS) (version 1)",
+            "Code 36 (BAD_ARGUMENTS)",
+            "server log",
+        ),
+        ("unexpected answer", "RuntimeError", "server log"),
+    ],
+)
+def test_a_refused_write_names_clickhouse_code_and_its_fix(
+    monkeypatch: pytest.MonkeyPatch, ready: None, raised: str, shown: str, fix_names: str
+) -> None:
+    _provisioning(monkeypatch, stored=None, caps="", foreign=[])
+
+    async def refuse(*_: Any, **__: Any) -> None:
+        raise RuntimeError(raised)
+
+    monkeypatch.setattr(app.store, "write_entities", refuse)
+    assert asyncio.run(app.provision()) is False
+    ready_now, problem, fix = app.analysis_state()
+    assert (ready_now, problem) == (False, f"writing or probing loom_analyst failed: {shown}")
+    state = problems.HealthState(analysis_ok=ready_now, analysis_error=problem, analysis_fix=fix)
+    (shown_problem,) = problems._analysis_problems(None, state)
+    assert fix_names in shown_problem.fix
+
+
+def test_a_later_finding_drops_the_fix_of_the_one_it_replaces(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    _provisioning(monkeypatch, stored=None, caps="", foreign=[])
+
+    async def refuse(*_: Any, **__: Any) -> None:
+        raise RuntimeError(_CLOUD_PASSWORD_REFUSAL)
+
+    monkeypatch.setattr(app.store, "write_entities", refuse)
+    asyncio.run(app.provision())
+    assert app.analysis_state()[2]
+    monkeypatch.setattr(app.store, "foreign_policies", _returns(["bi_scope ON memory"]))
+    asyncio.run(app.provision())
+    _, problem, fix = app.analysis_state()
+    assert problem.startswith("row policies Loom did not write") and fix == ""
 
 
 def test_a_drawn_password_has_every_character_class() -> None:

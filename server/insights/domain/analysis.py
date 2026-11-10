@@ -32,6 +32,10 @@ from server.core.sql_literal import sql_string
 # back its narrower grants over N's (`needs_rewrite`).
 ENTITY_VERSION = 2
 
+# ClickHouse server error codes.
+BAD_ARGUMENTS = 36
+ACCESS_DENIED = 497
+
 ANALYST_USER = "loom_analyst"
 POLICY_NAME = "loom_analyst_scope"
 CAPS_PROFILE = "loom_analyst_caps"
@@ -602,3 +606,25 @@ def wrap_statement(sql: str, limit: int) -> str:
     the closing parenthesis."""
     body = sql.strip().removesuffix(";").rstrip()
     return f"SELECT * FROM (\n{body}\n) LIMIT {int(limit) + 1}"
+
+
+_PASSWORD_FIX = (
+    "Loom draws a password with a lower and an upper case letter, a digit and a symbol; "
+    f"a stored one that lacks any of them is refused. Run `DROP USER IF EXISTS {ANALYST_USER}`, "
+    "then `DELETE FROM loom.analysis_secrets WHERE id = 0` (`loom` stands for LOOM_CH_DATABASE): "
+    "the next setup draws a new pair (Loom's own where its server user has access "
+    "management, else `loom ch-setup`). Rules that ask for more refuse a new pair too: on "
+    "a self-managed server, relax its password_complexity rules."
+)
+
+
+def error_cause(code: int, name: str | None, text: str) -> tuple[str, str]:
+    """(cause, fix) for a ClickHouse error: its code, its error name and, for a
+    known cause, what it means. Never the message `text`, which can quote a
+    policy; '' is health's default fix."""
+    shown = f"Code {code} ({name})" if name else f"Code {code}"
+    if code == BAD_ARGUMENTS and "Invalid password" in text:
+        return f"{shown}: the password does not meet the server's password policy", _PASSWORD_FIX
+    if code == ACCESS_DENIED:
+        return f"{shown}: a privilege the statement needs is missing", ""
+    return shown, ""
