@@ -58,9 +58,13 @@ def _sees_every_entry(request: Request) -> bool:
 
     try:
         token = bearer_token(request.headers.get("Authorization"))
-        return token is not None and verify_token(token).has_role(Role.PLATFORM_ADMIN)
+        if token is None:
+            return False
+        info = verify_token(token)
     except TokenError:
         return False
+    # the admin routes' rule: a scoped token's `ns_roles` is no deployment authority
+    return not info.has_ns_roles() and info.has_role(Role.PLATFORM_ADMIN)
 
 
 def _health_provider_fields(

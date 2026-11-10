@@ -40,7 +40,7 @@ const KIND_WORD: Record<string, string> = {
   cmake: "build configure failed",
   harness: "indexer failed",
   module: "module failed to build",
-  unknown: "error",
+  unknown: "unclassified error",
 };
 
 export function tierName(tier: string): string {
@@ -60,6 +60,6 @@ export function failingTiers(rows: TierHealth[] | undefined): TierHealth[] {
  *  which the caller renders as a time element. */
 export function failureSummary(t: TierHealth): string {
   const passes = `${t.failed_passes} failed pass${t.failed_passes === 1 ? "" : "es"}`;
-  const behind = t.lag_commits >= 0 ? `, ${t.lag_commits} commit${t.lag_commits === 1 ? "" : "s"} behind` : "";
+  const behind = t.lag_commits > 0 ? `, ${t.lag_commits} commit${t.lag_commits === 1 ? "" : "s"} behind` : "";
   return `${passes}${behind} (${kindWord(t.kind)})`;
 }

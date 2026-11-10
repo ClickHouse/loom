@@ -44,11 +44,11 @@ def client(monkeypatch: pytest.MonkeyPatch) -> Any:
     recorder.reset_for_tests()
 
 
-def _tier_message(client: TestClient, headers: dict[str, str]) -> str:
+def _tier_message(client: TestClient, headers: dict[str, str]) -> tuple[str, str | None]:
     r = client.get("/v1/health", headers=headers)
     assert r.status_code == 200
     (p,) = [p for p in r.json()["problems"] if p["code"] == "code_tier_failing"]
-    return str(p["message"])
+    return str(p["message"]), r.headers.get("Cache-Control")
 
 
 def _bearer(roles: list[str]) -> dict[str, str]:
@@ -58,8 +58,22 @@ def _bearer(roles: list[str]) -> dict[str, str]:
 
 
 def test_a_platform_admin_reads_each_entry_and_its_error(client: TestClient) -> None:
-    message = _tier_message(client, _bearer(["platform_admin"]))
-    assert "o/a@main (code-a) clang_full: git lock held — ToolOutputError" in message
+    message, cache = _tier_message(client, _bearer(["platform_admin"]))
+    assert "o/a@main (o/code-a) clang_full: git lock held, 4 failed passes" in message
+    assert '"ToolOutputError: git checkout failed' in message
+    assert cache == "no-store"  # the answer names entries: no shared cache keeps it
+
+
+def test_a_scoped_token_is_no_platform_admin(client: TestClient) -> None:
+    token = mint_token(
+        subject="ops",
+        org="o",
+        namespaces=["*"],
+        roles=["platform_admin"],
+        ns_roles={"code-a": "admin"},
+    )
+    message, _ = _tier_message(client, {"Authorization": f"Bearer {token}"})
+    assert "code-a" not in message
 
 
 @pytest.mark.parametrize(
@@ -70,6 +84,7 @@ def test_a_platform_admin_reads_each_entry_and_its_error(client: TestClient) -> 
 def test_any_other_caller_reads_the_reason_without_the_entry(
     client: TestClient, headers: Any
 ) -> None:
-    message = _tier_message(client, _bearer(["writer"]) if headers == "writer" else headers)
+    message, cache = _tier_message(client, _bearer(["writer"]) if headers == "writer" else headers)
     assert "clang_full: git lock held, 4 failed passes" in message
+    assert cache != "no-store"
     assert not any(s in message for s in ("o/a", "code-a", "/srv", "ToolOutputError"))

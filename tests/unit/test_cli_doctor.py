@@ -38,7 +38,8 @@ def test_a_failing_code_tier_is_a_doctor_problem(monkeypatch: pytest.MonkeyPatch
     assert grade == doctor.WARN
     # the operator's view names the entry and its error
     assert (
-        "o/x@main (code-x) clang: no credential — fatal: could not read Username, 4 failed passes"
+        "o/x@main (o/code-x) clang: no credential, 4 failed passes since "
+        '2026-01-01T00:00:00+00:00, at least 12 commits behind — "fatal: could not read Username"'
     ) in detail
     assert "Fix: Set the token." in detail
 

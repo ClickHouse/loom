@@ -921,13 +921,15 @@ def _code_tier_problems(st: HealthState) -> list[Problem]:
         lag, passes = int(r["lag_commits"]), int(r["failed_passes"])
         # the count the entry's last published status made: a lower bound
         behind = f", at least {lag} commit{'' if lag == 1 else 's'} behind" if lag > 0 else ""
-        what = f"{r['tier']}: {r['reason']}"
-        if st.code_tier_named:
-            entry = f"{r['repo']}@{r['branch']} ({r['namespace']})"
-            what = f"{entry} {what}" + (f" — {r['error']}" if r["error"] else "")
-        return (
-            f"{what}, {passes} failed pass{'' if passes == 1 else 'es'} since {r['since']}{behind}"
+        line = (
+            f"{r['tier']}: {r['reason']}, {passes} failed pass{'' if passes == 1 else 'es'} "
+            f"since {r['since']}{behind}"
         )
+        if not st.code_tier_named:
+            return line
+        entry = f"{r['repo']}@{r['branch']} ({r['org']}/{r['namespace']})"
+        error = f' — "{r["error"]}"' if r["error"] else ""
+        return f"{entry} {line}{error}"
 
     shown = [named(r) for r in rows[:_TIER_FAILURES_NAMED]]
     more = len(rows) - len(shown)

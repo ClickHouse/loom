@@ -170,7 +170,7 @@ def _problem(rows: tuple[dict[str, Any], ...] | None) -> list[Any]:
     ]
 
 
-def test_the_problem_names_the_tier_kind_since_lag_and_fix_but_no_entry() -> None:
+def test_the_problem_names_the_tier_reason_since_lag_and_fix_but_no_entry() -> None:
     row = {
         "org": "o",
         "namespace": "code-a",
@@ -512,11 +512,14 @@ def _tier_problem(rows: tuple[dict[str, Any], ...], *, named: bool) -> Any:
 def test_an_operator_reads_each_entry_by_repository_branch_and_namespace_with_its_reason() -> None:
     p = _tier_problem(_two_entries(), named=True)
     assert (
-        "o/a@main (code-a) clang_full: git lock held — ToolOutputError: git checkout failed: "
-        "fatal: Unable to create '/srv/repos/checkout-a/.git/index.lock': File exists., "
-        "4 failed passes since 2026-01-01T12:00:00+00:00"
+        "o/a@main (o/code-a) clang_full: git lock held, 4 failed passes since "
+        '2026-01-01T12:00:00+00:00 — "ToolOutputError: git checkout failed: fatal: Unable to '
+        "create '/srv/repos/checkout-a/.git/index.lock': File exists.\""
     ) in p.message
-    assert "o/a@26.4 (code-a-26-4) clang_full: unclassified error — PermissionError, 4" in p.message
+    assert (
+        "o/a@26.4 (o/code-a-26-4) clang_full: unclassified error, 4 failed passes since "
+        '2026-01-01T12:00:00+00:00 — "PermissionError"'
+    ) in p.message
     assert "unknown" not in p.message and "commits behind" not in p.message
     assert tier_health.fix_for("git_lock", "", name_where=False) in p.fix
     assert tier_health.fix_for("unknown", "", name_where=False) in p.fix
@@ -539,3 +542,12 @@ def test_a_lag_behind_is_shown_and_a_lag_of_zero_is_not() -> None:
     p = _tier_problem(recorder.problem_rows(T0 + timedelta(hours=3)) or (), named=True)
     assert "at least 413 commits behind" in p.message
     assert p.message.count("commits behind") == 1 and "0 commits" not in p.message
+
+
+def test_the_error_line_is_the_one_that_says_why() -> None:
+    cmake = "x" * 700 + "\nCMake Error at CMakeLists.txt:12\n>> cmake configure failed\nexit 1"
+    health = _failing_with(cmake)
+    # the record starts mid-line; the kind's own line is the one shown
+    assert tier_health.error_line(health.kind, health.error) == ">> cmake configure failed"
+    health = _failing_with("y" * 700 + "\nsomething broke\nlast words")
+    assert tier_health.error_line(health.kind, health.error) == "something broke"

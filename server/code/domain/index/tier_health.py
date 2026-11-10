@@ -390,9 +390,17 @@ def reason(kind: str) -> str:
     return REASONS.get(kind, "unclassified error")
 
 
-def error_line(error: str) -> str:
-    """The first line of a recorded error, redacted and cut to `ERROR_LINE_CHARS`."""
-    line = next((s.strip() for s in redact(error).splitlines() if s.strip()), "")
+def error_line(kind: str, error: str) -> str:
+    """The line of a recorded error that says why, redacted and cut to
+    `ERROR_LINE_CHARS`: the line the kind's pattern matched, else the first whole line
+    (the record keeps the end of the output, so a record cut to `ERROR_CHARS` starts
+    mid-line)."""
+    lines = [s.strip() for s in redact(error).splitlines() if s.strip()]
+    if len(error) >= ERROR_CHARS:
+        lines = lines[1:]
+    patterns = [pattern for k, pattern in _KINDS if k == kind]
+    line = next((s for s in lines if any(p.search(s) for p in patterns)), "")
+    line = line or next(iter(lines), "")
     return line if len(line) <= ERROR_LINE_CHARS else line[: ERROR_LINE_CHARS - 1] + "…"
 
 

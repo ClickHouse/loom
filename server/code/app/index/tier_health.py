@@ -220,7 +220,7 @@ def problem_rows(now: datetime | None = None) -> tuple[dict[str, Any], ...] | No
                     # only a caller who may see every entry reads these three
                     "repo": f.repo,
                     "branch": f.branch,
-                    "error": tier_health.error_line(f.health.error),
+                    "error": tier_health.error_line(f.health.kind, f.health.error),
                     # the kind's fix without the repository it names: the problem is public
                     "fix": tier_health.fix_for(f.health.kind, f.health.error, name_where=False),
                     "severity": level,

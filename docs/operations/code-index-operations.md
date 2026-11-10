@@ -848,7 +848,7 @@ The record is read where each reader already looks:
   `/v1/health`, the dashboard banner and `loom doctor`
   ([monitoring](./monitoring.md#v1health)): one line per tier with its reason and
   fix. `loom doctor` and a platform admin's token also read which entry each line is
-  (repository@branch and namespace) and its error's first line; any other caller does
+  (repository@branch, org and namespace) and the error line that says why; any other caller does
   not, since `/v1/health` answers without a token;
 - for push alerting, the `loom.code.tier_failing` and `loom.code.tier_lag_commits`
   gauges carry each tier the `code_tier_failing` problem reports
