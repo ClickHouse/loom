@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { violations } from "./axe";
-import { installApi, ROUTES } from "./fixtures";
+import { boxOf, installApi, ROUTES } from "./fixtures";
 
 // axe-core on the rendered dashboard (e2e/axe.ts): every route at desktop and phone width,
 // and the shell's dialog and menu open. Any violation fails. Contrast is only measurable
@@ -636,16 +636,17 @@ for (const [width, touch] of [
       await page.waitForTimeout(300); // the toast and row entry animations, before axe
       expect(await violations(page)).toEqual([]);
       const name = order.getByText("team-research-notes", { exact: true });
-      expect((await name.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(140);
+      expect((await boxOf(name)).width).toBeGreaterThanOrEqual(140);
       // The arrows stay inside the list, wrapped under the name where the row is narrow.
-      const list = await order.boundingBox();
-      const down = await order.getByRole("button", { name: "Move team-research-notes down" }).boundingBox();
-      if (!list || !down) throw new Error("the search order or its Move down button has no box");
+      const list = await boxOf(order);
+      const down = await boxOf(order.getByRole("button", { name: "Move team-research-notes down" }));
       expect(down.x + down.width).toBeLessThanOrEqual(list.x + list.width);
       if (touch) {
-        // A touch screen starts no HTML drag: no grip offers one, and the hint names the arrows.
+        // On a touch screen no grip shows, the hint names the arrows, and an arrow moves a row.
         await expect(order.locator("[draggable]")).toHaveCount(0);
         await expect(page.getByText(/Use a row's arrows to change the order/)).toBeVisible();
+        await order.getByRole("button", { name: "Move team-research-notes down" }).tap();
+        await expect(order.getByRole("listitem").nth(0)).toContainText("shared-handbook");
       } else {
         await expect(page.getByText(/Drag a row by its grip, or use its arrows, to change the order/)).toBeVisible();
         // A real drag by the grip: the second row takes the first place.
