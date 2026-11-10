@@ -29,6 +29,8 @@ import { toastCommitted } from "../lib/errorWords";
 import { confirmAction } from "../components/ConfirmDialog";
 import { dayLabel, restoreText, displayAgent, SENTINEL_AGENTS } from "../lib/format";
 import { AddMemoryDialog } from "../flows/AddMemoryDialog";
+import { DASHBOARD_AGENT, GettingStarted, useOnboarding } from "../components/GettingStarted";
+import { shouldShowGettingStarted } from "../lib/onboarding";
 import { PageContainer } from "../layout/PageContainer";
 import { MemoryTabs } from "../components/MemoryTabs";
 import { ScopeBadge } from "../components/ScopeBadge";
@@ -276,6 +278,32 @@ function MemoryList() {
     memoriesVersion,
   });
   const browsedCurrent = entriesAt.size === pageSize;
+
+  // The first-run checklist (components/GettingStarted). It reads this list, not a second
+  // one: the namespace's total, and whether an agent other than the dashboard has saved a
+  // memory here — read off an unfiltered, live, first page, and kept once seen.
+  const whoamiNow = useStore((s) => s.whoami);
+  const mine = useStore((s) => s.myNamespaces);
+  const authOff = isAuthDisabled();
+  const onboarding = useOnboarding(whoamiNow?.subject ?? (authOff ? "local" : ""), identity.namespace);
+  const plainRead = entries !== null && !loadError && page === 0 && !listFiltered && !showDeleted;
+  const memoryTotal = plainRead ? (browsedTotal ?? entries.length) : null;
+  const agentSeen =
+    plainRead && entries.some((e) => !!e.agent && e.agent !== DASHBOARD_AGENT && !SENTINEL_AGENTS.has(e.agent));
+  const isNew = shouldShowGettingStarted({ mine, memoryTotal, authOff });
+  const { start } = onboarding;
+  useEffect(() => {
+    if (isNew) start();
+  }, [isNew, start]);
+  const checklist =
+    !readOnly &&
+    entries !== null &&
+    !onboarding.state.dismissed &&
+    !onboarding.state.finished &&
+    (isNew || onboarding.state.started);
+  // Open in full while the namespace is empty, and kept open once it was, so the first
+  // memory's arrival ticks the step in place; otherwise one line under the toolbar.
+  const [checklistOpen, setChecklistOpen] = useState(false);
   useEffect(() => {
     if (!firstScreenOnly || entries === null) return;
     let raf = 0;
@@ -520,6 +548,9 @@ function MemoryList() {
   const failed = entries !== null && entries.length === 0 && !!loadError;
   const emptyNamespace =
     entries !== null && entries.length === 0 && !loadError && !listFiltered && !filterPending && !showDeleted;
+  useEffect(() => {
+    if (emptyNamespace && checklist) setChecklistOpen(true);
+  }, [emptyNamespace, checklist]);
 
   // Group entries by day label, but not while searching — day buckets would hide the
   // relevance ranking.
@@ -750,6 +781,19 @@ function MemoryList() {
         />
       )}
 
+      {checklist && (
+        <GettingStarted
+          onboarding={onboarding}
+          identity={identity}
+          agentSeen={agentSeen}
+          hasMemory={(memoryTotal ?? 0) > 0 || (entries?.length ?? 0) > 0}
+          authOff={authOff}
+          collapsed={!emptyNamespace && !checklistOpen}
+          onExpand={() => setChecklistOpen(true)}
+          onMemoryAdded={() => bumpMemoriesVersion()}
+        />
+      )}
+
       {entries === null && (
         <LoadingSkeleton label="Loading memories">
           <div className="space-y-2">
@@ -770,7 +814,7 @@ function MemoryList() {
         />
       )}
 
-      {emptyNamespace && (
+      {emptyNamespace && !checklist && (
         <ListState
           kind="empty"
           icon="clock"

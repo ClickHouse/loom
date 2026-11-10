@@ -671,11 +671,11 @@ describe("a link's namespace", () => {
       window.history.replaceState(null, "", `/${n}#token=${token}`);
       serve(MINE);
       render(<App />);
-      await until(() => useStore.getState().identity !== null && useStore.getState().view === "setup");
+      await until(() => useStore.getState().identity !== null && useStore.getState().view === "memories");
       expect(localStorage.getItem("loom_token_v1")).toBe(token);
       expect(window.location.href).not.toContain("token=");
       // No way back to the page the sign-in started on: the bare root's landing instead.
-      expect(address()).toBe(`/settings?namespace=${NS}`);
+      expect(address()).toBe(`/memories?namespace=${NS}`);
       expect(screen.queryByText(/Auth bootstrap failed/)).toBeNull();
     } finally {
       vi.doUnmock("./lib/linkToken");

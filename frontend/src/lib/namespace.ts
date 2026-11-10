@@ -168,12 +168,15 @@ export function landingNamespace(
   const allowed = reachableNamespaces(claims, mine);
   // A collection is never the header's namespace: a saved one is passed over.
   if (saved && allowed.has(saved) && !isCollectionName(saved)) return saved;
-  const own = ownNamespace(mine);
+  // A benchmark namespace is a default only when nothing else is reachable: it holds a
+  // harness's rows, not the person's.
+  const bench = new Set(mine.filter((m) => m.kind === "bench").map((m) => m.namespace));
+  const own = ownNamespace(mine.filter((m) => !bench.has(m.namespace)));
   if (own) return own;
   // The first real claim — never a repository, a tracker namespace or a collection by default.
   const reference = new Set(mine.filter((m) => !isSelectableNamespace(m)).map((m) => m.namespace));
-  const firstClaim = claims.find((ns) => allowed.has(ns) && !reference.has(ns) && !isCollectionName(ns));
-  return firstClaim ?? null;
+  const usable = claims.filter((ns) => allowed.has(ns) && !reference.has(ns) && !isCollectionName(ns));
+  return usable.find((ns) => !bench.has(ns)) ?? ownNamespace(mine) ?? usable[0] ?? null;
 }
 
 /** The reachable code and tracker namespaces, in the order the dashboard offers

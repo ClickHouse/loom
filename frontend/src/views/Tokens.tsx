@@ -148,15 +148,12 @@ function parseTtl(raw: string): number | null | "invalid" {
 export function TokensSection({
   tokens,
   reloadTokens,
-  onMinted,
   formOpen,
   onFormOpenChange,
 }: {
   /** The tokens list, fetched once by Setup and shared with the checklist. */
   tokens: TokenEntry[] | null;
   reloadTokens: () => void;
-  /** A token was made — the checklist renders its connect line. */
-  onMinted: (r: { token: string; mcpUrl: string }) => void;
   /** The form is folded once a live token exists; `null` follows the list. */
   formOpen: boolean | null;
   onFormOpenChange: (open: boolean) => void;
@@ -233,7 +230,6 @@ export function TokensSection({
             onCancel={liveTokens.length > 0 ? () => toggleForm(false) : undefined}
             onCreated={(r) => {
               setCreated(r);
-              onMinted({ token: r.token, mcpUrl: r.mcp_url });
               setMintedAtMs(Date.now());
               reloadTokens();
             }}
@@ -406,6 +402,25 @@ function SearchOrder({
         })}
       </ol>
     </div>
+  );
+}
+
+/** The token form and the dialog that shows each client's setup once a token is made, on
+ *  their own: the first-run checklist on Memories makes a token in place with them. */
+export function QuickConnect({ onMinted }: { onMinted: (r: TokenCreated) => void }) {
+  const formRef = useRef<HTMLElement>(null);
+  const [created, setCreated] = useState<TokenCreated | null>(null);
+  return (
+    <>
+      <TokenForm
+        formRef={formRef}
+        onCreated={(r) => {
+          setCreated(r);
+          onMinted(r);
+        }}
+      />
+      <CreatedDialog created={created} onClose={() => setCreated(null)} />
+    </>
   );
 }
 

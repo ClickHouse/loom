@@ -48,6 +48,22 @@ describe("landingNamespace: the saved pick wins when it is still reachable", () 
   });
 });
 
+describe("landingNamespace: a benchmark namespace is a default only when nothing else is reachable", () => {
+  it("passes over a bench namespace the user administers for a real one", () => {
+    const mine = [admin("bench", { kind: "bench" }), entry("team-b")];
+    expect(landingNamespace(null, ["bench", "team-b"], mine)).toBe("team-b");
+  });
+
+  it("lands on the bench namespace when it is all the token reaches", () => {
+    expect(landingNamespace(null, ["bench"], [admin("bench", { kind: "bench" })])).toBe("bench");
+  });
+
+  it("keeps a saved pick of a bench namespace", () => {
+    const mine = [admin("bench", { kind: "bench" }), entry("team-b")];
+    expect(landingNamespace("bench", ["bench", "team-b"], mine)).toBe("bench");
+  });
+});
+
 describe("landingNamespace: the user's own namespace comes before the first claim", () => {
   it("lands on the admin namespace rather than the claim listed first", () => {
     const mine = [admin("personal-alice")];

@@ -14,7 +14,7 @@ import {
 // A token that names only code and/or QA namespaces lands on Repositories with the picker
 // on its first reachable code or tracker namespace, and makes no memory.* request; an
 // explicit path always wins — no deep link is redirected to Setup; a memory view on such
-// a token renders its own empty state; the memory-only fixture lands on Settings. The
+// a token renders its own empty state; the memory-only fixture lands on Memories. The
 // API is answered locally (fixtures.ts). Bare `/` is visited as `/`: `vite preview`
 // serves only the base path with its slash, and `pathnameView` reads both as bare.
 
@@ -137,10 +137,11 @@ test("a memory view on a picked code namespace names the kind and offers Reposit
   expect(calls.memory).toEqual([]);
 });
 
-test("the memory-only fixture lands on Settings on bare /", async ({ page }) => {
+test("the memory-only fixture lands on Memories on bare /", async ({ page }) => {
   await installApi(page);
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/memories/);
+  await expect(page.getByRole("heading", { name: "Memories", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: `Namespace: ${NAMESPACE}` })).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "No namespace selected" })).toHaveCount(0);
 });

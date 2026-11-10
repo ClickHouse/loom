@@ -440,7 +440,7 @@ export default function App() {
         // keyed by the token's own org claim, and the chunk for the view the URL names.
         // whoami still decides the gate below; on a token the server rejects the early
         // read fails quietly and one chunk was fetched for nothing.
-        preloadView(initial ?? "setup");
+        preloadView(initial ?? "memories");
         const early = claimsFromToken(storedToken());
         const earlyMine: Promise<MyNamespaceEntry[] | null> | null = early?.org
           ? sharedMine(early.org).catch(() => null)
@@ -539,12 +539,11 @@ export default function App() {
           bootView(initial);
         } else {
           // The bare root: the default-namespace chain (saved pick → own memory namespace →
-          // first memory claim) keeps its default view, Setup — that's where first-run
-          // onboarding and the actions live. A saved pick of a code or tracker namespace,
-          // or a token that reaches only code/tracker namespaces, lands on Repositories
-          // with the picker on that namespace; one that reaches only shared collections lands
-          // on the Library, and one that reaches nothing else lands on Setup, whose notice says
-          // how to get in.
+          // first memory claim) lands on Memories, where the first-run checklist sits. A saved
+          // pick of a code or tracker namespace, or a token that reaches only code/tracker
+          // namespaces, lands on Repositories with the picker on that namespace; one that
+          // reaches only shared collections lands on the Library, and one that reaches nothing
+          // else lands on Setup, whose notice says how to get in.
           let target = landingTarget(pick, reach, mine);
           if (target.view === "setup") {
             // Nothing but shared collections, maybe: `collection.list` decides, with the gate's
@@ -565,12 +564,8 @@ export default function App() {
             // Setup's notice says how to get in and opens the picker on request; opened here
             // it would cover that notice's actions.
             bootView("setup");
-            toast(
-              "Your token can reach no namespace yet — join one from Repositories or Spaces (namespace picker → Browse and join)",
-              "error",
-            );
           } else {
-            bootView(target.view ?? "setup");
+            bootView(target.view ?? (isCollectionName(target.namespace) ? "knowledge" : "memories"));
           }
         }
 

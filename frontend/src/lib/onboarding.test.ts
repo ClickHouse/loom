@@ -53,39 +53,62 @@ describe("shouldShowGettingStarted", () => {
     expect(shouldShowGettingStarted({ mine: null, memoryTotal: 0 })).toBe(false);
     expect(shouldShowGettingStarted({ mine: [row("personal-a")], memoryTotal: null })).toBe(false);
   });
+
+  it("with auth off, where list_mine is never read, shows on an empty namespace alone", () => {
+    expect(shouldShowGettingStarted({ mine: null, memoryTotal: 0, authOff: true })).toBe(true);
+    expect(shouldShowGettingStarted({ mine: null, memoryTotal: 3, authOff: true })).toBe(false);
+    expect(shouldShowGettingStarted({ mine: null, memoryTotal: null, authOff: true })).toBe(false);
+  });
 });
 
 describe("onboarding persistence", () => {
   afterEach(() => localStorage.clear());
 
-  it("round-trips ticks, started and dismissed under a per-subject versioned key", () => {
-    saveOnboarding("a@x", { done: { connect: true, find: true }, started: true, dismissed: false });
-    expect(onboardingKey("a@x")).toBe("loom_getting_started_v1:a@x");
-    expect(loadOnboarding("a@x")).toEqual({ done: { connect: true, find: true }, started: true, dismissed: false });
-    expect(loadOnboarding("b@x")).toEqual(EMPTY_ONBOARDING);
-    expect(countDone(loadOnboarding("a@x").done)).toBe(2);
+  it("round-trips ticks, started and dismissed under a per-subject, per-namespace versioned key", () => {
+    saveOnboarding("a@x", "ns1", { done: { connect: true }, started: true, dismissed: false, finished: false });
+    expect(onboardingKey("a@x", "ns1")).toBe("loom_getting_started_v2:a@x:ns1");
+    expect(loadOnboarding("a@x", "ns1")).toEqual({
+      done: { connect: true },
+      started: true,
+      dismissed: false,
+      finished: false,
+    });
+    expect(loadOnboarding("a@x", "ns2")).toEqual(EMPTY_ONBOARDING);
+    expect(loadOnboarding("b@x", "ns1")).toEqual(EMPTY_ONBOARDING);
+    expect(countDone(loadOnboarding("a@x", "ns1").done)).toBe(1);
+  });
+
+  it("reads every step done on an earlier visit as finished, and never stores the flag", () => {
+    saveOnboarding("a@x", "ns1", {
+      done: { connect: true, write: true },
+      started: true,
+      dismissed: false,
+      finished: true,
+    });
+    expect(JSON.parse(localStorage.getItem(onboardingKey("a@x", "ns1")) ?? "{}")).not.toHaveProperty("finished");
+    expect(loadOnboarding("a@x", "ns1").finished).toBe(true);
   });
 
   it("treats a corrupt or foreign value as empty instead of throwing", () => {
-    localStorage.setItem(onboardingKey("c@x"), "{not json");
-    expect(loadOnboarding("c@x")).toEqual(EMPTY_ONBOARDING);
+    localStorage.setItem(onboardingKey("c@x", "n"), "{not json");
+    expect(loadOnboarding("c@x", "n")).toEqual(EMPTY_ONBOARDING);
     localStorage.setItem(
-      onboardingKey("d@x"),
+      onboardingKey("d@x", "n"),
       JSON.stringify({ done: { bogus: true, write: "yes" }, dismissed: "no" }),
     );
-    expect(loadOnboarding("d@x")).toEqual(EMPTY_ONBOARDING);
+    expect(loadOnboarding("d@x", "n")).toEqual(EMPTY_ONBOARDING);
   });
 
   it.each(["null", "5", '"done"', "[]", '{"done":5}', '{"done":null}', '{"done":["connect"]}'])(
     "reads the malformed stored value %s as fresh state",
     (stored) => {
-      localStorage.setItem(onboardingKey("e@x"), stored);
-      expect(loadOnboarding("e@x")).toEqual(EMPTY_ONBOARDING);
+      localStorage.setItem(onboardingKey("e@x", "n"), stored);
+      expect(loadOnboarding("e@x", "n")).toEqual(EMPTY_ONBOARDING);
     },
   );
 
   it("keeps the valid fields of a partly malformed value", () => {
-    localStorage.setItem(onboardingKey("f@x"), JSON.stringify({ done: 5, started: true, dismissed: true }));
-    expect(loadOnboarding("f@x")).toEqual({ done: {}, started: true, dismissed: true });
+    localStorage.setItem(onboardingKey("f@x", "n"), JSON.stringify({ done: 5, started: true, dismissed: true }));
+    expect(loadOnboarding("f@x", "n")).toEqual({ done: {}, started: true, dismissed: true, finished: false });
   });
 });

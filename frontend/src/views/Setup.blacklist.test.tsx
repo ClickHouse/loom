@@ -168,7 +168,8 @@ describe("Setup's 'Never save' panel", () => {
     expect(screen.queryByLabelText("Substring to block")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Remove pattern/ })).not.toBeInTheDocument();
     expect(screen.queryByText(PRIVACY_FILTERS_MANAGED_BY_ADMIN)).not.toBeInTheDocument();
-    expect(countMemories).toHaveBeenCalledTimes(1);
+    // The first-run checklist moved to Memories: Settings reads no memory count.
+    expect(countMemories).not.toHaveBeenCalled();
     // Webhooks are ADMIN: a viewer neither sees the section nor reads them.
     expect(screen.queryByRole("heading", { name: "Webhooks" })).not.toBeInTheDocument();
     expect(listWebhooks).not.toHaveBeenCalled();
