@@ -140,13 +140,21 @@ async def test_the_snapshot_holds_the_failing_tiers_with_their_lag_and_keeps_it_
             _row("code-a", "clang", _failing(4)),
             _row("code-b", "fetch", tier_health.recovered("fetch", T0)),
             _row("code-gone", "clang", _failing(4)),  # no longer configured: nothing runs it
+            _row("code-r", "clang", _failing(4)),  # restricted by its directory row
         ],
         {("o", "code-a"): _state()},
     )
     monkeypatch.setattr("server.code.store.index.CodeRepo", lambda ch=None: store)
     monkeypatch.setattr(
         "server.code.domain.index.repos.configured_repos",
-        lambda: [_Cfg("code-a"), _Cfg("code-b")],
+        lambda: [_Cfg("code-a"), _Cfg("code-b"), _Cfg("code-r")],
+    )
+
+    async def restricted_set(org: str) -> frozenset[str]:
+        return frozenset({"code-r"})
+
+    monkeypatch.setattr(
+        "server.identity.app.namespace_classification.restricted_set", restricted_set
     )
     monkeypatch.setattr("server.code.app.index.repo_registry.registry_read", lambda: True)
     assert recorder.problem_rows() is None  # not read yet: unknown, not healthy
@@ -154,7 +162,10 @@ async def test_the_snapshot_holds_the_failing_tiers_with_their_lag_and_keeps_it_
     snap = recorder._FAILING
     assert snap is not None and [
         (f.namespace, f.health.tier, f.lag_commits, f.repo, f.branch, f.restricted) for f in snap
-    ] == [("code-a", "clang", 413, "o/r", "main", False)]
+    ] == [
+        ("code-a", "clang", 413, "o/r", "main", False),
+        ("code-r", "clang", -1, "o/r", "main", True),
+    ]
     store.fail = True
     await recorder.refresh_failing()
     assert recorder._FAILING == snap
@@ -842,3 +853,17 @@ def test_the_checkout_file_fix_gives_the_caps_the_tier_reads_under() -> None:
 def test_a_cmake_record_cut_before_cmakes_error_quotes_the_line_above_the_marker() -> None:
     cut = "-- Configuring incomplete, errors occurred!\n>> cmake configure failed"
     assert tier_health.error_line("cmake", cut) == "-- Configuring incomplete, errors occurred!"
+
+
+def test_the_records_fix_and_the_problems_fix_read_the_same_text() -> None:
+    private = (
+        "skip a: go mod download failed: If this is a private repository, see "
+        "https://go.dev/doc/faq#git_https for additional information."
+    )
+    other = "\n".join(f"skip m{i}: go mod download failed: no matching versions" for i in range(20))
+    health = _failing_with(f"TierDegraded: {private}\n{other}")  # the private line is cut off
+    recorder._FAILING = (recorder.FailingTier("o", "code-a", health, 0, "o/a", "main", False),)
+    (row,) = recorder.problem_rows(T0 + timedelta(hours=3)) or ()
+    assert row["fix"] == tier_health.fix_for(health.kind, health.error, name_where=False)
+    assert health.fix == tier_health.fix_for(health.kind, health.error)
+    assert "private repository" not in health.fix  # both read the kept tail

@@ -98,14 +98,16 @@ def failed(prev: TierHealth | None, tier: str, error: str, now: datetime) -> Tie
     """The record after a failed pass: the run of failures goes on from `prev`."""
     text = redact(error)
     kind = classify(text)
+    kept = text[-ERROR_CHARS:]
     at = _iso(now)
     ongoing = prev if prev is not None and prev.failing else None
     return TierHealth(
         tier=tier,
         state="failing",
         kind=kind,
-        error=text[-ERROR_CHARS:],
-        fix=fix_for(kind, text),
+        error=kept,
+        # from the text kept, which the health problem builds its fix from too
+        fix=fix_for(kind, kept),
         failing_since=(ongoing.failing_since if ongoing else "") or at,
         last_failed_at=at,
         failed_passes=(ongoing.failed_passes if ongoing else 0) + 1,
