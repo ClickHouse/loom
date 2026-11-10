@@ -370,10 +370,10 @@ def recording_check(
     post_json: PostJson,
     auth_ok: bool,
 ) -> Check:
-    """Whether the namespace the hooks write to keeps the
-    conversation turns they send. The owner's Record conversations switch in the dashboard
-    (`conversation_logging_enabled`) decides; with it off every append is
-    accepted and nothing is kept, which the hooks alone would never notice."""
+    """Whether the namespace the hooks write to keeps the conversation turns
+    they send. The owner's Record conversations switch in the dashboard
+    (`conversation_logging_enabled`) decides; with it off the hooks send no
+    turns, and an append from any other client is accepted and dropped."""
     name = "client:recording"
     if not token or not auth_ok:
         return (name, WARN, "skipped: check auth first")
