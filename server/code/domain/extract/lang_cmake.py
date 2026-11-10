@@ -40,8 +40,10 @@ with the other lane modules.
 
 from __future__ import annotations
 
+import bisect
 import posixpath
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 from server.code.domain.extract.chunker import Chunk, _assign_ordinals
@@ -98,6 +100,14 @@ _SOURCE_EXTS: tuple[str, ...] = (
     ".cfg",
 )
 _DECLARING = {"add_library", "add_executable", "function", "macro", "option", "add_test"}
+# A `${VAR}` use repeats every entry of VAR: without a cap, uses times entries facets.
+# Sources stop being added once a file has this many facets.
+# not a setting: it bounds what a crafted file costs, and changing it changes the stored rows
+_MAX_FACETS = 10_000
+_SOURCE_SKIP = frozenset({"TYPE", "BASE_DIRS", "FILES", "HEADERS"})
+# a path no longer than a file system takes: each facet copies it
+# not a setting: it bounds what a crafted file costs, and changing it changes the stored rows
+_MAX_SOURCE_CHARS = 4096
 
 
 def is_cmake_path(path: str) -> bool:
@@ -255,22 +265,31 @@ def _rel(cm_path: str, arg: str) -> str:
     return posixpath.normpath(posixpath.join(d, a)) if d else posixpath.normpath(a)
 
 
-def _expand(args: list[str], variables: dict[str, list[str]]) -> list[str]:
+def _expand(args: list[str], variables: dict[str, list[str]]) -> Iterator[str]:
     """`${VAR}` arguments replaced by what `file(GLOB VAR …)` / `set(VAR …)`
     in the same file gave them (a glob stays a glob, made directory-relative
-    by the caller); other arguments pass through."""
-    out: list[str] = []
+    by the caller); other arguments pass through. Lazy, so the caller's cap
+    stops the expansion too."""
     for a in args:
         m = re.fullmatch(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", a)
         if m and m.group(1) in variables:
-            out.extend(variables[m.group(1)])
+            yield from variables[m.group(1)]
         else:
-            out.append(a)
-    return out
+            yield a
 
 
 def _is_source(arg: str) -> bool:
     return arg.lower().endswith(tuple(e.lower() for e in _SOURCE_EXTS)) and "$<" not in arg
+
+
+def _builds(arg: str) -> bool:
+    """Whether a source argument gives a `builds` facet: a variable keeps only these, so
+    every entry a `${VAR}` use expands to counts toward the cap."""
+    if arg in _VISIBILITY or arg.startswith("FILE_SET") or arg in _SOURCE_SKIP:
+        return False
+    if len(arg) > _MAX_SOURCE_CHARS:
+        return False
+    return _is_source(arg) or "*" in arg
 
 
 @dataclass
@@ -282,6 +301,8 @@ class _Acc:
     links: list[tuple[str, str, int]] = field(default_factory=list)
     ordinal_of: dict[str, int] = field(default_factory=dict)
     variables: dict[str, list[str]] = field(default_factory=dict)
+    # `endfunction` / `endmacro` -> (start line, end line) of each, in file order
+    block_ends: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
 
 
 def _remember_variable(c: Command, acc: _Acc) -> bool:
@@ -298,10 +319,11 @@ def _remember_variable(c: Command, acc: _Acc) -> bool:
             "false",
         }
         pats = [a for a in c.args[2:] if a not in skip and not a.startswith("${")]
-        acc.variables[c.args[1]] = [("**/" + p if recursive and "/" not in p else p) for p in pats]
+        globs = [("**/" + p if recursive and "/" not in p else p) for p in pats]
+        acc.variables[c.args[1]] = [g for g in globs if _builds(g)]
         return True
     if c.name == "set" and len(c.args) >= 2 and not c.args[0].startswith("CMAKE_"):
-        acc.variables[c.args[0]] = [a for a in c.args[1:] if _is_source(a) or "*" in a]
+        acc.variables[c.args[0]] = [a for a in c.args[1:] if _builds(a)]
         return True
     return False
 
@@ -322,11 +344,10 @@ def _add_target(c: Command, acc: _Acc) -> None:
 
 
 def _add_sources(target: str, args: list[str], line: int, acc: _Acc) -> None:
-    skip = {"TYPE", "BASE_DIRS", "FILES", "HEADERS"}
     for a in _expand(args, acc.variables):
-        if a in _VISIBILITY or a.startswith("FILE_SET") or a in skip:
-            continue
-        if _is_source(a) or "*" in a:
+        if len(acc.facets) >= _MAX_FACETS:
+            return
+        if _builds(a):
             conf = 1.0 if "*" not in a else 0.9
             acc.facets.append(
                 Facet(FACET_BUILDS, _rel(acc.path, a), acc.ordinal_of.get(target, 0), line, conf)
@@ -348,7 +369,7 @@ def _add_test_symbol(c: Command, acc: _Acc) -> None:
             acc.facets.append(Facet(FACET_TESTS, tgt, acc.ordinal_of[tgt], c.start_line, 1.0))
 
 
-def _handle(c: Command, cmds: list[Command], acc: _Acc) -> None:
+def _handle(c: Command, acc: _Acc) -> None:
     """One declaring / linking / including command into the accumulator."""
     if c.name in ("add_library", "add_executable") and c.args:
         _add_target(c, acc)
@@ -361,10 +382,10 @@ def _handle(c: Command, cmds: list[Command], acc: _Acc) -> None:
             if a not in _VISIBILITY and "$<" not in a and not a.startswith("-")
         )
     elif c.name in ("function", "macro") and c.args:
-        end = next(
-            (x.end_line for x in cmds if x.start_line > c.start_line and x.name == "end" + c.name),
-            c.end_line,
-        )
+        # the first `end…` on a later line
+        ends = acc.block_ends.get("end" + c.name, [])
+        i = bisect.bisect_right(ends, c.start_line, key=lambda e: e[0])
+        end = ends[i][1] if i < len(ends) else c.end_line
         sig = f"{c.name}({' '.join(c.args)})"
         acc.syms.append(
             Symbol(
@@ -417,6 +438,9 @@ def cmake_units(path: str, text: str) -> CmakeUnits:
     saw_declaring = False
     src_lines = text.splitlines()
     for c in cmds:
+        if c.name in ("endfunction", "endmacro"):
+            acc.block_ends.setdefault(c.name, []).append((c.start_line, c.end_line))
+    for c in cmds:
         if _remember_variable(c, acc):
             continue
         if not saw_declaring and c.name in _DECLARING:
@@ -425,7 +449,7 @@ def cmake_units(path: str, text: str) -> CmakeUnits:
             # the comment run right above the first declaration is its doc, not header
             while header_end >= 1 and src_lines[header_end - 1].lstrip().startswith("#"):
                 header_end -= 1
-        _handle(c, cmds, acc)
+        _handle(c, acc)
     return CmakeUnits(
         acc.syms, acc.facets, acc.includes, acc.links, cmds, header_end if saw_declaring else 0
     )

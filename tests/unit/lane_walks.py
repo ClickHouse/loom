@@ -1,6 +1,8 @@
 """The lanes' walks over a file, each with the text of about n characters it walks: the
 shapes `test_code_regex_cost.py` times in a child process, kept apart so the child imports
-only these and not every pattern the module-level scan loads."""
+only these and not every pattern the module-level scan loads. Also the class guard's data:
+a sample per registered lane parser (`SAMPLES`), the generated shapes (`SHAPES`), the
+per-lane timing (`registry_cost`) and the shapes still over linear (`KNOWN_SLOW`)."""
 
 from __future__ import annotations
 
@@ -112,6 +114,127 @@ def _cmake(text: str) -> object:
     return commands(text)
 
 
+def _cmake_units(text: str) -> object:
+    from server.code.domain.extract.lang_cmake import cmake_units
+
+    return cmake_units("CMakeLists.txt", text)
+
+
+def _variable_uses(n: int) -> str:
+    """A variable of n/8 sources, used n/10 times by one target."""
+    return "set(S " + "a.c " * (n // 8) + ")\nadd_library(t " + "${S} " * (n // 10) + ")\n"
+
+
+def _glob_words(n: int) -> str:
+    """A glob variable of n/4 words that name no source, used n/10 times by one target."""
+    return "file(GLOB S " + "a " * (n // 4) + ")\nadd_library(t " + "${S} " * (n // 10) + ")\n"
+
+
+def _file_set_entries(n: int) -> str:
+    return "set(S " + "FILE_SET.c " * (n // 22) + ")\nadd_library(t " + "${S} " * (n // 10) + ")\n"
+
+
+def _one_module_files(text: str) -> object:
+    """A setup.cfg whose entry points all name one module, then that module once per
+    4,000 characters of it."""
+    from server.code.domain.extract.py_layouts import layout_from_texts, module_entry_facets
+    from server.code.domain.extract.treesitter import ParsedFile
+
+    layout = layout_from_texts({"setup.cfg": text}, [])
+    pf = ParsedFile(path="m.py", lang="python", source=b"")
+    return [len(module_entry_facets(pf, layout)) for _ in range(len(text) // 4000)]
+
+
+def _entry_point_files(text: str) -> object:
+    """A layout from one setup.py, then the entry points of one Python file per 4,000
+    characters of it."""
+    from server.code.domain.extract.py_layouts import layout_from_texts, module_entry_facets
+    from server.code.domain.extract.treesitter import ParsedFile
+
+    layout = layout_from_texts({"setup.py": text}, [])
+    return [
+        module_entry_facets(ParsedFile(path=f"r0/m{i}.py", lang="python", source=b""), layout)
+        for i in range(len(text) // 4000)
+    ]
+
+
+def _entry_points(n: int) -> str:
+    roots = "".join(f"find_packages('r{i}')\n" for i in range(64))
+    return roots + '"console_scripts":[' + _numbered('"a{0}=m{0}:f",')(n) + "]"
+
+
+def _doc_references(text: str) -> object:
+    """A file's backticked mentions against one definition of the name per 100 characters."""
+    from server.code.domain.extract.lang_markdown import (
+        doc_reference_edges,
+        doc_reference_sites,
+        parse_markdown,
+    )
+
+    pf = parse_markdown("a.md", text.encode())
+    table = {"abc": [(f"s{i}", f"m{i}::abc", "function") for i in range(len(text) // 100)]}
+    return doc_reference_edges(pf, doc_reference_sites(pf), table)
+
+
+def _pr_body(text: str) -> object:
+    from server.code.domain.pr_lexemes import strip_pr_template
+
+    return strip_pr_template(text)
+
+
+def _linked_issues(text: str) -> object:
+    from server.code.domain.pr_lexemes import linked_issues
+
+    return linked_issues(text)
+
+
+def _lane_includes(text: str) -> object:
+    import asyncio
+
+    from server.code.app.index.ingest_resolve import _resolve_simple_lane_includes
+    from server.code.domain.extract.lang_markdown import parse_markdown
+
+    class Repo:
+        async def live_paths_present(self, org: str, ns: str, paths: list[str]) -> set[str]:
+            return set(paths)
+
+    pf = parse_markdown("a/b/c/d/e/f/g/a.md", text.encode())
+    return asyncio.run(_resolve_simple_lane_includes(Repo(), "o", "n", pf))  # type: ignore[arg-type]
+
+
+def _python_parse(text: str) -> object:
+    from server.code.domain.extract.lang_python import parse_python
+
+    return parse_python("a.py", text.encode()).includes
+
+
+def _rust_parse(text: str) -> object:
+    from server.code.domain.extract.lang_rust import parse_rust
+
+    return parse_rust("src/lib.rs", text.encode()).includes
+
+
+def _wanted(lane: str) -> Callable[[str], object]:
+    """The import probe of one lane over a file's specifiers, one per line."""
+
+    def walk(text: str) -> object:
+        from server.code.domain.extract import lang_go, lang_proto, lang_python, lang_rust
+        from server.code.domain.extract import lang_typescript_imports as lang_ts
+
+        specs = text.split()
+        if lane == "python":
+            return lang_python.wanted_paths("a/b/c.py", specs, ("r0", "r1"))
+        if lane == "typescript":
+            return lang_ts.wanted_paths("a/b/c.ts", specs)
+        if lane == "rust":
+            return lang_rust.wanted_paths("src/a/b.rs", specs)
+        if lane == "go":
+            return lang_go.go_wanted_paths(specs, [("m", "")])
+        return lang_proto.wanted_paths("a/b/c.proto", specs)
+
+    return walk
+
+
 def _run(pre: str, unit: str, end: str = "") -> Callable[[int], str]:
     return lambda n: pre + (unit * (n // len(unit) + 1))[:n] + end
 
@@ -177,6 +300,43 @@ WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("dbt-raw-blocks", _dbt, _run("", "{% raw %}a{% endraw %}")),
     ("dbt-unclosed-tags", _dbt, _run("{{ config(", "tags=[", ") }}")),
     ("cmake-rows", _cmake, _run("", "a\n")),
+    ("cmake-variable-uses", _cmake_units, _variable_uses),
+    ("cmake-unclosed-functions", _cmake_units, _run("", "function(f)\n")),
+    ("cmake-glob-words", _cmake_units, _glob_words),
+    (
+        "cmake-long-entry",
+        _cmake_units,
+        lambda n: "set(S " + "a" * (n // 2) + ".c)\nadd_library(t " + "${S} " * (n // 10) + ")\n",
+    ),
+    ("cmake-file-set-entries", _cmake_units, _file_set_entries),
+    ("python-entry-point-files", _entry_point_files, _entry_points),
+    (
+        "setup-cfg-entry-points-of-one-module",
+        _one_module_files,
+        lambda n: "[options.entry_points]\nconsole_scripts =\n" + _numbered("  a{0} = m:f\n")(n),
+    ),
+    ("setup-cfg-name-spaces", _py_layout("setup.cfg"), _run("[options]\na", " ", "b\n")),
+    ("markdown-ambiguous-references", _doc_references, _run("# a\n", "`abc`\n")),
+    ("pr-body-unclosed-comments", _pr_body, _run("", "<!--")),
+    ("pr-body-fix-spaces", _linked_issues, _run("fix", " ", "b")),
+    ("markdown-lane-includes", _lane_includes, _numbered("[a](x{}.md)\n")),
+    ("python-imports", _wanted("python"), _numbered("m{}\n")),
+    ("python-import-statements", _python_parse, _numbered("import m{}\n")),
+    (
+        "python-long-module-members",
+        _python_parse,
+        lambda n: "from " + "a." * (n // 4) + "a import " + _numbered("b{},")(n // 2) + "c\n",
+    ),
+    (
+        "rust-long-use-prefix",
+        _rust_parse,
+        lambda n: "use " + "a::" * (n // 6) + "a::{" + _numbered("b{},")(n // 2) + "c};\n",
+    ),
+    ("typescript-imports", _wanted("typescript"), _numbered("./m{}\n")),
+    ("rust-uses", _wanted("rust"), _numbered("crate::m{}\n")),
+    ("rust-long-use", _wanted("rust"), _run("", "a::")),
+    ("go-imports", _wanted("go"), _numbered("m/p{}\n")),
+    ("proto-imports", _wanted("proto"), _numbered("p{}.proto\n")),
     ("python-route-rows", _py_routes, _run("", "app.add_url_rule('a')\n")),
     ("python-unclosed-include-router", _py_routes, _run("", "a.include_router(a,")),
     (
@@ -210,3 +370,230 @@ def walk_cost(name: str) -> tuple[float, float]:
         return time.perf_counter() - t0
 
     return min(cost(_WALK_N) for _ in range(3)), min(cost(4 * _WALK_N) for _ in range(3))
+
+
+# The class guard: every lane parser in the ingest's registry (`ingest_parse._PARSERS`)
+# over generated shapes, so a walk added without a cost walk of its own is timed too.
+# (path, header, the language the parse reports) per lane; the header makes a
+# content-detected lane (a manifest, a template, a TLC config) read as that lane.
+SAMPLES: dict[str, tuple[str, str, str]] = {
+    "cpp": ("a.cpp", "", "cpp"),
+    "python": ("a.py", "", "python"),
+    "shell": ("a.sh", "", "shell"),
+    "typescript": ("a.ts", "", "typescript"),
+    "javascript": ("a.js", "", "javascript"),
+    "rust": ("src/a.rs", "", "rust"),
+    "prisma": ("a.prisma", "", "prisma"),
+    "go": ("a.go", "package a\n", "go"),
+    "java": ("A.java", "", "java"),
+    "vue": ("a.vue", "", "javascript"),
+    "svelte": ("a.svelte", "", "javascript"),
+    "astro": ("a.astro", "", "typescript"),
+    "angular_template": ("a.component.html", "", "typescript"),
+    "proto": ("a.proto", "", "proto"),
+    "gotemplate": ("chart/templates/a.yaml", "{{ .Values.a }}\n", "gotemplate"),
+    "hcl": ("a.tf", "", "hcl"),
+    "k8s": ("a.yaml", "apiVersion: v1\nkind: ConfigMap\n", "k8s"),
+    "jsonnet": ("a.jsonnet", "", "jsonnet"),
+    "tla": ("a.tla", "---- MODULE a ----\n", "tla"),
+    "tla_config": ("a.cfg", "INIT Init\n", "tla_config"),
+    "flatbuffers": ("a.fbs", "", "flatbuffers"),
+    "cmake": ("CMakeLists.txt", "", "cmake"),
+    "doc": ("a.md", "", "doc"),
+}
+
+_CHARS = " \t\na({[<\"'`#/*\\$:-=|.,;"
+_REPEATED = (
+    "a ",
+    "a\n",
+    "a(\n",
+    "a.a",
+    "a::",
+    "a/",
+    "import a\n",
+    "use a;\n",
+    '#include "a"\n',
+    "include(a)\n",
+    "`abc`\n",
+    "[a](a)\n",
+    "{{ a }}",
+    "<a/>",
+    "a: a\n",
+    "- a\n",
+    "a = a\n",
+    "def a(): pass\n",
+    "class A {}\n",
+    "function(a)\n",
+    "@a\n",
+    "# a\n",
+)
+_NUMBERED = (
+    "import m{}\n",
+    "use m{};\n",
+    "`a{}`\n",
+    "a{}()\n",
+    "[a](a{}.md)\n",
+    '#include "a{}.h"\n',
+)
+_OPENERS = ("(", "{", "[", "<a>", "<!--", "/*", "{{", '"""', "${", "{%", "`", "'", '"')
+
+
+def _fan_out(
+    entry: str, use: str, head: str = "", mid: str = "\n", tail: str = ""
+) -> Callable[[int], str]:
+    """n/2 characters of entries, then n/2 of uses."""
+    return lambda n: head + _run("", entry)(n // 2) + mid + _run("", use)(n // 2) + tail
+
+
+SHAPES: list[tuple[str, Callable[[int], str]]] = [
+    *((f"run {c!r}", _run("", c)) for c in _CHARS),
+    *((f"names {u!r}", _run("", u)) for u in _REPEATED),
+    *((f"unclosed {o!r}", _run("", o)) for o in _OPENERS),
+    *((f"unclosed {o!r} words", _run("", o + "a ")) for o in _OPENERS),
+    ("fan-out list", _fan_out("a,", "a ")),
+    ("fan-out variable", _fan_out("a.c ", "${S} ", "set(S ", ")\nadd_library(t ", ")\n")),
+    ("fan-out members", _fan_out("a,", "m.a\n", "from m import ")),
+    ("fan-out definitions", _fan_out("def a(): pass\n", "a()\n")),
+    # distinct names: a dedupe by a list's `in` or a scan per name is linear on one name
+    *((f"numbered {u!r}", _numbered(u)) for u in _NUMBERED),
+    ("numbered sources", lambda n: "add_library(t " + _numbered("a{}.c ")(n) + ")\n"),
+]
+
+
+class _Names:
+    """A name table that holds two definitions of every name asked for."""
+
+    async def name_candidates(
+        self, org: str, ns: str, names: list[str]
+    ) -> dict[str, list[tuple[str, str, str]]]:
+        return {
+            n: [(f"{n}1", f"a::{n}", "function"), (f"{n}2", f"b::{n}", "function")] for n in names
+        }
+
+
+def _extract(path: str, source: bytes) -> object:
+    """What the ingest derives from one file without the store: the parse, its chunks
+    and facets, its call edges, and a tree-less lane's own edges against a name table,
+    under the recursion limit the edge stage retries with. A walk that raises costs what
+    it ran; running out of memory fails."""
+    import asyncio
+    import sys
+
+    from server.code.app.index import ingest_edges
+    from server.code.app.index.ingest_chunks import _chunks_for
+    from server.code.app.index.ingest_parse import (
+        _LANE_INCLUDE_LANGS,
+        LANE_UNIT_LANGS,
+        parse_for_ingest,
+    )
+    from server.code.domain.extract.edges_treesitter import extract_edges_and_misses
+    from server.code.domain.extract.lang_prisma import prisma_edges
+
+    pf, err = parse_for_ingest(path, source)
+    if err.startswith("parse: MemoryError"):
+        raise MemoryError(err)  # the parse reports it as a failed file
+    if pf is None:
+        return err
+    repo = _Names()
+    steps = [
+        lambda: _chunks_for(pf, path, source, 6000),
+        lambda: extract_edges_and_misses(pf, {}, None),
+    ]
+    if pf.lang in _LANE_INCLUDE_LANGS:
+        steps.append(lambda: asyncio.run(ingest_edges._simple_lane_edges(repo, "o", "n", pf)))  # type: ignore[arg-type]
+    if pf.lang in LANE_UNIT_LANGS:
+        steps.append(lambda: asyncio.run(ingest_edges._lane_site_edges(repo, "o", "n", pf)))  # type: ignore[arg-type]
+    if pf.lang == "prisma":
+        steps.append(lambda: prisma_edges(pf))
+    before = sys.getrecursionlimit()
+    sys.setrecursionlimit(ingest_edges._DEEP_RECURSION_LIMIT)
+    try:
+        for step in steps:
+            try:
+                step()
+            except MemoryError:
+                raise
+            except Exception:  # noqa: BLE001 — the guard times walks; a crash is another test's
+                pass
+    finally:
+        sys.setrecursionlimit(before)
+    return pf
+
+
+_REGISTRY_N = 5_000
+
+
+def registry_cost(lang: str) -> list[tuple[str, float, float, int, int]]:
+    """(shape, the time at N, the time at 4N, the bytes tree-sitter parsed at N and at 4N)
+    per shape the lane reads as its own (a manifest shape can read as a template), the
+    best of three for a listed shape that looks linear or an unlisted one that looks over
+    linear. The parses' time is not counted, since each has its own CPU deadline
+    (`bounded_parse`); the bytes they read are returned, so a walk that parses the file
+    again per block is still seen."""
+    from server.code.domain.extract import bounded_parse
+
+    path, head, as_lang = SAMPLES[lang]
+    real = bounded_parse.parse
+    parsed = [0.0, 0]
+
+    def timed(parser: object, source: bytes) -> object:
+        t0 = time.perf_counter()
+        try:
+            return real(parser, source)
+        finally:
+            parsed[0] += time.perf_counter() - t0
+            parsed[1] += len(source)
+
+    bounded_parse.parse = timed  # type: ignore[assignment]
+
+    def cost(text: Callable[[int], str], n: int) -> tuple[float, int, str]:
+        source = (head + text(n)).encode()
+        parsed[:] = [0.0, 0]
+        t0 = time.perf_counter()
+        pf = _extract(path, source)
+        took = time.perf_counter() - t0 - parsed[0]
+        return took, int(parsed[1]), str(getattr(pf, "lang", ""))
+
+    cost(lambda n: "a\n", 1)  # the first file of a lane loads its grammar and imports
+    out = []
+    for name, text in SHAPES:
+        # distinct names run 4 times larger: a dedupe by a list's `in` is quadratic at C
+        # speed, under the timer's floor at 20,000 characters
+        n = 4 * _REGISTRY_N if name.startswith("numbered") else _REGISTRY_N
+        small, bs, read_as = cost(text, n)
+        if read_as != as_lang:
+            continue
+        if small > 1.0:  # already over any linear budget: 4N would only spend the deadline
+            out.append((name, small, float("inf"), bs, bs))
+            continue
+        big, bb, _ = cost(text, 4 * n)
+        listed = name in KNOWN_SLOW.get(lang, ())
+        if (listed and big < 0.05) or (not listed and big > 0.02 and big > 8 * small):
+            small = min(small, cost(text, n)[0], cost(text, n)[0])
+            big = min(big, cost(text, 4 * n)[0], cost(text, 4 * n)[0])
+        out.append((name, small, big, bs, bb))
+    return out
+
+
+# lane -> the shapes still over linear there, each a follow-up fix. The guard fails once
+# a listed shape runs clearly in linear time, so the entry goes with its fix.
+_TEMPLATE_LITERALS = (
+    "run '`'",
+    "names '`abc`\\n'",
+    "unclosed '`'",
+    "unclosed '`' words",
+    "numbered '`a{}`\\n'",
+)
+KNOWN_SLOW: dict[str, tuple[str, ...]] = {
+    "typescript": _TEMPLATE_LITERALS,
+    "javascript": _TEMPLATE_LITERALS,
+    "rust": (
+        "run '|'",
+        "names 'a(\\n'",
+        "unclosed '<!--'",
+        "unclosed '${'",
+        "unclosed '{%'",
+        "unclosed '(' words",
+        "unclosed '[' words",
+    ),
+}

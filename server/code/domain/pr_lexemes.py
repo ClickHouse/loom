@@ -32,12 +32,12 @@ from collections.abc import Iterable
 from server.code.domain.extract.tokenize import code_tokens
 
 # (?i)(fix|close|resolve)\w*\s*:?\s*#(\d+) — plus the URL spelling GitHub
-# also auto-links ("Closes: https://github.com/Org/Repo/issues/123").
+# also auto-links ("Closes: https://github.com/Org/Repo/issues/123"). The space runs are
+# possessive: two greedy runs around an optional colon split a long run every way.
 LINKED_ISSUE_RE = re.compile(
-    r"(?i)\b(?:fix|close|resolve)\w*\s*:?\s*(?:#|https?://github\.com/[\w.-]+/[\w.-]+/issues/)(\d+)"
+    r"(?i)\b(?:fix|close|resolve)\w*\s*+(?::\s*+)?(?:#|https?://github\.com/[\w.-]+/[\w.-]+/issues/)(\d+)"
 )
 
-_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 _CI_BLOCK_RE = re.compile(
     r"<!-- CI automatic block start.*?(?:<!-- CI automatic block end[^>]*-->|$)", re.S
 )
@@ -91,13 +91,24 @@ def linked_issues(body: str) -> list[int]:
     return out
 
 
+def _drop_html_comments(text: str) -> str:
+    """Each `<!-- … -->` replaced by a space. A `<!--` with no `-->` after it ends the
+    search, since none after it has one either: a pattern scans to the end from each."""
+    out: list[str] = []
+    i = 0
+    while (start := text.find("<!--", i)) >= 0 and (end := text.find("-->", start + 4)) >= 0:
+        out += [text[i:start], " "]
+        i = end + 3
+    return "".join(out) + text[i:]
+
+
 def strip_pr_template(body: str) -> str:
     """The description minus the PR-template boilerplate: HTML comments and
     the CI links block, markdown headings, checkbox items, the changelog
     category menu, CI report lines and bare URLs. Prose, code spans and
     identifiers survive — those are the signal."""
     text = _CI_BLOCK_RE.sub(" ", body or "")
-    text = _HTML_COMMENT_RE.sub(" ", text)
+    text = _drop_html_comments(text)
     kept: list[str] = []
     for line in text.splitlines():
         s = line.strip()

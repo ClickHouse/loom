@@ -41,7 +41,8 @@ async def _py_layout(repo: CodeRepo, org: str, ns: str, present: set[str]) -> An
     / `setup.py` / `setup.cfg` / `pytest.ini` / `tox.ini`, read the way package.json is:
     from the mirror in a pass, up to `PACKAGE_JSON_MAX_BYTES`) and its entry points —
     cached ten minutes; None when the set is not live. A manifest read before it is
-    indexed (a first backfill) is not cached, unless every one is known over its cap."""
+    indexed (a first backfill) is not cached, unless every one is known over its cap or
+    empty."""
     import time
 
     from server.code.domain.extract import py_layouts as pl
@@ -63,7 +64,9 @@ async def _py_layout(repo: CodeRepo, org: str, ns: str, present: set[str]) -> An
         layout = await asyncio.to_thread(
             pl.layout_from_texts, {p: t for p, t in texts.items() if t}, frozenset(present)
         )
-        if all(t or _oversize(org, ns, p, PACKAGE_JSON_MAX_BYTES) for p, t in texts.items()):
+        if all(
+            t or _is_empty_verdict(org, ns, p, PACKAGE_JSON_MAX_BYTES) for p, t in texts.items()
+        ):
             _PY_LAYOUT_CACHE[(org, ns)] = (now, layout)
         return layout
 
@@ -204,11 +207,8 @@ async def _resolve_lane_includes(repo: CodeRepo, org: str, ns: str, pf: ParsedFi
     if pf.lang in TS_LANGS:
         # A workspace package's subpath export resolves only through its package.json
         # `exports` table
-        resolved.extend(
-            p
-            for p in await _resolve_package_exports(repo, org, ns, pf.path, pf.includes, present)
-            if p not in resolved
-        )
+        exports = await _resolve_package_exports(repo, org, ns, pf.path, pf.includes, present)
+        resolved = list(dict.fromkeys([*resolved, *exports]))
     pf.includes = resolved
 
 
@@ -221,8 +221,12 @@ async def _resolve_py_includes(repo: CodeRepo, org: str, ns: str, pf: ParsedFile
 
     specs = list(pf.includes)
     live = await _live_paths(repo, org, ns, pf)
-    roots = await _py_roots_for(repo, org, ns, pf, live) if live is not None else ()
-    present = await _present_for(repo, org, ns, pf, py_lane.wanted_paths(pf.path, specs, roots))
+    roots: tuple[str, ...] = ()
+    if live is not None:
+        roots = await _py_roots_for(repo, org, ns, pf, live)
+        present = live
+    else:  # the candidates are the probe's input only: with the live set they go unread
+        present = await _present_for(repo, org, ns, pf, py_lane.wanted_paths(pf.path, specs))
     pf.includes = [
         p for p in py_lane.resolve_imports(pf.path, specs, present, roots) if p != pf.path
     ]
@@ -332,11 +336,11 @@ async def _go_module_index(repo: CodeRepo, org: str, ns: str) -> list[tuple[str,
     ]
     texts = {p: await _package_json_text(repo, org, ns, p, GO_MOD_MAX_BYTES) for p in paths}
     index = go_module_index(texts)
-    if index or _read_or_oversize(org, ns, texts, GO_MOD_MAX_BYTES):
+    if index or _read_or_empty_verdict(org, ns, texts, GO_MOD_MAX_BYTES):
         # An EMPTY index is not cached — a first backfill reaching .go files before any
         # go.mod is indexed would otherwise treat every cross-package import as a
         # library for ten minutes — unless every go.mod was read or is known over its
-        # cap, which the next file would find again
+        # cap or empty, which the next file would find again
         _GO_MODULE_INDEX_CACHE.put(key, index)
     return index
 
@@ -396,29 +400,29 @@ def git_text_source(git_dir: str, sha: str) -> Iterator[None]:
         _GIT_TEXT_SOURCE.reset(token)
 
 
-# The sibling files found over a cap, by path and cap and by where the verdict came from:
-# (git_dir, sha) for the mirror's at a pass's commit, (org, namespace) for the indexed
-# chunks', which a pass also reaches when the mirror fails. An empty read is not cached,
-# so without this every import that needs the file would read it again; a file over one
-# cap may be within a larger one.
-_OVERSIZE: TtlCache[tuple[str, str, str, int], bool] = TtlCache(
+# The sibling files whose "" is a verdict, by path and cap and by where it came from:
+# (git_dir, sha) for the mirror's at a pass's commit (a file over the cap, or empty there),
+# (org, namespace) for the indexed chunks' (over the cap), which a pass also reaches when
+# the mirror fails. The text cache keeps no empty read, so without this every import that
+# needs the file would read it again; a file over one cap may be within a larger one.
+_EMPTY_VERDICTS: TtlCache[tuple[str, str, str, int], bool] = TtlCache(
     lambda: settings.code_ingest_sibling_text_ttl_s,
     maxsize=65_536,  # a verdict is a few bytes; the barrels of one pass do not evict a manifest's
 )
 
 
-def _oversize(org: str, ns: str, path: str, max_bytes: int) -> bool:
-    """Whether `path` is known over `max_bytes`, at the pass's commit or in the indexed
-    chunks: its "" is a verdict."""
+def _is_empty_verdict(org: str, ns: str, path: str, max_bytes: int) -> bool:
+    """Whether `path` is known over `max_bytes` or empty, at the pass's commit or in the
+    indexed chunks: its "" is a verdict."""
     src = _GIT_TEXT_SOURCE.get()
     keys = [(*src, path, max_bytes)] if src else []
     keys.append((org, ns, path, max_bytes))
-    return any(_OVERSIZE.get(k) is not None for k in keys)
+    return any(_EMPTY_VERDICTS.get(k) is not None for k in keys)
 
 
 def _over_cap(key: tuple[str, str, str, int], org: str, ns: str, why: object) -> str:
     """ "" for a file over its cap, recorded under `key` and logged once."""
-    _OVERSIZE.put(key, True)
+    _EMPTY_VERDICTS.put(key, True)
     logger.warning("code ingest: %s/%s: sibling file skipped: %s", org, ns, why)
     return ""
 
@@ -434,7 +438,7 @@ async def _live_text(repo: CodeRepo, org: str, ns: str, path: str, max_bytes: in
         from server.code.app.index import gitrepo
 
         at_commit = (*src, path, max_bytes)
-        if _OVERSIZE.get(at_commit) is not None:
+        if _EMPTY_VERDICTS.get(at_commit) is not None:
             return ""
         try:
             blob = await gitrepo.show_file(src[0], src[1], path, max_bytes=max_bytes)
@@ -443,9 +447,12 @@ async def _live_text(repo: CodeRepo, org: str, ns: str, path: str, max_bytes: in
         except Exception:  # noqa: BLE001 — a slow or broken mirror falls back
             blob = None
         if blob is not None:
+            if not blob:
+                # a fact at this commit, unlike an unindexed file
+                _EMPTY_VERDICTS.put(at_commit, True)
             return blob.decode("utf-8", "replace")
     in_chunks = (org, ns, path, max_bytes)
-    if _OVERSIZE.get(in_chunks) is not None:
+    if _EMPTY_VERDICTS.get(in_chunks) is not None:
         return ""
     text = await repo.live_text_for_path(org, ns, path)
     # the chunks hold files up to the ingest cap: the caller's cap holds on this path too
@@ -498,18 +505,21 @@ async def _workspace_registry(
     read.update((f"{d}/package.json", t) for d, t in texts.items())
     reg = tw.registry(texts)
     # An empty registry in a first backfill is the manifests not yet indexed, not a fact;
-    # one empty because a manifest is over its cap is.
+    # one empty because a manifest is over its cap or empty is.
     if reg or (
-        any(_oversize(org, ns, p, PACKAGE_JSON_MAX_BYTES) for p in read)
-        and _read_or_oversize(org, ns, read, PACKAGE_JSON_MAX_BYTES)
+        any(_is_empty_verdict(org, ns, p, PACKAGE_JSON_MAX_BYTES) for p in read)
+        and _read_or_empty_verdict(org, ns, read, PACKAGE_JSON_MAX_BYTES)
     ):
         _WORKSPACE_CACHE.put((org, ns), reg)
     return reg
 
 
-def _read_or_oversize(org: str, ns: str, texts: dict[str, str], max_bytes: int) -> bool:
-    """Every manifest read gave its text or is known over `max_bytes`, and one was read."""
-    return bool(texts) and all(t or _oversize(org, ns, p, max_bytes) for p, t in texts.items())
+def _read_or_empty_verdict(org: str, ns: str, texts: dict[str, str], max_bytes: int) -> bool:
+    """Every manifest read gave its text or is known over `max_bytes` or empty, and one was
+    read."""
+    return bool(texts) and all(
+        t or _is_empty_verdict(org, ns, p, max_bytes) for p, t in texts.items()
+    )
 
 
 def _registry_dirs(registry: dict[str, str], spec: str) -> list[str]:
@@ -562,7 +572,7 @@ async def _tsconfig_candidates(
             cur = tc.next_extends(cur, texts[cur], dirs_for, present)
         cfg = tc.resolve_config(cp, texts, dirs_for, present)
         # one read before it is indexed is not cached
-        if texts.get(cp) or _oversize(org, ns, cp, PACKAGE_JSON_MAX_BYTES):
+        if texts.get(cp) or _is_empty_verdict(org, ns, cp, PACKAGE_JSON_MAX_BYTES):
             _TSCONFIG_CACHE.put(key, cfg)
     out: dict[str, list[str]] = {}
     for spec in pf.includes:
@@ -692,7 +702,7 @@ async def _resolve_package_exports(
         if complete
         else await repo.live_paths_present(org, ns, list(dict.fromkeys(manifests)))
     )
-    out: list[str] = []
+    out: dict[str, None] = {}
     for spec in pending:
         pkg_dir = next(
             (d for d in _registry_dirs(reg, spec) if f"{d}/package.json" in live_manifests),
@@ -710,9 +720,9 @@ async def _resolve_package_exports(
             else set(await repo.live_paths_present(org, ns, cands[:64]))
         )
         hit = next((c for c in cands if c in found), None)
-        if hit and hit not in out:
-            out.append(hit)
-    return out
+        if hit:
+            out[hit] = None
+    return list(out)
 
 
 _BARREL_CACHE: TtlCache[tuple[str, str, str], tuple[str, ...]] = TtlCache(
@@ -754,15 +764,15 @@ async def _resolve_simple_lane_includes(repo: CodeRepo, org: str, ns: str, pf: P
     """An EXTENDS'd module, an included schema, an add_subdirectory, a doc's relative
     link — the includer's directory first, then each ancestor (the C++ ladder), kept
     when the namespace holds the file."""
-    wanted: list[str] = []
+    wanted: dict[str, None] = {}
     for inc in pf.includes:
-        wanted.extend(c for c in include_candidates(pf.path, inc) if c not in wanted)
+        wanted.update(dict.fromkeys(include_candidates(pf.path, inc)))
     present: set[str] = set()
     if wanted:
-        present = await repo.live_paths_present(org, ns, wanted[:_MAX_INCLUDE_PROBES])
-    resolved: list[str] = []
+        present = await repo.live_paths_present(org, ns, list(wanted)[:_MAX_INCLUDE_PROBES])
+    resolved: dict[str, None] = {}
     for inc in pf.includes:
         hit = next((c for c in include_candidates(pf.path, inc) if c in present), None)
-        if hit and hit not in resolved and hit != pf.path:
-            resolved.append(hit)
-    pf.includes = resolved
+        if hit and hit != pf.path:
+            resolved[hit] = None
+    pf.includes = list(resolved)

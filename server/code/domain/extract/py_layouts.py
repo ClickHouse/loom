@@ -24,6 +24,7 @@ package.json and tsconfig for TypeScript; the lane corpus and
 from __future__ import annotations
 
 import configparser
+import functools
 import posixpath
 import re
 from collections.abc import Iterable
@@ -44,6 +45,10 @@ VENDOR_SEGMENTS: frozenset[str] = frozenset({
     "_vendor", "vendor", "_vendored", "vendored", "third_party", "third-party",
 })
 MAX_MANIFESTS = 200
+# a file can serve every entry point: each is a facet on it, so a manifest of 1 MiB of them
+# must not give every module hundreds of thousands
+# not a setting: it bounds what a crafted file costs, and changing it changes the stored rows
+MAX_ENTRY_POINTS = 10_000
 MAX_ROOTS = 64  # a tree of fixture packages (pip's tests/data) must not make every probe a scan
 
 _TABLE_RE = re.compile(r"^\s*+\[\s*+([^\]]*[^\]\s])\s*+\]\s*+(?:#.*)?$")
@@ -98,6 +103,17 @@ class Layout:
                 continue
             out.append(r)
         return tuple(out)
+
+    @functools.cached_property
+    def entry_points_by_stem(self) -> dict[str, list[tuple[int, EntryPoint]]]:
+        """(index, entry point) by its module's path stem (`a.b` -> `a/b`): a file finds
+        the entry points it serves by its own stems, not by every entry point's candidates."""
+        out: dict[str, list[tuple[int, EntryPoint]]] = {}
+        for i, ep in enumerate(self.entry_points):
+            module = ep.module.strip()
+            if module and not module.startswith("."):  # `_TARGET_RE` gives neither
+                out.setdefault(module.replace(".", "/"), []).append((i, ep))
+        return out
 
 
 def is_vendored(path: str) -> bool:
@@ -178,10 +194,23 @@ def _pyproject_roots(base: str, data: dict[str, Any]) -> list[str]:
     return out
 
 
+def _squeezed_names(text: str) -> str:
+    """Each line's text before its first `=` / `:` with its whitespace runs squeezed, indent
+    kept: configparser's option pattern rescans such a run from every character before it,
+    in one regex call that holds the GIL. No name or value read here holds a whitespace run."""
+    out: list[str] = []
+    for line in text.split("\n"):
+        cut = min((i for i in (line.find("="), line.find(":")) if i >= 0), default=len(line))
+        name = line[:cut].lstrip()
+        indent = line[: cut - len(name)]
+        out.append(indent + " ".join(name.split()) + line[cut:])
+    return "\n".join(out)
+
+
 def _ini(text: str) -> configparser.RawConfigParser | None:
     cp = configparser.RawConfigParser(strict=False, allow_no_value=True)
     try:
-        cp.read_string(text)
+        cp.read_string(_squeezed_names(text))
     except (configparser.Error, ValueError):
         return None
     return cp
@@ -404,7 +433,7 @@ def layout_from_texts(texts: dict[str, str], present: Iterable[str]) -> Layout:
             notes[p] = "empty"
             continue
         roots.update(dict.fromkeys(roots_from_manifest(p, text)))
-        eps.extend(entry_points_from_manifest(p, text))
+        eps.extend(entry_points_from_manifest(p, text)[: MAX_ENTRY_POINTS - len(eps)])
     roots.update(dict.fromkeys(conftest_roots(present)))
     return Layout(tuple(roots)[:MAX_ROOTS], tuple(eps), tuple(manifests), notes)
 
@@ -428,14 +457,25 @@ def module_entry_facets(pf: ParsedFile, layout: Layout | None, *, ordinal: int =
     attribute is not a module-level definition (0.8)."""
     if layout is None or not layout.entry_points or not pf.path.endswith(".py"):
         return []
-    from server.code.domain.extract.lang_python import import_candidates, module_scope
+    from server.code.domain.extract.lang_python import module_files, module_scope, roots_for
 
     scope = module_scope(pf.path)
     by_name = {s.qualified_name: s for s in pf.symbols}
+    # the entry points whose `import_candidates("", module, layout.roots)` hold this path:
+    # under each root it tries, the path is one of `module_files` of a stem
+    hits: dict[int, EntryPoint] = {}
+    for root in roots_for("", layout.roots):
+        prefix = f"{root}/" if root else ""
+        if not pf.path.startswith(prefix):
+            continue
+        rest = pf.path[len(prefix):]
+        for suffix in module_files(""):
+            if rest.endswith(suffix):
+                hits.update(layout.entry_points_by_stem.get(rest[: -len(suffix)], ()))
     out: list[Facet] = []
     seen: set[str] = set()
-    for ep in layout.entry_points:
-        if ep.name in seen or pf.path not in import_candidates("", ep.module, roots=layout.roots):
+    for _i, ep in sorted(hits.items()):
+        if ep.name in seen:
             continue
         seen.add(ep.name)
         sym = by_name.get(f"{scope}::{ep.attr}") if ep.attr else None

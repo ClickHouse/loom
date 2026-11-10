@@ -11,7 +11,9 @@ or of one keyword with an opener, and a closing character, catch the patterns wh
 optional parts split one run every way or that search on from each keyword. A pattern
 only ever used with `fullmatch` is anchored with `\\A`, so the searches here cost what
 its use does. The lanes' own walks over a file (`lane_walks.py`) are timed the same way, each in
-a child process with a deadline."""
+a child process with a deadline. A class guard runs every registered lane parser over
+generated shapes in a child process with a deadline and a memory limit; `KNOWN_SLOW` lists
+the shapes still to fix."""
 
 from __future__ import annotations
 
@@ -270,3 +272,66 @@ def test_a_lane_walk_costs_linear_time(name: str) -> None:
     assert done.returncode == 0, done.stderr[-4000:]
     small, big = json.loads(done.stdout)
     assert big < _WALK_BOUND_S and (big < _FLOOR_S or big < _RATIO * small), (name, small, big)
+
+
+# The class guard: every lane parser in the ingest's registry, over generated shapes (runs
+# of one character, repeated names, unclosed openers, entries times uses), each lane in a
+# child process with a deadline and a memory limit, which also bound a listed shape. A new
+# lane, or a walk added to one without a cost walk of its own, is timed here. `KNOWN_SLOW`
+# holds the shapes still over linear, each a follow-up fix.
+_REGISTRY_CHILD = f"""
+import faulthandler, json, resource, sys
+faulthandler.dump_traceback_later({_WALK_DEADLINE_S * 3}, exit=True)
+resource.setrlimit(resource.RLIMIT_AS, (3 << 30, 3 << 30))
+from tests.unit.lane_walks import registry_cost
+print(json.dumps(registry_cost(sys.argv[1])))
+"""
+
+
+def _registered_lanes() -> list[str]:
+    from server.code.app.index.ingest_parse import _PARSERS
+
+    return sorted(_PARSERS)
+
+
+def test_every_registered_lane_has_a_sample_that_reads_as_it() -> None:
+    from server.code.app.index.ingest_parse import parse_for_ingest
+    from tests.unit.lane_walks import KNOWN_SLOW, SAMPLES, SHAPES
+
+    assert set(SAMPLES) == set(_registered_lanes()), "a lane needs a SAMPLES entry in lane_walks.py"
+    assert set(KNOWN_SLOW) <= set(SAMPLES)
+    shapes = {name for name, _text in SHAPES}
+    assert all(set(listed) <= shapes for listed in KNOWN_SLOW.values())
+    for path, head, lang in SAMPLES.values():
+        pf, _err = parse_for_ingest(path, (head + "a\n").encode())
+        assert pf is not None and pf.lang == lang, path
+
+
+@pytest.mark.parametrize("lang", _registered_lanes())
+def test_a_registered_lane_costs_linear_time(lang: str) -> None:
+    from tests.unit.lane_walks import KNOWN_SLOW, SHAPES
+
+    done = subprocess.run(
+        [sys.executable, "-c", _REGISTRY_CHILD, lang],
+        capture_output=True,
+        text=True,
+        timeout=_WALK_DEADLINE_S * 6,
+        cwd=pathlib.Path(__file__).resolve().parents[2],
+    )
+    assert done.returncode == 0, done.stderr[-4000:]
+    known = KNOWN_SLOW.get(lang, ())
+    timed = json.loads(done.stdout)
+    # a shape that reads as another lane is that lane's: at least half must read as this one
+    assert len(timed) >= len(SHAPES) // 2 and set(known) <= {t[0] for t in timed}, lang
+    slow, linear, reparsed = {}, set(), {}
+    for shape, small, big, parsed_small, parsed_big in timed:
+        if big > _BOUND_S or (big > _FLOOR_S / 2 and big > _RATIO * small):
+            slow[shape] = (round(small, 3), round(big, 3))
+        if big < _FLOOR_S / 2 and big < 4 * small:
+            linear.add(shape)
+        if parsed_big > 6 * parsed_small + 1000:  # a 4N file is 4 times the bytes
+            reparsed[shape] = (parsed_small, parsed_big)
+    new = {shape: t for shape, t in slow.items() if shape not in known}
+    assert not new and not reparsed, f"{lang}: (N s, 4N s) {new}; (N bytes, 4N bytes) {reparsed}"
+    fixed = sorted(set(known) & linear)  # clearly linear now, not a timer's doubt
+    assert not fixed, f"{lang}: {fixed} run in linear time; drop them from KNOWN_SLOW"

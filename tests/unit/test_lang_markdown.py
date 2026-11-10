@@ -142,3 +142,10 @@ def test_a_long_heading_path_is_cut_in_a_continued_chunk() -> None:
     assert cont and all(
         line == "<!-- " + ("x" * 600 + " › " + "y" * 600)[:1000] + " (cont.) -->" for line in cont
     )
+
+
+def test_a_qualified_mention_binds_only_the_one_candidate_it_ends() -> None:
+    pf = parse_markdown("a.md", b"# A\n\n`B::run`\n`x::B::run`\n")
+    table = {"run": [("1", "a::B::run", "function"), ("2", "x::B::run", "function")]}
+    got = [e.to_qualified_name for e in doc_reference_edges(pf, doc_reference_sites(pf), table)]
+    assert got == ["x::B::run"]

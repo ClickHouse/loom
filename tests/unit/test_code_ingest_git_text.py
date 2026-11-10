@@ -16,7 +16,7 @@ from server.settings import settings
 @pytest.fixture(autouse=True)
 def _fresh_caches() -> Any:
     caches = (
-        ingest_resolve._OVERSIZE,
+        ingest_resolve._EMPTY_VERDICTS,
         ingest_resolve._PACKAGE_JSON_CACHE,
         ingest_resolve._BARREL_CACHE,
         ingest_resolve._WORKSPACE_CACHE,
@@ -144,6 +144,23 @@ def test_a_file_found_over_its_cap_is_not_asked_for_again(tmp_path, monkeypatch)
     assert asked == ["big.json"] and repo.reads == []
 
 
+def test_an_empty_manifest_is_read_once_and_the_python_layout_kept(tmp_path, monkeypatch) -> None:
+    from server.code.domain.extract import py_layouts as pl
+
+    git_dir, sha = _mirror(tmp_path, {"setup.cfg": b"", "pyproject.toml": b"[project]\n"})
+    asked = _counting_show(monkeypatch)
+    built = []
+    real = pl.layout_from_texts
+    monkeypatch.setattr(pl, "layout_from_texts", lambda *a: built.append(1) or real(*a))
+    monkeypatch.setitem(ingest_resolve._LIVE_PATHS_CACHE, ("o", "n"), (0.0, set()))
+    monkeypatch.setattr(ingest_resolve, "_PY_LAYOUT_CACHE", {})
+    present = {"setup.cfg", "pyproject.toml", "a.py"}
+    with ingest_resolve.git_text_source(git_dir, sha):
+        for _ in range(3):  # one per Python file of a pass
+            asyncio.run(ingest_resolve._py_layout(_Repo(), "o", "n", present))  # type: ignore[arg-type]
+    assert built == [1] and asked.count("setup.cfg") == 1
+
+
 def test_a_barrel_over_the_file_cap_forwards_nothing_and_is_read_once(
     tmp_path, monkeypatch
 ) -> None:
@@ -164,7 +181,7 @@ def test_a_barrel_over_the_file_cap_forwards_nothing_and_is_read_once(
     assert asked == ["src/index.ts"]
     monkeypatch.setattr(settings, "code_ingest_max_file_bytes", 0)  # no cap: it forwards
     ingest_resolve._BARREL_CACHE.clear()
-    ingest_resolve._OVERSIZE.clear()
+    ingest_resolve._EMPTY_VERDICTS.clear()
     with ingest_resolve.git_text_source(git_dir, sha):
         got = asyncio.run(ingest_resolve._barrel_targets_of(repo, "o", "n", "src/index.ts"))  # type: ignore[arg-type]
     assert got == ("src/a.ts",)
@@ -252,8 +269,8 @@ def test_the_chunk_fallback_holds_the_callers_cap_and_records_the_cut() -> None:
     assert asyncio.run(read(repo, "o", "n", "go.mod", 50)) == ""
     assert asyncio.run(read(repo, "o", "n", "go.mod", 50)) == ""
     assert repo.reads == 2  # the cut is known: the second read under 50 asks no chunks
-    assert ingest_resolve._oversize("o", "n", "go.mod", 50)
-    assert not ingest_resolve._oversize("o2", "n", "go.mod", 50)
+    assert ingest_resolve._is_empty_verdict("o", "n", "go.mod", 50)
+    assert not ingest_resolve._is_empty_verdict("o2", "n", "go.mod", 50)
 
 
 def test_a_cut_the_chunks_made_does_not_stop_a_recovered_mirror(
@@ -282,4 +299,4 @@ def test_a_manifest_verdict_outlasts_a_pass_of_oversize_barrels() -> None:
     ingest_resolve._over_cap(("o", "n", "package.json", 1 << 20), "o", "n", "big")
     for i in range(2_000):
         ingest_resolve._over_cap(("o", "n", f"src/b{i}.ts", 1_000_000), "o", "n", "big")
-    assert ingest_resolve._oversize("o", "n", "package.json", 1 << 20)
+    assert ingest_resolve._is_empty_verdict("o", "n", "package.json", 1 << 20)

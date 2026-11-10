@@ -316,3 +316,12 @@ def test_a_call_holding_its_own_opener_is_read_from_the_inner_one() -> None:
     src = b'import starlette.routing\nroutes = [Route("/a",  # was Route("/old"\n  methods=["POST"])]\n'
     facets = py_facets(parse_python("svc/app.py", src))
     assert [f.name for f in facets if f.kind == "http_route"] == ["POST /old"]
+
+
+def test_a_member_is_joined_while_the_spec_stays_under_256_characters() -> None:
+    fits, over = "a" * 250, "b" * 251
+    pf = parse_python("x.py", f"from {fits} import cccc\nfrom {over} import cccc\n".encode())
+    assert pf.includes == [fits, f"{fits}.cccc", over]
+    rel = parse_python("x.py", f"from . import {'d' * 254}\n".encode())
+    assert rel.includes == [".", "." + "d" * 254]
+    assert parse_python("x.py", f"from . import {'d' * 255}\n".encode()).includes == ["."]
