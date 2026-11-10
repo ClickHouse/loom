@@ -245,8 +245,8 @@ function SearchOrder({
   const titleId = useId();
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<number | null>(null);
-  // A move can disable the arrow that was pressed (the row reached an end): focus then
-  // goes to the row's other arrow, never to the page.
+  // Focus goes back to the pressed arrow after every move (a row moved down is re-inserted,
+  // which drops focus), or to the row's other arrow when the pressed one is now disabled.
   const arrows = useRef(new Map<string, HTMLButtonElement | null>());
   const focusAfter = useRef<string | null>(null);
   useEffect(() => {

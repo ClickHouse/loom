@@ -299,6 +299,8 @@ describe("the token form", () => {
     // And at the bottom its Move down is gone; focus moves to its Move up.
     const down = screen.getByRole("button", { name: "Move ns-c down" });
     await userEvent.click(down);
+    // A row moved down is re-inserted: focus still lands back on the arrow pressed.
+    expect(screen.getByRole("button", { name: "Move ns-c down" })).toHaveFocus();
     await userEvent.click(down);
     expect(order()).toEqual(["ns-a", "ns-b", "ns-c"]);
     expect(screen.getByRole("button", { name: "Move ns-c up" })).toHaveFocus();
