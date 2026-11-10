@@ -141,16 +141,23 @@ async def _raises_http(_: _ProbeInput) -> _ProbeOutput:
     raise HTTPException(status_code=409, detail="conflict")
 
 
+async def _raises_coded_http(_: _ProbeInput) -> _ProbeOutput:
+    from fastapi import HTTPException
+
+    raise HTTPException(status_code=503, detail={"code": "PROJECTION_BEHIND", "message": "behind"})
+
+
 @pytest.mark.parametrize(
-    ("handler", "status"),
+    ("handler", "status", "code"),
     [
-        (_raises_keyerror, 500),  # generic INTERNAL_ERROR branch
-        (_raises_not_found, 404),  # LoomServerError branch
-        (_raises_http, 409),  # HTTPException branch
+        (_raises_keyerror, 500, "INTERNAL_ERROR"),  # generic INTERNAL_ERROR branch
+        (_raises_not_found, 404, "RESOURCE_NOT_FOUND"),  # LoomServerError branch
+        (_raises_http, 409, "HANDLER_HTTP_ERROR"),  # HTTPException branch, no code
+        (_raises_coded_http, 503, "PROJECTION_BEHIND"),  # its detail's own code
     ],
 )
 def test_every_http_failure_path_records_a_failed_op(
-    monkeypatch: pytest.MonkeyPatch, handler: Any, status: int
+    monkeypatch: pytest.MonkeyPatch, handler: Any, status: int, code: str
 ) -> None:
     from server.observability import otel as otel_mod
 
@@ -165,14 +172,14 @@ def test_every_http_failure_path_records_a_failed_op(
     assert len(failures) == 1, f"expected exactly one failed record_op, got {rec.calls}"
     args, kwargs = failures[0]
     assert args == ("probe.failure_metric",)
-    # Same attribute set as the success tick: op name, namespace, duration,
-    # default transport — so success and failure series divide cleanly.
+    # The success tick's attributes (op name, namespace, duration, default transport),
+    # plus the error code.
     assert kwargs["namespace"] == "ns-x"
     assert isinstance(kwargs["duration_ms"], int)
     # `error_code` goes on the request counter alone, never on the duration histogram
     # (`otel.record_op`), so the two series still divide.
     assert set(kwargs) == {"namespace", "success", "duration_ms", "error_code"}
-    assert kwargs["error_code"]
+    assert kwargs["error_code"] == code
     # No stray success tick on a failed request.
     assert not any(c[1].get("success") is True for c in rec.calls)
 

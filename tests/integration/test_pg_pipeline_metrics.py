@@ -65,7 +65,7 @@ async def test_the_memory_backlog_counts_pending_and_parked_deliveries(org_call:
         )
 
     try:
-        await owe("now() - interval '1 minute'")
+        await owe("now() + interval '1 minute'")
         due = await pg_memory.backlog(1_000_000)
         assert due.pending >= 1 and due.oldest_age_s is not None and not due.capped
         assert (await pg_memory.backlog(1)).capped  # one counted reaches a cap of one
@@ -112,10 +112,10 @@ async def test_the_knowledge_backlog_counts_pending_deliveries(org_call: Any) ->
             "INSERT INTO loom.knowledge_deliveries AS d (org, namespace, source_uri, version, "
             "user_id, row, targets, lease_until, fenced_until) "
             "SELECT org, namespace, source_uri, version, user_id, row, 1, "
-            "now() - interval '1 minute', now() FROM loom.knowledge_heads "
+            "now() + interval '1 minute', now() FROM loom.knowledge_heads "
             "WHERE org = $1 AND namespace = $2 "
             "ON CONFLICT (org, namespace, source_uri, version) DO UPDATE SET settled = false, "
-            "targets = 1, lease_until = now() - interval '1 minute'",
+            "targets = 1, lease_until = now() + interval '1 minute'",
             org,
             ns,
         )

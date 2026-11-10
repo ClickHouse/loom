@@ -39,7 +39,8 @@ TABLES = frozenset({"memory", "memory_embeddings", "audit_log"})
 @dataclass(frozen=True)
 class Backlog:
     """One source's backlog: deliveries owed and not parked, parked ones, and the age of
-    the oldest one owed (None for none). `capped`: `pending` reached the reading's cap."""
+    the oldest one owed (None for none). `capped`: the pending or the parked count
+    reached the reading's cap."""
 
     pending: int
     parked: int

@@ -201,7 +201,7 @@ def test_the_backlog_gauges_export_only_on_the_lease_holder(
 ) -> None:
     from server.observability import otel_probes
 
-    callbacks: dict[str, Any] = {}
+    gauges: dict[str, Any] = {}
 
     class _Meter:
         def create_histogram(self, **kw: Any) -> Any:
@@ -211,15 +211,17 @@ def test_the_backlog_gauges_export_only_on_the_lease_holder(
             return _Instrument()
 
         def create_observable_gauge(self, *, name: str, callbacks: list[Any], **kw: Any) -> None:
-            callbacks_by_name[name] = callbacks[0]
+            gauges[name] = callbacks[0]
 
-    callbacks_by_name = callbacks
+    # `register` sets the module's instruments: put them back after.
+    for name in ("_search_wait", "_projection_lag", "_inserts", "_insert_rows"):
+        monkeypatch.setattr(pg_pipeline, name, None)
     monkeypatch.setattr(pg_pipeline, "_readings", {})
     pg_pipeline.set_backlog("memory", pg_pipeline.Backlog(2, 1, 5.0))
     pg_pipeline.register(_Meter())
     for here, expected in ((False, 0), (True, 2)):
         monkeypatch.setattr(otel_probes, "_census_reads_here", lambda here=here: here)
-        assert len(callbacks["loom.pg.backlog"](None)) == expected
+        assert len(gauges["loom.pg.backlog"](None)) == expected
 
 
 def test_a_backlog_read_that_fails_leaves_the_pass_publishing(
@@ -234,22 +236,3 @@ def test_a_backlog_read_that_fails_leaves_the_pass_publishing(
     monkeypatch.setattr(pg_memory, "backlog", down)
     asyncio.run(pg_delivery._read_backlog())  # raises nothing
     assert "backlog not read" in caplog.text
-
-
-def test_an_http_refusal_counts_under_its_own_code(monkeypatch: pytest.MonkeyPatch) -> None:
-    """As MCP labels it: the detail's code, not a generic one."""
-    from server.observability import otel
-    from server.transport import http
-
-    seen: list[str] = []
-
-    def record(*a: Any, error_code: str = "", **k: Any) -> None:
-        seen.append(error_code)
-
-    monkeypatch.setattr(otel, "record_op", record)
-
-    class _Op:
-        name = "memory.get"
-
-    http._record_failure(_Op(), {"namespace": "n"}, 3, "NOT_FOUND")  # type: ignore[arg-type]
-    assert seen == ["NOT_FOUND"]

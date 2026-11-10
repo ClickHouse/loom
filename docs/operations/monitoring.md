@@ -230,13 +230,13 @@ lag-driven readiness check would take every replica out of rotation at once.
 
 Alerts:
 
-| Signal                                                         | Alert when                                        | Means                                                        | First step                                                                                       |
-| -------------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| `loom.pg.search_wait_ms{outcome="deadline"}` rate              | above 0 for 5 minutes                             | reads wait to the deadline: a search answers 503             | ClickHouse reachability, then `loom.pg.backlog` and the `pg_delivery` worker's passes            |
-| `loom.pg.oldest_pending_age_s{source="memory"}`                | above the target for 10 minutes                   | the delivery worker is not keeping up, or ClickHouse refuses | `GET /v1/health?include=postgres` → `postgres.backlog`, the `pg_delivery` worker status          |
-| `loom.pg.backlog{state="parked"}`                              | above 0                                           | a delivery ClickHouse kept refusing                          | the delivery's `last_error` ([storage authority](../architecture/storage-authority.md#delivery)) |
-| `loom.pg.backlog_reading_age_s`, or no `loom.pg.backlog` point | older than 3 export periods                       | the reading stopped: no lease holder, or its pass fails      | the `backlog not read` warning in the `pg_delivery` and `knowledge_pg_delivery` workers' logs    |
-| `loom.ch.inserts` rate per table                               | well above the deployment's write rate per second | many small inserts, which make many parts                    | the publish interval (`LOOM_PG_PUBLISH_INTERVAL_MS`) and `clickhouse_parts` in `ops.health`      |
+| Signal                                                         | Alert when                                        | Means                                                                   | First step                                                                                       |
+| -------------------------------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `loom.pg.search_wait_ms{outcome="deadline"}` rate              | above 0 for 5 minutes                             | a read waited out the deadline: a search answers 503, a report reads on | ClickHouse reachability, then `loom.pg.backlog` and the `pg_delivery` worker's passes            |
+| `loom.pg.oldest_pending_age_s{source="memory"}`                | above the target for 10 minutes                   | the delivery worker is not keeping up, or ClickHouse refuses            | `GET /v1/health?include=postgres` → `postgres.backlog`, the `pg_delivery` worker status          |
+| `loom.pg.backlog{state="parked"}`                              | above 0                                           | a delivery ClickHouse kept refusing                                     | the delivery's `last_error` ([storage authority](../architecture/storage-authority.md#delivery)) |
+| `loom.pg.backlog_reading_age_s`, or no `loom.pg.backlog` point | older than 3 export periods                       | the reading stopped: no lease holder, or its pass fails                 | the `backlog not read` warning in the `pg_delivery` and `knowledge_pg_delivery` workers' logs    |
+| `loom.ch.inserts` rate per table                               | well above the deployment's write rate per second | many small inserts, which make many parts                               | the publish interval (`LOOM_PG_PUBLISH_INTERVAL_MS`) and `clickhouse_parts` in `ops.health`      |
 
 ### Integrity invariants
 
