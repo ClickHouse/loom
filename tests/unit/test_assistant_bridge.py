@@ -671,8 +671,8 @@ def test_a_client_that_went_away_is_its_own_failure(monkeypatch: pytest.MonkeyPa
 def test_a_key_librechat_no_longer_takes_is_set_up_again(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    forgotten: list[str] = []
-    monkeypatch.setattr(service, "forget_answering", forgotten.append)
+    forgotten: list[bool] = []
+    monkeypatch.setattr(service, "forget_answering", lambda: forgotten.append(True))
     monkeypatch.setattr(settings, "assistant_concurrent_answers", 3)
     world.status = 401
     stale = asyncio.run(bridge.open_answer(_caller(), ORG, NS))
@@ -685,7 +685,7 @@ def test_a_key_librechat_no_longer_takes_is_set_up_again(
 
     with pytest.raises(AssistantUpstreamError, match="setting the assistant up again"):
         asyncio.run(run(stale))
-    assert forgotten and "401" in forgotten[0]
+    assert forgotten == [True]
     # A second answer meets the same stale key while the setup still runs: told the same.
     monkeypatch.setattr(service, "_answering", None)
     with pytest.raises(AssistantUpstreamError, match="setting the assistant up again"):
@@ -706,11 +706,10 @@ def test_a_forgotten_service_is_set_up_again(monkeypatch: pytest.MonkeyPatch) ->
     # Restored after the test: forgetting marks the service as setting up again.
     monkeypatch.setattr(service, "_ready", True)
     monkeypatch.setattr(service, "_problem", "")
-    service.forget_answering("LibreChat refused the stored key or agent (401)")
+    service.forget_answering()
     assert service.answering() is None and started == [True]
     # Starting over, not failing: `/v1/health` raises no warning for it.
-    ready, problem = service.assistant_state()
-    assert ready is None and "401" in problem
+    assert service.assistant_state() == (None, "")
     assert service.unready_reason() == "starting"
 
 

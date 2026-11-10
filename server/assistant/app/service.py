@@ -91,7 +91,7 @@ def answering() -> tuple[str, str] | None:
     return _answering
 
 
-def forget_answering(why: str) -> None:
+def forget_answering() -> None:
     """LibreChat no longer takes the stored key or agent (another replica replaced it,
     or LibreChat's database was): drop them and set the service up again, which reads
     the row another replica may have written or repairs it."""
@@ -99,7 +99,7 @@ def forget_answering(why: str) -> None:
     _answering = None
     # Not a failed try: the process is starting over, and `/v1/health` warns only if
     # that try fails.
-    _ready, _problem = None, f"setting up the assistant again: {why}"
+    _ready, _problem = None, ""
     if _loop is None or _loop.done():
         start_setup_loop()
 

@@ -395,7 +395,7 @@ def _refused(ticket: Ticket, status: int) -> NoReturn:
         if stored is None or stored == (ticket.agent_id, ticket.api_key):
             # Dropped by this answer, or by another that met the same stale key first.
             if stored is not None:
-                service.forget_answering(f"LibreChat refused the stored key or agent ({status})")
+                service.forget_answering()
             raise AssistantUpstreamError(
                 f"LibreChat refused the stored key or agent ({status}); this web process is "
                 "setting the assistant up again: ask again shortly"

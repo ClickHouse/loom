@@ -687,3 +687,12 @@ def test_a_full_sign_in_table_is_reported(monkeypatch: pytest.MonkeyPatch) -> No
     assert _oauth_claim_problems(off, HealthState(oauth_signin_state_full=True)) == []
     (full,) = _oauth_claim_problems(on, HealthState(oauth_signin_state_full=True))
     assert full.code == "oauth_signin_state_full"
+
+
+def test_an_assistant_still_being_set_up_raises_no_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Starting, or set up again after LibreChat refused the stored key, ends on its own:
+    only a failed setup try is a problem."""
+    s = _settings(monkeypatch)
+    assert "assistant_service_failing" not in _codes(collect_problems(s, HealthState(env={})))
+    failed = HealthState(env={}, assistant_ok=False, assistant_error="connection refused")
+    assert "assistant_service_failing" in _codes(collect_problems(s, failed))

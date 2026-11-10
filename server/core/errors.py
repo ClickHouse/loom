@@ -378,8 +378,8 @@ class AssistantUnavailableError(LoomServerError):
     """The assistant cannot answer in this web process: no LibreChat is configured
     (`LOOM_ASSISTANT_LIBRECHAT_URL`), auth is off (an answer is delegated from its
     caller's token), or this process's setup has not succeeded yet (at boot, or again
-    after LibreChat refused the stored key), which `/v1/health` names
-    (`assistant_service_failing`)."""
+    after LibreChat refused the stored key). `detail.reason` says which; `/v1/health`
+    (`assistant_service_failing`) names a setup try that failed."""
 
     code = "ASSISTANT_UNAVAILABLE"
     status_code = 503
