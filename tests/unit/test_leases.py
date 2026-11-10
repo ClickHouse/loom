@@ -165,7 +165,8 @@ async def test_a_lease_whose_renewals_fail_is_lost_at_half_its_ttl() -> None:
         async with leases.cluster_lease("job", ttl_s=0.6, ch=ch) as lease:
             ch.down = True
             await asyncio.sleep(2)
-    assert 0.25 <= loop.time() - started < 1.0 and not lease.held  # long before the 2 s block
+    # at half the TTL, before another process may take the key over (at the TTL)
+    assert 0.25 <= loop.time() - started < 0.6 and not lease.held
 
 
 async def test_a_renewal_that_recovers_before_half_the_ttl_keeps_the_lease() -> None:
@@ -247,3 +248,50 @@ async def test_a_claim_whose_reply_came_after_its_ttl_never_opens_its_block() ->
         await late
     await successor
     assert entered == ["successor"]
+
+
+async def test_one_renewal_that_hangs_is_retried_before_the_lease_counts_as_lost() -> None:
+    """A renewal whose ClickHouse call hangs is cut short and retried, so one hung call
+    well inside the window does not lose the lease."""
+
+    class HangsOnce(FakeLockTable):
+        def __init__(self) -> None:
+            super().__init__()
+            self.renewals = 0
+
+        async def execute(self, sql: str, params: Any = None, **kw: Any) -> None:
+            if sql == leases.LOCK_RENEW:
+                self.renewals += 1
+                if self.renewals == 1:
+                    await asyncio.sleep(10)  # the first renewal's call never answers in time
+            await super().execute(sql, params, **kw)
+
+    ch = HangsOnce()
+    lease = await leases.take("job", ttl_s=1.2, renew=True, ch=ch)
+    assert lease is not None
+    try:
+        await asyncio.sleep(1.0)  # past half the TTL from the take
+        # the first hung and a later one was sent; held means one landed
+        assert lease.held and ch.renewals >= 2
+    finally:
+        await lease.release()
+
+
+async def test_renewals_that_all_hang_still_lose_the_lease_at_half_its_ttl() -> None:
+    """Cutting each attempt short never stretches the window: a lease whose every
+    renewal hangs is lost half the TTL after its last landed renewal."""
+
+    class AlwaysHangs(FakeLockTable):
+        async def execute(self, sql: str, params: Any = None, **kw: Any) -> None:
+            if sql == leases.LOCK_RENEW:
+                await asyncio.sleep(10)
+            await super().execute(sql, params, **kw)
+
+    ch = AlwaysHangs()
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    with pytest.raises(leases.LeaseLost):
+        async with leases.cluster_lease("job", ttl_s=0.6, ch=ch):
+            await asyncio.sleep(2)
+    # at half the TTL, before another process may take the key over (at the TTL)
+    assert 0.25 <= loop.time() - started < 0.6
