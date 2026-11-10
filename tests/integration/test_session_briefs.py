@@ -51,7 +51,7 @@ async def test_a_brief_carries_one_line_of_work_across_sessions(
 
     owner = mint_test_token(org=org, namespaces=[ns], roles=["admin"], subject="alice")
     async with httpx.AsyncClient(base_url=control_plane_url, timeout=60) as c:
-        # Revision 1: an automatic save follows the Recording switch, which a
+        # Revision 1: an automatic save follows the Record conversations switch, which a
         # fresh namespace has off (fail closed) — nothing is stored.
         off = await _call(
             c,

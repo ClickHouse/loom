@@ -1232,7 +1232,7 @@ async def handle_conversation_threads(input: ConversationThreadsInput) -> Conver
 
     Group by thread_id, aggregate message count + first/last seen,
     project the most recent message's role + content excerpt so the
-    Sessions view has something to click without typing a query.
+    Conversations page has something to click without typing a query.
     """
     from server.knowledge.store import conversations as conversation_repo
 

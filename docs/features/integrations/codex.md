@@ -157,7 +157,7 @@ smaller tool listing ([MCP reference](../../reference/mcp.md)). The
 
 - `codex mcp list` shows `loom`; the first tool call turns the token's row green on the
   dashboard's **Settings → Tokens** tab.
-- After one session: the dashboard's Sessions view shows the conversation (when logging
+- After one session: the dashboard's Conversations page shows the conversation (when logging
   is on for the namespace), `run.get` on `cx-<session_id>` shows the run's observations,
   and the next primer starts from the working-memory note.
 - Nothing arrives: run the `loom-status` skill. It checks the Node runtime and runs
@@ -176,7 +176,7 @@ smaller tool listing ([MCP reference](../../reference/mcp.md)). The
 | `node: not found` from a hook                  | the installed plugin predates its Node launcher        | `codex plugin marketplace upgrade loom`                                        |
 | a hook prints a `loom:` line about Node.js 18+ | the launcher found no Node 18+, or only an old one     | `LOOM_NODE=/path/to/node` where Codex starts (macOS, Linux), or `$loom-status` |
 | hooks write nothing                            | viewer token, or the hooks read a different `url`      | writer token; check `~/.loom/config.json` and `LOOM_BASE_URL`                  |
-| Sessions view empty                            | conversation logging is off for the namespace          | turn it on in the dashboard or with `conversation.set_logging`                 |
+| Conversations page empty                       | conversation logging is off for the namespace          | the **Record conversations** switch, or `conversation.set_logging`             |
 
 ## Related
 

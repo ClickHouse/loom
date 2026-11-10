@@ -750,7 +750,7 @@ async def namespace_logging_enabled(
     keep transcripts for a namespace whose owner never answered the question.
 
     Turn it on per namespace with `conversation.set_logging` or the Sessions
-    "Recording" toggle in the dashboard.
+    Record conversations switch in the dashboard.
     """
     ch = ch or _default_client()
     r = await ch.query_one(

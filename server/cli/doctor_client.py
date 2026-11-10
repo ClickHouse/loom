@@ -371,7 +371,7 @@ def recording_check(
     auth_ok: bool,
 ) -> Check:
     """Whether the namespace the hooks write to keeps the
-    conversation turns they send. The owner's Recording switch in the dashboard
+    conversation turns they send. The owner's Record conversations switch in the dashboard
     (`conversation_logging_enabled`) decides; with it off every append is
     accepted and nothing is kept, which the hooks alone would never notice."""
     name = "client:recording"
@@ -385,15 +385,15 @@ def recording_check(
         return (
             name,
             WARN,
-            f"could not read the Recording switch for {namespace!r} (HTTP {status})",
+            f"could not read the Record conversations switch for {namespace!r} (HTTP {status})",
         )
     if body.get("conversation_logging_enabled") is False:
         return (
             name,
             WARN,
-            f"conversation recording is off for {namespace!r} (the owner's Recording switch "
-            "in the dashboard): the hooks send no turns and none are kept. Turn it on there if "
-            "you want transcripts.",
+            f"conversation recording is off for {namespace!r} (the owner's Record conversations "
+            "switch in the dashboard): the hooks send no turns and none are kept. Turn it on "
+            "there if you want transcripts.",
         )
     return (name, PASS, f"conversation recording is on for {namespace!r}")
 
