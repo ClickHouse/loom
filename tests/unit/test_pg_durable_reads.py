@@ -64,7 +64,8 @@ _CALLERS = {
     "server/knowledge/store/documents.py": "reads beside the writer's own commit; "
     "the worker's sends are its durable claims",
     "server/memory/app/blacklist_sweep.py": "tombstones through its own commit",
-    "server/memory/app/bulk_set.py": "decides a write, which commits",
+    "server/memory/app/bulk_set.py": "decides a write, which commits; a dedup against "
+    "an undelivered keeper answers the caller and sends nothing",
     "server/memory/app/conflicts.py": "refuses a write before its commit",
     "server/memory/app/curation.py": "scrubs delete; a row kept for a head a failover "
     "loses is residue the reconcile removes",

@@ -552,6 +552,9 @@ its own wait covers every row its transaction read.
 - `decision.record` checks its writers this way after its record lands, and a delete of a
   decision retires its record this way in its flush, so each waits for one more standby
   round trip.
+- A knowledge job version ClickHouse lacks is projected again by the ingest run only when
+  `pg_jobs.get(..., durable=True)` returns the same version: one only the primary holds
+  would come back through `pg_jobs.adopt` after a failover lost it.
 
 The rule for any path: a ClickHouse send fed by a Postgres read sends only what the
 caller committed or claimed, or reads durably first. A decision that only changes
