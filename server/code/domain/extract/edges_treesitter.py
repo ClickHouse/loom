@@ -2352,10 +2352,11 @@ class _CallResolver:
             return None
         scope = module_scope(path)
         pkg = scope[: -len(".__init__")] if scope.endswith(".__init__") else scope
-        hits = {
-            (c[0], c[1]) for c in self._member_rows(candidates, cls, bare)
+        rows = self._member_rows(candidates, cls, bare)
+        hits = self._of(rows, ("in module", scope, pkg), lambda: {
+            (c[0], c[1]) for c in rows
             if c[1].startswith(scope + "::") or c[1].startswith(pkg + ".")
-        }
+        })
         if len(hits) == 1:
             cid, cqn = next(iter(hits))
             return cid, cqn, IMPORT_BOUND_CONFIDENCE
@@ -2662,6 +2663,21 @@ class _CallResolver:
         return self._once(("local", bare), lambda: _Namesakes([
             s for s in self.local_by_name.get(bare, []) if s.kind not in _NEVER_CALLABLE
         ]))
+
+    def sole_definition(
+        self, candidates: list[tuple[str, str, str]], receiver: str,
+    ) -> str | None:
+        """The one qualified name `candidates` hold, field-based for a receiver other than
+        `this`; None when there are several or none. Once per candidate list and receiver
+        kind: a file can call one name on many receivers."""
+        def build() -> str | None:
+            narrowed = candidates
+            if receiver != "this":
+                narrowed = self.field_based(receiver != "", candidates)
+            return narrowed[0][1] if len({c[1] for c in narrowed}) == 1 else None
+
+        kind = "this" if receiver == "this" else "member" if receiver else "bare"
+        return self._of(candidates, ("sole", kind), build)
 
     def repo_import_keys(self) -> frozenset[str]:
         """The local names this file imports from repository-shaped specifiers, once."""
@@ -3473,11 +3489,9 @@ def callee_targets(
         if typed is not None:
             out[callee] = typed[1]
             continue
-        narrowed = (
-            candidates if receiver == "this" else resolver.field_based(receiver != "", candidates)
-        )
-        if len({c[1] for c in narrowed}) == 1:
-            out[callee] = narrowed[0][1]
+        sole = resolver.sole_definition(candidates, receiver)
+        if sole is not None:
+            out[callee] = sole
     return out
 
 

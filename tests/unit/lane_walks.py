@@ -250,6 +250,19 @@ def _edges(
     return walk
 
 
+def _callee_targets(text: str) -> object:
+    """The return-type round of call binding over a file's callees, against 2,000
+    repository definitions of `a`."""
+    from server.code.app.index.ingest_parse import parse_for_ingest
+    from server.code.domain.extract.edges_treesitter import callee_targets
+    from server.settings import settings
+
+    settings.code_parse_timeout_s = 600  # the walk's child process only, as in `_edges`
+    pf, err = parse_for_ingest("a.py", text.encode())
+    assert pf is not None and pf.tree is not None, err
+    return callee_targets(pf, {"a": [(f"s{i}", f"m{i}::a", "function") for i in range(2000)]})
+
+
 def _callers(head: str, unit: str, caller: str) -> Callable[[int], str]:
     """n/2 characters of one name's definitions, then n/2 of functions that call it."""
     return lambda n: head + unit * (n // 2 // len(unit)) + _numbered(caller)(n // 2)
@@ -449,6 +462,7 @@ WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ),
     ("python-table-calls", _edges("a.py", 2000), _run("", "a()\n")),
     ("python-receiver-calls", _edges("a.py", 2000), _numbered("o{}.a()\n")),
+    ("python-callee-returns", _callee_targets, _numbered("x{0} = o{0}.a()\n")),
     (
         "python-inherited-calls",
         _edges("a.py", 2000),
