@@ -196,6 +196,27 @@ def test_every_assistant_op_is_in_exactly_one_set() -> None:
     assert set().union(*sets) == set(toolsets.MCP_ASSISTANT_OPS)
 
 
+# The assistant ops with no found list: a miss is their `found: false` (`out_found`), or
+# they always return data (and why). A new assistant op names its signal here or in
+# ASSISTANT_FOUND_FIELD, or the test below fails.
+FOUND_BOOL_OPS: frozenset[str] = frozenset(
+    {
+        "memory.get",
+        "memory.provenance",
+        "knowledge.get",
+        "namespace.get",
+        "namespace.guide_get",
+        "facts.path",
+    }
+)
+ALWAYS_RETURNS: dict[str, str] = {
+    "namespace.inventory": "one section per plane, its counts zero or not",
+    "mentor.brief": "the namespace's usage counts and hints, zero or not",
+    "mentor.guide": "Loom's own writing guide",
+    "insights.catalog": "the tables an analysis may read",
+}
+
+
 def _field_type(model: type[Any], name: str) -> Any:
     return typing.get_type_hints(model)[name]
 
@@ -207,8 +228,8 @@ def test_every_assistant_op_says_how_its_ledger_row_shows_it_found_nothing(op: A
     name = op.name
     marks = [
         name in toolsets.ASSISTANT_FOUND_FIELD,
-        name in toolsets.ASSISTANT_FOUND_BOOL_OPS,
-        name in toolsets.ASSISTANT_ALWAYS_RETURNS,
+        name in FOUND_BOOL_OPS,
+        name in ALWAYS_RETURNS,
     ]
     assert sum(marks) == 1, name
     for field in toolsets.ASSISTANT_FOUND_FIELD.get(name, ()):
@@ -219,7 +240,7 @@ def test_every_assistant_op_says_how_its_ledger_row_shows_it_found_nothing(op: A
         hint = _field_type(model, last)
         lists = [hint, *typing.get_args(hint)]
         assert any(typing.get_origin(h) is list for h in lists), (name, field, hint)
-    if name in toolsets.ASSISTANT_FOUND_BOOL_OPS:
+    if name in FOUND_BOOL_OPS:
         assert _field_type(op.output_model, "found") is bool, name
 
 

@@ -440,10 +440,8 @@ ASSISTANT_UNCITABLE_OPS: frozenset[str] = (
 
 # Whether an assistant op's call found anything, as its ledger row records it (event_args):
 # the output lists whose summed length is `out_hits` (a dotted name reaches into a nested
-# object). The two sets after it change no behaviour (the run read takes any row without a
-# found-nothing column as data); they exist so the completeness test makes a new op's
-# author name its signal: a miss is `found: false` (`out_found`), or the op always returns
-# data, and why.
+# object). An op left out reports a miss as `found: false` (`out_found`) or always returns
+# data; tests/unit/test_assistant_support.py holds every op to one of the three.
 ASSISTANT_FOUND_FIELD: dict[str, tuple[str, ...]] = {
     "memory.search": ("results",),
     "memory.ask": ("results",),
@@ -468,22 +466,6 @@ ASSISTANT_FOUND_FIELD: dict[str, tuple[str, ...]] = {
     "namespace.list_categories": ("categories",),
     "namespace.taxonomy": ("tags",),
     "namespace.summary": ("type_counts",),
-}
-ASSISTANT_FOUND_BOOL_OPS: frozenset[str] = frozenset(
-    {
-        "memory.get",
-        "memory.provenance",
-        "knowledge.get",
-        "namespace.get",
-        "namespace.guide_get",
-        "facts.path",
-    }
-)
-ASSISTANT_ALWAYS_RETURNS: dict[str, str] = {
-    "namespace.inventory": "one section per plane, its counts zero or not",
-    "mentor.brief": "the namespace's usage counts and hints, zero or not",
-    "mentor.guide": "Loom's own writing guide",
-    "insights.catalog": "the tables an analysis may read",
 }
 
 
