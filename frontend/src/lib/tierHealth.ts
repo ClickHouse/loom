@@ -36,7 +36,7 @@ const KIND_WORD: Record<string, string> = {
   timeout: "timed out",
   disk: "disk full",
   git_lock: "git lock held",
-  file_cap: "file over its cap",
+  file_refused: "file refused",
   permission: "permission denied",
   cmake: "build configure failed",
   harness: "indexer failed",

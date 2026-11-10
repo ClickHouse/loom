@@ -167,13 +167,9 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("module", _MODULE_FAILED),
     # a relative submodule URL: the tier refuses the file transport it resolves to
     ("submodule_url", re.compile(r"transport 'file' not allowed", re.IGNORECASE)),
-    # a file a tier read is over the cap the server reads it under (`untrusted_files`)
-    (
-        "file_cap",
-        re.compile(
-            r"^FileRefused: .* is \d+ bytes; max \d+|\(code_scip_delta_max_nodes\)", re.MULTILINE
-        ),
-    ),
+    # a file the server refused to read (`untrusted_files`): over its cap, a link, not a
+    # regular file, or changed while read
+    ("file_refused", re.compile(r"^FileRefused: ", re.MULTILINE)),
     # A full disk also cuts a transfer short ("the remote end hung up"): before network.
     ("disk", re.compile(r"no space left on device|disk quota exceeded", re.IGNORECASE)),
     # the C/C++ harness's CMake configure failed: CMake's own last lines come before
@@ -300,12 +296,9 @@ def _where(text: str) -> str:
     return ", ".join(parts)
 
 
-# A checkout's own file the TypeScript tier reads under a fixed cap: its package.json
-# and the lockfiles it searches (`typescript_dependencies.LOCKFILES`).
-_CHECKOUT_FILE = re.compile(
-    r"/(?:package\.json|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock"
-    r"|bun\.lockb?) is \d+ bytes"
-)
+# The checkout's own files the TypeScript tier reads under a fixed cap (`untrusted_files`).
+_CHECKOUT_FILE = re.compile(r"/(?:package\.json|yarn\.lock) is \d+ bytes")
+_OVER_CAP = re.compile(r" is \d+ bytes; max \d+")
 
 
 def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
@@ -357,19 +350,25 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
             "fetches modules without a credential. The rest of the repository is indexed; "
             "the record clears on the next run that builds the modules it changes."
         )
-    if kind == "file_cap" and "(code_scip_delta_max_nodes)" in text:
+    if kind == "file_refused" and "(code_scip_delta_max_nodes)" in text:
         return (
             "The compiler tier's delta holds more JSON values than its cap: raise "
             "LOOM_CODE_SCIP_DELTA_MAX_NODES with LOOM_CODE_SCIP_DELTA_FILE_MAX_MB, within "
             "the memory the sizing in code-index-operations.md gives."
         )
-    if kind == "file_cap" and _CHECKOUT_FILE.search(text):
+    if kind == "file_refused" and _CHECKOUT_FILE.search(text):
         return (
             "A file of the checkout is larger than the tier reads (the error names it): a "
-            "package.json is read up to 1 MiB and a lockfile up to 64 MiB, caps no setting "
+            "package.json is read up to 1 MiB and a yarn.lock up to 64 MiB, caps no setting "
             "changes. The tier retries when the repository's file is smaller."
         )
-    if kind == "file_cap":
+    if kind == "file_refused" and not _OVER_CAP.search(text):
+        return (
+            "The tier refused a file it reads because it is a link, not a regular file, or "
+            "changed while it was read (the error names it and which): the repository's "
+            "file, or what its job wrote, is what to change. It recurs every pass until then."
+        )
+    if kind == "file_refused":
         return (
             "The compiler tier's delta is larger than its cap (the error gives both in "
             "bytes): raise LOOM_CODE_SCIP_DELTA_FILE_MAX_MB (MiB) with "
@@ -396,11 +395,10 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
         )
     if kind == "git_lock":
         return (
-            "Another git process holds a lock in the checkout or mirror the error names "
-            "(often index.lock): "
-            "let it finish, or delete the lock file the error names once no git process "
-            "runs there. Start no shell or agent session inside a checkout under the code "
-            "repos root: a `git status` there takes the same lock."
+            "Another git process holds a lock file in the checkout or mirror the error "
+            "names (often index.lock): let it finish, or delete the lock once no git "
+            "process runs there. Start no shell or agent session inside a checkout under "
+            "the code repos root: a `git status` there takes the same lock."
         )
     if kind == "harness":
         return "The indexer failed: the error holds the tail of its output."
@@ -420,7 +418,7 @@ REASONS: dict[str, str] = {
     "timeout": "timed out",
     "disk": "disk full",
     "git_lock": "git lock held",
-    "file_cap": "file over its cap",
+    "file_refused": "file refused",
     "permission": "permission denied",
     "cmake": "build configure failed",
     "harness": "indexer failed",

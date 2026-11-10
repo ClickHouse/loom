@@ -666,14 +666,14 @@ def test_a_delta_over_its_cap_is_recorded_with_its_sizes_and_the_setting_to_rais
     text = recorder.error_text(refused)
     assert text == "FileRefused: /w/scip_full_x/delta.json is 545908635 bytes; max 536870912"
     health = _failing_with(text)
-    assert health.kind == "file_cap" and tier_health.reason("file_cap") == "file over its cap"
+    assert health.kind == "file_refused" and tier_health.reason("file_refused") == "file refused"
     assert "LOOM_CODE_SCIP_DELTA_FILE_MAX_MB (MiB)" in health.fix
     nodes = FileRefused("/w/d.json holds 9 `{`/`[`/`,` bytes; max 8 (code_scip_delta_max_nodes)")
     nodes_health = _failing_with(recorder.error_text(nodes))
-    assert nodes_health.kind == "file_cap"
+    assert nodes_health.kind == "file_refused"
     assert nodes_health.fix.startswith("The compiler tier's delta holds more JSON values")
     # a checkout's own file over its fixed cap: nothing to raise
-    for name in ("package.json", "yarn.lock", "pnpm-lock.yaml", "package-lock.json"):
+    for name in ("package.json", "yarn.lock"):
         manifest = FileRefused(f"/r/co/{name} is 99999999 bytes; max 1048576")
         fix = _failing_with(recorder.error_text(manifest)).fix
         assert fix.startswith("A file of the checkout") and "LOOM_" not in fix, name
@@ -688,3 +688,16 @@ def test_a_go_module_that_needs_a_private_module_says_so() -> None:
     health = _failing_with(error)
     assert health.kind == "module"
     assert "private repository" in health.fix and "without a credential" in health.fix
+
+
+def test_a_linked_or_changed_file_reads_refused_with_its_own_fix() -> None:
+    from server.code.app.index.untrusted_files import FileRefused
+
+    for text in (
+        "/w/delta.json is a symlink or a symlink loop; not read",
+        "/r/co/package.json is not a regular file; not read",
+        "/w/delta.json changed while it was read",
+    ):
+        health = _failing_with(recorder.error_text(FileRefused(text)))
+        assert health.kind == "file_refused", text
+        assert health.fix.startswith("The tier refused a file it reads"), text
