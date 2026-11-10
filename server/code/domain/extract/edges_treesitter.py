@@ -54,7 +54,7 @@ from __future__ import annotations
 
 import bisect
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -1763,13 +1763,6 @@ def _base_rows(
     return [c for c in name_table.get(bare, []) if c[2] not in _NOT_A_BASE_KIND]
 
 
-def _first_per_name[T](pairs: Iterable[tuple[str, T]]) -> dict[str, T]:
-    out: dict[str, T] = {}
-    for qn, row in pairs:
-        out.setdefault(qn, row)
-    return out
-
-
 def _with_local_rows(
     candidates: list[tuple[str, str, str]], local: list[Symbol],
 ) -> list[tuple[str, str, str]]:
@@ -2728,9 +2721,9 @@ class _CallResolver:
 
     def _local_rows(self, bare: str) -> dict[str, Symbol]:
         """The file's first definition of `bare` per qualified name."""
-        return self._once(("local rows", bare), lambda: _first_per_name(
-            (s.qualified_name, s) for s in self.local_by_name.get(bare, [])
-        ))
+        return self._once(("local rows", bare), lambda: {
+            s.qualified_name: s for s in reversed(self.local_by_name.get(bare, []))
+        })
 
     def _local_class_name(self, name: str) -> bool:
         """Does the file's name index hold a class row under `name`?"""
@@ -3288,12 +3281,12 @@ class _CallResolver:
         return self._resolve_repo_wide(caller, name, bare, line, receiver)
 
     def _repo_wide_pool(
-        self, candidates: list[tuple[str, str, str]], bare_call: bool, member: bool,
+        self, candidates: list[tuple[str, str, str]], bare_call: bool, outside_this: bool,
     ) -> list[tuple[str, str, str]]:
         """Rung 3's candidates before the caller is left out: field-based for a script
-        call (a member call names a property, a bare call a binding), and of the caller's
-        language."""
-        if self.script and member:
+        call on a receiver other than `this` or `super` (`outside_this`; a member call names
+        a property, a bare call a binding), and of the caller's language."""
+        if self.script and outside_this:
             candidates = self.field_based(not bare_call, candidates)
         if self.present is not None and not self.python:
             # A TypeScript, Go or shell call binds a definition of its own
@@ -3389,10 +3382,10 @@ class _CallResolver:
             return None  # `parts.size()` on a std::vector is nobody's here
         # 3) unique repo-wide name: what narrows the candidates depends on the call
         # only through these, so a file of many calls narrows each name once
-        member = receiver not in ("this", "super")
+        outside_this = receiver not in ("this", "super")  # field-based narrowing applies
         pool = self._of(
-            candidates, ("rung 3", receiver == "", member),
-            lambda: self._repo_wide_pool(candidates, receiver == "", member),
+            candidates, ("rung 3", receiver == "", outside_this),
+            lambda: self._repo_wide_pool(candidates, receiver == "", outside_this),
         )
         skip = caller.qualified_name if receiver not in ("", "this", "super") else ""
         one = self._repo_wide_one(pool, skip)

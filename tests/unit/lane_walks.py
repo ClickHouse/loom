@@ -434,6 +434,12 @@ WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("python-decorator-methods", _py_decorator, _many_methods("@app.route('/")),
     ("starlette-route-methods", _py_routes, _many_methods("import starlette.routing\nRoute('/")),
     ("python-classes", _python_parse, _numbered("class C{}: pass\n")),
+    (
+        "python-fixture-parse",
+        _python_parse,
+        _callers("", "def f(): pass\n", "def g{}(request): request.getfixturevalue('x')\n"),
+    ),
+    ("rust-trait-impls", _rust_parse, _numbered("struct S{0};\nimpl T for S{0} {{}}\n")),
     ("python-same-named-calls", _edges("a.py"), _callers("", "def a(): pass\n", "a()\n")),
     ("python-callers", _edges("a.py"), _callers("", "def a(): pass\n", "def g{}(): a()\n")),
     (

@@ -232,11 +232,12 @@ def test_a_table_defined_in_two_stores_binds_by_the_islands_dialect(
 
 def test_a_long_callee_is_read_at_its_ends() -> None:
     """A callee longer than 128 bytes gives its client cue from its first and last 64
-    bytes: a name at the end still reads, one in the middle does not."""
+    bytes: a name at either end still reads, one in the middle does not."""
     middle = ".a" * 100
     src = (
         f"x{middle}.queryClickhouse(`SELECT a FROM t`);\n"
+        f"queryClickhouse{middle}(`SELECT a FROM t`);\n"
         f"x{middle}.queryClickhouse{middle}(`SELECT a FROM t`);\n"
     ).encode()
     islands = find_islands(parse_typescript("src/a.ts", src))
-    assert [i.dialect for i in islands] == ["clickhouse", "sql"]
+    assert [i.dialect for i in islands] == ["clickhouse", "clickhouse", "sql"]
