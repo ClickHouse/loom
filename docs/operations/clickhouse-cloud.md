@@ -41,11 +41,13 @@ root. Convert a root fetched as DER first:
 openssl x509 -inform DER -in root.der -out root.pem
 ```
 
-Check the bundle against the chain the server sends, trusting nothing but the bundle, as
-the driver does (`-no-CAstore` needs version 3 of `openssl`):
+Concatenate the `root.pem` files into `ca.crt`, the file the Secret holds. Check it against
+the chain the server sends, trusting nothing but the bundle, as the driver does: `leaf.pem`
+is the first certificate `s_client -showcerts` prints and `chain.pem` the rest
+(`-no-CAstore` needs version 3 of `openssl`):
 
 ```bash
-openssl verify -no-CApath -no-CAstore -CAfile roots.pem -untrusted chain.pem \
+openssl verify -no-CApath -no-CAstore -CAfile ca.crt -untrusted chain.pem \
   -verify_hostname <postgres host> leaf.pem
 ```
 
