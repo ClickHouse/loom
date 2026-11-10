@@ -855,7 +855,7 @@ def test_a_cmake_record_cut_before_cmakes_error_quotes_the_line_above_the_marker
     assert tier_health.error_line("cmake", cut) == "-- Configuring incomplete, errors occurred!"
 
 
-def test_the_records_fix_and_the_problems_fix_read_the_same_text() -> None:
+def test_the_record_reads_the_whole_output_and_the_problem_the_kept_tail() -> None:
     private = (
         "skip a: go mod download failed: If this is a private repository, see "
         "https://go.dev/doc/faq#git_https for additional information."
@@ -865,8 +865,8 @@ def test_the_records_fix_and_the_problems_fix_read_the_same_text() -> None:
     recorder._FAILING = (recorder.FailingTier("o", "code-a", health, 0, "o/a", "main", False),)
     (row,) = recorder.problem_rows(T0 + timedelta(hours=3)) or ()
     assert row["fix"] == tier_health.fix_for(health.kind, health.error, name_where=False)
-    assert health.fix == tier_health.fix_for(health.kind, health.error)
-    assert "private repository" not in health.fix  # both read the kept tail
+    assert "private repository" not in row["fix"]  # the problem reads the kept tail
+    assert "private repository" in health.fix  # the record, the whole output
 
 
 def _refusal(call: Any) -> str:
@@ -916,3 +916,11 @@ def test_each_real_refusal_gets_its_own_fix(tmp_path: Any, monkeypatch: pytest.M
     assert fix(_refusal(lambda: uf.read_delta(tmp_path / "fifo.json"))).startswith(
         "The tier refused a file it reads"
     )
+
+
+def test_an_ssh_refusal_before_the_kept_tail_keeps_its_fix_on_the_record() -> None:
+    refusal = "fetch git@github.com:o/r.git: git@github.com: Permission denied (publickey)."
+    retries = "\n".join(f"retrying submodule clone {i} of contrib/x" for i in range(40))
+    health = _failing_with(f"{refusal}\n{retries}")
+    assert health.kind == "credential" and refusal not in health.error
+    assert health.fix.startswith("The ssh key was refused")

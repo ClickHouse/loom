@@ -68,7 +68,7 @@ describe("sharedHealth", () => {
     }
   });
 
-  it("sends the page's own person's token, and no other's", async () => {
+  it("sends the page owner's token, and no other person's", async () => {
     const { sharedHealth } = await import("./sharedReads");
     const part = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
     const token = (sub: string) => `${part({ alg: "HS256" })}.${part({ sub, org: "o" })}.sig`;

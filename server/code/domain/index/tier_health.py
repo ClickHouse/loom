@@ -106,8 +106,9 @@ def failed(prev: TierHealth | None, tier: str, error: str, now: datetime) -> Tie
         state="failing",
         kind=kind,
         error=kept,
-        # from the text kept, which the health problem builds its fix from too
-        fix=fix_for(kind, kept),
+        # from the whole output: the cause (an ssh refusal, a private module) and the
+        # host it names may sit before the kept tail, which the health problem reads
+        fix=fix_for(kind, text),
         failing_since=(ongoing.failing_since if ongoing else "") or at,
         last_failed_at=at,
         failed_passes=(ongoing.failed_passes if ongoing else 0) + 1,

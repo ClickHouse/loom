@@ -850,11 +850,10 @@ The record is read where each reader already looks:
   five, with its reason, and each distinct fix once. `loom doctor`, which reads with the
   deployment's own credentials, also names each entry it lists, up to five, as
   repository@branch (org/namespace) with the error line that says why; `code.repos`
-  names the rest. A platform admin's token reads the
-  same for every entry that is not
-  [restricted](../architecture/security.md#restricted-namespaces); a restricted one
-  reads as "a restricted entry", as does one whose classification cannot be read. Any
-  other caller reads no entry, since `/v1/health` answers without a token;
+  names the rest. A platform admin's token reads the same for every entry that is not
+  [restricted](../architecture/security.md#restricted-namespaces); a restricted one reads
+  as "a restricted entry", as does one whose classification cannot be read. Any other
+  caller reads no entry, since `/v1/health` answers without a token;
 - for push alerting, the `loom.code.tier_failing` and `loom.code.tier_lag_commits`
   gauges carry each tier the `code_tier_failing` problem reports
   ([telemetry](../features/observability/telemetry.md)), with an alert in
