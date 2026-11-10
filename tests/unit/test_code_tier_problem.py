@@ -657,3 +657,26 @@ def test_cmakes_error_line_is_the_one_that_says_what_failed() -> None:
     assert tier_health.error_line("cmake", "clang: not found\n>> cmake configure failed") == (
         "clang: not found"
     )
+
+
+def test_a_delta_over_its_cap_is_recorded_with_its_sizes_and_the_setting_to_raise() -> None:
+    from server.code.app.index.untrusted_files import FileRefused
+
+    refused = FileRefused("/w/scip_full_x/delta.json is 545908635 bytes; max 536870912")
+    text = recorder.error_text(refused)
+    assert text == "FileRefused: /w/scip_full_x/delta.json is 545908635 bytes; max 536870912"
+    health = _failing_with(text)
+    assert health.kind == "file_cap" and tier_health.reason("file_cap") == "file over its cap"
+    assert "LOOM_CODE_SCIP_DELTA_FILE_MAX_MB" in health.fix
+    nodes = FileRefused("/w/d.json holds 9 `{`/`[`/`,` bytes; max 8 (code_scip_delta_max_nodes)")
+    assert tier_health.classify(recorder.error_text(nodes)) == "file_cap"
+
+
+def test_a_go_module_that_needs_a_private_module_says_so() -> None:
+    error = (
+        "TierDegraded: data-plane-management: go mod download failed: If this is a private "
+        "repository, see https://go.dev/doc/faq#git_https for additional information."
+    )
+    health = _failing_with(error)
+    assert health.kind == "module"
+    assert "private repository" in health.fix and "without a credential" in health.fix

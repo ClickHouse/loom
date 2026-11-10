@@ -167,6 +167,13 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("module", _MODULE_FAILED),
     # a relative submodule URL: the tier refuses the file transport it resolves to
     ("submodule_url", re.compile(r"transport 'file' not allowed", re.IGNORECASE)),
+    # a file a tier read is over the cap the server reads it under (`untrusted_files`)
+    (
+        "file_cap",
+        re.compile(
+            r"^FileRefused: .* is \d+ bytes; max \d+|\(code_scip_delta_max_nodes\)", re.MULTILINE
+        ),
+    ),
     # A full disk also cuts a transfer short ("the remote end hung up"): before network.
     ("disk", re.compile(r"no space left on device|disk quota exceeded", re.IGNORECASE)),
     # the C/C++ harness's CMake configure failed: CMake's own last lines come before
@@ -335,6 +342,20 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
         )
     if kind == "disk":
         return "The disk is full: free space under the code-index work directory."
+    if kind == "module" and "if this is a private repository" in text.lower():
+        return (
+            "A Go module did not build: a module it requires is in a private repository "
+            "(often this repository's own, through a vanity import path), and the Go tier "
+            "fetches modules without a credential. The rest of the repository is indexed; "
+            "the record clears on the next run that builds the modules it changes."
+        )
+    if kind == "file_cap":
+        return (
+            "A file the tier reads is over its cap (the error names the file, its size and "
+            "the cap): for a compiler-tier delta, raise LOOM_CODE_SCIP_DELTA_FILE_MAX_MB or "
+            "LOOM_CODE_SCIP_DELTA_MAX_NODES, whichever the error names, within the memory "
+            "the sizing in code-index-operations.md gives."
+        )
     if kind == "module":
         return (
             "A Go module did not build: the error names it and why. The rest of the "
@@ -379,6 +400,7 @@ REASONS: dict[str, str] = {
     "timeout": "timed out",
     "disk": "disk full",
     "git_lock": "git lock held",
+    "file_cap": "file over its cap",
     "permission": "permission denied",
     "cmake": "build configure failed",
     "harness": "indexer failed",

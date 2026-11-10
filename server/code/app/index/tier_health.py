@@ -20,6 +20,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from server.code.app.index.gitrepo import GitError
+from server.code.app.index.untrusted_files import FileRefused
 from server.code.domain.index import tier_health
 from server.core.datetimes import utc_now
 from server.core.errors import caller_text
@@ -39,9 +40,10 @@ class ToolOutputError(RuntimeError):
 
 def error_text(error: BaseException | str) -> str:
     """The record's error, which `code.index_status` shows a viewer: a tool's or git's
-    output whole (redacted later), a file error with the file it names, any other
-    exception's kind, since its text can carry a statement or the server's address."""
-    if isinstance(error, ToolOutputError | GitError) or (
+    output whole (redacted later), a refused file's own words (its sizes and cap), a
+    file error with the file it names, any other exception's kind, since its text can
+    carry a statement or the server's address."""
+    if isinstance(error, ToolOutputError | GitError | FileRefused) or (
         isinstance(error, OSError) and error.filename is not None
     ):
         return f"{type(error).__name__}: {error}"
