@@ -47,7 +47,7 @@ This copy names no release, so its commands do not run as they are. Follow the
 ## 1. Install the release
 
 ```sh
-curl -fsSL "https://github.com/ClickHouse/loom/releases/download/v<version>/install.sh" | sh
+curl -fsSLO "https://github.com/ClickHouse/loom/releases/download/v<version>/install.sh" && sh install.sh
 ```
 
 The installer verifies the bundle's SHA-256, installs under `~/.loom`, starts the stack

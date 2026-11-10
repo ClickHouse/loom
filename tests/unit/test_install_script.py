@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -745,3 +746,42 @@ def test_an_unreachable_docker_daemon_is_named_before_any_pull(
     assert "cannot reach the Docker daemon" in result.stderr
     assert Path(f"{docker}.log").read_text().splitlines() == ["info"]  # no pull
     assert not Path(installer_env["LOOM_INSTALL_DIR"]).exists()  # nor any file written
+
+
+# `install.sh` piped into a shell, also across a `\` line break: what a page
+# must never tell a user to run.
+_PIPED_INSTALLER = re.compile(r"install\.sh\"?\s*(?:\\\n\s*)?\\?\|")
+
+
+def test_no_page_pipes_the_installer_into_sh() -> None:
+    """`curl -fsSL …/install.sh | sh` exits 0 when the download fails: `sh` runs the
+    empty script curl wrote. Every page downloads it first, then runs it."""
+    pages = [ROOT / "README.md", ROOT / "install.sh", *(ROOT / "docs").rglob("*.md")]
+    pages += (ROOT / ".claude" / "skills").rglob("*.md")
+    piped = [str(p.relative_to(ROOT)) for p in pages if _PIPED_INSTALLER.search(p.read_text())]
+    assert piped == []
+
+
+def test_the_documented_one_liner_fails_on_a_failed_download(tmp_path: Path) -> None:
+    """The README's command, with a curl that answers a 404 as `curl -f` does: the
+    line exits non-zero and installs nothing."""
+    (line,) = [
+        line for line in (ROOT / "README.md").read_text().splitlines() if "install.sh" in line
+    ]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    curl = bin_dir / "curl"
+    curl.write_text(
+        "#!/bin/sh\necho 'curl: (22) The requested URL returned error: 404' >&2\nexit 22\n"
+    )
+    curl.chmod(0o755)
+    result = subprocess.run(
+        ["sh", "-c", line],
+        cwd=tmp_path,
+        env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "HOME": str(tmp_path)},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 22, result
+    assert "404" in result.stderr
+    assert not (tmp_path / ".loom").exists()
