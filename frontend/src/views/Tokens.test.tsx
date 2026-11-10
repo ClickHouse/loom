@@ -237,6 +237,19 @@ describe("the token form", () => {
     expect(screen.getByText(/Tick the namespaces this token reads/)).toBeInTheDocument();
   });
 
+  it("only these: each row shows your role, and the ordered list offers roles up to it", async () => {
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await screen.findByRole("checkbox", { name: "Read ns-b" }, WAIT);
+    const name = screen.getAllByText("ns-b").find((el) => el.tagName === "SPAN") as HTMLElement;
+    expect(name.parentElement).toHaveTextContent("Your role: Writer");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
+    const options = await openOptions(/^Role on ns-b$/);
+    expect(within(options).getByText("Writer")).toBeInTheDocument();
+    expect(within(options).getByText("Viewer")).toBeInTheDocument();
+    expect(within(options).queryByText("Admin")).not.toBeInTheDocument();
+  });
+
   it("only these: one ticked namespace offers nothing to reorder", async () => {
     render(<Setup />);
     await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));

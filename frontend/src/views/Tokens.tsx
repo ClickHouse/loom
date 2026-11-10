@@ -219,8 +219,8 @@ export function TokensSection({
 }
 
 /** The ticked namespaces as one ordered list: number 1 is searched first. Each row moves by
- *  its Move up and Move down buttons, and on a fine pointer (`touch` false) by dragging its
- *  grip; its role is at most the person's own. */
+ *  its Move up and Move down buttons, and, where the pointer is not coarse and two or more
+ *  rows are listed, by dragging its grip; its role is at most the person's own. */
 function SearchOrder({
   order,
   label,
@@ -239,7 +239,7 @@ function SearchOrder({
   onRole: (ns: string, r: GrantRole) => void;
   onMove: (ns: string, to: number) => void;
   /** A touch screen: no grip, since a long-press drag is not what a touch user expects; the
-   *  arrows are the way there. */
+   *  arrows move the rows. */
   touch: boolean;
 }) {
   const titleId = useId();
@@ -582,6 +582,16 @@ function TokenForm({
   const nothingListed = mine !== null && eligibleNs.length === 0 && eligibleRepos.length === 0;
   // Not before the memberships load: the form would describe a token it cannot know.
   const canCreate = rows !== null && (reach === "everything" || selectedNs.length > 0);
+  // What the ticked list means, and with two or more rows how to reorder it.
+  const reorderHint = touch
+    ? "Use a row's arrows to change the order."
+    : "Drag a row by its grip, or use its arrows, to change the order.";
+  const listHint =
+    selectedNs.length === 0
+      ? "Tick the namespaces this token reads. Nothing else, whatever you join later."
+      : selectedNs.length === 1
+        ? "1 ticked, and nothing else, whatever you join later. Number 1 is searched first."
+        : `${selectedNs.length} ticked, and nothing else, whatever you join later. Number 1 is searched first. ${reorderHint}`;
 
   return (
     <section
@@ -717,11 +727,7 @@ function TokenForm({
               Create namespace
             </Button>
           </div>
-          <p className="text-xs text-text-muted">
-            {selectedNs.length === 0
-              ? "Tick the namespaces this token reads. Nothing else, whatever you join later."
-              : `${selectedNs.length} ticked, and nothing else, whatever you join later. Number 1 is searched first.${selectedNs.length > 1 ? ` ${touch ? "Use a row's arrows" : "Drag a row by its grip, or use its arrows,"} to change the order.` : ""}`}
-          </p>
+          <p className="text-xs text-text-muted">{listHint}</p>
         </fieldset>
       )}
 
