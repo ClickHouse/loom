@@ -32,10 +32,10 @@ from array import array
 from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Annotated, Any, cast
 
 import pydantic_core
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from server.code.app.index.scip_delta import ScipDelta, ScipFile
 from server.code.app.index.untrusted_files import FileRefused, open_regular
@@ -334,6 +334,19 @@ class DeltaFile:
 # kept.
 _HEADER = frozenset({"delta_version", "commit", "base", "features"})
 _READ = _HEADER | {"files", "deleted_files"}
+# each header field as `ScipDelta` checks it, so a value past its cap is refused as it
+# is read, not held while the entries are parsed
+_HEADER_FIELDS: dict[str, TypeAdapter[Any]] = {
+    key: TypeAdapter(Annotated[ScipDelta.model_fields[key].annotation, ScipDelta.model_fields[key]])
+    for key in _HEADER
+}
+
+
+def _header_value(key: str, value: Any) -> Any:
+    try:
+        return _HEADER_FIELDS[key].validate_python(value)
+    except ValidationError:
+        raise ValueError(f"delta invalid: {key!r}") from None
 
 
 def _deleted_path(value: Any) -> str:
@@ -408,7 +421,7 @@ def _parse(values: _Values) -> _Parsed:
                 out.chars.append(len(text))
                 del text
         elif key in _HEADER:
-            out.header[key] = values.value()
+            out.header[key] = _header_value(key, values.value())
         else:
             values.span()  # a key the model ignores: neither it nor its value is kept
     if not values.at_end():

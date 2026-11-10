@@ -371,7 +371,7 @@ memory the workers process has. The full index of such a tree takes about an hou
     the densest default round from a source checkout:
 
     ```bash
-    .venv/bin/python -c "import json, resource, tempfile, pathlib; from server.settings import settings; from server.code.app.index.delta_file import open_delta; p = pathlib.Path(tempfile.mkdtemp()) / 'delta.json'; n = settings.code_scip_delta_round_max_nodes // 2 - 10; p.write_text('{\"commit\":\"c\",\"files\":[{\"path\":\"a\",\"symbols\":[' + ','.join(['{\"qualified_name\":\"\"}'] * n) + ']}]}'); list(open_delta(p).rounds(100, lambda x: True)); print(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss >> 10, 'MiB peak RSS')"
+    .venv/bin/python -c "import resource, tempfile, pathlib; from server.settings import settings; from server.code.app.index.delta_file import open_delta; p = pathlib.Path(tempfile.mkdtemp()) / 'delta.json'; n = settings.code_scip_delta_round_max_nodes // 2 - 10; p.write_text('{\"commit\":\"c\",\"files\":[{\"path\":\"a\",\"symbols\":[' + ','.join(['{\"qualified_name\":\"\"}'] * n) + ']}]}'); list(open_delta(p).rounds(100, lambda x: True)); print(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss >> 10, 'MiB peak RSS')"
     ```
 
   An invalid delta fails the pass with a short `delta invalid: <reason>` naming its

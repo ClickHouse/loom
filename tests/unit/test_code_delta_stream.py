@@ -655,3 +655,20 @@ def test_a_header_past_its_small_caps_is_refused(
     with pytest.raises(pydantic.ValidationError) as e:
         ScipDelta.model_validate_json(json.dumps(body))
     assert e.value.errors()[0]["loc"][0] == next(iter(head))
+
+
+def test_a_header_past_its_caps_is_refused_before_the_entries_are_parsed(
+    tmp_path: Path, caps: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The header is checked as each value is read, so an oversized one is not held
+    while the `files` array is walked."""
+    from server.code.app.index import delta_file
+
+    parsed: list[int] = []
+    real = delta_file._entry
+    monkeypatch.setattr(delta_file, "_entry", lambda text, i: parsed.append(i) or real(text, i))
+    path = tmp_path / "delta.json"
+    _write(path, 3, features=["x"] * 17)
+    with pytest.raises(ValueError, match="delta invalid: 'features'"):
+        open_delta(path)
+    assert parsed == []
