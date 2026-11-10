@@ -32,7 +32,7 @@ from server.core.sql_literal import sql_string
 # back its narrower grants over N's (`needs_rewrite`).
 ENTITY_VERSION = 2
 
-# ClickHouse error codes this plane branches on.
+# ClickHouse error codes the app, the store and refusal_cause share.
 BAD_ARGUMENTS = 36
 ACCESS_DENIED = 497
 

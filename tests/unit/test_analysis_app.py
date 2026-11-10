@@ -1088,6 +1088,11 @@ _CLOUD_PASSWORD_REFUSAL = (
             "Code 180 (THERE_IS_NO_PROFILE)",
             "server log",
         ),
+        (
+            "Code: 36. DB::Exception: Unknown format. (BAD_ARGUMENTS) (version 1)",
+            "Code 36 (BAD_ARGUMENTS)",
+            "server log",
+        ),
         ("unexpected answer", "RuntimeError", "server log"),
     ],
 )
