@@ -6958,15 +6958,15 @@ async def test_a_connection_lost_in_a_transaction_is_503_not_the_drivers_error(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("closed", [True, False])
+@pytest.mark.parametrize("block", ["transaction", "rolled_back"])
 async def test_the_drivers_own_error_on_a_lost_connection_is_503(
-    monkeypatch: pytest.MonkeyPatch, closed: bool
+    monkeypatch: pytest.MonkeyPatch, closed: bool, block: str
 ) -> None:
     """The server ended the connection between two statements: which error the next one
     raises depends on when the driver noticed. Its protocol caught mid-switch
     (InternalClientError) is an outage either way; any error once the connection reads
     closed is too."""
     import asyncpg
-    import asyncpg.exceptions._base as base
 
     from server.core import pg
 
@@ -6976,11 +6976,44 @@ async def test_the_drivers_own_error_on_a_lost_connection_is_503(
 
     _pg_pool(monkeypatch, _Ended())
     with pytest.raises(pg.PostgresUnavailableError) as raised:
-        async with pg.transaction():
+        async with getattr(pg, block)():
             if closed:
                 raise asyncpg.InterfaceError("connection is closed")
-            raise base.InternalClientError("cannot switch to state 15")
+            raise asyncpg.exceptions.InternalClientError("cannot switch to state 15")
     assert raised.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_a_commit_on_a_lost_connection_is_503_with_its_outcome_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncpg
+
+    from server.core import pg
+
+    class _Tx:
+        async def start(self) -> None:
+            return None
+
+        async def commit(self) -> None:
+            raise asyncpg.InterfaceError("connection is closed")
+
+        async def rollback(self) -> None:
+            return None
+
+    class _Ended(_PgConn):
+        def transaction(self) -> _Tx:
+            return _Tx()
+
+        def is_closed(self) -> bool:
+            return True
+
+    _pg_pool(monkeypatch, _Ended())
+    with pytest.raises(pg.PostgresUnavailableError) as raised:
+        async with pg.transaction():
+            pass
+    assert raised.value.status_code == 503
+    assert pg.may_have_committed(raised.value)
 
 
 @pytest.mark.asyncio

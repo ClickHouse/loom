@@ -258,9 +258,10 @@ def is_outage(e: BaseException) -> bool:
             asyncpg.exceptions.CannotConnectNowError,
             asyncpg.exceptions.AdminShutdownError,
             asyncpg.exceptions.CrashShutdownError,
-            # The driver's protocol lost track of a connection the server ended between
-            # its statements: never a caller's misuse (that is an InterfaceError).
-            asyncpg.exceptions._base.InternalClientError,
+            # An unexpected driver state (a protocol caught mid-switch by a connection the
+            # server ended, a stale schema cache): never a caller's misuse, which is an
+            # InterfaceError.
+            asyncpg.exceptions.InternalClientError,
             # A result type a later migration changed under a prepared statement: the
             # retry prepares it again.
             asyncpg.exceptions.InvalidCachedStatementError,
@@ -517,7 +518,7 @@ async def rolled_back() -> AsyncIterator[Any]:
         try:
             yield conn
         except Exception as e:
-            _raise_if_unavailable(e)
+            _raise_if_unavailable(e, lost=_lost(conn))
             raise
         finally:
             await _rollback(conn, tx)
@@ -533,7 +534,6 @@ async def _rollback(conn: Any, tx: Any) -> None:
     """Roll back within `_RELEASE_TIMEOUT_S`, never hiding the error that ended the
     block: a statement still in flight is cancelled first, and one that does not finish
     in time leaves the connection to `_release`, which has a bound of its own."""
-
     if _lost(conn):
         return  # nothing to roll back; a detached one fails any call (`_terminate`)
     try:
