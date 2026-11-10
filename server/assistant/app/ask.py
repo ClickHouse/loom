@@ -22,5 +22,6 @@ async def handle_assistant_ask(inp: AssistantAskInput) -> AssistantAskOutput:
         run_id=answer.run_id,
         citations=answer.citations,
         support=answer.support,
+        unknown_names=answer.unknown_names,
         model=service.current_definition().model,
     )

@@ -525,6 +525,64 @@ describe("AssistantChat", () => {
     expect(useStore.getState().pendingDocSourceUri).toBe("spec.pdf");
   });
 
+  it("opens a verified help citation's page on the Help view at its section, and links nothing in the answer", async () => {
+    const s = sse();
+    answers.push(() => s);
+    const { container } = render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    await ask("How do I revoke a token?");
+    const text = "[help:guides/tokens-and-grants.md § Tokens and grants > Revoke and rotate]";
+    const cited = [
+      {
+        kind: "help",
+        text,
+        verified: true,
+        reason: "",
+        ref: "guides/tokens-and-grants.md",
+        anchor: "revoke-and-rotate",
+      },
+      {
+        kind: "help",
+        text: "[help:guides/absent.md]",
+        verified: false,
+        reason: "no such page in this build's documentation",
+        ref: "guides/absent.md",
+        anchor: "",
+      },
+    ];
+    await act(async () => {
+      s.text(`Revoke it with loom revoke ${text} and see [help:guides/absent.md].`);
+      s.raw(citationsEvent(cited, "supported"));
+      s.done();
+    });
+    const sources = await screen.findByRole("list", { name: "Sources" });
+    expect(lastAnswer()).toHaveTextContent(text);
+    // The answer's text draws no link; the Sources entry opens the page in the dashboard.
+    expect(container.querySelector("a")).toBeNull();
+    expect(within(sources).getByText(/no such page in this build/)).toBeInTheDocument();
+    await userEvent.setup().click(within(sources).getByRole("button", { name: text.slice(1, -1) }));
+    expect(useStore.getState().view).toBe("help");
+    expect(window.location.search).toContain("page=guides%2Ftokens-and-grants.md");
+    expect(window.location.hash).toBe("#revoke-and-rotate");
+  });
+
+  it("names the op an answer may have invented in its label", async () => {
+    const s = sse();
+    answers.push(() => s);
+    render(<AssistantChat conversationKey={key()} namespace="team" blocked={null} />);
+    await ask("How do I pin a memory?");
+    const cited = [{ kind: "memory", text: "[memory:a/b/c@v3]", verified: true, reason: "", ref: "a/b/c", anchor: "" }];
+    await act(async () => {
+      s.text("Call `memory.frobnicate` [memory:a/b/c@v3].");
+      s.raw(
+        `data: ${JSON.stringify({ object: "loom.citations", id: "msg-1", choices: [], citations: cited, support: "unsupported", unknown_names: ["memory.frobnicate"] })}\n\n`,
+      );
+      s.done();
+    });
+    expect(await screen.findByTestId("assistant-support")).toHaveTextContent(
+      "Couldn't confirm: it names memory.frobnicate, which this Loom neither serves nor documents",
+    );
+  });
+
   it("marks an answer whose sources do not check out as unconfirmed", async () => {
     const s = sse();
     answers.push(() => s);

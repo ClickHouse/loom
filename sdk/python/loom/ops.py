@@ -5204,16 +5204,18 @@ class AssistantAskOutput(TypedDict, total=False):
     model: NotRequired[str]
     citations: NotRequired[list["AssistantCitation"]]
     support: NotRequired[str]
+    unknown_names: NotRequired[list[str]]
 
 
 class AssistantCitation(TypedDict, total=False):
     "One citation an answer wrote, as Loom checked it when the answer ended."
 
-    kind: Required[Literal["memory", "doc", "code", "sql"]]
+    kind: Required[Literal["memory", "doc", "help", "code", "sql"]]
     text: Required[str]
     verified: NotRequired[bool]
     reason: NotRequired[str]
     ref: NotRequired[str]
+    anchor: NotRequired[str]
 
 
 class AuditListInput(TypedDict, total=False):
@@ -9870,6 +9872,7 @@ class HelpGetOutput(TypedDict, total=False):
 class HelpOutlineEntry(TypedDict, total=False):
     section: Required[str]
     anchor: Required[str]
+    heading: NotRequired[str]
 
 
 class HelpSearchInput(TypedDict, total=False):

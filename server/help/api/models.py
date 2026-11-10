@@ -63,8 +63,13 @@ class HelpGetInput(BaseModel):
 
 
 class HelpOutlineEntry(BaseModel):
+    # The section's headings, `Title > A > B`.
     section: str
+    # Its heading's anchor on the rendered page.
     anchor: str
+    # Its heading as the page writes it, markup included: what a renderer matches to give
+    # the heading its anchor.
+    heading: str = ""
 
 
 class HelpGetOutput(BaseModel):

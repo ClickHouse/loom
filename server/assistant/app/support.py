@@ -28,12 +28,20 @@ _CALLS_S = 3.0  # not a setting: a fraction of the citation checks' bound
 
 
 async def answer_support(
-    checked: list[Checked], text: str, *, org: str, run_id: str, subject: str
+    checked: list[Checked],
+    text: str,
+    *,
+    org: str,
+    run_id: str,
+    subject: str,
+    unknown_names: list[str] | None = None,
 ) -> str:
     """The answer's support: `supported`, `unsupported`, `unchecked` or `none`."""
     citation_codes = [c.code for c in checked]
     # A cited answer, an empty one or an abstention is decided without its calls.
-    needs_calls = not citation_codes and text.strip() and not rule.is_abstention(text)
+    needs_calls = (
+        not citation_codes and not unknown_names and text.strip() and not rule.is_abstention(text)
+    )
     calls = await _calls(org, run_id, subject) if needs_calls else None
     return rule.support_of(
         citation_codes,
@@ -41,6 +49,7 @@ async def answer_support(
         calls=calls,
         citable=ASSISTANT_CITABLE_OPS,
         no_data=ASSISTANT_NO_NAMESPACE_DATA_OPS,
+        unknown_names=unknown_names,
     )
 
 

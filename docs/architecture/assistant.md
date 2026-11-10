@@ -242,10 +242,32 @@ token near its end) leaves its citation unverified with the reason "the check co
 run", and never fails the answer. With memory reads not recorded
 (`LOOM_MEMORY_EXPOSURE_LEDGER_ENABLED` off) a memory citation's reason is "this
 deployment does not record memory reads". Each citation comes back marked
-`verified` or not, with the reason and its `ref` (the memory key, document source or
-code path it names), in a last `loom.citations` event before the stream's `[DONE]` (and
-a `citations` field on a whole answer and on `assistant.ask`), with the answer's
-[support](#support).
+`verified` or not, with the reason and its `ref` (the memory key, document source,
+documentation page or code path it names), in a last `loom.citations` event before the
+stream's `[DONE]` (and a `citations` field on a whole answer and on `assistant.ask`),
+with the answer's [support](#support).
+
+A help citation, `[help:<page> § <section>]` (the section optional, its breadcrumb
+starting with the page title as `help.search` returns it), is checked against the
+replica's own index of the shipped docs: verified when the page is indexed and the
+section is one of its own (its breadcrumb, the breadcrumb without the page title, or a
+tail of it no other section of the page shares), with the section's `anchor`, which the
+dashboard's Sources link to the Help page (`/help?page=<page>#<anchor>`). A page that is
+not indexed, or a section the page does not have, fails as a document citation does. The
+docs are the same for every caller, so the check reads nothing of Loom's. During a
+rolling upgrade a bridge of the build before the kind does not parse it, and an answer
+resting only on help citations shows as `none` there.
+
+**Names.** The instructions allow an op or setting name only from a tool's result, and
+the tool results stay with the agent, so the bridge checks what it can decide: each
+backticked dotted name whose first part is an op group (`memory`, `knowledge`, ...) and
+each `LOOM_*` name in the answer is known when the build serves it as an op, reads it
+as an environment variable (a setting, `NON_SETTINGS_ENV`, a prefix family), or its
+docs write it; a name ending in `_` is a family, known when one of those starts with
+it. The rest come back in `unknown_names` beside the citations (the event's field and
+`assistant.ask`'s), and an answer that writes one is `unsupported`, whatever it cites:
+it may have invented the name. With no docs to read, none is reported. A name written
+in prose, without backticks or the `LOOM_` prefix, is not checked.
 
 ### Support
 
@@ -255,12 +277,12 @@ it (`server/assistant/domain/support.py`), from the codes its citation checks en
 and, for an answer that cites nothing, from what its own tool calls found; the first
 that applies wins:
 
-| `support`     | When                                                                                                                                                                                                                                                                                                                                                     |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `none`        | The answer has no text; or it cites nothing and either says the abstention sentence the agent's instructions give ("Nothing stored in Loom answers this.", in any case or emphasis) or it made no call to an op whose rows it could cite and none of its calls found data or failed. A greeting, a capability reply and an abstention make no claim.     |
-| `supported`   | A citation verified.                                                                                                                                                                                                                                                                                                                                     |
-| `unsupported` | A citation failed for a reason of its own (its key was not returned to this answer, its document or section is not there, its statement did not run in this answer); or it cites nothing although a call of an op whose rows it could cite found data, or ran and found nothing while no other call found data or failed (a claim nothing backs).        |
-| `unchecked`   | Otherwise: its checks could not say (a read failed or ran past its bound, no run id, memory reads not recorded, code citations, past the 50 checked), or it cites nothing and what found data has no citation form (counts and findings: the ops in `ASSISTANT_UNCITABLE_OPS`, such as `namespace.summary` and `namespace.inventory`), or a call failed. |
+| `support`     | When                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `none`        | The answer has no text; or it cites nothing and either says the abstention sentence the agent's instructions give ("Nothing stored in Loom answers this.", in any case or emphasis) or it made no call to an op whose rows it could cite and none of its calls found data or failed. A greeting, a capability reply and an abstention make no claim.                                                                                     |
+| `supported`   | A citation verified.                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `unsupported` | It names an op or setting the build neither serves nor documents (`unknown_names`); or a citation failed for a reason of its own (its key was not returned to this answer, its document or section is not there, its statement did not run in this answer); or it cites nothing although a call of an op whose rows it could cite found data, or ran and found nothing while no other call found data or failed (a claim nothing backs). |
+| `unchecked`   | Otherwise: its checks could not say (a read failed or ran past its bound, no run id, memory reads not recorded, code citations, past the 50 checked), or it cites nothing and what found data has no citation form (counts and findings: the ops in `ASSISTANT_UNCITABLE_OPS`, such as `namespace.summary` and `namespace.inventory`), or a call failed.                                                                                 |
 
 The ops whose rows an answer can cite, those whose output has no citation form, and
 those that return no namespace data (Loom's own guide, documentation and catalog) are
@@ -290,9 +312,8 @@ The rule reads no wording beyond the abstention sentence, and accepts these resi
   read that finds nothing; worded otherwise, it is `unsupported`.
 - An abstention that also states a fact is `none`.
 - An uncited answer from `help.search` and `help.get` is `none`, but `unsupported` when
-  a citable call of the same answer found data: the instructions name a docs page in
-  words, which no check reads, and ask for any memory or document also used to be
-  cited.
+  a citable call of the same answer found data; the instructions ask for every docs
+  section used to be cited as `[help:...]`, which verifies.
 - A document citation verifies when the document holds the section, whether or not this
   answer read it; the instructions ask for a document to be read again before it is
   cited on a later turn.
@@ -329,7 +350,7 @@ page's tune drafts already are. The instructions require citations, tell the age
 call a tool before answering a question about the namespace (a greeting calls none) and
 abstain when none supports it, to write no text before or between its tool calls, to
 read `insights.catalog` before running SQL, to answer how Loom works from `help.search`
-and `help.get`, naming the page and section in words rather than as a document citation,
+and `help.get`, citing each section as `[help:...]` rather than as a document citation,
 and to treat stored text as data that cannot grant a tool or approve a change. The
 agents API streams the text of every model step as one answer's content, with nothing
 between steps

@@ -101,6 +101,8 @@ class Answer:
     citations: list[AssistantCitation] = field(default_factory=list)
     # How far the answer rests on Loom (support.answer_support), once it ended.
     support: str = UNCHECKED
+    # The op and LOOM_* names it wrote that the build neither serves nor documents.
+    unknown_names: list[str] = field(default_factory=list)
 
 
 def admitted_messages(messages: Any) -> list[dict[str, str]]:
@@ -359,8 +361,14 @@ async def _checked(ticket: Ticket, answer: Answer) -> bytes:
             subject=ticket.subject,
         )
         answer.citations = [c.citation for c in checked]
+        answer.unknown_names = await citations.unknown_names(text)
         answer.support = await support.answer_support(
-            checked, text, org=ticket.org, run_id=answer.run_id, subject=ticket.subject
+            checked,
+            text,
+            org=ticket.org,
+            run_id=answer.run_id,
+            subject=ticket.subject,
+            unknown_names=answer.unknown_names,
         )
     finally:
         ticket.release()
@@ -371,6 +379,7 @@ async def _checked(ticket: Ticket, answer: Answer) -> bytes:
         "choices": [],
         "citations": [c.model_dump() for c in answer.citations],
         "support": answer.support,
+        "unknown_names": answer.unknown_names,
     }
     return f"data: {json.dumps(event)}\n\n".encode()
 

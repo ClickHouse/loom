@@ -1,5 +1,5 @@
 import { Table } from "@clickhouse/click-ui/Table";
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { CodeBlock } from "./CodeBlock";
 
 /**
@@ -7,9 +7,9 @@ import { CodeBlock } from "./CodeBlock";
  * else. The answer is model output that stored text can steer, so every piece of it is a
  * React text node: HTML in it shows as written, an image or a link shows as its Markdown
  * source, and a URL is not made a link. A citation (`[memory:<key>@v<version>]`,
- * `[doc:<uri> § <section>]`, `[code:<path>:<line>]`) shows as written; the answer's Sources
- * list links each one the server verified. A heading is drawn as a bold line, keeping the
- * page's heading outline its own.
+ * `[doc:<uri> § <section>]`, `[help:<page> § <section>]`, `[code:<path>:<line>]`) shows
+ * as written; the answer's Sources list links each one the server verified. A heading is
+ * drawn as a bold line, keeping the page's heading outline its own.
  */
 export function AnswerText({ text }: { text: string }) {
   return <div className="space-y-2 text-sm text-text break-words">{blocks(text)}</div>;
@@ -101,6 +101,12 @@ function startsTable(lines: string[], i: number): boolean {
 }
 
 function blocks(text: string): ReactNode[] {
+  return renderBlocks(text, inline);
+}
+
+/** `text`'s blocks, each line's inline Markdown drawn by `spans`: `inline` for an answer;
+ *  the Help page passes one that also draws links into the docs. */
+export function renderBlocks(text: string, spans: (line: string) => ReactNode[]): ReactNode[] {
   return parseBlocks(text).map((b, k) => {
     switch (b.kind) {
       case "code":
@@ -111,7 +117,7 @@ function blocks(text: string): ReactNode[] {
           <List key={k} className={`${b.ordered ? "list-decimal" : "list-disc"} pl-5 space-y-1`}>
             {b.items.map((item, j) => (
               <li key={j} className="whitespace-pre-wrap">
-                {inline(item)}
+                {spans(item)}
               </li>
             ))}
           </List>
@@ -123,11 +129,11 @@ function blocks(text: string): ReactNode[] {
           <div key={k} className="overflow-x-auto">
             <Table
               size="sm"
-              headers={b.header.map((h) => ({ label: inline(h) }))}
+              headers={b.header.map((h) => ({ label: spans(h) }))}
               rows={b.rows.map((row, j) => ({
                 id: String(j),
                 items: Array.from({ length: width }, (_, c) => ({
-                  label: <span className="whitespace-normal">{inline(row[c] ?? "")}</span>,
+                  label: <span className="whitespace-normal">{spans(row[c] ?? "")}</span>,
                 })),
               }))}
             />
@@ -137,7 +143,7 @@ function blocks(text: string): ReactNode[] {
       default:
         return (
           <p key={k} className={`whitespace-pre-wrap${b.strong ? " font-semibold" : ""}`}>
-            {inline(b.text)}
+            {spans(b.text)}
           </p>
         );
     }
@@ -148,18 +154,48 @@ function blocks(text: string): ReactNode[] {
 // (`[code:server/__init__.py:3]`); then code spans, strong, then emphasis. An underscore
 // emphasises only between word boundaries, so snake_case stays as written.
 const INLINE =
-  /(\[(?:memory|doc|code):[^\]\n]+\])|(`+)([^`]|[^`][\s\S]*?[^`])\2(?!`)|\*\*(?=\S)([\s\S]*?\S)\*\*|(?<!\w)__(?=\S)([\s\S]*?\S)__(?!\w)|\*(?=[^\s*])([\s\S]*?[^\s*])\*|(?<!\w)_(?=[^\s_])([\s\S]*?[^\s_])_(?!\w)/g;
+  /(\[(?:memory|doc|help|code):[^\]\n]+\])|(`+)([^`]|[^`][\s\S]*?[^`])\2(?!`)|\*\*(?=\S)([\s\S]*?\S)\*\*|(?<!\w)__(?=\S)([\s\S]*?\S)__(?!\w)|\*(?=[^\s*])([\s\S]*?[^\s*])\*|(?<!\w)_(?=[^\s_])([\s\S]*?[^\s_])_(?!\w)/g;
 
-/** A line's inline Markdown as React nodes; anything else, HTML included, is text. */
-export function inline(text: string): ReactNode[] {
+// With a link renderer, also `[label](target)` and `![alt](target)`, last: where a code span
+// or emphasis starts first it wins, and a link inside emphasis is read in its content. A
+// label is never empty and may hold one level of brackets, single-backtick code spans and a
+// backtick that closes nothing, so such a code span that opens in a label and closes past it
+// stays code. Links do not nest: a link inside a link's label is the link, and the outer
+// brackets and target are text; an image's alt shows a link in it as its label.
+const INLINE_LINKS = new RegExp(
+  `${INLINE.source}|(!?)\\[((?:[^\\[\\]\\n\`]|\`[^\`\\n]*\`|\`(?![^\`\\n]*\`)|\\[[^\\[\\]\\n]*\\])+)\\]\\(([^)\\s]+)(?:\\s+"[^"]*")?\\)`,
+  "g",
+);
+
+/** How a page draws one link: its label already drawn, whether it is an image, its target. */
+export type LinkRenderer = (label: ReactNode[], image: boolean, target: string) => ReactNode;
+
+/** A line's inline Markdown as React nodes; anything else, HTML included, is text. An
+ *  answer gets no links: only a caller that passes `link` (the Help page) draws them. */
+export function inline(text: string, link?: LinkRenderer): ReactNode[] {
   const out: ReactNode[] = [];
   let last = 0;
   let k = 0;
-  for (const m of text.matchAll(INLINE)) {
+  for (const m of text.matchAll(link ? INLINE_LINKS : INLINE)) {
     const at = m.index ?? 0;
     if (at > last) out.push(text.slice(last, at));
-    const [whole, citation, , code, strong, strong2, em, em2] = m;
-    if (citation) {
+    const [whole, citation, , code, strong, strong2, em, em2, image, label, target] = m;
+    if (link && label !== undefined) {
+      const isImage = image === "!";
+      let nested = false;
+      const inner: LinkRenderer = (l, img, t) => {
+        if (img) return link(l, img, t);
+        if (isImage) return l;
+        nested = true;
+        return link(l, img, t);
+      };
+      const drawn = inline(label, inner);
+      out.push(
+        <Fragment key={k++}>
+          {nested ? ["[", ...drawn, whole.slice(label.length + 1)] : link(drawn, isImage, target)}
+        </Fragment>,
+      );
+    } else if (citation) {
       out.push(
         <span key={k++} className="font-mono" data-citation="">
           {citation}
@@ -172,9 +208,9 @@ export function inline(text: string): ReactNode[] {
         </code>,
       );
     } else if (strong ?? strong2) {
-      out.push(<strong key={k++}>{inline(strong ?? strong2)}</strong>);
+      out.push(<strong key={k++}>{inline(strong ?? strong2, link)}</strong>);
     } else if (em ?? em2) {
-      out.push(<em key={k++}>{inline(em ?? em2)}</em>);
+      out.push(<em key={k++}>{inline(em ?? em2, link)}</em>);
     } else {
       out.push(whole);
     }

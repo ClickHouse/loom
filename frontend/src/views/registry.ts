@@ -15,6 +15,7 @@ export const VIEW_LOADERS: Record<View, () => Promise<unknown>> = {
   runs: () => import("./Runs"),
   graph: () => import("./Graph"),
   assistant: () => import("./Assistant"),
+  help: () => import("./Help"),
   browse: () => import("./Browse"),
   code: () => import("./Code"),
   tasks: () => import("./Tasks"),

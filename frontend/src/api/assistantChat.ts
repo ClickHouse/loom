@@ -14,13 +14,15 @@ export interface ChatMessage {
 }
 
 /** One citation of a finished answer, as the server checked it against Loom: `ref` is the
- *  memory key, document source or code path it names. */
+ *  memory key, document source, documentation page or code path it names. */
 export interface Citation {
   kind: string;
   text: string;
   verified: boolean;
   reason: string;
   ref: string;
+  /** A verified help citation's section anchor on its page; "" otherwise. */
+  anchor?: string;
 }
 
 /** How far an answer rests on what Loom holds (server/assistant/domain/support.py). */
@@ -37,8 +39,9 @@ export function supportOf(raw: unknown): Support {
 export interface ChatHandlers {
   /** Each piece of the answer's text, in order. */
   onText: (text: string) => void;
-  /** The answer's citations, checked, and its support, once its text is complete. */
-  onCitations?: (citations: Citation[], support: Support) => void;
+  /** The answer's citations, checked, its support, and the op and setting names it wrote
+   *  that the server neither serves nor documents, once its text is complete. */
+  onCitations?: (citations: Citation[], support: Support, unknownNames: string[]) => void;
 }
 
 function citationOf(raw: unknown): Citation | null {
@@ -50,6 +53,7 @@ function citationOf(raw: unknown): Citation | null {
     verified: raw.verified === true,
     reason: str(raw.reason),
     ref: str(raw.ref),
+    anchor: str(raw.anchor),
   };
 }
 
@@ -81,6 +85,7 @@ function readEvent(data: string, on: ChatHandlers, requestId: string): boolean {
     on.onCitations?.(
       all.map(citationOf).filter((c): c is Citation => c !== null),
       supportOf(chunk.support),
+      Array.isArray(chunk.unknown_names) ? chunk.unknown_names.filter((n) => typeof n === "string") : [],
     );
     return false;
   }

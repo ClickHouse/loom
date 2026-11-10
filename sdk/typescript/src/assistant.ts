@@ -29,12 +29,14 @@ export const DEFAULT_READ_TIMEOUT_MS = 300_000;
 
 /** One citation the answer wrote, whether Loom verified it, and why not. */
 export interface AssistantCitation {
-  kind: "memory" | "doc" | "code" | "sql" | string;
+  kind: "memory" | "doc" | "help" | "code" | "sql" | string;
   text: string;
   verified: boolean;
   reason: string;
-  /** The memory key, document source or code path it names ('' for sql). */
+  /** The memory key, document source, documentation page or code path it names ('' for sql). */
   ref: string;
+  /** A verified help citation's section anchor on its page; '' otherwise. */
+  anchor: string;
 }
 
 /** How far an answer rests on what Loom holds: `supported`, `unsupported`, `unchecked` or
@@ -51,6 +53,8 @@ export interface AssistantAnswer {
   support: AssistantSupport;
   promptTokens: number;
   completionTokens: number;
+  /** Op and LOOM_* names the answer wrote that the server neither serves nor documents. */
+  unknownNames: string[];
 }
 
 export type AssistantEvent = { type: "text"; text: string } | { type: "answer"; answer: AssistantAnswer };
@@ -129,6 +133,7 @@ export function assistantChat(transport: Transport): AssistantChat {
         support: "unchecked",
         promptTokens: 0,
         completionTokens: 0,
+        unknownNames: [],
       };
       try {
         for await (const data of events(res, transport.baseUrl, requestId, cut.signal, touch)) {
@@ -248,8 +253,10 @@ function fold(event: Record<string, unknown>, answer: AssistantAnswer): string {
       verified: c.verified === true,
       reason: String(c.reason ?? ""),
       ref: String(c.ref ?? ""),
+      anchor: String(c.anchor ?? ""),
     }));
     answer.support = supportOf(event.support);
+    answer.unknownNames = (Array.isArray(event.unknown_names) ? event.unknown_names : []).map(String);
     return "";
   }
   answer.runId ||= String(event.id ?? "");

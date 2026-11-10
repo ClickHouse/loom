@@ -354,3 +354,16 @@ def test_every_shipped_section_longer_than_one_read_is_read_to_its_end() -> None
             offset = got.next_offset
         assert read == whole.text, (whole.path, whole.anchor)
     docs.reset()
+
+
+def test_a_page_read_names_each_heading_as_the_page_writes_it(shipped_docs) -> None:
+    (shipped_docs / "features" / "links.md").write_text(
+        "# Links\n\nIntro.\n\n## See [the roles](roles.md)\n\nText.\n\nSetext\n------\n\nMore.\n"
+    )
+    docs.reset()
+    page = asyncio.run(docs.handle_help_get(HelpGetInput(path="features/links.md")))
+    assert [(e.heading, e.anchor) for e in page.sections] == [
+        ("Links", "links"),
+        ("See [the roles](roles.md)", "see-the-rolesrolesmd"),
+        ("Setext", "setext"),
+    ]

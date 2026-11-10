@@ -249,6 +249,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
+    "help.get": ("dashboard",),
     "inbox.list": ("dashboard",),
     "inbox.policy_list": ("dashboard",),
     "inbox.policy_set": ("dashboard",),

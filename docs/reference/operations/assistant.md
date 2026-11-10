@@ -28,5 +28,6 @@ Ask the Loom assistant one question about this namespace and get one cited answe
 | `model` | `str` | The model that answered. |
 | `citations` | `list[AssistantCitation]` | Each citation in `answer`, checked when the answer ended. |
 | `support` | `str` | How far the answer rests on what Loom holds: supported, unsupported, unchecked or none (no claim, such as a greeting or an abstention); default unchecked. |
+| `unknown_names` | `list[str]` | Op names the answer writes in backticks, and LOOM_* names anywhere in it, that this build neither serves nor documents: names it may have invented. |
 
 <!-- prettier-ignore-end -->

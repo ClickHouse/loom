@@ -62,23 +62,28 @@ def support_of(
     calls: RunCalls | None,
     citable: frozenset[str],
     no_data: frozenset[str],
+    unknown_names: list[str] | None = None,
 ) -> str:
     """The answer's support. `codes` are its citations' codes; `calls` what its tool calls
     left (None when they could not be read; never read for a cited, empty or abstaining
-    answer); `citable` the ops whose rows an answer can cite; `no_data` the ops that return
-    no namespace data.
+    answer, or one naming an unknown name); `citable` the ops whose rows an answer can
+    cite; `no_data` the ops that return no namespace data; `unknown_names` the op and
+    setting names it writes that the build neither serves nor documents.
 
     - none: no text; or it cites nothing and is an abstention, or its calls were read and
       none was citable, found data or failed;
     - supported: a citation verified;
-    - unsupported: a citation failed for a reason of its own, or it cites nothing although
-      a citable op's call found data, or ran and found nothing while no other call found
-      data or failed (a claim nothing backs);
+    - unsupported: it names an op or setting the build neither serves nor documents (one
+      it may have invented), whatever it cites; a citation failed for a reason of its
+      own; or it cites nothing although a citable op's call found data, or ran and found
+      nothing while no other call found data or failed (a claim nothing backs);
     - unchecked: otherwise (its checks could not say, what it read has no citation form, or
       a call failed).
     """
     if not text.strip():
         return NONE
+    if unknown_names:
+        return UNSUPPORTED
     if codes:
         if VERIFIED in codes:
             return SUPPORTED

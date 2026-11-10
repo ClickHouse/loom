@@ -31,15 +31,16 @@ DEFAULT_READ_TIMEOUT_S = 300.0
 
 @dataclass(frozen=True)
 class AssistantCitation:
-    """One citation the answer wrote: `memory`, `doc`, `code` or `sql`, its text,
-    whether Loom verified it, why not, and the memory key, document source or code path
-    it names (`ref`)."""
+    """One citation the answer wrote: `memory`, `doc`, `help`, `code` or `sql`, its text,
+    whether Loom verified it, why not, the memory key, document source, documentation
+    page or code path it names (`ref`), and a verified help citation's section anchor."""
 
     kind: str
     text: str
     verified: bool
     reason: str = ""
     ref: str = ""
+    anchor: str = ""
 
 
 @dataclass(frozen=True)
@@ -55,7 +56,8 @@ class AssistantAnswer:
     model, its checked citations, its token usage and how far it rests on what Loom
     holds (`support`): `supported`, `unsupported`, `unchecked` or `none`, as
     docs/architecture/assistant.md#support defines them; a value this SDK does not know,
-    or none from an older server, reads as `unchecked`."""
+    or none from an older server, reads as `unchecked`; and the op and LOOM_* names it
+    wrote that the server neither serves nor documents (`unknown_names`)."""
 
     text: str
     run_id: str
@@ -64,6 +66,7 @@ class AssistantAnswer:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     support: str = "unchecked"
+    unknown_names: tuple[str, ...] = ()
 
     @property
     def verified(self) -> tuple[AssistantCitation, ...]:
@@ -80,6 +83,7 @@ class _Reading:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     support: str = "unchecked"
+    unknown_names: tuple[str, ...] = ()
 
     def answer(self) -> AssistantAnswer:
         return AssistantAnswer(
@@ -90,6 +94,7 @@ class _Reading:
             self.prompt_tokens,
             self.completion_tokens,
             self.support,
+            self.unknown_names,
         )
 
 
@@ -101,6 +106,7 @@ def _citations(raw: Any) -> tuple[AssistantCitation, ...]:
             c.get("verified") is True,
             str(c.get("reason", "")),
             str(c.get("ref", "")),
+            str(c.get("anchor", "")),
         )
         for c in raw or []
         if isinstance(c, dict)
@@ -185,6 +191,8 @@ def _read(event: dict[str, Any], reading: _Reading) -> str:
     if event.get("object") == "loom.citations":
         reading.citations = _citations(event.get("citations"))
         reading.support = _support(event.get("support"))
+        names = event.get("unknown_names")
+        reading.unknown_names = tuple(str(n) for n in names) if isinstance(names, list) else ()
         return ""
     reading.run_id = reading.run_id or str(event.get("id") or "")
     reading.model = reading.model or str(event.get("model") or "")
