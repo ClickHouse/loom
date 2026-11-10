@@ -63,7 +63,7 @@ async def record(
     try:
         prev = tier_health.parse(tier, await repo.get_state(org, ns, key))
         if error is None:
-            if prev is None or not prev.failing:
+            if prev is None or prev.state == "ok":
                 return None
             new = tier_health.recovered(tier, utc_now())
         else:
@@ -83,6 +83,26 @@ async def record(
             new.failing_since,
             new.fix,
         )
+    return new
+
+
+async def record_unavailable(
+    repo: CodeRepo, org: str, ns: str, tier: str, error: str
+) -> tier_health.TierHealth | None:
+    """Note that the tier's run left out what it cannot fetch on this host (`error`
+    names it). Written, and logged, only when the note is new or says something else;
+    never fails the pass it describes."""
+    key = tier_health.state_key(tier)
+    try:
+        prev = tier_health.parse(tier, await repo.get_state(org, ns, key))
+        new = tier_health.unavailable(prev, tier, error, utc_now())
+        if prev is not None and prev.state == new.state and prev.error == new.error:
+            return None
+        await repo.set_state(org, ns, key, new.to_json(), detail=new.kind)
+    except Exception as e:  # noqa: BLE001 — a health record never fails the pass it describes
+        logger.warning("tier health %s/%s %s not recorded: %s", org, ns, tier, e)
+        return None
+    logger.warning("tier %s of %s/%s: %s. %s", tier, org, ns, new.error, new.fix)
     return new
 
 

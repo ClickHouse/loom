@@ -837,6 +837,14 @@ failed passes in a row. The next pass that succeeds clears it. A tier run from c
 records the same way when it runs under `loom code entry-lock --tier <tier>`;
 `loom code scip-delta` and `scip-full` record by themselves.
 
+A Go module whose dependencies this host cannot fetch (Go reports a private
+repository, often the repository's own modules through a vanity import path) is not a
+failure: the Go tier indexes the rest and records the tier `unavailable`, kind
+`dependency_unavailable`, with the fix (set `LOOM_CODE_SCIP_GO_PRIVATE` and give the
+tier's user a git credential for that host). The note is written once, counts no
+passes, is never a `code_tier_failing` problem, and stays until a run builds those
+modules. A module that fails for any other reason still fails the tier.
+
 The record is read where each reader already looks:
 
 - an agent's code answers carry it in `as_of.failing_tiers`

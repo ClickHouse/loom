@@ -45,7 +45,9 @@ class TierHealth:
     describe the current run of failures; all are empty once the tier is ok."""
 
     tier: str
-    state: str = "ok"  # ok | failing
+    # ok | failing | unavailable (a part the tier cannot fetch on this host: noted, not
+    # failing, and kept until a run builds it)
+    state: str = "ok"
     kind: str = ""
     error: str = ""
     fix: str = ""
@@ -114,6 +116,39 @@ def failed(prev: TierHealth | None, tier: str, error: str, now: datetime) -> Tie
         failed_passes=(ongoing.failed_passes if ongoing else 0) + 1,
         last_ok_at=prev.last_ok_at if prev else "",
     )
+
+
+def unavailable(prev: TierHealth | None, tier: str, error: str, now: datetime) -> TierHealth:
+    """The record when the run finished but left out what it cannot fetch on this host
+    (a Go module whose dependencies are private): a note, not a failure, that keeps
+    no count of passes."""
+    text = redact(error)
+    at = _iso(now)
+    ongoing = prev if prev is not None and prev.state == "unavailable" else None
+    return TierHealth(
+        tier=tier,
+        state="unavailable",
+        kind="dependency_unavailable",
+        error=text[-ERROR_CHARS:],
+        fix=fix_for("dependency_unavailable", text),
+        failing_since=(ongoing.failing_since if ongoing else "") or at,
+        last_failed_at=at,
+        last_ok_at=prev.last_ok_at if prev else "",
+    )
+
+
+# Go's words for a module it could not fetch for want of access: a private repository
+# (or its proxy's refusal of one), not a module that is broken
+_DEPENDENCY_UNAVAILABLE = re.compile(
+    r"if this is a private repository|terminal prompts disabled|could not read username"
+    r"|: 410 gone",
+    re.IGNORECASE,
+)
+
+
+def dependency_unavailable(line: str) -> bool:
+    """Whether a module's failure line says a dependency cannot be fetched from here."""
+    return bool(_DEPENDENCY_UNAVAILABLE.search(line))
 
 
 def recovered(tier: str, now: datetime) -> TierHealth:
@@ -346,13 +381,13 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
         )
     if kind == "disk":
         return "The disk is full: free space under the code-index work directory."
-    if kind == "module" and "if this is a private repository" in text.lower():
+    if kind == "dependency_unavailable":
         return (
-            "A Go module did not build: the error names each and why. Where it says a "
-            "private repository, a module it requires is in one (often this repository's "
-            "own, through a vanity import path), and the Go tier fetches modules without a "
-            "credential. The rest of the repository is indexed; the record clears on the "
-            "next run that builds the modules it changes."
+            "Go modules the error names require a module this host cannot fetch (a private "
+            "repository, often this repository's own through a vanity import path): they "
+            "are left out of the compiler tier and the rest is indexed. To index them, set "
+            "LOOM_CODE_SCIP_GO_PRIVATE to that module path and give the tier's user a git "
+            "credential for its host (a credential helper or ~/.netrc in its HOME)."
         )
     if kind == "file_refused" and "(code_scip_delta_max_nodes)" in text:
         return (
@@ -432,6 +467,7 @@ REASONS: dict[str, str] = {
     "cmake": "build configure failed",
     "harness": "indexer failed",
     "module": "module failed to build",
+    "dependency_unavailable": "dependency unavailable",
     "unknown": "unclassified error",
 }
 # How much of an error's line a status line shows.

@@ -6,7 +6,7 @@
 
 export interface TierHealth {
   tier: string;
-  state: "ok" | "failing";
+  state: "ok" | "failing" | "unavailable";
   kind: string;
   error: string;
   fix: string;
@@ -41,6 +41,7 @@ const KIND_WORD: Record<string, string> = {
   cmake: "build configure failed",
   harness: "indexer failed",
   module: "module failed to build",
+  dependency_unavailable: "dependency unavailable",
   unknown: "unclassified error",
 };
 
@@ -51,6 +52,12 @@ export function tierName(tier: string): string {
 export function kindWord(kind: string): string {
   // a kind a later build adds reads as itself
   return KIND_WORD[kind] ?? (kind || "unclassified error");
+}
+
+/** The tiers that left out a part they cannot fetch on this host (`unavailable`): a
+ *  note with its fix, not a failure. */
+export function unavailableTiers(rows: TierHealth[] | undefined): TierHealth[] {
+  return (rows ?? []).filter((t) => t.state === "unavailable");
 }
 
 /** The failing tiers, in the order the server lists them; [] for a row without any. */

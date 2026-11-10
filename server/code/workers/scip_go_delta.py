@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from server.code.app.index import tier_health
 from server.code.app.index.compiler_tier import (
     BaseUnknown,
     TierDegraded,
@@ -59,7 +60,11 @@ from server.code.app.index.gitrepo import (
 )
 from server.code.app.index.sandbox import tool_mounts
 from server.code.app.index.untrusted_files import read_delta
-from server.code.domain.index.tier_health import module_failures, without_module_failures
+from server.code.domain.index.tier_health import (
+    dependency_unavailable,
+    module_failures,
+    without_module_failures,
+)
 from server.core.paths import SCIP_HARNESS_DIR
 from server.settings import settings
 
@@ -204,12 +209,15 @@ async def _has_commit(checkout: Path, sha: str) -> bool:
 
 async def _modules_failing(repo: CodeRepo, cfg: RepoConfig) -> bool:
     """The tier's record holds a module that would not build (kind `module`, classified
-    from the whole error): a pass that builds nothing leaves it as it is."""
+    from the whole error) or one whose dependency cannot be fetched: a pass that builds
+    nothing leaves it as it is."""
     from server.code.domain.index import tier_health
 
     raw = await repo.get_state(cfg.org, cfg.namespace, tier_health.state_key(PRODUCER))
     record = tier_health.parse(PRODUCER, raw or "")
-    return record is not None and record.failing and record.kind == "module"
+    if record is None:
+        return False
+    return record.state == "unavailable" or (record.failing and record.kind == "module")
 
 
 async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResult) -> bool:
@@ -271,8 +279,17 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResu
         target[:8],
         len(paths),
     )
-    if failed:  # the rest is applied; the modules that would not build fail the tier
-        raise TierDegraded("; ".join(failed))
+    # The rest is applied. A module whose dependency cannot be fetched from this host is
+    # noted once and does not fail the tier; one that would not build for another reason
+    # fails it.
+    broken = [line for line in failed if not dependency_unavailable(line)]
+    if broken:
+        raise TierDegraded("; ".join(broken))
+    if failed:
+        await tier_health.record_unavailable(
+            repo, cfg.org, cfg.namespace, PRODUCER, "; ".join(failed)
+        )
+        return False  # the note stands: no success record clears it
     return True
 
 

@@ -32,7 +32,7 @@ import type { CodeRepoSummary } from "../api";
 import { absoluteTime, fmtInt, listTime, parseChTime } from "../lib/format";
 import { stageLabel } from "../lib/codeStage";
 import { freshness, type FreshTone } from "../lib/codeFreshness";
-import { failingTiers, failureSummary, tierName } from "../lib/tierHealth";
+import { failingTiers, failureSummary, kindWord, tierName, unavailableTiers } from "../lib/tierHealth";
 import {
   bindableRecords,
   canAdminister,
@@ -442,13 +442,22 @@ function branchRow(b: CodeRepoSummary, actions: CodeActions, busy: boolean): Tab
  *  the error kind and the fix — what an operator needs without opening the API. */
 function TierFailures({ facet }: { facet: CodeFacet }) {
   const rows = facet.branches.flatMap((b) => failingTiers(b.tier_health).map((t) => ({ b, t })));
-  if (rows.length === 0) return null;
+  const notes = facet.branches.flatMap((b) => unavailableTiers(b.tier_health).map((t) => ({ b, t })));
+  if (rows.length === 0 && notes.length === 0) return null;
   return (
     <ul className="space-y-1.5" data-testid="repo-tier-failures">
       {rows.map(({ b, t }) => (
         <li key={`${b.namespace}:${t.tier}`} className="text-xs">
           <Badge text={tierName(t.tier)} state="warning" size="sm" className="mr-1.5" />
           <span className="font-mono">{b.branch}</span>: {failureSummary(t)}, first failed{" "}
+          <ListTime time={t.failing_since} quiet />. <span className="text-text-muted">Fix: </span>
+          <span className="break-words">{t.fix}</span>
+        </li>
+      ))}
+      {notes.map(({ b, t }) => (
+        <li key={`${b.namespace}:${t.tier}`} className="text-xs">
+          <Badge text={tierName(t.tier)} state="neutral" size="sm" className="mr-1.5" />
+          <span className="font-mono">{b.branch}</span>: {kindWord(t.kind)}, since{" "}
           <ListTime time={t.failing_since} quiet />. <span className="text-text-muted">Fix: </span>
           <span className="break-words">{t.fix}</span>
         </li>

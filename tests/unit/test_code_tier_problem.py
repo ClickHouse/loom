@@ -704,15 +704,22 @@ def test_a_delta_over_its_cap_is_recorded_with_its_sizes_and_the_setting_to_rais
     assert health.fix != fix  # the delta's fix is its own
 
 
-def test_a_go_module_that_needs_a_private_module_says_so() -> None:
+def test_a_dependency_this_host_cannot_fetch_is_noted_not_failing() -> None:
     error = (
-        "TierDegraded: services/api: go mod download failed: If this is a private "
+        "services/api: go mod download failed: If this is a private "
         "repository, see https://go.dev/doc/faq#git_https for additional information."
     )
-    health = _failing_with(error)
-    assert health.kind == "module"
-    assert "Where it says a private repository" in health.fix
-    assert "without a credential" in health.fix
+    assert tier_health.dependency_unavailable(error)
+    assert not tier_health.dependency_unavailable(
+        "lib: go mod download failed: no matching versions"
+    )
+    note = tier_health.unavailable(None, "go", error, T0)
+    assert note.state == "unavailable" and not note.failing and note.failed_passes == 0
+    assert (
+        note.kind == "dependency_unavailable"
+        and tier_health.reason(note.kind) == "dependency unavailable"
+    )
+    assert "LOOM_CODE_SCIP_GO_PRIVATE" in note.fix and "credential" in note.fix
 
 
 def test_a_linked_or_changed_file_reads_refused_with_its_own_fix() -> None:
@@ -855,17 +862,14 @@ def test_a_cmake_record_cut_before_cmakes_error_quotes_the_line_above_the_marker
 
 
 def test_the_record_reads_the_whole_output_and_the_problem_the_kept_tail() -> None:
-    private = (
-        "skip a: go mod download failed: If this is a private repository, see "
-        "https://go.dev/doc/faq#git_https for additional information."
-    )
-    other = "\n".join(f"skip m{i}: go mod download failed: no matching versions" for i in range(20))
-    health = _failing_with(f"TierDegraded: {private}\n{other}")  # the private line is cut off
+    refusal = "fetch git@github.com:o/r.git: git@github.com: Permission denied (publickey)."
+    retries = "\n".join(f"retrying submodule clone {i} of contrib/x" for i in range(40))
+    health = _failing_with(f"{refusal}\n{retries}")  # the refusal is cut from the kept tail
     recorder._FAILING = (recorder.FailingTier("o", "code-a", health, 0, "o/a", "main", False),)
     (row,) = recorder.problem_rows(T0 + timedelta(hours=3)) or ()
     assert row["fix"] == tier_health.fix_for(health.kind, health.error, name_where=False)
-    assert "private repository" not in row["fix"]  # the problem reads the kept tail
-    assert "private repository" in health.fix  # the record, the whole output
+    assert not row["fix"].startswith("The ssh key was refused")  # the problem: the kept tail
+    assert health.fix.startswith("The ssh key was refused")  # the record: the whole output
 
 
 def _refusal(call: Any) -> str:
