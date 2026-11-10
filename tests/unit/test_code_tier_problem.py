@@ -673,8 +673,11 @@ def test_a_delta_over_its_cap_is_recorded_with_its_sizes_and_the_setting_to_rais
     assert nodes_health.kind == "file_cap"
     assert nodes_health.fix.startswith("The compiler tier's delta holds more JSON values")
     # a checkout's own file over its fixed cap: nothing to raise
-    manifest = FileRefused("/r/co/package.json is 2097152 bytes; max 1048576")
-    assert "package.json (1 MiB)" in _failing_with(recorder.error_text(manifest)).fix
+    for name in ("package.json", "yarn.lock", "pnpm-lock.yaml", "package-lock.json"):
+        manifest = FileRefused(f"/r/co/{name} is 99999999 bytes; max 1048576")
+        fix = _failing_with(recorder.error_text(manifest)).fix
+        assert fix.startswith("A file of the checkout") and "LOOM_" not in fix, name
+    assert health.fix != fix  # the delta's fix is its own
 
 
 def test_a_go_module_that_needs_a_private_module_says_so() -> None:

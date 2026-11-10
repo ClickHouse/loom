@@ -300,6 +300,14 @@ def _where(text: str) -> str:
     return ", ".join(parts)
 
 
+# A checkout's own file the TypeScript tier reads under a fixed cap: its package.json
+# and the lockfiles it searches (`typescript_dependencies.LOCKFILES`).
+_CHECKOUT_FILE = re.compile(
+    r"/(?:package\.json|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock"
+    r"|bun\.lockb?) is \d+ bytes"
+)
+
+
 def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
     """The one fix for a failure of `kind`, naming what the error names; with
     `name_where=False` the same fix without the host, repository or submodule."""
@@ -355,14 +363,18 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
             "LOOM_CODE_SCIP_DELTA_MAX_NODES with LOOM_CODE_SCIP_DELTA_FILE_MAX_MB, within "
             "the memory the sizing in code-index-operations.md gives."
         )
+    if kind == "file_cap" and _CHECKOUT_FILE.search(text):
+        return (
+            "A file of the checkout is larger than the tier reads (the error names it): a "
+            "package.json is read up to 1 MiB and a lockfile up to 64 MiB, caps no setting "
+            "changes. The tier retries when the repository's file is smaller."
+        )
     if kind == "file_cap":
         return (
-            "A file the tier reads is over its cap (the error names the file, its size and "
-            "the cap in bytes). For a compiler-tier delta, raise "
-            "LOOM_CODE_SCIP_DELTA_FILE_MAX_MB (MiB) with LOOM_CODE_SCIP_DELTA_MAX_NODES, "
-            "within the memory the sizing in code-index-operations.md gives. A checkout's "
-            "package.json (1 MiB) and lockfile (64 MiB) caps are fixed: the repository's "
-            "file is too large to read."
+            "The compiler tier's delta is larger than its cap (the error gives both in "
+            "bytes): raise LOOM_CODE_SCIP_DELTA_FILE_MAX_MB (MiB) with "
+            "LOOM_CODE_SCIP_DELTA_MAX_NODES, within the memory the sizing in "
+            "code-index-operations.md gives."
         )
     if kind == "module":
         return (

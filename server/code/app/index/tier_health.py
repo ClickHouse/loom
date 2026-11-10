@@ -121,8 +121,9 @@ _FAILING: tuple[FailingTier, ...] | None = None
 async def refresh_failing(ch: Any | None = None) -> None:
     """Re-read the tier-health records of every configured entry and, for the failing
     ones, how far behind the entry's last published status counted each
-    (`_published_lag`). Two small reads; called on the code_repos refresh timer. A
-    record of an entry no longer configured (removed from the config, or retired), or
+    (`_published_lag`) and whether the entry is restricted. Two small reads, and the
+    classification once per org a cache period; called on the code_repos refresh timer.
+    A record of an entry no longer configured (removed from the config, or retired), or
     kept while code intelligence is off, is not a problem: nothing runs it. Until the
     registry is first read, which entries are configured is unknown, and the snapshot
     stays as it was. Never raises: a failed read keeps the last snapshot."""
