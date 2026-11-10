@@ -2,13 +2,16 @@
 # Install or update the source-free Loom stack. Published as an asset on each
 # GitHub Release.
 #
-#   curl -fsSLO …/install.sh && sh install.sh          # with its own ClickHouse
-#   sh install.sh --clickhouse https://loom@host:8443
-#   sh install.sh --bundled                            # back to its own ClickHouse
+#   curl -fsSL …/install.sh -o loom-install.sh && sh loom-install.sh
 #
-# Downloaded first, not piped into `sh`: a failed download then stops the
-# command line with curl's error and a non-zero exit, where `curl | sh` runs
-# an empty script and exits 0.
+# then, with the saved copy:
+#
+#   sh loom-install.sh --clickhouse https://loom@host:8443
+#   sh loom-install.sh --bundled                 # back to its own ClickHouse
+#
+# The documentation saves the script before running it, so a failed download
+# stops with curl's error and a non-zero exit; piped into `sh`, an empty
+# download runs as an empty script and exits 0.
 #
 # --clickhouse (or LOOM_CH_URL) points Loom at a self-managed server or a
 # ClickHouse Cloud service instead; --bundled switches an install back (and wins

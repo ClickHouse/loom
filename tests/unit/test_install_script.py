@@ -748,23 +748,36 @@ def test_an_unreachable_docker_daemon_is_named_before_any_pull(
     assert not Path(installer_env["LOOM_INSTALL_DIR"]).exists()  # nor any file written
 
 
-# `install.sh` piped into a shell, also across a `\` line break: what a page
-# must never tell a user to run.
-_PIPED_INSTALLER = re.compile(r"install\.sh\"?\s*(?:\\\n\s*)?\\?\|")
+# The installer piped into a shell: `install.sh | sh`, with the URL quoted or not,
+# across a `\` line break, or written to stdout with `-o -` first.
+_PIPED_INSTALLER = re.compile(
+    r"install\.sh['\"]?\s*(?:-o\s*-\s*)?(?:\\\n\s*)?\\?\|\s*(?:\w+=\S*\s+)*(?:ba|da)?sh\b"
+)
 
 
-def test_no_page_pipes_the_installer_into_sh() -> None:
-    """`curl -fsSL …/install.sh | sh` exits 0 when the download fails: `sh` runs the
-    empty script curl wrote. Every page downloads it first, then runs it."""
-    pages = [ROOT / "README.md", ROOT / "install.sh", *(ROOT / "docs").rglob("*.md")]
-    pages += (ROOT / ".claude" / "skills").rglob("*.md")
-    piped = [str(p.relative_to(ROOT)) for p in pages if _PIPED_INSTALLER.search(p.read_text())]
+def test_no_tracked_file_pipes_the_installer_into_sh() -> None:
+    """Piped into `sh`, a failed download runs as an empty script and exits 0;
+    every command a user is shown saves the script first."""
+    listed = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, text=True, check=True
+    ).stdout.split("\0")
+    piped = []
+    for name in filter(None, listed):
+        path = ROOT / name
+        if path == Path(__file__) or not path.is_file():
+            continue
+        try:
+            text = path.read_text()
+        except UnicodeDecodeError:
+            continue  # a binary file
+        if _PIPED_INSTALLER.search(text):
+            piped.append(name)
     assert piped == []
 
 
 def test_the_documented_one_liner_fails_on_a_failed_download(tmp_path: Path) -> None:
     """The README's command, with a curl that answers a 404 as `curl -f` does: the
-    line exits non-zero and installs nothing."""
+    line exits with curl's code and runs no installer."""
     (line,) = [
         line for line in (ROOT / "README.md").read_text().splitlines() if "install.sh" in line
     ]

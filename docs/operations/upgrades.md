@@ -221,7 +221,7 @@ Then run the earlier release's installer naming its version, as an older install
 newer install refuses otherwise:
 
 ```bash
-curl -fsSLO https://github.com/ClickHouse/loom/releases/download/vX.Y.Z/install.sh && LOOM_VERSION=X.Y.Z sh install.sh
+curl -fsSL https://github.com/ClickHouse/loom/releases/download/vX.Y.Z/install.sh -o loom-install.sh && LOOM_VERSION=X.Y.Z sh loom-install.sh
 ```
 
 The installer keeps `.env`, so the pin holds ClickHouse through later upgrades too:

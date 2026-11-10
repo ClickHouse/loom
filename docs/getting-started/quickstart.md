@@ -31,13 +31,11 @@ configuration in either mode.
 Prerequisite: Docker Desktop or Docker Engine with Compose 2.20 or later.
 
 ```bash
-curl -fsSLO https://github.com/ClickHouse/loom/releases/latest/download/install.sh && sh install.sh
+curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh
 ```
 
-The installer is saved before it runs, so a failed download stops with curl's error and
-a non-zero exit instead of running nothing. It downloads `loom-stack.tar.gz` from the
-latest GitHub Release, verifies its SHA-256,
-installs the Compose and ClickHouse configuration under `~/.loom`, pulls the matching
+A failed download stops with curl's error and a non-zero exit. The installer downloads
+`loom-stack.tar.gz` from the latest GitHub Release, verifies its SHA-256, installs the Compose and ClickHouse configuration under `~/.loom`, pulls the matching
 `ghcr.io/clickhouse/loom:X.Y.Z` and `ghcr.io/clickhouse/loom-extractor:X.Y.Z` (the
 document extractor service) images, and waits for `http://localhost:7777/v1/health`. The
 server image contains the API, workers, migrations and the built React dashboard at the
@@ -53,8 +51,8 @@ database and a read-only reader user, or prints the SQL an admin has to run
 ([choosing the ClickHouse](../operations/deployment.md#choosing-the-clickhouse)):
 
 ```bash
-curl -fsSLO https://github.com/ClickHouse/loom/releases/latest/download/install.sh \
-  && sh install.sh --clickhouse https://loom@abc123.us-east-1.aws.clickhouse.cloud:8443
+curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh \
+  && sh loom-install.sh --clickhouse https://loom@abc123.us-east-1.aws.clickhouse.cloud:8443
 ```
 
 Each release's `install.sh` installs that release, so the copy `latest` serves installs the
@@ -65,7 +63,7 @@ ClickHouse on newer data; to downgrade on purpose, follow
 Pin a release, or inspect everything before starting:
 
 ```bash
-curl -fsSLO https://github.com/ClickHouse/loom/releases/download/v1.2.3/install.sh && sh install.sh
+curl -fsSL https://github.com/ClickHouse/loom/releases/download/v1.2.3/install.sh -o loom-install.sh && sh loom-install.sh
 
 curl -fLO https://github.com/ClickHouse/loom/releases/latest/download/loom-stack.tar.gz
 curl -fLO https://github.com/ClickHouse/loom/releases/latest/download/loom-stack.tar.gz.sha256
@@ -103,8 +101,8 @@ For a fresh released-image installation with accounts and sign-in from the first
 prepare the stack files without starting containers:
 
 ```bash
-curl -fsSLO https://github.com/ClickHouse/loom/releases/latest/download/install.sh \
-  && LOOM_SKIP_START=1 sh install.sh
+curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh \
+  && LOOM_SKIP_START=1 sh loom-install.sh
 ```
 
 Edit `~/.loom/.env` before starting Docker. Replace the existing identity and auth entries,

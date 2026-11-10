@@ -69,7 +69,7 @@ grant new accounts access to the existing namespaces.
 For the default personal installation, with Docker installed:
 
 ```bash
-curl -fsSLO https://github.com/ClickHouse/loom/releases/latest/download/install.sh && sh install.sh
+curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh
 ```
 
 The installer starts Loom and ClickHouse, applies migrations and prints the dashboard URL:

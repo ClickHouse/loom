@@ -223,7 +223,7 @@ def test_the_published_previous_release_is_installed_by_name(
     """By version: a copy from before releases stamped install.sh installs `latest`."""
     command, env = _previous_install(tmp_path, monkeypatch, None)
     url = f"{rehearsal.GITHUB_RELEASES}/download/v1.1.0/install.sh"
-    assert command[-1] == f'curl -fsSLO "{url}" && sh install.sh'
+    assert command[-1] == f'curl -fsSL "{url}" -o loom-install.sh && sh loom-install.sh'
     assert env["LOOM_VERSION"] == "1.1.0"
 
 

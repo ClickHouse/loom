@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the one-line installer,
-`curl -fsSLO …/releases/latest/download/install.sh && sh install.sh`, in clean Linux
-containers: install, a memory round trip, a re-run, a refused
+`curl -fsSL …/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh`,
+in clean Linux containers: install, a memory round trip, a re-run, a refused
 downgrade, and an upgrade from the previous release.
 
 A rehearsal serves a release's own files (`release/stack/`, as the release
@@ -99,10 +99,9 @@ def run(*args: str, **kwargs) -> subprocess.CompletedProcess[str]:
         raise
 
 
-def one_liner(url: str) -> str:
-    """The documented install command: downloaded first, so a failed download exits
-    non-zero, where `curl | sh` would run an empty script and exit 0."""
-    return f'curl -fsSLO "{url}" && sh install.sh'
+def install_command(url: str) -> str:
+    """The documented install command, which saves the script before it runs."""
+    return f'curl -fsSL "{url}" -o loom-install.sh && sh loom-install.sh'
 
 
 def free_port() -> int:
@@ -467,7 +466,7 @@ class Rehearsal:
             # The installer's Compose files are bind-mounted by the host's daemon,
             # so the home directory has the same path on both sides.
             "-v", f"{home}:{home}",
-            # The one-liner saves install.sh where it runs, as a user does at home.
+            # The command saves the installer where it runs, as a user does at home.
             "-w", str(home),
         ]  # fmt: skip
         if self.release.ca:
@@ -490,7 +489,7 @@ class Rehearsal:
     def one_liner(
         self, image: str, home: Path, port: int, url: str, extra_env: dict[str, str] | None = None
     ) -> str:
-        return self.container(image, home, port, one_liner(url), extra_env=extra_env)
+        return self.container(image, home, port, install_command(url), extra_env=extra_env)
 
     def install_previous(self, image: str, home: Path, port: int) -> None:
         """The previous release by its own install.sh: published, with LOOM_VERSION
@@ -554,7 +553,9 @@ class Rehearsal:
         newer = next_release(version)
         version_file = home / ".loom" / "VERSION"
         version_file.write_text(f"{newer}\n")
-        output = self.container(image, home, port, f'{one_liner(installer)} 2>&1; echo "exit $?"')
+        output = self.container(
+            image, home, port, f'{install_command(installer)} 2>&1; echo "exit $?"'
+        )
         check(
             "installs the older" in output and output.rstrip().endswith("exit 1"),
             f"{distro}: the one-liner did not refuse to replace {newer}",
