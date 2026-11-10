@@ -192,11 +192,9 @@ def _pyproject_roots(base: str, data: dict[str, Any]) -> list[str]:
 
 
 def _squeezed_names(text: str) -> str:
-    """Each line with the whitespace runs inside its text before its first `=` / `:` cut to
-    one space and the run right before the delimiter dropped, its indent kept: configparser's
-    option pattern rescans such a run from every character before it, inside one regex call
-    that holds the GIL. What is read here is unchanged: no
-    section or option name read holds a space, nor a `package_dir` name."""
+    """Each line's text before its first `=` / `:` with its whitespace runs squeezed, indent
+    kept: configparser's option pattern rescans such a run from every character before it,
+    in one regex call that holds the GIL. No name read here holds a space."""
     out: list[str] = []
     for line in text.split("\n"):
         cut = min((i for i in (line.find("="), line.find(":")) if i >= 0), default=len(line))

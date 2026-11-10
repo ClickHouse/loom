@@ -104,6 +104,7 @@ _DECLARING = {"add_library", "add_executable", "function", "macro", "option", "a
 # Sources stop being added once a file has this many facets.
 _MAX_FACETS = 10_000
 _SOURCE_SKIP = frozenset({"TYPE", "BASE_DIRS", "FILES", "HEADERS"})
+_MAX_SOURCE_CHARS = 4096  # a path no longer than a file system takes: each facet copies it
 
 
 def is_cmake_path(path: str) -> bool:
@@ -282,6 +283,8 @@ def _builds(arg: str) -> bool:
     """Whether a source argument gives a `builds` facet: a variable keeps only these, so
     every entry a `${VAR}` use expands to counts toward the cap."""
     if arg in _VISIBILITY or arg.startswith("FILE_SET") or arg in _SOURCE_SKIP:
+        return False
+    if len(arg) > _MAX_SOURCE_CHARS:
         return False
     return _is_source(arg) or "*" in arg
 

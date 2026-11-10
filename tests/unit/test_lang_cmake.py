@@ -131,3 +131,8 @@ def test_a_function_ends_at_the_first_end_on_a_later_line() -> None:
     text = "function(a) endfunction()\nfunction(b)\nmacro(c)\nendmacro()\nendfunction()\n"
     ends = {s.name: s.end_line for s in cmake_units("CMakeLists.txt", text).symbols}
     assert ends == {"a": 5, "b": 5, "c": 4}
+
+
+def test_a_source_longer_than_a_path_gives_no_facet() -> None:
+    text = "set(S " + "a" * 5000 + ".c b.c)\nadd_library(t ${S} " + "c" * 5000 + ".c)\n"
+    assert [f.name for f in cmake_units("CMakeLists.txt", text).facets] == ["b.c"]

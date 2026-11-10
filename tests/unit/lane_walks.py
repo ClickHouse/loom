@@ -289,6 +289,11 @@ WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("cmake-variable-uses", _cmake_units, _variable_uses),
     ("cmake-unclosed-functions", _cmake_units, _run("", "function(f)\n")),
     ("cmake-glob-words", _cmake_units, _glob_words),
+    (
+        "cmake-long-entry",
+        _cmake_units,
+        lambda n: "set(S " + "a" * (n // 2) + ".c)\nadd_library(t " + "${S} " * (n // 10) + ")\n",
+    ),
     ("cmake-file-set-entries", _cmake_units, _file_set_entries),
     ("python-entry-point-files", _entry_point_files, _entry_points),
     (
