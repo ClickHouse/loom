@@ -131,12 +131,6 @@ def main() -> None:
         )
     for port in ("0", "70000", "5432?x"):
         refused("postgres.port must be a port number", "--set-string", f"postgres.port={port}")
-    pool = "postgres.poolMaxSize must be at least the pool's minimum"
-    refused(pool, *sets("postgres.poolMaxSize=1"))
-    refused(pool, *sets("env.LOOM_PG_POOL_MIN_SIZE=10"))
-    refused(pool, *sets("settingsFile.pg_pool_min_size=10"))
-    # A minimum of 0 admits a pool of 1.
-    render(*CLOUD, *sets("postgres.poolMaxSize=1", "env.LOOM_PG_POOL_MIN_SIZE=0"))
     refused(
         "postgres.host needs postgres.passwordSecret.name", *sets("postgres.passwordSecret.name=")
     )

@@ -54,7 +54,8 @@ postgres:
   # LOOM_PG_DURABILITY: synchronous refuses to start when the server's
   # synchronous_standby_names is empty.
   durability: synchronous
-  # LOOM_PG_POOL_MAX_SIZE: connections per Loom process, 2 or more (the pool keeps 2).
+  # LOOM_PG_POOL_MAX_SIZE: connections per Loom process, at least LOOM_PG_POOL_MIN_SIZE
+  # (2 by default); a smaller pool fails at boot.
   poolMaxSize: 20
 
 embedding:

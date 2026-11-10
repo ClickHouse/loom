@@ -242,10 +242,6 @@ upgraded with --reuse-values from a chart without the block has none. */}}
 {{- if not (regexMatch "^[A-Za-z0-9._-]+$" (toString (get $pg $field))) }}{{ fail (printf "postgres.%s goes into the DSN as written: letters, digits, '.', '_' and '-' only" $field) }}{{ end }}
 {{- end -}}
 {{- if not (and (regexMatch "^[0-9]+$" (toString $pg.port)) (ge (int $pg.port) 1) (le (int $pg.port) 65535)) }}{{ fail "postgres.port must be a port number, 1 to 65535" }}{{ end -}}
-{{- /* The pool's minimum as the server reads it: env over the settings file, else 2. */}}
-{{- $min := dig "pg_pool_min_size" 2 (.Values.settingsFile | default dict) -}}
-{{- if hasKey (.Values.env | default dict) "LOOM_PG_POOL_MIN_SIZE" }}{{ $min = get .Values.env "LOOM_PG_POOL_MIN_SIZE" }}{{ end -}}
-{{- if lt (int $pg.poolMaxSize) (int $min) }}{{ fail "postgres.poolMaxSize must be at least the pool's minimum (LOOM_PG_POOL_MIN_SIZE, 2 by default)" }}{{ end -}}
 {{- end -}}
 {{- toYaml $pg -}}
 {{- end }}

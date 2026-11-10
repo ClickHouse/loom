@@ -55,8 +55,8 @@ list, with the admission and delivery settings, is in the
    attached than it names ([what the boot checks](#what-the-boot-checks)).
 
 Failover, standby placement and the old primary's fencing are the service's. On
-Kubernetes, the chart's `postgres` values set all of this ([ClickHouse Cloud and Managed
-Postgres](clickhouse-cloud.md)).
+Kubernetes, the chart's `postgres` values set the [settings](#settings) ([ClickHouse Cloud
+and Managed Postgres](clickhouse-cloud.md)).
 
 ## Self-hosted Postgres
 
