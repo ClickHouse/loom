@@ -229,13 +229,13 @@ def load_ch(args: argparse.Namespace) -> None:
         done = start + count - args.offset
         rate = done / (time.monotonic() - t0)
         print(f"loaded {done:,}/{args.rows:,} keys ({rate:,.0f}/s)", flush=True)
-        if _free_gb() < args.min_free_gb:
+        if _free_gb(ch) < args.min_free_gb:
             raise SystemExit(f"free disk below {args.min_free_gb} GB; stopped at {done:,} keys")
 
 
-def _free_gb() -> float:
-    st = os.statvfs("/")
-    return st.f_bavail * st.f_frsize / 1e9
+def _free_gb(ch: Any) -> float:
+    """The least free space of ClickHouse's own disks, wherever it runs."""
+    return float(ch.query("SELECT min(free_space) FROM system.disks").result_rows[0][0]) / 1e9
 
 
 # --- Postgres -------------------------------------------------------------------------
@@ -582,11 +582,13 @@ def new_parts_per_s(ch: Any, since: float, until: float) -> dict[str, float]:
 def flush_logs(ch: Any, attempts: int = 10) -> None:
     """`SYSTEM FLUSH LOGS`, waiting out a ClickHouse that is short of memory right after a
     load (code 241) for up to `attempts` tries, 5 s apart."""
+    from clickhouse_connect.driver.exceptions import DatabaseError
+
     for attempt in range(attempts):
         try:
             ch.command("SYSTEM FLUSH LOGS")
             return
-        except Exception as e:  # waits out code 241 only; the rest re-raise
+        except DatabaseError as e:
             if "Code: 241." not in str(e) or attempt == attempts - 1:
                 raise
             time.sleep(5)

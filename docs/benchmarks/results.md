@@ -1015,7 +1015,7 @@ as JSON in Postgres):
 
 | Store      | Table               | Bytes                                           | Per key |
 | ---------- | ------------------- | ----------------------------------------------- | ------: |
-| ClickHouse | `memory_embeddings` | 13,170 to 13,210 per row                        |  13,210 |
+| ClickHouse | `memory_embeddings` | 13,130 to 13,220 per row                        |  13,210 |
 | ClickHouse | `memory`            | 92 (single) to 161 (zipf) per head after merges |      92 |
 | ClickHouse | `memory_versions`   | 107 to 110 per version                          |     264 |
 | Postgres   | `memory_current`    | 1,594 to 1,634 per head                         |   1,623 |
