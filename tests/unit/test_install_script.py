@@ -16,6 +16,7 @@ import pytest
 
 from scripts.release import build_stack_bundle
 from tests.unit.install_versions import GUARD_CASES
+from tests.unit.tracked_files import tracked
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -764,12 +765,9 @@ def test_no_tracked_file_pipes_the_installer_into_sh() -> None:
     """A line that names `install.sh` and hands the download to a shell runs an
     empty script and exits 0 when the download fails; every command a user is
     shown saves the script first. A `\\` line break joins two lines into one."""
-    listed = subprocess.run(
-        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, text=True, check=True
-    ).stdout.split("\0")
     piped = []
-    own = str(Path(__file__).relative_to(ROOT))  # holds the examples below
-    for name in filter(None, listed):
+    own = Path(__file__).resolve().relative_to(ROOT).as_posix()  # holds the examples below
+    for name in tracked():
         if name == own:
             continue
         try:
@@ -836,7 +834,6 @@ def test_the_documented_one_liner_fails_on_a_failed_download(tmp_path: Path) -> 
     )
     assert result.returncode == 22, result
     assert "404" in result.stderr
-    assert (
-        tmp_path / "loom-install.sh"
-    ).is_file()  # the fake wrote it: only `&&` kept it from running
+    # The fake wrote it: only `&&` kept it from running.
+    assert (tmp_path / "loom-install.sh").is_file()
     assert not (tmp_path / ".loom").exists()

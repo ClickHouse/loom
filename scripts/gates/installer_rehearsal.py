@@ -126,7 +126,7 @@ def request(port: int, op: str, body: dict) -> dict:
 
 
 def installed_version(home: Path, distro: str) -> str:
-    """The version the installer wrote; a failed download wrote nothing."""
+    """The version the installer wrote."""
     version_file = home / ".loom" / "VERSION"
     check(version_file.is_file(), f"{distro}: the installer wrote no {version_file}")
     return version_file.read_text().strip()
