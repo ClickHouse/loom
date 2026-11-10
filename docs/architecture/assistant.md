@@ -227,11 +227,12 @@ caller's own call, so a citation it makes verified misleads only the caller. The
 are written in the background and a tool call can land on another replica, so the bridge
 waits up to five seconds for them; a citation whose row has not arrived by then, or was
 dropped, comes back unverified. A check Loom refuses (a rate limit, an outage), a ledger
-that cannot be read, memory reads that are not recorded
-(`LOOM_MEMORY_EXPOSURE_LEDGER_ENABLED` off), an answer with no run id, a check past the
-ten seconds, or a document read whose token expired (an answer that ran to its limit
-leaves its checks a token near its end) leaves its citation unverified with the reason
-"the check could not run", and never fails the answer. Each citation comes back marked
+that cannot be read, an answer with no run id, a check past the ten seconds, or a
+document read whose token expired (an answer that ran to its limit leaves its checks a
+token near its end) leaves its citation unverified with the reason "the check could not
+run", and never fails the answer. With memory reads not recorded
+(`LOOM_MEMORY_EXPOSURE_LEDGER_ENABLED` off) a memory citation's reason is "this
+deployment does not record memory reads". Each citation comes back marked
 `verified` or not, with the reason and its `ref` (the memory key, document source or
 code path it names), in a last `loom.citations` event before the stream's `[DONE]` (and
 a `citations` field on a whole answer and on `assistant.ask`), with the answer's

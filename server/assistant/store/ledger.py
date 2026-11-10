@@ -93,9 +93,7 @@ async def run_calls(
     ch = ch or _default_client()
     rows = await ch.query_all(
         "SELECT groupUniqArrayIf(operation, success "
-        "AND args['out_found'] != 'false' AND args['out_found_n'] != '0' "
-        "AND args['out_hits'] != '0' AND args['out_section_hits'] != '0' "
-        "AND args['out_abstain'] != 'true') AS returned, "
+        "AND args['out_found'] != 'false' AND args['out_hits'] != '0') AS returned, "
         "countIf(NOT success) > 0 AS failed, "
         "groupUniqArrayIf(operation, success) AS ran "
         "FROM loom.agent_events "

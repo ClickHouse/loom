@@ -25,6 +25,8 @@ _INSERT_SLACK_S = 0.2  # not a setting: a fraction of one ClickHouse insert
 # Both reads and the wait between them: past it the answer is unchecked, and its slot and
 # its last event are not held on a slow ClickHouse.
 _CALLS_S = 3.0  # not a setting: a fraction of the citation checks' bound
+# The calls of an answer whose support needs none of them.
+NO_CALLS = ledger.RunCalls(frozenset(), False, frozenset())
 
 
 async def answer_support(
@@ -32,15 +34,16 @@ async def answer_support(
 ) -> str:
     """The answer's support: `supported`, `unsupported`, `unchecked` or `none`."""
     citation_codes = [c.code for c in checked]
-    calls: ledger.RunCalls | None = ledger.RunCalls(frozenset(), False, frozenset())
+    # A cited answer, an empty one or an abstention needs no read of its calls.
+    calls: ledger.RunCalls | None = NO_CALLS
     if not citation_codes and text.strip() and not rule.is_abstention(text):
         calls = await _calls(org, run_id, subject)
     return rule.support_of(
         citation_codes,
         text=text,
-        returned=calls.returned if calls else None,
-        failed=calls.failed if calls else False,
-        ran=calls.ran if calls else frozenset(),
+        returned=None if calls is None else calls.returned,
+        failed=calls is not None and calls.failed,
+        ran=frozenset() if calls is None else calls.ran,
         citable=ASSISTANT_CITABLE_OPS,
         no_data=ASSISTANT_NO_NAMESPACE_DATA_OPS,
     )

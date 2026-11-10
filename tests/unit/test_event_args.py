@@ -275,6 +275,9 @@ def test_an_assistant_op_records_how_many_rows_it_found() -> None:
     assert project_result(absent, op_name="code.symbol")["out_hits"] == "0"
     present = {"definitions": [], "presence": [{"verdict": "present"}, {"verdict": "absent"}]}
     assert project_result(present, op_name="code.symbol")["out_hits"] == "1"
+    # Only the presence answer is read by verdict: another list counts every row.
+    findings = {"findings": [{"verdict": "absent"}, {"verdict": "ok"}]}
+    assert project_result(findings, op_name="namespace.audit")["out_hits"] == "2"
     # A get's miss is its found flag, kept as it was.
     miss = project_result({"found": False, "tags": []}, op_name="memory.get")
     assert miss["out_found"] == "false" and "out_hits" not in miss

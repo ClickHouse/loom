@@ -440,14 +440,14 @@ def test_the_run_read_names_the_ops_that_found_data() -> None:
         # Found nothing.
         _event("knowledge.search", {"out_hits": "0"}),
         _event("knowledge.get", {"out_found": "false"}),
+        # An abstention's hits are written as "0" (event_args).
         _event("memory.ask", {"out_abstain": "true", "out_hits": "0"}),
-        _event("memory.bulk_get", {"out_found_n": "0"}),
-        _event("search.query", {"out_section_hits": "0"}),
+        _event("namespace.audit", {"out_hits": "0"}),
     )
     found = frozenset({"memory.search", "namespace.inventory", "memory.get", "code.search"})
     assert calls.returned == found and calls.failed is False
     # Every successful call ran, found or not.
-    nothing = {"knowledge.search", "knowledge.get", "memory.ask", "memory.bulk_get", "search.query"}
+    nothing = {"knowledge.search", "knowledge.get", "memory.ask", "namespace.audit"}
     assert calls.ran == found | nothing
 
 

@@ -678,7 +678,11 @@ def _hits_column(op_name: str, result: dict[str, Any]) -> dict[str, str]:
     lists = [_at(result, f) for f in fields]
     if not any(isinstance(found, list) for found in lists):
         return {}
-    hits = sum(_found_rows(found) for found in lists if isinstance(found, list))
+    hits = sum(
+        _found_rows(f, found)
+        for f, found in zip(fields, lists, strict=True)
+        if isinstance(found, list)
+    )
     return {RESULT_PREFIX + "hits": "0" if result.get("abstain") is True else str(hits)}
 
 
@@ -690,14 +694,12 @@ def _at(result: dict[str, Any], path: str) -> Any:
     return value
 
 
-def _found_rows(rows: list[Any]) -> int:
-    """How many of `rows` are a find: a row with a verdict (`code.symbol`'s presence answer)
-    counts only when the verdict is "present"."""
-    return sum(
-        1
-        for row in rows
-        if not (isinstance(row, dict) and "verdict" in row) or row["verdict"] == "present"
-    )
+def _found_rows(field: str, rows: list[Any]) -> int:
+    """How many of `rows` are a find: in `code.symbol`'s presence answer (`presence`) only a
+    row whose verdict is "present" counts; every other list counts each row."""
+    if field != "presence":
+        return len(rows)
+    return sum(1 for row in rows if isinstance(row, dict) and row.get("verdict") == "present")
 
 
 def project_result(result: Any, *, op_name: str = "") -> dict[str, str]:
