@@ -763,8 +763,8 @@ def _runs_a_download(line: str) -> bool:
 
 def test_no_tracked_file_pipes_the_installer_into_sh() -> None:
     """A line that names `install.sh` and hands the download to a shell runs an
-    empty script and exits 0 when the download fails; every command a user is
-    shown saves the script first. A `\\` line break joins two lines into one."""
+    empty script and exits 0 when the download fails: no such line is tracked. A
+    `\\` line break joins two lines into one; a URL held in a variable is not seen."""
     piped = []
     own = Path(__file__).resolve().relative_to(ROOT).as_posix()  # holds the examples below
     for name in tracked():
