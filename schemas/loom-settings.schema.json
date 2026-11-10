@@ -39,7 +39,7 @@
         "allow_insecure": {
           "default": false,
           "type": "boolean",
-          "description": "True lets a non-loopback bind start with auth off, MCP open mode, the dev signing secret or a weak root, gateway or end-user key. Only for a port others cannot reach."
+          "description": "True lets a non-loopback bind start with auth off, MCP open mode, open self-signup outside trust-network, the dev signing secret or a weak root, gateway or end-user key. Only for a port others cannot reach."
         },
         "anthropic_base_url": {
           "default": "https://api.anthropic.com",
@@ -5852,7 +5852,7 @@
             "open"
           ],
           "type": "string",
-          "description": "Browser self-signup: \"off\" (endpoint 404s) or \"open\" (/v1/auth/self-signup mints JWTs scoped to the requested namespace)."
+          "description": "Browser self-signup: \"off\" (endpoint 404s) or \"open\" (/v1/auth/self-signup mints JWTs scoped to the requested namespace). A non-loopback bind refuses \"open\" unless identity_provider is \"trust-network\"."
         },
         "self_signup_org": {
           "default": "dev",

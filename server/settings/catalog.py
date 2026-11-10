@@ -388,6 +388,7 @@ class AuthSettings(BaseModel):
 
     # Browser self-signup: "off" (endpoint 404s) or "open"
     # (/v1/auth/self-signup mints JWTs scoped to the requested namespace).
+    # A non-loopback bind refuses "open" unless identity_provider is "trust-network".
     self_signup: Literal["off", "open"] = "off"
     # Default org for self-signed tokens.
     self_signup_org: str = "dev"
@@ -454,6 +455,11 @@ class AuthSettings(BaseModel):
             if shared:
                 raise ValueError(f"end-user issuers {a!r} and {b!r} both sign for {shared[0]}")
         return self
+
+    def self_signup_served(self) -> bool:
+        """Whether the self-signup routes mint tokens: open, and sign-in not
+        delegated to OIDC (which closes them)."""
+        return self.self_signup == "open" and self.oauth_login_provider != "oidc"
 
     def auth_actually_required(self) -> bool:
         """Whether the HTTP transport should require a bearer.
@@ -5005,9 +5011,9 @@ class RuntimeSettings(BaseModel):
     # Required behind a load balancer: at the default every client counts as the
     # balancer's address for the sign-in and sign-up limits.
     trusted_proxies: str = "127.0.0.1"
-    # True lets a non-loopback bind start with auth off, MCP open mode, the dev
-    # signing secret or a weak root, gateway or end-user key. Only for a port others
-    # cannot reach.
+    # True lets a non-loopback bind start with auth off, MCP open mode, open self-signup
+    # outside trust-network, the dev signing secret or a weak root, gateway or end-user
+    # key. Only for a port others cannot reach.
     allow_insecure: bool = False
 
     def workers_mode(self) -> str:

@@ -795,7 +795,8 @@ request's own scheme and `Host`, validated as `http(s)://hostname[:port]`.
 
 **Exposure.** A non-loopback `LOOM_BIND_HOST` refuses to start without
 `LOOM_PUBLIC_BASE_URL`, and, unless `LOOM_ALLOW_INSECURE=1`, with auth off,
-`LOOM_MCP_AUTH_MODE=open`, the dev JWT secret, or a root, gateway
+`LOOM_MCP_AUTH_MODE=open`, `LOOM_SELF_SIGNUP=open` without
+`LOOM_IDENTITY_PROVIDER=trust-network`, the dev JWT secret, or a root, gateway
 (`LOOM_JWT_PUBLIC_KEYS_JSON`) or inline end-user issuer key below the minimum size of
 RFC 7518 (an HMAC secret under 32 bytes, or an RSA key under 2048 bits; only the length
 is checked, not the randomness). Keys fetched from a JWKS URL arrive at runtime and are

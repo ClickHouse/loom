@@ -488,6 +488,22 @@ def _exposure_problems(settings: Any) -> list[Problem]:
                 "Set LOOM_MCP_AUTH_MODE=required or bind 127.0.0.1.",
             )
         )
+    if reachable and settings.self_signup_served():
+        named = settings.identity_provider == "trust-network"
+        out.append(
+            Problem(
+                "insecure_bind_open_signup",
+                "info" if named else severity,
+                f"LOOM_SELF_SIGNUP=open on a non-loopback bind (LOOM_BIND_HOST="
+                f"{settings.bind_host}): anyone who reaches the port can sign up and gets a "
+                "writer token.",
+                "Nothing to do if everyone who can reach the port may have an account; otherwise "
+                "turn self-signup off or bind 127.0.0.1."
+                if named
+                else "Set LOOM_IDENTITY_PROVIDER=trust-network if everyone who can reach the "
+                "port may have an account, turn self-signup off, or bind 127.0.0.1.",
+            )
+        )
     weak = keyring.weak_keys(settings) if reachable else []
     if weak:
         out.append(
