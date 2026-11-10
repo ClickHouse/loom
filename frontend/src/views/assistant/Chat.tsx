@@ -30,6 +30,8 @@ interface Turn {
   citations?: Citation[];
   /** How far the answer rests on Loom; absent until the answer ends. */
   support?: Support;
+  /** Op and setting names the answer wrote that the server neither serves nor documents. */
+  unknownNames?: string[];
 }
 
 const isAbort = (e: unknown) => e instanceof DOMException && e.name === "AbortError";
@@ -122,9 +124,9 @@ export function AssistantChat({
           streamed = true;
           update(id, (t) => ({ answer: t.answer + text }));
         },
-        onCitations: (citations, support) => {
-          labelled = supportLabel(support, citations)?.text ?? "";
-          update(id, () => ({ citations, support }));
+        onCitations: (citations, support, unknownNames) => {
+          labelled = supportLabel(support, citations, unknownNames)?.text ?? "";
+          update(id, () => ({ citations, support, unknownNames }));
         },
       },
       mine.signal,
@@ -209,7 +211,12 @@ export function AssistantChat({
                 {t.answer && <AnswerText text={t.answer} />}
                 {t.state === "answering" && !t.answer && <p className="text-sm text-text-muted">Answering…</p>}
                 {t.state === "done" && t.support && (
-                  <Sources citations={t.citations ?? []} support={t.support} answer={i + 1} />
+                  <Sources
+                    citations={t.citations ?? []}
+                    support={t.support}
+                    unknownNames={t.unknownNames ?? []}
+                    answer={i + 1}
+                  />
                 )}
                 {t.state === "stopped" && <p className="text-xs text-text-muted mt-1">Stopped.</p>}
                 {t.error && (

@@ -46,16 +46,20 @@ class AssistantAskInput(BaseModel):
 class AssistantCitation(BaseModel):
     """One citation an answer wrote, as Loom checked it when the answer ended."""
 
-    kind: Literal["memory", "doc", "code", "sql"]
+    kind: Literal["memory", "doc", "help", "code", "sql"]
     # The citation as the answer wrote it.
     text: str
     # True when the answer's own tool calls read the memory key or ran the statement, or
-    # the document holds the section.
+    # the document, or this build's documentation page, holds the section.
     verified: bool = False
     # Why it is not verified ('' when it is).
     reason: str = ""
-    # The memory key, document source or code path it names ('' for sql).
+    # The memory key, document source, documentation page or code path it names ('' for
+    # sql).
     ref: str = ""
+    # For a verified help citation, the section's anchor on its rendered page; '' for the
+    # whole page and for every other kind.
+    anchor: str = ""
 
 
 class AssistantAskOutput(BaseModel):
@@ -70,3 +74,6 @@ class AssistantAskOutput(BaseModel):
     # How far the answer rests on what Loom holds: supported, unsupported, unchecked or none
     # (no claim, such as a greeting or an abstention); default unchecked.
     support: str = "unchecked"
+    # Op names the answer writes in backticks, and LOOM_* names anywhere in it, that this
+    # build neither serves nor documents: names it may have invented.
+    unknown_names: list[str] = Field(default_factory=list)

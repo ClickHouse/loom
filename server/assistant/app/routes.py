@@ -315,6 +315,7 @@ async def _whole(chunks: AsyncIterator[bytes], held: _Held) -> JSONResponse:
             ],
             "citations": [c.model_dump() for c in answer.citations],
             "support": answer.support,
+            "unknown_names": answer.unknown_names,
             "usage": {
                 "prompt_tokens": answer.prompt_tokens,
                 "completion_tokens": answer.completion_tokens,

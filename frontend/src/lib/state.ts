@@ -15,6 +15,7 @@ export type View =
   | "runs"
   | "graph"
   | "assistant"
+  | "help"
   | "browse"
   | "code"
   | "tasks"
@@ -39,6 +40,7 @@ export const ALL_VIEWS: View[] = [
   "runs",
   "graph",
   "assistant",
+  "help",
   "browse",
   "code",
   "tasks",
@@ -100,6 +102,9 @@ const VIEW_QUERY_KEYS: Partial<Record<View, readonly string[]>> = {
   // The Library also carries the collection it shows (`?collection=`).
   knowledge: ["doc", "collection"],
   sessions: ["thread"],
+  // The Help view's page of the docs (`?page=features/knowledge.md`); its section is the
+  // URL's anchor.
+  help: ["page"],
 };
 
 /** The key naming the namespace a page shows. The app's own addresses carry it first (a
@@ -384,6 +389,8 @@ interface AppState {
   searchByTag: (tag: string) => void;
   setMemoryTagFilter: (tag: string | null) => void;
   openDocument: (sourceUri: string) => void;
+  /** Open a page of Loom's docs on the Help view, at a section's anchor when given. */
+  openDocsPage: (page: string, anchor?: string) => void;
   clearPendingDoc: () => void;
   /** The Library shows a place other than the header's namespace (a collection, or one it
    *  is confirming), or shows nothing of a namespace that holds no documents: the header's
@@ -545,6 +552,17 @@ export const useStore = create<AppState>((set, get) => ({
     set({ pendingDocSourceUri: sourceUri });
   },
   clearPendingDoc: () => set({ pendingDocSourceUri: null }),
+  openDocsPage: (page, anchor = "") => {
+    const before = window.location.pathname + window.location.search;
+    get().navigate("help", { query: { page } });
+    // The section rides the URL's anchor, which the Help view scrolls to once it has read
+    // the page; navSeq moves on either way, so the view reads the address again. A move to
+    // another section of the same page gets its own entry, so Back returns to the first.
+    const here = window.location.pathname + window.location.search;
+    const hash = anchor ? `#${anchor}` : "";
+    if (here === before && hash !== window.location.hash) history.pushState(history.state, "", here + hash);
+    else history.replaceState(history.state, "", here + hash);
+  },
   openConversationThread: (threadId) => {
     get().navigate("sessions", { query: { thread: threadId } });
     set({ pendingConversationThread: { threadId } });

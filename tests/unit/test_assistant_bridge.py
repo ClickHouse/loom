@@ -191,6 +191,7 @@ def test_an_answer_runs_the_seeded_agent_with_its_own_token(world: _World) -> No
         "citations": [],
         # It cites nothing and its calls found nothing: it makes no claim.
         "support": "none",
+        "unknown_names": [],
     }
 
 
@@ -1111,6 +1112,39 @@ def test_an_answers_checked_citations_reach_every_surface(
     assert [c.model_dump() for c in out.citations] == wire and out.support == "supported"
     # Each checked the answer's own text.
     assert asked and all(text == "Seven memories." for text in asked)
+
+
+def test_an_answer_naming_an_unknown_op_is_unsupported_on_every_surface(
+    world: _World, client: tuple[Any, list[dict[str, Any]]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.assistant.api.models import AssistantAskInput, AssistantCitation
+    from server.assistant.app import ask
+    from server.assistant.app.citations import Checked
+    from server.assistant.domain.support import VERIFIED
+
+    checked = [
+        AssistantCitation(kind="memory", text="[memory:a/b/c@v3]", verified=True, ref="a/b/c")
+    ]
+
+    async def verify(text: str, **_kw: Any) -> list[Checked]:
+        return [Checked(c, VERIFIED) for c in checked]
+
+    async def unknown_names(text: str) -> list[str]:
+        return ["memory.frobnicate"]
+
+    monkeypatch.setattr(bridge.citations, "verify", verify)
+    monkeypatch.setattr(bridge.citations, "unknown_names", unknown_names)
+    http, _ = client
+    r = http.post(ROUTE, headers=HEADERS, json={"stream": True, "messages": QUESTION})
+    last = json.loads([line for line in r.text.split("\n\n") if line][-2][6:])
+    assert (last["unknown_names"], last["support"]) == (["memory.frobnicate"], "unsupported")
+    whole = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION}).json()
+    assert (whole["unknown_names"], whole["support"]) == (["memory.frobnicate"], "unsupported")
+    monkeypatch.setattr(ask, "current_auth", lambda: _caller())
+    out = asyncio.run(
+        ask.handle_assistant_ask(AssistantAskInput(org=ORG, namespace=NS, question="q"))
+    )
+    assert (out.unknown_names, out.support) == (["memory.frobnicate"], "unsupported")
 
 
 def test_the_citation_checks_run_inside_the_answers_slot(

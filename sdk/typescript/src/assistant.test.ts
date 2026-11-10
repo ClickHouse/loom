@@ -12,7 +12,17 @@ import { AuthError, BackendUnavailable, LoomError, RateLimited, TimeoutError } f
 import type { TokenProvider } from "./machine.js";
 import { Transport } from "./transport.js";
 
-const CITED = [{ kind: "memory", text: "[memory:a/b/c@v3]", verified: true, reason: "", ref: "a/b/c" }];
+const CITED = [
+  { kind: "memory", text: "[memory:a/b/c@v3]", verified: true, reason: "", ref: "a/b/c", anchor: "" },
+  {
+    kind: "help",
+    text: "[help:guides/tokens-and-grants.md § Tokens and grants > Mint a token]",
+    verified: true,
+    reason: "",
+    ref: "guides/tokens-and-grants.md",
+    anchor: "mint-a-token",
+  },
+];
 
 function sse(...events: unknown[]): string {
   return `${events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("")}data: [DONE]\n\n`;
@@ -24,7 +34,13 @@ const ANSWER = sse(
   chunk("Deploys freeze "),
   chunk("on Fridays."),
   { id: "chatcmpl-1", choices: [], usage: { prompt_tokens: 9, completion_tokens: 4 } },
-  { object: "loom.citations", id: "chatcmpl-1", citations: CITED, support: "supported" },
+  {
+    object: "loom.citations",
+    id: "chatcmpl-1",
+    citations: CITED,
+    support: "supported",
+    unknown_names: ["memory.frobnicate"],
+  },
 );
 
 /** A body delivered in pieces cut at `cuts`, so an event can span reads. */
@@ -85,6 +101,7 @@ describe("loom.assistant.stream", () => {
         support: "supported",
         promptTokens: 9,
         completionTokens: 4,
+        unknownNames: ["memory.frobnicate"],
       },
     });
     expect(out).toHaveLength(3);

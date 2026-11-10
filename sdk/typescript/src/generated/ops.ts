@@ -75,11 +75,12 @@ export interface AssistantAskInput {
 }
 
 export interface AssistantCitation {
-  kind: "memory" | "doc" | "code" | "sql";
+  kind: "memory" | "doc" | "help" | "code" | "sql";
   text: string;
   verified?: boolean;
   reason?: string;
   ref?: string;
+  anchor?: string;
 }
 
 export interface AssistantAskOutput {
@@ -88,6 +89,7 @@ export interface AssistantAskOutput {
   model?: string;
   citations?: AssistantCitation[];
   support?: string;
+  unknown_names?: string[];
 }
 
 export interface AuditListInput {
@@ -3123,6 +3125,7 @@ export interface HelpGetInput {
 export interface HelpOutlineEntry {
   section: string;
   anchor: string;
+  heading?: string;
 }
 
 export interface HelpGetOutput {

@@ -14,10 +14,21 @@ interface Label {
   tone: string;
 }
 
-/** The label of an answer with this support and these citations; null when it has none. */
-export function supportLabel(support: Support, citations: Citation[]): Label | null {
+/** The label of an answer with this support and these citations; null when it has none.
+ *  `unknownNames` are the op and setting names it wrote that the server neither serves nor
+ *  documents, which make it unsupported whatever it cites. */
+export function supportLabel(support: Support, citations: Citation[], unknownNames: string[] = []): Label | null {
   const verified = citations.filter((c) => c.verified).length;
   if (support === "none") return null;
+  if (support === "unsupported" && unknownNames.length > 0) {
+    const names = unknownNames.join(", ");
+    return {
+      text: `Couldn't confirm: it names ${names}, which this Loom neither serves nor documents`,
+      why: "The answer names an operation or setting this Loom has no record of, so it may have made the name up. Check the name before you use it.",
+      icon: "warning",
+      tone: "text-warn",
+    };
+  }
   if (support === "supported") {
     const all = verified === citations.length;
     return {
@@ -69,11 +80,32 @@ export function supportLabel(support: Support, citations: Citation[]): Label | n
  * A verified memory or document opens where the dashboard shows it; an unverified citation
  * says why.
  */
-export function Sources({ citations, support, answer }: { citations: Citation[]; support: Support; answer: number }) {
+export function Sources({
+  citations,
+  support,
+  unknownNames = [],
+  answer,
+}: {
+  citations: Citation[];
+  support: Support;
+  unknownNames?: string[];
+  answer: number;
+}) {
   const inspect = useStore((s) => s.inspect);
   const openDocument = useStore((s) => s.openDocument);
+  const openDocsPage = useStore((s) => s.openDocsPage);
   const labelId = useId();
-  const label = supportLabel(support, citations);
+  const label = supportLabel(support, citations, unknownNames);
+  // Where a verified citation opens: a memory in the drawer (any writer's: the wildcard
+  // reads it whichever agent, user or session it is filed under), a document in its
+  // preview, a docs page on the Help view at its section.
+  const opener = (c: Citation): (() => void) | undefined => {
+    if (!c.verified || !c.ref) return undefined;
+    if (c.kind === "memory") return () => inspect(c.ref, { agent: "*" });
+    if (c.kind === "doc") return () => openDocument(c.ref);
+    if (c.kind === "help") return () => openDocsPage(c.ref, c.anchor);
+    return undefined;
+  };
   if (!label && citations.length === 0) return null;
   return (
     <div className="mt-2 space-y-1" data-testid="assistant-sources">
@@ -98,26 +130,22 @@ export function Sources({ citations, support, answer }: { citations: Citation[];
       )}
       {citations.length > 0 && (
         <ul className="space-y-1 text-xs" aria-label="Sources">
-          {citations.map((c) => (
-            <li key={c.text} className="break-words">
-              <span className="text-text-muted">{c.verified ? "Verified" : "Not verified"} · </span>
-              {c.verified && c.ref && (c.kind === "memory" || c.kind === "doc") ? (
-                <Link
-                  component="button"
-                  type="button"
-                  size="sm"
-                  // A cited key may be any writer's: the wildcard reads it whichever agent,
-                  // user or session it is filed under.
-                  onClick={() => (c.kind === "memory" ? inspect(c.ref, { agent: "*" }) : openDocument(c.ref))}
-                >
-                  {citationText(c)}
-                </Link>
-              ) : (
-                <span className={c.verified ? "text-text" : "text-text-muted"}>{citationText(c)}</span>
-              )}
-              {!c.verified && c.reason && <span className="text-text-muted"> ({c.reason})</span>}
-            </li>
-          ))}
+          {citations.map((c) => {
+            const open = opener(c);
+            return (
+              <li key={c.text} className="break-words">
+                <span className="text-text-muted">{c.verified ? "Verified" : "Not verified"} · </span>
+                {open ? (
+                  <Link component="button" type="button" size="sm" onClick={open}>
+                    {citationText(c)}
+                  </Link>
+                ) : (
+                  <span className={c.verified ? "text-text" : "text-text-muted"}>{citationText(c)}</span>
+                )}
+                {!c.verified && c.reason && <span className="text-text-muted"> ({c.reason})</span>}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

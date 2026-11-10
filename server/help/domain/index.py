@@ -53,6 +53,16 @@ class Section:
         return " > ".join(self.breadcrumb)
 
     @property
+    def heading(self) -> str:
+        """The section's heading as the page writes it (its first line, an ATX heading's
+        `#`s left off); empty for text before the page's first heading."""
+        if not self.breadcrumb:
+            return ""
+        first = self.text.split("\n", 1)[0]
+        m = _HEADING.match(first)
+        return m[2] if m else first.strip()
+
+    @property
     def audience(self) -> Literal["user", "operator"]:
         return "operator" if self.path.startswith(_OPERATOR_DIRS) else "user"
 
@@ -66,6 +76,8 @@ class Index:
     postings: dict[str, tuple[array[int], array[int]]] = field(default_factory=dict)
     lengths: array[int] = field(default_factory=lambda: array("I"))
     avgdl: float = 1.0
+    # Every whole identifier the pages write (`memory.set`, `loom_client_id`), lower-cased.
+    identifiers: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -179,6 +191,7 @@ def build(pages: Iterable[tuple[str, str]]) -> Index:
                 counts.setdefault(t, {})[sid] = n
     for t, by_section in counts.items():
         index.postings[t] = (array("I", by_section.keys()), array("I", by_section.values()))
+    index.identifiers = frozenset(t for t in index.postings if _IDENTIFIER.fullmatch(t))
     if index.lengths:
         index.avgdl = max(sum(index.lengths) / len(index.lengths), 1.0)
     return index
@@ -235,6 +248,24 @@ def page_sections(index: Index, path: str) -> list[Section]:
     return [index.sections[i] for i in index.pages.get(path, [])]
 
 
+def find_section(index: Index, path: str, breadcrumb: tuple[str, ...]) -> Section | None:
+    """The section of `path` a cited `breadcrumb` names, or None: the one it equals, else
+    the one it equals once the page title is left off, else the only one it ends. A
+    citation that writes a heading alone (`Daily spend caps`) names its section as long as
+    no other section of the page ends the same way."""
+    if not breadcrumb:
+        return None
+    sections = page_sections(index, path)
+    exact = next((s for s in sections if s.breadcrumb == breadcrumb), None)
+    if exact is not None:
+        return exact
+    untitled = next((s for s in sections if s.breadcrumb[1:] == breadcrumb), None)
+    if untitled is not None:
+        return untitled
+    tails = [s for s in sections if s.breadcrumb[-len(breadcrumb) :] == breadcrumb]
+    return tails[0] if len(tails) == 1 else None
+
+
 def section_text(
     index: Index, path: str, breadcrumb: tuple[str, ...], anchor: str = ""
 ) -> Section | None:
@@ -275,6 +306,7 @@ __all__ = [
     "Index",
     "Section",
     "build",
+    "find_section",
     "page_sections",
     "query_terms",
     "search",

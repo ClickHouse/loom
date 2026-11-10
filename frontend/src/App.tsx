@@ -79,6 +79,7 @@ const Conversations = lazy(() => import("./views/Conversations").then((m) => ({ 
 const Runs = lazy(() => import("./views/Runs").then((m) => ({ default: m.Runs })));
 const GraphExplorer = lazy(() => import("./views/Graph").then((m) => ({ default: m.GraphExplorer })));
 const Assistant = lazy(() => import("./views/Assistant").then((m) => ({ default: m.Assistant })));
+const Help = lazy(() => import("./views/Help").then((m) => ({ default: m.Help })));
 const Sharing = lazy(() => import("./views/Sharing").then((m) => ({ default: m.Sharing })));
 const Browse = lazy(() => import("./views/Browse").then((m) => ({ default: m.Browse })));
 const CodeView = lazy(() => import("./views/Code").then((m) => ({ default: m.CodeView })));
@@ -767,6 +768,8 @@ function ViewSwitch({ view }: { view: ReturnType<typeof useStore.getState>["view
       return <Agents />;
     case "assistant":
       return <Assistant />;
+    case "help":
+      return <Help />;
     case "admin:users":
       return <AdminUsersView />;
     case "admin:settings":

@@ -16,8 +16,17 @@ from loom.agent import Agent
 from loom.errors import AuthInsufficient, BackendUnavailable, LoomError, RateLimited
 from loom.sync import SyncAgent
 
+HELP = "[help:guides/tokens-and-grants.md § Tokens and grants > Mint a token]"
 CITED = [
-    {"kind": "memory", "text": "[memory:a/b/c@v3]", "verified": True, "reason": "", "ref": "a/b/c"}
+    {"kind": "memory", "text": "[memory:a/b/c@v3]", "verified": True, "reason": "", "ref": "a/b/c"},
+    {
+        "kind": "help",
+        "text": HELP,
+        "verified": True,
+        "reason": "",
+        "ref": "guides/tokens-and-grants.md",
+        "anchor": "mint-a-token",
+    },
 ]
 
 
@@ -39,7 +48,13 @@ ANSWER = _sse(
     _chunk("Deploys freeze "),
     _chunk("on Fridays."),
     {"id": "chatcmpl-1", "choices": [], "usage": {"prompt_tokens": 9, "completion_tokens": 4}},
-    {"object": "loom.citations", "id": "chatcmpl-1", "citations": CITED, "support": "supported"},
+    {
+        "object": "loom.citations",
+        "id": "chatcmpl-1",
+        "citations": CITED,
+        "support": "supported",
+        "unknown_names": ["memory.frobnicate"],
+    },
 )
 
 
@@ -74,8 +89,14 @@ def test_the_stream_yields_text_then_the_answer_with_its_citations() -> None:
     assert isinstance(answer, AssistantAnswer) and len(events) == 3
     assert answer.text == "Deploys freeze on Fridays." and answer.run_id == "chatcmpl-1"
     assert (answer.model, answer.prompt_tokens, answer.completion_tokens) == ("m", 9, 4)
-    assert answer.verified == (AssistantCitation("memory", "[memory:a/b/c@v3]", True, ref="a/b/c"),)
+    assert answer.verified == (
+        AssistantCitation("memory", "[memory:a/b/c@v3]", True, ref="a/b/c"),
+        AssistantCitation(
+            "help", HELP, True, ref="guides/tokens-and-grants.md", anchor="mint-a-token"
+        ),
+    )
     assert answer.support == "supported"
+    assert answer.unknown_names == ("memory.frobnicate",)
     (r,) = sent
     assert r.url.path == "/v1/assistant/chat/completions"
     assert r.headers["X-Loom-Namespace"] == "handbook"

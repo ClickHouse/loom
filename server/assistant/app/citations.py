@@ -7,7 +7,9 @@ ran that statement (`loom.agent_events`): both read from the rows the answer's c
 left under its run, which land in the background, so the check waits up to five seconds
 for them. A document citation is read with `knowledge.outline`, sent through Loom's own
 HTTP routes in process with the answer's token, so every gate a read passes applies to
-it. A code citation is not checked. Every check together runs for at most ten seconds.
+it. A help citation is checked against this process's index of the documentation the
+build ships: the same text for every caller, so no read of Loom's is made for it. A code
+citation is not checked. Every check together runs for at most ten seconds.
 """
 
 from __future__ import annotations
@@ -21,9 +23,12 @@ from typing import Any
 import httpx
 
 from server.assistant.api.models import AssistantCitation
+from server.assistant.domain import names
 from server.assistant.domain import support as rule
 from server.assistant.domain.citations import Citation, parse, section_path
 from server.assistant.store import ledger
+from server.help.app import docs as help_docs
+from server.help.domain import index as help_index
 from server.memory.app import exposure_ledger
 from server.observability.event_args import text_digest
 from server.observability.run_context import set_ledger_run
@@ -65,12 +70,14 @@ class Checked:
     code: str
 
 
-def _result(c: Citation, code: str, reason: str = "") -> Checked:
+def _result(
+    c: Citation, code: str, reason: str = "", *, ref: str = "", anchor: str = ""
+) -> Checked:
     verified = code == rule.VERIFIED
-    return Checked(
-        AssistantCitation(kind=c.kind, text=c.text, verified=verified, reason=reason, ref=c.ref),
-        code,
+    citation = AssistantCitation(
+        kind=c.kind, text=c.text, verified=verified, reason=reason, ref=ref or c.ref, anchor=anchor
     )
+    return Checked(citation, code)
 
 
 async def verify(
@@ -108,9 +115,12 @@ async def _check_all(
     ledgered = asyncio.create_task(_ledgered(org, namespace, run_id, subject, cited))
     # One outline per document, however many of its sections are cited.
     documents: dict[str, list[int]] = {}
+    helped: list[int] = []
     for i, c in enumerate(cited):
         if c.kind == "code":
             out[i] = _result(c, rule.CODE, "code citations are not checked")
+        elif c.kind == "help":
+            helped.append(i)
         elif c.kind == "doc":
             documents.setdefault(c.source_uri, []).append(i)
     gate = asyncio.Semaphore(_PARALLEL_READS)
@@ -138,8 +148,15 @@ async def _check_all(
             for i in at:
                 out[i] = _document(cited[i], sections)
 
+        async def help_pages() -> None:
+            ix = await help_docs.index() if helped else None
+            for i in helped:
+                out[i] = _help(cited[i], ix)
+
         try:
-            await asyncio.gather(from_ledger(), *(document(u, at) for u, at in documents.items()))
+            await asyncio.gather(
+                from_ledger(), help_pages(), *(document(u, at) for u, at in documents.items())
+            )
         finally:
             ledgered.cancel()
 
@@ -256,4 +273,56 @@ def _document(c: Citation, sections: set[tuple[str, ...]] | None) -> Checked:
     return _result(c, rule.VERIFIED)
 
 
-__all__ = ["RECORDING_READS", "Checked", "set_app", "verify"]
+def _help(c: Citation, ix: help_index.Index | None) -> Checked:
+    """A help citation against this build's documentation: the page indexed, and the
+    section one of its own; the result names the page and the section's anchor."""
+    path = c.path.removeprefix("docs/")
+    if ix is None:
+        return _result(c, rule.NOT_RUN, _NOT_RUN, ref=path)
+    if path not in ix.pages:
+        reason = "no such page in this build's documentation"
+        return _result(c, rule.NO_DOCUMENT, reason, ref=path)
+    if not c.section:
+        return _result(c, rule.VERIFIED, ref=path)
+    section = help_index.find_section(ix, path, c.section)
+    if section is None:
+        return _result(c, rule.NO_SECTION, "the page has no such section", ref=path)
+    return _result(c, rule.VERIFIED, ref=path, anchor=section.anchor)
+
+
+async def unknown_names(answer_text: str) -> list[str]:
+    """The op and LOOM_* names `answer_text` writes that this build neither serves nor
+    documents; none when the documentation cannot be read, since every name it writes
+    would then look unknown."""
+    ix = await help_docs.index()
+    if ix is None:
+        return []
+    return names.unknown(answer_text, _known(ix))
+
+
+# What `_known` built, and for which index: the index lives as long as the process.
+_known_for: tuple[help_index.Index, names.Known] | None = None
+
+
+def _known(ix: help_index.Index) -> names.Known:
+    """What this build knows: its ops, its environment variables and its documentation's
+    identifiers, built once per index."""
+    global _known_for
+    if _known_for is not None and _known_for[0] is ix:
+        return _known_for[1]
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.settings import Settings
+    from server.settings._env import NON_SETTINGS_ENV, NON_SETTINGS_ENV_PREFIXES
+
+    known = names.Known(
+        ops=frozenset(OPERATIONS_BY_NAME),
+        groups=frozenset(n.split(".", 1)[0] for n in OPERATIONS_BY_NAME),
+        env=frozenset(f"LOOM_{f.upper()}" for f in Settings.model_fields) | NON_SETTINGS_ENV,
+        env_prefixes=tuple(NON_SETTINGS_ENV_PREFIXES),
+        documented=ix.identifiers,
+    )
+    _known_for = (ix, known)
+    return known
+
+
+__all__ = ["RECORDING_READS", "Checked", "set_app", "unknown_names", "verify"]

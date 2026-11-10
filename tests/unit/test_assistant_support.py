@@ -183,6 +183,31 @@ def test_an_uncited_fact_after_calls_that_found_nothing(ran: frozenset[str], exp
 
 
 @pytest.mark.parametrize(
+    ("codes", "text", "unknown"),
+    [
+        (
+            [rule.VERIFIED],
+            "Set it with `memory.frobnicate` [memory:policy/freeze@v3].",
+            "memory.frobnicate",
+        ),
+        ([], "Set LOOM_MADE_UP to true.", "LOOM_MADE_UP"),
+    ],
+)
+def test_an_answer_naming_an_unknown_name_is_unsupported_whatever_it_cites(
+    codes: list[str], text: str, unknown: str
+) -> None:
+    got = rule.support_of(
+        codes,
+        text=text,
+        calls=rule.RunCalls(frozenset(), False, frozenset()),
+        citable=CITABLE,
+        no_data=NO_DATA,
+        unknown_names=[unknown],
+    )
+    assert got == "unsupported"
+
+
+@pytest.mark.parametrize(
     ("returned", "expected"),
     [
         # Only the docs were read: they are not the namespace's data.
@@ -367,6 +392,21 @@ def test_a_cited_answer_or_an_abstention_reads_no_calls(monkeypatch: pytest.Monk
     assert _answer([], "Nothing stored in Loom answers this.") == "none"
     assert _answer([], "") == "none"
     assert asked == []
+
+
+def test_an_answer_naming_an_unknown_name_reads_no_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    asked = _calls(monkeypatch)
+    got = asyncio.run(
+        app_support.answer_support(
+            [],
+            "Call `memory.frobnicate`.",
+            org="acme",
+            run_id="r1",
+            subject="alice",
+            unknown_names=["memory.frobnicate"],
+        )
+    )
+    assert (got, asked) == ("unsupported", [])
 
 
 def test_an_uncited_answer_reads_its_calls_again_until_a_citable_op_found_data(

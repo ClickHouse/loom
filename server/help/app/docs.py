@@ -131,7 +131,7 @@ async def handle_help_get(inp: HelpGetInput) -> HelpGetOutput:
         truncated=truncated,
         next_offset=rest,
         sections=[
-            HelpOutlineEntry(section=s.section, anchor=s.anchor)
+            HelpOutlineEntry(section=s.section, anchor=s.anchor, heading=s.heading)
             for s in docs_index.page_sections(ix, path)
         ]
         if outline
