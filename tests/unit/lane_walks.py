@@ -448,6 +448,7 @@ WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
         _callers("class C:\n", "    def a(self): pass\n", "    def g{}(self): self.a()\n"),
     ),
     ("python-table-calls", _edges("a.py", 2000), _run("", "a()\n")),
+    ("python-receiver-calls", _edges("a.py", 2000), _numbered("o{}.a()\n")),
     (
         "python-inherited-calls",
         _edges("a.py", 2000),

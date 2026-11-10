@@ -116,7 +116,9 @@ def test_a_deep_file_tries_the_nearest_ancestors_then_the_root() -> None:
     assert len(ladder) == MAX_ANCESTOR_DIRS + 1 and ladder[-1] == "p.proto"
     assert ladder[0] == "/".join(dirs) + "/p.proto"
     assert ladder[-2] == "/".join(dirs[:9]) + "/p.proto"
-    assert include_candidates(from_path.replace(".proto", ".c"), "h.h")[-1] == "h.h"
+    includes = include_candidates(from_path.replace(".proto", ".c"), "h.h")
+    assert len(includes) == MAX_ANCESTOR_DIRS + 1 and includes[-1] == "h.h"
+    assert includes[0] == "/".join(dirs) + "/h.h" and includes[-2] == "/".join(dirs[:9]) + "/h.h"
 
 
 def test_the_ladders_answer_what_the_loops_answered_within_the_cap() -> None:

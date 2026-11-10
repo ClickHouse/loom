@@ -1750,6 +1750,12 @@ class _Namesakes:
         return 1, self.syms[lo] if lo < s_lo else self.syms[s_hi]
 
 
+def _scoped_text(call_text: str) -> str:
+    """What of a call's text `candidates_for_call` reads: the text written with a scope
+    (`Foo::bar`), '' otherwise."""
+    return call_text if "::" in call_text else ""
+
+
 # the rows of a name the table does not hold: one shared list, so the per-list memos of
 # `_CallResolver._of` keep one entry for every absent name
 _NO_ROWS: list[tuple[str, str, str]] = []
@@ -2668,9 +2674,11 @@ class _CallResolver:
         return self._once(("bases", bare), lambda: _base_rows(self.name_table, bare))
 
     def candidates(self, name: str, bare: str) -> list[tuple[str, str, str]]:
-        """`candidates_for_call`, once per call text; callers never change the list."""
+        """`candidates_for_call`, once per bare name, or per call text for one written with
+        a scope (the only text it reads); callers never change the list."""
         return self._once(
-            ("table", name, bare), lambda: candidates_for_call(self.name_table, name, bare)
+            ("table", _scoped_text(name), bare),
+            lambda: candidates_for_call(self.name_table, name, bare),
         )
 
     def _of[T](self, rows: list[Any], key: tuple[Any, ...], build: Callable[[], T]) -> T:
@@ -3354,7 +3362,7 @@ class _CallResolver:
     ) -> Edge | None:
         # 2c) the file's import names the module — or, in
         # Go, the package directory the module index resolves
-        candidates = self._once(("callable", name, bare), lambda: [
+        candidates = self._once(("callable", _scoped_text(name), bare), lambda: [
             c for c in self.candidates(name, bare) if c[2] not in _NEVER_CALLABLE
         ])
         bound = self.go_package_bound(receiver, bare, candidates)
@@ -3441,7 +3449,7 @@ def callee_targets(
         if callee.startswith("fixture:"):
             continue
         if callee.startswith("name:"):
-            _bind_name_receiver(resolver, name_table, callee, out)
+            _bind_name_receiver(resolver, callee, out)
             continue
         bare = callee.rsplit(".", 1)[-1]
         receiver = callee.rsplit(".", 1)[0] if "." in callee else ""
@@ -3473,10 +3481,7 @@ def callee_targets(
     return out
 
 
-def _bind_name_receiver(
-    resolver: _CallResolver, name_table: dict[str, list[tuple[str, str, str]]],
-    callee: str, out: dict[str, str],
-) -> None:
+def _bind_name_receiver(resolver: _CallResolver, callee: str, out: dict[str, str]) -> None:
     """`name:<receiver>` — an imported name used as a receiver
     binds to its definition through the import alone (never a repo-wide
     guess); the caller reads that definition's annotation as the type."""
