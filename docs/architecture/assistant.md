@@ -272,9 +272,13 @@ The rule reads no wording beyond the abstention sentence, and accepts these resi
   `unsupported` (`unchecked` when only ops with no citation form found data). The
   instructions keep such calls rare: a greeting calls no tool, and a question back lists
   each match with its citation.
-- An uncited fact with no call at all (a later turn restating an earlier one), or after
+- An uncited fact with no call at all (a later turn restating an earlier one, or a
+  first answer from the model's own knowledge, which the instructions forbid), or after
   calls whose rows land past the re-read or are dropped (the ledger keeps them at most
   once), is `none`.
+- A "not found" answer from a lookup that misses (`memory_get`, `code_symbol`) is
+  `none` when it ends with the abstention sentence, as the instructions ask for every
+  read that finds nothing; worded otherwise, it is `unsupported`.
 - An abstention that also states a fact is `none`.
 - A document citation verifies when the document holds the section, whether or not this
   answer read it; the instructions ask for a document to be read again before it is

@@ -216,6 +216,26 @@ def test_an_empty_search_beside_other_data_or_a_failure_is_unchecked(
     assert got == "unchecked"
 
 
+@pytest.mark.parametrize("op", ["memory.get", "code.symbol"])
+def test_a_lookup_that_missed_is_none_with_the_sentence_and_unsupported_without(op: str) -> None:
+    def support(text: str) -> str:
+        return rule.support_of(
+            [],
+            text=text,
+            returned=frozenset(),
+            failed=False,
+            ran=frozenset({op}),
+            citable=CITABLE,
+            no_data=NO_DATA,
+        )
+
+    assert (
+        support("No memory is stored under policy/freeze. Nothing stored in Loom answers this.")
+        == "none"
+    )
+    assert support("No memory is stored under policy/freeze.") == "unsupported"
+
+
 def test_a_question_back_that_cites_each_match_is_supported() -> None:
     text = "Two match: [memory:deploy/staging@v2] and [memory:deploy/prod@v4]. Which one?"
     assert (
