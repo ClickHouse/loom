@@ -195,6 +195,7 @@ def _delete(client: Any, database: str, tables: list[str], orgs: frozenset[str])
 
 # The Postgres authority's tables that hold rows by org, children before parents.
 _PG_TABLES = (
+    "loom.knowledge_jobs",
     "loom.knowledge_deliveries",
     "loom.knowledge_heads",
     "loom.memory_deliveries",

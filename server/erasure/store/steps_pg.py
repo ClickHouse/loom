@@ -13,9 +13,10 @@ the write limit (`ch.write_limit_s`, `pg.wait_out`). The ClickHouse steps that f
 then find every copy that arrives within that bound.
 
 `pg_knowledge.delete` does the same for knowledge documents: it removes the scope's
-heads and deliveries under the namespaces' document lock, keeps the document ids of
-every version of the scope's documents as evidence that refuses a write built from
-them (`loom.erased_documents`), and waits out the removed deliveries' publishers.
+heads, deliveries and ingestion jobs under the namespaces' document lock, keeps the
+document ids of every version of the scope's documents as evidence that refuses a write
+built from them (`loom.erased_documents`), and waits out the removed deliveries'
+publishers.
 """
 
 from __future__ import annotations
@@ -247,10 +248,11 @@ async def delete_pg_memory_by_user(org: str, user_id: str) -> int:
 
 
 async def _erase_knowledge(org: str, namespaces: list[str] | None, user_id: str | None) -> int:
-    """The scope's knowledge heads and deliveries (`loom.knowledge_heads`,
-    `loom.knowledge_deliveries`) out of Postgres, their documents' ids kept as deletion
-    evidence, then the wait for the publishers of those deliveries, so the documents
-    step below finds every copy they could land."""
+    """The scope's knowledge heads, deliveries and ingestion jobs
+    (`loom.knowledge_heads`, `loom.knowledge_deliveries`, `loom.knowledge_jobs`) out of
+    Postgres, their documents' ids kept as deletion evidence, then the wait for the
+    publishers of those deliveries, so the documents step below finds every copy they
+    could land."""
     removed, leases = await _after_deadlocks(_erase_knowledge_once, org, namespaces, user_id)
     await pg.wait_out(leases)
     return removed
@@ -303,7 +305,16 @@ async def _erase_knowledge_once(
         await _keep_evidence(conn, org, removed, quiet_s)
         async for page in documents_in_clickhouse(org, scoped, user_id):
             await _keep_evidence(conn, org, page, quiet_s)
-    return len(heads) + len(leases), [*left, *earlier]
+        # Last, so their row locks are held only to the commit (a take skips a locked job,
+        # `pg_jobs.take`); a run's next read or save of a deleted job finds no row and
+        # stops (`JobGone`).
+        jobs = await conn.fetchval(
+            f"WITH gone AS (DELETE FROM loom.knowledge_jobs WHERE {where} RETURNING 1)"
+            " SELECT count(*) FROM gone",
+            org,
+            arg,
+        )
+    return len(heads) + len(leases) + int(jobs), [*left, *earlier]
 
 
 async def documents_in_clickhouse(
@@ -477,6 +488,7 @@ PG_CENSUS: dict[str, str] = {
     "pg:loom.idempotency": "idempotency.delete",
     "pg:loom.knowledge_heads": "pg_knowledge.delete",
     "pg:loom.knowledge_deliveries": "pg_knowledge.delete",
+    "pg:loom.knowledge_jobs": "pg_knowledge.delete",
 }
 # The Postgres tables that hold none, with the reason.
 PG_NO_MEMORY_CONTENT: dict[str, str] = {
@@ -506,20 +518,21 @@ PG_NO_MEMORY_CONTENT: dict[str, str] = {
 }
 
 
-# The Postgres tables a namespace's memory or knowledge documents live in, which the
-# in-use check reads.
+# The Postgres tables a namespace's memory, knowledge documents or ingestion jobs live
+# in, which the in-use check reads.
 PG_IN_USE_TABLES = (
     "loom.memory_current",
     "loom.memory_revisions",
     "loom.knowledge_heads",
     "loom.knowledge_deliveries",
+    "loom.knowledge_jobs",
 )
 
 
 async def pg_holds_namespace(org: str, namespace: str) -> bool:
-    """Whether the Postgres authority holds a memory head or revision, or a knowledge
-    document head or delivery, of (org, namespace): one committed but not yet delivered
-    to ClickHouse is in no census table there."""
+    """Whether the Postgres authority holds a memory head or revision, a knowledge
+    document head or delivery, or an ingestion job of (org, namespace): one committed
+    but not yet delivered to ClickHouse is in no census table there."""
     if not pg.enabled() or pg.unstorable(org) or pg.unstorable(namespace):
         return False
     branches = [f"SELECT 1 FROM {t} WHERE org = $1 AND namespace = $2" for t in PG_IN_USE_TABLES]

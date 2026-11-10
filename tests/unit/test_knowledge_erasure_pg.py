@@ -151,8 +151,9 @@ def test_the_erasure_reads_each_named_namespace_once_with_an_idle_limit_for_it(
         async def fetch(self, sql: str, *args: Any) -> list[Any]:
             return []
 
-        async def fetchval(self, sql: str, *args: Any) -> None:
-            return None
+        async def fetchval(self, sql: str, *args: Any) -> int | None:
+            # A count always answers, 0 when nothing matched (the jobs deleted).
+            return 0 if "count(*)" in sql else None
 
         @contextlib.asynccontextmanager
         async def transaction(self) -> Any:

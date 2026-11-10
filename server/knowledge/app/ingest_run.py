@@ -31,16 +31,17 @@ never wrote (an error, a cancel, a cancelled pass, a crash) are retired by the
 job's retry, its failure or its next run; the document row names the job that
 wrote it (`ingestion_id`), which is how a run tells its own publish. A job is
 taken under a deployment-wide lease on its id, so two workers never run it at
-once, and re-read under it, so a cancel (`loom.knowledge_ingest_cancels`, a
-row of its own) or a finished run is seen. A transient failure (an extractor,
-store or provider outage) puts the job back with a growing delay until
-`knowledge_ingest_max_attempts`; anything else, a source the extractor refuses
-included, fails the job with a typed code.
+once, and re-read under it, so a cancel (recorded apart from the job's versions,
+`ingest_jobs.request_cancel`) or a finished run is seen. A transient failure (an
+extractor, store or provider outage) puts the job back with a growing delay
+until `knowledge_ingest_max_attempts`; anything else, a source the extractor
+refuses included, fails the job with a typed code.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import json
 import logging
@@ -61,7 +62,7 @@ from server.core.errors import (
 from server.core.leases import LeaseLost
 from server.core.pg import PostgresUnavailableError
 from server.core.pg_lease import PublicationPending
-from server.knowledge.app import datasets
+from server.knowledge.app import datasets, ingest_jobs
 from server.knowledge.app.extractors import (
     ExtractionFailed,
     ExtractorUnavailable,
@@ -74,12 +75,18 @@ from server.knowledge.domain.extract.structural import StructuralChunk, chunk_ar
 from server.knowledge.domain.ingest_states import OPEN_STATES
 from server.knowledge.store import datasets as datasets_repo
 from server.knowledge.store import documents as documents_repo
-from server.knowledge.store import ingestions
+from server.knowledge.store import ingestions, pg_jobs
 from server.knowledge.store.documents import DocumentInsertRow, DocumentRow, OlderNotRetired
 from server.knowledge.store.pg_documents import HeadMoved
 from server.settings import settings
 
 log = logging.getLogger(__name__)
+
+# Under the Postgres authority, the token this task's run took its job with
+# (`pg_jobs.take`); every save carries it.
+_RUN_TOKEN: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "knowledge_ingest_token", default=None
+)
 
 # The lease a job runs under, and the claim a publish of one source runs under.
 # A run that gives up on a document insert whose outcome is unknown leaves the job's lease to expire
@@ -167,27 +174,47 @@ def _author(job: dict[str, Any]) -> dict[str, str]:
 
 
 async def _current(job: dict[str, Any]) -> dict[str, Any]:
-    """The job's row as it is now; JobGone once an erasure has deleted it."""
-    current = await ingestions.get_ingestion(job["org"], job["namespace"], job["ingestion_id"])
-    if current is None:
+    """The job's row as it is now; JobGone once an erasure has deleted it. A job
+    Postgres holds is read under the run's token: LeaseLost once another run took it,
+    so a run that lost the job acts on nothing of the run that has it."""
+    key = (job["org"], job["namespace"], job["ingestion_id"])
+    token = _RUN_TOKEN.get()
+    if token is None:
+        current = await ingestions.get_ingestion(*key)
+        if current is None:
+            raise JobGone(job["ingestion_id"])
+        return current
+    read = await pg_jobs.read(*key, token)
+    if read == "gone":
         raise JobGone(job["ingestion_id"])
-    return current
+    if read == "taken":
+        raise LeaseLost(f"knowledge-ingest:{job['ingestion_id']}")
+    return read
 
 
 async def _save(job: dict[str, Any], **fields: Any) -> dict[str, Any]:
     """A new version of the job row; only the worker that holds the job's lease
     writes them. The chunk version a publish recorded is kept: a caller's copy
     of the row may predate it. A job an erasure deleted is not written again
-    (JobGone)."""
+    (JobGone). A job Postgres holds is saved under the run's token, and one another
+    run took since is not written (LeaseLost)."""
     current = await _current(job)
     fields.setdefault("doc_version", current["doc_version"])
     row = ingestions.ingestion_row(job, **fields)
-    await ingestions.insert_ingestion(row)
+    token = _RUN_TOKEN.get()
+    if token is None:
+        await ingestions.insert_ingestion(row)
+        return row
+    outcome = await pg_jobs.save(row, token)
+    if outcome == "gone":
+        raise JobGone(job["ingestion_id"])
+    if outcome == "taken":
+        raise LeaseLost(f"knowledge-ingest:{job['ingestion_id']}")
     return row
 
 
 async def _cancelled(job: dict[str, Any]) -> bool:
-    return await ingestions.cancel_requested(job["org"], job["namespace"], job["ingestion_id"])
+    return await ingest_jobs.cancel_requested(job["org"], job["namespace"], job["ingestion_id"])
 
 
 async def _own_publish(job: dict[str, Any]) -> int | None:
@@ -682,22 +709,19 @@ async def run(job: dict[str, Any], lease: Any) -> str:
 
 async def take_and_run(job: dict[str, Any]) -> str | None:
     """Run `job` under its lease, renewed, after reading it again under the
-    lease: None when another worker holds it, it is no longer open, an erasure
-    deleted it while it ran, or the lease was lost (the job is another worker's
-    then, and this run writes nothing more)."""
+    lease: None when another worker holds it, it is no longer open, it waits behind
+    an earlier open job of its source (`_take`), an erasure deleted it while it ran,
+    or the lease was lost (the job is another worker's then, and this run writes
+    nothing more)."""
     from server.core import leases
 
     lease = await leases.take(f"knowledge-ingest:{job['ingestion_id']}", ttl_s=JOB_LEASE_S)
     if lease is None:
         return None
+    reset = _RUN_TOKEN.set(None)
     try:
         async with lease.renewed():
-            # Sequentially consistent: the run that held the lease before may have just
-            # ended the job on another replica, and the worker takes the next job at once.
-            with sequential_reads():
-                current = await ingestions.get_ingestion(
-                    job["org"], job["namespace"], job["ingestion_id"]
-                )
+            current = await _take(job)
             if current is None or current["state"] not in OPEN_STATES:
                 return None
             # A due row read from a lagging replica can name a job that has since been put
@@ -731,3 +755,48 @@ async def take_and_run(job: dict[str, Any]) -> str | None:
     except LeaseLost:
         log.warning("knowledge_ingest: lost the lease of job %s", job["ingestion_id"])
         return None
+    finally:
+        _RUN_TOKEN.reset(reset)
+
+
+async def _take(job: dict[str, Any]) -> dict[str, Any] | None:
+    """The job read again under its lease, as it is now; None when it is gone or must
+    wait. Under the Postgres authority a job Postgres holds is taken there
+    (`pg_jobs.take`), ClickHouse's version first adopted when an older build wrote a
+    newer one, and its saves carry the take's token; one only ClickHouse holds (an older
+    build queued it, or an erasure or the expiry deleted it from Postgres) runs in
+    ClickHouse alone, as under the ClickHouse authority (rolling upgrades, rule 40). A
+    held job whose projection did not land (an ended one has no next save to repair it)
+    is projected again here, each time the queue offers it."""
+    key = (job["org"], job["namespace"], job["ingestion_id"])
+    if not pg.enabled():
+        # Sequentially consistent: the run that held the lease before may have just
+        # ended the job on another replica, and the worker takes the next job at once.
+        with sequential_reads():
+            return await ingestions.get_ingestion(*key)
+    held, projected = await ingest_jobs.both(*key)
+    if (
+        held is not None
+        and held["updated_at"] < datetime.now(UTC).replace(tzinfo=None) - pg_jobs.TTL
+    ):
+        return None  # expired: `pg_jobs.expire` deletes it, and ClickHouse's queue skips it
+    if held is None:
+        # It waits too for an earlier job of its source Postgres holds, whose projection
+        # may not have landed.
+        if projected is not None and await pg_jobs.earlier_open(projected):
+            return None
+        return projected
+    if projected is not None and int(projected["version"]) > int(held["version"]):
+        await pg_jobs.adopt(projected)
+        held = projected
+    elif projected is None or int(projected["version"]) < int(held["version"]):
+        await pg_jobs.project(held)
+    if held["state"] not in OPEN_STATES:
+        return held
+    if await ingest_jobs.earlier_open(held):
+        return None
+    taken = await pg_jobs.take(*key)
+    if taken is None:
+        return None
+    _RUN_TOKEN.set(taken[0])
+    return taken[1]

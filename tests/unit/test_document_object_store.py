@@ -23,7 +23,7 @@ import pytest
 from server.core import object_store, pg
 from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_memory
-from server.knowledge.domain.owed_originals import NEEDS_ORIGINAL, OWED_SHAS
+from server.knowledge.domain.owed_originals import NEEDS_ORIGINAL, OPEN_JOB, OWED_SHAS
 from server.knowledge.store import blobs, pg_documents
 from server.knowledge.workers import blob_gc
 from server.settings import settings
@@ -1769,7 +1769,7 @@ def test_under_postgres_an_original_another_writers_unpublished_commit_names_sta
     # rows the fragment selects are pinned against Postgres in test_knowledge_pg_heads).
     [(sql, args)] = sent
     assert args == ("o", ["ns", "ns"], [shared, mine], "alice") and "user_id <> $4" in sql
-    assert NEEDS_ORIGINAL in sql and OWED_SHAS in sql
+    assert NEEDS_ORIGINAL in sql and OWED_SHAS in sql and OPEN_JOB in sql
 
 
 def test_an_erased_user_id_postgres_cannot_store_still_keeps_others_owed_originals(
@@ -1822,3 +1822,4 @@ def test_owed_originals_reads_the_shared_fragment_for_the_namespace(
     assert asyncio.run(pg_documents.owed_originals("o", "ns")) == {"a" * 64}
     [(sql, args)] = sent
     assert args == ("o", "ns") and NEEDS_ORIGINAL in sql and OWED_SHAS in sql
+    assert OPEN_JOB in sql  # an open ingestion job's original too
