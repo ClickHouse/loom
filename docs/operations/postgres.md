@@ -51,7 +51,9 @@ list, with the admission and delivery settings, is in the
 3. Set the [settings](#settings) and start Loom. The boot log reads the service's
    `synchronous_standby_names`; with two standbys it names them, and Loom starts.
 
-Failover, standby placement and the old primary's fencing are the service's.
+Failover, standby placement and the old primary's fencing are the service's. On
+Kubernetes, the chart's `postgres` values set all of this ([ClickHouse Cloud and Managed
+Postgres](clickhouse-cloud.md)).
 
 ## Self-hosted Postgres
 

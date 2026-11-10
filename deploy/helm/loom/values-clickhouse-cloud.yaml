@@ -1,0 +1,32 @@
+# ClickHouse Cloud plus ClickHouse Managed Postgres as the memory authority, on the
+# EKS overlay (docs/operations/clickhouse-cloud.md). For a new deployment on an empty
+# ClickHouse: the authority is chosen at first boot.
+#   helm install loom deploy/helm/loom -f deploy/helm/loom/values-eks.yaml \
+#     -f deploy/helm/loom/values-clickhouse-cloud.yaml \
+#     --set publicBaseUrl=https://loom.example.com --set clickhouse.host=... \
+#     --set postgres.host=...
+
+postgres:
+  # The direct host from the service's connection details, never its pooler: the
+  # pooler runs in transaction mode, which keeps neither the migration lock nor
+  # prepared statements.
+  host: loom-postgres.example.com
+  port: 5432
+  database: loom
+  user: loom
+  # Both made by the ExternalSecret beside loom-secrets (docs/operations/clickhouse-cloud.md).
+  passwordSecret:
+    name: loom-postgres
+    key: password
+  caSecret:
+    name: loom-postgres-ca
+    key: ca.crt
+  # The service runs two HA standbys, so commits wait for one.
+  durability: synchronous
+  # 5 × (4 web processes × 3 pods + 1 workers process) × 2 during a rollout = 130
+  # connections, plus booting processes, erasures and CLI runs: fits a service whose
+  # max_connections leaves 150 for Loom.
+  poolMaxSize: 5
+
+# Fixed, so the connection count above holds on any node size.
+webWorkers: "4"

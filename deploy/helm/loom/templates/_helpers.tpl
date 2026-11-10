@@ -145,6 +145,18 @@ restarts mid-rollout keeps its own config instead of booting with the new one. *
 {{- fail $nameKeyRefused }}
 {{- end }}
 {{- end }}
+{{- $pg := include "loom.postgres" . | fromYaml }}
+{{- if $pg.host }}
+{{- /* The names the postgres block renders: set twice, one would silently win. */}}
+{{- $pgNames := list "LOOM_STORAGE_AUTHORITY" "LOOM_PG_DSN" "LOOM_PG_DURABILITY" "LOOM_PG_POOL_MAX_SIZE" "PGPASSWORD" }}
+{{- range $pgNames }}
+{{- if hasKey $.Values.env . }}{{ fail (printf "set %s through postgres.*, not env, beside postgres.host" .) }}{{ end }}
+{{- if hasKey $.Values.secrets.extra . }}{{ fail (printf "set %s through postgres.*, not secrets.extra, beside postgres.host" .) }}{{ end }}
+{{- end }}
+{{- range .Values.extraEnv }}
+{{- if has .name $pgNames }}{{ fail (printf "set %s through postgres.*, not extraEnv, beside postgres.host" .name) }}{{ end }}
+{{- end }}
+{{- end }}
 LOOM_DEPLOYMENT: "1"
 LOOM_PUBLIC_BASE_URL: {{ required "publicBaseUrl is required" .Values.publicBaseUrl | quote }}
 {{- if not (hasKey .Values.env "LOOM_OAUTH_ISSUER") }}
@@ -165,6 +177,14 @@ LOOM_CH_READER_USER: {{ . | quote }}
 LOOM_SHUTDOWN_READY_DELAY_S: {{ .Values.shutdown.readyDelaySeconds | quote }}
 LOOM_GRACEFUL_SHUTDOWN_S: {{ .Values.shutdown.gracefulSeconds | quote }}
 LOOM_KEEP_ALIVE_S: {{ .Values.keepAliveSeconds | quote }}
+{{- if $pg.host }}
+# The Postgres memory authority (postgres.*). The DSN holds no password: the driver
+# reads PGPASSWORD (loom.pgEnv), and verify-full checks the server against the CA.
+LOOM_STORAGE_AUTHORITY: postgres
+LOOM_PG_DSN: {{ printf "postgres://%s@%s:%v/%s?sslmode=verify-full&sslrootcert=/etc/loom/pg-ca/%s" $pg.user $pg.host $pg.port $pg.database $pg.caSecret.key | quote }}
+LOOM_PG_DURABILITY: {{ $pg.durability | quote }}
+LOOM_PG_POOL_MAX_SIZE: {{ $pg.poolMaxSize | quote }}
+{{- end }}
 {{- $ownUrl := hasKey .Values.env "LOOM_DOCUMENT_EXTRACTOR_URL" }}
 {{- range .Values.extraEnv }}{{ if eq .name "LOOM_DOCUMENT_EXTRACTOR_URL" }}{{ $ownUrl = true }}{{ end }}{{ end }}
 {{- if and .Values.extractor.enabled (not $ownUrl) }}
@@ -206,6 +226,50 @@ LOOM_LLM_MODEL: {{ . | quote }}
 {{- range $k, $v := .Values.env }}
 {{ $k }}: {{ $v | toString | quote }}
 {{- end }}
+{{- end }}
+
+{{/* The postgres block, checked: "" host for the ClickHouse authority. A release
+upgraded with --reuse-values from a chart without the block has none. */}}
+{{- define "loom.postgres" -}}
+{{- $pg := .Values.postgres | default dict -}}
+{{- if $pg.host -}}
+{{- if not (dig "passwordSecret" "name" "" $pg) }}{{ fail "postgres.host needs postgres.passwordSecret.name: the Secret holding the role's password" }}{{ end -}}
+{{- if not (dig "caSecret" "name" "" $pg) }}{{ fail "postgres.host needs postgres.caSecret.name: the CA bundle verify-full checks the server's certificate against" }}{{ end -}}
+{{- end -}}
+{{- toYaml $pg -}}
+{{- end }}
+
+{{/* PGPASSWORD for a pod that connects to Postgres. */}}
+{{- define "loom.pgEnv" -}}
+{{- $pg := include "loom.postgres" . | fromYaml -}}
+{{- if $pg.host -}}
+- name: PGPASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ $pg.passwordSecret.name }}
+      key: {{ $pg.passwordSecret.key }}
+{{- end -}}
+{{- end }}
+
+{{/* The CA bundle the DSN's sslrootcert names, as a volume and its mount. */}}
+{{- define "loom.pgVolume" -}}
+{{- $pg := include "loom.postgres" . | fromYaml -}}
+{{- if $pg.host -}}
+- name: pg-ca
+  secret:
+    secretName: {{ $pg.caSecret.name }}
+    items:
+      - key: {{ $pg.caSecret.key }}
+        path: {{ $pg.caSecret.key }}
+{{- end -}}
+{{- end }}
+
+{{- define "loom.pgVolumeMount" -}}
+{{- if dig "host" "" (.Values.postgres | default dict) -}}
+- name: pg-ca
+  mountPath: /etc/loom/pg-ca
+  readOnly: true
+{{- end -}}
 {{- end }}
 
 {{/* Hash of the embedding space, which every pod must share and cannot roll.
@@ -274,6 +338,9 @@ passes and runs an overdue worker instead of restarting its interval. */}}
 - name: settings-file
   mountPath: /app/config
   readOnly: true
+{{- with include "loom.pgVolumeMount" . }}
+{{ . }}
+{{- end }}
 {{- end }}
 
 {{/* The settings file's `data`, for the release's ConfigMap and each hook Job's copy. */}}
@@ -338,6 +405,9 @@ for the workers pods. */}}
 - name: settings-file
   configMap:
     name: {{ include "loom.suffixed" (dict "root" . "suffix" "settings") }}
+{{- with include "loom.pgVolume" . }}
+{{ . }}
+{{- end }}
 {{- with .Values.extraVolumes }}
 {{ toYaml . }}
 {{- end }}
@@ -415,6 +485,9 @@ the scheduler places the pod where they fit. Sizes in Gi only. */}}
     {{- end }}
     {{- end }}
     {{- include "loom.podEnv" $ | nindent 4 }}
+    {{- with include "loom.pgEnv" $ }}
+    {{- . | nindent 4 }}
+    {{- end }}
     - name: LOOM_SETTINGS_FILE
       value: /app/config/loom.yaml
     {{- if .serves }}

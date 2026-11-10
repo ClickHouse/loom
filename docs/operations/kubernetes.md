@@ -2,8 +2,10 @@
 
 `deploy/helm/loom` runs Loom as [N identical replicas](./replicas.md) on Kubernetes: one
 Deployment of web pods over one ClickHouse service, each pod a full replica. It works on
-any conformant cluster; `values-eks.yaml` sets it up on EKS and `values-kind.yaml` runs
-it on a laptop.
+any conformant cluster; `values-eks.yaml` sets it up on EKS, `values-kind.yaml` runs it on
+a laptop, and `values-clickhouse-cloud.yaml`, over the EKS one, adds ClickHouse Managed
+Postgres as the memory authority ([ClickHouse Cloud and Managed
+Postgres](./clickhouse-cloud.md)).
 
 | Object                                | What it does                                                                                                                                                  |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
