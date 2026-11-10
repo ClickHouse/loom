@@ -199,14 +199,14 @@ curl -s -XPOST http://localhost:7777/v1/namespace.rollback -H "Authorization: Be
 
 ## Under the Postgres authority
 
-With `LOOM_STORAGE_AUTHORITY=postgres`, live memory, its revision journal and the
-knowledge heads are in Postgres ([storage authority](../architecture/storage-authority.md)),
+With `LOOM_STORAGE_AUTHORITY=postgres`, live memory, its revision journal, the
+knowledge heads, the ingestion jobs and the dataset catalog are in Postgres ([storage authority](../architecture/storage-authority.md)),
 and a deployment has two stores to back up: Postgres and ClickHouse.
 
-| Store      | Holds alone                                                                                                                                                | RPO                                                                                                                                                                                                                                                                                                                                        | Backed up by                                                   |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------- |
-| Postgres   | every memory head and revision, knowledge heads, idempotency answers                                                                                       | 0 for acknowledged writes across a failover to the synchronous standby; a point-in-time restore loses what followed its point                                                                                                                                                                                                              | the HA manager's or the service's base backups and WAL archive |
-| ClickHouse | search documents and vectors, the chunks of knowledge documents and of long memory values, history past what Postgres keeps, analytics, traces, audit rows | the time since its last backup, for what only it holds; memory revisions and knowledge documents Postgres holds are published again, but not their chunks: `loom reconcile` names each knowledge source to re-chunk, or past 20 its namespace (`loom rechunk`), and a long memory value is searchable by its excerpt until it is set again | the methods above                                              |
+| Store      | Holds alone                                                                                                                                                | RPO                                                                                                                                                                                                                                                                                                                                                                                                  | Backed up by                                                   |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Postgres   | every memory head and revision, knowledge heads, ingestion jobs, the dataset catalog, idempotency answers                                                  | 0 for acknowledged writes across a failover to the synchronous standby; a point-in-time restore loses what followed its point                                                                                                                                                                                                                                                                        | the HA manager's or the service's base backups and WAL archive |
+| ClickHouse | search documents and vectors, the chunks of knowledge documents and of long memory values, history past what Postgres keeps, analytics, traces, audit rows | the time since its last backup, for what only it holds; memory revisions and knowledge documents Postgres holds are published again, but not their chunks nor their datasets' rows: `loom reconcile` names each knowledge source to re-chunk, or past 20 its namespace (`loom rechunk`), and each source to ingest again, and a long memory value is searchable by its excerpt until it is set again | the methods above                                              |
 
 The recovery time of a restore is the store's own restore time plus `loom reconcile`,
 which runs again what the restored store lost of the other's record.
@@ -299,6 +299,11 @@ On the Helm chart ([Kubernetes](kubernetes.md)), with release `loom`:
   lost) is scrubbed in place. What was written after the point is lost, as with any
   point-in-time restore; ClickHouse still holds copies of it, which search does not
   serve once Postgres has no matching head.
+
+A dataset's rows are in ClickHouse alone, and only an ingest builds them: after a
+ClickHouse restore, a dataset whose snapshot was published or approved after the point
+reads with no rows (its catalog row, in Postgres, names the lost snapshot), and
+`loom reconcile` names each such source to upload and ingest again.
 
 Knowledge ingestion jobs need no step of their own: a job's reads take the newer of
 Postgres's row and ClickHouse's, and a job Postgres holds is projected again when a

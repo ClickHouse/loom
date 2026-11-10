@@ -246,3 +246,15 @@ async def forget_published(
             bounds,
         )
     return {str(r["dataset_id"]) for r in gone}, {int(r["snapshot_id"]) for r in kept}
+
+
+async def sources_with_snapshots_since(since_ns: int) -> list[dict[str, Any]]:
+    """(org, namespace, source_uri) of each source a catalog row of which names a snapshot
+    written at or after `since_ns` (a snapshot id is its write time in nanoseconds):
+    after a ClickHouse restore to before then, that snapshot's rows are gone."""
+    rows = await pg.fetch(
+        "SELECT DISTINCT org, namespace, source_uri FROM loom.knowledge_datasets"
+        " WHERE snapshot_id >= $1 ORDER BY org, namespace, source_uri",
+        int(since_ns),
+    )
+    return [dict(r) for r in rows]

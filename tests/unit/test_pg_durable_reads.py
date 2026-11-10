@@ -66,8 +66,9 @@ _CALLERS = {
     "server/knowledge/app/ingest_run.py": "a job is projected from a durable read or its own "
     "save; a run's read under its token decides a save, which commits",
     "server/knowledge/app/inspect.py": "a report to the caller; sends nothing",
-    "server/knowledge/app/restore_reconcile.py": "the reconcile's heads and held sources "
-    "decide holds and print commands; a held head reaches ClickHouse through a claim",
+    "server/knowledge/app/restore_reconcile.py": "the reconcile's heads, held sources and "
+    "lost dataset sources decide holds and print commands; a held head reaches ClickHouse "
+    "through a claim",
     "server/knowledge/app/pg_serving.py": "filters what a knowledge search serves; sends nothing",
     "server/knowledge/store/blobs.py": "keeps originals a commit owes; deletes none of them",
     "server/knowledge/store/datasets.py": "catalog rows to the caller; a write it decides "

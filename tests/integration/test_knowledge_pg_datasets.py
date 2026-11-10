@@ -313,3 +313,23 @@ async def test_a_user_erasure_locks_the_namespace_of_the_user_s_headless_catalog
         await conn.close()
     (got,) = await pg_datasets.at_version(org, "docs", _URI, 100)
     assert got["schema_state"] == "needs_clarification"
+
+
+async def test_a_clickhouse_restore_names_the_sources_whose_snapshots_it_lost(
+    stores: httpx.AsyncClient,
+) -> None:
+    """A catalog row whose snapshot was written after the point names rows the restore
+    removed; a row that carries an older snapshot does not."""
+    import time
+    from datetime import UTC, datetime
+
+    from server.knowledge.app import restore_reconcile
+    from server.knowledge.store import pg_datasets
+
+    org = unique_org("pgds-restore")
+    point = datetime.now(UTC)
+    later = time.time_ns() + 1
+    await pg_datasets.upsert([_catalog(org, 100, snapshot_id=1)])
+    await pg_datasets.upsert([_catalog(org, 100, source_uri="kb://new.csv", snapshot_id=later)])
+    lost = [s for s in await restore_reconcile.dataset_sources_lost(point) if s["org"] == org]
+    assert lost == [{"org": org, "namespace": "docs", "source_uri": "kb://new.csv"}]

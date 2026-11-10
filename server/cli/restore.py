@@ -174,6 +174,12 @@ async def reconcile(
         # live head held here, which `loom rechunk` builds again from the stored content.
         for line in _rechunk_lines(await knowledge_reconcile.held_sources()):
             print(line)
+        # A dataset's rows live in ClickHouse alone too, and only an ingest builds them.
+        for s in await knowledge_reconcile.dataset_sources_lost(after):
+            print(
+                f"  to ingest again (its datasets read no rows): org {s['org']}, "
+                f"namespace {s['namespace']}, source_uri {s['source_uri']}"
+            )
     # A step that raises is counted and the rest run: what `hold` held is published
     # whatever an erasure did.
     for entry in erasures:
