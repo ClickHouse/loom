@@ -396,8 +396,10 @@ asks for the plugin's settings, keep the default server URL and leave the token 
 
 With auth on, create a token in **Settings → Tokens** and choose **Claude Code** under
 **Connect**: the dialog shows the setup for the plugin and for a `claude mcp add` entry,
-with the token in it. Its `~/.loom/config.json` replaces the single-user identity the
-plugin's first session saved there.
+with the token in it. Its `~/.loom/config.json` replaces any single-user identity a plugin
+session saved there; the plugin reads `LOOM_API_KEY` before that file
+([configuration](../features/integrations/claude-code.md#configuration)), so a
+`LOOM_API_KEY` in Claude Code's environment must hold the new token or be unset.
 
 `loom install --client <name>` writes the MCP entry for Claude Desktop, Claude Code,
 Codex, Cursor, VS Code, Cline, Windsurf and Zed; with no flag it wires every client it
