@@ -125,6 +125,8 @@ def main() -> None:
     assert urlsplit(dsn).port == 6432 and 6432 in egress_ports(moved), dsn
     check_unconfigured(render(*sets("networkPolicy.enabled=true", *EVERYTHING)), "defaults")
     check_unconfigured(render(*eks, *sets(*EVERYTHING)), "eks")
+    # A release upgraded with --reuse-values from a chart without the block has no key.
+    check_unconfigured(render(*eks, *sets("postgres=null", *EVERYTHING)), "no postgres key")
     # Without the block, these names are the documented way to set the authority.
     render(
         *eks,
@@ -142,6 +144,7 @@ def main() -> None:
         refused(f"{want}, not secrets.extra", *sets(f"secrets.extra.{name}=x"))
         refused(f"{want}, not extraEnv", *sets(f"extraEnv[0].name={name}", "extraEnv[0].value=x"))
     refused("postgres.host needs postgres.caSecret.name", *sets("postgres.caSecret.name="))
+    refused("postgres.database goes into the DSN as written", *sets("postgres.database=2024"))
     for field, bad in (("user", "lo@m"), ("database", "a/b"), ("host", "h?x")):
         refused(f"postgres.{field} goes into the DSN as written", *sets(f"postgres.{field}={bad}"))
     for field in ("storage_authority", "pg_dsn", "pg_durability", "pg_pool_max_size"):

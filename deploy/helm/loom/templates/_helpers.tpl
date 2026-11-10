@@ -239,7 +239,7 @@ upgraded with --reuse-values from a chart without the block has none. */}}
 {{- if not (dig "passwordSecret" "name" "" $pg) }}{{ fail "postgres.host needs postgres.passwordSecret.name: the Secret holding the role's password" }}{{ end -}}
 {{- if not (dig "caSecret" "name" "" $pg) }}{{ fail "postgres.host needs postgres.caSecret.name: the CA bundle verify-full checks the server's certificate against" }}{{ end -}}
 {{- range $field := list "host" "database" "user" }}
-{{- if not (regexMatch "^[A-Za-z0-9._-]+$" (toString (get $pg $field))) }}{{ fail (printf "postgres.%s goes into the DSN as written: letters, digits, '.', '_' and '-' only" $field) }}{{ end }}
+{{- if not (and (kindIs "string" (get $pg $field)) (regexMatch "^[A-Za-z0-9._-]+$" (toString (get $pg $field)))) }}{{ fail (printf "postgres.%s goes into the DSN as written: a quoted string of letters, digits, '.', '_' and '-'" $field) }}{{ end }}
 {{- end -}}
 {{- range $secret := list "passwordSecret" "caSecret" }}
 {{- $key := toString (dig $secret "key" "" $pg) }}

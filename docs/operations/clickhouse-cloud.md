@@ -42,7 +42,7 @@ openssl x509 -inform DER -in root.der -out root.pem
 ```
 
 Check the bundle against the chain the server sends, trusting nothing but the bundle, as
-the driver does (`-no-CAstore` needs OpenSSL 3):
+the driver does (`-no-CAstore` needs version 3 of `openssl`):
 
 ```bash
 openssl verify -no-CApath -no-CAstore -CAfile roots.pem -untrusted chain.pem \
@@ -84,8 +84,10 @@ the names it renders set a second time in `env`, `extraEnv`, `secrets.extra` or
 
 ### Connections
 
-Each Loom process holds up to `postgres.poolMaxSize` connections, and a rollout runs the
-old and the new pods side by side, so size the service for twice the steady count:
+Each Loom process runs at most `postgres.poolMaxSize` pooled statements at once; a call
+that finds every connection busy waits up to `LOOM_PG_STATEMENT_TIMEOUT_MS` for one, then
+answers 503. Each process holds up to `postgres.poolMaxSize` connections, and a rollout runs
+the old and the new pods side by side, so size the service for twice the steady count:
 
 ```text
 poolMaxSize × (webWorkers × web pods + worker processes) × 2
