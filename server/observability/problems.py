@@ -626,7 +626,6 @@ def _deployment_problems(settings: Any, state: HealthState) -> list[Problem]:
     return out
 
 
-# A branch server's fix: its own workers, never the deployment's.
 _RUN_HERE = "On a ClickHouse no deployment uses, set LOOM_BACKGROUND_WORKERS=on to run them here."
 _ON_UNSEEN = "A process with LOOM_BACKGROUND_WORKERS=on takes no lease and does not show here."
 _NO_AUTO_RUNS = (
@@ -658,12 +657,9 @@ def _lease_absent(settings: Any, holder_live: bool | None) -> Problem | None:
                 f"{_RUN_HERE} On a shared one, check the deployment's workers process; do not "
                 "run them from this one."
             )
-        elif off:
-            msg = _NO_AUTO_RUNS
-            fix = f"{_START_WORKERS} {_WHY_NO_LEASE}"
         else:
             msg = _NO_AUTO_RUNS
-            fix = _WHY_NO_LEASE
+            fix = f"{_START_WORKERS} {_WHY_NO_LEASE}" if off else _WHY_NO_LEASE
         return Problem("workers_lease_absent", "warn", msg, fix, source="workers")
     if outside:
         msg = (

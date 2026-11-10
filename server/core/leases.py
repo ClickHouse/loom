@@ -356,7 +356,7 @@ async def held_by(name: str, holder: str, *, ch: Any = None) -> bool:
 
 async def has_live_holder(name: str, *, ch: Any = None) -> bool:
     """Whether some holder keeps `name` with a renewal that has not lapsed, on
-    the store's clock."""
+    the store's clock. The driver's error goes to the caller, which logs it."""
     return await _live_holder_name(name, ch) is not None
 
 

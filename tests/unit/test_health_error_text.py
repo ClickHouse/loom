@@ -216,28 +216,3 @@ def test_health_shows_the_analysis_finding_with_its_own_fix(
     problems = health._health_provider_fields(ch_ok=True)["problems"]
     (shown,) = [p for p in problems if p["code"] == "analysis_user_failing"]
     assert shown["fix"] == "the fix for code 36"
-
-
-@pytest.mark.parametrize(("live", "shown"), [(True, None), (False, "warn")])
-def test_health_and_its_gauge_show_the_lease_the_beat_read(
-    monkeypatch: pytest.MonkeyPatch, live: bool, shown: str | None
-) -> None:
-    import time
-
-    from fastapi import Request, Response
-
-    import server.core.ch as ch_mod
-    from server.workers import leader
-
-    class _Up:
-        async def query_one(self, *a: Any, **k: Any) -> Any:
-            return {"one": 1}
-
-    monkeypatch.setattr(leader, "_CURRENT", leader.SupervisorLease("off"))
-    monkeypatch.setattr(leader, "_holder_read", (time.monotonic(), live))
-    monkeypatch.setattr(ch_mod, "get_client", lambda: _Up())
-    anonymous = Request({"type": "http", "headers": []})
-    body = asyncio.run(health.health(anonymous, Response()))
-    for problems in (body["problems"], health.health_problems()):
-        severities = [p["severity"] for p in problems if p["code"] == "workers_lease_absent"]
-        assert severities == ([shown] if shown else [])

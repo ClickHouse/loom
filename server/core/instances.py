@@ -215,7 +215,7 @@ async def tick(ch: Any, *, leader: bool) -> None:
         try:
             await _prune(ch)
         except Exception as e:  # noqa: BLE001 — a later sweep retries
-            log.warning("instance row sweep failed: %s", e)
+            log.warning("instance row sweep failed: %s: %s", type(e).__name__, e)
 
 
 async def publish_config(ch: Any) -> None:

@@ -783,3 +783,30 @@ def test_an_assistant_still_being_set_up_raises_no_warning(monkeypatch: pytest.M
     assert "assistant_service_failing" not in _codes(collect_problems(s, again))
     failed = HealthState(env={}, assistant_ok=False, assistant_error="connection refused")
     assert "assistant_service_failing" in _codes(collect_problems(s, failed))
+
+
+@pytest.mark.parametrize(("live", "shown"), [(True, None), (False, "warn")])
+def test_health_and_its_gauge_show_the_lease_the_beat_read(
+    monkeypatch: pytest.MonkeyPatch, live: bool, shown: str | None
+) -> None:
+    import asyncio
+    import time
+
+    from fastapi import Request, Response
+
+    import server.core.ch as ch_mod
+    from server import health
+    from server.workers import leader
+
+    class _Up:
+        async def query_one(self, *a: Any, **k: Any) -> Any:
+            return {"one": 1}
+
+    monkeypatch.setattr(leader, "_CURRENT", leader.SupervisorLease("off"))
+    monkeypatch.setattr(leader, "_holder_read", (time.monotonic(), live))
+    monkeypatch.setattr(ch_mod, "get_client", lambda: _Up())
+    anonymous = Request({"type": "http", "headers": []})
+    body = asyncio.run(health.health(anonymous, Response()))
+    for problems in (body["problems"], health.health_problems()):
+        severities = [p["severity"] for p in problems if p["code"] == "workers_lease_absent"]
+        assert severities == ([shown] if shown else [])
