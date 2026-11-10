@@ -509,10 +509,11 @@ def _probe_failed(what: str, e: BaseException) -> None:
         return
     if not _no_answer(e):
         code = error_code(e)
-        cause, fix = (
-            boundary.refusal_cause(code, str(e)) if code is not None else (error_kind(e), "")
-        )
-        _set_problem(f"{what}: {cause}", error_line(e), fix)
+        if code is None:
+            _set_problem(f"{what}: {error_kind(e)}", error_line(e))
+        else:
+            cause, fix = boundary.refusal_cause(code, str(e))
+            _set_problem(f"{what}: {cause}", error_line(e), fix)
         return
     kind = error_kind(e)
     if kind != _unreached_kind:
@@ -808,6 +809,7 @@ async def handle_insights_catalog(input: InsightsCatalogInput) -> InsightsCatalo
 
 
 __all__ = [
+    "analysis_fix",
     "analysis_state",
     "entity_statements",
     "handle_insights_catalog",

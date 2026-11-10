@@ -40,6 +40,7 @@ def ready(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app, "_setting_names", NAMES)
     monkeypatch.setattr(app, "_ready", True)
     monkeypatch.setattr(app, "_problem", "")
+    monkeypatch.setattr(app, "_fix", "")
     monkeypatch.setattr(app, "_running", {})
     monkeypatch.setattr(app.store, "target_database", lambda: "`loom`")
 
@@ -1078,7 +1079,7 @@ _CLOUD_PASSWORD_REFUSAL = (
         ),
         (
             "Code: 497. DB::Exception: loom: Not enough privileges. (ACCESS_DENIED) (version 1)",
-            "Code 497 (ACCESS_DENIED): the server user lacks a privilege the write needs",
+            "Code 497 (ACCESS_DENIED): a privilege the statement needs is missing",
             "access management",
         ),
         (
@@ -1107,6 +1108,23 @@ def test_a_refused_write_names_clickhouse_code_and_its_fix(
     )
     (shown_problem,) = problems._analysis_problems(None, state)
     assert fix_names in shown_problem.fix
+
+
+def test_a_later_finding_drops_the_fix_of_the_one_it_replaces(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    _provisioning(monkeypatch, stored=None, caps="", foreign=[])
+
+    async def refuse(*_: Any, **__: Any) -> None:
+        raise RuntimeError(_CLOUD_PASSWORD_REFUSAL)
+
+    monkeypatch.setattr(app.store, "write_entities", refuse)
+    asyncio.run(app.provision())
+    assert app.analysis_fix()
+    monkeypatch.setattr(app.store, "foreign_policies", _returns(["bi_scope ON memory"]))
+    asyncio.run(app.provision())
+    assert app.analysis_state()[1].startswith("row policies Loom did not write")
+    assert app.analysis_fix() == ""
 
 
 def test_a_drawn_password_has_every_character_class() -> None:
