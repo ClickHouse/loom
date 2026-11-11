@@ -658,6 +658,14 @@ async def _index_step(
 
     cost_accumulator.report_embed = counting  # type: ignore[assignment]
     await get_client().connect()
+    from server.code.app.index import repo_registry
+
+    # A fresh process has not read the self-service registry, and repo_for_namespace
+    # refuses until it has.
+    if not await repo_registry.read_registry():
+        raise SystemExit(
+            "index-step: the self-service repository registry could not be read; retry"
+        )
     repo = CodeRepo()
     cfg = repo_for_namespace(org, ns)
     if cfg is None:

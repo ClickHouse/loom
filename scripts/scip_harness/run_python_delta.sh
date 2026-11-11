@@ -73,7 +73,7 @@ async def m():
     # A fresh process has not read the self-service registry, and configured_repos
     # refuses until it has.
     if not await repo_registry.read_registry():
-        raise SystemExit("run_python_delta: the code repository registry is unreadable")
+        raise SystemExit("run_python_delta: the self-service repository registry could not be read; retry")
     repo = CodeRepo()
     org = os.environ.get("ORG_ARG") or settings.code_org
     ns = os.environ.get("NS_ARG") or settings.code_namespace
