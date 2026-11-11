@@ -268,9 +268,11 @@ def main() -> None:
         cold_reads()
 
     async def go() -> list[dict[str, Any]]:
+        from server.code.app.index.repo_registry import read_registry_or_exit
         from server.core.ch import get_client
 
         await get_client().connect()
+        await read_registry_or_exit("code_grep_handler")
         rows = await get_client().query_all(
             TRACE_SQL, {"hours": args.hours, "consumer": args.consumer}
         )

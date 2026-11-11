@@ -162,9 +162,7 @@ async def reconcile(
     # A redaction checks the code registry (`require_registry_read`), which only a
     # server's boot reads otherwise.
     if not await repo_registry.read_registry(ch):
-        print(
-            "loom reconcile: refused: the code repository registry is unreadable", file=sys.stderr
-        )
+        print(f"loom reconcile: refused: {repo_registry.REGISTRY_UNREAD_MESSAGE}", file=sys.stderr)
         return 2
     failed = 0
     if store == "clickhouse":

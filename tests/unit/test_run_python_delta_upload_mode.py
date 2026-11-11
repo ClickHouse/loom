@@ -16,7 +16,12 @@ import pytest
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "scip_harness" / "run_python_delta.sh"
 
 _FAKE_PYTHON = """#!/usr/bin/env bash
-if [[ "$1" == "-" ]]; then cat >/dev/null; echo "$FAKE_IDENT"; exit 0; fi
+if [[ "$1" == "-" ]]; then
+  cat >/dev/null
+  if [[ -n "${FAKE_IDENT_EXIT:-}" ]]; then echo "identity failed" >&2; exit "$FAKE_IDENT_EXIT"; fi
+  echo "$FAKE_IDENT"
+  exit 0
+fi
 echo "converter $*" >>"$CALLS"
 while [[ $# -gt 0 ]]; do
   if [[ "$1" == "--changed-files" ]]; then sed 's/^/changed /' "$2" >>"$CALLS"; fi
@@ -70,25 +75,31 @@ def repos(tmp_path: Path) -> dict[str, object]:
     }
 
 
-def _run(
-    r: dict[str, object], *, wm: str, head: str, bare: str, owner: str = "manual"
-) -> tuple[str, str]:
+def _script(r: dict[str, object], **extra: str) -> subprocess.CompletedProcess[str]:
+    """The script in upload mode against the stub `python`, with `extra` in its env."""
     env = {
         **os.environ,
-        "FAKE_IDENT": f"org code-x {wm} {head} {bare} {owner}",
         "CALLS": str(r["calls"]),
         "PYTHON": str(Path(str(r["bin"])) / "python"),
         "SCIP_PYTHON": str(Path(str(r["bin"])) / "scip-python"),
         "LOOM_API_KEY": "k",
+        **extra,
     }
     env.pop("DELTA_OUT", None)
-    out = subprocess.run(
+    return subprocess.run(
         ["bash", str(_SCRIPT), str(r["checkout"]), "http://loom", "org", "code-x"],
         env=env,
-        check=True,
         capture_output=True,
         text=True,
-    ).stdout
+    )
+
+
+def _run(
+    r: dict[str, object], *, wm: str, head: str, bare: str, owner: str = "manual"
+) -> tuple[str, str]:
+    done = _script(r, FAKE_IDENT=f"org code-x {wm} {head} {bare} {owner}")
+    done.check_returncode()
+    out = done.stdout
     calls = Path(str(r["calls"]))
     return out, calls.read_text() if calls.exists() else ""
 
@@ -189,6 +200,7 @@ def test_the_manual_python_pass_goes_where_the_entry_and_its_tree_say(
     Python build file (its Go and TypeScript tiers work in their own trees)."""
     from unittest.mock import AsyncMock
 
+    from server.code.app.index import repo_registry
     from server.code.domain.index import repos
     from server.code.store import index as store_index
     from server.core import ch
@@ -205,9 +217,76 @@ def test_the_manual_python_pass_goes_where_the_entry_and_its_tree_say(
         org="org", namespace="code-x", scip_producer=producer, scip_extra_producers=extras
     )
     monkeypatch.setattr(repos, "configured_repos", lambda: [cfg])
+    monkeypatch.setattr(repo_registry, "read_registry", AsyncMock(return_value=True))
     monkeypatch.setenv("ORG_ARG", "org")
     monkeypatch.setenv("NS_ARG", "code-x")
 
     exec(_ident_snippet(), {})
 
     assert capsys.readouterr().out.split()[-1] == owner
+
+
+def test_the_identity_read_loads_the_repository_registry_before_listing_entries(
+    monkeypatch, capsys
+) -> None:
+    """The script runs in a fresh process, which has not read the self-service registry:
+    `configured_repos` refuses until it is read, so the snippet reads it first. The
+    registry and `configured_repos` are the real ones; only the store is a stub."""
+    from unittest.mock import AsyncMock
+
+    from server.code.app.index import repo_registry
+    from server.code.store import index as store_index
+    from server.core import ch
+    from server.settings import settings
+
+    repo = AsyncMock()
+    repo.get_state.return_value = ""
+    repo.registry_rows.return_value = [
+        {
+            "org": "org",
+            "namespace": "code-x",
+            "repo": "acme/x",
+            "git_branch": "main",
+            "active": 1,
+            "row_kind": "page",
+            "scip_producer": "go",
+        }
+    ]
+    monkeypatch.setattr(store_index, "CodeRepo", lambda *a: repo)
+    monkeypatch.setattr(ch, "get_client", lambda: AsyncMock())
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    repo_registry.reset_for_tests()
+    monkeypatch.setenv("ORG_ARG", "org")
+    monkeypatch.setenv("NS_ARG", "code-x")
+
+    try:
+        exec(_ident_snippet(), {})
+    finally:
+        repo_registry.reset_for_tests()
+
+    assert capsys.readouterr().out.split()[-1] == "go"
+
+
+def test_a_failed_identity_read_stops_the_script_before_indexing(repos) -> None:
+    """When the identity step exits non-zero (an unreadable registry, an unreachable
+    ClickHouse), the script stops: no converter runs on an empty identity line."""
+    done = _script(repos, FAKE_IDENT_EXIT="1")
+    calls = Path(str(repos["calls"]))
+    assert done.returncode != 0
+    assert "identity failed" in done.stderr
+    assert "converter" not in (calls.read_text() if calls.exists() else "")
+
+
+def test_an_unreadable_registry_stops_the_identity_read(monkeypatch) -> None:
+    """With the registry unreadable the snippet exits non-zero and names why, rather than
+    guessing which entries are configured."""
+    from unittest.mock import AsyncMock
+
+    from server.code.app.index import repo_registry
+    from server.core import ch
+
+    monkeypatch.setattr(ch, "get_client", lambda: AsyncMock())
+    monkeypatch.setattr(repo_registry, "read_registry", AsyncMock(return_value=False))
+
+    with pytest.raises(SystemExit, match=r"^run_python_delta: .*could not be read; retry$"):
+        exec(_ident_snippet(), {})
