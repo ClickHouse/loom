@@ -1090,13 +1090,15 @@ def test_rescore_reads_memory_citations_by_the_saved_runs_path(monkeypatch, tmp_
 )
 def test_each_help_forbid_is_what_fails_one_wrong_sample(case):
     q = _qualify()
-    # A wrong sample that states what the label expects, and fails only on the forbid.
-    reached = [
-        a
-        for a in case["samples"]["wrong"]
-        if q.score({**case, "forbid": []}, a)["correct"] and not q.score(case, a)["correct"]
-    ]
-    assert reached, case["id"]
+    # Each pattern has a wrong sample that the label and the other patterns let through.
+    for pattern in case["forbid"]:
+        others = [f for f in case["forbid"] if f != pattern]
+        reached = [
+            a
+            for a in case["samples"]["wrong"]
+            if q.score({**case, "forbid": others}, a)["correct"] and not q.score(case, a)["correct"]
+        ]
+        assert reached, (case["id"], pattern)
 
 
 def test_a_memory_citation_in_a_document_answer_is_no_document(monkeypatch):
@@ -1218,3 +1220,40 @@ def test_a_failed_direct_read_of_the_no_docs_question_is_not_scored():
     q = _qualify()
     case = _case("help-undocumented")
     assert q.native_score(case, 503, {"detail": "unavailable"})["correct"] is None
+
+
+def test_ask_assistant_reads_the_bridges_citations_event(monkeypatch):
+    q = _qualify()
+    # The event as server.assistant.app.bridge writes it after the answer's text.
+    event = {
+        "object": "loom.citations",
+        "id": "run-1",
+        "choices": [],
+        "citations": [{"kind": "help", "text": "[help:a.md]", "verified": True}],
+        "support": "supported",
+        "unknown_names": ["token.revoke_all"],
+    }
+    lines = [
+        'data: {"choices": [{"delta": {"content": "Answer."}}]}',
+        f"data: {json.dumps(event)}",
+        "data: [DONE]",
+    ]
+
+    class Response:
+        status_code = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def iter_lines(self):
+            return iter(lines)
+
+    monkeypatch.setattr(q, "answer_request", lambda st, person, question: ("u", {}, {}))
+    monkeypatch.setattr(q.httpx, "stream", lambda *a, **k: Response())
+    got = q.ask_assistant({}, "alice", "q")
+    assert got["answer"] == "Answer."
+    assert got["server_citations"] == event["citations"]
+    assert got["unknown_names"] == ["token.revoke_all"] and got["support"] == "supported"

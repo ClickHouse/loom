@@ -159,10 +159,10 @@ orgs, mints a token per person, revokes one, and scores each answer:
 | Model cost per answer, every prompt token at list price | at most $0.05 | mean $0.029; max $0.064 (`abstain-cfo`, three searches) misses the target |
 
 The LibreChat numbers are from one run of the 14 memory, inventory, inspect, tune, refusal
-and abstention cases other than `data-history` and `data-connected-agents`, scored against the current `cases.json` with `qualify.py rescore`;
-the direct-path numbers are from a later run of that path alone
-(`qualify.py run --native-only`) on a fresh seed. The document cases below were run
-separately.
+and abstention cases other than `data-history` and `data-connected-agents`, scored against
+the current `cases.json` with `qualify.py rescore`; the direct-path numbers are from a
+later run of that path alone (`qualify.py run --native-only`) on a fresh seed. The
+document cases below were run separately.
 
 The direct path answered the same 14 cases correctly at p50 0.08 s and p95 0.24 s with one
 read each. The model adds natural-language questions and a written answer; it costs seconds
@@ -225,16 +225,16 @@ help tools, which read the documentation the server ships). Each help case label
 values its answer must state and the pages that hold them, with a right and a wrong sample
 answer the label is tested against. Its answer is scored correct when it states them,
 under the unknown-name rule above. For the case with no answer in the docs, the answer is
-correct when it says so and writes no `LOOM_` name that no docs page writes, as a name or as a member of a family a
-page writes with placeholders; an answer
-that names an invented setting only to deny it is scored wrong. The labels are patterns
-over the answer's text, so they err both ways: an answer that states the labeled values
-beside a wrong claim about them can pass, and a right answer worded otherwise can fail. A
-correct score means the answer has what the page says. A help citation is valid when its
-page is in the server's documentation (`help.get`) and its section is one of the page's
-own, by the rule the server's own check uses. The cases go through Loom's assistant route
-(`qualify.py setup-bridge`), so each answer also carries the question's asker line and
-the bridge's own citation check.
+correct when it says so and writes no `LOOM_` name that no docs page writes, as a name or
+as a member of a family a page writes with placeholders; an answer that names an invented
+setting only to deny it is scored wrong. The labels are patterns over the answer's text,
+so they err both ways: an answer that states the labeled values beside a wrong claim about
+them can pass, and a right answer worded otherwise can fail. A correct score means the
+answer has what the page says. A help citation is valid when its page is in the server's
+documentation (`help.get`) and its section is one of the page's own, by the rule the
+server's own check uses. The cases go through Loom's assistant route (`qualify.py
+setup-bridge`), so each answer also carries the question's asker line and the bridge's own
+citation check.
 
 | Use case                          | Cases | Correct  | No invalid citation |
 | --------------------------------- | ----- | -------- | ------------------- |
@@ -381,26 +381,26 @@ python $Q revoke
 python $Q run --cancel-probe
 ```
 
-Among its cases are three analysis cases (`insights.query` over the
-namespace, one asking for every org's counts, whose answer must name no other tenant's
-rows) and two recommendation cases over `acme-notes`, a namespace written badly on
-purpose (hash-named keys, a JSON value encoded twice, a 6.5 KB runbook stored as a
-memory).
+Among its cases are three analysis cases (`insights.query` over the namespace, one asking
+for every org's counts, whose answer must name no other tenant's rows) and two
+recommendation cases over `acme-notes`, a namespace written badly on purpose (hash-named
+keys, a JSON value encoded twice, a 6.5 KB runbook stored as a memory). The table measures
+the data cases other than `data-history` and `data-connected-agents`.
 
-| Measured on v0.8.8, the 28 data cases other than `data-history` and `data-connected-agents`, `claude-haiku-4-5`, fake embedder | The deployed agent, asked directly                              |
-| ------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
-| Correct answers                                                                                                                | 28 of 28, in one run                                            |
-| Analysis cases / recommendation cases                                                                                          | 3 of 3 / 2 of 2                                                 |
-| Cross-tenant, revoked and other-org SQL cases, no leak                                                                         | 3 of 3                                                          |
-| Should-abstain cases that abstain                                                                                              | 4 of 4, no false abstention                                     |
-| Memory citations valid                                                                                                         | 13 of 16                                                        |
-| Document citations valid                                                                                                       | 8 of 9                                                          |
-| End-to-end latency p50 / p95                                                                                                   | 3.4 s / 10.7 s; the recommendation cases 10.7 s and 14.5 s      |
-| Tool calls per question                                                                                                        | at most 6 (a recommendation reads the audit, mentor and guides) |
-| Model cost per answer, every prompt token at list price                                                                        | mean $0.033, max $0.048                                         |
-| Loom calls after a client disconnects mid-answer                                                                               | 0                                                               |
-| Answer tokens or service password in LibreChat's logs or database                                                              | none                                                            |
-| What LibreChat stored                                                                                                          | `transactions` only: no messages, conversations or tool calls   |
+| Measured on v0.8.8, 28 cases, `claude-haiku-4-5`, fake embedder   | The deployed agent, asked directly                              |
+| ----------------------------------------------------------------- | --------------------------------------------------------------- |
+| Correct answers                                                   | 28 of 28, in one run                                            |
+| Analysis cases / recommendation cases                             | 3 of 3 / 2 of 2                                                 |
+| Cross-tenant, revoked and other-org SQL cases, no leak            | 3 of 3                                                          |
+| Should-abstain cases that abstain                                 | 4 of 4, no false abstention                                     |
+| Memory citations valid                                            | 13 of 16                                                        |
+| Document citations valid                                          | 8 of 9                                                          |
+| End-to-end latency p50 / p95                                      | 3.4 s / 10.7 s; the recommendation cases 10.7 s and 14.5 s      |
+| Tool calls per question                                           | at most 6 (a recommendation reads the audit, mentor and guides) |
+| Model cost per answer, every prompt token at list price           | mean $0.033, max $0.048                                         |
+| Loom calls after a client disconnects mid-answer                  | 0                                                               |
+| Answer tokens or service password in LibreChat's logs or database | none                                                            |
+| What LibreChat stored                                             | `transactions` only: no messages, conversations or tool calls   |
 
 The same cases asked through Loom's chat route, each with the person's own token: 25 of
 28 correct and the other 3 refused with `RATE_LIMITED` once the namespace had spent the
