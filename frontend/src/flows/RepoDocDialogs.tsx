@@ -19,8 +19,9 @@ import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { addKnowledge, downloadKnowledge, getKnowledge, textDownloadName, type KnowledgeEntry } from "../api";
 import { relativeTime } from "../lib/format";
-import { humanizeError } from "../lib/errorWords";
+import { humanizeError, toastCommitted } from "../lib/errorWords";
 import { toast, toastError } from "../components/Toast";
+import { isPublicationPending } from "../lib/errors";
 import { DropZone } from "../components/ui/DropZone";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { Loading } from "../components/ui/Loading";
@@ -58,8 +59,9 @@ export function RepoDocAddDialog({
   namespace: string;
   repo: string;
   takenUris: string[];
-  /** `lost`: what a file published as partial lost ([] for nothing named); null when whole. */
-  onAdded: (title: string, lost: string[] | null) => void;
+  /** `lost`: what a file published as partial lost ([] for nothing named); null when whole.
+   *  `said`: the line for it was already toasted (a write that committed with lists behind). */
+  onAdded: (title: string, lost: string[] | null, said?: boolean) => void;
 }) {
   const [mode, setMode] = useState<"file" | "paste">("file");
   const [file, setFile] = useState<File | null>(null);
@@ -142,6 +144,13 @@ export function RepoDocAddDialog({
       if (e instanceof FollowLost) {
         // Queued, but no longer heard of: say it goes on rather than offer to send it again.
         toast(goesOn(title.trim()), "info");
+        onOpenChange(false);
+        return;
+      }
+      if (isPublicationPending(e)) {
+        // Added, with only lists and search behind: closed as after a success, not sent again.
+        toastCommitted(e, `Added ${title.trim()}; the list may not show it for a moment`);
+        onAdded(title.trim(), null, true);
         onOpenChange(false);
         return;
       }

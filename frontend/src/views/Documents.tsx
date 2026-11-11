@@ -37,7 +37,9 @@ import { isCollectionName, isMemoryNamespace, kindOf } from "../lib/namespace";
 import { collectionTitle } from "../lib/collections";
 import { AskAboutThis, exact, quoted } from "../components/AskAboutThis";
 import { RowSkeleton } from "../components/Skeleton";
-import { toast, toastError } from "../components/Toast";
+import { toast, toastError, toastWithId } from "../components/Toast";
+import { committedAnyway, toastCommitted } from "../lib/errorWords";
+import { isPublicationPending } from "../lib/errors";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
 import { ListRow, Loading, LoadingSkeleton, PageHeader, TagList, Tip } from "../components/ui";
@@ -440,17 +442,22 @@ export function Documents() {
     const place = { org: identity.org, namespace: identity.namespace };
     try {
       await deleteKnowledge(place, source_uri);
-      // Keyed by the document, so a later delete of it replaces this notice and its Undo.
-      toast(`Deleted ${source_uri}`, "ok", {
-        key: `delete:${place.org}/${place.namespace}/${source_uri}`,
-        action: { label: "Undo", run: () => void onRestore(place, source_uri) },
-      });
-      // The row and its menu leave with the next read: focus then goes to the search.
-      focusSearchOnRead.current = true;
-      reload();
+      toast(`Deleted ${source_uri}`, "ok", undoNotice(place, source_uri));
     } catch (e) {
-      toastError("Delete failed", e);
+      if (!isPublicationPending(e)) {
+        toastError("Delete failed", e);
+        return;
+      }
+      // Deleted, with only lists and search behind: still a delete, with its Undo.
+      toastCommitted(
+        e,
+        `Deleted ${source_uri}; the list may show it for a moment, and Undo may need a moment too`,
+        undoNotice(place, source_uri),
+      );
     }
+    // The row and its menu leave with the next read: focus then goes to the search.
+    focusSearchOnRead.current = true;
+    reload();
   };
 
   // The delete's Undo: the place it was deleted from, whatever the page shows now.
@@ -472,9 +479,25 @@ export function Documents() {
         toast(`${source_uri} was not restored: ${RESTORE_REFUSED[r.reason]}`, "info");
       }
     } catch (e) {
+      // Refused for now (another write holds the source, or a delivery may still land, which
+      // can wait on an operator): the notice comes back with its Undo, which left when pressed.
+      if (e instanceof ApiError && e.code === "BACKEND_UNAVAILABLE") {
+        toastWithId(
+          `${source_uri} is not restored yet; try Undo again later`,
+          "info",
+          e,
+          undoNotice(place, source_uri),
+        );
+        return;
+      }
       toastError("Restore failed", e);
     }
   };
+  // A delete's notice options: its key (a later delete of the document replaces it) and Undo.
+  const undoNotice = (place: { org: string; namespace: string }, source_uri: string) => ({
+    key: `delete:${place.org}/${place.namespace}/${source_uri}`,
+    action: { label: "Undo", run: () => void onRestore(place, source_uri) },
+  });
 
   const onDownload = async (r: KnowledgeEntry) => {
     try {
@@ -731,7 +754,11 @@ export function Documents() {
       clearSelection();
       reload();
     } catch (e) {
-      toastError("Bulk delete failed", e);
+      // Deleted, with only lists and search behind: the selection goes, so none is sent again.
+      if (committedAnyway("Bulk delete failed", e)) {
+        clearSelection();
+        reload();
+      }
     } finally {
       setBulkBusy(false);
     }

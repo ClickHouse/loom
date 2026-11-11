@@ -17,11 +17,11 @@ import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
 import { deleteKnowledge, knowledgeReads, listKnowledge, type KnowledgeEntry } from "../api";
 import { ApiError } from "../lib/errors";
-import { humanizeError } from "../lib/errorWords";
+import { committedAnyway, humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
 import { confirmAction } from "../components/ConfirmDialog";
 import { Skeleton } from "../components/Skeleton";
-import { toast, toastError } from "../components/Toast";
+import { toast } from "../components/Toast";
 import { ListTime, LoadingSkeleton } from "../components/ui";
 
 const RepoDocAddDialog = lazy(() => import("../flows/RepoDocDialogs").then((m) => ({ default: m.RepoDocAddDialog })));
@@ -111,7 +111,7 @@ export function RepoDocsList({
       toast(`Removed ${doc.title || doc.source_uri}`, "ok");
       setNonce((n) => n + 1);
     } catch (e) {
-      toastError("Couldn't remove it", e);
+      if (committedAnyway("Couldn't remove it", e)) setNonce((n) => n + 1);
     } finally {
       setRemoving(null);
     }
@@ -216,7 +216,12 @@ export function RepoDocsList({
             onOpenChange={(v) => {
               if (!v) setAdding(false);
             }}
-            onAdded={(title, lost) => {
+            onAdded={(title, lost, said) => {
+              // A write that committed with lists behind: the dialog already said so.
+              if (said) {
+                setNonce((n) => n + 1);
+                return;
+              }
               if (lost === null) toast(`Added ${title}`, "ok");
               else
                 toast(

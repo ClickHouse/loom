@@ -21,6 +21,7 @@ import { RowSkeleton } from "../components/Skeleton";
 import { fmtInt, parseChTime, relativeTime } from "../lib/format";
 import { useVisiblePoll } from "../lib/hooks";
 import { toast, toastError } from "../components/Toast";
+import { committedAnyway } from "../lib/errorWords";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
 import { PageContainer } from "../layout/PageContainer";
@@ -783,7 +784,7 @@ function SectionEditor({
       toast(isNew ? "Section created" : "Section saved", "ok");
       onSaved();
     } catch (e) {
-      toastError(isNew ? "Couldn't create the section" : "Couldn't save the section", e);
+      if (committedAnyway(isNew ? "Couldn't create the section" : "Couldn't save the section", e)) onSaved();
     } finally {
       setSaving(false);
     }

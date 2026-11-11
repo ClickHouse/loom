@@ -33,11 +33,16 @@ vi.mock("../api", async (importOriginal) => {
 vi.mock("../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
 // `toast` is silenced; `toastError` and the viewport stay real, so a failure's
 // rendered text (with its request id) is what a test reads.
+vi.mock("../lib/errorWords", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/errorWords")>()),
+  toastCommitted: vi.fn(),
+}));
 vi.mock("../components/Toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../components/Toast")>()),
   toast: vi.fn(),
 }));
 import { toast, ToastViewport } from "../components/Toast";
+import { toastCommitted } from "../lib/errorWords";
 import { ingestClock } from "../lib/fileIngest";
 import {
   type KnowledgeUpload,
@@ -280,6 +285,29 @@ describe("RepoDocsList", () => {
         upsert: false,
       },
     ]);
+  });
+
+  it("closes the add dialog for pasted text that committed with only lists and search behind", async () => {
+    vi.mocked(listKnowledge).mockResolvedValue({ rows: [], next_cursor: null });
+    vi.mocked(addKnowledge).mockRejectedValue(
+      new ApiError({ status: 503, code: "PUBLICATION_PENDING", detail: { category: "dependency", retryable: false } }),
+    );
+    mount(true);
+    fireEvent.click(await screen.findByRole("button", { name: "Add a document" }));
+    const dialog = await screen.findByRole("dialog");
+    const user = userEvent.setup();
+    await user.click(within(dialog).getByRole("tab", { name: "Paste text" }));
+    await user.type(within(dialog).getByLabelText(/^Text/), "Step 1: page the owner.");
+    await user.type(within(dialog).getByLabelText("Title"), "Runbook");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
+    // Closed, so it is not sent again, and said as added.
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(addKnowledge).toHaveBeenCalledTimes(1);
+    // One line: added, and the list may lag, with the request id and an error's reading time.
+    expect(vi.mocked(toastCommitted).mock.calls.map(([, m]) => m)).toEqual([
+      "Added Runbook; the list may not show it for a moment",
+    ]);
+    expect(vi.mocked(toast).mock.calls.filter(([m]) => /Runbook/.test(String(m)))).toEqual([]);
   });
 
   it("a writer adds a file as its bytes, ingested under an address made from its name", async () => {

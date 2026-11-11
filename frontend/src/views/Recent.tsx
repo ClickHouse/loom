@@ -24,7 +24,8 @@ import { ListState } from "../components/ui/ListState";
 import { ListTime } from "../components/ui/ListTime";
 import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { RowSkeleton } from "../components/Skeleton";
-import { toast } from "../components/Toast";
+import { toast, toastErrorLine } from "../components/Toast";
+import { toastCommitted } from "../lib/errorWords";
 import { confirmAction } from "../components/ConfirmDialog";
 import { dayLabel, restoreText, displayAgent, SENTINEL_AGENTS } from "../lib/format";
 import { AddMemoryDialog } from "../flows/AddMemoryDialog";
@@ -37,6 +38,7 @@ import { READ_ONLY_TIP, canWrite, useNamespaceRole } from "../lib/namespaceRole"
 import { canCall } from "../lib/canCall";
 import { parseSearchQuery, type SearchQuery, takePendingSearch, toggleQueryToken } from "../lib/memoriesSearch";
 import { oneOf } from "../lib/oneOf";
+import { isPublicationPending } from "../lib/errors";
 import { shortcutOff } from "../lib/shortcuts";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { useRowNav } from "../lib/useRowNav";
@@ -408,6 +410,10 @@ function MemoryList() {
     const keys = Array.from(selected);
     let ok = 0,
       fail = 0;
+    // The last pin that committed with lists behind, and the last call that failed, for
+    // their request ids.
+    let lagging: unknown = null;
+    let failure: unknown = null;
     for (const k of keys) {
       const entry = flatList.find((e) => e.memory_key === k);
       if (!entry) {
@@ -426,13 +432,24 @@ function MemoryList() {
         } else {
           fail++;
         }
-      } catch {
-        fail++;
+      } catch (e) {
+        // Pinned, with only lists and search behind: counted as pinned, and said once below.
+        if (isPublicationPending(e)) {
+          ok++;
+          lagging = e;
+        } else {
+          fail++;
+          failure = e;
+        }
       }
     }
     setBusy(false);
     selection.clear();
-    toast(`Pinned ${ok}${fail ? ` · ${fail} failed` : ""}`, fail ? "error" : "ok");
+    const behind = lagging ? " · lists may show the old state for a moment" : "";
+    const line = `Pinned ${ok}${fail ? ` · ${fail} failed` : ""}${behind}`;
+    if (fail) toastErrorLine(line, failure);
+    else if (lagging) toastCommitted(lagging, line);
+    else toast(line, "ok");
     bumpMemoriesVersion();
   };
 

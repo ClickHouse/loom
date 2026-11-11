@@ -4,6 +4,7 @@ import { act, cleanup, render, screen } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../lib/errors";
 import { ToastViewport, errorToastMs, toastError, toastErrorLine } from "./Toast";
+import { committedAnyway } from "../lib/errorWords";
 
 afterEach(() => {
   cleanup();
@@ -144,5 +145,24 @@ describe("an internal error's toast", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("request id r9")).toBeNull();
+  });
+});
+
+describe("committedAnyway", () => {
+  it("tells a write's catch that a committed write went through, and toasts every failure", async () => {
+    render(<ToastViewport />);
+    const pending = new ApiError({ status: 503, code: "PUBLICATION_PENDING", requestId: "req-p", detail: {} });
+    let committed = false;
+    act(() => {
+      committed = committedAnyway("Save failed", pending);
+    });
+    expect(committed).toBe(true);
+    expect(await screen.findByText(/^Done, but lists and search have not caught up yet/)).toBeInTheDocument();
+    expect(screen.getByText("request id req-p")).toBeInTheDocument();
+    act(() => {
+      committed = committedAnyway("Save failed", new ApiError({ status: 409, message: "the row changed" }));
+    });
+    expect(committed).toBe(false);
+    expect(await screen.findByText(/^Save failed: /)).toBeInTheDocument();
   });
 });

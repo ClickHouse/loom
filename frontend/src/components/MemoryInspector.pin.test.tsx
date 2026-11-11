@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryDetail, MyNamespaceEntry, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
+import { ApiError } from "../lib/errors";
 import { MemoryInspector } from "./MemoryInspector";
 
 // Pin writes the inspected row back through memory.pin, which stores a whole new
@@ -24,7 +25,13 @@ const LIVE: MemoryDetail = {
   agent: "claude-desktop",
 };
 
-vi.mock("./Toast", () => ({ toast: vi.fn(), toastError: vi.fn(), ToastViewport: () => null }));
+// The real committedAnyway: a committed write's answer counts as done.
+vi.mock("./Toast", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./Toast")>()),
+  toast: vi.fn(),
+  toastError: vi.fn(),
+  ToastViewport: () => null,
+}));
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
@@ -91,6 +98,34 @@ describe("MemoryInspector pin", () => {
 
     await waitFor(() => expect(pinMemory).toHaveBeenCalledTimes(1));
     expect(vi.mocked(pinMemory).mock.calls[0]).toEqual([identity, "coffee_pref", LIVE]);
+  });
+
+  it("stays pinned when memory.pin committed with only search behind, and rolls back a failure", async () => {
+    // An admin, who may unpin, so the menu shows which state the drawer holds.
+    useStore.setState({ myNamespaces: [{ ...member, role: "admin" }] });
+    const onChanged = vi.fn();
+    const pending = new ApiError({ status: 503, code: "PUBLICATION_PENDING", detail: {} });
+    vi.mocked(pinMemory).mockRejectedValueOnce(pending);
+    render(<MemoryInspector identity={identity} memoryKey="coffee_pref" onClose={() => {}} onChanged={onChanged} />);
+    await screen.findByText("oat milk, no sugar");
+    await userEvent.click(screen.getByRole("button", { name: "More actions" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Pin" }));
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+    // Shown pinned: the menu offers Unpin, not Pin again.
+    await userEvent.click(screen.getByRole("button", { name: "More actions" }));
+    expect(await screen.findByRole("menuitem", { name: "Unpin" })).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    cleanup();
+    onChanged.mockClear();
+    vi.mocked(pinMemory).mockRejectedValueOnce(new ApiError({ status: 500, code: "INTERNAL", detail: {} }));
+    render(<MemoryInspector identity={identity} memoryKey="coffee_pref" onClose={() => {}} onChanged={onChanged} />);
+    await screen.findByText("oat milk, no sugar");
+    await userEvent.click(screen.getByRole("button", { name: "More actions" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Pin" }));
+    await waitFor(() => expect(pinMemory).toHaveBeenCalledTimes(2));
+    await userEvent.click(screen.getByRole("button", { name: "More actions" }));
+    expect(await screen.findByRole("menuitem", { name: "Pin" })).toBeInTheDocument();
+    expect(onChanged).not.toHaveBeenCalled();
   });
 
   it("unpins the row it read, by that row's own agent, user and session", async () => {

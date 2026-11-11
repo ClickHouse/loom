@@ -44,7 +44,16 @@ const MOVED: MemoryMoveResult = {
 };
 
 // The toast store has no viewport in this render; assert the call.
-vi.mock("./Toast", () => ({ toast: vi.fn(), toastError: vi.fn(), ToastViewport: () => null }));
+vi.mock("../lib/errorWords", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/errorWords")>()),
+  toastCommitted: vi.fn(),
+}));
+vi.mock("./Toast", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./Toast")>()),
+  toast: vi.fn(),
+  toastError: vi.fn(),
+  ToastViewport: () => null,
+}));
 vi.mock("./ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true), ConfirmViewport: () => null }));
 
 vi.mock("../api", async (importOriginal) => {
@@ -82,7 +91,9 @@ vi.mock("../api", async (importOriginal) => {
   };
 });
 import { deleteMemory, getMemory, moveMemory, pinMemory, setMemory } from "../api";
+import { ApiError } from "../lib/errors";
 import { toast } from "./Toast";
+import { toastCommitted } from "../lib/errorWords";
 
 const row = (namespace: string, role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
   namespace,
@@ -102,6 +113,8 @@ const person: WhoAmI = {
   namespaces: ["team-alerts"],
 };
 const identity = { org: "dev", namespace: "team-alerts", agent: "loom-ui" };
+
+const PENDING = new ApiError({ status: 503, code: "PUBLICATION_PENDING", detail: { retryable: false } });
 
 function seed(role: MyNamespaceEntry["role"]) {
   useStore.setState({
@@ -189,6 +202,51 @@ describe("MemoryInspector rename with redirect", () => {
     const badge = await screen.findByTestId("redirect-badge");
     expect(badge).toHaveTextContent("redirects to prefs/coffee");
     expect(toast).toHaveBeenCalledWith("Renamed to prefs/coffee — the old key redirects to it", "ok");
+  });
+
+  it("keeps the form open when the new key is written but the old one is not moved yet", async () => {
+    seed("writer");
+    const onChanged = vi.fn();
+    await open(onChanged);
+    await openRename();
+    const form = screen.getByTestId("rename-form");
+    const input = within(form).getByLabelText("New key");
+    await userEvent.clear(input);
+    await userEvent.type(input, "prefs/coffee");
+    vi.mocked(moveMemory).mockRejectedValueOnce(PENDING);
+    await userEvent.click(within(form).getByRole("button", { name: "Rename" }));
+    await waitFor(() =>
+      expect(toastCommitted).toHaveBeenCalledWith(
+        PENDING,
+        "prefs/coffee is written, but coffee_pref is not moved yet. Rename again to finish the move.",
+      ),
+    );
+    // A second Rename finishes the move: the form is still there to send it, and holds the
+    // key and the redirect, since another key would leave the first one behind.
+    expect(screen.getByTestId("rename-form")).toBeInTheDocument();
+    expect(within(form).getByLabelText("New key")).toHaveAttribute("readonly");
+    expect(within(form).getByRole("checkbox", { name: "Keep old key readable (redirect)" })).toBeDisabled();
+    expect(onChanged).not.toHaveBeenCalled();
+    vi.mocked(getMemory).mockResolvedValue(REDIRECTED);
+    await userEvent.click(within(form).getByRole("button", { name: "Rename" }));
+    await waitFor(() => expect(screen.queryByTestId("rename-form")).toBeNull());
+    expect(vi.mocked(moveMemory).mock.calls.at(-1)?.slice(1, 3)).toEqual(["coffee_pref", "prefs/coffee"]);
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("closes the editor on a saved value whose search copy lags, and reads the row again", async () => {
+    seed("writer");
+    await open();
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const value = screen.getByLabelText("Memory value");
+    await userEvent.clear(value);
+    await userEvent.type(value, "black");
+    vi.mocked(setMemory).mockRejectedValueOnce(PENDING);
+    vi.mocked(getMemory).mockResolvedValue({ ...LIVE, value: "black" });
+    await userEvent.click(screen.getByRole("button", { name: "Save new version" }));
+    await waitFor(() => expect(screen.queryByLabelText("Memory value")).toBeNull());
+    expect(await screen.findByText("black")).toBeInTheDocument();
+    expect(setMemory).toHaveBeenCalledTimes(1);
   });
 
   it("holds the redirect on a no_delete row, which a rename without one would delete", async () => {
