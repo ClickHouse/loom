@@ -1323,3 +1323,9 @@ def test_a_failed_memory_read_stops_the_check_rather_than_marking_the_key(monkey
 def test_markdown_bold_is_no_settings_family():
     q = _qualify()
     assert q.SETTING_FAMILY_RE.findall("**LOOM_COLOUR** and LOOM_CH_*") == ["LOOM_CH_*"]
+
+
+@pytest.mark.parametrize("case", _help_cases(), ids=lambda c: c["id"])
+def test_every_help_case_with_a_claim_forbids_its_denial(case):
+    # The question the docs leave open has no claim to deny; every other help case does.
+    assert case["kind"] == "help_abstain" or case.get("forbid"), case["id"]

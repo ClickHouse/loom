@@ -1180,9 +1180,11 @@
         "Yes. It won't run without your OpenAI key.",
         "Yes: you cannot use the quickstart without an API key.",
         "Yes. With no API key, the quickstart won't start.",
-        "Yes, the quickstart needs an OpenAI API key; search doesn't need a key."
+        "Yes, the quickstart needs an OpenAI API key; search doesn't need a key.",
+        "Yes: the quickstart requires an API key, though its embedder needs no key."
       ]
-    }
+    },
+    "forbid": ["(^|[.!?:]\\s*)yes\\b[^.]{0,40}\\b(needs?|requires?)\\b"]
   },
   {
     "id": "help-upgrade",
