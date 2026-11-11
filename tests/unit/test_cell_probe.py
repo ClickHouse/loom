@@ -149,6 +149,17 @@ def test_a_port_it_cannot_bind_is_logged_and_the_process_serves_on(
     assert "could not bind" in caplog.text
 
 
+async def _get_when_up(port: int) -> httpx.Response:
+    """The probe route's answer on `port`, once the listener there accepts."""
+    async with httpx.AsyncClient() as client:
+        for _ in range(100):
+            try:
+                return await client.get(f"http://127.0.0.1:{port}{cell_probe.PATH}")
+            except httpx.ConnectError:
+                await asyncio.sleep(0.02)
+    pytest.fail("the listener never accepted")
+
+
 def test_start_listener_binds_the_configured_port_and_serves(
     deployment: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -176,16 +187,7 @@ def test_start_listener_binds_the_configured_port_and_serves(
         assert listener is not None
         port = bound[0].getsockname()[1]
         try:
-            async with httpx.AsyncClient() as client:
-                for _ in range(100):
-                    try:
-                        r = await client.get(f"http://127.0.0.1:{port}{cell_probe.PATH}")
-                        break
-                    except httpx.ConnectError:
-                        await asyncio.sleep(0.02)
-                else:
-                    pytest.fail("the listener never accepted")
-            return r.status_code
+            return (await _get_when_up(port)).status_code
         finally:
             await listener.stop()
 
@@ -210,15 +212,7 @@ def test_the_listener_serves_on_its_port_and_leaves_the_signal_handlers(
         listener = cell_probe.Listener(sock)
         assert logging.getLogger("uvicorn.error").level == uvicorn_level
         try:
-            async with httpx.AsyncClient() as client:
-                for _ in range(100):
-                    try:
-                        r = await client.get(f"http://127.0.0.1:{port}{cell_probe.PATH}")
-                        break
-                    except httpx.ConnectError:
-                        await asyncio.sleep(0.02)
-                else:
-                    pytest.fail("the listener never accepted")
+            r = await _get_when_up(port)
             assert {sig: signal.getsignal(sig) for sig in handlers} == handlers
             return r.json()
         finally:
