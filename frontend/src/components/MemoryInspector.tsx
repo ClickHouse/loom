@@ -56,7 +56,7 @@ import { openerUsable } from "../lib/place";
 import { graphSeedHref, isModifiedClick, openGraphAt } from "../lib/graphLink";
 import { AgentBadge } from "./AgentBadge";
 import { DiffView } from "./DiffView";
-import { keepOpenOnToasts, toast, toastError } from "./Toast";
+import { committedAnyway, keepOpenOnToasts, toast, toastError } from "./Toast";
 import { IconButton } from "./IconButton";
 import { SkeletonText } from "./Skeleton";
 import { Chip, ExternalLink, Loading, LoadingSkeleton, Tip } from "./ui";
@@ -537,11 +537,13 @@ export function MemoryInspector({
         await pinMemory(identity, memoryKey, detail);
       }
       toast(wasPinned ? "Unpinned" : "Pinned", "ok");
-      onChanged();
     } catch (e) {
-      setDetail((d) => (d ? { ...d, pinned: wasPinned } : d));
-      toastError("Pin failed", e);
+      if (!committedAnyway("Pin failed", e)) {
+        setDetail((d) => (d ? { ...d, pinned: wasPinned } : d));
+        return;
+      }
     }
+    onChanged();
   };
 
   // Attest (or revoke). The server picks the actor from the token and binds
@@ -718,11 +720,13 @@ export function MemoryInspector({
         tags: nextTags,
         charLimit: detail.char_limit ?? undefined,
       });
-      onChanged();
     } catch (e) {
-      setDetail((d) => (d ? { ...d, tags: prev } : d));
-      toastError("Tag update failed", e);
+      if (!committedAnyway("Tag update failed", e)) {
+        setDetail((d) => (d ? { ...d, tags: prev } : d));
+        return;
+      }
     }
+    onChanged();
   };
 
   const onRemoveTag = (t: string) => {
@@ -753,8 +757,7 @@ export function MemoryInspector({
       });
       toast(ttlSeconds === null ? "Expiry cleared — never expires" : "Expiry updated", "ok");
     } catch (e) {
-      toastError("Expiry update failed", e);
-      return;
+      if (!committedAnyway("Expiry update failed", e)) return;
     }
     await reread();
   };
@@ -779,12 +782,11 @@ export function MemoryInspector({
         charLimit: detail.char_limit ?? undefined,
       });
       toast("Saved", "ok");
-      // A save that answers after another Edit leaves that editor open.
-      if (formSession.current === session) setEditing(false);
     } catch (e) {
-      toastError("Save failed", e);
-      return;
+      if (!committedAnyway("Save failed", e)) return;
     }
+    // A save that answers after another Edit leaves that editor open.
+    if (formSession.current === session) setEditing(false);
     await reread();
   };
 
@@ -2101,7 +2103,9 @@ function RenameForm({
       if (dryRun) setPreview(r);
       else onRenamed(r);
     } catch (e) {
-      toastError(`${dryRun ? "Preview" : "Rename"} failed`, e, { read: dryRun });
+      if (dryRun) toastError("Preview failed", e, { read: true });
+      // Moved, with no answer to follow: the form closes, so the move is not sent again.
+      else if (committedAnyway("Rename failed", e)) onCancel();
     } finally {
       setBusy(null);
     }

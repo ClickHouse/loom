@@ -5,6 +5,7 @@ import { useStore } from "../lib/state";
 import { toast, ToastViewport } from "../components/Toast";
 import { Documents } from "./Documents";
 import { axeViolations } from "../test/axe";
+import { ApiError } from "../lib/errors";
 
 // A delete's notice carries Undo, which calls knowledge.restore for the place the document
 // was deleted from, and says why when nothing came back.
@@ -76,6 +77,16 @@ describe("Library delete Undo", () => {
     expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
     expect(screen.getByLabelText("Search library")).toHaveFocus();
     await waitFor(() => expect(api.listKnowledge.mock.calls.length).toBeGreaterThan(reads));
+  });
+
+  it("keeps Undo for a delete that committed with only lists and search behind", async () => {
+    api.deleteKnowledge.mockRejectedValueOnce(
+      new ApiError({ status: 503, code: "PUBLICATION_PENDING", detail: { category: "dependency", retryable: false } }),
+    );
+    const undo = await deleteRow();
+    expect(undo).toBeInTheDocument();
+    expect(screen.getByText("Deleted docs/refunds.md; the list may show it for a moment")).toBeInTheDocument();
+    expect(screen.queryByText(/Delete failed/)).toBeNull();
   });
 
   it("says why a refused restore left the document deleted", async () => {

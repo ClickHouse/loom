@@ -37,7 +37,8 @@ import { isCollectionName, isMemoryNamespace, kindOf } from "../lib/namespace";
 import { collectionTitle } from "../lib/collections";
 import { AskAboutThis, exact, quoted } from "../components/AskAboutThis";
 import { RowSkeleton } from "../components/Skeleton";
-import { toast, toastError } from "../components/Toast";
+import { committedAnyway, toast, toastError } from "../components/Toast";
+import { isPublicationPending } from "../lib/errors";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
 import { ListRow, Loading, LoadingSkeleton, PageHeader, TagList, Tip } from "../components/ui";
@@ -438,19 +439,29 @@ export function Documents() {
     )
       return;
     const place = { org: identity.org, namespace: identity.namespace };
+    // Deleted, with only lists and search behind: still a delete, with its Undo.
+    let lagging = false;
     try {
       await deleteKnowledge(place, source_uri);
-      // Keyed by the document, so a later delete of it replaces this notice and its Undo.
-      toast(`Deleted ${source_uri}`, "ok", {
+    } catch (e) {
+      if (!isPublicationPending(e)) {
+        toastError("Delete failed", e);
+        return;
+      }
+      lagging = true;
+    }
+    // Keyed by the document, so a later delete of it replaces this notice and its Undo.
+    toast(
+      lagging ? `Deleted ${source_uri}; the list may show it for a moment` : `Deleted ${source_uri}`,
+      lagging ? "info" : "ok",
+      {
         key: `delete:${place.org}/${place.namespace}/${source_uri}`,
         action: { label: "Undo", run: () => void onRestore(place, source_uri) },
-      });
-      // The row and its menu leave with the next read: focus then goes to the search.
-      focusSearchOnRead.current = true;
-      reload();
-    } catch (e) {
-      toastError("Delete failed", e);
-    }
+      },
+    );
+    // The row and its menu leave with the next read: focus then goes to the search.
+    focusSearchOnRead.current = true;
+    reload();
   };
 
   // The delete's Undo: the place it was deleted from, whatever the page shows now.
@@ -731,7 +742,11 @@ export function Documents() {
       clearSelection();
       reload();
     } catch (e) {
-      toastError("Bulk delete failed", e);
+      // Deleted, with only lists and search behind: the selection goes, so none is sent again.
+      if (committedAnyway("Bulk delete failed", e)) {
+        clearSelection();
+        reload();
+      }
     } finally {
       setBulkBusy(false);
     }

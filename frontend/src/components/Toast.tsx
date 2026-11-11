@@ -87,6 +87,15 @@ export function toast(msg: string, kind: ToastKind = "ok", opts: ToastOpts = {})
   _listeners.forEach((l) => l(item));
 }
 
+/** For a write's catch: toasts the failure as `toastError` does and says whether the write
+ *  committed anyway (`PUBLICATION_PENDING`: only lists and search lag). On true the caller
+ *  goes on as after a success, so the page shows the write as made and never invites a
+ *  repeat; on false it handles the failure. */
+export function committedAnyway(context: string, err: unknown): boolean {
+  toastError(context, err);
+  return isPublicationPending(err);
+}
+
 /** An error toast for a thrown value: `context: <the server's words>` (the context is the
  *  lead-in, so humanizeError's own is left out) with the request id underneath when the
  *  failure carried one. It stays up long enough to read: 8 s plus 50 ms a character, at

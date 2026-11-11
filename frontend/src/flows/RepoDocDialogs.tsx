@@ -21,6 +21,7 @@ import { addKnowledge, downloadKnowledge, getKnowledge, textDownloadName, type K
 import { relativeTime } from "../lib/format";
 import { humanizeError } from "../lib/errorWords";
 import { toast, toastError } from "../components/Toast";
+import { isPublicationPending } from "../lib/errors";
 import { DropZone } from "../components/ui/DropZone";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { Loading } from "../components/ui/Loading";
@@ -142,6 +143,13 @@ export function RepoDocAddDialog({
       if (e instanceof FollowLost) {
         // Queued, but no longer heard of: say it goes on rather than offer to send it again.
         toast(goesOn(title.trim()), "info");
+        onOpenChange(false);
+        return;
+      }
+      if (isPublicationPending(e)) {
+        // Added, with only lists and search behind: closed as after a success, not sent again.
+        toastError("Couldn't add the document", e);
+        onAdded(title.trim(), null);
         onOpenChange(false);
         return;
       }

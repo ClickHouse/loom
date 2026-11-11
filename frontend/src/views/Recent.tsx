@@ -37,6 +37,7 @@ import { READ_ONLY_TIP, canWrite, useNamespaceRole } from "../lib/namespaceRole"
 import { canCall } from "../lib/canCall";
 import { parseSearchQuery, type SearchQuery, takePendingSearch, toggleQueryToken } from "../lib/memoriesSearch";
 import { oneOf } from "../lib/oneOf";
+import { isPublicationPending } from "../lib/errors";
 import { shortcutOff } from "../lib/shortcuts";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { useRowNav } from "../lib/useRowNav";
@@ -407,7 +408,8 @@ function MemoryList() {
     setBusy(true);
     const keys = Array.from(selected);
     let ok = 0,
-      fail = 0;
+      fail = 0,
+      lagging = false;
     for (const k of keys) {
       const entry = flatList.find((e) => e.memory_key === k);
       if (!entry) {
@@ -426,13 +428,18 @@ function MemoryList() {
         } else {
           fail++;
         }
-      } catch {
-        fail++;
+      } catch (e) {
+        // Pinned, with only lists and search behind: counted as pinned, and said once below.
+        if (isPublicationPending(e)) {
+          ok++;
+          lagging = true;
+        } else fail++;
       }
     }
     setBusy(false);
     selection.clear();
-    toast(`Pinned ${ok}${fail ? ` · ${fail} failed` : ""}`, fail ? "error" : "ok");
+    const behind = lagging ? " · lists may show the old state for a moment" : "";
+    toast(`Pinned ${ok}${fail ? ` · ${fail} failed` : ""}${behind}`, fail ? "error" : "ok");
     bumpMemoriesVersion();
   };
 

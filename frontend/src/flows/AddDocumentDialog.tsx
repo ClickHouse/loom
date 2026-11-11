@@ -6,6 +6,7 @@ import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { addKnowledge, cancelIngestion, type Identity, type IngestCancelResult } from "../api";
 import { toast, toastError } from "../components/Toast";
+import { isPublicationPending, PUBLICATION_PENDING } from "../lib/errors";
 import { DropZone } from "../components/ui/DropZone";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { TabTrigger } from "../components/ui/TabTrigger";
@@ -282,6 +283,11 @@ export function AddDocumentDialog({
       }
       finish(replaceMode ? `Replaced ${replaceMode.sourceUri}` : "Document added");
     } catch (e) {
+      // Saved, with only lists and search behind: closed as after a success, not sent again.
+      if (isPublicationPending(e)) {
+        finish(PUBLICATION_PENDING, "info");
+        return;
+      }
       setError(humanizeError(e));
       setBusy(null);
     }
