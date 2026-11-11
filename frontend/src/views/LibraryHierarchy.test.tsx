@@ -180,9 +180,10 @@ describe("CollectionsInside", () => {
   it("lists the collections shared with the caller apart, each with where it sits", () => {
     const rows = [
       entry("col-lib", { title: "Library" }),
-      // Shared at the top: no path. (A child inherits its parents' grants, so a shared one
-      // inside one's own shows only when a token caps the role below the inherited one.)
+      // Shared at the top: no path.
       entry("col-r", { title: "Research", role: "viewer" }),
+      // A child inherits its parents' grants, so a shared one inside one's own shows only when
+      // a token caps the role below the inherited one.
       entry("col-claimed", { parent: "col-lib", title: "Claimed", role: "viewer" }),
       entry("col-r-notes", { parent: "col-r", title: "Notes", role: "viewer" }),
       entry("col-far", { parent: "col-hidden", title: "Far", role: "writer" }),

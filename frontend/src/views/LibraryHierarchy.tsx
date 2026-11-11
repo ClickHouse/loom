@@ -73,7 +73,8 @@ export function collectionPath(
 
 /** A collection someone shared with the caller: one they read or write but do not
  *  administer. `collection.list` names no owner, so the role is the signal: one shared as
- *  admin is the caller's to manage, and sits with their own. */
+ *  admin is the caller's to manage, and sits with their own. The role is the token's, so a
+ *  token capped below admin lists the person's own collections here too. */
 function isSharedWithMe(c: CollectionEntry): boolean {
   return !c.personal && c.role !== "admin";
 }
