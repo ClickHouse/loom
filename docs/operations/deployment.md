@@ -1048,10 +1048,11 @@ The matching GitHub Release carries `loom-stack.tar.gz`, its SHA-256 file, and
 `install.sh`. The bundle is the supported source-free laptop deployment: it contains
 Compose plus the ClickHouse configuration/dictionary the stack needs, while the UI and
 server stay in the image. Each release's `install.sh` installs that release; running the
-install command again preserves `.env` (apart from advancing the pinned `LOOM_VERSION` and giving an `.env` without
-an extractor token one, and the extractor URL unless it names its own) and volumes. An older
-release's `install.sh` run over a newer install refuses; a downgrade on purpose follows
-[downgrading an installer install](./upgrades.md#downgrading-an-installer-install).
+install command again preserves `.env` (apart from advancing the pinned `LOOM_VERSION` and
+giving an `.env` without an extractor token one, and the extractor URL unless it names its
+own) and volumes. An older release's `install.sh` run over a newer install refuses; a
+downgrade on purpose follows [downgrading an installer
+install](./upgrades.md#downgrading-an-installer-install).
 
 ## N identical replicas
 
