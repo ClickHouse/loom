@@ -8,10 +8,9 @@ it is the one whose stores they write to (docs/architecture/cells.md, "Preparing
   answers the values under prepare's nonce keys, read on that request from this
   process's own connections: the Postgres row `loom.cell_probe`, the key `cell-probe` of
   the ClickHouse KeeperMap `loom._migration_lock` and the bucket object
-  `<prefix>/_cell_probe`, and the bucket and prefix it stores under. None of these values
-  is secret. It answers 429 past
-  PROBES_PER_MINUTE per process. Every web process of a host accepts on the port
-  (SO_REUSEPORT); the workers child opens none.
+  `<prefix>/_cell_probe`; it also names the bucket and prefix it stores under. None of
+  these values is secret. It answers 429 past PROBES_PER_MINUTE per process. Every web
+  process of a host accepts on the port (SO_REUSEPORT); the workers child opens none.
 
 Prepare writes a nonce to each store, reads it back here, and deletes it. A copy of
 another deployment's stores answers that deployment's id with none of this nonce.

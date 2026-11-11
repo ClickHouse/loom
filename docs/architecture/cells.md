@@ -272,8 +272,9 @@ fingerprint gate:
   separate probe listener port (`LOOM_CELL_PROBE_PORT`, `0` for off; it needs the
   Postgres authority and authentication on, and binds every address of the host): the
   Postgres row `loom.cell_probe` and the KeeperMap key, each named `cell-probe`, and the
-  object `<prefix>/_cell_probe`, with the bucket and prefix it stores under. None of
-  these values is secret. It answers 429 past a fixed rate per process on that listener.
+  object `<prefix>/_cell_probe`; it also names the bucket and prefix it stores under.
+  None of these values is secret. It answers 429 past a fixed rate per process on that
+  listener.
 - Only the cell's probe address (`probe_url`) targets the listener: an internal address
   that no ingress exposes and the router never routes to, which the deployment sends to
   every live process, ready or not, so prepare and attach reach a process the gate holds
