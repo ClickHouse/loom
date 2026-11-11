@@ -86,7 +86,8 @@ export function DockBody() {
     if (!open) setShowHistory(false);
   }, [open]);
   const [checking, setChecking] = useState(true);
-  const [indexTick, setIndexTick] = useState(0);
+  // Bumped to draw History again: a write to the index here or in another tab.
+  const [, setIndexTick] = useState(0);
 
   // The person (or their token's scope) changed: what was shown is not theirs.
   useEffect(() => {
@@ -212,7 +213,7 @@ export function DockBody() {
         <History
           owner={owner}
           readable={readable}
-          tick={indexTick}
+          onDeleted={() => setIndexTick((n) => n + 1)}
           onOpen={async (entry) => {
             if (!(await openConversation(entry.id))) return;
             setShowHistory(false);
@@ -359,15 +360,15 @@ function Mismatch({ old, now }: { old: string; now: string }) {
 function History({
   owner,
   readable,
-  tick,
+  onDeleted,
   onOpen,
 }: {
   owner: Owner;
   readable: (ns: string) => boolean;
-  tick: number;
+  /** A Delete or Delete all here: DockBody draws the list again, as for another tab's. */
+  onDeleted: () => void;
   onOpen: (entry: { id: string; namespace: string }) => Promise<void>;
 }) {
-  const [, setRefresh] = useState(0);
   const headingId = useId();
   const list = useRef<HTMLUListElement>(null);
   // Where the focus goes once a Delete or Delete all has drawn: a row's id, or the heading.
@@ -378,8 +379,8 @@ function History({
     (row ?? document.getElementById(headingId))?.focus();
     setFocusTo(null);
   }, [focusTo, headingId]);
-  // Read on each render (cheap: one small key), so a delete here or in another tab shows.
-  void tick;
+  // Read on each render (cheap: one small key): DockBody draws it again on a delete here or
+  // a write to the index in another tab.
   const entries = listConversations(owner, readable);
   return (
     <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3">
@@ -408,7 +409,7 @@ function History({
                   deleteConversation(e.id);
                   // The button goes with its row: the focus goes to the next row, or the heading.
                   setFocusTo((entries[i + 1] ?? entries[i - 1])?.id ?? "heading");
-                  setRefresh((n) => n + 1);
+                  onDeleted();
                 }}
               >
                 Delete
@@ -435,7 +436,7 @@ function History({
                 resetChat(owner);
                 // The button goes with the list: the focus goes to the heading.
                 setFocusTo("heading");
-                setRefresh((n) => n + 1);
+                onDeleted();
               })
             }
           >
