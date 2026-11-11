@@ -115,6 +115,8 @@ beforeEach(() => {
   modelCalls = () => json({ enabled: false, locked: false });
   resetChat(null);
   useChat.setState({ hint: null, readiness: null, storageOff: false });
+  // A test that opens another page leaves it for the next one's question context otherwise.
+  useStore.setState({ view: "memories" });
   useDock.setState({
     open: true,
     mounted: true,
@@ -468,6 +470,26 @@ describe("History", () => {
     await waitFor(() => expect(screen.getByText("No conversations saved here yet.")).toBeInTheDocument());
   });
 
+  it("lists no conversation kept in a collection: the header never holds one", async () => {
+    signIn("viewer");
+    useStore.setState((st) => ({
+      myNamespaces: [
+        ...(st.myNamespaces ?? []),
+        { namespace: "col-research", role: "viewer", status: "active", kind: "collection" } as never,
+      ],
+    }));
+    for (const [id, namespace, title] of [
+      ["c1", "team", "Invoices"],
+      ["c2", "col-research", "Research notes"],
+    ])
+      saveConversation({ id, owner: alice, namespace, title, turns: [done(0)], trimmed: false, updated: Date.now() });
+    show();
+    await userEvent.setup().click(screen.getByRole("button", { name: "History" }));
+    const list = screen.getByRole("list", { name: "Saved conversations" });
+    expect(within(list).getByText("Invoices")).toBeInTheDocument();
+    expect(within(list).queryByText(/Research notes/)).toBeNull();
+  });
+
   it("opens a saved conversation, its older turns said not kept", async () => {
     signIn("viewer");
     const turns = Array.from({ length: 30 }, (_, i) => done(i));
@@ -587,6 +609,32 @@ describe("the conversation", () => {
       expect(document.getElementById("loom-assistant-status")).toHaveTextContent(
         "New conversation in ops; the one about team is in History.",
       ),
+    );
+  });
+
+  it("links a conversation kept in a collection to the Library", async () => {
+    signIn("viewer");
+    show();
+    act(() => useChat.setState({ namespace: "col-research", turns: [done(0)] }));
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Library" }));
+    expect(useStore.getState().view).toBe("knowledge");
+    // It closes the panel too, even one beside the page, which a navigation leaves open.
+    expect(useDock.getState().open).toBe(false);
+  });
+
+  it("offers no way back into a collection a kept conversation is about", async () => {
+    signIn("viewer");
+    show();
+    act(() => useChat.setState({ namespace: "col-research", turns: [done(0)] }));
+    expect(
+      await screen.findByText(/^This conversation is about a collection; collections are in the/),
+    ).toHaveTextContent("This conversation is about a collection; collections are in the Library.");
+    expect(screen.queryByText(/col-research/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Switch back to/ })).toBeNull();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Start a new one in team" }));
+    // History lists it no more, so the announcement does not send anyone there.
+    await waitFor(() =>
+      expect(document.getElementById("loom-assistant-status")).toHaveTextContent(/^New conversation in team\.$/),
     );
   });
 
@@ -1410,6 +1458,17 @@ describe("the page a question is asked from", () => {
     await waitFor(() => expect(document.getElementById("loom-assistant-status")).toHaveTextContent(line));
     await userEvent.setup().click(screen.getByRole("button", { name: "History" }));
     expect(screen.getByRole("button", { name: "Who owns billing?" })).toBeInTheDocument();
+  });
+
+  it("on a conversation kept in a collection, points to no History entry and names no address", async () => {
+    signIn("viewer");
+    show();
+    act(() => useChat.setState({ namespace: "col-research", turns: [done(0)] }));
+    act(() => askAbout(item({ namespace: "team" })));
+    const line = "New conversation in team.";
+    expect(await screen.findByText(line)).toBeInTheDocument();
+    expect(screen.queryByText(/col-research/)).toBeNull();
+    await waitFor(() => expect(document.getElementById("loom-assistant-status")).toHaveTextContent(line));
   });
 });
 

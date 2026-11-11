@@ -133,6 +133,9 @@ const BUDGET: Record<string, { render: () => JSX.Element; view: View; allow: Rec
       "/v1/namespace.list_mine": 1,
       "/v1/code.repos": 1,
       "/v1/blacklist.list": 1,
+      // The token form says a token that reads everything reads no collection only to one
+      // who reads a collection, maybe through a group, which list_mine leaves out.
+      "/v1/collection.list": 1,
     },
   },
   Sharing: {

@@ -1213,11 +1213,14 @@ export interface MyNamespaceEntry {
   visibility: Visibility;
   /** A client token reads this through its creator's grant; the role is the creator's. Never true for a person's own rows. */
   inherited?: boolean;
-  /** "memory" (default), "code" — a code-plane repo index (the Code
-   *  section), "qa" — a tracker read live, or "bench". Code and QA
+  /** "memory" (default), "code" — a repository (the Repositories
+   *  section), "qa" — a tracker read live, "bench", or "collection" / "personal" for a
+   *  `col-…` collection, which the dashboard shows in the Library. Code and QA
    *  namespaces are reference data, never the landing default, but a claim on one is
    *  pickable: Patterns mode lives there. */
-  kind?: "memory" | "code" | "tracker" | "qa" | "bench";
+  kind?: "memory" | "code" | "tracker" | "qa" | "bench" | "collection" | "personal";
+  /** A collection's title; "" for a namespace, an untitled collection, or a server a release behind. */
+  title?: string;
   description: string;
   joined_at: string | null;
   is_new: boolean;
@@ -1378,8 +1381,6 @@ export interface TokenCreated {
   saves_to: string | null;
   created_at: string;
   expires_at: string | null;
-  /** Restricted namespaces the token reads with a grant of its own. */
-  restricted_namespaces: string[];
   mcp_url: string;
 }
 
@@ -1410,7 +1411,6 @@ export async function createToken(opts: {
     roles: [],
     created_at: "",
     expires_at: null,
-    restricted_namespaces: [],
     ...r,
     reads_everything: r.reads_everything ?? r.namespaces.includes("*"),
     saves_to: r.saves_to ?? null,

@@ -296,8 +296,8 @@ describe("the path's place above the top", () => {
     fireEvent.click(namespaceLink);
     expect(onPick).toHaveBeenLastCalledWith(null);
     cleanup();
-    // The header's namespace is itself a collection: the user's own files are the place above.
-    at("col-q3", ROWS, ROWS[0]);
+    // No namespace in the header: the user's own files are the place above.
+    at(null, ROWS, ROWS[0]);
     fireEvent.click(
       within(screen.getByRole("navigation", { name: "Collection path" })).getByRole("link", { name: "My files" }),
     );
@@ -741,13 +741,39 @@ describe("the Library on a collection", () => {
     useStore.setState({ myNamespaces: null });
   });
 
-  it("while the list is read, or when it fails, says no collection is missing", async () => {
+  it("with no namespace and only one's own collection, says how to get in", async () => {
+    api.listCollections.mockResolvedValue({
+      collections: [entry("col-me-1a2b", { personal: true })],
+      next_cursor: null,
+    });
+    useStore.setState({ identity: { org: "acme", namespace: "", agent: "loom-ui" } });
+    render(<Documents />);
+    await settle();
+    expect(screen.getByText(/^Your token reaches no namespace yet\./)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Browse and join spaces" })).toBeInTheDocument();
+  });
+
+  it("says nothing of collections or namespaces while the list is read", async () => {
+    api.listCollections.mockReturnValue(new Promise(() => {}));
+    useStore.setState({ identity: { org: "acme", namespace: "", agent: "loom-ui" } });
+    render(<Documents />);
+    await settle();
+    // Not known yet: no "Pick a collection", no "reaches no namespace", no Spaces to take back.
+    expect(screen.queryByText("Pick a collection", { selector: "h2, h3, p, div" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/reaches no namespace/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Browse and join spaces" })).not.toBeInTheDocument();
+  });
+
+  it("when the list fails, says no collection is missing", async () => {
     api.listCollections.mockRejectedValue(new Error("offline"));
     useStore.setState({ identity: { org: "acme", namespace: "", agent: "loom-ui" } });
     render(<Documents />);
     await settle();
     expect(screen.queryByText("No collection yet", { selector: "h2, h3, p, div" })).not.toBeInTheDocument();
     expect(screen.getByText("Pick a collection", { selector: "h2, h3, p, div" })).toBeInTheDocument();
+    // Not known to hold one: the page says what is missing, and offers to join a namespace.
+    expect(screen.getByText("Your token reaches no namespace yet. Pick a collection above.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Browse and join spaces" })).toBeInTheDocument();
   });
 
   it("on a tracker namespace of either kind, points at Patterns", async () => {
@@ -776,54 +802,28 @@ describe("the Library on a collection", () => {
     expect(screen.getByRole("button", { name: "Browse and join spaces" })).toBeInTheDocument();
   });
 
-  it("lists a header namespace that is a collection once, with its role", async () => {
-    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
-    useStore.setState({ identity: { org: "acme", namespace: "col-plans", agent: "loom-ui" } });
-    render(<Documents />);
-    await settle();
-    expect(screen.getByRole("button", { name: "Show the documents of" })).toHaveTextContent("col-plans");
-    expect(screen.getByText("Viewer")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Add document" })).not.toBeInTheDocument();
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Show the documents of" }), { button: 0, ctrlKey: false });
-    fireEvent.click(screen.getByRole("button", { name: "Show the documents of" }));
-    const menu = within(screen.getByRole("dialog"));
-    expect(menu.queryByText(/^Namespace /)).not.toBeInTheDocument();
-    expect(menu.getAllByText(/col-plans/)).toHaveLength(1);
-  });
-
-  it("offers no write on a header namespace that is a collection until its role is known", async () => {
-    api.listCollections.mockReturnValue(new Promise(() => undefined));
+  it("leaves the collection deleted here for the header's namespace, replacing the entry", async () => {
+    api.listCollections
+      .mockResolvedValueOnce({ collections: ROWS, next_cursor: null })
+      .mockResolvedValue({ collections: ROWS.filter((c) => c.namespace !== "col-q3"), next_cursor: null });
+    api.deleteCollection.mockResolvedValue({ deleted: true, erasure_status: "completed" });
     api.listKnowledge.mockResolvedValue({
       rows: [{ source_uri: "a", title: "A", chunk_count: 1, updated_at: null, tags: [] }],
       next_cursor: null,
     });
-    useStore.setState({ identity: { org: "acme", namespace: "col-team", agent: "loom-ui" }, myNamespaces: null });
+    history.replaceState(null, "", "/library?collection=col-q3");
     render(<Documents />);
     await settle();
-    expect(api.listKnowledge).toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: "Add document" })).not.toBeInTheDocument();
-    cleanup();
-    // The namespace menu says writer: the writes are offered at once.
-    useStore.setState({
-      whoami: { authenticated: true, subject: "alice", org: "acme", roles: ["VIEWER"] } as never,
-      myNamespaces: [{ namespace: "col-team", role: "writer", status: "active" } as never],
-    });
-    render(<Documents />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Actions for col-q3" }), { button: 0, ctrlKey: false });
     await settle();
-    expect(screen.getByRole("button", { name: "Add document" })).toBeInTheDocument();
-    cleanup();
-    // A claim-only row is read by the token's claim (viewer here), and a pending one as none.
-    for (const row of [
-      { namespace: "col-team", role: "jwt", status: "active" },
-      { namespace: "col-team", role: "writer", status: "pending" },
-    ]) {
-      useStore.setState({ myNamespaces: [row as never] });
-      render(<Documents />);
-      await settle();
-      expect(screen.queryByRole("button", { name: "Add document" }), JSON.stringify(row)).not.toBeInTheDocument();
-      cleanup();
-    }
-    useStore.setState({ myNamespaces: null, whoami: null });
+    confirm.next = true;
+    const entries = history.length;
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete collection" }));
+    await settle();
+    confirm.next = false;
+    // Leaving what is gone replaces the entry: Back does not return to it.
+    expect(history.length).toBe(entries);
+    expect(new URLSearchParams(location.search).get("collection")).toBeNull();
   });
 
   it("keeps New collection open when the list confirms the collection the page is on", async () => {
@@ -833,7 +833,7 @@ describe("the Library on a collection", () => {
         answer = r;
       }),
     );
-    useStore.setState({ identity: { org: "acme", namespace: "col-q3", agent: "loom-ui" } });
+    history.replaceState(null, "", "/library?collection=col-q3");
     render(<Documents />);
     await settle();
     fireEvent.click(screen.getByRole("button", { name: "New collection" }));
@@ -933,46 +933,5 @@ describe("the Library on a collection", () => {
     fireEvent.pointerDown(screen.getByRole("button", { name: "Show the documents of" }), { button: 0, ctrlKey: false });
     fireEvent.click(screen.getByRole("button", { name: "Show the documents of" }));
     expect(within(screen.getByRole("dialog")).getByRole("textbox")).toBeInTheDocument();
-  });
-
-  it("reads nothing more once the header's own collection is deleted here", async () => {
-    api.listCollections
-      .mockResolvedValueOnce({ collections: ROWS, next_cursor: null })
-      .mockResolvedValue({ collections: ROWS.filter((c) => c.namespace !== "col-q3"), next_cursor: null });
-    api.deleteCollection.mockResolvedValue({ deleted: true, erasure_status: "completed" });
-    api.listKnowledge.mockResolvedValue({
-      rows: [{ source_uri: "a", title: "A", chunk_count: 1, updated_at: null, tags: [] }],
-      next_cursor: null,
-    });
-    useStore.setState({ identity: { org: "acme", namespace: "col-q3", agent: "loom-ui" } });
-    render(<Documents />);
-    await settle();
-    expect(screen.getByRole("button", { name: "Preview A" })).toBeInTheDocument();
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Actions for col-q3" }), { button: 0, ctrlKey: false });
-    await settle();
-    confirm.next = true;
-    const entries = history.length;
-    fireEvent.click(screen.getByRole("menuitem", { name: "Delete collection" }));
-    await settle();
-    confirm.next = false;
-    // Leaving what is gone replaces the entry: Back does not return to it.
-    expect(history.length).toBe(entries);
-    expect(screen.queryByRole("button", { name: "Preview A" })).not.toBeInTheDocument();
-    expect(screen.getByText(/col-q3 was deleted/)).toBeInTheDocument();
-  });
-
-  it("picking the header's own collection shows it as the header's namespace, keeping the header's New", async () => {
-    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
-    useStore.setState({ identity: { org: "acme", namespace: "col-q3", agent: "loom-ui" } });
-    history.replaceState(null, "", "/library?collection=col-plans");
-    render(<Documents />);
-    await settle();
-    expect(useStore.getState().libraryElsewhere).toBe(true);
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Show the documents of" }), { button: 0, ctrlKey: false });
-    fireEvent.click(screen.getByRole("button", { name: "Show the documents of" }));
-    fireEvent.click(within(screen.getByRole("dialog")).getByText(/^col-q3/));
-    await settle();
-    expect(new URLSearchParams(location.search).get("collection")).toBeNull();
-    expect(useStore.getState().libraryElsewhere).toBe(false);
   });
 });

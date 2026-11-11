@@ -80,8 +80,8 @@ session. `loom logout` revokes it on the server. `--profile NAME` (or
 token is only ever sent to the server it signed in to.
 
 **CI and services** have no one to approve a code. Give them a token that reads
-only the namespaces they need instead, made under **Settings → Tokens** (_Only these
-namespaces_), with `loom token create --namespace …`, or by an operator. Pass it as
+only the namespaces they need instead, made under **Settings → Tokens** (_Only what you
+choose_), with `loom token create --namespace …`, or by an operator. Pass it as
 `LOOM_API_KEY`, which takes precedence over a stored session:
 
 ```bash
@@ -339,9 +339,17 @@ token, once, with the setup of every supported MCP client (`clients`) and where 
   answers the namespace the token names for its saves while it may write there, ""
   otherwise.
 
+On the dashboard, _Everything you belong to_ reads no collection: a `*` claim names none,
+and a delegated token reads a collection only when its claim lists it. _Only what you
+choose_ lists three groups: **Namespaces**, **Collections** and **Repositories
+(read-only)**. A collection is offered by its title and the collections it sits in
+(`Library › Papers`, its `col-…` name in its tooltip), and only where the person holds a
+grant on it directly, the grant the mint accepts; one read through a parent, a group or
+everyone is not offered. **Saves memories to** never lists a collection.
+
 Blank names become `token-<day>-<hex>`. Every token the person made is listed with what it
 reads and, when it records one, where it saves, and revoking it there ends it in every
-tool at once.
+tool at once; a collection there is named by its title.
 
 ## Delegated tokens
 

@@ -17,7 +17,7 @@ import {
 } from "../../lib/assistantLayout";
 import { announceAssistant, closeAssistant } from "../../lib/assistantDockRuntime";
 import { CONVERSATION_PREFIX, EPOCH_KEY, INDEX_KEY, type Owner } from "../../lib/assistantStorage";
-import { canReadNamespace, isMemoryNamespace } from "../../lib/namespace";
+import { canReadNamespace, isCollectionName, isMemoryNamespace } from "../../lib/namespace";
 import { hasOrgAdminClaim, hasPlatformAdminClaim, isNamespaceAdmin } from "../../lib/role";
 import { useStore } from "../../lib/state";
 import { AssistantChat } from "./Chat";
@@ -111,7 +111,7 @@ export function DockBody() {
     if (c.answering || c.turns.length === 0 || !c.namespace || c.namespace === header) return;
     const old = c.namespace;
     newConversation();
-    const line = `New conversation in ${header}; the one about ${old} is in History.`;
+    const line = newConversationLine(header, old);
     useChat.setState({ notice: line });
     announceAssistant(line);
   }, [askSeq]);
@@ -245,7 +245,9 @@ export function DockBody() {
   const memory = isMemoryNamespace(namespace, mine);
   const mismatch = turns.length > 0 && convNamespace !== null && convNamespace !== namespace;
   const blocked = blockedBy({ reason, checking, memory, mismatch });
-  const readable = (ns: string) => ns === namespace || canReadNamespace(ns, whoami?.namespaces ?? [], mine);
+  // A conversation kept in a collection is not reopened: the header never holds one.
+  const readable = (ns: string) =>
+    !isCollectionName(ns) && (ns === namespace || canReadNamespace(ns, whoami?.namespaces ?? [], mine));
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -372,33 +374,66 @@ function savedHere(): string {
     : "Saved in this browser only, for 30 days. Signing out deletes them.";
 }
 
+/** What a new conversation in `now` says of the one about `old` it replaces: in History,
+ *  unless it was kept in a collection, which History does not list (`readable`). */
+function newConversationLine(now: string, old: string): string {
+  return isCollectionName(old)
+    ? `New conversation in ${now}.`
+    : `New conversation in ${now}; the one about ${old} is in History.`;
+}
+
 function Mismatch({ old, now }: { old: string; now: string }) {
   const identity = useStore((s) => s.identity);
+  // One kept in a collection: History does not list it, and there is no way back, since the
+  // header never holds a collection.
+  const collection = isCollectionName(old);
   return (
     <div className="space-y-2">
-      <p className="text-sm text-text">This conversation is about {old}.</p>
+      <p className="text-sm text-text">
+        {collection ? (
+          <>
+            This conversation is about a collection; collections are in the{" "}
+            <Link
+              component="button"
+              type="button"
+              size="sm"
+              onClick={() => {
+                closeAssistant("nav");
+                useStore.getState().setView("knowledge");
+              }}
+            >
+              Library
+            </Link>
+            .
+          </>
+        ) : (
+          `This conversation is about ${old}.`
+        )}
+      </p>
       <div className="flex flex-wrap gap-2">
         <Button
           type="secondary"
           htmlType="button"
           onClick={() => {
             newConversation();
-            announceAssistant(`New conversation in ${now}; the one about ${old} is in History.`);
+            announceAssistant(newConversationLine(now, old));
             useDock.setState({ focusField: true });
           }}
         >
           {`Start a new one in ${now}`}
         </Button>
-        <Button
-          type="secondary"
-          htmlType="button"
-          onClick={() => {
-            if (identity) useStore.getState().setIdentity({ ...identity, namespace: old });
-            useDock.setState({ focusField: true });
-          }}
-        >
-          {`Switch back to ${old}`}
-        </Button>
+        {!collection && (
+          <Button
+            type="secondary"
+            htmlType="button"
+            onClick={() => {
+              if (identity) useStore.getState().setIdentity({ ...identity, namespace: old });
+              useDock.setState({ focusField: true });
+            }}
+          >
+            {`Switch back to ${old}`}
+          </Button>
+        )}
       </div>
     </div>
   );

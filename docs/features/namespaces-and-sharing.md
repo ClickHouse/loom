@@ -72,10 +72,10 @@ namespaces it may reach; the grant table decides the role.
 | `grants.revoke`                                                      | admin     | Remove a grant.                                                                                                                                        |
 | `grants.approve`                                                     | admin     | Approve or reject a pending request, optionally with a different role.                                                                                 |
 | `grants.pending_for_me`                                              | viewer    | Every pending request in the namespaces the caller administers, org-wide.                                                                              |
-| `namespace.browse`                                                   | viewer    | Public namespaces in the org (`closed` ones only with `include_closed`).                                                                               |
+| `namespace.browse`                                                   | viewer    | Public namespaces in the org, never a collection (`closed` ones only with `include_closed`).                                                           |
 | `namespace.join`                                                     | viewer    | Self-join a public namespace. `viewer` is granted at once; a `writer` or `admin` request always lands pending, with no access until an admin approves. |
 | `namespace.leave`, `namespace.cancel_request`, `namespace.mark_seen` | viewer    | Drop one's own grant, withdraw a pending request, acknowledge an invitation.                                                                           |
-| `namespace.list_mine`                                                | viewer    | The namespaces the caller belongs to.                                                                                                                  |
+| `namespace.list_mine`                                                | viewer    | The namespaces the caller belongs to, each with its `kind` (`collection` for a collection) and `title`.                                                |
 | `namespace.list`                                                     | org admin | Every namespace in the org.                                                                                                                            |
 
 Minting tokens, service accounts, read scopes and restricted namespaces are covered in

@@ -24,8 +24,8 @@ import {
 import { fmtInt } from "../lib/format";
 import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
-import { useStore } from "../lib/state";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
+import { invalidateSharedCollections } from "../lib/collectionPlaces";
 
 /** The select's value for the namespace picked in the header: an item cannot carry "". */
 const NAMESPACE_SHELF = "__namespace__";
@@ -144,7 +144,6 @@ export function LibraryCollections({
   opening = null,
   place = "",
   onPick,
-  onDeleted,
   onLeave,
 }: {
   org: string;
@@ -160,8 +159,6 @@ export function LibraryCollections({
    *  the list confirming it is no move. */
   place?: string;
   onPick: (collection: string | null) => void;
-  /** A collection deleted from the menu. */
-  onDeleted?: (collection: string) => void;
   /** Leave the place shown without a new history entry (it was deleted). */
   onLeave?: (collection: string | null) => void;
 }) {
@@ -186,7 +183,7 @@ export function LibraryCollections({
   // the places that list the top-level collections.
   const own = (rows ?? []).find((c) => c.personal);
   const home =
-    namespace !== null && !(rows ?? []).some((c) => c.namespace === namespace)
+    namespace !== null
       ? { label: `Namespace ${namespace}`, collection: null, open: () => onPick(null) }
       : own
         ? { label: collectionTitle(own), collection: own.namespace, open: () => onPick(own.namespace) }
@@ -205,6 +202,8 @@ export function LibraryCollections({
     if (!ok) return;
     try {
       const r = await deleteCollection(org, c.namespace);
+      // The titles and places other pages show come from one shared read.
+      invalidateSharedCollections();
       if (r.erasure_status && r.erasure_status !== "completed") {
         toast(`Deleted ${collectionTitle(c)}; erasing what it held is being retried`, "info", {
           detail: `erasure ${r.erasure_id}`,
@@ -212,13 +211,10 @@ export function LibraryCollections({
       } else {
         toast(`Deleted ${collectionTitle(c)}`, "ok");
       }
-      onDeleted?.(c.namespace);
       // Only while it is still the one shown: a Back during the confirm moved elsewhere. A
       // correction, so the entry is replaced: Back does not return to what is gone.
       if (shownRef.current === c.namespace) (onLeave ?? onPick)(null);
       reload();
-      // The header's namespace is gone with it: the header picks the next one.
-      if (c.namespace === namespace) useStore.getState().openNamespacePicker(true);
     } catch (e) {
       toastError(`Couldn't delete ${collectionTitle(c)}`, e);
     }
@@ -279,10 +275,7 @@ export function LibraryCollections({
           showSearch
           className="min-w-0 flex-1 sm:flex-none sm:w-96"
         >
-          {/* A header namespace that is a collection is listed once, as the collection. */}
-          {namespace !== null && !ordered.some(({ c }) => c.namespace === namespace) && (
-            <Select.Item value={NAMESPACE_SHELF}>{`Namespace ${namespace}`}</Select.Item>
-          )}
+          {namespace !== null && <Select.Item value={NAMESPACE_SHELF}>{`Namespace ${namespace}`}</Select.Item>}
           {ordered.map(({ c, depth }) => (
             <Select.Item key={c.namespace} value={c.namespace}>
               {/* Indented, not marked: the closed select and a screen reader read the name. */}

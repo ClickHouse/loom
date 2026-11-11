@@ -24,6 +24,9 @@ export interface ScopeRepo {
 export interface TokenReadScope {
   /** Memory / tracker namespaces the token reads (active membership). */
   namespaces: string[];
+  /** Whether the form offers a collection to list (`offersCollection`): a `*` claim names
+   *  none, so the token reads none of them, and the panel says how a token reads one. */
+  collectionsOffered: boolean;
   /** Repositories the token reads, grouped from their branch namespaces. */
   repositories: ScopeRepo[];
   /** Restricted repositories the person belongs to that the token reads only when
@@ -50,6 +53,21 @@ function groupRepos(rows: MyNamespaceEntry[], facts: Record<string, RepoFacts>):
   return Array.from(by.values()).sort((a, b) => a.repo.localeCompare(b.repo));
 }
 
+/** Whether the token form offers `r` under Collections: a collection the person holds a
+ *  grant on directly, the one the mint accepts (not a claim-only row, nor one a client token
+ *  reads through its creator). */
+export function offersCollection(r: MyNamespaceEntry): boolean {
+  return (
+    isCollectionName(r.namespace) && (r.role === "viewer" || r.role === "writer" || r.role === "admin") && !r.inherited
+  );
+}
+
+/** Whether a namespace its owner writes counts as written by a token with `claim`: a `*`
+ *  claim names no collection, so a collection counts only where the claim names it. */
+export function claimReaches(claim: readonly string[], ns: string): boolean {
+  return !claim.includes("*") || !isCollectionName(ns) || claim.includes(ns);
+}
+
 /** What a token that reads everything its owner belongs to reads. `mine` is the
  *  caller's `namespace.list_mine` rows (null while loading); `repos` the `code.repos`
  *  rows, which carry each repository's classification (null when the caller may not
@@ -62,9 +80,10 @@ export function everythingScope(mine: MyNamespaceEntry[] | null, repos: RepoFact
   const codeRows = active.filter((r) => r.kind === "code");
   const restricted = codeRows.filter((r) => facts[r.namespace]?.classification === "restricted");
   const readableCode = codeRows.filter((r) => facts[r.namespace]?.classification !== "restricted");
-  const namespaces = active.filter((r) => r.kind !== "code").map((r) => r.namespace);
+  const namespaces = active.filter((r) => r.kind !== "code" && !isCollectionName(r.namespace)).map((r) => r.namespace);
   return {
     namespaces,
+    collectionsOffered: active.some(offersCollection),
     repositories: groupRepos(readableCode, facts),
     excludedRestricted: groupRepos(restricted, facts),
     pending,
@@ -75,6 +94,21 @@ type TokenClaim = Pick<TokenEntry, "namespaces" | "roles" | "ns_roles" | "saves_
 
 const WRITES = new Set(["writer", "admin"]);
 
+/** A `*` claim's home (the name before the `*`, never a collection: the mint refuses one as
+ *  a home, so one named first is read like the rest) and the names it also reads. */
+export function starClaim(namespaces: readonly string[]): { home: string; also: string[] } {
+  const home = namespaces[0] !== "*" && !isCollectionName(namespaces[0]) ? (namespaces[0] ?? "") : "";
+  return { home, also: namespaces.filter((n) => n !== "*" && n !== home) };
+}
+
+/** What a `*` token's line adds: it reads no collection but the ones its claim also names,
+ *  however its owner reaches one (`sharing._claim_limits`); nothing for a viewer who reads no
+ *  collection (`readsCollections`), whom "everything" already describes. */
+export function noCollection(also: readonly string[], readsCollections: boolean): string {
+  if (also.some(isCollectionName)) return ", but no other collection";
+  return readsCollections ? ", but no collection" : "";
+}
+
 /** One line for a token row in the Tokens list: what it reads and where it saves, in
  *  words, instead of the raw claim. */
 export function describeTokenScope(
@@ -84,37 +118,41 @@ export function describeTokenScope(
     writable,
     writesAny = writable,
     label = (n) => n,
+    readsCollections = true,
   }: {
     yours?: boolean;
     /** The memory namespaces the viewer may write that a token saves to (no collection);
      *  unknown when absent. */
     writable?: readonly string[];
-    /** Every namespace the viewer may write, a collection included (a call may name one);
-     *  `writable` when absent. */
+    /** Every namespace the viewer may write, a collection included (a list token's call may
+     *  name one; a `*` token reads no collection, so none counts for it); `writable` when
+     *  absent. */
     writesAny?: readonly string[];
     /** A namespace in words, e.g. a repository's as "repo · branch". */
     label?: (ns: string) => string;
+    /** Whether the viewer may read a collection (`readsCollections`); another person's
+     *  token says it reads none either way, its owner's reach unknown here. */
+    readsCollections?: boolean;
   } = {},
 ): string {
   const ns = t.namespaces || [];
   if (ns.length === 0) return "reads nothing";
   if (ns.includes("*")) {
-    const home = ns[0] !== "*" ? ns[0] : "";
-    const also = ns.filter((n) => n !== "*" && n !== home);
+    const { home, also } = starClaim(ns);
     // Another person's token (an admin of one of its namespaces sees it) reads as theirs.
     const who = yours ? "you belong" : "its owner belongs";
-    const reads = `reads everything ${who} to${also.length ? `, plus ${also.map(label).join(", ")}` : ""}`;
+    // The claim alone decides which collections it reads, whoever's token it is.
+    const reads = `reads everything ${who} to${also.length ? `, plus ${also.map(label).join(", ")}` : ""}${noCollection(also, readsCollections || !yours)}`;
     // It writes through its owner's grants and its own one role: either one short of
     // writer, and it only reads.
     const tokenWrites = (t.roles || []).some((r) => WRITES.has(r));
-    if (!tokenWrites || (yours && writesAny?.length === 0)) return `${reads} · read-only`;
+    const writesNamed = writesAny?.filter((n) => claimReaches(ns, n));
+    if (!tokenWrites || (yours && writesNamed?.length === 0)) return `${reads} · read-only`;
     // Its owner writes only namespaces a token never saves to unasked: a call may name one.
     if (yours && writable?.length === 0) return `${reads} · saves nowhere by default`;
-    // Its home counts only while its owner may write there, and never a collection (shared
-    // reading: the mint refuses one); else it follows the pick (the server skips a picked
-    // collection too, which this line does not name).
-    if (home && !isCollectionName(home) && (!yours || !writable || writable.includes(home)))
-      return `${reads} · saves to ${home}`;
+    // Its home counts only while its owner may write there; else it follows the pick (the
+    // server skips a picked collection, which this line does not name).
+    if (home && (!yours || !writable || writable.includes(home))) return `${reads} · saves to ${home}`;
     return `${reads} · ${whereYouWork(yours)}`;
   }
   const roles = t.ns_roles && Object.keys(t.ns_roles).length > 0 ? t.ns_roles : null;

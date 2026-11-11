@@ -57,6 +57,22 @@ describe("everythingScope", () => {
     expect(s.pending).toEqual(["shared"]);
   });
 
+  it("a `*` claim names no collection: none is read", () => {
+    const s = everythingScope(
+      [row("me", "memory"), { ...row("col-research", "collection"), title: "Research" }, row("col-old", "memory")],
+      null,
+    );
+    expect(s.namespaces).toEqual(["me"]);
+    expect(s.collectionsOffered).toBe(true);
+  });
+
+  it("offers no collection to list when the only one is read through a creator or a claim", () => {
+    const inherited = { ...row("col-team", "collection"), inherited: true };
+    const claimOnly = { ...row("col-claim", "collection"), role: "jwt" as const };
+    expect(everythingScope([row("me", "memory"), inherited, claimOnly], null).collectionsOffered).toBe(false);
+    expect(everythingScope([row("me", "memory"), row("col-team", "collection")], null).collectionsOffered).toBe(true);
+  });
+
   it("a code namespace with no repo facts keeps its identifier and counts as readable", () => {
     const s = everythingScope([row("code-x", "code")], null);
     expect(s.repositories).toEqual([{ repo: "code-x", branches: [{ namespace: "code-x", branch: "code-x" }] }]);
@@ -66,45 +82,78 @@ describe("everythingScope", () => {
 describe("describeTokenScope", () => {
   it("a token claiming `*` reads everything and saves to the namespace named first", () => {
     expect(describeTokenScope({ namespaces: ["me", "*"], roles: ["writer"] })).toBe(
-      "reads everything you belong to · saves to me",
+      "reads everything you belong to, but no collection · saves to me",
     );
   });
   it("a bare `*` token saves where its owner works", () => {
     expect(describeTokenScope({ namespaces: ["*"], roles: ["writer"] })).toBe(
-      "reads everything you belong to · saves to the namespace you pick in Loom",
+      "reads everything you belong to, but no collection · saves to the namespace you pick in Loom",
     );
   });
-  it("a `*` token of someone who writes nowhere is read-only, and of one who writes only a collection saves nowhere by default", () => {
+  it("a `*` token of someone who writes nowhere, or only a collection, is read-only", () => {
     expect(describeTokenScope({ namespaces: ["*"], roles: ["writer"] }, { writable: [] })).toBe(
-      "reads everything you belong to · read-only",
+      "reads everything you belong to, but no collection · read-only",
     );
-    // A collection a call names is still written: not read-only.
+    // A `*` claim names no collection, so the token reads and writes none.
     expect(
       describeTokenScope({ namespaces: ["*"], roles: ["writer"] }, { writable: [], writesAny: ["col-team"] }),
-    ).toBe("reads everything you belong to · saves nowhere by default");
+    ).toBe("reads everything you belong to, but no collection · read-only");
+    // One its claim names beside the `*` is written when a call names it.
+    expect(
+      describeTokenScope(
+        { namespaces: ["*", "col-team"], roles: ["writer"] },
+        { writable: [], writesAny: ["col-team"] },
+      ),
+    ).toBe("reads everything you belong to, plus col-team, but no other collection · saves nowhere by default");
+  });
+  it("a `*` token says it reads no collection but those it names, however its owner reaches one", () => {
+    const holds = { writable: ["me"], writesAny: ["me", "col-team"] };
+    expect(describeTokenScope({ namespaces: ["*"], roles: ["writer"] }, holds)).toMatch(
+      /^reads everything you belong to, but no collection · /,
+    );
+    expect(describeTokenScope({ namespaces: ["*", "col-team"], roles: ["writer"] }, holds)).toMatch(
+      /^reads everything you belong to, plus col-team, but no other collection · /,
+    );
+    // Another person's token: the claim decides it the same way.
+    expect(describeTokenScope({ namespaces: ["*"], roles: ["writer"] }, { ...holds, yours: false })).toMatch(
+      /^reads everything its owner belongs to, but no collection · /,
+    );
+  });
+  it("a `*` token says nothing of collections to a viewer who reads none, unless its claim names one", () => {
+    const none = { writable: ["me"], writesAny: ["me"], readsCollections: false };
+    expect(describeTokenScope({ namespaces: ["*"], roles: ["writer"] }, none)).toMatch(
+      /^reads everything you belong to · /,
+    );
+    expect(describeTokenScope({ namespaces: ["*", "col-team"], roles: ["writer"] }, none)).toMatch(
+      /^reads everything you belong to, plus col-team, but no other collection · /,
+    );
+    // Another person's token: its owner's reach is not the viewer's.
+    expect(describeTokenScope({ namespaces: ["*"], roles: ["writer"] }, { ...none, yours: false })).toMatch(
+      /^reads everything its owner belongs to, but no collection · /,
+    );
   });
   it("a `*` token minted read-only says so", () => {
     expect(describeTokenScope({ namespaces: ["ns", "*"], roles: ["viewer"] })).toBe(
-      "reads everything you belong to · read-only",
+      "reads everything you belong to, but no collection · read-only",
     );
   });
   it("a home you can no longer write gives way to your pick", () => {
     const writable = ["me"];
     expect(describeTokenScope({ namespaces: ["team-x", "*"], roles: ["writer"] }, { writable })).toBe(
-      "reads everything you belong to · saves to the namespace you pick in Loom",
+      "reads everything you belong to, but no collection · saves to the namespace you pick in Loom",
     );
   });
   it("another person's `*` token reads as theirs, with no read-only judgement of yours", () => {
     expect(describeTokenScope({ namespaces: ["team-x", "*"], roles: ["writer"] }, { writable: [], yours: false })).toBe(
-      "reads everything its owner belongs to · saves to team-x",
+      "reads everything its owner belongs to, but no collection · saves to team-x",
     );
     expect(describeTokenScope({ namespaces: ["*"], roles: ["writer"] }, { yours: false })).toBe(
-      "reads everything its owner belongs to · saves to the namespace its owner picks in Loom",
+      "reads everything its owner belongs to, but no collection · saves to the namespace its owner picks in Loom",
     );
   });
   it("names beside `*` are the restricted ones it also reads", () => {
     expect(describeTokenScope({ namespaces: ["me", "*", "code-private"], roles: ["writer"] })).toBe(
-      "reads everything you belong to, plus code-private · saves to me",
+      "reads everything you belong to, plus code-private, but no collection · saves to me",
     );
   });
   it("a listed token reads only its list, each at its role", () => {
@@ -127,7 +176,7 @@ describe("describeTokenScope", () => {
   it("names a repository by repository and branch, not by its namespace", () => {
     const label = (n: string) => (n === "code-secret" ? "org/secret · main" : n);
     expect(describeTokenScope({ namespaces: ["me", "*", "code-secret"], roles: ["writer"] }, { label })).toBe(
-      "reads everything you belong to, plus org/secret · main · saves to me",
+      "reads everything you belong to, plus org/secret · main, but no collection · saves to me",
     );
     expect(
       describeTokenScope(
@@ -172,13 +221,13 @@ describe("describeTokenScope", () => {
       describeTokenScope({ namespaces: ["docs"], roles: ["writer"], ns_roles: { docs: "writer" } }, { yours: false }),
     ).toBe("reads only docs (writer)");
   });
-  it("a `*` token whose home is a collection follows its owner's pick: a collection is no token's home", () => {
+  it("a `*` token that names a collection first reads it, and follows its owner's pick: a collection is no token's home", () => {
     // The page's writable list leaves collections out (Tokens.tsx useWritable), as the server does.
     expect(describeTokenScope({ namespaces: ["col-team", "*"], roles: ["writer"] }, { writable: ["team"] })).toBe(
-      "reads everything you belong to · saves to the namespace you pick in Loom",
+      "reads everything you belong to, plus col-team, but no other collection · saves to the namespace you pick in Loom",
     );
     expect(describeTokenScope({ namespaces: ["col-team", "*"], roles: ["writer"] }, { yours: false })).toBe(
-      "reads everything its owner belongs to · saves to the namespace its owner picks in Loom",
+      "reads everything its owner belongs to, plus col-team, but no other collection · saves to the namespace its owner picks in Loom",
     );
   });
   it("a token with no claim reads nothing", () => {

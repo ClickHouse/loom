@@ -19,6 +19,7 @@ import {
   type ProfileEntry,
   type SearchHit,
 } from "../api";
+import { isCollectionName } from "../lib/namespace";
 import { sharedMine } from "../lib/sharedReads";
 import { useStore } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
@@ -136,9 +137,9 @@ export function HeaderSearch({
         let browse = browseIn;
         // Repositories (kind = code) are not memory identities: they live in
         // the Repositories section and never appear as a namespace to switch
-        // into or join from here.
-        mine = mine.filter((m) => m.kind !== "code");
-        browse = browse.filter((b) => b.kind !== "code");
+        // into or join from here. Nor does a collection: the Library opens it.
+        mine = mine.filter((m) => m.kind !== "code" && !isCollectionName(m.namespace));
+        browse = browse.filter((b) => b.kind !== "code"); // the server lists no collection here
         const mineSet = new Set(mine.map((m) => m.namespace));
         const all: NsRow[] = mine.map((m) => ({
           namespace: m.namespace,

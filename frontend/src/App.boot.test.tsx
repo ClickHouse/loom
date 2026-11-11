@@ -415,6 +415,161 @@ describe("a link's namespace", () => {
     expect(new URLSearchParams(window.location.search).get("namespace")).toBe(NS);
   });
 
+  it("opens a document link whose namespace is its collection on that document", async () => {
+    window.history.replaceState(null, "", "/library?namespace=col-q3&doc=kb%3A%2F%2Fq3%2Fplan.md");
+    serve([...MINE, { ...MINE[0], namespace: "col-q3", role: "viewer", kind: "collection" }]);
+    const serveRest = vi.mocked(fetch).getMockImplementation();
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/v1/collection.list"))
+        return json({
+          collections: [{ namespace: "col-q3", parent: "", personal: false, role: "viewer", description: "" }],
+          next_cursor: null,
+        });
+      return serveRest ? serveRest(input, init) : json(GENERIC);
+    });
+    render(<App />);
+    await until(() => useStore.getState().identity !== null && useStore.getState().view === "knowledge");
+    expect(new URLSearchParams(window.location.search).get("collection")).toBe("col-q3");
+    // The Library reads that document in that collection (this fake server has no such
+    // document, so the page then says it is gone).
+    await until(() =>
+      vi
+        .mocked(fetch)
+        .mock.calls.some(
+          ([, init]) => String(init?.body).includes("kb://q3/plan.md") && String(init?.body).includes("col-q3"),
+        ),
+    );
+  });
+
+  it("opens a memory link whose namespace is a collection in the Library, on that collection", async () => {
+    window.history.replaceState(null, "", "/memories?namespace=col-q3&memory=k");
+    serve([...MINE, { ...MINE[0], namespace: "col-q3", role: "viewer", kind: "collection" }]);
+    const serveRest = vi.mocked(fetch).getMockImplementation();
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/v1/collection.list"))
+        return json({
+          collections: [{ namespace: "col-q3", parent: "", personal: false, role: "viewer", description: "" }],
+          next_cursor: null,
+        });
+      return serveRest ? serveRest(input, init) : json(GENERIC);
+    });
+    render(<App />);
+    await until(() => useStore.getState().identity !== null && useStore.getState().view === "knowledge");
+    // The header keeps a namespace; the collection is the Library's.
+    expect(useStore.getState()).toMatchObject({ identity: { namespace: NS }, deniedNamespace: null });
+    expect(window.location.pathname).toBe("/library");
+    const params = new URLSearchParams(window.location.search);
+    await until(() =>
+      vi
+        .mocked(fetch)
+        .mock.calls.some(([u, init]) => String(u).includes("knowledge.list") && String(init?.body).includes("col-q3")),
+    );
+    expect(params.get("collection")).toBe("col-q3");
+    expect(params.get("namespace")).toBe(NS);
+    expect(params.get("memory")).toBeNull();
+    expect(calls.some((c) => c.path === "memory.list" || c.path === "memory.get")).toBe(false);
+  });
+
+  it("lands an account whose own list names a collection on the Library, without the collection read", async () => {
+    window.history.replaceState(null, "", "/");
+    localStorage.removeItem("loom_namespace_v1");
+    localStorage.setItem("loom_token_v1", jwt({ sub: "alice", org: ORG, namespaces: [], roles: ["WRITER"] }));
+    calls = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const path = url
+          .replace(/^https?:\/\/[^/]+/, "")
+          .split("?")[0]
+          .replace("/v1/", "");
+        calls.push({ path, body: null });
+        if (path === "whoami")
+          return json({ authenticated: true, subject: "alice", org: ORG, namespaces: [], roles: ["WRITER"] });
+        if (path === "namespace.list_mine")
+          return json({ ...GENERIC, rows: [{ ...MINE[0], namespace: "col-a", role: "viewer", kind: "collection" }] });
+        // Even a failing collection read changes nothing: list_mine already said.
+        if (path === "collection.list") return new Response("{}", { status: 500 });
+        return json(GENERIC);
+      }),
+    );
+    render(<App />);
+    await until(() => useStore.getState().view === "knowledge");
+    expect(useStore.getState().identity?.namespace).toBe("");
+    expect(screen.queryByText(/can reach no namespace yet/)).toBeNull();
+  });
+
+  it("lands an account that reads only shared collections on the Library, with no toast to join", async () => {
+    window.history.replaceState(null, "", "/");
+    localStorage.removeItem("loom_namespace_v1");
+    localStorage.setItem("loom_token_v1", jwt({ sub: "alice", org: ORG, namespaces: [], roles: ["WRITER"] }));
+    calls = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const path = url
+          .replace(/^https?:\/\/[^/]+/, "")
+          .split("?")[0]
+          .replace("/v1/", "");
+        calls.push({ path, body: null });
+        if (path === "whoami")
+          return json({ authenticated: true, subject: "alice", org: ORG, namespaces: [], roles: ["WRITER"] });
+        if (path === "namespace.list_mine") return json({ ...GENERIC, rows: [] });
+        if (path === "collection.list")
+          return json({
+            collections: [{ namespace: "col-research-0123456789abcdef", parent: "", personal: false, role: "viewer" }],
+            next_cursor: null,
+          });
+        return json(GENERIC);
+      }),
+    );
+    render(<App />);
+    await until(() => useStore.getState().view === "knowledge");
+    expect(useStore.getState().identity?.namespace).toBe("");
+    expect(screen.queryByText(/can reach no namespace yet/)).toBeNull();
+    // The namespace menu holds nothing for this account: the page sends no one there.
+    expect(
+      await screen.findByText(/^Collections are shared document libraries\. Pick a collection above\.$/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open the namespace menu" })).toBeNull();
+  });
+
+  it("lands an account whose only collection is its own on Setup", async () => {
+    window.history.replaceState(null, "", "/");
+    localStorage.removeItem("loom_namespace_v1");
+    localStorage.setItem("loom_token_v1", jwt({ sub: "alice", org: ORG, namespaces: [], roles: ["WRITER"] }));
+    calls = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const path = url
+          .replace(/^https?:\/\/[^/]+/, "")
+          .split("?")[0]
+          .replace("/v1/", "");
+        calls.push({ path, body: null });
+        if (path === "whoami")
+          return json({ authenticated: true, subject: "alice", org: ORG, namespaces: [], roles: ["WRITER"] });
+        if (path === "namespace.list_mine") return json({ ...GENERIC, rows: [] });
+        if (path === "collection.list")
+          return json({
+            collections: [{ namespace: "col-me-0123456789abcdef", parent: "", personal: true, role: "admin" }],
+            next_cursor: null,
+          });
+        return json(GENERIC);
+      }),
+    );
+    render(<App />);
+    // The no-namespace toast comes only after the collection read decides.
+    await until(() => screen.queryByText(/can reach no namespace yet/) !== null);
+    expect(calls.some((c) => c.path === "collection.list")).toBe(true);
+    expect(useStore.getState().view).toBe("setup");
+    expect(useStore.getState().identity?.namespace).toBe("");
+  });
+
   it("still says no access when the link's collection is no collection's name", async () => {
     window.history.replaceState(null, "", "/library?namespace=group-b-shared&collection=x");
     serve(MINE);

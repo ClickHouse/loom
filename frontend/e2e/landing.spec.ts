@@ -145,10 +145,17 @@ test("the memory-only fixture lands on Settings on bare /", async ({ page }) => 
   await expect(page.getByRole("status").filter({ hasText: "No namespace selected" })).toHaveCount(0);
 });
 
+test("an account that reads only collections lands on the Library", async ({ page }) => {
+  await installApi(page, { viewer: true, claims: [], mine: [], savedNamespace: null });
+  await page.goto("/");
+  await expect(page).toHaveURL(/\/library/);
+  await expect(page.getByText(/can reach no namespace yet/)).toHaveCount(0);
+});
+
 test("a token that reaches nothing lands on Setup with the join-or-grant notice and a button to Repositories", async ({
   page,
 }) => {
-  const calls = await installApi(page, { viewer: true, claims: [], mine: [], savedNamespace: null });
+  const calls = await installApi(page, { viewer: true, claims: [], mine: [], savedNamespace: null, collections: [] });
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
   const notice = page.getByRole("status").filter({ hasText: "No namespace selected" });

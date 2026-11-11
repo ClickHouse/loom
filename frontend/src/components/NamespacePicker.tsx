@@ -173,7 +173,7 @@ const NamespaceTrigger = forwardRef<
         ref={ref}
         type="button"
         className="inline-flex items-center gap-1.5 max-w-full min-w-0 h-8 px-2 sm:px-3 rounded-sm hover:bg-surface-2 transition-colors text-sm text-text"
-        aria-label={`Namespace: ${name}${isCode ? ", code index" : ""}`}
+        aria-label={`Namespace: ${name}${isCode ? ", repository" : ""}`}
         {...rest}
         // The tooltip only repeats the name the label already says.
         aria-describedby={undefined}

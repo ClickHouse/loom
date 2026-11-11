@@ -40,7 +40,7 @@ import {
 } from "./lib/boot";
 import { pendingKey } from "./lib/pendingKey";
 import { preloadView } from "./views/registry";
-import { useStore, pathnameView, linkedNamespace, addressPageNamespace } from "./lib/state";
+import { useStore, pathnameView, linkedNamespace, addressPageNamespace, collectionLinkView } from "./lib/state";
 import { arriveAt, readPlace, restorePlace } from "./lib/place";
 import { useKeyboard } from "./lib/hooks";
 import { NetworkProgress } from "./components/NetworkProgress";
@@ -399,6 +399,9 @@ export default function App() {
           }
         }
 
+        // A link that names a collection as its namespace opens it in the Library instead.
+        const initial = collectionLinkView(pathnameView());
+
         // Auth-disabled mode (LOOM_AUTH_REQUIRED=false): skip TokenGate, synthesise
         // a local identity. The server accepts every /v1/* call without a bearer.
         // The namespace is the one the server serves (LOOM_DEFAULT_NAMESPACE,
@@ -425,7 +428,7 @@ export default function App() {
           bootIdentity({ org: "dev", namespace: authOffNs, agent: "loom-ui" });
           // Local mode uses one namespace, but explicit links still choose the
           // view: model onboarding and refreshes must not land on Memories.
-          bootView(pathnameView() ?? "memories");
+          bootView(initial ?? "memories");
           return;
         }
 
@@ -433,7 +436,6 @@ export default function App() {
         // keyed by the token's own org claim, and the chunk for the view the URL names.
         // whoami still decides the gate below; on a token the server rejects the early
         // read fails quietly and one chunk was fetched for nothing.
-        const initial = pathnameView();
         preloadView(initial ?? "setup");
         const early = claimsFromToken(storedToken());
         const earlyMine: Promise<MyNamespaceEntry[] | null> | null = early?.org
@@ -536,15 +538,26 @@ export default function App() {
           // first memory claim) keeps its default view, Setup — that's where first-run
           // onboarding and the actions live. A saved pick of a code or tracker namespace,
           // or a token that reaches only code/tracker namespaces, lands on Repositories
-          // with the picker on that namespace; only a token that reaches nothing lands on
-          // Setup, whose notice says how to get in.
-          const target = landingTarget(pick, reach, mine);
+          // with the picker on that namespace; one that reaches only shared collections lands
+          // on the Library, and one that reaches nothing else lands on Setup, whose notice says
+          // how to get in.
+          let target = landingTarget(pick, reach, mine);
+          if (target.view === "setup") {
+            // Nothing but shared collections, maybe: `collection.list` decides, with the gate's
+            // rules (`landingWithCollections`). Loaded on demand: in the shell it takes the index
+            // chunk over its budget; a failed load lands on Setup.
+            const setup = target;
+            target = await import("./lib/collectionPlaces").then(
+              (m) => m.landingWithCollections(effectiveOrg, mine),
+              () => setup,
+            );
+          }
           bootIdentity(
             { org: effectiveOrg, namespace: target.namespace ?? "", agent: "loom-ui" },
             denied,
             readable ? linked : null,
           );
-          if (target.namespace === null) {
+          if (target.view === "setup") {
             // Setup's notice says how to get in and opens the picker on request; opened here
             // it would cover that notice's actions.
             bootView("setup");

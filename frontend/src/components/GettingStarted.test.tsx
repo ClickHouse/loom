@@ -33,7 +33,6 @@ vi.mock("../api", async (importOriginal) => {
       saves_to: "personal-n",
       created_at: "2026-01-01T00:00:00",
       expires_at: null,
-      restricted_namespaces: [],
       mcp_url: "http://loom.test/mcp",
     })),
   };

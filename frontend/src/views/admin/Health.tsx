@@ -31,6 +31,7 @@ import { ScopeBadge } from "../../components/ScopeBadge";
 import { PageContainer } from "../../layout/PageContainer";
 import { Alert, LoadingSkeleton, PageHeader, Stat, TabTrigger } from "../../components/ui";
 import { useNamespaceRole } from "../../lib/namespaceRole";
+import { isCollectionName } from "../../lib/namespace";
 import { NamespaceHealthPanel } from "./NamespaceHealth";
 import { ProjectionFailuresPanel } from "./ProjectionFailures";
 import { RepairsPanel } from "./Repairs";
@@ -573,10 +574,13 @@ export function WorkersPanel() {
                                   </span>
                                 </>
                               )}
+                              {/* A collection by its address, the name an operator looks for. */}
                               {w.namespace && (
                                 <>
                                   {" "}
-                                  · last namespace reached: <span className="font-mono">{w.namespace}</span>
+                                  ·{" "}
+                                  {isCollectionName(w.namespace) ? "last collection reached" : "last namespace reached"}
+                                  : <span className="font-mono">{w.namespace}</span>
                                 </>
                               )}
                               {w.trigger === "manual" && <> · manual run</>}

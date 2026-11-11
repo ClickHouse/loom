@@ -7694,6 +7694,7 @@ export interface MineEntry {
   pending_admins?: string[];
   visibility?: "private" | "public";
   kind?: string;
+  title?: string;
   description?: string;
   joined_at?: string | null;
   is_new?: boolean;

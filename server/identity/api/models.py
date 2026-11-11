@@ -458,7 +458,10 @@ class _MineEntry(BaseModel):
     # Admins who could approve; populated only when pending_role is set.
     pending_admins: list[str] = Field(default_factory=list)
     visibility: VisibilityStr = "private"
+    # `memory`, `code`, `tracker`, `qa`, `bench`, `collection` or `personal` (a `col-` name).
     kind: str = "memory"
+    # A collection's title from the directory; '' for a namespace or an untitled collection.
+    title: str = ""
     description: str = ""
     joined_at: datetime | None = None
     # True when unvisited since the grant; False for JWT-only namespaces.

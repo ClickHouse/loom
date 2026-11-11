@@ -11,6 +11,7 @@ import { distinctTitle, placeholderName, plainName, repeatedTitles } from "../li
 import { ApiError } from "../lib/errors";
 import { humanizeError } from "../lib/errorWords";
 import { COLLECTION_PREFIX, isPersonalCollection, NAMESPACE_NAME, PERSONAL_COLLECTION_PREFIX } from "../lib/namespace";
+import { invalidateSharedCollections } from "../lib/collectionPlaces";
 
 // The Select's value for "no parent": a Select item cannot carry "".
 const TOP_LEVEL = "__top__";
@@ -114,6 +115,7 @@ export function CreateCollectionDialog({ open, onOpenChange, org, parents, initi
             title: trimmedTitle,
             deriveName: true,
           });
+      invalidateSharedCollections();
       const shown = r.title || trimmedTitle || r.namespace;
       toast(r.created ? `Created ${shown}` : `${shown} already exists here`, r.created ? "ok" : "info");
       onCreated(r.namespace);

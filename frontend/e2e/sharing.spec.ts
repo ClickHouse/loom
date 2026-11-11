@@ -15,7 +15,15 @@ for (const width of [375, 1400]) {
           org: "",
           window_days: 7,
           totals: { writes: 1234567, recalls: 7654321, cross_namespace_recalls: 1000001, namespaces: 3, agents: 2 },
-          namespaces: [],
+          // Three namespaces, so the namespace tile is drawn too.
+          namespaces: ["team", "ops", "notes"].map((namespace) => ({
+            namespace,
+            role: "admin",
+            visibility: "private",
+            member_count: 1,
+            writes_7d: 1,
+            recalls_7d: 1,
+          })),
           agents: [],
           agent_namespaces: [],
         },

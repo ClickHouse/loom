@@ -298,11 +298,12 @@ operator access and [TLS](../operations/deployment.md#proxy-and-tls).
 In single-user mode a token is optional. Minting one anyway keeps your scripts working
 when auth is turned on.
 
-- **Dashboard:** **Settings → Tokens → New token**. By default the token reads everything
-  you belong to and saves to the namespace you are in. _Only these namespaces_ limits it to
-  the ones you tick (none at first); the ticked ones are searched in the order listed, and
-  you change it with a row's arrows, or on a desktop by dragging the row's grip. The result
-  shows the token once, with the setup for your MCP client or a script.
+- **Dashboard:** **Settings → Tokens → New token**. By default the token reads every
+  namespace and unrestricted repository you belong to, but no collection, and saves to the
+  namespace you are in. _Only what you choose_ limits it to the namespaces, collections
+  and repositories you tick (none at first); the ticked ones are searched in the order
+  listed, and you change it with a row's arrows, or on a desktop by dragging the row's
+  grip. The result shows the token once, with the setup for your MCP client or a script.
 - **CLI, as the operator:** run it inside the server container, which holds the signing
   secret:
 

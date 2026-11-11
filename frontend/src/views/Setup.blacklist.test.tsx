@@ -35,7 +35,6 @@ vi.mock("../api", async (importOriginal) => {
       saves_to: "reporter-public",
       created_at: "2026-01-01T00:00:00",
       expires_at: null,
-      restricted_namespaces: [],
       mcp_url: "http://localhost/mcp",
     })),
     listBlacklist: vi.fn(async () => ({
@@ -290,7 +289,7 @@ describe("Setup's new-namespace button", () => {
     const admin: WhoAmI = { authenticated: true, subject: "a@x", org: ORG, roles: ["ADMIN"] };
     seed(admin, [], MEMORY_NS);
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
     await userEvent.type(screen.getByLabelText("New namespace name"), "robot-ns");
     await userEvent.click(screen.getByRole("button", { name: /Create namespace/ }));
     await waitFor(() => expect(registerNamespace).toHaveBeenCalledTimes(1), WAIT);
@@ -321,7 +320,7 @@ describe("Setup's new-namespace button", () => {
         <Setup />
       </>,
     );
-    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
     expect(screen.queryByText("Your role here: admin")).not.toBeInTheDocument();
     await userEvent.type(screen.getByLabelText("New namespace name"), "robot-ns");
     await userEvent.click(screen.getByRole("button", { name: /Create namespace/ }));

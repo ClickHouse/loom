@@ -16529,6 +16529,7 @@ class MineEntry(TypedDict, total=False):
     pending_admins: NotRequired[list[str]]
     visibility: NotRequired[Literal["private", "public"]]
     kind: NotRequired[str]
+    title: NotRequired[str]
     description: NotRequired[str]
     joined_at: NotRequired[Optional[str]]
     is_new: NotRequired[bool]

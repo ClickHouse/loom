@@ -12,15 +12,15 @@ import type { View } from "./state";
  * literal namespace name that every query then read as
  * `WHERE namespace = '*'` — an empty dashboard with no error.
  *
- * Order, first match wins:
+ * Order, first match wins, never a collection (`col-…`, which the Library holds):
  *   1. the saved pick, if the user can still reach it;
  *   2. a namespace the user administers — `namespace.list_mine` carries
  *      no owner field, so `role === "admin"` is the owner signal; the
  *      server's auto-claimed `personal-*` row first, then the oldest
  *      admin grant (the one the user created first);
  *   3. the first claim that names a real namespace;
- *   4. nothing — the caller lands on Setup and opens the picker; it never
- *      invents a name.
+ *   4. nothing — the caller lands on the Library when the account reads a shared
+ *      collection, else on Setup; it never invents a name.
  *
  * Code indexes and tracker namespaces (`kind` code / qa) are reference data,
  * never a memory identity and never the landing *default* while a memory namespace is
@@ -31,11 +31,12 @@ import type { View } from "./state";
  * A token that names ONLY code and/or QA namespaces — a QA team, a reviewer, a code-index
  * service account — is a real persona, not a misconfiguration. On the bare root it lands on
  * Repositories (`landingTarget`) with the picker on its first reachable code or tracker
- * namespace (code before qa, alphabetical within); only a token that reaches nothing
- * lands on Setup. An explicit path always wins (`deepLinkNamespace`): a deep link keeps
- * its view, and when the default-namespace chain finds no namespace the view takes the
- * first reachable namespace of the kind it needs — a memory view a memory one (none → its
- * own empty state), every other view a code or QA one.
+ * namespace (code before qa, alphabetical within); one that reaches only shared
+ * collections lands on the Library, and one that reaches nothing else, or only its own
+ * collection, lands on Setup. An explicit path always wins (`deepLinkNamespace`): a deep
+ * link keeps its view, and when the default-namespace chain finds no namespace the view
+ * takes the first reachable namespace of the kind it needs — a memory view a memory one
+ * (none → its own empty state), every other view a code or QA one.
  */
 export const WILDCARD_NAMESPACE = "*";
 
@@ -64,9 +65,10 @@ export function isReferenceKind(kind: MyNamespaceEntry["kind"] | string | null |
 }
 
 /** A namespace that may be the memory landing default: reachable and a
- *  memory identity — a code index or a tracker namespace never is. */
+ *  memory identity — a repository, a tracker namespace or a collection never is (a
+ *  collection opens in the Library, by its reserved `col-` name). */
 export function isSelectableNamespace(m: Pick<MyNamespaceEntry, "namespace" | "kind">): boolean {
-  return isReachableNamespace(m) && !isReferenceKind(m.kind);
+  return isReachableNamespace(m) && !isReferenceKind(m.kind) && !isCollectionName(m.namespace);
 }
 
 /** The server's `kind` for `namespace`, from the list_mine rows the app
@@ -79,10 +81,15 @@ export function kindOf(
 }
 
 /** True when `namespace` is a name a memory view may read from: non-empty
- *  and not a code or tracker namespace. An unknown kind (no list_mine row, or
- *  list_mine failed) reads as memory. */
+ *  and not a code or tracker namespace, nor a collection (the Library shows those). An
+ *  unknown kind (no list_mine row, or list_mine failed) reads as memory. */
 export function isMemoryNamespace(namespace: string, mine: readonly MyNamespaceEntry[] | null): boolean {
-  return namespace !== "" && namespace !== WILDCARD_NAMESPACE && !isReferenceKind(kindOf(namespace, mine));
+  return (
+    namespace !== "" &&
+    namespace !== WILDCARD_NAMESPACE &&
+    !isCollectionName(namespace) &&
+    !isReferenceKind(kindOf(namespace, mine))
+  );
 }
 
 /** Views that read the memory plane of the picked namespace. Everything else —
@@ -160,12 +167,13 @@ export function landingNamespace(
   mine: readonly MyNamespaceEntry[],
 ): string | null {
   const allowed = reachableNamespaces(claims, mine);
-  if (saved && allowed.has(saved)) return saved;
+  // A collection is never the header's namespace: a saved one is passed over.
+  if (saved && allowed.has(saved) && !isCollectionName(saved)) return saved;
   const own = ownNamespace(mine);
   if (own) return own;
-  // The first real claim — never a code index or a tracker namespace by default.
+  // The first real claim — never a repository, a tracker namespace or a collection by default.
   const reference = new Set(mine.filter((m) => !isSelectableNamespace(m)).map((m) => m.namespace));
-  const firstClaim = claims.find((ns) => allowed.has(ns) && !reference.has(ns));
+  const firstClaim = claims.find((ns) => allowed.has(ns) && !reference.has(ns) && !isCollectionName(ns));
   return firstClaim ?? null;
 }
 
@@ -185,8 +193,8 @@ export function referenceNamespaces(claims: readonly string[], mine: readonly My
 
 /** Where the bare root lands. `view` is null when the default-namespace chain found a memory
  *  namespace — the caller keeps its own default view for that case. */
-interface LandingTarget {
-  view: "code" | "setup" | null;
+export interface LandingTarget {
+  view: "code" | "knowledge" | "setup" | null;
   namespace: string | null;
 }
 

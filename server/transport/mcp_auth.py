@@ -87,13 +87,15 @@ def _not_accessible_result(
     # Someone else's personal collection takes no grant: no advice could work. Any other
     # collection is shared by grants, never joined; the words are the same whether or not
     # it exists.
-    not_listed = f"namespace {ns!r} is not in your accessible list."
+    collection = sharing.is_collection(ns)
+    noun = "collection" if collection else "namespace"
+    not_listed = f"{noun} {ns!r} is not in your accessible list."
     if sharing.is_personal(ns):
         return _refusal_body(not_listed, ns)
-    if unverified and sharing.is_collection(ns):
+    if unverified and collection:
         return _refusal_body(not_listed, ns, **unverified_class("NAMESPACE_NOT_ACCESSIBLE", True))
     creator = ""
-    if sharing.is_collection(ns):
+    if collection:
         # A delegated token's creator needs the role too, as the gate says.
         if getattr(auth, "creator", None):
             creator = " This token's creator must be active and hold a grant on it too."
@@ -102,22 +104,20 @@ def _not_accessible_result(
         needs = sharing.claim_cap(auth, auth.org, ns, Role.VIEWER)
         if needs:
             return _refusal_body(
-                f"namespace {ns!r} is not in your accessible list: {needs}, and"
+                f"collection {ns!r} is not in your accessible list: {needs}, and"
                 f" {getattr(auth, 'subject', '')!r} must hold a grant of at least viewer on it or"
                 f" a collection above it (directly, through a group or to everyone).{creator}",
                 ns,
             )
-    msg = (
-        f"namespace {ns!r} is not in your accessible list and you don't have an active grant on it."
-    )
+    msg = f"{noun} {ns!r} is not in your accessible list and you don't have an active grant on it."
     if assistant:
         msg += (
             f" Ask the collection's admin for a grant on it or a collection above it.{creator}"
-            if sharing.is_collection(ns)
+            if collection
             else " Omit the namespace argument to use your default namespace, or request a "
             "grant from the dashboard's Spaces page."
         )
-    elif sharing.is_collection(ns):
+    elif collection:
         # Never "omit the namespace": a write meant for the collection would land in the
         # default namespace instead.
         msg += (
