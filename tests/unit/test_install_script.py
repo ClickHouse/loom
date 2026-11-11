@@ -839,10 +839,10 @@ def _inspect_then_install() -> tuple[str, str, str]:
     same page, as a reader runs them once the checks look right."""
     ((page, checks),) = [(p, e) for p, e in _INSTALLS if _INSPECT in e]
     text = (ROOT / page).read_text(encoding="utf-8")
-    after = text[text.index(_INSPECT) :]
-    install = re.search(r"^```[^\n]*\n(.*?)^```", after[after.index("```") + 3 :], re.M | re.S)
-    assert install, page
-    return page, checks, _joined(install[1]).strip()
+    blocks = [m[1] for m in re.finditer(r"^```[^\n]*\n(.*?)^```", text, re.M | re.S)]
+    at = next(i for i, block in enumerate(blocks) if _INSPECT in block)
+    assert at + 1 < len(blocks), page
+    return page, checks, _joined(blocks[at + 1]).strip()
 
 
 def test_the_pages_show_install_commands() -> None:

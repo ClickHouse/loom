@@ -34,8 +34,8 @@ Prerequisite: Docker Desktop or Docker Engine with Compose 2.20 or later.
 curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh
 ```
 
-The command saves the installer where it runs and then runs that file, so run it from your
-home directory, or another directory only you can write to: in a shared one, someone else
+The command saves the installer in the current directory and then runs that file, so run it
+from your home directory, or another directory only you can write to: in a shared one, someone else
 can replace `loom-install.sh`, or point it at another file, before it runs. A failed
 download stops with curl's error and a non-zero exit; after a failed install, fix what it
 reports and run the whole command again. The installer downloads `loom-stack.tar.gz` from
@@ -61,7 +61,7 @@ curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.s
 ```
 
 Each release's `install.sh` installs that release, so the copy `latest` serves installs the
-latest release, and a copy you keep installs the same version every time it runs. Over a newer
+latest release, and a release's own URL, below, installs that release every time. Over a newer
 install, an older release's copy refuses to install, rather than start an older Loom and
 ClickHouse on newer data; to downgrade on purpose, follow
 [downgrading an installer install](../operations/upgrades.md#downgrading-an-installer-install).
