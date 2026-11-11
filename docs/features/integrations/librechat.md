@@ -134,10 +134,14 @@ orgs, mints a token per person, revokes one, and scores each answer:
   inspect or tune case contains the labeled value; a refusal case says access was refused
   or failed; an abstention case says the fact is not stored. The forbidden text is the
   other org's canary for the cross-tenant case, the person's own answer (`friday`) for the
-  revoked-token case, and a stale or wrong value for some others.
-- **citation valid:** every memory key the answer names exists in the person's namespace,
+  revoked-token case, and a stale or wrong value for some others. Through Loom's assistant
+  route, an answer of any kind that names an op or setting the build neither serves nor
+  documents (`unknown_names`) is wrong.
+- **citation valid:** every memory key the answer cites exists in the person's namespace,
   and a version written next to it is the row's current version, or, for a question about
-  the key's history (`cite_history`), one of its earlier versions.
+  the key's history (`cite_history`), one of its earlier versions. Through Loom's assistant
+  route a memory citation is `[memory:<key>@v<version>]`; otherwise it is any key-shaped
+  text.
 - **tool calls:** the `mcp` rows Loom ledgered under the person's subject during the answer.
 - **latency and time to first token:** end to end, and to the first streamed delta, which
   for the harness's own agent (`setup`) is the model's one-line preamble before its first
@@ -219,9 +223,8 @@ The case set holds at least one question per use case of Loom: what a namespace 
 how it is used (the data tools), and how Loom works and how to do something in it (the
 help tools, which read the documentation the server ships). Each help case labels the
 values its answer must state and the pages that hold them, with a right and a wrong sample
-answer the label is tested against. Its answer is scored correct when it states them and
-names no op or setting the server neither serves nor documents (`unknown_names` on the
-answer's `loom.citations` event). For the case with no answer in the docs, the answer is
+answer the label is tested against. Its answer is scored correct when it states them,
+under the unknown-name rule above. For the case with no answer in the docs, the answer is
 correct when it says so and writes no `LOOM_` name that no docs page writes; an answer
 that names an invented setting only to deny it is scored wrong. A help citation is valid
 when its page is in the server's documentation (`help.get`) and its section is one of the
@@ -233,7 +236,7 @@ the bridge's own citation check.
 | --------------------------------- | ----- | -------- | ------------------- |
 | U1 Look up a stored fact          | 7     | 7 of 7   | 7 of 7              |
 | U2 What a document says           | 10    | 9 of 10  | 10 of 10            |
-| U3 What the namespace holds       | 3     | 3 of 3   | 3 of 3              |
+| U3 What the namespace holds       | 4     | 4 of 4   | 4 of 4              |
 | U4 Usage counts and trends        | 3     | 3 of 3   | 3 of 3              |
 | U5 Cost and spend                 | 1     | 1 of 1   | 1 of 1              |
 | U6 Write memory better            | 4     | 4 of 4   | 2 of 4              |
@@ -254,7 +257,7 @@ the bridge's own citation check.
 | U21 Retention and erasure         | 1     | 1 of 1   | 1 of 1              |
 | U22 Extraction from transcripts   | 1     | 1 of 1   | 1 of 1              |
 | U23 Working memory                | 1     | 1 of 1   | 1 of 1              |
-| U24 Integrations                  | 2     | 2 of 2   | 2 of 2              |
+| U24 Integrations                  | 1     | 1 of 1   | 1 of 1              |
 | U25 What a setting does           | 1     | 1 of 1   | 1 of 1              |
 | U26 Getting started               | 1     | 1 of 1   | 1 of 1              |
 | U27 Operating a deployment        | 1     | 1 of 1   | 1 of 1              |

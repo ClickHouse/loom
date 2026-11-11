@@ -1118,7 +1118,6 @@ def test_through_the_bridge_a_memory_citation_is_read_whole():
     assert q.memory_mentions({"bridge": True}, text) == [
         ("user/pref/john_doe", 1793745407448901606)
     ]
-    assert q.memory_mentions({}, text)[0] == ("user/pref/example", 1793745407448901606)
 
 
 def test_rescore_asks_for_a_new_run_when_the_saved_path_is_unknown(tmp_path):

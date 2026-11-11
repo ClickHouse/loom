@@ -582,7 +582,7 @@ HELP_CITE_RE = re.compile(r"\[help:(?P<path>[^\]§\s]+?)(?:\s*§\s*(?P<section>[
 HELP_ABSTAIN_PATTERNS = (
     r"\bnot (documented|covered|described|mentioned|listed|in (loom's|the) documentation)\b",
     r"\b(documentation|docs) (does|do) ?n[o']t (cover|describe|mention|say|list)\b",
-    r"\bno (documented |such )?(setting|option|feature)\b",
+    r"\bno (\w+ ){0,3}(setting|option|feature)s?\b",
     r"\b(could ?n[o']t|did ?n[o']t|can ?not) find\b",
 )
 

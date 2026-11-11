@@ -522,7 +522,7 @@
     "use_case": "U5 Cost and spend",
     "person": "alice",
     "question": "What is the default daily spend cap of a namespace, and what does Loom skip once it is spent?",
-    "expect": ["(\\$\\s?1(\\.0+)?(?![\\d.])|\\b1(\\.0)? ?(USD|dollar)|\\b1\\.0(?![\\d.]))", "(synthes|extract)"],
+    "expect": ["(\\$\\s?1(\\.0+)?(?!\\.?\\d)|\\b1(\\.0)? ?(USD|dollar)|\\b1\\.0(?!\\.?\\d))", "(synthes|extract)"],
     "cite_help": ["features/observability/cost-and-usage.md"],
     "baseline": {
       "op": "help.search",
@@ -532,7 +532,11 @@
       }
     },
     "samples": {
-      "right": ["$1.0 a day; once it is spent Loom skips synthesis and entity extraction."],
+      "right": [
+        "$1.0 a day; once it is spent Loom skips synthesis and entity extraction.",
+        "The default cap is $1. Once it is spent, Loom skips synthesis.",
+        "The cap is $1.0. Past it Loom skips entity extraction."
+      ],
       "wrong": [
         "$1.0, and nothing is skipped: the cap only warns.",
         "There is no default cap; extraction keeps running.",
@@ -576,13 +580,16 @@
       }
     },
     "samples": {
-      "right": ["Call `memory.history` with the key."],
+      "right": [
+        "Call `memory.history` with the key.",
+        "`memory.get` returns only the latest version; `memory.history` returns every earlier one."
+      ],
       "wrong": [
         "Loom keeps only the latest version.",
         "Loom has no `memory.history` op; it keeps only the latest version."
       ]
     },
-    "forbid": ["\\bno `?memory\\.history", "only (keeps |the )?(the )?latest"]
+    "forbid": ["\\bno `?memory\\.history", "\\b(keeps only|only keeps) the latest"]
   },
   {
     "id": "help-graph",
@@ -908,16 +915,21 @@
         "limit": 5
       }
     },
-    "forbid": ["run\\w* `?memory\\.clear", "`?memory\\.clear`?\\s+(erases(?!\\s+nothing)|with `?agent)"],
+    "forbid": [
+      "\\b(admin|you|or|then) (can )?runs? `?memory\\.clear",
+      "`?memory\\.clear`?\\s+(erases(?!\\s+nothing)|with `?agent)"
+    ],
     "samples": {
       "right": [
         "An org admin, with `erasure.request` and the `user_id` scope.",
-        "`memory.clear` erases nothing; it only tombstones. An org admin uses `erasure.request` with the `user_id` scope."
+        "`memory.clear` erases nothing; it only tombstones. An org admin uses `erasure.request` with the `user_id` scope.",
+        "Running `memory.clear` is not enough: it only tombstones. An org admin uses `erasure.request` with the `user_id` scope."
       ],
       "wrong": [
         "An org admin runs `memory.clear` with `agent=\"*\"`.",
         "Any writer may, with `memory.delete`.",
-        "An org admin can use `erasure.request`, or run `memory.clear` across the org."
+        "An org admin can use `erasure.request`, or run `memory.clear` across the org.",
+        "An org admin runs `memory.clear` across every namespace, which also calls `erasure.request`."
       ]
     }
   },
@@ -999,7 +1011,10 @@
     "use_case": "U25 What a setting does",
     "person": "alice",
     "question": "What does LOOM_ASSISTANT_MODEL set?",
-    "expect": ["agent definition", "\\bboot"],
+    "expect": [
+      "agent definition|agent('s)? model|model the (assistant|agent)|agent\\.yaml",
+      "\\bboot|restart|start-?up"
+    ],
     "cite_help": ["reference/configuration.md", "architecture/assistant.md"],
     "baseline": {
       "op": "help.search",
@@ -1009,7 +1024,10 @@
       }
     },
     "samples": {
-      "right": ["The assistant agent's model; Loom writes it into the agent definition at boot."],
+      "right": [
+        "The assistant agent's model; Loom writes it into the agent definition at boot.",
+        "It sets the model the assistant's agent runs, in place of `agent.yaml`'s; a change takes effect at the next restart."
+      ],
       "wrong": ["I could not find what LOOM_ASSISTANT_MODEL sets."]
     }
   },
@@ -1044,7 +1062,7 @@
     "person": "alice",
     "question": "How do I upgrade a Loom deployment to a new release?",
     "expect": [
-      "(boot|start)\\w*[^.]{0,60}(appl|run)\\w* (the |pending |its )?migrat|migrations? (run|are applied|apply) (at|on|when) (boot|start)"
+      "(boot|start)\\w*[^.]{0,60}(appl|run)\\w* (the |pending |its )?migrat|(appl|run)\\w* (the |pending |its )?migrat\\w*[^.]{0,40}\\b(at|on|when|before) (boot|start|it reports ready)|migrations? (run|are applied|apply) (at|on|when) (boot|start)"
     ],
     "cite_help": ["operations/upgrades.md"],
     "baseline": {
@@ -1055,7 +1073,10 @@
       }
     },
     "samples": {
-      "right": ["Deploy the new image; the first container to boot applies the migrations."],
+      "right": [
+        "Deploy the new image; the first container to boot applies the migrations.",
+        "Deploy the new image; the server applies pending migrations at boot."
+      ],
       "wrong": [
         "Export every memory, reinstall the new release and import them back.",
         "Loom cannot be upgraded in place; migrate the data by hand.",
@@ -1083,7 +1104,9 @@
       "right": [
         "Loom's documentation does not describe a dashboard colour theme.",
         "Loom has no setting for the dashboard's colour theme.",
-        "The docs don't list a theme setting; `LOOM_COLOUR` picks a blue/green deployment, not a theme."
+        "The docs don't list a theme setting; `LOOM_COLOUR` picks a blue/green deployment, not a theme.",
+        "No Loom setting changes the dashboard's colour theme.",
+        "There is no colour theme setting."
       ],
       "wrong": [
         "The docs don't cover it, but set `LOOM_DASHBOARD_COLOUR=dark`.",
@@ -1096,7 +1119,7 @@
   {
     "id": "data-connected-agents",
     "kind": "inventory",
-    "use_case": "U24 Integrations",
+    "use_case": "U3 What the namespace holds",
     "person": "alice",
     "question": "Which agents have written to this namespace?",
     "expect": ["handbook-bot", "ops-bot"],
