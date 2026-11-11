@@ -77,7 +77,8 @@ compaction. See the
 They differ from `conversation.append` and `conversation.search` in six ways:
 
 - **The Record conversations switch does not apply.** The save is stored even when the
-  switch (or `conversation.set_logging`) has turned recording off, and it does not turn it on.
+  switch (or `conversation.set_logging`) has turned recording off, and saving does not turn
+  recording on.
 - **The message is flagged, not re-labelled.** The transcript row and its embedding row
   carry `is_saved` and `saved_at`, the time the user saved the message. A message the
   transcript already holds is flagged in place: its `run_id` and content stay as
