@@ -96,8 +96,8 @@ SaveRefusal = Literal[
 
 
 async def namespace_recording_enabled(org: str, namespace: str) -> bool:
-    """The namespace owner's Record conversations switch. Fails closed: a
-    namespace with no stored answer is not recording."""
+    """The namespace owner's Record conversations switch. Fails closed: a namespace
+    with no stored answer is not recording."""
     from server.knowledge.store import conversations as conversation_repo
 
     return await conversation_repo.namespace_logging_enabled(org, namespace)
@@ -153,8 +153,8 @@ async def handle_conversation_append(
         ]
     )
 
-    # The namespace's Record conversations switch. When off, accept the call
-    # but store nothing — a client can't override the user's choice.
+    # The namespace's Record conversations switch. When off, accept the call but
+    # store nothing — a client can't override the user's choice.
     with traced("ch.query.conversation_logging_enabled"):
         logging_on = await conversation_repo.namespace_logging_enabled(input.org, input.namespace)
     if not logging_on:
