@@ -710,20 +710,25 @@ def test_the_configured_orgs_hold_the_org_of_each_repository_entry_the_code_conf
     assert set(cell.fingerprint("dep-1")["configured_orgs"]) == ({code_org} | kept) - {""}
 
 
-def test_a_cell_process_counts_the_code_orgs_once_boot_hands_their_reader_in(
+def test_every_server_process_counts_the_code_orgs_with_or_without_loom_cell(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`server.core` reads no code config itself: until boot hands the reader in, no code
-    org is counted (the fingerprint then matches no accepted value and the process is
-    gated); `start_cell_state` hands it in before the first read."""
+    """The heartbeat reports the fingerprint before LOOM_CELL rolls out, and prepare
+    accepts it: a server process with LOOM_CELL unset counts the code orgs as one with
+    it set, from boot on, and so does the workers child's cell state."""
     from server.code.domain.index import repos
 
     for field in ("oidc_jit_org", "tracker_org", "code_org"):
         monkeypatch.setattr(settings, field, "")
     monkeypatch.setattr(settings, "self_signup", "off")
-    monkeypatch.setattr(cell, "_code_orgs", None)
+    monkeypatch.setattr(settings, "cell", "")
     monkeypatch.setattr(repos, "operator_orgs", lambda: {"beta"})
-    assert cell.fingerprint("dep-1")["configured_orgs"] == []
+    monkeypatch.setattr(pg, "enabled", lambda: False)
+    monkeypatch.setattr(pg_profile, "require_authority", AsyncMock(return_value=None))
+    monkeypatch.setattr(cell, "_code_orgs", None)
+    asyncio.run(boot.require_storage_authority(object()))
+    assert cell.fingerprint("dep-1")["configured_orgs"] == ["beta"]
+    monkeypatch.setattr(cell, "_code_orgs", None)
     monkeypatch.setattr(cell, "_deployment_id", "dep-1")
     monkeypatch.setattr(cell, "refresh", AsyncMock(return_value=True))
     monkeypatch.setattr(cell, "start_refresh_loop", lambda: "loop")

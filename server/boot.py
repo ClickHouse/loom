@@ -351,9 +351,13 @@ async def require_storage_authority(ch: Any) -> None:
     deployment's record (`server.core.pg_profile`); the Postgres profile first opens
     Postgres, applies its migrations and checks its commit durability. Raises to
     refuse the boot."""
+    from server.code.domain.index import repos
     from server.core import cell, pg, pg_profile
 
     global SKIPPED_PG_MIGRATIONS
+    # The heartbeat reports the fingerprint with or without LOOM_CELL, and prepare
+    # accepts it from then: it counts the code orgs in every server process.
+    cell.set_code_orgs(repos.operator_orgs)
     if pg.enabled():
         SKIPPED_PG_MIGRATIONS = tuple(f"pg:{name}" for name in await pg_profile.start())
     await pg_profile.require_authority(ch)
