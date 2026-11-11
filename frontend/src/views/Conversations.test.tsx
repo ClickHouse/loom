@@ -7,7 +7,7 @@ import { Conversations } from "./Conversations";
 import { must } from "../test/must";
 
 // Conversations stays mounted while threads open and close and while the namespace
-// switches, so every async answer must land only on the thread or namespace it was
+// changes, so every async answer must land only on the thread or namespace it was
 // asked for: thread A's detail and memories never render under thread B, and
 // namespace A's hits and Record conversations switch never survive into namespace B.
 

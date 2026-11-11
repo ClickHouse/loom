@@ -119,7 +119,7 @@ export function Conversations() {
   // card OR a search-hit thread header → the dialog reads the full messages and shows them.
   const [openThread, setOpenThread] = useState<ReplayThread | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
-  // Bumped per search and per namespace switch: only the latest search writes hits.
+  // Bumped per search and per namespace change: only the latest search writes hits.
   const searchSeq = useRef(0);
   // Bumped per namespace change: a logging write that fails after the change must not
   // revert the new namespace's Record conversations switch.
