@@ -85,7 +85,7 @@ export function collectionsInside(rows: CollectionEntry[], current: CollectionEn
   const under =
     current && !current.personal
       ? rows.filter((c) => c.parent === current.namespace)
-      : rows.filter((c) => !c.personal && c.role === "admin" && (!c.parent || !names.has(c.parent)));
+      : rows.filter((c) => !c.personal && !isSharedWithMe(c) && (!c.parent || !names.has(c.parent)));
   return under.sort(collectionOrder);
 }
 

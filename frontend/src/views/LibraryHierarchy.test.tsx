@@ -181,18 +181,20 @@ describe("CollectionsInside", () => {
     const rows = [
       entry("col-lib", { title: "Library" }),
       // Shared at the top: no path. (A child inherits its parents' grants, so a shared one
-      // inside one's own is rare: a scoped token's claim.)
+      // inside one's own shows only when a token caps the role below the inherited one.)
       entry("col-r", { title: "Research", role: "viewer" }),
       entry("col-claimed", { parent: "col-lib", title: "Claimed", role: "viewer" }),
       entry("col-r-notes", { parent: "col-r", title: "Notes", role: "viewer" }),
       entry("col-far", { parent: "col-hidden", title: "Far", role: "writer" }),
-      // Shared as admin: the caller's to manage, so with their own.
+      // Shared as admin: the caller's to manage, so with their own, here or under a parent the
+      // caller cannot read.
       entry("col-ops", { title: "Ops" }),
+      entry("col-run", { parent: "col-hidden", title: "Runbooks" }),
       entry("col-me-1a2b", { personal: true, role: "admin" }),
     ];
     // A shared one's children are inside it, not listed again.
     expect(sharedWithMe(rows).map((c) => c.namespace)).toEqual(["col-claimed", "col-far", "col-r"]);
-    expect(collectionsInside(rows, null).map((c) => c.namespace)).toEqual(["col-lib", "col-ops"]);
+    expect(collectionsInside(rows, null).map((c) => c.namespace)).toEqual(["col-lib", "col-ops", "col-run"]);
     render(<CollectionsInside rows={rows} current={null} onPick={() => {}} />);
     const shared = screen.getByRole("region", { name: /Shared with you/ });
     expect(within(shared).getByRole("link", { name: "Research" })).toBeInTheDocument();
@@ -201,6 +203,8 @@ describe("CollectionsInside", () => {
     expect(within(shared).getByText("… › Far")).toBeInTheDocument();
     expect(within(shared).queryByRole("link", { name: "Ops" })).toBeNull();
     const own = screen.getByRole("region", { name: /^Collections/ });
+    expect(within(own).getByRole("link", { name: "Runbooks" })).toBeInTheDocument();
+    expect(within(own).queryByText(/›/)).toBeNull();
     expect(within(own).queryByRole("link", { name: "Research" })).toBeNull();
     cleanup();
     // Inside a collection, only its children: no "Shared with you".

@@ -52,7 +52,8 @@ interface Props {
   parents: CollectionEntry[];
   /** The parent the form starts on; "" for top level. */
   initialParent?: string;
-  /** The header's namespace, named so a top-level collection is not taken to sit in it. */
+  /** The header's namespace when it holds documents, named so a top-level collection is not
+   *  taken to sit in it. */
   headerNamespace?: string | null;
   /** Fires with the collection's name: the new one, or the one the title already names there. */
   onCreated: (namespace: string) => void;
