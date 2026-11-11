@@ -141,7 +141,7 @@ Start with docs/index.md (the map). To install Loom, a coding agent reads docs/g
 
 ## Development
 
-- [Add a ClickHouse table or column](docs/development/adding-a-table.md): Loom's ClickHouse state is tables in the `loom` and `loom_telemetry` databases; under the Postgres memory authority, live memory and knowledge state are in Postgres.
+- [Add a ClickHouse table or column](docs/development/adding-a-table.md): Loom's ClickHouse state is tables in the `loom` and `loom_telemetry` databases; under the Postgres memory authority, live memory, knowledge state and the records beside them are in Postgres.
 - [Add a background worker](docs/development/adding-a-worker.md): A worker is a row in `server/workers/registry.py` (`_WORKERS`) plus a module with one pass function.
 - [Add an operation](docs/development/adding-an-operation.md): An operation is declared once, in the registry.
 - [Add language support to the code index](docs/development/adding-language-support.md): The code index reads a repository in two tiers:
