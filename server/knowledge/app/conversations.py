@@ -474,8 +474,8 @@ async def _write_saved_turn(
     input: ConversationSaveMessageInput, *, once_per_identity: bool
 ) -> None:
     """The transcript row of a turn the transcript does not hold, flagged saved
-    for its user. The namespace's logging switch does not apply: saving is the
-    user's own choice for that one turn."""
+    for its user. The namespace's Record conversations switch does not apply:
+    saving is the user's own choice for that one turn."""
     from server.knowledge.store import conversations as conversation_repo
 
     with traced("ch.insert.conversation", role=input.role):

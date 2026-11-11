@@ -12,8 +12,8 @@ async def set_conversation_logging(org: str, namespace: str, enabled: bool) -> N
     namespace.delete: the live row copied forward with the switch flipped, so
     FINAL readers see it at once without a synchronous mutation. A namespace
     written to but never registered has no row, so one is created: a mutation
-    there would match nothing and the toggle would report On for a namespace
-    that never records."""
+    there would match nothing and the Record conversations switch would report
+    On for a namespace that never records."""
     from server.core.ch import get_client
 
     ch = get_client()
