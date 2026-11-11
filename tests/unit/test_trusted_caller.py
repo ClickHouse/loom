@@ -694,11 +694,11 @@ def test_the_memo_is_emptied_past_its_bound(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
-def test_a_bot_disabled_on_this_process_is_refused_at_once(
+def test_a_bot_created_or_disabled_on_this_process_takes_effect_at_once(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The disabling process drops its memo of the bot, and `machines.get` reads the
-    real table."""
+    """The process that creates or disables a bot drops its memo of it, and
+    `machines.get` reads the real table."""
     from server.auth import authz, machines
     from server.core import grant_cache
 
@@ -738,6 +738,8 @@ def test_a_bot_disabled_on_this_process_is_refused_at_once(
         "max_access_token_s": 86400,
         "platform_admin": False,
     }
+    with pytest.raises(authz.ActedForRefused):  # no bot yet, and that is remembered
+        asyncio.run(authz.check_acted_for(_acting("sa:ci:agent-1", "acme"), "acme"))
     asyncio.run(machines.save(bot, by="cli:root"))
     asyncio.run(authz.check_acted_for(_acting("sa:ci:agent-1", "acme"), "acme"))  # remembered
     asyncio.run(machines.save(bot, by="cli:root", active=False))

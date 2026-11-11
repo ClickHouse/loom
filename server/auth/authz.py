@@ -115,9 +115,9 @@ async def check_acted_for(auth: AuthInfo | None, org: str | None) -> None:
         raise ActedForRefused(_ACTED_FOR_NO_BOT)
 
 
-# (kind, key) -> (read at, ended), kept grant_cache_ttl_seconds: a SCIM deactivation or a
-# bot disable written by another process reaches this one within that, and one written
-# here drops its entry (`forget_ended`); emptied past _ENDED_MAX.
+# (kind, key) -> (read at, ended), kept grant_cache_ttl_seconds: a SCIM deactivation, or
+# a bot created or disabled, by another process reaches this one within that, and one
+# written here drops its entry (`forget_ended`); emptied past _ENDED_MAX.
 _ENDED: dict[tuple[str, str], tuple[float, bool]] = {}
 _forgets = 0  # forgets so far: a read that one overtook is not kept
 _ENDED_MAX = 10_000  # not a setting: a memory bound on a memo the TTL already ages
