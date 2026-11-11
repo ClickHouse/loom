@@ -19,8 +19,9 @@ The table is KeeperMap, one key per process that the leader sweeps an hour after
 it stops beating.
 
 Each beat also writes the process's `loom.cell_heartbeats` row (its `LOOM_CELL`,
-tenancy mode and fingerprint, `cell_row`), which prepare and attach read to check every
-live process of a cell; the leader sweeps its old keys as it sweeps the instances'.
+tenancy mode and fingerprint, `cell_row`), the values `loom cell prepare` and attach
+compare across a cell's live processes (docs/architecture/cells.md); the leader sweeps
+its old keys as it sweeps the instances'.
 """
 
 from __future__ import annotations
