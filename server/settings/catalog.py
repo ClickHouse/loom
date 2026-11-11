@@ -339,8 +339,8 @@ class AuthSettings(BaseModel):
     router_pg_dsn: str = ""
     # Placement calls one cell may make in a minute, counted by each router replica.
     router_placements_per_minute: int = Field(default=60, ge=1)
-    # Seconds (at least 1) a router replica keeps the cells' credential hashes before
-    # reading them from the directory again; a cell's new credential works within this.
+    # Seconds (at least 1) a router replica keeps the cells' credential hashes and a placed
+    # org's lookup answer before reading again; a new credential or host works within this.
     router_directory_cache_s: float = Field(default=5.0, ge=1.0)
     # Org lookups one client address may make in a minute, counted by each router
     # replica (`GET /cells/lookup`).

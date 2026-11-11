@@ -987,10 +987,10 @@ wait on the router's.
   `tests/unit/test_cell_tenancy.py` holds the census of every route;
 - `server/router/app.py` (`loom router serve`): the placement API, the first cell's
   state read (which `server.auth.tenancy.directory_says_attaching` makes in `recording`)
-  and the org lookup, their rate limits (`server/router/limits.py`) and the checks a
-  placement passes; `server/router/directory.py` and `schemas/router_migrations/`: the
-  directory, in the router's own Postgres database (`LOOM_ROUTER_PG_DSN`,
-  `loom router migrate`).
+  and the org lookup with its cache of placed orgs, their rate limits
+  (`server/router/limits.py`) and the checks a placement passes;
+  `server/router/directory.py` and `schemas/router_migrations/`: the directory, in the
+  router's own Postgres database (`LOOM_ROUTER_PG_DSN`, `loom router migrate`).
 
 The rest of the cell code is added by the pull requests that implement this page. It
 builds on:

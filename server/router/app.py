@@ -6,7 +6,9 @@
 - `GET /cells/v1/cells/<cell>`: the first cell's state (`attaching`, `serving`), for that
   cell's own credential only, which it reads while its mode is `recording`;
 - `GET /cells/lookup?org=`: which cell, and at which host, an org lives in
-  (unauthenticated, rate-limited per client address);
+  (unauthenticated, rate-limited per client address); a placed org's answer is cached
+  and given while the directory cannot be read, and before any cell is registered the
+  lookup answers 503 with the code `NO_CELL`;
 - `GET /livez` and `GET /readyz` (the directory answers, read at most once a second).
 
 Every refusal of a placement answers 503 and writes nothing, so the cell's request
@@ -22,9 +24,10 @@ import hmac
 import json
 import logging
 import time
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, NamedTuple
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -34,7 +37,7 @@ from starlette.routing import Route
 from server.auth.tenancy import ORG_FREE
 from server.core import cell as cell_state
 from server.router import directory
-from server.router.limits import Limiter
+from server.router.limits import MAX_KEYS, Limiter
 from server.settings import settings
 
 log = logging.getLogger("loom.router")
@@ -45,8 +48,12 @@ MAX_BODY_BYTES = 64 * 1024  # not a setting: the request's own shape bounds it
 READY_TTL_S = 1.0  # not a setting: the probe's own cadence bounds it
 
 
-def _refused(status: int, reason: str, headers: dict[str, str] | None = None) -> JSONResponse:
-    return JSONResponse({"error": reason}, status_code=status, headers=headers)
+def _refused(
+    status: int, reason: str, headers: dict[str, str] | None = None, *, code: str = ""
+) -> JSONResponse:
+    # A client matches `code`, never the message.
+    body = {"error": reason, **({"code": code} if code else {})}
+    return JSONResponse(body, status_code=status, headers=headers)
 
 
 def _org(value: Any) -> str | None:
@@ -130,6 +137,16 @@ def _this_version(value: dict[str, Any]) -> bool:
     return type(version) is int and version == cell_state.FINGERPRINT_VERSION
 
 
+class _Placed(NamedTuple):
+    cell: str
+    host: str
+    read_at: float  # monotonic
+
+
+def _answer(org: str, cell: str, host: str) -> JSONResponse:
+    return JSONResponse({"org": org, "cell": cell, "host": host})
+
+
 class Router:
     def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
         self._clock = clock
@@ -145,6 +162,10 @@ class Router:
         self._ready = ""
         self._lock = asyncio.Lock()
         self._ready_lock = asyncio.Lock()
+        # Placed orgs' (cell, host), read again once LOOM_ROUTER_DIRECTORY_CACHE_S old and
+        # answered stale while the directory cannot be read: a placement never changes, so
+        # an outage costs only uncached lookups. Bounded: the oldest read is forgotten.
+        self._placed: OrderedDict[str, _Placed] = OrderedDict()
 
     async def _credential(self, name: str) -> str | None:
         async with self._lock:
@@ -251,16 +272,34 @@ class Router:
         org = _org(request.query_params.get("org"))
         if org is None:
             return _refused(400, "a lookup names an org: ?org=")
+        cached = self._placed.get(org)
+        now = self._clock()
+        if cached is not None and now - cached.read_at < settings.router_directory_cache_s:
+            return _answer(org, cached.cell, cached.host)
+        if cached is not None:
+            # Stamped before the read: lookups arriving while it runs, and after it fails,
+            # get the cached answer, so a down directory is read at most once a window.
+            self._remember(org, cached.cell, cached.host, now)
         try:
             found = await directory.lookup(org)
-            if found is None:
+            if found is not None:
+                self._remember(org, *found, now)
+            else:
                 first = await directory.first_cell()
                 found = (first.cell, first.host) if first else None
         except directory.DirectoryUnavailable as e:
-            return _refused(503, e.reason)
+            if cached is None:
+                return _refused(503, e.reason)
+            return _answer(org, cached.cell, cached.host)
         if found is None:
-            return _refused(503, "the directory holds no cell yet")
-        return JSONResponse({"org": org, "cell": found[0], "host": found[1]})
+            return _refused(503, "the directory holds no cell yet", code="NO_CELL")
+        return _answer(org, *found)
+
+    def _remember(self, org: str, cell: str, host: str, now: float) -> None:
+        self._placed.pop(org, None)
+        self._placed[org] = _Placed(cell, host, now)
+        while len(self._placed) > MAX_KEYS:
+            self._placed.popitem(last=False)
 
     async def livez(self, _request: Request) -> JSONResponse:
         return JSONResponse({"status": "ok"})
