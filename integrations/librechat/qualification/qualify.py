@@ -866,8 +866,6 @@ def baseline(st: dict[str, Any], case: dict[str, Any], person: dict[str, Any]) -
         **ASSISTANT_FORCED_ARGS.get(spec["op"], {}),
     }
     code, out, elapsed = loom_call(st["loom_url"], st["tokens"][person["name"]], spec["op"], body)
-    if spec["op"] == "help.search" and code == 200 and not out.get("available", True):
-        sys.exit("help.search: this server has no documentation, so the help cases cannot run")
     return {**native_score(case, code, out), "latency_s": elapsed, "ttft_s": elapsed}
 
 
@@ -972,16 +970,15 @@ def native_document_score(case: dict[str, Any], out: dict[str, Any]) -> dict[str
 
 
 def require_docs(st: dict[str, Any], people: dict[str, Any], cases: list[dict[str, Any]]) -> None:
-    """Stop before the first model answer when help cases are selected and the server ships
-    no docs: every help answer would be paid for and then not checkable."""
-    help_cases = [c for c in cases if is_help_case(c)]
-    if not help_cases:
+    """Stop before the first read when the server ships no docs: any answer may cite a help
+    page, and a help citation or a help case cannot be checked then."""
+    if not cases:
         return
-    person = people[help_cases[0]["person"]]
+    person = people[cases[0]["person"]]
     body = {"org": person["org"], "namespace": person["namespace"], "query": "loom", "limit": 1}
     code, out, _ = loom_call(st["loom_url"], st["tokens"][person["name"]], "help.search", body)
     if code == 200 and not out.get("available", True):
-        sys.exit("help.search: this server has no documentation, so the help cases cannot run")
+        sys.exit("help.search: this server has no documentation, so its help cannot be checked")
 
 
 def cmd_run(args: argparse.Namespace) -> None:
@@ -1007,7 +1004,7 @@ def cmd_run(args: argparse.Namespace) -> None:
             {
                 "id": case["id"],
                 "kind": case["kind"],
-                "use_case": case.get("use_case", ""),
+                "use_case": case["use_case"],
                 "documents": is_document_case(case),
                 "librechat": {
                     **got,
@@ -1075,14 +1072,15 @@ def run_native_only(st: dict[str, Any], people: dict[str, Any], args: argparse.N
         sys.exit(f"{out} is missing: --native-only replaces the native side of a saved run")
     saved = json.loads(out.read_text())
     rows = {r["id"]: r for r in saved["rows"]}
-    for case in load("cases.json"):
-        if case["id"] in rows and (not args.only or case["id"] in args.only):
-            rows[case["id"]]["use_case"] = case.get("use_case", "")
-            rows[case["id"]]["native"] = baseline(st, case, people[case["person"]])
-            native = rows[case["id"]]["native"]
-            print(
-                f"{case['id']:<28} native {verdict(native['correct'])} {native['latency_s']:.2f}s"
-            )
+    cases = [
+        c for c in load("cases.json") if c["id"] in rows and (not args.only or c["id"] in args.only)
+    ]
+    require_docs(st, people, cases)
+    for case in cases:
+        rows[case["id"]]["use_case"] = case["use_case"]
+        rows[case["id"]]["native"] = baseline(st, case, people[case["person"]])
+        native = rows[case["id"]]["native"]
+        print(f"{case['id']:<28} native {verdict(native['correct'])} {native['latency_s']:.2f}s")
     out.write_text(json.dumps(saved, indent=2))
     print(report(saved["rows"], saved.get("model", "")))
 
@@ -1103,7 +1101,7 @@ def cmd_rescore(args: argparse.Namespace) -> None:
             lc = row["librechat"]
             case = cases[row["id"]]
             text = lc["answer"] or lc["error"]
-            row["use_case"] = case.get("use_case", "")
+            row["use_case"] = case["use_case"]
             lc.update(score_answer(case, lc))
             if args.citations:
                 lc.update(answer_citations(st, case, people[case["person"]], text))

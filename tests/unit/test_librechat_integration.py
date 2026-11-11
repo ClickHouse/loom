@@ -1157,6 +1157,7 @@ def test_native_only_takes_the_cases_current_use_case_labels(monkeypatch, tmp_pa
     q = _qualify()
     side = _saved_side("ok")
     monkeypatch.setattr(q, "baseline", lambda st, case, person: side)
+    monkeypatch.setattr(q, "require_docs", lambda st, people, cases: None)
     out = tmp_path / "results.json"
     row = {"id": "help-revoke-token", "kind": "help", "librechat": side, "native": side}
     out.write_text(json.dumps({"model": "m", "bridge": True, "rows": [row]}))
@@ -1357,9 +1358,10 @@ def test_a_server_without_docs_stops_the_help_checks(monkeypatch):
         q.check_help_citations(st, {"namespace": "acme-handbook"}, {}, "[help:a.md]")
     monkeypatch.setattr(q, "loom_call", lambda *a: (200, {"available": False, "hits": []}, 0.0))
     st = {"loom_url": "u", "tokens": {"alice": "t"}}
-    person = {"name": "alice", "org": "acme", "namespace": "acme-handbook"}
+    people = {p["name"]: p for p in q.load("fixture.json")["people"]}
+    # A data case can cite a help page too, so even a run of data cases stops first.
     with pytest.raises(SystemExit, match="no documentation"):
-        q.baseline(st, _case("help-revoke-token"), person)
+        q.require_docs(st, people, [_case("memory-freeze")])
 
 
 def test_a_run_with_help_cases_checks_for_docs_before_any_answer(monkeypatch):
