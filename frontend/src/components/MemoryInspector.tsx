@@ -1399,7 +1399,6 @@ export function MemoryInspector({
                   }`,
                 }}
                 reason={formOpen ? "Save or cancel the edit first." : null}
-                namespace={identity.namespace}
                 leave={() => {
                   leaving.current = true;
                   onClose();

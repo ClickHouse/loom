@@ -16,8 +16,8 @@ export function clip(text: string, max = 200): string {
 /** Free text for the context line (an agent, a title, a query), clipped and written as a
  *  JSON string literal: text written by someone else stays one delimited value, its quotes
  *  escaped, whatever it holds. */
-export function quoted(text: string, max = 200): string {
-  return JSON.stringify(clip(text, max));
+export function quoted(text: string): string {
+  return JSON.stringify(clip(text));
 }
 
 /** An identifier for the context line (a memory key, a source URI): written as a JSON string
