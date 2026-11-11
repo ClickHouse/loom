@@ -45,6 +45,7 @@ def _declared(orgs: Iterable[str | None] | None, org_free: str) -> tuple[str, ..
 async def check_orgs(orgs: Iterable[str]) -> None:
     """Refuse, before the command does anything, an org this cell does not hold."""
     from server.auth import tenancy
+    from server.code.domain.index import repos
     from server.core import cell, pg_profile
     from server.core.errors import BackendUnavailableError, WrongCellError
     from server.settings import settings
@@ -52,11 +53,11 @@ async def check_orgs(orgs: Iterable[str]) -> None:
     orgs = tuple(orgs)
     if not settings.cell or not orgs:
         return
+    # Boot hands the code orgs' reader in for a server; a CLI process does it here, so
+    # its fingerprint is the one its server reports.
+    cell.set_code_orgs(repos.operator_orgs)
     # A CLI process has not read the cell's rows. They decide what the transports decide:
     # whether this process may serve at all, and whether a new org is recorded or refused.
-    from server.code.domain.index import repos
-
-    cell.set_code_orgs(repos.operator_orgs)
     try:
         cell.set_deployment_id(await pg_profile.deployment_id())
     except Exception as e:  # noqa: BLE001 — an unread Postgres refuses the command

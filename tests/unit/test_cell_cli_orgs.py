@@ -29,6 +29,7 @@ def _cell_state(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cell, "_deployment_id", "")
     monkeypatch.setattr(cell, "_memo", None)
     monkeypatch.setattr(cell, "_view", cell._View())
+    monkeypatch.setattr(cell, "_code_orgs", None)
 
 
 def _sources() -> list[Path]:
@@ -175,15 +176,27 @@ def test_an_unread_tenancy_refuses_with_its_message(monkeypatch: pytest.MonkeyPa
 
 
 def test_a_cli_counts_the_code_orgs_as_its_server_does(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Its fingerprint holds the code config's orgs, so its placement call is accepted
-    as the server's would be."""
+    """A cell's accepted fingerprint holds its code orgs (its server counts them from
+    boot): a CLI process counts them too, so its fingerprint matches and the gate lets
+    it through."""
     from server.code.domain.index import repos
 
-    _serving_cell(monkeypatch)
+    monkeypatch.setattr(settings, "cell", "eu-1")
+    monkeypatch.setattr(pg_profile, "deployment_id", AsyncMock(return_value="d1"))
+    monkeypatch.setattr(repos, "operator_orgs", lambda: {"beta"})
+    monkeypatch.setattr(cell, "_code_orgs", repos.operator_orgs)
+    mine = cell.fingerprint("d1")
+    assert "beta" in mine["configured_orgs"]
+    accepted = cell.as_value(mine)
     monkeypatch.setattr(cell, "_code_orgs", None)
+    first = {"is_first": True, "cell": "eu-1"}
+    own = {"current_fp": accepted, "next_fp": None}
+    monkeypatch.setattr(
+        pg, "fetchrow", AsyncMock(return_value={"first": first, "mode": "enforced", "own": own})
+    )
     monkeypatch.setattr(tenancy, "ensure_held", AsyncMock(return_value=None))
     asyncio.run(_ch.check_orgs(["acme"]))
-    assert cell._code_orgs is repos.operator_orgs
+    assert cell.gate_reason() == ""
 
 
 def test_a_dry_run_declares_no_org() -> None:
