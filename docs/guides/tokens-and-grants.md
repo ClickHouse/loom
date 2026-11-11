@@ -593,8 +593,8 @@ acted for: it is a token's own subject, and its grants must not outlive the toke
 minted under a subject without `sa:` (`loom mint-token --subject support-bot`) reads to the
 server like a person's, so a trusted caller may act for it until `loom revoke-token --subject`
 revokes it outright: mint a token that holds direct grants under `sa:<name>`. A cutoff
-(`--issued-before`) ends that subject's own tokens but not a trusted caller's calls for
-it. Empty disables the header. With self-signup open, act for email subjects (a sign-up
+(`--issued-before`) ends a subject's own tokens but not a trusted caller's calls for a
+subject it still acts for (a person, or a bot's agent). Empty disables the header. With self-signup open, act for email subjects (a sign-up
 name cannot spell one) or grant each handle in `LOOM_SELF_SIGNUP_ORG` before acting for
 it: a handle nothing reserves there is open to sign-up, and acting for it from a service
 account or another org grants nothing there.

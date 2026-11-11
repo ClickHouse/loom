@@ -454,9 +454,8 @@ grants belong to the token and must end with it, and a token ends in ways its gr
 record (an expiry, a revoke by `jti`, a cutoff on its maker or on itself), so a trusted
 caller acting for one would keep reaching what a dead token held. A token minted under a
 subject without `sa:` cannot be told from a person's, and is acted for until its subject is
-revoked outright. A request that names no
-org, from a caller whose token is for every org, has no org to read spellings in, so only
-the subject as sent is checked. An unverified email is not held: revoking a stranger's
+revoked outright. A request that names no org, from a caller whose token is for every org,
+has no org to read spellings in, so only the subject as sent is checked. An unverified email is not held: revoking a stranger's
 account that typed someone's email does not refuse acting for that email. Sign-up refuses
 a trusted caller's own subject as a name (the sign-up rule under roles above). Sign-up
 refuses a handle the caller acts for as a new name only once a row reserves it there (the
