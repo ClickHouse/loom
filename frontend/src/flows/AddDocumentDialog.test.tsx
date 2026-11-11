@@ -18,13 +18,17 @@ vi.mock("../api", async (importOriginal) => ({
   cancelIngestion: vi.fn(),
   listKnowledge: vi.fn(),
 }));
+vi.mock("../lib/errorWords", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/errorWords")>()),
+  toastCommitted: vi.fn(),
+}));
 vi.mock("../components/Toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../components/Toast")>()),
   toast: vi.fn(),
   toastError: vi.fn(),
-  toastCommitted: vi.fn(),
 }));
-import { toast, toastCommitted, toastError } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
+import { toastCommitted } from "../lib/errorWords";
 import {
   type KnowledgeUpload,
   addKnowledge,

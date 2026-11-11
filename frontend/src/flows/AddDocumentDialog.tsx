@@ -5,13 +5,13 @@ import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { addKnowledge, cancelIngestion, type Identity, type IngestCancelResult } from "../api";
-import { toast, toastCommitted, toastError } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
+import { humanizeError, toastCommitted } from "../lib/errorWords";
 import { isPublicationPending } from "../lib/errors";
 import { DropZone } from "../components/ui/DropZone";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { foldersNotRead, type PickedEntry } from "../lib/batchIngest";
-import { humanizeError } from "../lib/errorWords";
 import {
   FollowLost,
   fileVerdict,

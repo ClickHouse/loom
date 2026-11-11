@@ -44,11 +44,14 @@ const MOVED: MemoryMoveResult = {
 };
 
 // The toast store has no viewport in this render; assert the call.
+vi.mock("../lib/errorWords", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/errorWords")>()),
+  toastCommitted: vi.fn(),
+}));
 vi.mock("./Toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./Toast")>()),
   toast: vi.fn(),
   toastError: vi.fn(),
-  toastCommitted: vi.fn(),
   ToastViewport: () => null,
 }));
 vi.mock("./ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true), ConfirmViewport: () => null }));
@@ -89,7 +92,8 @@ vi.mock("../api", async (importOriginal) => {
 });
 import { deleteMemory, getMemory, moveMemory, pinMemory, setMemory } from "../api";
 import { ApiError } from "../lib/errors";
-import { toast, toastCommitted } from "./Toast";
+import { toast } from "./Toast";
+import { toastCommitted } from "../lib/errorWords";
 
 const row = (namespace: string, role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
   namespace,

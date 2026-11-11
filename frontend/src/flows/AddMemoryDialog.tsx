@@ -5,9 +5,9 @@ import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { setMemory, type Identity } from "../api";
 import { sharedTagVocabulary } from "../lib/sharedReads";
-import { humanizeError } from "../lib/errorWords";
+import { humanizeError, toastCommitted } from "../lib/errorWords";
 import { isPublicationPending } from "../lib/errors";
-import { toast, toastCommitted } from "../components/Toast";
+import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, fieldError } from "../components/ui";
 

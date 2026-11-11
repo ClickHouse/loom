@@ -33,12 +33,16 @@ vi.mock("../api", async (importOriginal) => {
 vi.mock("../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
 // `toast` is silenced; `toastError` and the viewport stay real, so a failure's
 // rendered text (with its request id) is what a test reads.
+vi.mock("../lib/errorWords", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/errorWords")>()),
+  toastCommitted: vi.fn(),
+}));
 vi.mock("../components/Toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../components/Toast")>()),
   toast: vi.fn(),
-  toastCommitted: vi.fn(),
 }));
-import { toast, toastCommitted, ToastViewport } from "../components/Toast";
+import { toast, ToastViewport } from "../components/Toast";
+import { toastCommitted } from "../lib/errorWords";
 import { ingestClock } from "../lib/fileIngest";
 import {
   type KnowledgeUpload,

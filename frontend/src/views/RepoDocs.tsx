@@ -17,11 +17,11 @@ import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
 import { deleteKnowledge, knowledgeReads, listKnowledge, type KnowledgeEntry } from "../api";
 import { ApiError } from "../lib/errors";
-import { humanizeError } from "../lib/errorWords";
+import { committedAnyway, humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
 import { confirmAction } from "../components/ConfirmDialog";
 import { Skeleton } from "../components/Skeleton";
-import { committedAnyway, toast } from "../components/Toast";
+import { toast } from "../components/Toast";
 import { ListTime, LoadingSkeleton } from "../components/ui";
 
 const RepoDocAddDialog = lazy(() => import("../flows/RepoDocDialogs").then((m) => ({ default: m.RepoDocAddDialog })));

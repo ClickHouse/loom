@@ -3,7 +3,8 @@
 import { act, cleanup, render, screen } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../lib/errors";
-import { ToastViewport, committedAnyway, errorToastMs, toastError, toastErrorLine } from "./Toast";
+import { ToastViewport, errorToastMs, toastError, toastErrorLine } from "./Toast";
+import { committedAnyway } from "../lib/errorWords";
 
 afterEach(() => {
   cleanup();

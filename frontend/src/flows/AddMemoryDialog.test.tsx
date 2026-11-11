@@ -14,13 +14,17 @@ vi.mock("../lib/sharedReads", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/sharedReads")>()),
   sharedTagVocabulary: vi.fn(async () => []),
 }));
+vi.mock("../lib/errorWords", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/errorWords")>()),
+  toastCommitted: vi.fn(),
+}));
 vi.mock("../components/Toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../components/Toast")>()),
   toast: vi.fn(),
-  toastCommitted: vi.fn(),
 }));
 import { setMemory } from "../api";
-import { toast, toastCommitted } from "../components/Toast";
+import { toast } from "../components/Toast";
+import { toastCommitted } from "../lib/errorWords";
 import { ApiError } from "../lib/errors";
 import { AddMemoryDialog } from "./AddMemoryDialog";
 

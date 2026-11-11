@@ -87,26 +87,6 @@ export function toast(msg: string, kind: ToastKind = "ok", opts: ToastOpts = {})
   _listeners.forEach((l) => l(item));
 }
 
-/** The line for a write that committed with only lists and search behind
- *  (`PUBLICATION_PENDING`), with its request id and an error's reading time. `msg` is a
- *  page's own line for it (what was done, what to do next); `opts` adds a key or an action. */
-export function toastCommitted(
-  err: unknown,
-  msg: string = PUBLICATION_PENDING,
-  opts: Pick<ToastOpts, "key" | "action"> = {},
-): void {
-  toastWithId(msg, "info", err, opts);
-}
-
-/** For a write's catch: toasts the failure as `toastError` does and says whether the write
- *  committed anyway (`PUBLICATION_PENDING`: only lists and search lag). On true the caller
- *  goes on as after a success, so the page shows the write as made and never invites a
- *  repeat; on false it handles the failure. */
-export function committedAnyway(context: string, err: unknown): boolean {
-  toastError(context, err);
-  return isPublicationPending(err);
-}
-
 /** An error toast for a thrown value: `context: <the server's words>` (the context is the
  *  lead-in, so humanizeError's own is left out) with the request id underneath when the
  *  failure carried one. It stays up long enough to read: 8 s plus 50 ms a character, at
@@ -116,7 +96,7 @@ export function toastError(context: string, err: unknown, opts: { read?: boolean
   // "<context>:" in front of it. Said before the wording loads, so a chunk that cannot load
   // never turns it into "failed".
   if (isPublicationPending(err)) {
-    toastCommitted(err);
+    toastWithId(PUBLICATION_PENDING, "info", err);
     return;
   }
   // The wording is a lazy chunk (the boot chunk's budget), loaded by the viewport soon

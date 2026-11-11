@@ -20,6 +20,7 @@ import {
   TIMED_OUT,
 } from "./errors";
 import { errorRequestId } from "./format";
+import { toastError, toastWithId, type ToastOpts } from "../components/Toast";
 
 /** Sentences for the server's error codes (`server/core/errors.py` and the
  *  `HTTPException` details in `server/main.py`), kept only where the code says more than
@@ -291,4 +292,27 @@ export function errorLine(err: unknown, opts: { read?: boolean } = {}): string {
   const rid = errorRequestId(err);
   const text = humanizeError(err, { bare: true, read: opts.read === true });
   return rid && !text.includes(rid) ? withTail(text, `Request id ${rid}.`) : text;
+}
+
+// A write's catch when the server answered `PUBLICATION_PENDING` (the write committed; only
+// lists and search lag): here, beside the wording the pages that write already load, so the
+// boot chunk carries none of it.
+/** The line for a write that committed with only lists and search behind
+ *  (`PUBLICATION_PENDING`), with its request id and an error's reading time. `msg` is a
+ *  page's own line for it (what was done, what to do next); `opts` adds a key or an action. */
+export function toastCommitted(
+  err: unknown,
+  msg: string = PUBLICATION_PENDING,
+  opts: Pick<ToastOpts, "key" | "action"> = {},
+): void {
+  toastWithId(msg, "info", err, opts);
+}
+
+/** For a write's catch: toasts the failure as `toastError` does and says whether the write
+ *  committed anyway (`PUBLICATION_PENDING`: only lists and search lag). On true the caller
+ *  goes on as after a success, so the page shows the write as made and never invites a
+ *  repeat; on false it handles the failure. */
+export function committedAnyway(context: string, err: unknown): boolean {
+  toastError(context, err);
+  return isPublicationPending(err);
 }
