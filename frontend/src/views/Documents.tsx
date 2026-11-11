@@ -171,7 +171,8 @@ export function Documents() {
   const opensFirst = useMemo(() => {
     const rows = collections.rows;
     if (picked.namespace || !rows?.length) return null;
-    return rows.find((c) => c.personal) ?? treeOrder(rows)[0].c;
+    // Tree order puts the person's own first.
+    return treeOrder(rows)[0].c;
   }, [picked.namespace, collections.rows]);
   const fallback = ownShelf
     ? `showing ${picked.namespace}`

@@ -180,7 +180,10 @@ describe("CollectionsInside", () => {
   it("lists the collections shared with the caller apart, each with where it sits", () => {
     const rows = [
       entry("col-lib", { title: "Library" }),
-      entry("col-r", { parent: "col-lib", title: "Research", role: "viewer" }),
+      // Shared at the top: no path. (A child inherits its parents' grants, so a shared one
+      // inside one's own is rare: a scoped token's claim.)
+      entry("col-r", { title: "Research", role: "viewer" }),
+      entry("col-claimed", { parent: "col-lib", title: "Claimed", role: "viewer" }),
       entry("col-r-notes", { parent: "col-r", title: "Notes", role: "viewer" }),
       entry("col-far", { parent: "col-hidden", title: "Far", role: "writer" }),
       // Shared as admin: the caller's to manage, so with their own.
@@ -188,12 +191,13 @@ describe("CollectionsInside", () => {
       entry("col-me-1a2b", { personal: true, role: "admin" }),
     ];
     // A shared one's children are inside it, not listed again.
-    expect(sharedWithMe(rows).map((c) => c.namespace)).toEqual(["col-far", "col-r"]);
+    expect(sharedWithMe(rows).map((c) => c.namespace)).toEqual(["col-claimed", "col-far", "col-r"]);
     expect(collectionsInside(rows, null).map((c) => c.namespace)).toEqual(["col-lib", "col-ops"]);
     render(<CollectionsInside rows={rows} current={null} onPick={() => {}} />);
     const shared = screen.getByRole("region", { name: /Shared with you/ });
     expect(within(shared).getByRole("link", { name: "Research" })).toBeInTheDocument();
-    expect(within(shared).getByText("Library › Research")).toBeInTheDocument();
+    expect(within(shared).getByRole("link", { name: "Research" }).parentElement?.textContent).toBe("ResearchViewer");
+    expect(within(shared).getByText("Library › Claimed")).toBeInTheDocument();
     expect(within(shared).getByText("… › Far")).toBeInTheDocument();
     expect(within(shared).queryByRole("link", { name: "Ops" })).toBeNull();
     const own = screen.getByRole("region", { name: /^Collections/ });

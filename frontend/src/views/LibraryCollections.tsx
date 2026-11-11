@@ -317,7 +317,7 @@ export function LibraryCollections({
       </div>
       {collections.truncated && (
         <p className="text-xs text-text-muted">
-          {`Only the first ${fmtInt(COLLECTIONS_LISTED)} collections are listed here; a link to a later one ${namespace === null ? "asks to pick another" : "shows the namespace"}.`}
+          {`Only the first ${fmtInt(COLLECTIONS_LISTED)} collections are listed here; a link to a later one does not open it.`}
         </p>
       )}
       {/* The namespace's documents still show: a note, not a second alert beside the list's. */}

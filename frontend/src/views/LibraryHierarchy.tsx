@@ -2,9 +2,9 @@
  * Where a collection sits, on the Library: the path to it from the top, on one line before the
  * select (the parent a link, the ones above it folded; on a phone, one button back to the
  * parent), and the collections inside the one shown, or on "My files" and on a namespace the
- * top-level ones and those shared with the caller. The tree is the server's (`collection.list` gives each collection's
- * parent); in the path, a parent the caller cannot read is a dots button, never a link, and
- * gives its address when tapped.
+ * caller's own top-level ones and those shared with them. The tree is the server's
+ * (`collection.list` gives each collection's parent); in the path, a parent the caller cannot
+ * read is a dots button, never a link, and gives its address when tapped.
  */
 import {
   type ComponentPropsWithoutRef,

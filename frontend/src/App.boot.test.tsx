@@ -286,7 +286,7 @@ describe("boot order", () => {
     expect(useStore.getState().identity?.namespace).toBe("joined");
   });
 
-  it("opens the Library on a code namespace, reading only the collections it lists", async () => {
+  it("opens a code-only account's Library on no namespace, and there the collection listed", async () => {
     const CODE = "code-repo";
     localStorage.setItem("loom_token_v1", jwt({ sub: "alice", org: ORG, namespaces: [CODE], roles: ["ADMIN"] }));
     localStorage.setItem("loom_kinds_v1", JSON.stringify({ [CODE]: "code" }));
@@ -315,7 +315,7 @@ describe("boot order", () => {
     );
     render(<App />);
     await until(() => order.includes("collection.list"));
-    // The code namespace holds no documents: the Library opens the collection listed instead.
+    // No memory namespace to show: the Library opens the collection listed instead.
     await until(() => new URLSearchParams(window.location.search).get("collection") === "col-q3");
     await until(() => order.includes("knowledge.list"));
     const reads = vi.mocked(fetch).mock.calls.filter(([u]) => String(u).includes("knowledge.list"));
