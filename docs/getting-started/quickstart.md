@@ -299,11 +299,12 @@ In single-user mode a token is optional. Minting one anyway keeps your scripts w
 when auth is turned on.
 
 - **Dashboard:** **Settings → Tokens → New token**. By default the token reads every
-  namespace and unrestricted repository you belong to, but no collection, and saves to the
-  namespace you are in. _Only what you choose_ limits it to the namespaces, collections
-  and repositories you tick (none at first); the ticked ones are searched in the order
-  listed, and you change it with a row's arrows, or on a desktop by dragging the row's
-  grip. The result shows the token once, with the setup for your MCP client or a script.
+  namespace and repository you belong to (a restricted repository only when you add it),
+  but no collection, and saves to the namespace you are in. _Only what you choose_ limits
+  it to the namespaces, collections and repositories you tick (none at first); the ticked
+  ones are searched in the order listed, and you change it with a row's arrows, or on a
+  desktop by dragging the row's grip. The result shows the token once, with the setup for
+  your MCP client or a script.
 - **CLI, as the operator:** run it inside the server container, which holds the signing
   secret:
 
