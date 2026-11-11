@@ -521,9 +521,11 @@ def check_citations(
     for key, version in memory_mentions(st, text):
         if key not in current:
             cited.append(key)
-            # A key that is not there is the answer's fault: it is marked invalid.
-            code, out, _ = loom_call(st["loom_url"], scorer, "memory.get", body(key))
-            ok = code == 200 and out.get("found", True) and out.get("version")
+            # A key that is not there (found: false) is the answer's fault and is marked
+            # invalid; a read that fails says nothing about it, so scorer_read waits out a
+            # 429 and stops the run on anything else.
+            out = scorer_read(st, scorer, "memory.get", body(key))
+            ok = out.get("found", True) and out.get("version")
             current[key] = int(out["version"]) if ok else None
             if current[key] is None:
                 invalid.append(key)
@@ -600,7 +602,7 @@ DOCS = HERE.parents[2] / "docs"
 SETTING_RE = re.compile(r"\bLOOM_[A-Z0-9_]*[A-Z0-9](?![A-Z0-9_])")
 # A settings family a docs page writes with placeholders (`LOOM_RETENTION_<TABLE>_DAYS`,
 # `LOOM_RETENTION_*`).
-SETTING_FAMILY_RE = re.compile(r"\bLOOM_[A-Z0-9_]*(?:(?:<[A-Z]+>|\*)[A-Z0-9_]*)+")
+SETTING_FAMILY_RE = re.compile(r"\bLOOM_[A-Z0-9_]*(?:(?:<[A-Z]+>|(?<=_)\*)[A-Z0-9_]*)+")
 # The kinds whose right answer is an abstention: from the namespace, or from the docs.
 ABSTAIN_KINDS = ("abstain", "help_abstain")
 

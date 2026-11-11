@@ -1291,3 +1291,35 @@ def test_a_case_whose_direct_path_cannot_cite_leaves_the_count_either_way():
     assert q.native_score(case, 503, {"detail": "x"})["cited_expected"] is None
     two = {"rows": [{"version": 2}, {"version": 1}]}
     assert q.native_score(case, 200, two)["cited_expected"] is None
+
+
+def test_a_failed_memory_read_stops_the_check_rather_than_marking_the_key(monkeypatch):
+    q = _qualify()
+    calls = []
+
+    def fake_call(base, token, op, body):
+        calls.append(op)
+        return (
+            (429, {"detail": {"retry_after_s": 0}}, 0.0)
+            if len(calls) == 1
+            else (
+                200,
+                {"found": True, "version": 1793745407448901606},
+                0.0,
+            )
+        )
+
+    monkeypatch.setattr(q, "loom_call", fake_call)
+    monkeypatch.setattr(q.time, "sleep", lambda s: None)
+    st = {"loom_url": "u", "tokens": {"scorer:acme-handbook": "t"}}
+    person = {"org": "acme", "namespace": "acme-handbook"}
+    text = "`policy/deploy/freeze` (version 1793745407448901606)"
+    assert q.check_citations(st, person, text) == (["policy/deploy/freeze"], [])
+    monkeypatch.setattr(q, "loom_call", lambda *a: (503, {"detail": "down"}, 0.0))
+    with pytest.raises(SystemExit):
+        q.check_citations(st, person, "`policy/deploy/other`")
+
+
+def test_markdown_bold_is_no_settings_family():
+    q = _qualify()
+    assert q.SETTING_FAMILY_RE.findall("**LOOM_COLOUR** and LOOM_CH_*") == ["LOOM_CH_*"]
