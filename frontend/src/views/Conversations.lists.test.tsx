@@ -8,8 +8,9 @@ import { Conversations } from "./Conversations";
 
 // Conversations against the list rules: a thread is named by its title, else by what the
 // user said, else "Untitled thread" — never its id; a search shows one row per thread with
-// up to three of its matching turns, the matched words in 600 weight; the recording switch
-// sits with the page title; a failed read says so with a Retry and no count.
+// up to three of its matching turns, the matched words in 600 weight; the Record
+// conversations switch sits with the page title; a failed read says so with a Retry and
+// no count.
 
 const api = vi.hoisted(() => ({
   listConversationThreads: vi.fn(),
@@ -105,7 +106,7 @@ describe("Conversations list", () => {
     expect(row.querySelector("time")).not.toBeNull();
   });
 
-  it("puts the recording switch with the page title, not under the toolbar", async () => {
+  it("puts the Record conversations switch with the page title, not under the toolbar", async () => {
     render(<Conversations />);
     const recording = await screen.findByRole("switch", { name: "Record conversations" });
     const header = screen.getByRole("heading", { level: 1, name: "Conversations" }).closest("header, div");

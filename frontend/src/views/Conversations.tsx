@@ -139,9 +139,10 @@ export function Conversations() {
   );
   useKeyboard(keys);
 
-  // Hits, threads, the agent filter and the recording switch belong to the namespace
-  // they were read for; a switch clears them during render, so B's first read asks for its
-  // own first page under every agent, and B never shows A's rows or toggles A's value.
+  // Hits, threads, the agent filter and the Record conversations switch belong to the
+  // namespace they were read for; a switch clears them during render, so B's first read
+  // asks for its own first page under every agent, and B never shows A's rows or toggles
+  // A's value.
   const namespaceKey = `${identity.org}/${identity.namespace}`;
   const [stateFor, setStateFor] = useState(namespaceKey);
   if (stateFor !== namespaceKey) {
@@ -219,7 +220,8 @@ export function Conversations() {
     },
     [identity.org, identity.namespace, threadsRetry, threadPage, agentFilter],
   );
-  // The recording switch is the namespace's, read once per namespace, not per page.
+  // The Record conversations switch is the namespace's, read once per namespace, not
+  // per page.
   useAbortableEffect(
     (signal, live) => {
       getNamespace(identity, { signal })
