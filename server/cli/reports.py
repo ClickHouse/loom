@@ -41,7 +41,8 @@ def _cmd_entity_export(args: argparse.Namespace) -> int:
     text = run_connected(
         lambda ch: export_entity_graph(
             ch, org=args.org, namespace=args.namespace, fmt=args.format, live_only=not args.all
-        )
+        ),
+        org_free="reads",
     )
     if args.output and args.output != "-":
         with open(args.output, "w", encoding="utf-8") as fh:
@@ -93,7 +94,7 @@ def _cmd_audit_namespace(args: argparse.Namespace) -> int:
             print(render_table(out))
         return 0 if out.healthy else 1
 
-    return run_connected(_go)
+    return run_connected(_go, org_free="reads")
 
 
 def _add_audit_namespace_parser(sub: Any) -> None:
@@ -182,7 +183,7 @@ def _cmd_deploy_delta(args: argparse.Namespace) -> int:
             top=args.top,
         )
 
-    delta = run_connected(_go)
+    delta = run_connected(_go, org_free="reads")
     print(render(delta), end="")
     if args.json:
         with open(args.json, "w", encoding="utf-8") as fh:
@@ -214,7 +215,7 @@ def _cmd_mentor(args: argparse.Namespace) -> int:
             print(render_table(out))
         return 0 if out.healthy else 1
 
-    return run_connected(_go)
+    return run_connected(_go, org_free="reads")
 
 
 def _add_mentor_parser(sub: Any) -> None:

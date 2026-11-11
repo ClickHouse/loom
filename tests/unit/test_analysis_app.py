@@ -534,7 +534,7 @@ def test_ch_setups_analyst_line_advises_the_printed_sql_only_where_no_fix_fits(
         raise error
 
     monkeypatch.setattr(app, "rewrite", fail)
-    monkeypatch.setattr(_ch, "run_connected", lambda fn: asyncio.run(fn(None)))
+    monkeypatch.setattr(_ch, "run_connected", lambda fn, **_declared: asyncio.run(fn(None)))
     ch_setup._write_analyst()
     line = capsys.readouterr().out.strip()
     assert line.startswith("· loom_analyst (insights.query): not written (")

@@ -238,6 +238,8 @@ class _ConnectingCh(_Ch):
         self.read_timeout_at_connect = 0
         self.disconnected = False
 
+    connected = False
+
     async def connect(self) -> None:
         from server.core.ch import _driver_read_timeout_s
 

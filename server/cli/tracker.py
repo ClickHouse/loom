@@ -10,7 +10,7 @@ import sys
 from typing import Any
 
 from server.cli._apply import add_apply_flags
-from server.cli._ch import run_connected
+from server.cli._ch import dry_run_orgs, run_connected
 
 # ----------------------------------------------------------------------
 # loom tracker-probe — first contact with the tracker source
@@ -103,7 +103,7 @@ def _cmd_tracker_dupcheck_fit(args: argparse.Namespace) -> int:
         await qa_intel.close()
         return 0 if out.status in ("written", "dry_run") else 1, fit
 
-    code, fit = run_connected(_run)
+    code, fit = run_connected(_run, orgs=dry_run_orgs(args))
     if args.out and fit:
         pathlib.Path(args.out).write_text(json.dumps(fit, indent=1, default=str))
     return code
@@ -160,7 +160,7 @@ def _cmd_tracker_embed_reset(args: argparse.Namespace) -> int:
             print(f"{args.namespace}/{kind}: cursor {before} → cleared")
         return 0
 
-    return run_connected(_run)
+    return run_connected(_run, orgs=dry_run_orgs(args))
 
 
 def register_tracker_embed_reset(sub: Any) -> None:

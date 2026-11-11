@@ -365,9 +365,11 @@ async def test_loom_code_init_clones_the_mirror_the_way_the_worker_does(
     monkeypatch.setattr("server.settings.settings.code_repos_shared_gid", tmp_path.stat().st_gid)
     monkeypatch.setattr(cm, "_repo_cfg", lambda _args: cfg)
     monkeypatch.setattr(sandbox, "run_job", clone)
-    monkeypatch.setattr("server.core.ch.get_client", lambda: SimpleNamespace(connect=_stop))
+    monkeypatch.setattr(
+        "server.core.ch.get_client", lambda: SimpleNamespace(connected=False, connect=_stop)
+    )
     with pytest.raises(_Stop):  # stops after the clone, before any ClickHouse write
-        await cm._init(SimpleNamespace())
+        await cm._init(SimpleNamespace(org="o", namespace="ns"))
     assert modes == [0o2770] and git_dir.stat().st_mode & 0o7777 == 0o2770
 
 
@@ -388,7 +390,7 @@ async def test_a_failed_loom_code_init_clone_leaves_no_mirror(
     monkeypatch.setattr("server.settings.settings.code_bootstrap_clone_timeout_s", 1800.0)
     monkeypatch.setattr(cm, "_repo_cfg", lambda _args: cfg)
     monkeypatch.setattr(sandbox, "run_job", clone)
-    assert await cm._init(SimpleNamespace()) == 1
+    assert await cm._init(SimpleNamespace(org="o", namespace="ns")) == 1
     out = capsys.readouterr()
     assert "at most 1800s, code_bootstrap_clone_timeout_s" in out.out  # the time bound
     assert "git clone failed (exit 128)" in out.err
@@ -408,7 +410,7 @@ async def test_loom_code_init_is_refused_where_the_sandbox_is_required_and_canno
     monkeypatch.setattr(cm, "_repo_cfg", lambda _args: cfg)
     monkeypatch.setattr(sandbox, "sandbox_available", lambda: False)
     monkeypatch.setattr("server.settings.settings.code_sandbox_required", True)
-    assert await cm._init(SimpleNamespace()) == 1
+    assert await cm._init(SimpleNamespace(org="o", namespace="ns")) == 1
     assert SANDBOX_REQUIRED_REFUSAL in capsys.readouterr().err
     assert not git_dir.exists()
 
@@ -430,7 +432,7 @@ async def test_a_timed_out_loom_code_init_clone_names_the_bound(
 
     monkeypatch.setattr(cm, "_repo_cfg", lambda _args: cfg)
     monkeypatch.setattr(sandbox, "run_job", clone)
-    assert await cm._init(SimpleNamespace()) == 1
+    assert await cm._init(SimpleNamespace(org="o", namespace="ns")) == 1
     assert "clone timed out (code_bootstrap_clone_timeout_s)" in capsys.readouterr().err
 
 

@@ -765,6 +765,8 @@ def test_cli_command_prints_the_table_or_json_and_exits_on_criticals(
         return sample
 
     class _Client:
+        connected = False
+
         async def connect(self) -> None: ...
         async def disconnect(self) -> None: ...
 

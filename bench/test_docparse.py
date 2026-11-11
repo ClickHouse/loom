@@ -661,7 +661,7 @@ def test_decision_counts_come_from_where_extraction_grounds_its_quotes(
 
     monkeypatch.setattr(dx, "ground", ground)
     monkeypatch.setattr(app, "extract_document", extract_document)
-    monkeypatch.setattr(_ch, "run_connected", lambda run: asyncio.run(run(None)))
+    monkeypatch.setattr(_ch, "run_connected", lambda run, **_declared: asyncio.run(run(None)))
     gold = {"a.pdf": S.words("first the queue drains first, then the rest")}
     files = ["a.pdf", "b.pdf"]
     states = {"new": {"a.pdf": "ready", "b.pdf": "failed"}}  # b.pdf: an earlier run's text

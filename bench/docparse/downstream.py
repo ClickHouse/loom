@@ -531,7 +531,7 @@ def decisions(
 
     dx.ground = counted  # the extractor reads it off the module at each call
     try:
-        run_connected(_run)
+        run_connected(_run, org_free="a benchmark against its own disposable stack")
     finally:
         dx.ground = real
     out: dict[str, dict[str, Any]] = {}

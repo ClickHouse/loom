@@ -176,6 +176,8 @@ def test_reextract_token_falls_back_to_the_saved_token(tmp_path, monkeypatch) ->
         return type("R", (), {"failed": 0, "sessions": 1})()
 
     class _CH:
+        connected = False
+
         async def connect(self): ...
         async def disconnect(self): ...
 

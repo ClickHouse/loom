@@ -1572,7 +1572,7 @@ def test_the_erasure_cli_refuses_a_bucket_without_boto3(
     assert hygiene._cmd_namespaces_gc(argparse.Namespace(erase=True)) == 2
     assert "needs boto3" in capsys.readouterr().err
     # A read-only re-verify still runs: its census lists the bucket apart.
-    monkeypatch.setattr(hygiene, "run_connected", lambda run: 0)
+    monkeypatch.setattr(hygiene, "run_connected", lambda run, **_declared: 0)
     assert hygiene._cmd_erasure_re_verify(argparse.Namespace(resume=False, erase=False)) == 0
 
 

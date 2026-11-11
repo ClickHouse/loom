@@ -110,7 +110,9 @@ class _Keyring:
 
 def _keyring_rows(monkeypatch: pytest.MonkeyPatch, rows: list[dict[str, Any]]) -> None:
     """`loom mint-token` reads this keyring instead of ClickHouse."""
-    monkeypatch.setattr(access, "run_connected", lambda run: asyncio.run(run(_Keyring(rows))))
+    monkeypatch.setattr(
+        access, "run_connected", lambda run, **_declared: asyncio.run(run(_Keyring(rows)))
+    )
     monkeypatch.setattr(keyring, "_view", keyring._View())
 
 
@@ -174,7 +176,7 @@ def test_an_offline_mint_signs_with_the_root_secret(
 ) -> None:
     _auth_on_with(monkeypatch, "a-real-secret-that-is-not-the-default")
 
-    def _unreachable(run: Any) -> None:
+    def _unreachable(run: Any, **_declared: object) -> None:
         raise ConnectionError("no clickhouse")
 
     monkeypatch.setattr(access, "run_connected", _unreachable)
@@ -318,7 +320,7 @@ def test_a_platform_admin_mint_for_another_deployment_is_refused_as_such(
     from server.cli import access
     from server.core.pg import AuthorityMismatch
 
-    def _refuse(_run: object) -> bool:
+    def _refuse(_run: object, **_declared: object) -> bool:
         raise AuthorityMismatch("this deployment's memory authority is postgres")
 
     monkeypatch.setattr(access, "run_connected", _refuse)
@@ -333,7 +335,7 @@ def test_a_revocation_for_another_deployment_is_refused_as_such(
     from server.cli import access, main
     from server.core.pg import AuthorityMismatch
 
-    def _refuse(_run: object) -> int:
+    def _refuse(_run: object, **_declared: object) -> int:
         raise AuthorityMismatch("this deployment's memory authority is postgres")
 
     monkeypatch.setattr(access, "run_connected", _refuse)

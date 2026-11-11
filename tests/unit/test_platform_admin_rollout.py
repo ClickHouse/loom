@@ -88,7 +88,7 @@ def test_cli_admin_mint_reads_the_fleet_before_minting(
     monkeypatch.setattr(instances, "live_rows", lambda: [{"schema_version": 76}])
     monkeypatch.setattr(instances, "read_live", read_live)
     monkeypatch.setattr(keyring, "load_for_offline_mint", lambda **kw: None)
-    monkeypatch.setattr(access, "run_connected", lambda run: asyncio.run(run(None)))
+    monkeypatch.setattr(access, "run_connected", lambda run, **_declared: asyncio.run(run(None)))
     monkeypatch.setattr(access, "_audit_platform_admin_mint", lambda *a: True)
     monkeypatch.setattr(jwt, "mint_token", mint)
     code = cli.main(
@@ -118,7 +118,7 @@ def test_cli_admin_mint_refuses_an_unread_fleet(monkeypatch, capsys) -> None:
     from server.auth import jwt
     from server.cli import access
 
-    def unread(run):
+    def unread(run, **_declared: object):
         raise ConnectionError("offline")
 
     def mint(**kw):
@@ -214,7 +214,7 @@ def test_cli_sees_older_replicas_of_the_other_kind(monkeypatch, capsys, deployme
         raise AssertionError("an older replica of either kind must refuse issuance")
 
     monkeypatch.setattr(settings, "deployment", deployment)
-    monkeypatch.setattr(access, "run_connected", lambda run: asyncio.run(run(fleet)))
+    monkeypatch.setattr(access, "run_connected", lambda run, **_declared: asyncio.run(run(fleet)))
     monkeypatch.setattr(jwt, "mint_token", mint)
     code = cli.main(
         [

@@ -20,6 +20,8 @@ class _CH:
         self.events: list[str] = []
         self.open = False
 
+    connected = False
+
     async def connect(self) -> None:
         if not self.open:
             self.events.append("connect")
@@ -46,7 +48,7 @@ def test_run_connected_disconnects_after_a_failure(ch: _CH) -> None:
         raise RuntimeError("mid-command")
 
     with pytest.raises(RuntimeError):
-        _ch.run_connected(_boom)
+        _ch.run_connected(_boom, org_free="a test command")
     assert ch.events == ["connect", "disconnect"]
 
 
@@ -68,7 +70,7 @@ def test_a_command_for_another_authority_refuses_before_it_runs(
 
     monkeypatch.setattr(pg_profile, "check_configured", _mismatch)
     with pytest.raises(pg.AuthorityMismatch):
-        _ch.run_connected(_run)
+        _ch.run_connected(_run, org_free="a test command")
     assert ran == []
     assert ch.events == ["connect", "disconnect"]
 
@@ -83,7 +85,7 @@ def test_run_connected_closes_the_postgres_pool(ch: _CH, monkeypatch: pytest.Mon
         return 0
 
     monkeypatch.setattr("server.core.pg.close_pool", _close_pool)
-    _ch.run_connected(_run)
+    _ch.run_connected(_run, org_free="a test command")
     assert closed == ["pool"] and ch.events == ["connect", "disconnect"]
 
 
@@ -105,11 +107,11 @@ def test_an_in_process_import_for_another_authority_refuses(
 
     async def _connect() -> None:
         if importer == "recall":
-            args = argparse.Namespace(base_url=None, token=None)
+            args = argparse.Namespace(base_url=None, token=None, org="o")
             await import_recall._make_writer(args, dict, timeout_s=1.0)
         else:
             async with contextlib.AsyncExitStack() as stack:
-                await import_clickgap._clickgap_enroll(stack)
+                await import_clickgap._clickgap_enroll(stack, "o")
 
     monkeypatch.setattr(pg_profile, "check_configured", _mismatch)
     with pytest.raises(pg.AuthorityMismatch):
@@ -198,7 +200,7 @@ def test_a_command_leaves_no_deployment_check_armed(
             raise AssertionError("the check ran again")
 
     monkeypatch.setattr(pg_profile, "check_configured", _arm)
-    _ch.run_connected(_run)
+    _ch.run_connected(_run, org_free="a test command")
     asyncio.run(pg._check_deployment(_Conn()))
 
 

@@ -786,7 +786,7 @@ async def _make_writer(
 
     handlers = inproc_ops()
     ch = get_client()
-    await connect_checked(ch)
+    await connect_checked(ch, orgs=(args.org,))
     from server import boot
     from server.core.background import register_buffer_drainer
     from server.insights.app.provider_command import model_command

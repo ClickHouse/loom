@@ -10,7 +10,7 @@ import sys
 from typing import Any
 
 from server.cli._apply import add_apply_flags
-from server.cli._ch import run_connected
+from server.cli._ch import dry_run_orgs, run_connected
 from server.cli._client import refused_for_agent, resolve_token
 
 
@@ -41,7 +41,7 @@ def _cmd_period_digest(args: argparse.Namespace) -> int:
             print(f"  failure: {f}")
         return 1 if res.failures and not res.periods_written else 0
 
-    return run_connected(_go)
+    return run_connected(_go, orgs=dry_run_orgs(args))
 
 
 def _cmd_reconcile_status(args: argparse.Namespace) -> int:
@@ -106,7 +106,7 @@ def _cmd_reconcile_status(args: argparse.Namespace) -> int:
         _report(args.namespace, counts)
         return 0
 
-    return run_connected(_go)
+    return run_connected(_go, orgs=dry_run_orgs(args))
 
 
 def _add_activity_trivia_parser(sub: Any) -> None:
@@ -161,7 +161,7 @@ def _cmd_demote_activity_narration(args: argparse.Namespace) -> int:
             print("    " + atc.candidate_line(r))
         return 0
 
-    return run_connected(_go)
+    return run_connected(_go, orgs=dry_run_orgs(args))
 
 
 def _add_reextract_parser(sub: Any) -> None:
@@ -207,6 +207,7 @@ def _cmd_reextract(args: argparse.Namespace) -> int:
     the stored transcripts, the source untouched."""
     import asyncio
 
+    from server.cli._ch import connect_declared, disconnect
     from server.core.ch import get_client
     from server.memory.app.reextract import load_sessions, render_report, replay
 
@@ -224,11 +225,13 @@ def _cmd_reextract(args: argparse.Namespace) -> int:
 
     async def _go() -> int:
         ch = get_client()
-        await ch.connect()
+        await connect_declared(
+            ch, org_free="reads; the replay writes through the server at --base-url"
+        )
         try:
             sessions = await load_sessions(ch, org=args.org, namespace=args.namespace)
         finally:
-            await ch.disconnect()
+            await disconnect(ch)
         if args.limit_sessions:
             sessions = sessions[: args.limit_sessions]
         if not sessions:
@@ -290,7 +293,7 @@ def _cmd_reembed(args: argparse.Namespace) -> int:
         print(f"re-embedded: {written}")
         return 0
 
-    return run_connected(_go)
+    return run_connected(_go, orgs=dry_run_orgs(args))
 
 
 def _add_reembed_parser(sub: Any) -> None:

@@ -63,17 +63,19 @@ def _login_check(user: str, password: str) -> str:
     )
 
 
-def _connected(work: Any) -> Any:
-    """Run `work(ch)` on one plain connection: the command calls no model."""
+def _connected(work: Any, *, orgs: tuple[str, ...] | None = None, org_free: str = "") -> Any:
+    """Run `work(ch)` on one plain connection: the command calls no model. `orgs` or
+    `org_free` as `server.cli._ch.connect_declared` takes them."""
+    from server.cli._ch import connect_declared, disconnect
     from server.core.ch import get_client
 
     async def _go() -> Any:
         ch = get_client()
-        await ch.connect()
+        await connect_declared(ch, orgs=orgs, org_free=org_free)
         try:
             return await work(ch)
         finally:
-            await ch.disconnect()
+            await disconnect(ch)
 
     return asyncio.run(_go())
 
@@ -85,7 +87,9 @@ def _cmd_grant(args: argparse.Namespace) -> int:
         done = _connected(
             lambda ch: grant(
                 args.user, _scope(args), login_check=_login_check, rotate=args.rotate, ch=ch
-            )
+            ),
+            orgs=None if args.all else (args.org,),
+            org_free="a grant of every org's views" if args.all else "",
         )
     except AccessRefused as e:
         print(f"  ✗ {e}", file=sys.stderr)
@@ -106,7 +110,7 @@ def _cmd_revoke(args: argparse.Namespace) -> int:
     from server.insights.app.sql_access import AccessRefused, revoke
 
     try:
-        done = _connected(lambda ch: revoke(args.user, ch=ch))
+        done = _connected(lambda ch: revoke(args.user, ch=ch), org_free="drops a SQL user by name")
     except AccessRefused as e:
         print(f"  ✗ {e}", file=sys.stderr)
         return REFUSED
@@ -125,7 +129,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
 
     by_config = config_restricted()
     status = 0
-    for row in _connected(lambda ch: grants(ch=ch)):
+    for row in _connected(lambda ch: grants(ch=ch), org_free="lists the SQL users"):
         org, ns = str(row["org"]), str(row["namespace"])
         print(f"  {row['user_name']}\t{org}/{ns}\t{row['updated_at']}")
         # The views cannot read the code repo configuration: a grant made before a

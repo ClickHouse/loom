@@ -281,7 +281,9 @@ def call_counts(days: int) -> dict[str, dict[str, Any]]:
     token = bind_background("cli:op_reach_census")
     tag = query_tag_var.set("cli.op_reach_census")
     try:
-        rows = run_connected(lambda ch: ch.query_all(CALLS_SQL, {"days": days}))
+        rows = run_connected(
+            lambda ch: ch.query_all(CALLS_SQL, {"days": days}), org_free="reads the call ledger"
+        )
     finally:
         query_tag_var.reset(tag)
         reset_traffic_class(token)

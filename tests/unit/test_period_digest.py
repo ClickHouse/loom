@@ -674,7 +674,9 @@ def test_loom_period_digest_writes_as_its_command(monkeypatch: pytest.MonkeyPatc
         return period_digest.PeriodDigestResult()
 
     monkeypatch.setattr(period_digest, "run_period_digest", _run)
-    monkeypatch.setattr(maintenance, "run_connected", lambda go: asyncio.run(go(object())))
+    monkeypatch.setattr(
+        maintenance, "run_connected", lambda go, **_declared: asyncio.run(go(object()))
+    )
     args = argparse.Namespace(
         cmd="period-digest",
         func=maintenance._cmd_period_digest,

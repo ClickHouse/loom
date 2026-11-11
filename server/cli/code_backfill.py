@@ -13,6 +13,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
+from server.cli._ch import connect_code_plane
 from server.cli.code_maintenance import _compact_after_bulk
 from server.cli.code_run import _identity, _note, _repo_cfg
 from server.core.background import gather_or_cancel
@@ -56,14 +57,14 @@ async def _backfill(args: argparse.Namespace) -> int:
     from server.core.ch import get_client
     from server.settings import settings
 
-    await get_client().connect()
+    if args.phase == "embed":
+        return await _backfill_embed(CodeRepo(), *_identity(args), args)
+    # Before declaring the org: an unconfigured entry records nothing.
+    cfg = _repo_cfg(args)
+    await connect_code_plane(get_client(), args)
     org, ns = _identity(args)
     repo = CodeRepo()
 
-    if args.phase == "embed":
-        return await _backfill_embed(repo, org, ns, args)
-
-    cfg = _repo_cfg(args)
     git_dir = cfg.git_dir
     if not await asyncio.to_thread(os.path.isdir, git_dir):
         print(f"git dir {git_dir} missing — run `loom code init`", file=sys.stderr)
@@ -588,10 +589,10 @@ async def _backfill_embed(repo: Any, org: str, ns: str, args: argparse.Namespace
         )
         return code
 
-    while True:
+    async def _pending() -> list[Any]:
         # --include-poisoned: rows that exhausted their attempts get one more
         # pass (inputs are bounded now).
-        rows = await repo.pending_embed_chunks(
+        rows: list[Any] = await repo.pending_embed_chunks(
             org,
             ns,
             embedder.model_name,
@@ -599,8 +600,17 @@ async def _backfill_embed(repo: Any, org: str, ns: str, args: argparse.Namespace
             500,
             include_poisoned=bool(getattr(args, "include_poisoned", False)),
         )
-        if not rows:
-            break
+        return rows
+
+    # The first page is read before the org is declared (on the client `code_run`
+    # connected): a mistyped --org has none, so a `recording` cell records nothing,
+    # and the pass's status row, keyed by namespace, needs no org.
+    rows = await _pending()
+    if rows:
+        from server.core.ch import get_client
+
+        await connect_code_plane(get_client(), args)  # declares the org it now writes
+    while rows:
         n = await _embed_rows(
             repo,
             "code_chunks",
@@ -619,5 +629,6 @@ async def _backfill_embed(repo: Any, org: str, ns: str, args: argparse.Namespace
         if n == 0 and result.failed:
             print("  stalling on failures — stopping; re-run to retry", file=sys.stderr)
             return await _finish(1)
+        rows = await _pending()
     print(f"embed phase complete: {total} chunks embedded")
     return await _finish(0)

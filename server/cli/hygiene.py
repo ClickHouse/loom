@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.cli._apply import add_apply_flags
-from server.cli._ch import run_connected
+from server.cli._ch import dry_run_orgs, run_connected
 from server.core.error_summary import error_summary
 from server.erasure.domain.failure_reason import REPLAY_PENDING_REASON
 
@@ -95,7 +95,7 @@ def _cmd_drops(args: argparse.Namespace) -> int:
         print(_format_drops(rows, namespace=args.namespace, hours=int(args.hours)))
         return 0
 
-    return run_connected(_run)
+    return run_connected(_run, org_free="reads")
 
 
 # ----------------------------------------------------------------------
@@ -246,7 +246,8 @@ def _cmd_namespaces_gc(args: argparse.Namespace) -> int:
             return await _gc_worker_pass(ch, args, explicit=explicit)
         return await _gc_run(ch, args, prefixes=prefixes, explicit=explicit)
 
-    return run_connected(_run)
+    # Without --erase it lists only: a read records no org.
+    return run_connected(_run, orgs=(args.org,) if args.erase else ())
 
 
 async def _gc_worker_pass(ch: Any, args: argparse.Namespace, *, explicit: tuple[str, ...]) -> int:
@@ -304,7 +305,7 @@ def _cmd_namespaces_adopt(args: argparse.Namespace) -> int:
     async def _run(ch: Any) -> int:
         return await _adopt_run(ch, args)
 
-    return run_connected(_run)
+    return run_connected(_run, orgs=dry_run_orgs(args))
 
 
 async def _adopt_run(ch: Any, args: argparse.Namespace) -> int:
@@ -494,7 +495,8 @@ def _cmd_erasure_re_verify(args: argparse.Namespace) -> int:
         # One connection for the whole command (see `_cmd_namespaces_gc`).
         return await _re_verify_run(ch, args)
 
-    return run_connected(_run)
+    # --erase files purges for rows already in this cell, which stay erasable.
+    return run_connected(_run, org_free="re-verifies and files erasures of this cell's rows")
 
 
 def _utc_instant(text: str) -> datetime:

@@ -73,6 +73,8 @@ class _Store:
         self.busy_names: set[str] = set()  # a token name whose revoked row cannot be written
         self.directory_down = False
 
+    connected = False
+
     async def connect(self) -> None:
         pass
 

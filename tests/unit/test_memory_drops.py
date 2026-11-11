@@ -477,6 +477,8 @@ def test_drops_cli_is_registered_and_runs(monkeypatch: pytest.MonkeyPatch, capsy
     from server.cli import main
 
     class _CH:
+        connected = False
+
         async def connect(self):
             return None
 

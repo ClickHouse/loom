@@ -74,6 +74,8 @@ def test_answers_purge_dry_run_samples_and_writes_nothing(
     written: list[object] = []
 
     class _CH:
+        connected = False
+
         async def connect(self) -> None: ...
 
         async def disconnect(self) -> None: ...

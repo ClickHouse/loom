@@ -338,6 +338,8 @@ async def test_the_child_stops_its_loops_before_its_writes_drain(monkeypatch) ->
     events: list[str] = []
 
     class _Ch:
+        connected = False
+
         async def connect(self) -> None:
             return None
 

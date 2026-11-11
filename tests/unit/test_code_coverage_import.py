@@ -476,6 +476,8 @@ def test_the_cli_dry_run_prints_counts(monkeypatch: pytest.MonkeyPatch, capsys: 
     from server.core import ch
 
     class _Client:
+        connected = False
+
         async def connect(self) -> None:
             return None
 

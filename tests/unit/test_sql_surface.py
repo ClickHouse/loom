@@ -389,7 +389,7 @@ def test_list_names_any_grant_the_code_repo_configuration_now_restricts(
         {"user_name": "acme_bi", "org": "acme", "namespace": "support", "updated_at": NOW},
         {"user_name": "acme_bi", "org": "acme", "namespace": "repo", "updated_at": NOW},
     ]
-    monkeypatch.setattr(cli, "_connected", lambda work: rows)
+    monkeypatch.setattr(cli, "_connected", lambda work, **_declared: rows)
     monkeypatch.setattr(
         "server.insights.app.sql_access.config_restricted", lambda: {("acme", "repo")}
     )
@@ -522,7 +522,7 @@ def test_the_cli_prints_why_a_login_check_could_not_run(
     from server.cli import sql_access as cli
     from server.insights.app.sql_access import AccessRefused, LoginUnchecked
 
-    def refused(work: Any) -> Any:
+    def refused(work: Any, **_declared: object) -> Any:
         cause = LoginUnchecked("could not log in as it: Code: 516. Authentication failed")
         raise AccessRefused("acme_bi was dropped: its login could not be checked") from cause
 
