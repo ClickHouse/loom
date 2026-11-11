@@ -280,16 +280,14 @@ function MemoryList() {
   });
   const browsedCurrent = entriesAt.size === pageSize;
 
-  // The first-run checklist (components/GettingStarted). It reads this list, not a second
-  // one: the namespace's total, and whether an agent other than the dashboard has saved a
-  // memory here — read off an unfiltered, live, first page, and kept once seen.
-  const whoamiNow = useStore((s) => s.whoami);
+  // The first-run checklist (components/GettingStarted). Every signal it takes comes from
+  // this list's one read: the unfiltered, live first page, read in this namespace for the
+  // filter in force. Right after a namespace switch or a filter change the rows on screen
+  // are still the last read's, and count for nothing.
+  const whoami = useStore((s) => s.whoami);
   const mine = useStore((s) => s.myNamespaces);
   const authOff = isAuthDisabled();
-  const onboarding = useOnboarding(whoamiNow?.subject ?? (authOff ? "local" : ""), namespaceKey);
-  // Every checklist signal comes from one read: the unfiltered, live first page, read in this
-  // namespace for the filter in force. Right after a namespace switch or a filter change the
-  // rows on screen are still the last read's, and count for nothing.
+  const onboarding = useOnboarding(whoami?.subject ?? (authOff ? "local" : ""), namespaceKey);
   const plainRead =
     entries !== null &&
     listedIn === namespaceKey &&
@@ -311,6 +309,7 @@ function MemoryList() {
   const checklist =
     !readOnly &&
     entries !== null &&
+    listedIn === namespaceKey &&
     !onboarding.state.dismissed &&
     !onboarding.state.finished &&
     (isNew || onboarding.state.started);
@@ -361,7 +360,6 @@ function MemoryList() {
   // Only when the role here is known to allow it: an unknown role sends nothing and the
   // cards simply carry no conflict chip, instead of a token-only viewer drawing an
   // AUTH_INSUFFICIENT per Memories load from this read.
-  const whoami = useStore((s) => s.whoami);
   const conflictsReadable = canCall("conflicts.list", role, whoami);
   useEffect(() => {
     // A role here that cannot read conflicts, or a failed read, shows no chip (never
