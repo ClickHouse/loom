@@ -56,6 +56,10 @@ _EXPECTED_MUTATIONS = Counter(
         ("server/memory/store/graph_projections.py", "graph_projections", "UPDATE"): 1,
         # The leader's hourly sweep of the slot keys of projections that died.
         ("server/core/leases.py", "graph_projections", "DELETE"): 1,
+        # The leader's sweep, every ten minutes, of the heartbeat keys of processes gone an hour:
+        # KeeperMap keys, not a MergeTree part.
+        ("server/core/instances.py", "instances", "DELETE"): 1,
+        ("server/core/instances.py", "cell_heartbeats", "DELETE"): 1,
         # Sign-in state, a KeeperMap key per pending login: a compare-and-swap
         # on the key's value under strict mode, its drop when the login ends,
         # and the sweep of expired keys.

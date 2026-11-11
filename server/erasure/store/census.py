@@ -691,6 +691,9 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.carry_acks": "each process's host, pid and column-list fingerprints; 1-day TTL.",
     "loom.storage_authority": "the deployment's memory authority, epoch and id; no tenant data.",
     "loom.instances": "one heartbeat row per Loom process: build, fingerprints, host; no content.",
+    "loom.cell_heartbeats": (
+        "per Loom process, its LOOM_CELL, tenancy mode and configuration fingerprint; no content."
+    ),
     "loom.frontend_assets": "the dashboard's built JS, CSS and fonts; no tenant data; 30-day TTL.",
     "loom.embedder_calibration": "similarity thresholds per embedder model; no content.",
     "loom.usage_acted_credits": "hashes of credited write/read pairs; no text; 3-day TTL.",

@@ -19,6 +19,7 @@ class _Ch:
 
     def __init__(self, live: list[dict[str, Any]] | None = None) -> None:
         self.rows: dict[str, dict[str, Any]] = {}
+        self.cell_rows: dict[str, dict[str, Any]] = {}
         self.extra_live = live or []
         self.executed: list[str] = []
         self.config: dict[str, Any] | None = None
@@ -45,6 +46,9 @@ class _Ch:
         if table == instances.TABLE:
             for r in rows:
                 self.rows[r["instance_id"]] = r
+        elif table == instances.CELL_TABLE:
+            for r in rows:
+                self.cell_rows[r["instance_id"]] = r
         else:
             import json
 
@@ -74,6 +78,12 @@ def test_a_beat_writes_this_process_row_with_its_fingerprints() -> None:
     assert row["config_fp"] == dc.fingerprints(settings)["config_fp"]
     assert {"settings_fp", "keys_fp", "started_at", "host", "pid"} <= set(row)
     assert row["serving"] == 1 and row["schema_version"] == instances.schema_version() > 0
+    assert set(ch.cell_rows[instances.instance_id()]) == {
+        "instance_id",
+        "cell",
+        "tenancy_mode",
+        "fingerprint",
+    }
 
 
 @pytest.mark.parametrize("why", ["draining", "drifted"])
@@ -204,7 +214,9 @@ def test_a_beat_flags_drift_and_the_leader_replaces_only_a_snapshot_it_agrees_wi
     # A drifted leader keeps the deployment's snapshot: `loom deployment publish` replaces it.
     asyncio.run(instances.tick(ch, leader=True))
     assert ch.config == stored and dc.drift()
-    assert ch.executed and "DELETE" in ch.executed[0]  # the leader sweeps old keys
+    # The leader sweeps old keys of both tables.
+    assert any("loom.instances DELETE" in sql for sql in ch.executed)
+    assert any("loom.cell_heartbeats DELETE" in sql for sql in ch.executed)
     # No other live instance runs the stored one: the leader adopts its own.
     ch.config = {**dc.snapshot(settings), "note": "another build's snapshot"}
     asyncio.run(instances.tick(ch, leader=True))

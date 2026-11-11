@@ -16,13 +16,13 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 185 tables + 5 views + 19 materialized views.
+-- Counts: 186 tables + 5 views + 19 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (185)
+-- Tables (186)
 -- ======================================================================
 
 -- loom.acl_versions
@@ -350,6 +350,18 @@ CREATE TABLE IF NOT EXISTS loom.categories
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, name)
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
+
+-- loom.cell_heartbeats
+CREATE TABLE IF NOT EXISTS loom.cell_heartbeats
+(
+    `instance_id` String,
+    `cell` String DEFAULT '',
+    `tenancy_mode` String DEFAULT '',
+    `fingerprint` String DEFAULT '',
+    `heartbeat_at` DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = KeeperMap('/loom/cell_heartbeats')
+PRIMARY KEY instance_id;
 
 -- loom.chunk_supersessions
 CREATE TABLE IF NOT EXISTS loom.chunk_supersessions

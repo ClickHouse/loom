@@ -39,7 +39,8 @@ contends again GIVE_UP_COOLDOWN_S later.
 
 Modes (`LOOM_BACKGROUND_WORKERS`, as `settings.workers_mode()` resolves it):
   auto  — contend for the lease (default); `off` outside the deployment
-  on    — always run (one process, or an operator who wants N copies)
+  on    — always run (one process, or an operator who wants N copies); a cell's
+          process runs only while its cell's gate lets it serve
   off   — never run (a pure web replica behind a load balancer)
 """
 
@@ -47,12 +48,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import threading
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
-from server.core import deployment_config, instances, readiness
+from server.core import cell, deployment_config, instances, readiness
 from server.core.leases import has_live_holder
 from server.core.schema.migrate_lease import (
     KeeperLock,
@@ -114,7 +116,8 @@ class SupervisorLease:
         self._lock: KeeperLock | None = None
         # A step still running in its thread when shutdown releases.
         self._mutex = threading.Lock()
-        self.held = mode == "on"
+        # A cell's `on` process starts no worker until its own rows let it serve.
+        self.held = mode == "on" and not settings.cell
         self.reason = _mode_reason(mode) if mode != "auto" else "not acquired yet"
         self.error = ""
         self.given_up = ""
@@ -122,6 +125,14 @@ class SupervisorLease:
 
     def step(self) -> None:
         """Acquire when free, renew when held. Blocking: run it in a thread."""
+        if self.mode == "on" and settings.cell:
+            # No lease to contend for, but a cell's gate still stops and starts them.
+            aside = cell.gate_reason()
+            self.held = not aside
+            self.reason = (
+                f"{_mode_reason(self.mode)}: {aside}" if aside else _mode_reason(self.mode)
+            )
+            return
         if self.mode != "auto":
             return
         with self._mutex:
@@ -223,6 +234,8 @@ def _stand_aside_reason() -> str:
         return "this process is draining"
     if found := deployment_config.drift():
         return "configuration differs from the deployment's: " + "; ".join(found)
+    if reason := cell.gate_reason():
+        return "this cell does not serve: " + reason
     return ""
 
 
@@ -284,7 +297,8 @@ async def keep_lease(
     """Renew the lease while held, contend while not, and start or stop the
     supervisor when that changes. While the workers run, every wait (the
     sleep, a blocked renewal) is cut at the lease's deadline, and the workers
-    stop then. `auto` mode only; cancelled on shutdown."""
+    stop then. `auto` mode, and a cell's `on` mode, whose gate is its only
+    lease; cancelled on shutdown."""
     running = lease.held  # the lifespan started the supervisor when held at boot
     while True:
         running = await _until_done(asyncio.sleep(_period_s(lease.held)), lease, running, on_lost)
@@ -313,7 +327,9 @@ async def _until_done(
     fut = asyncio.ensure_future(aw)
     try:
         while True:
-            timeout = max(0.0, lease.remaining_s()) if running and lease.held else None
+            left = lease.remaining_s()
+            # An `on` lease has no deadline (inf): wait without one.
+            timeout = max(0.0, left) if running and lease.held and left != math.inf else None
             done, _ = await asyncio.wait({fut}, timeout=timeout)
             if done:
                 return running

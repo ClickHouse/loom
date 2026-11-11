@@ -334,17 +334,37 @@ async def require_keeper(ch: Any) -> None:
         raise KeeperRequired("loom._migration_lock is not a KeeperMap table")
 
 
+def require_identity_settings() -> None:
+    """Refuse to start with SCIM that could not deactivate anyone, or as a cell without
+    what a cell needs. Settings only: run before anything touches a store."""
+    from server.auth.scim_routes import require_scim_settings
+    from server.core import cell
+
+    require_scim_settings(
+        settings.scim_token, settings.oauth_login_provider, settings.auth_actually_required()
+    )
+    cell.require_settings()
+
+
 async def require_storage_authority(ch: Any) -> None:
     """The memory authority this replica is configured for, checked against the
     deployment's record (`server.core.pg_profile`); the Postgres profile first opens
     Postgres, applies its migrations and checks its commit durability. Raises to
     refuse the boot."""
-    from server.core import pg, pg_profile
+    from server.code.domain.index import repos
+    from server.core import cell, pg, pg_profile
 
     global SKIPPED_PG_MIGRATIONS
+    # The heartbeat reports the fingerprint with or without LOOM_CELL, and prepare
+    # accepts it from then: it counts the code orgs in every server process.
+    cell.set_code_orgs(repos.operator_orgs)
     if pg.enabled():
         SKIPPED_PG_MIGRATIONS = tuple(f"pg:{name}" for name in await pg_profile.start())
     await pg_profile.require_authority(ch)
+    if pg.enabled():
+        # Both stores record it now: the store identity the cell's fingerprint carries,
+        # reported before LOOM_CELL is set too, since prepare reads it from then.
+        cell.set_deployment_id(await pg_profile.deployment_id())
 
 
 async def open_storage_authority() -> None:
@@ -592,6 +612,18 @@ async def calibrate_similarity_gates() -> None:
         log.warning("calibration failed (%s); falling back to scalar settings", e)
 
 
+async def start_cell_state() -> list[asyncio.Task[None]]:
+    """A cell's process reads its cell's rows before it serves, then on a timer."""
+    from server.code.domain.index import repos
+    from server.core import cell, pg_profile
+
+    cell.set_code_orgs(repos.operator_orgs)
+    if not cell.deployment_id():
+        cell.set_deployment_id(await pg_profile.deployment_id())
+    await cell.refresh()
+    return [cell.start_refresh_loop()]
+
+
 async def start_token_state() -> list[asyncio.Task[None]]:
     """Every process that verifies tokens loads the revocation snapshot, the
     signing keyring, the end-user issuers' JWKS and the grant watermark at boot
@@ -607,7 +639,8 @@ async def start_token_state() -> list[asyncio.Task[None]]:
     with query_tag("grant_cache.poll"):
         await grant_cache.poll()
     await end_user_keys.refresh()
-    return [
+    loops = await start_cell_state() if settings.cell else []
+    return loops + [
         revocation.start_refresh_loop(settings.jwt_revocation_cache_ttl_seconds),
         keyring.start_refresh_loop(),
         end_user_keys.start_refresh_loop(),
@@ -675,15 +708,19 @@ async def _apply_retention_overrides(ch: Any) -> None:
 def start_lease_loop(lease: Any, supervisor: Any, ch: Any) -> asyncio.Task[None] | None:
     """In `auto` mode keep the supervisor lease: the workers start where it is
     acquired (another process's holder died or exited) and stop where it is
-    lost. Returns the loop task, or None outside `auto`."""
-    if lease.mode != "auto":
+    lost. A cell's `on` process runs the loop too, with no lease: its cell's gate
+    starts and stops the workers. Returns the loop task, or None otherwise."""
+    if lease.mode != "auto" and not (lease.mode == "on" and settings.cell):
         return None
     from server.workers import leader as _leader
 
     def _on_acquired() -> None:
         # The leader's boot duties follow the lease.
         supervisor.start_all()
-        _spawn_boot_task(register_tracker_namespaces(ch), name="loom-tracker-namespaces")
+        # As at boot: only the deployment's leader registers them (a cell's `on`
+        # process outside LOOM_DEPLOYMENT is not one).
+        if _leader.leads_deployment():
+            _spawn_boot_task(register_tracker_namespaces(ch), name="loom-tracker-namespaces")
         _spawn_boot_task(_apply_retention_overrides(ch), name="loom-retention-overrides")
         publish_deployment_config(ch)
 
@@ -826,6 +863,10 @@ def register_readiness_checks(ch: Any) -> None:
     readiness.register("runtime_overrides", _overrides_ready)
     readiness.register("calibration", embedder_calibration.readiness_check)
     readiness.register("config_drift", deployment_config.readiness_check)
+    if settings.cell:
+        from server.core import cell
+
+        readiness.register("cell", cell.readiness_check)
     readiness.register("sandbox", sandbox.readiness_check)
     # Reported, not required: a provider rebuild closes the gate on every
     # replica at once, and an LB with no ready backend would cut off the

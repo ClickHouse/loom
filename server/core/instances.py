@@ -15,14 +15,18 @@ rows), the workers lease the newer builds contending for it
 published snapshot (`deployment_config.check`) and runs the `on_beat` read (the
 workers lease, `leader.read_holder`).
 
-Where the server has a Keeper the table is KeeperMap, one key per process that
-the leader sweeps an hour after it stops beating; elsewhere it is a
-ReplacingMergeTree whose TTL drops the old rows.
+The table is KeeperMap, one key per process that the leader sweeps an hour after
+it stops beating.
+
+Each beat also writes the process's `loom.cell_heartbeats` row (its `LOOM_CELL`,
+tenancy mode and fingerprint, `cell_row`), which attach reads to check every live
+process of a cell; the leader sweeps its old keys as it sweeps the instances'.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import os
@@ -34,13 +38,14 @@ from datetime import UTC, datetime
 from functools import cache
 from typing import Any
 
-from server.core import deployment_config, readiness
+from server.core import cell, deployment_config, readiness
 from server.core.ch import query_tag, set_query_tag
 from server.settings import settings
 
 log = logging.getLogger(__name__)
 
 TABLE = "loom.instances"
+CELL_TABLE = "loom.cell_heartbeats"
 QUERY_TAG = "instances.heartbeat"
 
 # A row is live while its last beat is younger than this many intervals.
@@ -105,12 +110,13 @@ def row(*, stopped: bool = False) -> dict[str, Any]:
         "pid": os.getpid(),
         "build_commit": settings.build_commit,
         "schema_version": schema_version(),
-        # A draining or drifted process answers no traffic: the live replicas'
+        # A draining, drifted or gated-cell process answers no traffic: the live replicas'
         # rate-limit shares leave it out.
         "serving": int(
             bool(settings.serves_traffic)
             and not readiness.draining()
             and not deployment_config.drift()
+            and not cell.gate_reason()
         ),
         "workers_lease": _workers_lease(),
         **deployment_config.fingerprints(settings),
@@ -126,6 +132,20 @@ def live_window_s() -> float:
 async def beat(ch: Any, *, stopped: bool = False) -> None:
     """Write this process's row. A KeeperMap insert replaces the key."""
     await ch.insert(TABLE, [row(stopped=stopped)])
+
+
+def cell_row() -> dict[str, Any]:
+    """What this process reports about its cell (`loom.cell_heartbeats`)."""
+    return {
+        "instance_id": instance_id(),
+        "cell": settings.cell,
+        "tenancy_mode": cell.mode(),
+        "fingerprint": json.dumps(cell.as_value(cell.mine()), sort_keys=True),
+    }
+
+
+async def cell_beat(ch: Any) -> None:
+    await ch.insert(CELL_TABLE, [cell_row()])
 
 
 async def read_live(ch: Any, *, all_deployments: bool = False) -> list[dict[str, Any]]:
@@ -189,15 +209,27 @@ async def _prune(ch: Any) -> None:
     if time.monotonic() - _pruned_at < _PRUNE_EVERY_S:
         return
     _pruned_at = time.monotonic()
-    await ch.execute(
-        f"ALTER TABLE {TABLE} DELETE WHERE heartbeat_at < now64(3) - toIntervalHour(1)"
-    )
+    # Each table's sweep stands alone: one failing leaves the other to run.
+    try:
+        await ch.execute(
+            "ALTER TABLE loom.instances DELETE WHERE heartbeat_at < now64(3) - toIntervalHour(1)"
+        )
+    except Exception as e:  # noqa: BLE001 — a later sweep retries
+        log.warning("instance row sweep failed: %s", e)
+    try:
+        await ch.execute(
+            "ALTER TABLE loom.cell_heartbeats DELETE "
+            "WHERE heartbeat_at < now64(3) - toIntervalHour(1)"
+        )
+    except Exception as e:  # noqa: BLE001 — a later sweep retries
+        log.warning("cell heartbeat sweep failed: %s", e)
 
 
 async def tick(ch: Any, *, leader: bool) -> None:
-    """One beat: write the row, read the live ones, read what `on_beat` reads
-    (the workers lease), compare this process with the published configuration and, on
-    the leader, publish this one when the deployment has moved to it. Never raises."""
+    """One beat: write the row and the cell row, read the live ones, read what `on_beat`
+    reads (the workers lease), compare this process with the published configuration
+    and, on the leader, publish this one when the deployment has moved to it and sweep
+    old keys. Never raises."""
     live: list[dict[str, Any]] | None = None
     try:
         await beat(ch)
@@ -209,13 +241,14 @@ async def tick(ch: Any, *, leader: bool) -> None:
             await _on_beat(ch)
         except Exception as e:  # noqa: BLE001 — a missed read must not stop the loop
             log.warning("instance beat read failed: %s: %s", type(e).__name__, e)
+    try:
+        await cell_beat(ch)
+    except Exception as e:  # noqa: BLE001 — a missed cell beat must not stop the loop
+        log.warning("cell heartbeat failed: %s: %s", type(e).__name__, e)
     await deployment_config.check(ch)
     if leader and live is not None:
         await deployment_config.publish(ch, live=live, published_by=_label)
-        try:
-            await _prune(ch)
-        except Exception as e:  # noqa: BLE001 — a later sweep retries
-            log.warning("instance row sweep failed: %s: %s", type(e).__name__, e)
+        await _prune(ch)  # each table's sweep catches its own failure
 
 
 async def publish_config(ch: Any) -> None:
@@ -285,8 +318,11 @@ def _reset_for_tests() -> None:
 
 
 __all__ = [
+    "CELL_TABLE",
     "TABLE",
     "beat",
+    "cell_beat",
+    "cell_row",
     "instance_id",
     "live_hosts",
     "live_rows",

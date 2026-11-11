@@ -320,6 +320,12 @@ class AuthSettings(BaseModel):
     # Seconds between re-reads of loom.signing_keys in every process (at least
     # 1); `loom signing-key rotate` waits out two of the slowest process's.
     jwt_keyring_refresh_seconds: float = Field(default=30.0, ge=1.0)
+    # This cell's name (1 to 32 of a-z, 0-9, '-') behind a router, "" = not a cell; set,
+    # the process serves only while its cell's rows accept it (docs/architecture/cells.md).
+    cell: str = ""
+    # Seconds (at least 1) between re-reads of a cell's three rows (LOOM_CELL); with
+    # LOOM_CELL set, LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this.
+    tenancy_mode_cache_s: float = Field(default=5.0, ge=1.0)
 
     def jwt_secret_is_dev_default(self) -> bool:
         """Whether the root secret is the checked-in dev default — the value
@@ -522,6 +528,12 @@ class AuthSettings(BaseModel):
             raise ValueError(
                 "LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times "
                 "LOOM_JWT_KEYRING_REFRESH_SECONDS"
+            )
+        # A cell's rows go stale at the same limit, so the same margin (a cell only).
+        if self.cell and self.jwt_revocation_max_stale_seconds < 3 * self.tenancy_mode_cache_s:
+            raise ValueError(
+                "LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times "
+                "LOOM_TENANCY_MODE_CACHE_S"
             )
         return self
 

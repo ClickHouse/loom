@@ -3852,8 +3852,20 @@ async def test_a_boot_without_migrations_lists_the_postgres_files_it_skips(
     monkeypatch.setattr(pg, "enabled", lambda: True)
     monkeypatch.setattr(pg_profile, "start", _start)
     monkeypatch.setattr(pg_profile, "require_authority", _nothing)
+
+    async def _deployment_id() -> str:
+        return "dep-1"
+
+    # The boot reads the deployment id both stores record, for the cell fingerprint.
+    monkeypatch.setattr(pg_profile, "deployment_id", _deployment_id)
     monkeypatch.setattr(boot, "SKIPPED_PENDING_MIGRATIONS", ("900_ch.sql",))
     monkeypatch.setattr(boot, "SKIPPED_PG_MIGRATIONS", ())
+    from server.core import cell
+
+    # The boot records the deployment id and the code orgs' reader too: restored after,
+    # as the lists above are.
+    monkeypatch.setattr(cell, "_deployment_id", cell.deployment_id())
+    monkeypatch.setattr(cell, "_code_orgs", None)
     for _ in range(2):
         await boot.require_storage_authority(object())
     assert boot.skipped_migrations() == ("900_ch.sql", "pg:002_more.sql")
