@@ -731,7 +731,6 @@ def test_every_server_process_counts_the_code_orgs_with_or_without_loom_cell(
     monkeypatch.setattr(repos, "operator_orgs", lambda: {"beta"})
     monkeypatch.setattr(pg, "enabled", lambda: False)
     monkeypatch.setattr(pg_profile, "require_authority", AsyncMock(return_value=None))
-    monkeypatch.setattr(cell, "_code_orgs", None)
     asyncio.run(boot.require_storage_authority(object()))
     assert cell.fingerprint("dep-1")["configured_orgs"] == ["beta"]
     monkeypatch.setattr(cell, "_code_orgs", None)
