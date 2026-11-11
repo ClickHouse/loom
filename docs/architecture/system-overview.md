@@ -5,10 +5,11 @@ and ClickHouse, with Postgres as an option for live memory and knowledge state. 
 stateful: everything it knows (facts and their vectors, documents, conversations, the
 entity graph, the code index, tasks, audit, cost and erasure progress) is stored in
 ClickHouse, except that under `LOOM_STORAGE_AUTHORITY=postgres` Postgres holds its live
-memory and knowledge state ([storage authority](storage-authority.md#why-two-stores)).
-The server processes keep no durable state of their own, so any number of them can serve
-the same deployment and a request can land on any of them. The few pieces of state kept
-outside those stores are listed under [Deployment topology](#deployment-topology).
+memory, knowledge state and the records beside them
+([storage authority](storage-authority.md#the-tables)). The server processes keep no
+durable state of their own, so any number of them can serve the same deployment and a
+request can land on any of them. The few pieces of state kept outside those stores are
+listed under [Deployment topology](#deployment-topology).
 
 The storage layout is in [ClickHouse](clickhouse.md).
 
