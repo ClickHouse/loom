@@ -246,7 +246,11 @@ deployment does not record memory reads". Each citation comes back marked
 `verified` or not, with the reason and its `ref` (the memory key, document source,
 documentation page or code path it names), in a last `loom.citations` event before the
 stream's `[DONE]` (and a `citations` field on a whole answer and on `assistant.ask`),
-with the answer's [support](#support).
+with the answer's [support](#support). A streamed answer sends a `loom.text_done` event
+when LibreChat's stream ends, before the checks start, so a client can show the text as
+complete while they run (up to ten seconds); the answer's slot is held until
+`loom.citations`. The dashboard shows "Checking sources…" under every streamed answer in
+that time, since the checks read every streamed answer's run.
 
 A help citation, `[help:<page> § <section>]` (the section optional, its breadcrumb
 starting with the page title as `help.search` returns it), is checked against the
@@ -344,9 +348,11 @@ says the answer's support in words, leading with how many sources were found whe
 were not: "Checked against what Loom holds", "Partly confirmed: n of m sources found in
 Loom", "Couldn't confirm: 0 of m sources found in Loom", "Couldn't confirm: it names …"
 (an op or setting this Loom does not have), "Couldn't confirm: it gives no sources",
-"Sources not checked" or "Not checked: it cites nothing Loom holds". Each label's "Why
-this label" note says why it reads as it does; an answer whose support is `none` has no
-label. A value the dashboard does not know reads as `unchecked`.
+"Sources not checked" or "Not checked: it cites nothing Loom holds"; an answer whose
+`loom.citations` never came (the connection was lost after its text, or the page was left)
+reads "Check didn't finish". Each label's "Why this label" note says why it reads as it
+does; an answer whose support is `none` has no label. A value the dashboard does not know
+reads as `unchecked`.
 
 ### Steps
 
@@ -371,10 +377,11 @@ steps; the answer goes on. The steps are display only and never decide the label
 The `loom.citations` event then carries `steps` from the one read of the run after the
 answer ends (above), which replace the live list: an empty list when the run made no call,
 and no `steps` when that read failed or ran past its bound, when the dashboard keeps what
-it showed live; and `steps_cut: true` when the run held more than 200 ledger rows. Both
-events have `choices: []`, the run id (or none yet) as `id`, and no model or usage, so a
-client that guards for no choices skips them; both SDKs skip `loom.step` and expose the
-final list as the answer's `steps`. A whole answer and `assistant.ask` carry no steps.
+it showed live; and `steps_cut: true` when the run held more than 200 ledger rows. These
+events and `loom.text_done` have `choices: []`, the run id (or none yet) as `id`, and no
+model or usage, so a client that guards for no choices skips them; both SDKs skip
+`loom.step` and `loom.text_done` and expose the final list as the answer's `steps`. A
+whole answer and `assistant.ask` carry no steps and no `loom.text_done`.
 
 ### Starters and cards
 
@@ -395,6 +402,23 @@ existing op under their own role (registering a category, the guide editor on to
 guide read now) or a copy of the change; the answer's token stays `viewer` and the
 assistant writes nothing. Cards come only from starters: a free-form question's tool calls
 carry no arguments the dashboard could read again.
+
+### Asking again
+
+Retry, an edit of the last question and "Ask again with sources" answer the last turn
+again under its own id (`frontend/src/views/assistant/chatStore.ts`), so another tab's
+stored copy cannot bring the old answer back. The turn keeps its old answer, on screen and
+in storage, until the new text begins: an attempt that fails, is refused, is stopped or
+ends empty first puts the turn back as it was, as does a reload before then.
+
+- **Try again** follows a refusal whose reason the panel shows, and any such ending of an
+  edit whose words changed. It answers that turn again with the words, page line and "with
+  sources" it was asked with, whatever the field holds. Another question, Cancel edit, a
+  new conversation or another one opened drops it.
+- Any other ending of a Retry (a rate limit, the cost cap, a lost connection), or of an
+  edit that left the words as they were, offers no Try again.
+- In each case an empty field gets the question as an edit (after Stop, only an edit's
+  words), and an Ask from it goes with the chip as it shows now.
 
 ## The agent definition
 
@@ -1227,13 +1251,20 @@ that answer goes without the docs. The analyst user, its grants and policies,
 ClickHouse and are shared by every replica; the agent definition is written as
 [the agent definition](#the-agent-definition) says, never by an older build.
 
-A streamed answer from an older replica sends no `loom.step` events and no `steps`, and
-its mentor hints no `plane`: the dashboard then shows "Answering…" until the text comes,
-no "What it read" list, and a hint without a page link. An older dashboard or SDK skips
-`loom.step` as an event it does not know and ignores the fields. A dashboard tab of the
+A streamed answer from an older replica sends no `loom.step` events, no `steps` and no
+`loom.text_done`, and its mentor hints no `plane`: the dashboard then shows "Answering…"
+until the text comes, no "What it read" list, keeps Stop until `loom.citations` lands, and
+shows a hint without a page link. An older dashboard or SDK skips `loom.step` and
+`loom.text_done` as events it does not know and ignores the fields. A dashboard tab of the
 older build that shares the browser's stored conversations reads a starter's card-only
 turn as a question with no answer: it shows an empty answer and sends that question as
-history, until the tab is reloaded on the new build.
+history, until the tab is reloaded on the new build. Such a tab also leaves out a turn
+stored while its sources were checked, as any turn still answering, and reads it as
+stopped once it is cut off; shows a turn whose check was cut off (`checkLost`) as done
+with no label; sends a question asked with sources without " Cite your sources." in its
+history and shows no "With sources" tag; and offers no Retry, ignoring a turn's
+`retryable` and a card's `again` mark, so a starter's turn asked again shows its stored
+card there.
 
 ## Build order
 
@@ -1259,9 +1290,10 @@ history, until the tab is reloaded on the new build.
    row, the answer's id on its tool calls' rows, the citation check and the SDKs'
    streaming clients. Built.
 5. The dashboard's assistant panel, on the signed-in session and the header's namespace,
-   with a Stop button that closes the request, each answer's checked citations under it,
-   the reasons it cannot answer, the conversations kept in the browser, the page's chip
-   on each question and "Ask about this" on a memory, a document and a Recall result
+   with a Stop button that closes the request, Copy, Retry and an edit of the last
+   question, each answer's checked citations under it, the reasons it cannot answer, the
+   conversations kept in the browser, the page's chip on each question and "Ask about
+   this" on a memory, a document and a Recall result
    ([the assistant panel](../features/dashboard.md#the-assistant-panel)). Built.
 6. Loom's documentation in the image, `help.search` and `help.get` on the toolset
    ([Loom's documentation](#looms-documentation)). Built.

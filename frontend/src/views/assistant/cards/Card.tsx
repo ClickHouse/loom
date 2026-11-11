@@ -1,4 +1,4 @@
-import { Component, useId, type ReactNode } from "react";
+import { Component, useEffect, useId, type ReactNode } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Link } from "@clickhouse/click-ui/Link";
 import { Select } from "@clickhouse/click-ui/Select";
@@ -24,7 +24,7 @@ import { CardSection } from "./section";
 import { InventoryPopulations, InventoryScopeNote, InventorySections } from "../Inventory";
 import { INSPECTED_AS } from "../subjects";
 import { AuditBody } from "./AuditBody";
-import { isFresh, readCard, startStarter, useCardGate } from "./cardStore";
+import { ROLE_LOADING, isFresh, readCard, startStarter, useCardGate } from "./cardStore";
 import { MentorBody } from "./MentorBody";
 import { askNow, asks, useStarterPrefs } from "./prefs";
 import { AUDIT_WINDOWS, MENTOR_WINDOWS, DEFAULT_WINDOW, starterOf } from "./starters";
@@ -215,7 +215,12 @@ export function Card({ turn, level }: { turn: Turn; level: 2 | 3 }) {
   const head = useId();
   const starter = starterOf(card.op);
   const fresh = isFresh(turn.id);
-  const reread = (args?: CardArgs) => readCard(turn.id, gate(card.op), args);
+  const blockedNow = gate(card.op);
+  const reread = (args?: CardArgs) => readCard(turn.id, blockedNow, args);
+  // A turn asked again reads its card again, once the person's role is known.
+  useEffect(() => {
+    if (card.again && blockedNow !== ROLE_LOADING) readCard(turn.id, blockedNow);
+  }, [card.again, blockedNow, turn.id]);
   const thing = starter.title.toLowerCase();
   // The body's sections sit one level under the card's heading.
   const sub = level === 2 ? 3 : 4;

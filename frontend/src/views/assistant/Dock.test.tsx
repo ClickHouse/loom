@@ -52,7 +52,7 @@ function answer(text: string) {
 }
 
 let check: Record<string, unknown> | null = { ok: true, required: false };
-let chat: Array<() => Response> = [];
+let chat: Array<(init?: RequestInit) => Response> = [];
 let modelCalls: () => Response = () => json({ enabled: false, locked: false });
 let paths: string[] = [];
 /** The namespace each chat request was sent to, and the questions it carried. */
@@ -145,7 +145,7 @@ beforeEach(() => {
         sent.push((body.messages ?? []).filter((m) => m.role === "user").map((m) => m.content));
         const next = chat.shift();
         if (!next) throw new Error("no answer queued");
-        return next();
+        return next(init);
       }
       return json({});
     }),
@@ -401,11 +401,449 @@ describe("Try again", () => {
     expect(paths.filter((p) => p === "/v1/assistant/chat/completions")).toHaveLength(2);
   });
 
+  it("answers a refused Retry in the turn it asked again, not as a new turn", async () => {
+    signIn("viewer");
+    show();
+    chat.push(() => answer("Ada."));
+    await askIt("Who owns billing?");
+    expect(await screen.findByText("Ada.")).toBeInTheDocument();
+    await waitFor(() => expect(useChat.getState().answering).toBe(false));
+    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
+    await unavailable();
+    // The turn is back as it was, its question waiting in the field as an edit.
+    expect(screen.getByText("Ada.")).toBeInTheDocument();
+    chat.push(() => answer("Grace."));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("Grace.")).toBeInTheDocument();
+    expect(useChat.getState().turns.map((t) => t.answer)).toEqual(["Grace."]);
+    expect(screen.queryByText("Ada.")).toBeNull();
+  });
+
+  const starting = () => refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" });
+  async function answered(question: string, text: string) {
+    chat.push(() => answer(text));
+    await askIt(question);
+    expect(await screen.findByText(text)).toBeInTheDocument();
+    await waitFor(() => expect(useChat.getState().answering).toBe(false));
+  }
+  const pairs = () => useChat.getState().turns.map((t) => [t.question, t.answer]);
+
+  it("asks a refused new question as a new turn, the one before staying, and offers no Edit over it", async () => {
+    signIn("viewer");
+    show();
+    await answered("Who owns billing?", "Ada.");
+    chat.push(starting());
+    await askIt("Since when?");
+    await unavailable();
+    const user = userEvent.setup();
+    // The refused question waits in the field: an Edit would replace it.
+    expect(screen.queryByRole("button", { name: "Edit your question" })).toBeNull();
+    chat.push(() => answer("Since May."));
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("Since May.")).toBeInTheDocument();
+    expect(pairs()).toEqual([
+      ["Who owns billing?", "Ada."],
+      ["Since when?", "Since May."],
+    ]);
+  });
+
+  it("offers no Edit, up arrow or Retry while an edit put back waits for Try again", async () => {
+    signIn("viewer");
+    show();
+    await answered("Who owns billing?", "Ada.");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Edit your question" }));
+    const field = screen.getByLabelText("Question");
+    await user.clear(field);
+    await user.type(field, "Who owns invoices?");
+    // The attempt fails with no reason the panel shows, while the person types the next question.
+    chat.push(() => {
+      throw new TypeError("Failed to fetch");
+    });
+    await user.click(screen.getByRole("button", { name: "Ask" }));
+    await user.type(field, "next");
+    await waitFor(() => expect(useChat.getState().refused?.question).toBe("Who owns invoices?"));
+    await user.clear(field);
+    expect(screen.queryByRole("button", { name: "Edit your question" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    await user.keyboard("{ArrowUp}");
+    expect(field).toHaveValue("");
+    // Try again still asks the edited words in place.
+    chat.push(() => answer("Grace."));
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("Grace.")).toBeInTheDocument();
+    expect(pairs()).toEqual([["Who owns invoices?", "Grace."]]);
+  });
+
+  it("edits nothing with the up arrow while nothing can be asked", async () => {
+    signIn("viewer");
+    show();
+    await answered("Who owns billing?", "Ada.");
+    chat.push(starting());
+    await askIt("Since when?");
+    await unavailable();
+    const user = userEvent.setup();
+    const field = screen.getByLabelText("Question");
+    await user.clear(field);
+    await user.click(field);
+    await user.keyboard("{ArrowUp}");
+    expect(field).toHaveValue("");
+    expect(useChat.getState().editing).toBeNull();
+  });
+
+  it("offers no Edit while a refused question waits, even with the field cleared", async () => {
+    signIn("viewer");
+    show();
+    await answered("Who owns billing?", "Ada.");
+    chat.push(starting());
+    await askIt("Since when?");
+    await unavailable();
+    const user = userEvent.setup();
+    // Nothing can be asked until the reason goes: an edit opened now would end with the
+    // refused question's Try again.
+    await user.clear(screen.getByLabelText("Question"));
+    expect(screen.queryByRole("button", { name: "Edit your question" })).toBeNull();
+  });
+
+  it("answers a Retry refused while the field held other text in its turn, and keeps that text", async () => {
+    signIn("viewer");
+    show();
+    await answered("Who owns billing?", "Ada.");
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Question"), "half typed");
+    chat.push(starting());
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await unavailable();
+    expect(screen.getByLabelText("Question")).toHaveValue("half typed");
+    chat.push(() => answer("Grace."));
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("Grace.")).toBeInTheDocument();
+    expect(pairs()).toEqual([["Who owns billing?", "Grace."]]);
+    expect(screen.getByLabelText("Question")).toHaveValue("half typed");
+  });
+
+  it("asks a refused Retry no more after Cancel edit: Try again then only reads readiness", async () => {
+    signIn("viewer");
+    show();
+    await answered("Who owns billing?", "Ada.");
+    chat.push(starting());
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await unavailable();
+    await user.click(screen.getByRole("button", { name: "Cancel edit" }));
+    expect(useChat.getState().editing).toBeNull();
+    expect(useChat.getState().refused).toBeNull();
+    const reads = paths.filter((p) => p === "/v1/health/ready").length;
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(paths.filter((p) => p === "/v1/health/ready").length).toBe(reads + 1));
+    expect(paths.filter((p) => p === "/v1/assistant/chat/completions")).toHaveLength(2);
+    expect(pairs()).toEqual([["Who owns billing?", "Ada."]]);
+  });
+
+  it("asks a refused Ask again with sources with its sources, and keeps the button off while blocked", async () => {
+    signIn("viewer");
+    show();
+    const citations = `data: ${JSON.stringify({ object: "loom.citations", id: "m", choices: [], citations: [], support: "unsupported" })}\n\n`;
+    chat.push(
+      () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(c) {
+              c.enqueue(enc.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: "Fridays." } }] })}\n\n`));
+              c.enqueue(enc.encode(citations));
+              c.enqueue(enc.encode("data: [DONE]\n\n"));
+              c.close();
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+    );
+    await askIt("When do invoices go out?");
+    const user = userEvent.setup();
+    // Text in the field: the refused question waits for Try again, not as an edit.
+    await user.type(screen.getByLabelText("Question"), "half typed");
+    chat.push(starting());
+    await user.click(await screen.findByRole("button", { name: "Ask again with sources" }));
+    await unavailable();
+    // The turn put back waits for Try again: no second attempt can replace its words.
+    expect(screen.queryByRole("button", { name: "Ask again with sources" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(sent).toHaveLength(2);
+    chat.push(() => answer("On Fridays."));
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("On Fridays.")).toBeInTheDocument();
+    expect(sent[2].at(-1)).toBe("Context: Memories page\n\nWhen do invoices go out? Cite your sources.");
+    expect(useChat.getState().turns).toHaveLength(1);
+    expect(useChat.getState().turns[0].withSources).toBe(true);
+  });
+
+  it("sends a refused Retry on Try again with the page line the turn was asked with", async () => {
+    signIn("viewer");
+    show();
+    await answered("Who owns billing?", "Ada.");
+    act(() => useStore.setState({ view: "recall" }));
+    chat.push(starting());
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await unavailable();
+    chat.push(() => answer("Grace."));
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("Grace.")).toBeInTheDocument();
+    expect(sent[2]).toEqual(["Context: Memories page\n\nWho owns billing?"]);
+  });
+
+  /** A streamed answer of these events, closed after them; with none, it stays open until
+   *  the request's abort errors it, as a browser's fetch does. */
+  const stream = (events: string[], init?: RequestInit) =>
+    new Response(
+      new ReadableStream<Uint8Array>({
+        start(c) {
+          for (const e of events) c.enqueue(enc.encode(e));
+          if (events.length > 0) c.close();
+          else init?.signal?.addEventListener("abort", () => c.error(new DOMException("aborted", "AbortError")));
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "text/event-stream" } },
+    );
+  it.each([
+    [
+      "a lost connection before the request",
+      () => () => {
+        throw new TypeError("Failed to fetch");
+      },
+      false,
+    ],
+    [
+      "an error event before any text",
+      () => () =>
+        stream([
+          `data: ${JSON.stringify({ error: { code: "ASSISTANT_UPSTREAM_FAILED", message: "unreachable", retryable: true } })}\n\n`,
+        ]),
+      false,
+    ],
+    ["Stop before the first token", () => (init?: RequestInit) => stream([], init), true],
+  ])("keeps the answer before a Retry that ends with %s, here and stored", async (_, next, stopIt) => {
+    signIn("viewer");
+    show();
+    await answered("Who owns billing?", "Ada.");
+    const id = useChat.getState().id as string;
+    chat.push(next());
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    if (stopIt) await user.click(await screen.findByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(useChat.getState().answering).toBe(false));
+    expect(pairs()).toEqual([["Who owns billing?", "Ada."]]);
+    expect(useChat.getState().turns[0].state).toBe("done");
+    expect(screen.getByText("Ada.")).toBeInTheDocument();
+    expect(readConversation(id, alice)?.turns.map((t) => [t.answer, t.state])).toEqual([["Ada.", "done"]]);
+    expect(useChat.getState().notice).toMatch(stopIt ? /^Stopped before the answer began/ : /^Not asked again: /);
+  });
+
+  it("keeps the answer before a Retry stored until its text begins: a reload and the next tab find it", async () => {
+    signIn("viewer");
+    fakeLocks();
+    show();
+    await answered("Who owns billing?", "Ada.");
+    const id = useChat.getState().id as string;
+    chat.push((init?: RequestInit) => stream([], init));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(useChat.getState().answering).toBe(true));
+    // The page hides before any text: the stored turn is still the answer before.
+    window.dispatchEvent(new Event("pagehide"));
+    const stored = () => readConversation(id, alice, { answering: "stopped" })?.turns.map((t) => [t.answer, t.state]);
+    expect(stored()).toEqual([["Ada.", "done"]]);
+    // The tab goes; the next one opens the conversation and asks in it.
+    act(() => resetChat(alice));
+    await user.click(screen.getByRole("button", { name: "History" }));
+    await user.click(screen.getByRole("button", { name: "Who owns billing?" }));
+    expect(await screen.findByText("Ada.")).toBeInTheDocument();
+    chat.push(() => answer("Since May."));
+    await user.type(screen.getByLabelText("Question"), "Since when?");
+    await user.click(screen.getByRole("button", { name: "Ask" }));
+    expect(await screen.findByText("Since May.")).toBeInTheDocument();
+    await waitFor(() => expect(useChat.getState().answering).toBe(false));
+    expect(stored()).toEqual([
+      ["Ada.", "done"],
+      ["Since May.", "done"],
+    ]);
+  });
+
+  it.each([
+    [
+      "text_done, its check and its end",
+      [
+        `data: ${JSON.stringify({ object: "loom.text_done", id: "m", choices: [] })}\n\n`,
+        `data: ${JSON.stringify({ object: "loom.citations", id: "m", choices: [], citations: [], support: "none" })}\n\n`,
+        "data: [DONE]\n\n",
+      ],
+    ],
+    ["only its end", ["data: [DONE]\n\n"]],
+  ])("keeps the answer before a Retry whose new answer is empty, with %s, here and stored", async (_, events) => {
+    signIn("viewer");
+    show();
+    await answered("Who owns billing?", "Ada.");
+    const id = useChat.getState().id as string;
+    chat.push((init?: RequestInit) => stream(events, init));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(useChat.getState().answering).toBe(false));
+    expect(pairs()).toEqual([["Who owns billing?", "Ada."]]);
+    expect(screen.getByText("Ada.")).toBeInTheDocument();
+    expect(readConversation(id, alice)?.turns.map((t) => [t.answer, t.state])).toEqual([["Ada.", "done"]]);
+    expect(useChat.getState().notice).toBe("No new answer came: the answer before it stays.");
+  });
+
+  it.each([
+    ["Stop", true],
+    ["a lost connection", false],
+  ])("keeps an edit's words for Try again when %s ends it after the field got other text", async (_, stopIt) => {
+    signIn("viewer");
+    show();
+    await answered("Who owns billing?", "Ada.");
+    let fail!: () => void;
+    chat.push(
+      (init?: RequestInit) =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(c) {
+              fail = () => c.error(new TypeError("network error"));
+              init?.signal?.addEventListener("abort", () => c.error(new DOMException("aborted", "AbortError")));
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Edit your question" }));
+    const field = screen.getByLabelText("Question");
+    await user.clear(field);
+    await user.type(field, "Who owns invoices?");
+    await user.click(screen.getByRole("button", { name: "Ask" }));
+    await waitFor(() => expect(useChat.getState().answering).toBe(true));
+    await user.type(field, "half typed");
+    if (stopIt) await user.click(screen.getByRole("button", { name: "Stop" }));
+    else await act(async () => fail());
+    await waitFor(() => expect(useChat.getState().answering).toBe(false));
+    expect(pairs()).toEqual([["Who owns billing?", "Ada."]]);
+    expect(field).toHaveValue("half typed");
+    chat.push(() => answer("Grace."));
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("Grace.")).toBeInTheDocument();
+    expect(pairs()).toEqual([["Who owns invoices?", "Grace."]]);
+    expect(field).toHaveValue("half typed");
+  });
+
+  /** An edit of the last question stopped before any text: its words wait for Try again. */
+  async function stoppedEdit() {
+    await answered("Who owns billing?", "Ada.");
+    chat.push((init?: RequestInit) => stream([], init));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Edit your question" }));
+    const field = screen.getByLabelText("Question");
+    await user.clear(field);
+    await user.type(field, "Who owns invoices?");
+    await user.click(screen.getByRole("button", { name: "Ask" }));
+    await user.click(await screen.findByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(useChat.getState().answering).toBe(false));
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    return user;
+  }
+  const chats = () => paths.filter((p) => p === "/v1/assistant/chat/completions").length;
+
+  it("asks a stopped edit in no other conversation: New conversation and a History open drop it", async () => {
+    signIn("viewer");
+    show();
+    const user = await stoppedEdit();
+    await user.click(screen.getByRole("button", { name: "New conversation" }));
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(useChat.getState().refused).toBeNull();
+
+    // Again, then the conversation opened from History.
+    await stoppedEdit();
+    await user.click(screen.getByRole("button", { name: "History" }));
+    await user.click(screen.getAllByRole("button", { name: "Who owns billing?" })[0]);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Try again" })).toBeNull());
+    expect(useChat.getState().refused).toBeNull();
+    expect(chats()).toBe(4);
+  });
+
+  it("offers no Try again for a refused new question once its reason went: the question is in the field", async () => {
+    signIn("viewer");
+    show();
+    chat.push(starting());
+    await askIt("Who owns billing?");
+    await unavailable();
+    act(() => useChat.setState({ hint: null }));
+    await waitFor(() => expect(screen.queryByTestId("assistant-unavailable")).toBeNull());
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(screen.getByLabelText("Question")).toHaveValue("Who owns billing?");
+  });
+
+  it("offers no Try again for a stopped edit while the namespace shown differs", async () => {
+    signIn("viewer");
+    show();
+    await stoppedEdit();
+    act(() =>
+      useStore.setState({
+        identity: { org: "acme", namespace: "ops", agent: "loom-ui" },
+        myNamespaces: [
+          { namespace: "team", role: "reader", status: "active", kind: "memory" } as never,
+          { namespace: "ops", role: "reader", status: "active", kind: "memory" } as never,
+        ],
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Try again" })).toBeNull());
+  });
+
+  it("Cancel edit drops a stopped edit's Try again too", async () => {
+    signIn("viewer");
+    show();
+    const user = await stoppedEdit();
+    await user.click(screen.getByRole("button", { name: "Cancel edit" }));
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(useChat.getState().refused).toBeNull();
+    expect(screen.getByLabelText("Question")).toHaveValue("");
+  });
+
+  it("says why beside Try again once readiness clears a setting-up refusal of a Retry", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    signIn("viewer");
+    show();
+    await answered("Who owns billing?", "Ada.");
+    chat.push(starting());
+    await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
+    await unavailable();
+    await act(async () => {
+      vi.advanceTimersByTime(READINESS_POLL_MS + 10);
+    });
+    await waitFor(() => expect(screen.queryByTestId("assistant-unavailable")).toBeNull());
+    // The notice line, beside what the live region said.
+    const line = "The assistant can't answer: setting up. The answer before it stays.";
+    expect(screen.getAllByText(line).filter((el) => el.id !== "loom-assistant-status")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    expect(screen.getByText("Ada.")).toBeInTheDocument();
+  });
+
+  it("offers no Try again for a Retry refused with no reason the panel shows: the question waits as an edit", async () => {
+    signIn("viewer");
+    show();
+    await answered("Who owns billing?", "Ada.");
+    chat.push(refusal(429, { code: "RATE_LIMITED", message: "over the cap", retry_after_s: 60 }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(useChat.getState().notice).toMatch(/^Not asked again: /));
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(useChat.getState().refused).toBeNull();
+    expect(screen.getByLabelText("Question")).toHaveValue("Who owns billing?");
+    expect(screen.getByTestId("assistant-editing")).toBeInTheDocument();
+    expect(pairs()).toEqual([["Who owns billing?", "Ada."]]);
+  });
+
   it("keeps Ask off while the token's own claims still refuse", async () => {
     signIn("viewer", { read_scope: "own_session" });
     show();
     await unavailable();
-    useChat.setState({ refused: "Who?" });
+    useChat.setState({ refused: { question: "Who?" } });
     await userEvent.setup().click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(paths).toContain("/v1/health/ready"));
     expect(paths).not.toContain("/v1/assistant/chat/completions");
@@ -584,6 +1022,39 @@ describe("the conversation", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "Who owns billing?" }));
     expect(await screen.findByText("Stopped.")).toBeInTheDocument();
     expect(screen.getByText("Ada")).toBeInTheDocument();
+  });
+
+  it("is stored as answering while its sources are checked, so no other tab shows it, and a reload reads it done", async () => {
+    signIn("viewer");
+    show();
+    let finish!: () => void;
+    chat.push(
+      () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(c) {
+              c.enqueue(enc.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: "Ada." } }] })}\n\n`));
+              c.enqueue(enc.encode(`data: ${JSON.stringify({ object: "loom.text_done", id: "m", choices: [] })}\n\n`));
+              finish = () => c.close();
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+    await askIt("Who owns billing?");
+    await waitFor(() => expect(useChat.getState().checkingSources).not.toBeNull());
+    const id = useChat.getState().id as string;
+    // The page hides while the sources are checked.
+    window.dispatchEvent(new Event("pagehide"));
+    expect(readConversation(id, alice)?.turns).toEqual([]);
+    expect(readConversation(id, alice, { answering: "stopped" })?.turns[0]).toMatchObject({
+      answer: "Ada.",
+      state: "done",
+    });
+    expect(readConversation(id, alice, { answering: "stopped" })?.turns[0].textDone).toBeUndefined();
+    await act(async () => finish());
+    await waitFor(() => expect(useChat.getState().answering).toBe(false));
+    expect(readConversation(id, alice)?.turns[0]).toMatchObject({ answer: "Ada.", state: "done" });
   });
 
   it("asks how to go on when the header switches namespace under it", async () => {
@@ -1157,6 +1628,29 @@ describe("a turn stored while it answered", () => {
     ]);
   });
 
+  it("left while its sources were checked is kept as done by the next tab to ask", async () => {
+    signIn("viewer");
+    saved([done(0), { ...answering(1), answer: "Ada.", textDone: true }]);
+    const locks = fakeLocks();
+    locks.hold("loom_assistant_c_c1");
+    show();
+    const user = userEvent.setup();
+    await openSaved(user);
+    expect(screen.queryByText("Ada.")).toBeNull();
+    locks.release("loom_assistant_c_c1");
+    chat.push(() => answer("Since May."));
+    await user.type(screen.getByLabelText("Question"), "Since when?");
+    await user.click(screen.getByRole("button", { name: "Ask" }));
+    expect(await screen.findByText("Since May.")).toBeInTheDocument();
+    expect(screen.getByText("Ada.")).toBeInTheDocument();
+    expect(screen.getByText("Check didn't finish")).toBeInTheDocument();
+    await waitFor(() => expect(useChat.getState().answering).toBe(false));
+    expect(storedTurns().slice(0, 2)).toEqual([
+      ["t0", "done"],
+      ["t1", "done"],
+    ]);
+  });
+
   it("of another tab still answering stays stored when this tab saves on hiding", async () => {
     signIn("viewer");
     saved([done(0)]);
@@ -1721,6 +2215,27 @@ describe("Ask about this, the edge cases", () => {
     await waitFor(() => expect(document.getElementById("loom-assistant-status")).toHaveTextContent(line));
     expect(sent).toHaveLength(1);
     expect(screen.getByLabelText("Question")).toHaveValue("a newer question");
+  });
+
+  it("a question waiting with sources counts their words in the length it says", async () => {
+    signIn("viewer");
+    show();
+    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" }));
+    await waitFor(() => expect(screen.queryByText("Getting the assistant ready…")).not.toBeInTheDocument());
+    act(() => useDock.setState({ draft: "x".repeat(19_970) }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Ask" }));
+    await unavailable();
+    const refused = useChat.getState().refused;
+    if (!refused) throw new Error("the question should wait for Try again");
+    act(() => useChat.setState({ refused: { ...refused, withSources: true } }));
+    act(() => askAbout(item()));
+    act(() => useDock.setState({ draft: "a newer question" }));
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    // 19,951 less " Cite your sources." (19 characters).
+    const line = "Not sent: with this page's line the question is longer than 19,932 characters.";
+    expect(await screen.findByText(line)).toBeInTheDocument();
+    expect(sent).toHaveLength(1);
   });
 
   it("mid-answer after a namespace switch starts no conversation: the prompt shows and the item stays", async () => {

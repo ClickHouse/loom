@@ -3,20 +3,21 @@
 // navigation never stops an answer. Saved to this browser at turn boundaries and when the
 // page hides (./conversations.ts).
 import { create } from "zustand";
-import { type ChatMessage, streamAssistantChat } from "../../api/assistantChat";
+import { type ChatMessage, type Support, streamAssistantChat } from "../../api/assistantChat";
 import { ApiError } from "../../lib/errors";
 import { humanizeError } from "../../lib/errorWords";
 import type { Owner } from "../../lib/assistantStorage";
 import { useDock } from "../../lib/assistantDock";
 import { SHORT_REASON, type AssistantReason } from "../../lib/assistantLayout";
 import { announceAssistant } from "../../lib/assistantDockRuntime";
-import { supportLabel } from "./Sources";
+import { NOT_CHECKED, supportLabel } from "./Sources";
 import { withContext, type AskContext, type Asked } from "./pageContext";
 import type { TurnCard } from "./cards/types";
 import {
   ConversationDeleted,
   StorageRefused,
   deleteConversation,
+  cutOffTurn,
   mergeTurns,
   randomId,
   readConversation,
@@ -26,6 +27,13 @@ import {
 } from "./conversations";
 
 export type { Turn } from "./conversations";
+
+/** A question refused for a reason the panel shows, and how Try again asks it. */
+type Refused = {
+  question: string;
+  /** The page line a turn asked again was asked with: Try again sends it, not the chip's. */
+  asked?: Asked;
+} & Pick<AskOptions, "replace" | "withSources">;
 
 /** The reason a refusal before the stream names, when it is one the panel words as the
  *  assistant being unavailable (the route's `detail.reason`, server/assistant/app). */
@@ -52,6 +60,21 @@ export function refusalReason(e: unknown): AssistantReason | null {
 
 const isAbort = (e: unknown) => e instanceof DOMException && e.name === "AbortError";
 
+/** Whether the same question sent again may be answered: the server marks the error
+ *  retryable, the stream lost its connection, or the request never reached Loom (fetch's
+ *  own TypeError). */
+function retryableError(e: unknown): boolean {
+  if (e instanceof ApiError) return e.code === "STREAM_ENDED" || e.detail.retryable === true;
+  return e instanceof TypeError;
+}
+
+/** What "Ask again with sources" adds to the question. */
+export const CITE_SOURCES = " Cite your sources.";
+
+/** The question as it is sent: with CITE_SOURCES when it was asked with sources. */
+export const sentQuestion = (question: string, withSources = false) =>
+  withSources ? `${question}${CITE_SOURCES}` : question;
+
 // What one request may carry (server/assistant/api/models.py): the earlier messages, newest
 // kept, and each message's length.
 const MAX_HISTORY = 50;
@@ -66,7 +89,8 @@ export function conversation(turns: Turn[], question: string, context: AskContex
   const history: ChatMessage[] = [];
   for (const t of turns) {
     if (t.state === "refused" || t.state === "card") continue;
-    history.push({ role: "user", content: withContext(t.question, t.context).slice(0, MAX_MESSAGE_CHARS) });
+    const sent = sentQuestion(t.question, t.withSources);
+    history.push({ role: "user", content: withContext(sent, t.context).slice(0, MAX_MESSAGE_CHARS) });
     if (t.answer.trim()) history.push({ role: "assistant", content: t.answer.slice(0, MAX_MESSAGE_CHARS) });
   }
   return [...history.slice(-MAX_HISTORY), { role: "user", content: withContext(question, context) }];
@@ -85,13 +109,21 @@ interface ChatState {
   notice: string | null;
   /** This browser refused to store conversations: this one lasts as long as the tab. */
   storageOff: boolean;
-  /** A question the route refused for a reason the panel shows (Try again asks it again). */
-  refused: string | null;
+  /** A question the route refused for a reason the panel shows: Try again asks it again,
+   *  answering `replace` again in place when it was a turn asked again, with CITE_SOURCES
+   *  when it was asked with them. */
+  refused: Refused | null;
   /** A reason the route's refusal named: a tab-lifetime hint, cleared by an answer or by
    *  Try again. */
   hint: AssistantReason | null;
   /** The reason the readiness read gave, null when it reported none or failed. */
   readiness: AssistantReason | null;
+  /** The last question is in the field to be edited: Ask answers that turn again;
+   *  `withSources`: Ask adds CITE_SOURCES. An edit starts only in an empty field. */
+  editing: { id: string; withSources?: boolean } | null;
+  /** The turn whose text is complete while this tab checks its sources (`loom.text_done`
+   *  came, `loom.citations` not yet): never stored. */
+  checkingSources: string | null;
 }
 
 /** Said about one Ask refused because another tab held the conversation's lock: it goes with
@@ -99,20 +131,39 @@ interface ChatState {
 export const OTHER_TAB = "Another tab was answering in this conversation. Ask again once it ends.";
 export const DELETED = "This conversation was deleted: it is no longer saved.";
 
-const blank = { id: null, namespace: null, turns: [] as Turn[], trimmed: false, notice: null };
+// A refusal belongs to its conversation: Try again never asks it in another.
+const blank = {
+  id: null,
+  namespace: null,
+  turns: [] as Turn[],
+  trimmed: false,
+  notice: null,
+  editing: null,
+  refused: null,
+};
 
 export const useChat = create<ChatState>(() => ({
   owner: null,
   ...blank,
   answering: false,
   storageOff: false,
-  refused: null,
   hint: null,
   readiness: null,
+  checkingSources: null,
 }));
 
 /** The answer running in this tab; a callback of any other answer changes nothing shared. */
 let controller: AbortController | null = null;
+
+/** A starter card's read in flight, by turn (cards/cardStore.ts): kept here so a turn put
+ *  back can stop its read without this module loading the cards. */
+export const cardReads = new Map<string, AbortController>();
+
+/** The turn asked again, as it was, while its new answer has not begun: saves write it in
+ *  place of the empty turn shown, so a reload or a closed tab keeps the answer before. Other
+ *  tabs see that turn finished until the new text comes; where the Locks API is, the
+ *  conversation's lock still keeps them from answering in it meanwhile. */
+let keptBack: Turn | null = null;
 
 export const lockName = (id: string) => `loom_assistant_c_${id}`;
 
@@ -145,7 +196,7 @@ function mergeStored(answering: "omit" | "stopped" = "omit"): boolean {
   const stored = readConversation(s.id, s.owner, { answering: "kept" });
   if (!stored) return false;
   const theirs = stored.turns.flatMap((t) =>
-    t.state !== "answering" ? [t] : answering === "stopped" ? [{ ...t, state: "stopped" as const }] : [],
+    t.state !== "answering" ? [t] : answering === "stopped" ? [cutOffTurn(t)] : [],
   );
   useChat.setState({ turns: mergeTurns(s.turns, theirs) });
   return stored.turns.some((t) => t.state === "answering");
@@ -166,7 +217,16 @@ export function save({ held = false, drop }: { held?: boolean; drop?: string } =
     theirs.filter((t) => t.state !== "answering"),
   );
   useChat.setState({ turns: shown });
-  const c = current(mergeTurns(shown, theirs));
+  // A turn whose sources this tab still checks is stored as answering, so no other tab
+  // shows it or asks it again before the check ends; cut off, it reads as done.
+  const written = mergeTurns(shown, theirs).map((t) =>
+    t.id === keptBack?.id
+      ? keptBack
+      : t.id === s.checkingSources
+        ? { ...t, state: "answering" as const, textDone: true as const }
+        : t,
+  );
+  const c = current(written);
   if (!c) return;
   try {
     saveConversation(c);
@@ -226,8 +286,9 @@ export function newConversation(): void {
 export function resetChat(owner: Owner | null): void {
   controller?.abort();
   controller = null;
+  keptBack = null;
   // A refusal's reason was about the owner's token: it goes with them.
-  useChat.setState({ owner, ...blank, answering: false, refused: null, hint: null });
+  useChat.setState({ owner, ...blank, answering: false, checkingSources: null, hint: null });
   useDock.setState({ working: false });
 }
 
@@ -239,6 +300,17 @@ export interface WithCard {
   alone: (why: string) => void;
 }
 
+/** How a question is asked. `replace`: the id of the last turn, answered again in place
+ *  (Retry, an edit, "Ask again with sources"); it keeps its id, so every tab's copy of the
+ *  conversation takes the new answer. `withSources`: asked with CITE_SOURCES. `fromField`:
+ *  the question came from the field, which empties once it is asked (by default, a
+ *  question with no card). */
+export interface AskOptions {
+  replace?: string;
+  withSources?: boolean;
+  fromField?: boolean;
+}
+
 /** Ask `question`, with what the panel's chip says about the page (`asked`): in the
  *  conversation's namespace, or in `namespace` when a new one starts. The conversation's
  *  lock is taken first, only if no other tab holds it; when one does, nothing is sent and
@@ -248,6 +320,7 @@ export function ask(
   namespace: string,
   asked: Asked = { context: null, item: null },
   withCard: WithCard | null = null,
+  opts: AskOptions = {},
 ): void {
   const s = useChat.getState();
   if (s.answering) return;
@@ -258,7 +331,7 @@ export function ask(
   // Answering from here on, so a second Ask waits; the turn shows once the lock is held.
   useChat.setState({ answering: true, notice: null });
   useDock.setState({ working: true });
-  const run = (held: boolean) => answer(id, ns, question, asked, mine, held, withCard);
+  const run = (held: boolean) => answer(id, ns, question, asked, mine, held, withCard, opts);
   const locks = webLocks();
   if (!locks?.request) {
     void run(false);
@@ -286,7 +359,8 @@ export function ask(
 function settle(mine: AbortController): boolean {
   if (controller !== mine) return false;
   controller = null;
-  useChat.setState({ answering: false });
+  keptBack = null;
+  useChat.setState({ answering: false, checkingSources: null });
   useDock.setState({ working: false });
   return true;
 }
@@ -319,6 +393,7 @@ async function answer(
   mine: AbortController,
   held: boolean,
   withCard: WithCard | null,
+  opts: AskOptions,
 ): Promise<void> {
   const context = asked.context;
   // Stopped, or the chat reset, before the lock came: nothing is asked.
@@ -326,33 +401,46 @@ async function answer(
     settle(mine);
     return;
   }
-  const turnId = randomId();
   // What another tab finished in this conversation goes with the question.
   useChat.setState({ id, namespace, refused: null });
   mergeStored(held ? "stopped" : "omit");
   const before = useChat.getState().turns;
-  const messages = conversation(before, question, context);
+  // The turn answered again, when it is still the last one; otherwise the question is a
+  // new turn and nothing is lost.
+  const last = before[before.length - 1];
+  const previous = opts.replace && last?.id === opts.replace ? last : null;
+  const turnId = previous?.id ?? randomId();
+  const earlier = previous ? before.slice(0, -1) : before;
+  const messages = conversation(earlier, sentQuestion(question, opts.withSources), context);
+  // A starter's turn answered again keeps its card, marked to be read again once it shows.
+  const card = withCard?.card ?? (previous?.card ? { ...previous.card, again: true } : undefined);
+  const fromField = opts.fromField ?? !withCard;
   useChat.setState({
     turns: [
-      ...before,
+      ...earlier,
       {
         id: turnId,
         question,
         ...(context ? { context } : {}),
-        ...(withCard ? { card: withCard.card } : {}),
+        ...(opts.withSources ? { withSources: true } : {}),
+        ...(card ? { card } : {}),
         answer: "",
         state: "answering",
         at: Date.now(),
       },
     ],
+    editing: null,
   });
   withCard?.shown(turnId);
-  // The next question starts again from the page alone, its chip on. A starter's question
-  // never came from the field: what is typed there, and its chip, stay.
-  if (!withCard) useDock.setState({ draft: "", item: null, pageOff: false });
+  // The next question starts again from the page alone, its chip on. A starter's question,
+  // or one asked again from the transcript, never came from the field: what is typed there,
+  // and its chip, stay.
+  if (fromField) useDock.setState({ draft: "", item: null, pageOff: false });
   announceAssistant("The assistant is answering.");
   // Saved at its start: a reload mid-answer shows it as stopped. Other tabs leave a turn
-  // still answering out until it ends.
+  // still answering out until it ends. A turn asked again is stored as it was until its new
+  // text begins.
+  keptBack = previous;
   save({ held });
   const update = (change: (t: Turn) => Partial<Turn>) => {
     if (controller !== mine) return;
@@ -361,18 +449,30 @@ async function answer(
     }));
   };
   let streamed = false;
-  // The label, said with the end of the answer.
+  // The label, said with the end of the answer, and the support it is for.
   let labelled = "";
+  let support: Support | null = null;
+  // Every source the answer cites was found: its label needs no saying once the end was.
+  let allFound = false;
+  // `loom.text_done` came: the text is complete and its sources are being checked.
+  let textDone = false;
+  // The end was said at text_done (the panel was open then): it is not said again, nor
+  // marked unread, when the check lands.
+  let saidDone = false;
+  const endSaid = (unchecked = "") =>
+    endAnnouncement({ label: labelled || (support === null ? unchecked : ""), allFound, saidDone });
   const end = (change: Partial<Turn>, said: string) => {
     update(() => change);
     if (!settle(mine)) return;
     save({ held });
-    const unread = !useDock.getState().open && change.state === "done";
+    const unread = !useDock.getState().open && change.state === "done" && !saidDone;
     if (unread) {
       useDock.setState({ unread: true });
       announceAssistant("Assistant answer ready");
     } else if (said) announceAssistant(said);
   };
+  // What ended the answer: null when its stream ended.
+  let failure: unknown = null;
   try {
     await streamAssistantChat(
       namespace,
@@ -380,29 +480,55 @@ async function answer(
       {
         onText: (text) => {
           streamed = true;
+          if (controller === mine) keptBack = null;
           update((t) => ({ answer: t.answer + text }));
         },
-        onCitations: (citations, support, unknownNames, read) => {
-          labelled = supportLabel(support, citations, unknownNames)?.text ?? "";
+        onCitations: (citations, landed, unknownNames, read) => {
+          support = landed;
+          allFound = landed === "supported" && citations.every((c) => c.verified);
+          labelled = supportLabel(landed, citations, unknownNames)?.text ?? "";
           // The server's one read of the run replaces the live list (an empty one when the
           // run made no call); when that read failed or ran past its bound the event lists
           // none, and the steps already shown stay.
           update(() => ({
             citations,
-            support,
+            support: landed,
             unknownNames,
             ...(read.listed ? { steps: read.steps, stepsCut: read.cut } : {}),
           }));
         },
         // Display only: the steps are not said (the live region keeps card lines and the end).
         onSteps: (read) => update(() => ({ steps: read.steps, stepsCut: read.cut })),
+        // The turn is done and Stop goes; Ask still waits for the checks, which hold the
+        // namespace's answer slot.
+        onTextDone: () => {
+          // A turn asked again with no new text keeps answering until it goes back as it was.
+          if (controller !== mine || (previous && !streamed)) return;
+          textDone = true;
+          update(() => ({ state: "done" }));
+          useChat.setState({ checkingSources: turnId });
+          saidDone = useDock.getState().open;
+          if (saidDone) announceAssistant("The answer is complete.");
+        },
       },
       mine.signal,
     );
+  } catch (e: unknown) {
+    failure = e;
+  }
+  // A turn asked again replaces the answer before it only once new text came: however it
+  // ended (the stream's end, a refusal, an error, Stop), with none it goes back as it was.
+  if (previous && !streamed) return putBack(previous, question, asked, opts, failure, mine, held);
+  if (failure === null) {
     // An answer came: whatever the route refused before no longer holds.
     if (controller === mine) useChat.setState({ hint: null });
-    end({ state: "done" }, `The answer is complete.${labelled ? ` ${labelled}.` : ""}`);
-  } catch (e: unknown) {
+    end({ state: "done" }, endSaid());
+  } else {
+    const e = failure;
+    // The text was complete: whatever cut the checks short, the answer stands; with no
+    // label yet, its check did not finish.
+    if (textDone)
+      return end({ state: "done", ...(support === null ? { checkLost: true } : {}) }, endSaid(NOT_CHECKED.text));
     if (isAbort(e)) return end({ state: "stopped" }, "The answer was stopped.");
     // A refusal before the stream started is an HTTP error (status set); one inside the
     // stream is an error event (status 0) after part of the answer.
@@ -414,8 +540,124 @@ async function answer(
     // A refused question was never answered: it waits in the field to be asked again, with
     // the chip it was asked with.
     if (refusedBefore && controller === mine) giveBack(question, asked);
-    end({ state: refusedBefore ? "refused" : "failed", error: humanizeError(e, { read: true }) }, "");
+    end(
+      {
+        state: refusedBefore ? "refused" : "failed",
+        error: humanizeError(e, { read: true }),
+        ...(retryableError(e) ? { retryable: true } : {}),
+      },
+      "",
+    );
   }
+}
+
+/** What is said when an answer ends. `label`: its label ("" for none); `allFound`: every
+ *  source it cites was found; `saidDone`: "The answer is complete." was said when its text
+ *  ended, so only a label not fully confirmed is said now. */
+export function endAnnouncement(end: { label: string; allFound: boolean; saidDone: boolean }): string {
+  if (!end.saidDone) return end.label ? `The answer is complete. ${end.label}.` : "The answer is complete.";
+  return end.label && !end.allFound ? `${end.label}.` : "";
+}
+
+/** A turn asked again ended with no new text (`e` null: its stream ended empty): it goes
+ *  back as it was, and Try again or an Ask from the field answers it again in place. */
+function putBack(
+  previous: Turn,
+  question: string,
+  asked: Asked,
+  opts: AskOptions,
+  e: unknown,
+  mine: AbortController,
+  held: boolean,
+): void {
+  if (controller !== mine) return;
+  // A card read the attempt started would land on the turn put back.
+  cardReads.get(previous.id)?.abort();
+  cardReads.delete(previous.id);
+  const reason = e instanceof ApiError && e.status !== 0 ? refusalReason(e) : null;
+  const said = isAbort(e)
+    ? "Stopped before the answer began: the answer before it stays."
+    : e === null
+      ? "No new answer came: the answer before it stays."
+      : reason
+        ? `The assistant can't answer: ${SHORT_REASON[reason.kind]}. The answer before it stays.`
+        : `Not asked again: ${humanizeError(e, { read: true, bare: true })}`;
+  // Try again asks it again: a refusal the panel shows, and an edit, whose words are
+  // nowhere else once the field holds other text.
+  const again = reason || question !== previous.question;
+  useChat.setState((st) => ({
+    turns: st.turns.map((t) =>
+      t.id === previous.id ? { ...previous, card: keptCard(previous, t), at: Date.now() } : t,
+    ),
+    // Said in the notice too: it stays once readiness clears a reason of the setup.
+    notice: said,
+    ...(reason ? { hint: reason } : {}),
+    ...(again
+      ? { refused: { question, asked, replace: previous.id, ...(opts.withSources ? { withSources: true } : {}) } }
+      : {}),
+  }));
+  // Stopped, a Retry needs nothing in the field; an edit's words go back to it.
+  if ((!isAbort(e) || question !== previous.question) && !useDock.getState().draft) {
+    giveBack(question, asked);
+    useChat.setState({
+      editing: { id: previous.id, ...(opts.withSources ? { withSources: true } : {}) },
+    });
+  }
+  settle(mine);
+  save({ held });
+  announceAssistant(said);
+}
+
+/** The card of a turn put back: the one its attempt's read landed in, or the turn's own
+ *  when no read landed (none started, or one stopped busy); never marked again or busy, as
+ *  its reads were stopped. */
+function keptCard(previous: Turn, shown: Turn): Turn["card"] {
+  const card = !shown.card || shown.card.busy ? previous.card : shown.card;
+  if (!card) return card;
+  const { again: _again, busy: _busy, ...kept } = card;
+  return kept;
+}
+
+/** The last turn, when it can be asked again or edited: nothing answering, and not a card
+ *  alone. A selector, so a component re-renders when it changes. */
+export function lastAskedOf(s: Pick<ChatState, "turns" | "answering">): Turn | null {
+  const t = s.turns[s.turns.length - 1];
+  return !s.answering && t && t.state !== "card" && t.state !== "answering" ? t : null;
+}
+
+const lastAsked = (): Turn | null => lastAskedOf(useChat.getState());
+
+/** Ask the last turn's question again in its place, with the context line it was asked
+ *  with (Retry), or with CITE_SOURCES (`withSources`, "Ask again with sources"). A
+ *  starter's turn reads its card again. */
+export function retry(turnId: string, namespace: string, { withSources }: { withSources?: boolean } = {}): void {
+  const t = lastAsked();
+  if (!t || t.id !== turnId) return;
+  // A refused question was given back to the field: asked again, it leaves it.
+  const fromField = useDock.getState().draft === t.question;
+  ask(t.question, namespace, { context: t.context ?? null, item: null }, null, {
+    replace: t.id,
+    withSources: withSources ?? t.withSources === true,
+    fromField,
+  });
+}
+
+/** Put the last question in an empty field to be edited; Ask then answers that turn again,
+ *  with sources when it was asked with them. */
+export function editLast(): boolean {
+  const t = lastAsked();
+  if (!t || useDock.getState().draft) return false;
+  useChat.setState({ editing: { id: t.id, ...(t.withSources ? { withSources: true } : {}) }, notice: null });
+  useDock.setState({ draft: t.question });
+  return true;
+}
+
+/** Leave the edit: the field empties, and an edit put back is not asked again either. */
+export function cancelEdit(): void {
+  const { editing, refused } = useChat.getState();
+  if (!editing) return;
+  useChat.setState({ editing: null, ...(refused?.replace === editing.id ? { refused: null } : {}) });
+  useDock.setState({ draft: "" });
 }
 
 /** The route refused before the answer for a reason the panel shows: the turn is taken
@@ -433,7 +675,7 @@ function takeBack(
 ): void {
   if (controller !== mine) return;
   const turns = useChat.getState().turns.filter((t) => t.id !== turnId);
-  useChat.setState({ turns, hint: reason, refused: question });
+  useChat.setState({ turns, hint: reason, refused: { question } });
   giveBack(question, asked);
   const owner = useChat.getState().owner;
   const stored = owner ? readConversation(id, owner, { answering: "kept" }) : null;

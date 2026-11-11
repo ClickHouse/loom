@@ -240,12 +240,14 @@ def test_sync_agent_iterates_the_stream() -> None:
         assert sa.assistant.ask("q").run_id == "chatcmpl-1"
 
 
-def test_steps_ride_the_answer_and_a_step_event_yields_nothing() -> None:
+def test_steps_ride_the_answer_and_loom_events_yield_nothing() -> None:
     step = {"op": "namespace.audit", "text": "Read the audit", "ok": True}
     failed = {"op": "memory.search", "text": "Couldn't search memories", "ok": False}
     stream = _sse(
         {"object": "loom.step", "id": "", "choices": [], "steps": [step]},
         _chunk("Seven."),
+        # The end of the text, before the checks: no choices, so no text.
+        {"object": "loom.text_done", "id": "chatcmpl-1", "choices": []},
         {
             "object": "loom.citations",
             "id": "chatcmpl-1",

@@ -137,7 +137,25 @@ working line names the latest call it made ("Read the audit"), or "Answering…"
 first; a call that failed or was refused reads "Couldn't read …", muted. Under the finished
 answer **What it read (n)** lists every call (see
 [steps](../architecture/assistant.md#steps)). **Stop** ends an answer; closing the panel or
-leaving the page does not. Each question goes with the conversation's newest 50 messages.
+leaving the page does not. Once the text is complete Stop goes, and the answer shows
+"Checking sources…" until its check ends; the next question waits for that check. An
+answer whose check never came back (the connection was lost, or the page was left) reads
+"Check didn't finish". Each question goes with the conversation's newest 50 messages.
+
+**Copy** under a finished answer copies it as written, citations included. The last answer
+offers **Retry**, which answers its question again in its place with the page line it was
+asked with: after it ended, was stopped, or failed in a way that sending it again may pass
+(the server marks the error retryable, or the connection was lost). **Edit** on the last
+question, or the up arrow, puts it in the field while the field is empty; Ask then
+replaces its answer (with sources when it was asked with them), and **Cancel edit**
+empties the field; while an edit is open, Retry and Ask again with sources are not
+offered. A label that could not confirm the last answer offers **Ask again with sources**,
+which asks it again with "Cite your sources." after it, shown with a "With sources" tag. A
+starter's turn asked again reads its card again.
+
+A question asked again replaces its answer only once new text comes: until then the turn
+stays as it was, and a refusal the panel explains, or an edit that did not go, offers
+**Try again** (see [asking again](../architecture/assistant.md#asking-again)).
 
 **Starters** list in an empty conversation, whether the assistant can answer or not: what the
 namespace holds and who appears in it (`namespace.inventory`), how it is used (the audit over

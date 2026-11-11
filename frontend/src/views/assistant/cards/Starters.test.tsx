@@ -22,9 +22,11 @@ import { axeViolations } from "../../../test/axe";
 import { resetInsights } from "../../../test/insights";
 import { AssistantChat } from "../Chat";
 import { resetChat, useChat, type Turn } from "../chatStore";
+import { DockBody } from "../Dock";
 import { supportLabel } from "../Sources";
 import { Starters } from "./Starters";
 import { CARD_SNAPSHOT_MAX, storedCard } from "./types";
+import { forgetCards, isFresh } from "./cardStore";
 
 const AUDIT: NamespaceAuditResult = {
   org: "dev",
@@ -303,6 +305,222 @@ describe("a starter that asks the assistant", () => {
     // A refused step is muted, not an error.
     expect(within(list).getByText("Couldn't search memories")).toHaveClass("text-text-muted");
     expect(await axeViolations(container)).toEqual([]);
+  });
+
+  it("reads its card again on Retry and on an edit of its question, answering the same turn", async () => {
+    render(<Panel />);
+    await userEvent.click(await screen.findByRole("button", { name: AUDIT_STARTER }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    await screen.findByTestId("audit-summary");
+    await act(async () => {
+      answer?.send({ id: "msg-1", choices: [{ delta: { content: "Three exact-key reads." } }] });
+      answer?.done();
+    });
+    await userEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(sent).toHaveLength(2));
+    expect(sent[1].messages).toEqual([
+      { role: "user", content: "How is this namespace being used over the last 7 days?" },
+    ]);
+    await waitFor(() => expect(auditNamespace).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      answer?.send({ id: "msg-2", choices: [{ delta: { content: "Two exact-key reads." } }] });
+      answer?.done();
+    });
+    await waitFor(() => expect(useChat.getState().answering).toBe(false));
+
+    await userEvent.click(screen.getByRole("button", { name: "Edit your question" }));
+    const field = screen.getByLabelText("Question");
+    await userEvent.clear(field);
+    await userEvent.type(field, "Which reads are exact-key?");
+    await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+    await waitFor(() => expect(sent).toHaveLength(3));
+    await waitFor(() => expect(auditNamespace).toHaveBeenCalledTimes(3));
+    const turns = useChat.getState().turns;
+    expect(turns).toHaveLength(1);
+    expect(turns[0].question).toBe("Which reads are exact-key?");
+    expect(turns[0].card?.op).toBe("namespace.audit");
+    expect(await screen.findByTestId("audit-summary")).toBeInTheDocument();
+  });
+
+  it("puts a starter's turn back as it was when its Retry is refused, and Try again reads its card again", async () => {
+    // The panel's body, which says why the assistant can't answer and offers Try again.
+    const refusals: Response[] = [];
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const json = (body: unknown, status = 200) =>
+        new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+      if (url.startsWith("/v1/health/ready")) return json({ ready: true, checks: { assistant: { ok: true } } });
+      if (url.startsWith("/v1/org.model_calls")) return json({ enabled: false, locked: false });
+      if (!url.startsWith("/v1/assistant/chat")) return json({});
+      sent.push(JSON.parse(String(init?.body)));
+      const refused = refusals.shift();
+      if (refused) return refused;
+      answer = sse();
+      return answer.response;
+    });
+    render(
+      <>
+        <DockBody />
+        <p id="loom-assistant-status" role="status" />
+      </>,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: AUDIT_STARTER }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    await screen.findByTestId("audit-summary");
+    await act(async () => {
+      answer?.send({ id: "msg-1", choices: [{ delta: { content: "Three exact-key reads." } }] });
+      answer?.done();
+    });
+    await waitFor(() => expect(useChat.getState().answering).toBe(false));
+    refusals.push(
+      new Response(
+        JSON.stringify({ detail: { code: "ASSISTANT_UNAVAILABLE", message: "not yet", reason: "starting" } }),
+        { status: 503, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    const tryAgain = await screen.findByRole("button", { name: "Try again" });
+    const turn = useChat.getState().turns[0];
+    expect(turn.answer).toBe("Three exact-key reads.");
+    expect(turn.card?.op).toBe("namespace.audit");
+    expect(turn.card?.again).toBeUndefined();
+    // The card read itself again as the Retry started, before the refusal.
+    expect(auditNamespace).toHaveBeenCalledTimes(2);
+
+    await userEvent.click(tryAgain);
+    await waitFor(() => expect(sent).toHaveLength(3));
+    await waitFor(() => expect(auditNamespace).toHaveBeenCalledTimes(3));
+    expect(useChat.getState().turns).toHaveLength(1);
+    expect(useChat.getState().turns[0].id).toBe(turn.id);
+  });
+
+  it("drops a card read a refused Retry started, so the turn put back keeps its card", async () => {
+    render(<Panel />);
+    await userEvent.click(await screen.findByRole("button", { name: AUDIT_STARTER }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    await screen.findByTestId("audit-summary");
+    await act(async () => {
+      answer?.send({ id: "msg-1", choices: [{ delta: { content: "Three exact-key reads." } }] });
+      answer?.done();
+    });
+    await waitFor(() => expect(useChat.getState().answering).toBe(false));
+    // The read the Retry starts lands only after the refusal.
+    let land!: (r: NamespaceAuditResult) => void;
+    auditNamespace.mockImplementationOnce(() => new Promise<NamespaceAuditResult>((r) => (land = r)));
+    vi.mocked(fetch).mockImplementationOnce(
+      async () =>
+        new Response(
+          JSON.stringify({ detail: { code: "ASSISTANT_UNAVAILABLE", message: "not yet", reason: "starting" } }),
+          { status: 503, headers: { "Content-Type": "application/json" } },
+        ),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(auditNamespace).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "starting" }));
+    await act(async () => land({ ...AUDIT, criticals: 9 }));
+    const card = useChat.getState().turns[0].card;
+    expect((card?.data as NamespaceAuditResult | undefined)?.criticals).toBe(1);
+    expect(card?.busy).toBeFalsy();
+  });
+
+  it("keeps a card read that landed before the route refused the Retry, its data and its freshness one", async () => {
+    render(<Panel />);
+    await userEvent.click(await screen.findByRole("button", { name: AUDIT_STARTER }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    await screen.findByTestId("audit-summary");
+    await act(async () => {
+      answer?.send({ id: "msg-1", choices: [{ delta: { content: "Three exact-key reads." } }] });
+      answer?.done();
+    });
+    await waitFor(() => expect(useChat.getState().answering).toBe(false));
+    const turnId = useChat.getState().turns[0].id;
+    // As after a reload: the card shows its stored snapshot, not a read of this visit.
+    forgetCards();
+    expect(isFresh(turnId)).toBe(false);
+    auditNamespace.mockImplementationOnce(async () => ({ ...AUDIT, criticals: 9 }));
+    // The route's refusal comes only once the card's read landed.
+    let refuse!: () => void;
+    vi.mocked(fetch).mockImplementationOnce(
+      () =>
+        new Promise<Response>((r) => {
+          refuse = () =>
+            r(
+              new Response(
+                JSON.stringify({ detail: { code: "ASSISTANT_UNAVAILABLE", message: "not yet", reason: "starting" } }),
+                { status: 503, headers: { "Content-Type": "application/json" } },
+              ),
+            );
+        }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(isFresh(turnId)).toBe(true));
+    await act(async () => refuse());
+    await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "starting" }));
+    const card = useChat.getState().turns[0].card;
+    expect((card?.data as NamespaceAuditResult | undefined)?.criticals).toBe(9);
+    expect(card?.again).toBeUndefined();
+    expect(isFresh(turnId)).toBe(true);
+  });
+
+  it("keeps a card's failed read when a Retry's read is still in flight as the route refuses", async () => {
+    auditNamespace.mockImplementationOnce(async () => {
+      throw new Error("boom");
+    });
+    render(<Panel />);
+    await userEvent.click(await screen.findByRole("button", { name: AUDIT_STARTER }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    await waitFor(() => expect(useChat.getState().turns[0].card?.failed).toBe(true));
+    const error = useChat.getState().turns[0].card?.error;
+    await act(async () => {
+      answer?.send({ id: "msg-1", choices: [{ delta: { content: "Three exact-key reads." } }] });
+      answer?.done();
+    });
+    await waitFor(() => expect(useChat.getState().answering).toBe(false));
+    auditNamespace.mockImplementationOnce(() => new Promise<NamespaceAuditResult>(() => {}));
+    vi.mocked(fetch).mockImplementationOnce(
+      async () =>
+        new Response(
+          JSON.stringify({ detail: { code: "ASSISTANT_UNAVAILABLE", message: "not yet", reason: "starting" } }),
+          { status: 503, headers: { "Content-Type": "application/json" } },
+        ),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(auditNamespace).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "starting" }));
+    const card = useChat.getState().turns[0].card;
+    expect(card?.error).toBe(error);
+    expect(card?.failed).toBe(true);
+    expect(card?.busy).toBeFalsy();
+  });
+
+  it("leaves no card busy when its first read was still running as a refused Retry put the turn back", async () => {
+    // The starter's own read and the Retry's read never land.
+    auditNamespace.mockImplementationOnce(() => new Promise<NamespaceAuditResult>(() => {}));
+    auditNamespace.mockImplementationOnce(() => new Promise<NamespaceAuditResult>(() => {}));
+    render(<Panel />);
+    await userEvent.click(await screen.findByRole("button", { name: AUDIT_STARTER }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    await waitFor(() => expect(useChat.getState().turns[0].card?.busy).toBe(true));
+    await act(async () => {
+      answer?.send({ id: "msg-1", choices: [{ delta: { content: "Three exact-key reads." } }] });
+      answer?.done();
+    });
+    await waitFor(() => expect(useChat.getState().answering).toBe(false));
+    vi.mocked(fetch).mockImplementationOnce(
+      async () =>
+        new Response(
+          JSON.stringify({ detail: { code: "ASSISTANT_UNAVAILABLE", message: "not yet", reason: "starting" } }),
+          { status: 503, headers: { "Content-Type": "application/json" } },
+        ),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(auditNamespace).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "starting" }));
+    expect(useChat.getState().turns[0].card?.busy).toBeFalsy();
+    // Read again reads it, and the card shows the read.
+    await userEvent.click(screen.getByRole("button", { name: "Read again" }));
+    expect(await screen.findByTestId("audit-summary")).toBeInTheDocument();
+    expect(useChat.getState().turns[0].card?.busy).toBeFalsy();
   });
 
   it("remembers the box per viewer, and with it off reads the card alone", async () => {
