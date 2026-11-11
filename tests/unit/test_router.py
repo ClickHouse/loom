@@ -581,8 +581,8 @@ def test_a_state_read_while_the_directory_is_down_answers_503(fake: _Directory) 
 def test_a_state_read_with_its_credential_cached_answers_503_when_the_directory_goes_down(
     fake: _Directory,
 ) -> None:
-    """The credential was read, then the directory fails on the row: the read itself
-    answers 503 with the directory's reason, not the cached credential's."""
+    """The credential comes from the cache and the row read fails: the read answers 503
+    with the directory's reason."""
     fake.cells["eu-1"] = _row(is_first=True)
     client = _client()
     assert _state(client).status_code == 200
