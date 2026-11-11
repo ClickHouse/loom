@@ -149,6 +149,50 @@ def test_a_port_it_cannot_bind_is_logged_and_the_process_serves_on(
     assert "could not bind" in caplog.text
 
 
+def test_start_listener_binds_the_configured_port_and_serves(
+    deployment: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`start_listener` asks for LOOM_CELL_PROBE_PORT and serves on what it bound (port 0
+    stands in for it, so no other test can hold it)."""
+
+    async def _none() -> dict[str, None]:
+        return {"postgres": None, "clickhouse": None, "bucket": None}
+
+    monkeypatch.setattr(cell_probe, "nonces", _none)
+    monkeypatch.setattr(settings, "cell_probe_port", 7790)
+    asked: list[int] = []
+    bound: list[socket.socket] = []
+    real = cell_probe.bind
+
+    def _bind(port: int) -> socket.socket:
+        asked.append(port)
+        bound.append(real(0))
+        return bound[-1]
+
+    monkeypatch.setattr(cell_probe, "bind", _bind)
+
+    async def _run() -> int:
+        listener = cell_probe.start_listener()
+        assert listener is not None
+        port = bound[0].getsockname()[1]
+        try:
+            async with httpx.AsyncClient() as client:
+                for _ in range(100):
+                    try:
+                        r = await client.get(f"http://127.0.0.1:{port}{cell_probe.PATH}")
+                        break
+                    except httpx.ConnectError:
+                        await asyncio.sleep(0.02)
+                else:
+                    pytest.fail("the listener never accepted")
+            return r.status_code
+        finally:
+            await listener.stop()
+
+    assert asyncio.run(_run()) == 200
+    assert asked == [7790]
+
+
 def test_the_listener_serves_on_its_port_and_leaves_the_signal_handlers(
     deployment: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
