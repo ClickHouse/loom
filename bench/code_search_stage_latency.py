@@ -185,6 +185,7 @@ def _instrument(stmts: list[tuple[str, float, float]], embeds: list[float]) -> N
 
 async def _live(args: argparse.Namespace) -> int:
     from server.code.app import search as code_search
+    from server.code.app.index.repo_registry import read_registry_or_exit
     from server.code.app.spans import current_stage_ms, start_stage_wall
     from server.code.store.index import CodeRepo
     from server.core.ch import get_client
@@ -197,8 +198,6 @@ async def _live(args: argparse.Namespace) -> int:
     _instrument(stmts, embeds)
     ch = get_client()
     await ch.connect()
-    from server.code.app.index.repo_registry import read_registry_or_exit
-
     await read_registry_or_exit("code_search_stage_latency")
     queries = [
         str(r["query"])

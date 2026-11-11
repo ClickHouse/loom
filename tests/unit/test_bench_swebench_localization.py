@@ -173,7 +173,10 @@ def test_the_index_step_reads_the_registry_before_it_looks_up_the_entry(
     from server.code.app.index import repo_registry
     from server.code.domain.index import repos
     from server.core import ch
+    from server.observability import cost_accumulator
 
+    # The step wraps report_embed to count tokens; put the original back afterwards.
+    monkeypatch.setattr(cost_accumulator, "report_embed", cost_accumulator.report_embed)
     monkeypatch.setattr(ch, "get_client", lambda: AsyncMock())
     monkeypatch.setattr(repo_registry, "read_registry", AsyncMock(return_value=False))
     looked_up = []
