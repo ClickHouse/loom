@@ -212,11 +212,15 @@ export function AddDocumentDialog({
   const canSubmit =
     sourceUri.trim() !== "" && busy === null && (mode === "file" ? !!file && !verdict?.refusal : content.trim() !== "");
 
-  const finish = (msg: string, level: "ok" | "info" = "ok") => {
-    toast(msg, level);
+  // Added: the list reads again and the dialog closes, whichever line said so.
+  const closeAdded = () => {
     onAdded();
     reset();
     onOpenChange(false);
+  };
+  const finish = (msg: string, level: "ok" | "info" = "ok") => {
+    toast(msg, level);
+    closeAdded();
   };
 
   const submitFile = async () => {
@@ -286,9 +290,7 @@ export function AddDocumentDialog({
       // Saved, with only lists and search behind: closed as after a success, not sent again.
       if (isPublicationPending(e)) {
         toastCommitted(e);
-        onAdded();
-        reset();
-        onOpenChange(false);
+        closeAdded();
         return;
       }
       setError(humanizeError(e));
