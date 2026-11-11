@@ -971,16 +971,29 @@ def native_document_score(case: dict[str, Any], out: dict[str, Any]) -> dict[str
     }
 
 
+def require_docs(st: dict[str, Any], people: dict[str, Any], cases: list[dict[str, Any]]) -> None:
+    """Stop before the first model answer when help cases are selected and the server ships
+    no docs: every help answer would be paid for and then not checkable."""
+    help_cases = [c for c in cases if is_help_case(c)]
+    if not help_cases:
+        return
+    person = people[help_cases[0]["person"]]
+    body = {"org": person["org"], "namespace": person["namespace"], "query": "loom", "limit": 1}
+    code, out, _ = loom_call(st["loom_url"], st["tokens"][person["name"]], "help.search", body)
+    if code == 200 and not out.get("available", True):
+        sys.exit("help.search: this server has no documentation, so the help cases cannot run")
+
+
 def cmd_run(args: argparse.Namespace) -> None:
     st = state()
     people = {p["name"]: p for p in load("fixture.json")["people"]}
     if args.native_only:
         run_native_only(st, people, args)
         return
+    cases = [c for c in load("cases.json") if not args.only or c["id"] in args.only]
+    require_docs(st, people, cases)
     rows = []
-    for case in load("cases.json"):
-        if args.only and case["id"] not in args.only:
-            continue
+    for case in cases:
         person = people[case["person"]]
         native = baseline(st, case, person)
         t0 = time.time()

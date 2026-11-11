@@ -846,7 +846,7 @@
     "question": "What does the health problem assistant_service_failing mean?",
     "expect": [
       "LibreChat",
-      "(set ?up|setup|regist\\w*|sign-?in|creat\\w*)[^.]{0,80}((?<![a-z_])fail(?!ing`)|could ?n[o']t|did ?n[o']t)|(?<![a-z_])fail(?!ing`)\\w*[^.]{0,80}(set ?up|setup|regist|sign-?in)|(?<![a-z_])fail(?!ing`)\\w*[^.]{0,80}retr(y|ies)|retr(y|ies)[^.]{0,40}(set ?up|regist)"
+      "(set ?up|setup|regist\\w*|sign-?in|creat\\w*)[^.]{0,80}((?<![a-z_])fail(?!ing`)|could ?n[o']t|did ?n[o']t)|(?<![a-z_])fail(?!ing`)\\w*[^.]{0,80}(set ?up|setup|regist|sign-?in)|(?<![a-z_])fail(?!ing`)\\w*[^.]{0,80}retr(y|ies)|retr(y|ies)[^.]{0,40}(set ?up|regist)|sign-?in[^.]{0,40}refus|refus\\w*[^.]{0,40}sign-?in|seal\\w*[^.]{0,60}(neither|cannot|can't) (open|unseal)"
     ],
     "cite_help": ["features/integrations/librechat.md", "architecture/assistant.md"],
     "baseline": {
@@ -859,7 +859,8 @@
     "samples": {
       "right": [
         "Loom's setup of the LibreChat assistant failed; it retries, and `/v1/health` names what to fix.",
-        "Loom's boot-time registration of its service user and agent in LibreChat failed; it clears once a try succeeds."
+        "Loom's boot-time registration of its service user and agent in LibreChat failed; it clears once a try succeeds.",
+        "It means LibreChat refuses Loom's sign-in with a 4xx other than 429, or the stored service row's sealed value opens with neither `LOOM_JWT_SECRET` nor `LOOM_JWT_SECRET_PREVIOUS`."
       ],
       "wrong": [
         "It means the LibreChat chat history is full.",

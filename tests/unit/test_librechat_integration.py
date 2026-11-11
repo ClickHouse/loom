@@ -1360,3 +1360,15 @@ def test_a_server_without_docs_stops_the_help_checks(monkeypatch):
     person = {"name": "alice", "org": "acme", "namespace": "acme-handbook"}
     with pytest.raises(SystemExit, match="no documentation"):
         q.baseline(st, _case("help-revoke-token"), person)
+
+
+def test_a_run_with_help_cases_checks_for_docs_before_any_answer(monkeypatch):
+    import argparse
+
+    q = _qualify()
+    monkeypatch.setattr(q, "state", lambda: {"loom_url": "u", "tokens": {"alice": "t"}})
+    monkeypatch.setattr(q, "loom_call", lambda *a: (200, {"available": False, "hits": []}, 0.0))
+    monkeypatch.setattr(q, "ask_assistant", lambda *a: pytest.fail("a model answer was asked for"))
+    args = argparse.Namespace(native_only=False, only=["help-revoke-token"], out="unused")
+    with pytest.raises(SystemExit, match="no documentation"):
+        q.cmd_run(args)
