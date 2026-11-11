@@ -146,8 +146,10 @@ question being typed and the chip moving to it, and says "New conversation in <n
 the one about <old> is in History." While an answer is still coming in there, it starts
 none: the panel asks how to go on with that conversation, as after any switch of namespace,
 and the chip keeps the item. The button is there for anyone the assistant's route admits on
-the namespace; while the assistant cannot answer it is unavailable with the reason, and in
-the drawer while an edit or a rename is open, with "Save or cancel the edit first."
+the namespace. It is unavailable, with the reason, while the assistant cannot answer, on a
+header namespace that holds no memories, on a document of a collection linked in the Library
+(the answer reads only the header's namespace), and in the drawer while an edit or a rename
+is open ("Save or cancel the edit first.").
 
 One panel serves every window width:
 

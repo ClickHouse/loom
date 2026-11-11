@@ -1395,10 +1395,11 @@ export function MemoryInspector({
                 item={{
                   chip: `key ${memoryKey}`,
                   line: `memory ${exact(memoryKey)}${
-                    detail.agent && !SENTINEL_AGENTS.has(detail.agent) ? ` (agent ${quoted(detail.agent, 80)})` : ""
+                    detail.agent && !SENTINEL_AGENTS.has(detail.agent) ? ` (agent ${quoted(detail.agent)})` : ""
                   }`,
                 }}
                 reason={formOpen ? "Save or cancel the edit first." : null}
+                namespace={identity.namespace}
                 leave={() => {
                   leaving.current = true;
                   onClose();

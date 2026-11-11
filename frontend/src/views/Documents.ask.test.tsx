@@ -12,6 +12,7 @@ import { Documents } from "./Documents";
 
 const api = vi.hoisted(() => ({
   listKnowledge: vi.fn(),
+  listCollections: vi.fn(),
   getKnowledge: vi.fn(),
   fetchKnowledgePreview: vi.fn(),
 }));
@@ -36,6 +37,10 @@ describe("Ask about this in the document preview", () => {
   beforeEach(() => {
     resetNamespaceRoleCache();
     api.listKnowledge.mockResolvedValue({ rows: [ROW], total: 1, next_cursor: null });
+    api.listCollections.mockResolvedValue({
+      collections: [{ namespace: "col-plans", parent: "", personal: false, role: "viewer", description: "" }],
+      next_cursor: null,
+    });
     api.getKnowledge.mockResolvedValue({
       found: true,
       content: "Invoices go out on Fridays.",
@@ -133,6 +138,37 @@ describe("Ask about this in the document preview", () => {
     await waitFor(() => expect(useDock.getState().item).not.toBeNull());
     expect(uri.length).toBeGreaterThan(200);
     expect(useDock.getState().item?.line).toBe(`document ${JSON.stringify(uri)} (title "Billing notes")`);
+  });
+
+  it("is unavailable on a linked collection's document: the answer reads the header's namespace", async () => {
+    history.replaceState(null, "", "/library?collection=col-plans");
+    render(<Documents />);
+    await settle();
+    expect(api.listKnowledge.mock.calls.at(-1)?.[0]).toMatchObject({ namespace: "col-plans" });
+    fireEvent.click(screen.getByRole("button", { name: "Preview Billing notes" }));
+    await settle();
+    const ask = screen.getByRole("button", { name: "Ask the assistant about this document" });
+    expect(ask).toHaveAttribute("aria-disabled", "true");
+    expect(ask).toHaveAccessibleDescription("The assistant answers about team; this document is in col-plans.");
+    await userEvent.setup().click(ask);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(useDock.getState().item).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Billing notes" })).toBeInTheDocument();
+  });
+
+  it("is unavailable while the header's namespace holds no memories", async () => {
+    useStore.setState({
+      identity: { org: "acme", namespace: "repo", agent: "loom-ui" },
+      myNamespaces: [{ namespace: "repo", role: "viewer", status: "active", kind: "code" } as never],
+    });
+    history.replaceState(null, "", "/library?collection=col-plans");
+    render(<Documents />);
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Preview Billing notes" }));
+    await settle();
+    const ask = screen.getByRole("button", { name: "Ask the assistant about this document" });
+    expect(ask).toHaveAttribute("aria-disabled", "true");
+    expect(ask).toHaveAccessibleDescription("The assistant answers about a memory namespace.");
   });
 
   it("offers no Ask about this to a role the assistant's route does not admit", async () => {

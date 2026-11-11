@@ -25,8 +25,9 @@ export interface AskItem {
   namespace: string;
   /** The chip's words after the page ("key user/pref/lang"). */
   chip: string;
-  /** The context line's words after the page, which the agent's tools can read; every
-   *  name in them is quoted (`quoted` in components/AskAboutThis.tsx). */
+  /** The context line's words after the page, which the agent's tools can read: an
+   *  identifier (a key, a source URI) written exactly (`exact`), free text (an agent, a
+   *  title, a query) clipped and quoted (`quoted`, both in components/AskAboutThis.tsx). */
   line: string;
 }
 

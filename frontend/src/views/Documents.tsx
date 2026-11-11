@@ -1148,10 +1148,12 @@ export function Documents() {
               )}
               <AskAboutThis
                 what="document"
+                // A linked collection's document is not in the namespace the answer reads.
+                namespace={identity.namespace}
                 item={{
                   chip: `document ${previewEntry.title || previewEntry.original_filename || previewEntry.source_uri}`,
                   line: `document ${exact(previewEntry.source_uri)}${
-                    previewEntry.title ? ` (title ${quoted(previewEntry.title, 120)})` : ""
+                    previewEntry.title ? ` (title ${quoted(previewEntry.title)})` : ""
                   }`,
                 }}
                 leave={() => {

@@ -182,6 +182,22 @@ describe("Ask about this in the memory drawer", () => {
     expect(ask).toHaveAccessibleDescription("The assistant can't answer now: not set up.");
   });
 
+  it("is unavailable on a header namespace that holds no memories (the Graph opens the drawer there)", async () => {
+    const tracker = { ...identity, namespace: "tracker-x" };
+    useStore.setState({
+      identity: tracker,
+      myNamespaces: [{ ...mine[0], namespace: "tracker-x", kind: "tracker" } as MyNamespaceEntry],
+    });
+    const user = userEvent.setup();
+    render(<MemoryInspector identity={tracker} memoryKey="api/rate-limit" onClose={() => {}} onChanged={() => {}} />);
+    await screen.findByText("the public API allows 100 requests a minute");
+    const ask = footer().getByRole("button", { name: "Ask the assistant about this memory" });
+    expect(ask).toHaveAccessibleDescription("The assistant answers about a memory namespace.");
+    await user.click(ask);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(useDock.getState().item).toBeNull();
+  });
+
   it("is not offered to a role the assistant's route does not admit", async () => {
     useStore.setState({ myNamespaces: [] });
     await openDrawer();
