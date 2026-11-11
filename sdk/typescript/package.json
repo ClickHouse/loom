@@ -1,7 +1,7 @@
 {
   "name": "@clickhouse/loom",
   "version": "1.1.0",
-  "description": "TypeScript SDK for Loom — shared-production agent memory, knowledge, conflict and observability plane on ClickHouse. Typed over every wire operation the server declares, with retries, rate-limit pacing, idempotency keys and an Agent identity binding.",
+  "description": "TypeScript SDK for Loom, a self-hosted server, built on ClickHouse, that gives AI agents shared long-term memory, document search and a code index. Typed over every wire operation the server declares, with retries, rate-limit pacing, idempotency keys and an Agent identity binding.",
   "type": "module",
   "sideEffects": false,
   "main": "./dist/index.cjs",
@@ -55,11 +55,13 @@
   "keywords": [
     "loom",
     "clickhouse",
-    "agent",
-    "memory",
-    "llm",
-    "ai",
     "mcp",
+    "agent-memory",
+    "long-term-memory",
+    "ai-agents",
+    "document-search",
+    "code-search",
+    "llm",
     "sdk"
   ],
   "author": "ClickHouse, Inc.",
@@ -72,7 +74,7 @@
   "bugs": {
     "url": "https://github.com/ClickHouse/loom/issues"
   },
-  "homepage": "https://github.com/ClickHouse/loom/tree/main/sdk/typescript#readme",
+  "homepage": "https://github.com/ClickHouse/loom/blob/main/docs/reference/typescript-sdk.md",
   "engines": {
     "node": ">=20.0.0"
   },
