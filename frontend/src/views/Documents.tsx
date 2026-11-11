@@ -166,7 +166,14 @@ export function Documents() {
   const mine = useStore((s) => s.myNamespaces);
   const ownShelf = isMemoryNamespace(picked.namespace, mine);
   const noPlace = !shown && !resolving && !ownShelf;
-  const fallback = ownShelf ? `showing ${picked.namespace}` : "pick another";
+  // With no namespace in the header, the Library opens the person's own files; a token that
+  // is not a person's has none, so it stays on the top level, which lists the collections.
+  const opensFirst = picked.namespace ? null : (collections.rows?.find((c) => c.personal) ?? null);
+  const fallback = ownShelf
+    ? `showing ${picked.namespace}`
+    : opensFirst
+      ? `showing ${collectionTitle(opensFirst)}`
+      : "pick another";
   const createdTold = useRef("");
   // A list that names the linked collection no more leaves it for good; one that failed
   // shows the namespace for now and keeps the link, for "Load collections again".
@@ -187,6 +194,10 @@ export function Documents() {
     );
     pickCollection(null);
   }, [collection, collections.rows, collections.truncated, collections.expected, shown, pickCollection, fallback]);
+  // A correction, not a pick: the entry is replaced, so Back leaves the Library.
+  useEffect(() => {
+    if (!collection && opensFirst) pickCollection(opensFirst.namespace);
+  }, [collection, opensFirst, pickCollection]);
   const identity = useMemo(() => (shown ? { ...picked, namespace: shown.namespace } : picked), [picked, shown]);
   const readOnly = shown?.role === "viewer";
   const phone = useMedia(PHONE_QUERY);
@@ -810,6 +821,7 @@ export function Documents() {
     <CollectionsInside
       key={shown?.namespace ?? ""}
       rows={collections.rows}
+      truncated={collections.truncated}
       current={shown}
       onPick={goTo}
       className="mt-6"
@@ -858,10 +870,10 @@ export function Documents() {
     const go = useStore.getState();
     // The list's answer decides: none while it is read, and a failure is not "none".
     const listed = collections.rows;
-    // No namespace, but shared collections to pick (one's own alone is no way in): the page
-    // asks only for the pick.
-    const picking = !picked.namespace && !!listed?.some((c) => !c.personal);
-    const unknown = !picked.namespace && listed === null && !collections.error;
+    // Nothing said while the list is read, or while one's own files open by themselves.
+    const unknown = !picked.namespace && ((listed === null && !collections.error) || !!opensFirst);
+    // No namespace, but collections to pick: the page asks only for the pick.
+    const picking = !picked.namespace && !!listed?.length;
     const action = picking
       ? undefined
       : !picked.namespace

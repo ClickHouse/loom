@@ -1,10 +1,10 @@
 /**
  * Where a collection sits, on the Library: the path to it from the top, on one line before the
  * select (the parent a link, the ones above it folded; on a phone, one button back to the
- * parent), and the collections inside the one shown, or the top-level ones on "My files" and
- * on a namespace. The tree is the server's (`collection.list` gives each collection's
- * parent); in the path, a parent the caller cannot read is a dots button, never a link, and
- * gives its address when tapped.
+ * parent), and the collections inside the one shown, or on "My files" and on a namespace the
+ * caller's own top-level ones and those shared with them. The tree is the server's
+ * (`collection.list` gives each collection's parent); in the path, a parent the caller cannot
+ * read is a dots button, never a link, and gives its address when tapped.
  */
 import {
   type ComponentPropsWithoutRef,
@@ -39,6 +39,7 @@ import { isModifiedClick } from "../lib/graphLink";
 import { navigationHref } from "../lib/state";
 
 const HEADING_ID = "library-collections-inside";
+const SHARED_HEADING_ID = "library-collections-shared";
 
 /** Collections inside listed at first, and how many more each "Show more" adds. */
 const FIRST_INSIDE = 6;
@@ -70,15 +71,45 @@ export function collectionPath(
   return path;
 }
 
-/** The collections listed under the place shown: the children of a collection, or the
- *  top-level ones (and those whose parent the caller cannot read) elsewhere. */
+/** A collection someone shared with the caller: one they read or write but do not
+ *  administer. `collection.list` names no owner, so the role is the signal: one shared as
+ *  admin is the caller's to manage, and sits with their own. The role is the token's, so a
+ *  token capped below admin lists the person's own collections here too. */
+function isSharedWithMe(c: CollectionEntry): boolean {
+  return !c.personal && c.role !== "admin";
+}
+
+/** The collections listed under the place shown: the children of a collection, or at the top
+ *  level the caller's own top-level ones (and those whose parent the caller cannot read). */
 export function collectionsInside(rows: CollectionEntry[], current: CollectionEntry | null): CollectionEntry[] {
   const names = new Set(rows.map((c) => c.namespace));
   const under =
     current && !current.personal
       ? rows.filter((c) => c.parent === current.namespace)
-      : rows.filter((c) => !c.personal && (!c.parent || !names.has(c.parent)));
+      : rows.filter((c) => !c.personal && !isSharedWithMe(c) && (!c.parent || !names.has(c.parent)));
   return under.sort(collectionOrder);
+}
+
+/** "Shared with you", at the top level: each collection shared with the caller whose parent
+ *  is not itself shared with them (a shared one's children are inside it), wherever it sits. */
+export function sharedWithMe(rows: CollectionEntry[]): CollectionEntry[] {
+  const shared = new Set(rows.filter(isSharedWithMe).map((c) => c.namespace));
+  return rows.filter((c) => shared.has(c.namespace) && !shared.has(c.parent)).sort(collectionOrder);
+}
+
+/** Where a collection sits, by its parents from the top ("in Team › Research"); a parent the
+ *  caller cannot read is "…", and alone is said in words, as the path's dots button says it.
+ *  Empty for a top-level one. */
+function pathText(
+  c: CollectionEntry,
+  byName: Map<string, CollectionEntry>,
+  repeated: Set<string>,
+  truncated: boolean,
+): string {
+  const parents = collectionPath(c, byName).slice(0, -1);
+  if (parents.length === 0) return "";
+  if (parents.length === 1 && "hidden" in parents[0]) return `inside ${hiddenWhat(truncated)}`;
+  return `in ${parents.map((p) => ("hidden" in p ? "…" : distinctTitle(p, repeated))).join(" › ")}`;
 }
 
 /** The place above the top: its label, the collection it is (null for the header's
@@ -132,6 +163,11 @@ function CutLink({ collection, onOpen, text }: { collection: string | null; onOp
   );
 }
 
+/** A parent missing from the list, in words: past the list's end, or one the caller cannot read. */
+function hiddenWhat(truncated: boolean): string {
+  return truncated ? "a collection not listed here" : "a collection you can't open";
+}
+
 /** What a parent missing from the list is, by its address. */
 function hiddenText(part: HiddenPart, truncated: boolean): string {
   return truncated
@@ -142,7 +178,7 @@ function hiddenText(part: HiddenPart, truncated: boolean): string {
 /** An ancestor the caller cannot open: a dots button whose popover gives its address. A
  *  popover, not a tooltip: a tap on a phone opens it. `lead` starts the button's name. */
 function HiddenParent({ part, truncated, lead = "" }: { part: HiddenPart; truncated: boolean; lead?: string }) {
-  const what = truncated ? "a collection not listed here" : "a collection you can't open";
+  const what = hiddenWhat(truncated);
   const label = lead ? `${lead}${what}` : what[0].toUpperCase() + what.slice(1);
   return (
     <Popover>
@@ -269,21 +305,76 @@ export function CollectionPath({
 
 export function CollectionsInside({
   rows,
+  truncated = false,
   current,
   onPick,
   className = "",
 }: {
   rows: CollectionEntry[];
+  /** The list stopped early: a parent missing from it may be one the caller can open. */
+  truncated?: boolean;
   current: CollectionEntry | null;
   onPick: (collection: string) => void;
   className?: string;
 }) {
-  const [count, setCount] = useState(FIRST_INSIDE);
-  const list = useRef<HTMLUListElement | null>(null);
   const inside = useMemo(() => collectionsInside(rows, current), [rows, current]);
+  const top = !current || current.personal;
+  const shared = useMemo(() => (top ? sharedWithMe(rows) : []), [rows, top]);
   // Over every collection listed, as the select and the path count them.
   const repeated = useMemo(() => repeatedTitles(rows), [rows]);
-  const left = inside.length - count;
+  const byName = useMemo(() => new Map(rows.map((c) => [c.namespace, c])), [rows]);
+  if (inside.length === 0 && shared.length === 0) return null;
+  return (
+    <div className={`space-y-6 ${className}`}>
+      {/* At the top, each says where it sits: one may be inside a collection not listed. */}
+      <PlaceList
+        id={HEADING_ID}
+        label="Collections"
+        items={inside}
+        repeated={repeated}
+        byName={byName}
+        onPick={onPick}
+        withPath={top}
+        truncated={truncated}
+      />
+      <PlaceList
+        id={SHARED_HEADING_ID}
+        label="Shared with you"
+        items={shared}
+        repeated={repeated}
+        byName={byName}
+        onPick={onPick}
+        withPath
+        truncated={truncated}
+      />
+    </div>
+  );
+}
+
+/** One list of places to open, revealed a step at a time; `withPath` says where each sits. */
+function PlaceList({
+  id,
+  label,
+  items,
+  repeated,
+  byName,
+  onPick,
+  withPath,
+  truncated,
+}: {
+  id: string;
+  label: string;
+  items: CollectionEntry[];
+  /** Titles shown twice, and every collection by name, over the whole list. */
+  repeated: Set<string>;
+  byName: Map<string, CollectionEntry>;
+  onPick: (collection: string) => void;
+  withPath: boolean;
+  truncated: boolean;
+}) {
+  const [count, setCount] = useState(FIRST_INSIDE);
+  const list = useRef<HTMLUListElement | null>(null);
+  const left = items.length - count;
   // The last Show more removes its button: the focus goes to the first collection it added.
   const markShown = useLastPageFocus({
     loading: false,
@@ -293,26 +384,30 @@ export function CollectionsInside({
         const link = li.querySelector<HTMLElement>("a");
         return link ? [[li.dataset.collection ?? "", link] as [string, HTMLElement]] : [];
       }),
-    fallback: () => document.getElementById(HEADING_ID),
+    fallback: () => document.getElementById(id),
   });
-  if (inside.length === 0) return null;
+  if (items.length === 0) return null;
   // Links to other places, not rows of this list: a plain list, revealed a step at a time
   // (the select above finds any of them).
   return (
-    <section aria-labelledby={HEADING_ID} className={`space-y-1 ${className}`}>
-      <SectionHeading id={HEADING_ID} level={2} label="Collections" count={inside.length} focusable />
+    <section aria-labelledby={id} className="space-y-1">
+      <SectionHeading id={id} level={2} label={label} count={items.length} focusable />
       <ul ref={list} className="space-y-1">
-        {inside.slice(0, count).map((c) => (
-          <li key={c.namespace} data-collection={c.namespace}>
-            <div className="flex flex-wrap items-baseline gap-x-2">
-              <PlaceLink collection={c.namespace} onOpen={() => onPick(c.namespace)}>
-                {distinctTitle(c, repeated)}
-              </PlaceLink>
-              <span className="text-xs text-text-muted">{roleLabel(c.role)}</span>
-            </div>
-            {c.description && <TextClamp text={c.description} reach="tooltip" className="text-xs text-text-muted" />}
-          </li>
-        ))}
+        {items.slice(0, count).map((c) => {
+          const path = withPath ? pathText(c, byName, repeated, truncated) : "";
+          return (
+            <li key={c.namespace} data-collection={c.namespace}>
+              <div className="flex flex-wrap items-baseline gap-x-2">
+                <PlaceLink collection={c.namespace} onOpen={() => onPick(c.namespace)}>
+                  {distinctTitle(c, repeated)}
+                </PlaceLink>
+                <span className="text-xs text-text-muted">{roleLabel(c.role)}</span>
+                {path && <span className="text-xs text-text-muted">{path}</span>}
+              </div>
+              {c.description && <TextClamp text={c.description} reach="tooltip" className="text-xs text-text-muted" />}
+            </li>
+          );
+        })}
       </ul>
       <div className="flex gap-3">
         {left > 0 && (
@@ -320,7 +415,7 @@ export function CollectionsInside({
             type="empty"
             htmlType="button"
             onClick={() => {
-              markShown(inside.slice(0, count).map((c) => c.namespace));
+              markShown(items.slice(0, count).map((c) => c.namespace));
               setCount(count + MORE_INSIDE);
             }}
           >
@@ -333,7 +428,7 @@ export function CollectionsInside({
             htmlType="button"
             onClick={() => {
               // Its button goes with the list it shortens; the heading stays.
-              document.getElementById(HEADING_ID)?.focus();
+              document.getElementById(id)?.focus();
               setCount(FIRST_INSIDE);
             }}
           >

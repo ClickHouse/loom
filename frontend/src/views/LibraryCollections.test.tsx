@@ -741,16 +741,68 @@ describe("the Library on a collection", () => {
     useStore.setState({ myNamespaces: null });
   });
 
-  it("with no namespace and only one's own collection, says how to get in", async () => {
+  it("with no namespace, opens one's own files in place of the page; with none, lists every collection", async () => {
+    api.listCollections.mockResolvedValue({
+      collections: [entry("col-a", { title: "Alpha" }), entry("col-me-1a2b", { personal: true })],
+      next_cursor: null,
+    });
+    useStore.setState({ identity: { org: "acme", namespace: "", agent: "loom-ui" } });
+    const entries = window.history.length;
+    render(<Documents />);
+    await settle();
+    expect(new URLSearchParams(window.location.search).get("collection")).toBe("col-me-1a2b");
+    // A correction, not a pick: Back leaves the Library.
+    expect(window.history.length).toBe(entries);
+    expect(api.listKnowledge.mock.calls.at(-1)?.[0]).toMatchObject({ namespace: "col-me-1a2b" });
+    expect(screen.queryByText(/reaches no namespace/)).not.toBeInTheDocument();
+    cleanup();
+    window.history.replaceState(null, "", "/library");
+    api.listCollections.mockResolvedValue({
+      collections: [entry("col-z", { title: "Zeta" }), entry("col-a", { title: "Alpha", role: "viewer" })],
+      next_cursor: null,
+    });
+    render(<Documents />);
+    await settle();
+    // No files of its own (a token that is not a person's): the top level, where both lists show.
+    expect(new URLSearchParams(window.location.search).get("collection")).toBeNull();
+    expect(screen.getByText("Collections are shared document libraries. Pick a collection above.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Browse and join spaces" })).toBeNull();
+    expect(
+      within(screen.getByRole("region", { name: /^Collections/ })).getByRole("link", { name: "Zeta" }),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: /Shared with you/ })).getByRole("link", { name: "Alpha" }),
+    ).toBeInTheDocument();
+  });
+
+  it("with no namespace, leaves a linked collection it cannot read for the one it opens, and says so", async () => {
     api.listCollections.mockResolvedValue({
       collections: [entry("col-me-1a2b", { personal: true })],
       next_cursor: null,
     });
     useStore.setState({ identity: { org: "acme", namespace: "", agent: "loom-ui" } });
+    history.replaceState(null, "", "/library?collection=col-secret");
     render(<Documents />);
     await settle();
-    expect(screen.getByText(/^Your token reaches no namespace yet\./)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Browse and join spaces" })).toBeInTheDocument();
+    expect(toast).toHaveBeenCalledWith(
+      "col-secret is not among the collections you can read now; showing My files.",
+      "info",
+    );
+    expect(new URLSearchParams(window.location.search).get("collection")).toBe("col-me-1a2b");
+    cleanup();
+    // A list that stopped early: the link may be to a later one.
+    api.listCollections.mockResolvedValue({
+      collections: [entry("col-me-1a2b", { personal: true })],
+      next_cursor: "more",
+    });
+    history.replaceState(null, "", "/library?collection=col-later");
+    render(<Documents />);
+    await settle();
+    expect(toast).toHaveBeenCalledWith(
+      "col-later is past the first collections listed here; showing My files.",
+      "info",
+    );
+    expect(new URLSearchParams(window.location.search).get("collection")).toBe("col-me-1a2b");
   });
 
   it("says nothing of collections or namespaces while the list is read", async () => {

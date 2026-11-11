@@ -14,13 +14,14 @@ import {
   CollectionsInside,
   collectionPath,
   collectionsInside,
+  sharedWithMe,
 } from "./LibraryHierarchy";
 
 const entry = (namespace: string, over: Partial<CollectionEntry> = {}): CollectionEntry => ({
   namespace,
   parent: "",
   personal: false,
-  role: "writer",
+  role: "admin",
   description: "",
   ...over,
 });
@@ -174,6 +175,54 @@ describe("CollectionsInside", () => {
     cleanup();
     render(<CollectionsInside rows={ROWS} current={ROWS[2]} onPick={onPick} />);
     expect(screen.queryByRole("region", { name: /Collections/ })).toBeNull();
+  });
+
+  it("lists the collections shared with the caller apart, each with where it sits", () => {
+    const rows = [
+      entry("col-lib", { title: "Library" }),
+      // Shared at the top: no path.
+      entry("col-r", { title: "Research", role: "viewer" }),
+      // A child inherits its parents' grants, so a shared one inside one's own shows only when
+      // a token caps the role below the inherited one.
+      entry("col-claimed", { parent: "col-lib", title: "Claimed", role: "viewer" }),
+      entry("col-r-notes", { parent: "col-r", title: "Notes", role: "viewer" }),
+      entry("col-far", { parent: "col-hidden", title: "Far", role: "writer" }),
+      // Under a readable parent that sits under one the caller cannot read.
+      entry("col-mid", { parent: "col-hidden", title: "Mid" }),
+      entry("col-deep", { parent: "col-mid", title: "Deep", role: "viewer" }),
+      // Shared as admin: the caller's to manage, so with their own, here or under a parent the
+      // caller cannot read.
+      entry("col-ops", { title: "Ops" }),
+      entry("col-run", { parent: "col-hidden", title: "Runbooks" }),
+      entry("col-me-1a2b", { personal: true, role: "admin" }),
+    ];
+    // A shared one's children are inside it, not listed again.
+    expect(sharedWithMe(rows).map((c) => c.namespace)).toEqual(["col-claimed", "col-deep", "col-far", "col-r"]);
+    expect(collectionsInside(rows, null).map((c) => c.namespace)).toEqual(["col-lib", "col-mid", "col-ops", "col-run"]);
+    render(<CollectionsInside rows={rows} current={null} onPick={() => {}} />);
+    const shared = screen.getByRole("region", { name: /Shared with you/ });
+    expect(within(shared).getByRole("link", { name: "Research" })).toBeInTheDocument();
+    expect(within(shared).getByRole("link", { name: "Research" }).parentElement?.textContent).toBe("ResearchViewer");
+    expect(within(shared).getByText("in Library")).toBeInTheDocument();
+    expect(within(shared).getByText("inside a collection you can't open")).toBeInTheDocument();
+    expect(within(shared).getByText("in … › Mid")).toBeInTheDocument();
+    expect(within(shared).queryByRole("link", { name: "Ops" })).toBeNull();
+    const own = screen.getByRole("region", { name: /^Collections/ });
+    // Shared as admin under a parent the caller cannot read: its place is said too.
+    expect(within(own).getByRole("link", { name: "Runbooks" }).parentElement).toHaveTextContent(
+      "inside a collection you can't open",
+    );
+    expect(within(own).queryByRole("link", { name: "Research" })).toBeNull();
+    cleanup();
+    // A list that stopped early: the missing parent may be one the caller can open.
+    render(<CollectionsInside rows={rows} truncated current={null} onPick={() => {}} />);
+    expect(
+      within(screen.getByRole("region", { name: /Shared with you/ })).getByText("inside a collection not listed here"),
+    ).toBeInTheDocument();
+    cleanup();
+    // Inside a collection, only its children: no "Shared with you".
+    render(<CollectionsInside rows={rows} current={rows[0]} onPick={() => {}} />);
+    expect(screen.queryByRole("region", { name: /Shared with you/ })).toBeNull();
   });
 
   it("tells two collections with one title apart by their address", () => {
