@@ -193,8 +193,8 @@ there costs a candidate number, not a final version.
    `make schema-check` before `build` may pin it, and refuses a ClickHouse downgrade (see step 8),
    so such a run stops before it builds and pushes images
    ([when it stops](#when-the-clickhouse-job-stops)). The release is the first of:
-   - the one this version's published bundle already names, so rerunning the installer for a
-     version never moves ClickHouse (a release without a bundle resolves anew, as `github-release`
+   - the one this version's published bundle already names, so running the install command again
+     for a version never moves ClickHouse (a release without a bundle resolves anew, as `github-release`
      never replaces one, so nobody can have installed it);
    - a dispatch's `clickhouse_image`, which for a final is used in place of any release its
      candidates on the same commit published;
