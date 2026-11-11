@@ -13,11 +13,14 @@ This page holds the rules for writing a migration. How a deployment applies them
   (a CI step and the deploy preflight) fails on either. A file renamed with its text
   unchanged is not ledger-only: its SHA-256 names it, and it is recorded under the new
   name without running again.
-- Every file addresses `loom.<table>` and `loom_telemetry.<table>`. The runner maps
-  them to `LOOM_CH_DATABASE` and `LOOM_CH_TELEMETRY_DATABASE` as it sends each
-  statement (`server/core/ch_names.py`), so the checksum is over the file as written.
-  A database is compared by value as `currentDatabase()` or a bound name, never a
-  literal `'loom'` (`tests/unit/test_ch_names.py`).
+- Every file addresses `loom.<table>` and `loom_telemetry.<table>`. The runner maps them
+  to `LOOM_CH_DATABASE` and `LOOM_CH_TELEMETRY_DATABASE` as it sends each statement
+  (`server/core/ch_names.py`), so the checksum is over the file as written. A database
+  is compared by value as `currentDatabase()` or a bound name, never a literal `'loom'`
+  (`tests/unit/test_ch_names.py`). A file that changes the key or TTL of a table whose
+  name starts with `_`, or renames or exchanges one, also updates its row in [storage
+  layout](../architecture/storage-layout.md) and the reshape guard of
+  `tests/unit/test_storage_layout_rows.py`.
 
 ## Numbering
 
@@ -144,12 +147,14 @@ operator step ([release process](./release-process.md#release-notes)).
 ## Postgres migrations
 
 `schemas/pg_migrations/NNN_*.sql` follow the same rules: numbered, additive, never
-edited once merged. A boot applies them under a Postgres advisory lock, each file in one
-transaction with its ledger row. A migration waits at most 5 s for a table lock
-(`lock_timeout`, then retried), so an `ALTER` never queues every query of the table
-behind a long transaction. A build serves a ledger that holds a later build's files, with
-a warning naming them; a ledger file it does not carry numbered at or below its own last
-file, or one whose checksum changed, refuses the boot.
+edited once merged, and every `CREATE`, `ALTER` or `DROP` of a table names
+`loom.<table>`, except a rename's new name, where Postgres takes no schema
+(`tests/unit/test_storage_layout_rows.py`). A boot applies them under a Postgres
+advisory lock, each file in one transaction with its ledger row. A migration waits at
+most 5 s for a table lock (`lock_timeout`, then retried), so an `ALTER` never queues
+every query of the table behind a long transaction. A build serves a ledger that holds a
+later build's files, with a warning naming them; a ledger file it does not carry
+numbered at or below its own last file, or one whose checksum changed, refuses the boot.
 
 Every file runs in one transaction, so a migration builds no index on a large table: the
 build would hold off the table's writes, every commit answering 503, until it ends. Such
