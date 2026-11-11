@@ -442,7 +442,7 @@ def render_llms_txt() -> str:
         "MCP, HTTP and the Python and TypeScript SDKs.",
         "",
         "Start with docs/index.md (the map). To install Loom, a coding agent reads "
-        "docs/getting-started/agent-setup.md and runs the agent-setup.txt each release "
+        "docs/getting-started/agent-setup.md and follows the agent-setup.txt each release "
         "attaches, with its pins filled in. To connect to a running server: "
         "docs/getting-started/connect-a-coding-agent.md. To decide whether Loom fits: "
         "docs/getting-started/overview.md. Every operation's fields are in "
