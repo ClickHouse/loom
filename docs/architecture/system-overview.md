@@ -1,24 +1,27 @@
 # System overview
 
 Loom is a Python server (a FastAPI application plus a supervisor of background workers)
-and one ClickHouse database. Loom is stateful: everything it knows is stored in
-ClickHouse, including facts and their vectors, documents, conversations, the entity graph,
-the code index, tasks, audit, cost and erasure progress. The server processes keep no
-durable state of their own, so any number of them can serve the same database and a
-request can land on any of them. The few pieces of state kept
-outside ClickHouse are listed under [Deployment topology](#deployment-topology).
+and ClickHouse, with Postgres as an option for live memory and knowledge state. Loom is
+stateful: everything it knows (facts and their vectors, documents, conversations, the
+entity graph, the code index, tasks, audit, cost and erasure progress) is stored in
+ClickHouse, except that under `LOOM_STORAGE_AUTHORITY=postgres` Postgres holds its live
+memory, knowledge state and the records beside them
+([storage authority](storage-authority.md#the-tables)). The server processes keep no
+durable state of their own, so any number of them can serve the same deployment and a
+request can land on any of them. The few pieces of state kept outside those stores are
+listed under [Deployment topology](#deployment-topology).
 
 The storage layout is in [ClickHouse](clickhouse.md).
 
 ## Goals and non-goals
 
-| Goals                                                                                                  | Non-goals                                                                                         |
-| ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| One engine for every kind of state: vectors, full text, graph edges, time series and ledgers.          | File formats in the server: `knowledge.add` takes `content: str`; parsing is the CLI's job.       |
-| One wire surface, declared once, served the same over HTTP and MCP.                                    | Cross-table transactions. Derived rows catch up after the primary write.                          |
-| Server processes hold no durable state: add web capacity by running more of them.                      | Bi-temporal history. Validity is valid-time only; transaction-time history is the version mirror. |
-| Every row attributable to a tenant (identity tuple), a writer (`actor`) and a request (`log_comment`). | A GDPR-compliance guarantee. Erasure and audit hashing are engineering primitives.                |
-| A keyless install that boots and answers, with fake providers reported.                                |                                                                                                   |
+| Goals                                                                                                                | Non-goals                                                                                         |
+| -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| One engine for every kind of state (ClickHouse authority): vectors, full text, graph edges, time series and ledgers. | File formats in the server: `knowledge.add` takes `content: str`; parsing is the CLI's job.       |
+| One wire surface, declared once, served the same over HTTP and MCP.                                                  | Cross-table transactions. Derived rows catch up after the primary write.                          |
+| Server processes hold no durable state: add web capacity by running more of them.                                    | Bi-temporal history. Validity is valid-time only; transaction-time history is the version mirror. |
+| Every row attributable to a tenant (identity tuple), a writer (`actor`) and a request (`log_comment`).               | A GDPR-compliance guarantee. Erasure and audit hashing are engineering primitives.                |
+| A keyless install that boots and answers, with fake providers reported.                                              |                                                                                                   |
 
 ## Components
 
@@ -338,16 +341,21 @@ flowchart LR
 ```
 
 - **Server processes hold no durable state.** Cross-replica state (revocations, signing
-  keys, runtime overrides, sign-in attempt counts, graph write marks, the supervisor lease,
-  erasure checkpoints, the blacklist version, the idempotency cache) and uploaded document
-  originals live in ClickHouse, the bytes of those written with
-  `LOOM_DOCUMENT_OBJECT_STORE=s3` in an S3-compatible bucket instead. A new Loom with the
-  same ClickHouse, env config and `LOOM_JWT_SECRET`, and that bucket while rows name objects
-  in it, gets every feature back.
-- **State outside ClickHouse.** The code plane's git mirrors under `var/code_repos` (a
-  cache: a host without them re-clones) and the rate-limit buckets on the `loom-shared`
-  volume, neither the system of record; and, while any catalog row names an object in it,
-  `LOOM_DOCUMENT_S3_BUCKET`, holding the bytes of those originals.
+  keys, runtime overrides, sign-in attempt counts, graph write marks, the supervisor
+  lease, erasure checkpoints, the blacklist version, the idempotency cache under the
+  default authority, the recorded authority) and uploaded document originals live in
+  ClickHouse, the bytes of those written with `LOOM_DOCUMENT_OBJECT_STORE=s3` in an
+  S3-compatible bucket instead. Under the Postgres authority, Postgres holds the tables
+  [storage authority](storage-authority.md#the-tables) lists, among them the idempotency
+  cache, its own erasure ledger and a copy of the recorded authority. A new Loom with
+  the same ClickHouse (and Postgres, under that authority), env config and
+  `LOOM_JWT_SECRET`, and that bucket while rows name objects in it, gets every feature
+  back.
+- **State outside ClickHouse and Postgres.** The code plane's git mirrors under
+  `var/code_repos` (a cache: a host without them re-clones) and the rate-limit buckets
+  on the `loom-shared` volume, neither the system of record; and, while any catalog row
+  names an object in it, `LOOM_DOCUMENT_S3_BUCKET`, holding the bytes of those
+  originals.
 - **Two containers, one image.** `dev/docker-compose.cloud.yml` runs `loom-server`
   (`LOOM_BACKGROUND_WORKERS=off`) and `loom-workers` (`auto`: it runs the workers while it
   holds the lease), so a long worker pass never shares an event loop with requests.
@@ -365,8 +373,13 @@ and on this page.
 
 ### One engine: ClickHouse
 
-Every plane (facts and vectors, BM25 and token indexes, the entity graph walked with
-`WITH RECURSIVE`, the code index, ledgers and cost) is a set of tables in one database.
+Under the default ClickHouse authority, every plane (facts and vectors, BM25 and token
+indexes, the entity graph walked with `WITH RECURSIVE`, the code index, ledgers and
+cost) is a set of ClickHouse tables. Under `LOOM_STORAGE_AUTHORITY=postgres`, live
+memory and knowledge state are held in Postgres, which trades one backup and one
+consistency domain for transactional memory writes
+([why two stores](storage-authority.md#why-two-stores)); the Why and Cost below are the
+default's.
 
 **Why:** one backup, one access boundary, one query language for retrieval and analytics,
 and joins between memory and its telemetry without a sync job. Hybrid retrieval runs as

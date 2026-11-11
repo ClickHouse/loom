@@ -1,16 +1,22 @@
 # ClickHouse
 
-All durable Loom state lives in one ClickHouse database, `loom`. The canonical schema is
-[`schemas/schema.sql`](../../schemas/schema.sql), dumped from a server with every
-migration applied. The generated [schema reference](../reference/schema.md) lists every
-table with its engine, keys, TTL and indexes. This page covers the table families, how
-Loom uses engines, indexes and views, and how migrations run.
+Durable Loom state lives in ClickHouse, except document bytes in an optional
+S3-compatible bucket and, under the Postgres memory authority, the Postgres tables: live
+memory, knowledge state and the records beside them. The bucket is used with
+`LOOM_DOCUMENT_OBJECT_STORE=s3`. ClickHouse holds projections of the live memory and
+knowledge state Postgres holds; [storage authority](storage-authority.md#the-tables)
+lists every Postgres table. Loom's ClickHouse databases are `loom` and `loom_telemetry`.
+The canonical ClickHouse schema is [`schemas/schema.sql`](../../schemas/schema.sql),
+dumped from a server with every migration applied; the Postgres schema is the journal in
+`schemas/pg_migrations/`. The generated [schema reference](../reference/schema.md) lists
+every ClickHouse table with its engine, keys, TTL and indexes. This page covers the
+table families, how Loom uses engines, indexes and views, and how migrations run.
 
 ## Goals and non-goals
 
 | Goals                                                                                     | Non-goals                                                                                   |
 | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| One engine and one database for every plane, so a read never joins across stores.         | Cross-table transactions. A primary row lands first; derived rows follow.                   |
+| One engine for every plane (ClickHouse authority), so a read never joins across stores.   | Cross-table transactions. A primary row lands first; derived rows follow.                   |
 | Every row names its tenant, writer (`actor`) and content (`content_sha256`).              | Transaction-time history on every table. The version mirror covers `loom.memory`.           |
 | Mutable state as append-only versions: a write is an INSERT, a read is deterministic.     | In-place updates on the request path. Updates are new versions or batched background folds. |
 | Nothing that holds memory content expires unless its writer or the operator asked for it. | Default retention on facts, documents, conversations or the graph.                          |
@@ -55,20 +61,22 @@ applied, so nothing recreates it. The cost is one more database: the setup SQL g
 migrating user `CURRENT GRANTS ON loom_telemetry.*`, and preflight names that grant when
 it is missing.
 
-**State outside ClickHouse.** Uploaded document originals are rows of `document_blobs`,
-addressed per namespace by SHA-256 (`server/knowledge/store/blobs.py`); with
-`LOOM_DOCUMENT_OBJECT_STORE=s3` each row is the catalog entry of an object in an
-S3-compatible bucket, which holds the bytes
-([knowledge](../features/knowledge.md#where-originals-are-stored)). The token signing keys
-(`signing_keys`), admin runtime overrides of rate limits, latency budgets and live
-settings (`runtime_overrides`), sign-in attempt counts (`auth_attempts`), graph-walk marks
-(`graph_projections`: the projections in flight and each namespace's last graph write),
-each namespace's last write (`namespace_write_keys`) and the supervisor lease are in
-ClickHouse too, so a new Loom pointed at this database, and the document bucket while rows
-name objects in it, gets every feature back. On the filesystem: the code plane's git
-mirrors under `var/code_repos`, a cache of the remotes ClickHouse records that a host
-without them re-clones. The root secret `LOOM_JWT_SECRET`, which seals the signing keys
-and stored credentials, is in the env. Process caches and file locks are listed in
+**State outside ClickHouse.** Under the Postgres memory authority, Postgres holds the
+tables [storage authority](storage-authority.md#the-tables) lists. Uploaded document
+originals are rows of `document_blobs`, addressed per namespace by SHA-256
+(`server/knowledge/store/blobs.py`); with `LOOM_DOCUMENT_OBJECT_STORE=s3` each row is
+the catalog entry of an object in an S3-compatible bucket, which holds the bytes
+([knowledge](../features/knowledge.md#where-originals-are-stored)). The token signing
+keys (`signing_keys`), admin runtime overrides of rate limits, latency budgets and live
+settings (`runtime_overrides`), sign-in attempt counts (`auth_attempts`), graph-walk
+marks (`graph_projections`: the projections in flight and each namespace's last graph
+write), each namespace's last write (`namespace_write_keys`) and the supervisor lease
+are in ClickHouse too, so a new Loom pointed at this ClickHouse (and its Postgres, under
+the Postgres memory authority), and the document bucket while rows name objects in it,
+gets every feature back. On the filesystem: the code plane's git mirrors under
+`var/code_repos`, a cache of the remotes ClickHouse records that a host without them
+re-clones. The root secret `LOOM_JWT_SECRET`, which seals the signing keys and stored
+credentials, is in the env. Process caches and file locks are listed in
 [system overview](system-overview.md#deployment-topology).
 
 ## Conventions every table follows

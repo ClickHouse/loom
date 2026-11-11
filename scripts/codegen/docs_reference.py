@@ -436,12 +436,17 @@ def render_llms_txt() -> str:
     out = [
         "# Loom",
         "",
-        "> Loom is a memory, knowledge and code-intelligence data plane for AI "
-        "agents, built on one ClickHouse database and served over MCP, HTTP and "
-        "Python/TypeScript SDKs.",
+        "> Loom is a self-hosted MCP server that gives AI agents shared long-term memory, "
+        "document search with citations and a code index. It keeps its data in ClickHouse, "
+        "with Postgres as an option for live memory and knowledge state, and serves it over "
+        "MCP, HTTP and the Python and TypeScript SDKs.",
         "",
-        "Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-agent.md "
-        "(the fastest path). Every operation's fields are in docs/reference/operations/.",
+        "Start with docs/index.md (the map). To install Loom, a coding agent reads "
+        "docs/getting-started/agent-setup.md and follows the agent-setup.txt each release "
+        "attaches, with its pins filled in. To connect to a running server: "
+        "docs/getting-started/connect-a-coding-agent.md. To decide whether Loom fits: "
+        "docs/getting-started/overview.md. Every operation's fields are in "
+        "docs/reference/operations/.",
         "",
     ]
     for heading, sub in _LLMS_SECTIONS:

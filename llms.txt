@@ -1,8 +1,8 @@
 # Loom
 
-> Loom is a memory, knowledge and code-intelligence data plane for AI agents, built on one ClickHouse database and served over MCP, HTTP and Python/TypeScript SDKs.
+> Loom is a self-hosted MCP server that gives AI agents shared long-term memory, document search with citations and a code index. It keeps its data in ClickHouse, with Postgres as an option for live memory and knowledge state, and serves it over MCP, HTTP and the Python and TypeScript SDKs.
 
-Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-agent.md (the fastest path). Every operation's fields are in docs/reference/operations/.
+Start with docs/index.md (the map). To install Loom, a coding agent reads docs/getting-started/agent-setup.md and follows the agent-setup.txt each release attaches, with its pins filled in. To connect to a running server: docs/getting-started/connect-a-coding-agent.md. To decide whether Loom fits: docs/getting-started/overview.md. Every operation's fields are in docs/reference/operations/.
 
 ## Getting started
 
@@ -11,7 +11,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [Evaluate Loom](docs/getting-started/evaluate.md): Evaluate the decision you need to make, not every harness in the repository.
 - [Your first agent](docs/getting-started/first-agent.md): This tutorial builds a small agent with the Python SDK.
 - [Configure models and API keys](docs/getting-started/models-and-keys.md): Your coding agent, Loom's internal LLM and Loom's embedding model are separate choices.
-- [Overview](docs/getting-started/overview.md): Loom is a server that stores memory, documents, conversations, an entity graph and a code index for AI agents, as rows in one ClickHouse database.
+- [Overview](docs/getting-started/overview.md): Loom is a server that stores memory, documents, conversations, an entity graph and a code index for AI agents, as rows in ClickHouse, with Postgres as an option for live memory and knowledge state.
 - [Quickstart](docs/getting-started/quickstart.md): This page boots Loom on a laptop and saves a first memory over HTTP, Python and MCP.
 
 ## Operations
@@ -20,7 +20,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [Backup and recovery](docs/operations/backup-and-recovery.md): A Loom backup is a ClickHouse backup, plus the document bucket while any catalog row names an object in it, and under the Postgres authority a backup of Postgres too.
 - [ClickHouse Cloud and Managed Postgres](docs/operations/clickhouse-cloud.md): This guide runs Loom on Kubernetes over two managed services: ClickHouse Cloud for projections, vectors, history and analytics, and ClickHouse Managed Postgres as the memory authority.
 - [Code index operations](docs/operations/code-index-operations.md): The code index runs only when an operator enables its workers and configures repositories.
-- [Deployment](docs/operations/deployment.md): Loom is one server image plus ClickHouse, with the document extractor service as an image of its own (container images).
+- [Deployment](docs/operations/deployment.md): Loom is one server image plus ClickHouse (and Postgres, under `LOOM_STORAGE_AUTHORITY=postgres`), with the document extractor service as an image of its own (container images).
 - [Kubernetes](docs/operations/kubernetes.md): `deploy/helm/loom` runs Loom as N identical replicas on Kubernetes: one Deployment of web pods over one ClickHouse service, each pod a full replica.
 - [Maintenance](docs/operations/maintenance.md): Every command here is a `loom` subcommand; run it inside the container that has the deployment's environment (`docker exec loom-server loom …`, or `loom-workers` in a split deployment).
 - [Monitoring](docs/operations/monitoring.md): This page says what to watch.
@@ -85,7 +85,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [MCP reference](docs/reference/mcp.md): Loom serves its operations as MCP tools at `<loom>/mcp`.
 - [Operations reference](docs/reference/operations.md): An operation (op) is one named unit of work on the Loom wire, such as `memory.set` or `code.search`.
 - [Python SDK reference](docs/reference/python-sdk.md): The Python SDK (`clickhouse-loom`, source in `sdk/python/loom/`) is an async client over the HTTP API.
-- [Schema reference](docs/reference/schema.md): Loom keeps all of its state in one ClickHouse database, `loom`.
+- [Schema reference](docs/reference/schema.md): Loom keeps its ClickHouse state in the `loom` and `loom_telemetry` databases.
 - [SQL surface](docs/reference/sql-surface.md): The SQL surface is a set of read-only ClickHouse views over a tenant's memories, memory history, conversations and request ledger.
 - [Status of Loom's surfaces](docs/reference/status.md): This page counts each op group's stable ops, names its experimental ones, and lists every boolean setting that loads false, so a caller can tell, before relying on an op or a switch, whether it is stable and whether it is on by default.
 - [TypeScript SDK reference](docs/reference/typescript-sdk.md): The TypeScript SDK (`@clickhouse/loom`, source in `sdk/typescript/src/`) is a typed client over the HTTP API.
@@ -115,7 +115,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 ## Architecture
 
 - [Assistant design](docs/architecture/assistant.md): This page is the design of Loom's assistant, which answers questions about what a namespace holds and how it is used, with a citation for every claim.
-- [ClickHouse](docs/architecture/clickhouse.md): All durable Loom state lives in one ClickHouse database, `loom`.
+- [ClickHouse](docs/architecture/clickhouse.md): Durable Loom state lives in ClickHouse, except document bytes in an optional S3-compatible bucket and, under the Postgres memory authority, the Postgres tables: live memory, knowledge state and the records beside them.
 - [Code index architecture](docs/architecture/code-index-architecture.md): This page is the inside view of the code index: how files become chunks, symbols and edges, and how the two tiers stay current.
 - [Document extraction](docs/architecture/document-extraction.md): An uploaded original is parsed into one shape, the extraction artifact, by an extractor service: a separate process with its own dependencies, never the Loom server.
 - [Failure and recovery](docs/architecture/failure-and-recovery.md): The primary write and every access decision fail closed.
@@ -127,7 +127,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [Server layout](docs/architecture/server-layout.md): `server/` is organised by domain.
 - [Sharing knowledge](docs/architecture/sharing.md): A collection is a namespace that only grants open.
 - [Storage authority: Postgres for live memory, ClickHouse for search](docs/architecture/storage-authority.md): Loom runs with one of two memory authorities, chosen per deployment by `LOOM_STORAGE_AUTHORITY`.
-- [System overview](docs/architecture/system-overview.md): Loom is a Python server (a FastAPI application plus a supervisor of background workers) and one ClickHouse database.
+- [System overview](docs/architecture/system-overview.md): Loom is a Python server (a FastAPI application plus a supervisor of background workers) and ClickHouse, with Postgres as an option for live memory and knowledge state.
 
 ## Benchmarks
 
@@ -141,7 +141,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 
 ## Development
 
-- [Add a ClickHouse table or column](docs/development/adding-a-table.md): Loom's durable state is ClickHouse tables in the `loom` database.
+- [Add a ClickHouse table or column](docs/development/adding-a-table.md): Loom's ClickHouse state is tables in the `loom` and `loom_telemetry` databases; under the Postgres memory authority, live memory, knowledge state and the records beside them are in Postgres.
 - [Add a background worker](docs/development/adding-a-worker.md): A worker is a row in `server/workers/registry.py` (`_WORKERS`) plus a module with one pass function.
 - [Add an operation](docs/development/adding-an-operation.md): An operation is declared once, in the registry.
 - [Add language support to the code index](docs/development/adding-language-support.md): The code index reads a repository in two tiers:

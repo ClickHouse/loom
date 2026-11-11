@@ -1,17 +1,21 @@
 # Schema reference
 
-Loom keeps all of its state in one ClickHouse database, `loom`. The shape of
-that database is defined by the numbered migrations in `schemas/migrations/`;
-`schemas/schema.sql` is the result of applying all of them, dumped from a live
-server. The table at the end of this page is generated from `schema.sql`.
+Loom keeps its ClickHouse state in the `loom` and `loom_telemetry` databases. Under the
+Postgres memory authority, Postgres holds live memory, knowledge state and the records
+beside them, in the tables
+[storage authority](../architecture/storage-authority.md#the-tables) lists. The Postgres
+schema is defined by `schemas/pg_migrations/`, and the shape of the ClickHouse databases
+by the numbered migrations in `schemas/migrations/`; `schemas/schema.sql` is the result
+of applying every ClickHouse migration, dumped from a live server. The table at the end
+of this page is generated from `schema.sql`.
 
 ## Where the schema comes from
 
-| File                           | What it is                                                                                                                                                                        |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schemas/migrations/NNN_*.sql` | The journal. Applied in numeric order by `loom migrate` (and at boot with `LOOM_BOOT_MIGRATE=true`), each recorded with its SHA-256 in the `loom._migrations` ledger.             |
-| `schemas/schema.sql`           | The canonical current state: every `loom.*` table, view and materialized view as ClickHouse prints it after a full replay. Read this to understand the shape; never hand-edit it. |
-| `scripts/ops/dump_schema.py`   | Writes `schema.sql` (`make schema-dump`) and compares it with a live server (`make schema-check`, run in CI after a replay).                                                      |
+| File                           | What it is                                                                                                                                                                                               |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schemas/migrations/NNN_*.sql` | The journal. Applied in numeric order by `loom migrate` (and at boot with `LOOM_BOOT_MIGRATE=true`), each recorded with its SHA-256 in the `loom._migrations` ledger.                                    |
+| `schemas/schema.sql`           | The canonical current state: every `loom.*` and `loom_telemetry.*` table, view and materialized view as ClickHouse prints it after a full replay. Read this to understand the shape; never hand-edit it. |
+| `scripts/ops/dump_schema.py`   | Writes `schema.sql` (`make schema-dump`) and compares it with a live server (`make schema-check`, run in CI after a replay).                                                                             |
 
 A migration change regenerates the dump in the same pull request:
 
@@ -30,10 +34,11 @@ page. How to write a migration (additive only, never edit a merged file) is in
 
 ## Reading schema.sql
 
-Each object is one `CREATE … IF NOT EXISTS loom.<name>` statement under a
-`-- loom.<name>` comment, tables first, then views, then materialized views, each group
-sorted by name. A table statement lists its columns, then its skip indexes
-(`INDEX … TYPE …`) and projections, then the clauses the table below extracts:
+Each object is one `CREATE … IF NOT EXISTS <database>.<name>` statement, the database
+being `loom` or `loom_telemetry`, under a `-- <database>.<name>` comment, tables first,
+then views, then materialized views, each group sorted by database (`loom` first), then
+by name. A table statement lists its columns, then its skip indexes (`INDEX … TYPE …`)
+and projections, then the clauses the table below extracts:
 
 - **`ENGINE`** decides what a read sees. `MergeTree` tables are append-only
   logs. `ReplacingMergeTree(version)` tables keep the latest row per sort key
