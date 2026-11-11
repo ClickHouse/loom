@@ -183,6 +183,8 @@ def test_the_index_step_reads_the_registry_before_it_looks_up_the_entry(
     looked_up = []
     monkeypatch.setattr(repos, "repo_for_namespace", lambda org, ns: looked_up.append(ns))
 
-    with pytest.raises(SystemExit, match="index-step: .*registry could not be read; retry"):
+    with pytest.raises(
+        SystemExit, match="swebench_localization index-step: .*registry could not be read; retry"
+    ):
         asyncio.run(S._index_step("org", "code-x", "abc", 1, str(tmp_path / "paths")))
     assert looked_up == []

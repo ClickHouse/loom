@@ -659,7 +659,7 @@ async def _index_step(
 
     cost_accumulator.report_embed = counting  # type: ignore[assignment]
     await get_client().connect()
-    await read_registry_or_exit("index-step")
+    await read_registry_or_exit("swebench_localization index-step")
     repo = CodeRepo()
     cfg = repo_for_namespace(org, ns)
     if cfg is None:
