@@ -5,9 +5,9 @@ S3-compatible bucket and, under the Postgres memory authority, the Postgres tabl
 memory, knowledge state and the records beside them. The bucket is used with
 `LOOM_DOCUMENT_OBJECT_STORE=s3`. ClickHouse holds projections of the live memory and
 knowledge state Postgres holds; [storage authority](storage-authority.md#the-tables)
-lists every table. Loom's ClickHouse databases are `loom` and `loom_telemetry`. The
-canonical ClickHouse schema is [`schemas/schema.sql`](../../schemas/schema.sql), dumped
-from a server with every migration applied; the Postgres schema is the journal in
+lists every Postgres table. Loom's ClickHouse databases are `loom` and `loom_telemetry`.
+The canonical ClickHouse schema is [`schemas/schema.sql`](../../schemas/schema.sql),
+dumped from a server with every migration applied; the Postgres schema is the journal in
 `schemas/pg_migrations/`. The generated [schema reference](../reference/schema.md) lists
 every ClickHouse table with its engine, keys, TTL and indexes. This page covers the
 table families, how Loom uses engines, indexes and views, and how migrations run.
