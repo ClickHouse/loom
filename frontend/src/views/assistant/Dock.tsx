@@ -21,8 +21,18 @@ import { canReadNamespace, isMemoryNamespace } from "../../lib/namespace";
 import { hasOrgAdminClaim, hasPlatformAdminClaim, isNamespaceAdmin } from "../../lib/role";
 import { useStore } from "../../lib/state";
 import { AssistantChat } from "./Chat";
-import { useChat, newConversation, openConversation, resetChat, saveOnHide, ask, storedChanged } from "./chatStore";
+import {
+  MAX_MESSAGE_CHARS,
+  useChat,
+  newConversation,
+  openConversation,
+  resetChat,
+  saveOnHide,
+  ask,
+  storedChanged,
+} from "./chatStore";
 import { adoptEpoch, deleteAllConversations, deleteConversation, listConversations, sameOwner } from "./conversations";
+import { contextLength, currentAsk, withContext } from "./pageContext";
 import { readReadiness } from "./readiness";
 import { tokenReadScope } from "./tokenScope";
 
@@ -85,6 +95,26 @@ export function DockBody() {
   useEffect(() => {
     if (!open) setShowHistory(false);
   }, [open]);
+  // "Ask about this" (lib/assistantDockRuntime.ts askAbout): the chat shows, and a
+  // conversation about another namespace gives way to a new one in the header's, which the
+  // question being typed and the chip move to (they are the panel's); the old one stays in
+  // History. While an answer still streams there, none starts: the mismatch prompt shows and
+  // the chip keeps the item.
+  const askSeq = useDock((s) => s.askSeq);
+  const handledAsk = useRef(0);
+  useEffect(() => {
+    if (askSeq === handledAsk.current) return;
+    handledAsk.current = askSeq;
+    setShowHistory(false);
+    const c = useChat.getState();
+    const header = useStore.getState().identity?.namespace ?? "";
+    if (c.answering || c.turns.length === 0 || !c.namespace || c.namespace === header) return;
+    const old = c.namespace;
+    newConversation();
+    const line = `New conversation in ${header}; the one about ${old} is in History.`;
+    useChat.setState({ notice: line });
+    announceAssistant(line);
+  }, [askSeq]);
   const [checking, setChecking] = useState(true);
   // Bumped to draw History again: a write to the index here or in another tab.
   const [, setIndexTick] = useState(0);
@@ -175,7 +205,7 @@ export function DockBody() {
     if (!reasonNow) useDock.setState({ focusField: true });
     // A question the route refused is asked again, in the conversation's namespace, unless
     // what blocks Ask still applies; with nothing refused, nothing is sent.
-    const question = useChat.getState().refused;
+    const refused = useChat.getState().refused;
     const c = useChat.getState();
     const st = useStore.getState();
     const header = st.identity?.namespace ?? "";
@@ -185,7 +215,24 @@ export function DockBody() {
       memory: isMemoryNamespace(header, st.myNamespaces),
       mismatch: c.turns.length > 0 && c.namespace !== null && c.namespace !== header,
     });
-    if (question && !stillBlocked) ask(question, c.namespace ?? header);
+    // It goes with what the chip shows now: a chip removed since sends nothing about the page.
+    // A line longer now than when it was asked (an item added since) can push the message
+    // past the route's length: nothing is sent. The question waits in the field, which says
+    // why; a field holding other text keeps it, and a line in the panel says why.
+    if (!refused || stillBlocked) return;
+    const asked = currentAsk();
+    if (withContext(refused, asked.context).length > MAX_MESSAGE_CHARS) {
+      const draft = useDock.getState().draft;
+      if (!draft || draft === refused) useDock.setState({ draft: refused });
+      else {
+        const limit = MAX_MESSAGE_CHARS - contextLength(asked.context);
+        const line = `Not sent: with this page's line the question is longer than ${limit.toLocaleString("en-US")} characters.`;
+        useChat.setState({ notice: line });
+        announceAssistant(line);
+      }
+      return;
+    }
+    ask(refused, c.namespace ?? header, asked);
   };
 
   if (expired)

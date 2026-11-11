@@ -1,12 +1,14 @@
-import { useEffect, useRef, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
-import { Alert, Unavailable } from "../../components/ui";
+import { Alert, Chip, Unavailable } from "../../components/ui";
 import { fieldError } from "../../components/ui/fieldError";
 import { useDock } from "../../lib/assistantDock";
+import { useStore } from "../../lib/state";
 import { AnswerText } from "./AnswerText";
 import { MAX_MESSAGE_CHARS, ask, draftEdited, stop, useChat } from "./chatStore";
 import { Sources } from "./Sources";
+import { contextLength, markPageHintSeen, pageContext, pageHintSeen } from "./pageContext";
 
 /**
  * The assistant's chat: the conversation the panel shows and the question field. The
@@ -20,6 +22,21 @@ export function AssistantChat({ namespace, blocked }: { namespace: string; block
   const answering = useChat((s) => s.answering);
   const draft = useDock((s) => s.draft);
   const focusField = useDock((s) => s.focusField);
+  const view = useStore((s) => s.view);
+  const item = useDock((s) => s.item);
+  const pageOff = useDock((s) => s.pageOff);
+  const context = pageContext(view, item, pageOff);
+  // The same trimmed question `ask` sends, after its context line; past the route's length
+  // it says so on the field.
+  const limit = MAX_MESSAGE_CHARS - contextLength(context);
+  const tooLong =
+    draft.trim().length > limit ? `A question is at most ${limit.toLocaleString("en-US")} characters.` : null;
+  // Shown until the chip is removed once or a first question is asked.
+  const [hint, setHint] = useState(() => !pageHintSeen());
+  const hintSeen = () => {
+    markPageHintSeen();
+    setHint(false);
+  };
   const field = useRef<HTMLTextAreaElement>(null);
 
   // The shell asks for the field's focus on an open the person started.
@@ -37,8 +54,9 @@ export function AssistantChat({ namespace, blocked }: { namespace: string; block
 
   const send = () => {
     const question = draft.trim();
-    if (!question || question.length > MAX_MESSAGE_CHARS || answering || blocked) return;
-    ask(question, namespace);
+    if (!question || question.length > limit || answering || blocked) return;
+    if (hint) hintSeen();
+    ask(question, namespace, { context, item: context ? item : null });
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -49,11 +67,6 @@ export function AssistantChat({ namespace, blocked }: { namespace: string; block
     }
   };
 
-  // The same trimmed question `ask` sends; past the route's length it says so on the field.
-  const tooLong =
-    draft.trim().length > MAX_MESSAGE_CHARS
-      ? `A question is at most ${MAX_MESSAGE_CHARS.toLocaleString("en-US")} characters.`
-      : null;
   const sendBlocked =
     blocked ?? (answering ? "An answer is still coming in." : !draft.trim() ? "Type a question." : tooLong);
   const error = fieldError("assistant-question-error", tooLong);
@@ -68,6 +81,11 @@ export function AssistantChat({ namespace, blocked }: { namespace: string; block
                 <div className="rounded-lg bg-surface-2 p-3">
                   <p className="section-label">You</p>
                   <p className="text-sm text-text whitespace-pre-wrap break-words">{t.question}</p>
+                  {t.context && (
+                    <div className="mt-2">
+                      <Chip label={`Includes: ${t.context.chip}`} />
+                    </div>
+                  )}
                 </div>
                 <div className="px-3" aria-busy={t.state === "answering" || undefined}>
                   <p className="section-label">Assistant</p>
@@ -101,6 +119,20 @@ export function AssistantChat({ namespace, blocked }: { namespace: string; block
           send();
         }}
       >
+        {context && (
+          <div className="flex min-w-0 flex-wrap items-center gap-2" data-testid="assistant-page-chip">
+            <Chip
+              label={`Includes: ${context.chip}`}
+              removeLabel="Don't include this page"
+              onRemove={() => {
+                useDock.setState({ pageOff: true, item: null });
+                if (hint) hintSeen();
+                field.current?.focus();
+              }}
+            />
+          </div>
+        )}
+        {context && hint && <p className="text-xs text-text-muted">Your question names this page. Remove it here.</p>}
         <TextAreaField
           ref={field}
           id="assistant-question"

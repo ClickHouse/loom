@@ -14,8 +14,22 @@ import { create } from "zustand";
 import { isAuthDisabled } from "../api";
 import { INDEX_KEY, PANEL_KEY } from "./assistantStorage";
 import { patchEntry } from "./place";
-import { sheetEntry, useStore } from "./state";
+import { sheetEntry, useStore, type View } from "./state";
 import type { AssistantReason } from "./assistantLayout";
+
+/** The thing "Ask about this" names for the next question: a memory, a document or a
+ *  Recall result, on the page and in the namespace it was asked from. */
+export interface AskItem {
+  view: View;
+  org: string;
+  namespace: string;
+  /** The chip's words after the page ("key user/pref/lang"). */
+  chip: string;
+  /** The context line's words after the page, which the agent's tools can read: an
+   *  identifier (a key, a source URI) written exactly (`exact`), free text (an agent, a
+   *  title, a query) clipped and quoted (`quoted`, both in components/AskAboutThis.tsx). */
+  line: string;
+}
 
 export interface DockState {
   open: boolean;
@@ -39,6 +53,12 @@ export interface DockState {
   reasonShort: string;
   /** The panel's question field takes the focus once it has drawn. */
   focusField: boolean;
+  /** The item "Ask about this" set for the next question; it goes with the page chip. */
+  item: AskItem | null;
+  /** The person removed the page chip: the next question says nothing about the page. */
+  pageOff: boolean;
+  /** Bumped by each "Ask about this", so the panel's body can act on it once. */
+  askSeq: number;
 }
 
 // Auth off is known from the first paint; the token's claims are read when the panel's
@@ -59,6 +79,9 @@ export const useDock = create<DockState>(() => ({
   reason: authOff ? { kind: "auth_off" } : null,
   reasonShort: authOff ? "needs auth on" : "",
   focusField: false,
+  item: null,
+  pageOff: false,
+  askSeq: 0,
 }));
 
 type Runtime = typeof import("./assistantDockRuntime");

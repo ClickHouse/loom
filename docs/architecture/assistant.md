@@ -405,6 +405,22 @@ does: the docs are not the namespace's data. A read returns at most 16,000 chara
 and a cut one names the offset its rest starts at; a page read, or a cut one, adds the
 page's outline.
 
+**The page's context.** The dashboard's panel starts a question with one line about the page
+it is asked from, `Context: <page> page`, and with the item "Ask about this" named,
+`Context: Memories page, memory "<key>" (agent "<agent>", user "<user>", session "<session>")`,
+`Context: Library page, document "<source URI>" (title "<title>")` or `Context: Recall page,
+result <rank>, memory "<key>", for the query "<query>"`: a key or source URI the agent reads
+with `memory.get` or `knowledge.get`. A memory's user and session are named when the drawer
+read the row under them (a row filed under a user or a session), since `memory.get` takes
+`user_id` and `session_id` and misses such a row without them; an answer's token reads the
+whole namespace, so naming another user's row is a filter, not a widening. The line quotes
+names that others wrote and the person's own query, each as a JSON string literal, so a quote
+or a line break in one cannot end it: a key, a source URI, a user or a session exactly as
+stored, never cut, and an agent, a title or the query on one line, cut at 200 characters. The
+person sees it as a chip and can remove it before it is sent; it grants nothing, and no
+server or wire field carries it
+([the assistant panel](../features/dashboard.md#the-assistant-panel)).
+
 **The asker's context.** An answer's token is `viewer` on one namespace, so the agent
 cannot tell from it what the person asking may do. The bridge, which holds the caller's
 own credential, puts one line in fixed words as the last line of the question it sends
@@ -1176,7 +1192,8 @@ ClickHouse and are shared by every replica; the agent definition is written as
    streaming clients. Built.
 5. The dashboard's assistant panel, on the signed-in session and the header's namespace,
    with a Stop button that closes the request, each answer's checked citations under it,
-   the reasons it cannot answer and the conversations kept in the browser
+   the reasons it cannot answer, the conversations kept in the browser, the page's chip
+   on each question and "Ask about this" on a memory, a document and a Recall result
    ([the assistant panel](../features/dashboard.md#the-assistant-panel)). Built.
 6. Loom's documentation in the image, `help.search` and `help.get` on the toolset
    ([Loom's documentation](#looms-documentation)). Built.

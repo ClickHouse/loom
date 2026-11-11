@@ -12,6 +12,8 @@
 export const INDEX_KEY = "loom_assistant_index";
 /** The panel's own preferences, kept per browser: whether it was open and its width. */
 export const PANEL_KEY = "loom_assistant_panel";
+/** Whether this browser has shown the panel's one-time line about the page chip. */
+export const PAGE_HINT_KEY = "loom_assistant_page_hint";
 export const EPOCH_KEY = "loom_assistant_epoch";
 export const CONVERSATION_PREFIX = "loom_assistant_c_";
 

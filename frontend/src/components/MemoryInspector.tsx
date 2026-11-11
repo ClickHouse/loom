@@ -64,6 +64,7 @@ import { AnchoredPopover } from "./ui/AnchoredPopover";
 import { CHIP_OUTLINE_CLASS } from "./ui/Chip";
 import { confirmAction } from "./ConfirmDialog";
 import { CopyToNamespaceDialog } from "../flows/CopyToNamespaceDialog";
+import { AskAboutThis, exact, quoted } from "./AskAboutThis";
 import { ThreadReplayDialog, type ReplayThread } from "./ThreadReplayDialog";
 import { absoluteTime, relativeTime, formatValue, parseChTime, SENTINEL_AGENTS } from "../lib/format";
 import { errorLine } from "../lib/errorWords";
@@ -121,6 +122,19 @@ function Disclosure({
   );
 }
 
+/** "Ask about this"'s words for a memory: its key, and the writer agent, user and session
+ *  it was read under, so the assistant's memory.get (which takes user_id and session_id,
+ *  '-' when absent) reads the same row. */
+function memoryLine(key: string, agent: string | undefined, identity: Identity): string {
+  const named = (v: string | undefined) => !!v && !SENTINEL_AGENTS.has(v);
+  const under = [
+    named(agent) ? `agent ${quoted(agent ?? "")}` : "",
+    named(identity.user_id) ? `user ${exact(identity.user_id ?? "")}` : "",
+    named(identity.session_id) ? `session ${exact(identity.session_id ?? "")}` : "",
+  ].filter(Boolean);
+  return `memory ${exact(key)}${under.length ? ` (${under.join(", ")})` : ""}`;
+}
+
 function SectionEmpty({ children }: { children: React.ReactNode }) {
   return <div className="text-xs text-text-muted">{children}</div>;
 }
@@ -140,8 +154,8 @@ interface InspectorProps {
 
 /**
  * Right-edge drawer showing one memory: value, metadata, tags, provenance,
- * related rows, history and lineage. The footer is one row: Edit and Delete, and a More
- * menu with the rest of the row's actions.
+ * related rows, history and lineage. The footer holds Edit, Ask about this, a More menu with
+ * the rest of the row's actions, and Delete at the end: one row, two on a narrow drawer.
  *
  * The shell is a Radix `Dialog`: portal, overlay, focus trap, Escape, body scroll lock;
  * focus returns to the card that opened it on close (captured here — a triggerless Radix
@@ -228,6 +242,8 @@ export function MemoryInspector({
     return el instanceof HTMLElement ? el : null;
   });
   const [openedAt] = useState(() => useStore.getState().navSeq);
+  // Set by "Ask about this", which closes the drawer for the assistant panel's field.
+  const leaving = useRef(false);
   const inspect = useStore((s) => s.inspect);
   const openMemory = onInspectMemory ?? inspect;
   // A rename's destination is this row moved: it opens under the writer identity this one
@@ -897,7 +913,7 @@ export function MemoryInspector({
             e.preventDefault();
             // A navigation since the drawer opened (a tag, a graph link) moved the focus to
             // its page; an opener in an assistant panel that closed is hidden.
-            if (useStore.getState().navSeq === openedAt && openerUsable(opener)) opener?.focus();
+            if (!leaving.current && useStore.getState().navSeq === openedAt && openerUsable(opener)) opener?.focus();
           }}
           onEscapeKeyDown={onEscapeKeyDown}
           onPointerDownOutside={onPointerDownOutside}
@@ -1379,12 +1395,26 @@ export function MemoryInspector({
           {/* The actions are the drawer's last row, below the scrolling body, never over it:
               they wrap to two rows on a narrow drawer. */}
           {detail && detail.found && (
-            <footer className="px-5 py-3 border-t border-border bg-surface flex items-center gap-2 shrink-0">
+            <footer className="px-5 py-3 border-t border-border bg-surface flex flex-wrap items-center gap-2 shrink-0">
               {!editing && !renaming && !valueLocked && (
                 <Button type="secondary" htmlType="button" iconLeft="pencil" onClick={onStartEdit}>
                   Edit
                 </Button>
               )}
+              {/* Asking about a memory does not depend on editing it: it stays in view while
+                  a form is open, unavailable until the form is saved or cancelled. */}
+              <AskAboutThis
+                what="memory"
+                item={{
+                  chip: `key ${memoryKey}`,
+                  line: memoryLine(memoryKey, detail.agent, identity),
+                }}
+                reason={formOpen ? "Save or cancel the edit first." : null}
+                leave={() => {
+                  leaving.current = true;
+                  onClose();
+                }}
+              />
               <Dropdown modal={false}>
                 <MenuTrigger>
                   <IconButton icon="dots-horizontal" label="More actions" tooltip="More" />
