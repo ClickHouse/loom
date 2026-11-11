@@ -1257,3 +1257,13 @@ def test_ask_assistant_reads_the_bridges_citations_event(monkeypatch):
     assert got["answer"] == "Answer."
     assert got["server_citations"] == event["citations"]
     assert got["unknown_names"] == ["token.revoke_all"] and got["support"] == "supported"
+
+
+def test_the_help_direct_path_counts_its_top_hit_as_the_expected_page():
+    q = _qualify()
+    case = _case("help-revoke-token")
+    top = {"hits": [{"path": case["cite_help"][0]}, {"path": "other.md"}]}
+    assert q.native_score(case, 200, top)["cited_expected"] is True
+    second = {"hits": [{"path": "other.md"}, {"path": case["cite_help"][0]}]}
+    assert q.native_score(case, 200, second)["cited_expected"] is False
+    assert q.native_score(_case("help-undocumented"), 200, top)["cited_expected"] is None

@@ -141,7 +141,7 @@ orgs, mints a token per person, revokes one, and scores each answer:
   and a version written next to it is the row's current version, or, for a question about
   the key's history (`cite_history`), one of its earlier versions. Through Loom's assistant
   route a memory citation is `[memory:<key>@v<version>]`; otherwise it is any key-shaped
-  text.
+  text outside a `[help:]` citation.
 - **tool calls:** the `mcp` rows Loom ledgered under the person's subject during the answer.
 - **latency and time to first token:** end to end, and to the first streamed delta, which
   for the harness's own agent (`setup`) is the model's one-line preamble before its first

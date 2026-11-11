@@ -859,6 +859,7 @@ def native_score(case: dict[str, Any], code: int, out: dict[str, Any]) -> dict[s
     spec = case["baseline"]
     cited: list[str] = []
     abstained = False
+    expected = case.get("cite") in cited if case.get("cite") else None
     if code != 200:
         text = f"{code} {out.get('detail', out)}"
         # The direct path of a question the docs leave open is not scored, whatever answered.
@@ -871,6 +872,7 @@ def native_score(case: dict[str, Any], code: int, out: dict[str, Any]) -> dict[s
         else:
             text = f"{hits[0].get('content_excerpt', '')} [{hits[0]['memory_key']}]"
             cited = [hits[0]["memory_key"]]
+            expected = case.get("cite") in cited if case.get("cite") else None
         correct = abstained if case["kind"] == "abstain" else score(case, text)["correct"]
         correct = correct and case["kind"] != "refusal"
     elif spec["op"] == "knowledge.search":
@@ -884,6 +886,8 @@ def native_score(case: dict[str, Any], code: int, out: dict[str, Any]) -> dict[s
         wanted = set(case.get("cite_help") or [])
         correct = bool(wanted & set(pages)) if wanted else None
         cited = pages[:1]
+        # The labeled page as its top hit, as the LibreChat side counts the page it cites.
+        expected = bool(pages) and pages[0] in wanted if wanted else None
     elif "findings" in spec:
         # A recommendation's direct path: the audit names each labeled finding on rows.
         found = {f["code"] for f in out.get("findings", []) if f.get("count")}
@@ -908,7 +912,7 @@ def native_score(case: dict[str, Any], code: int, out: dict[str, Any]) -> dict[s
         "tool_calls": 1,
         "cited": cited,
         "invalid_citations": [],
-        "cited_expected": case.get("cite") in cited if case.get("cite") else None,
+        "cited_expected": expected,
     }
 
 

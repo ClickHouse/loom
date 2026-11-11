@@ -821,7 +821,10 @@
     "use_case": "U16 Health problems",
     "person": "alice",
     "question": "What does the health problem assistant_service_failing mean?",
-    "expect": ["LibreChat", "set ?up|setup|sign-?in|configur|retr|regist|creat"],
+    "expect": [
+      "LibreChat",
+      "(set ?up|setup|regist\\w*|sign-?in|creat\\w*)[^.]{0,80}(fail|could ?n[o']t|did ?n[o']t)|fail\\w*[^.]{0,80}(set ?up|setup|regist|sign-?in)|retr(y|ies)"
+    ],
     "cite_help": ["features/integrations/librechat.md", "architecture/assistant.md"],
     "baseline": {
       "op": "help.search",
@@ -835,7 +838,10 @@
         "Loom's setup of the LibreChat assistant failed; it retries, and `/v1/health` names what to fix.",
         "Loom's boot-time registration of its service user and agent in LibreChat failed; it clears once a try succeeds."
       ],
-      "wrong": ["It means the LibreChat chat history is full."]
+      "wrong": [
+        "It means the LibreChat chat history is full.",
+        "It means LibreChat's chat history is full; create a new chat."
+      ]
     }
   },
   {
@@ -920,7 +926,7 @@
     "person": "alice",
     "question": "Does Loom copy our issue tracker's data into its own database?",
     "expect": [
-      "(never|does ?n[o']t|does not) (copy|copies|store|stores|keep|keeps)\\b|(reads|queries)\\b[^.]{0,30}\\blive|keeps? no copy"
+      "never copies (it|your|the|any)|(does ?n[o']t|does not|never) (copy|store|keep) (it|your|the|any)|(reads|queries)\\b[^.]{0,30}\\blive|keeps? no copy"
     ],
     "cite_help": ["features/tracker/overview.md"],
     "baseline": {
@@ -936,7 +942,10 @@
         "No. Loom doesn't store your tracker's data; it queries it live with a read-only credential.",
         "No. Loom reads your tracker live with a read-only credential."
       ],
-      "wrong": ["Yes, it copies every issue into its database each night."]
+      "wrong": [
+        "Yes, it copies every issue into its database each night.",
+        "Yes: Loom copies every issue into its database each night; it doesn't store attachments."
+      ]
     }
   },
   {
