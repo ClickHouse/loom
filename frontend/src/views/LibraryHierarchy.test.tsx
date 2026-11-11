@@ -200,12 +200,14 @@ describe("CollectionsInside", () => {
     const shared = screen.getByRole("region", { name: /Shared with you/ });
     expect(within(shared).getByRole("link", { name: "Research" })).toBeInTheDocument();
     expect(within(shared).getByRole("link", { name: "Research" }).parentElement?.textContent).toBe("ResearchViewer");
-    expect(within(shared).getByText("Library › Claimed")).toBeInTheDocument();
-    expect(within(shared).getByText("… › Far")).toBeInTheDocument();
+    expect(within(shared).getByText("in Library")).toBeInTheDocument();
+    expect(within(shared).getByText("inside a collection you can't open")).toBeInTheDocument();
     expect(within(shared).queryByRole("link", { name: "Ops" })).toBeNull();
     const own = screen.getByRole("region", { name: /^Collections/ });
-    expect(within(own).getByRole("link", { name: "Runbooks" })).toBeInTheDocument();
-    expect(within(own).queryByText(/›/)).toBeNull();
+    // Shared as admin under a parent the caller cannot read: its place is said too.
+    expect(within(own).getByRole("link", { name: "Runbooks" }).parentElement).toHaveTextContent(
+      "inside a collection you can't open",
+    );
     expect(within(own).queryByRole("link", { name: "Research" })).toBeNull();
     cleanup();
     // Inside a collection, only its children: no "Shared with you".

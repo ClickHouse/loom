@@ -97,12 +97,13 @@ export function sharedWithMe(rows: CollectionEntry[]): CollectionEntry[] {
   return rows.filter((c) => shared.has(c.namespace) && !shared.has(c.parent)).sort(collectionOrder);
 }
 
-/** Where a collection sits, as one line of titles from the top ("Team › Research"); a parent
- *  the caller cannot read is "…". Empty for a top-level one. */
+/** Where a collection sits, by its parents from the top ("in Team › Research"); a parent the
+ *  caller cannot read is "…", and alone is said in words. Empty for a top-level one. */
 function pathText(c: CollectionEntry, byName: Map<string, CollectionEntry>, repeated: Set<string>): string {
-  const path = collectionPath(c, byName);
-  if (path.length < 2) return "";
-  return path.map((p) => ("hidden" in p ? "…" : distinctTitle(p, repeated))).join(" › ");
+  const parents = collectionPath(c, byName).slice(0, -1);
+  if (parents.length === 0) return "";
+  const text = parents.map((p) => ("hidden" in p ? "…" : distinctTitle(p, repeated))).join(" › ");
+  return text === "…" ? "inside a collection you can't open" : `in ${text}`;
 }
 
 /** The place above the top: its label, the collection it is (null for the header's
@@ -308,7 +309,8 @@ export function CollectionsInside({
   if (inside.length === 0 && shared.length === 0) return null;
   return (
     <div className={`space-y-6 ${className}`}>
-      <PlaceList id={HEADING_ID} label="Collections" items={inside} rows={rows} onPick={onPick} />
+      {/* At the top, each says where it sits: one may be inside a collection not listed. */}
+      <PlaceList id={HEADING_ID} label="Collections" items={inside} rows={rows} onPick={onPick} withPath={top} />
       <PlaceList id={SHARED_HEADING_ID} label="Shared with you" items={shared} rows={rows} onPick={onPick} withPath />
     </div>
   );
