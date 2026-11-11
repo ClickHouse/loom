@@ -1,11 +1,12 @@
 <h1 align="center">Loom</h1>
 
 <p align="center">
-  <b>Shared memory and code intelligence for AI agents.</b><br>
-  Agents remember what they learned, find code with evidence and hand work to each other. Self-hosted on ClickHouse.
+  <b>Shared memory, document search and code intelligence for AI agents.</b><br>
+  For Claude Code, Codex, Cursor and your own agents.
 </p>
 
 <p align="center">
+  <a href="#what-loom-is-for">What Loom is for</a> ·
   <a href="#measured-results">Benchmarks</a> ·
   <a href="#get-started">Get started</a> ·
   <a href="#why-loom">Capabilities</a> ·
@@ -16,13 +17,35 @@
 ![Loom dashboard showing shared agent memories, a pinned fact and flagged conflicts](./docs/images/dashboard-memories.png)
 
 Loom is an open-source, self-hosted MCP server that gives your agents long-term, shared
-memory: one place to remember decisions, find relevant code and documents, and hand work
-to each other. Context persists across tools and sessions, so the next agent can build on
-what the previous one learned.
+memory: what one agent learns in a session, the next agent or tool can find.
 
-Connect Claude Code, Codex, Cursor or your own agents through MCP, HTTP, Python or
-TypeScript. Self-host with Docker; agent context and index data live in ClickHouse.
-The dashboard brings memories, repositories, tasks and runs into one place.
+Agents connect through MCP, HTTP, Python or TypeScript. Self-host with Docker or
+[on Kubernetes with the Helm chart](./docs/operations/kubernetes.md); agent context and
+index data live in ClickHouse, and a deployment can choose
+[Postgres at first boot](./docs/operations/postgres.md) for live memory and knowledge
+state. The dashboard brings memories, repositories, tasks and runs into one place.
+
+## What Loom is for
+
+- **Memory shared across your coding agents**, with plugins that load context at session
+  start and capture the session as it runs.
+  [Connect a coding agent](./docs/getting-started/connect-a-coding-agent.md)
+- **Long-term memory for an agent application**, per user, from the Python or TypeScript
+  SDK. [Your first agent](./docs/getting-started/first-agent.md)
+- **A multi-user MCP memory server** with namespaces, roles and tokens.
+  [Multi-user mode](./docs/getting-started/quickstart.md#start-in-multi-user-mode) ·
+  [Namespaces and sharing](./docs/features/namespaces-and-sharing.md)
+- **A code index of your repositories** that coding agents query.
+  [Code index](./docs/features/code-index/overview.md)
+- **Document search with citations**, including PDF, `.docx` and `.pptx` files the
+  extractor service converts. [Knowledge documents](./docs/features/knowledge.md)
+- **A record of agent work**, with searchable conversations (when recording is on),
+  session briefs to resume from, and runs with their goals, outcomes and model costs
+  when supplied. [Conversations](./docs/features/conversations-and-sessions.md) ·
+  [Runs](./docs/features/runs.md)
+
+Loom is not an in-process library for one agent's short-lived memory, nor an agent
+framework. [When Loom does not fit](./docs/getting-started/overview.md#when-it-does-not-fit)
 
 ## Measured results
 
@@ -165,21 +188,12 @@ tokens in **Settings → Tokens**. Cursor and other MCP clients, and
 - **Grounded retrieval.** Search permitted memories, documents, conversations and
   tracker records. Answers cite their sources; low-confidence retrieval can abstain.
   [Retrieval](./docs/concepts/retrieval-and-ranking.md)
-- **Multi-agent handoffs.** Share findings and assign work through durable task inboxes
-  with leases, retries, review rules and outcomes. Your agents execute the workflow;
-  Loom preserves the handoffs. [Task queues](./docs/features/tasks-and-decisions.md)
+- **Multi-agent handoffs.** Assign work through durable task inboxes with leases,
+  retries, review rules and outcomes. Your agents execute the workflow; Loom
+  preserves the handoffs. [Task queues](./docs/features/tasks-and-decisions.md)
 - **Control over agent data.** Manage namespace access, provenance, retention, audit
   records and verified erasure. Context remains queryable in ClickHouse.
   [Security](./docs/architecture/security.md)
-
-A research agent can post a task, a coding agent can claim it, and a reviewer can
-inspect the outcome—all using shared findings. Two or more agents can coordinate in
-either deployment mode.
-
-[Conversations](./docs/features/conversations-and-sessions.md) preserve searchable
-dialogue when recording is enabled; session briefs help resume work.
-[Runs](./docs/features/runs.md) record goals, outcomes, memories used and model costs
-when supplied.
 
 ## Integrations
 
@@ -218,8 +232,8 @@ and the full protocols, models and artifacts.
 ## Documentation and contributing
 
 For shared agent context, code intelligence and permissioned retrieval, start with the
-[documentation](./docs/index.md). For deployment requirements and when Loom is a good fit,
-see the [fit guide](./docs/getting-started/overview.md#when-loom-fits).
+[documentation](./docs/index.md). For deployment requirements, see the
+[prerequisites](./docs/getting-started/overview.md#prerequisites).
 
 [Deployment](./docs/operations/deployment.md) · [FAQ](./docs/faq.md) ·
 [Contributing](./CONTRIBUTING.md) · [Security reporting](./SECURITY.md) ·
