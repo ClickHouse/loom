@@ -19,12 +19,15 @@ import {
 } from "../../lib/assistantStorage";
 import { readIndex } from "./storedIndex";
 import type { Citation, Support } from "../../api/assistantChat";
+import type { AskContext } from "./pageContext";
 
 export type TurnState = "answering" | "done" | "stopped" | "failed" | "refused";
 
 export interface Turn {
   id: string;
   question: string;
+  /** What the question said about the page it was asked from; absent when nothing. */
+  context?: AskContext;
   answer: string;
   state: TurnState;
   error?: string;

@@ -138,7 +138,9 @@ for (const width of [1400, 375]) {
       await expect(page.getByRole("dialog", { name: key })).toBeVisible();
     });
 
-    test("the drawer footer is one row: Edit, More and Delete", async ({ page }, testInfo) => {
+    test("the drawer footer is one row: Edit, Ask about this, More and Delete; two on a phone", async ({
+      page,
+    }, testInfo) => {
       await installApi(page, { memoryRows: 3 });
       await entityApi(page);
       await page.goto("/memories?memory=alerts%2F2026-09-19%2F0001", { waitUntil: "domcontentloaded" });
@@ -146,7 +148,10 @@ for (const width of [1400, 375]) {
       const footer = drawer.locator("footer");
       await expect(footer.getByRole("button", { name: "More actions" })).toBeVisible();
       const h = await footer.evaluate((f) => f.getBoundingClientRect().height);
-      expect(h).toBeLessThanOrEqual(60);
+      // A phone-wide drawer wraps the footer, Ask about this on the first row beside Edit.
+      expect(h).toBeLessThanOrEqual(width < 640 ? 110 : 60);
+      const top = async (name: string) => (await footer.getByRole("button", { name }).boundingBox())?.y;
+      expect(await top("Ask the assistant about this memory")).toBe(await top("Edit"));
       await footer.getByRole("button", { name: "More actions" }).click();
       const menu = page.getByRole("menu", { name: "More actions" });
       await expect(menu.getByRole("menuitem", { name: "Copy", exact: true })).toBeVisible();

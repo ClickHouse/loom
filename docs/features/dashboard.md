@@ -126,6 +126,25 @@ an answer that makes no claim, such as a greeting or an abstention. **Stop** end
 answer; closing the panel or leaving the page does not. Each question goes with the
 conversation's newest 50 messages.
 
+**Each question says which page it is asked from**, and shows it: a chip above the field,
+"Includes: Memories", sends one leading line with the question (`Context: Memories page`),
+which the transcript shows as the chip, not as text. Its remove button, **Don't include this
+page**, sends nothing about the page for that question; the next question, or another page, carries the chip
+again. A line under the field says so until the chip is removed once or a first question is
+asked. **Ask about this** adds the item to the chip for one question ("Includes: Memories ·
+key user/pref/lang"; the line names the memory's key and writer agent, the document's source
+URI and title, or the result's rank, key and query). It is in the memory drawer's footer
+after Edit, in the document preview's actions before Download, and on each Recall lab result
+row as **Ask**. It closes the drawer or the preview without handing the focus back to what
+opened it, opens the panel in the mode the window gives with the focus in its field, keeps
+the question being typed and sends nothing. The item leaves with the chip, after the
+question, or when the page or the namespace changes. On a conversation about another
+namespace it starts a new one in the header's namespace, the question being typed and the
+chip moving to it, and says "New conversation in <namespace>; the one about <old> is in
+History." The button is there for anyone the assistant's route admits on the namespace;
+while the assistant cannot answer it is unavailable with the reason, and in the drawer
+while an edit or a rename is open, with "Save or cancel the edit first".
+
 One panel serves every window width:
 
 - **Beside the page** while the page keeps 640 px: 360 to 720 px wide (420 by default, and

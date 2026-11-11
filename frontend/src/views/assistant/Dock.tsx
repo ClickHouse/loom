@@ -85,6 +85,25 @@ export function DockBody() {
   useEffect(() => {
     if (!open) setShowHistory(false);
   }, [open]);
+  // "Ask about this" (lib/assistantDockRuntime.ts askAbout): the chat shows, and a
+  // conversation about another namespace gives way to a new one in the header's, which the
+  // question being typed and the chip move to (they are the panel's); the old one stays in
+  // History.
+  const askSeq = useDock((s) => s.askSeq);
+  const handledAsk = useRef(0);
+  useEffect(() => {
+    if (askSeq === handledAsk.current) return;
+    handledAsk.current = askSeq;
+    setShowHistory(false);
+    const c = useChat.getState();
+    const header = useStore.getState().identity?.namespace ?? "";
+    if (c.answering || c.turns.length === 0 || !c.namespace || c.namespace === header) return;
+    const old = c.namespace;
+    newConversation();
+    const line = `New conversation in ${header}; the one about ${old} is in History.`;
+    useChat.setState({ notice: line });
+    announceAssistant(line);
+  }, [askSeq]);
   const [checking, setChecking] = useState(true);
   // Bumped to draw History again: a write to the index here or in another tab.
   const [, setIndexTick] = useState(0);
@@ -175,7 +194,7 @@ export function DockBody() {
     if (!reasonNow) useDock.setState({ focusField: true });
     // A question the route refused is asked again, in the conversation's namespace, unless
     // what blocks Ask still applies; with nothing refused, nothing is sent.
-    const question = useChat.getState().refused;
+    const refused = useChat.getState().refused;
     const c = useChat.getState();
     const st = useStore.getState();
     const header = st.identity?.namespace ?? "";
@@ -185,7 +204,7 @@ export function DockBody() {
       memory: isMemoryNamespace(header, st.myNamespaces),
       mismatch: c.turns.length > 0 && c.namespace !== null && c.namespace !== header,
     });
-    if (question && !stillBlocked) ask(question, c.namespace ?? header);
+    if (refused && !stillBlocked) ask(refused.question, c.namespace ?? header, refused.context);
   };
 
   if (expired)

@@ -25,6 +25,7 @@ import {
 import { setViewParam, useStore, useIdentity } from "../lib/state";
 import { isCollectionName, isMemoryNamespace, kindOf } from "../lib/namespace";
 import { roleOnNamespace } from "../lib/namespaceRole";
+import { AskAboutThis, clip } from "../components/AskAboutThis";
 import { RowSkeleton } from "../components/Skeleton";
 import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
@@ -544,6 +545,8 @@ export function Documents() {
     [],
   );
 
+  // Set by "Ask about this", which closes the preview for the assistant panel's field.
+  const leavingPreview = useRef(false);
   const closePreview = () => {
     linkRead.current?.abort();
     if (previewFile?.url) {
@@ -1083,6 +1086,12 @@ export function Documents() {
         onOpenChange={(v) => {
           if (!v) closePreview();
         }}
+        // "Ask about this" closed it for the assistant panel's field: no focus handed back.
+        onCloseAutoFocus={(e) => {
+          if (!leavingPreview.current) return;
+          leavingPreview.current = false;
+          e.preventDefault();
+        }}
         title={previewEntry?.title || previewEntry?.original_filename || previewEntry?.source_uri || "Document"}
         className="max-w-[900px] w-full"
         initialFocus="dialog"
@@ -1137,6 +1146,19 @@ export function Documents() {
                   </Button>
                 </Tip>
               )}
+              <AskAboutThis
+                what="document"
+                item={{
+                  chip: `document ${previewEntry.title || previewEntry.original_filename || previewEntry.source_uri}`,
+                  line: `document ${clip(previewEntry.source_uri)}${
+                    previewEntry.title ? ` ("${clip(previewEntry.title, 120)}")` : ""
+                  }`,
+                }}
+                leave={() => {
+                  leavingPreview.current = true;
+                  closePreview();
+                }}
+              />
               <Tip
                 content={
                   hasOriginalFile(previewEntry) ? "Download the original file" : "Save the stored text as Markdown"

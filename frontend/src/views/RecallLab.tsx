@@ -19,6 +19,9 @@ import { displayAgent, previewValue, SENSITIVE_LABEL } from "../lib/format";
 import { humanizeError } from "../lib/errorWords";
 import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
 import { signed, termText, whyTerms } from "../lib/whyNote";
+import { AskAboutThis, clip } from "../components/AskAboutThis";
+import { canCall } from "../lib/canCall";
+import { useNamespaceRole } from "../lib/namespaceRole";
 
 // One recorded search, expanded in place. A person reading "my agent answered badly an
 // hour ago" needs more than the top score and the first eight keys — they need every key
@@ -277,17 +280,28 @@ const SCORE_HEADERS = [
   { label: <span className={NUMERIC}>Entity</span>, width: "80px" },
   { label: "Type", width: "140px" },
 ];
+// Shown to whoever may ask the assistant: each row's "Ask".
+const ASK_HEADERS = [...SCORE_HEADERS, { label: <span className="sr-only">Assistant</span>, width: "96px" }];
 
 /** One scored row: the key opens the memory (a button, so the keyboard reaches it), the
- *  score draws Click UI's table bar against the top ranked hit. */
-function scoreRow(row: RecallRow, i: number, top: number, open: (key: string) => void): TableRowType {
+ *  score draws Click UI's table bar against the top ranked hit, and the last cell asks the
+ *  assistant about the result (its click, even an unavailable one, opens nothing). */
+function scoreRow(
+  row: RecallRow,
+  i: number,
+  top: number,
+  open: (key: string) => void,
+  query: string | null,
+): TableRowType {
   const hit = row.hit;
   const terms = whyTerms(hit?.score_components);
   const entity = terms.find((t) => t.label === ENTITY);
   const width = hit && top > 0 ? Math.max(0, Math.min(100, (hit.rank_score / top) * 100)) : 0;
   return {
     id: row.key,
-    onClick: () => open(row.key),
+    onClick: (e) => {
+      if (!e.defaultPrevented) open(row.key);
+    },
     className: "cursor-pointer",
     items: [
       { className: CARD, label: <span className={`${NUMERIC} text-text-muted`}>{i + 1}</span> },
@@ -356,6 +370,23 @@ function scoreRow(row: RecallRow, i: number, top: number, open: (key: string) =>
           </span>
         ),
       },
+      ...(query === null
+        ? []
+        : [
+            {
+              className: CARD,
+              label: (
+                <AskAboutThis
+                  what="result"
+                  short
+                  item={{
+                    chip: `result ${row.key}`,
+                    line: `result ${i + 1}, memory ${clip(row.key)}, for the query "${clip(query)}"`,
+                  }}
+                />
+              ),
+            },
+          ]),
     ],
   };
 }
@@ -383,6 +414,8 @@ export function RecallLab() {
   // Bumped by Retry: the same query is asked again.
   const [attempt, setAttempt] = useState(0);
   const inspect = useStore((s) => s.inspect);
+  const whoami = useStore((s) => s.whoami);
+  const askable = canCall("assistant.ask", useNamespaceRole(identity.namespace), whoami);
   const open = useCallback((key: string) => inspect(key, { agent: "*" }), [inspect]);
   // The ranked search failed while keyword rows stood: those still show, with this said.
   const [rankedError, setRankedError] = useState<string | null>(null);
@@ -566,8 +599,10 @@ export function RecallLab() {
                   aria-label="Recall scores"
                   aria-busy={loading || undefined}
                   size="sm"
-                  headers={SCORE_HEADERS}
-                  rows={rows.map((row, i) => scoreRow(row, i, topScore, open))}
+                  headers={askable ? ASK_HEADERS : SCORE_HEADERS}
+                  rows={rows.map((row, i) =>
+                    scoreRow(row, i, topScore, open, askable ? parseSearchQuery(query).text : null),
+                  )}
                 />
               )}
             </>

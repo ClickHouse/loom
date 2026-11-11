@@ -405,6 +405,14 @@ does: the docs are not the namespace's data. A read returns at most 16,000 chara
 and a cut one names the offset its rest starts at; a page read, or a cut one, adds the
 page's outline.
 
+**The page's context.** The dashboard's panel starts a question with one line about the
+page it is asked from, `Context: <page> page`, and with the item "Ask about this" named,
+`Context: Memories page, memory <key> (agent <agent>)`, `Context: Library page, document
+<source URI> ("<title>")` or `Context: Recall page, result <rank>, memory <key>, for the
+query "<query>"`: a key or source URI the agent reads with `memory.get` or `knowledge.get`. The line is
+the person's own text, removable before it is sent, and grants nothing; no server or wire
+field carries it ([the assistant panel](../features/dashboard.md#the-assistant-panel)).
+
 **The asker's context.** An answer's token is `viewer` on one namespace, so the agent
 cannot tell from it what the person asking may do. The bridge, which holds the caller's
 own credential, puts one line in fixed words as the last line of the question it sends
@@ -1176,7 +1184,8 @@ ClickHouse and are shared by every replica; the agent definition is written as
    streaming clients. Built.
 5. The dashboard's assistant panel, on the signed-in session and the header's namespace,
    with a Stop button that closes the request, each answer's checked citations under it,
-   the reasons it cannot answer and the conversations kept in the browser
+   the reasons it cannot answer, the conversations kept in the browser, the page's chip
+   on each question and "Ask about this" on a memory, a document and a Recall result
    ([the assistant panel](../features/dashboard.md#the-assistant-panel)). Built.
 6. Loom's documentation in the image, `help.search` and `help.get` on the toolset
    ([Loom's documentation](#looms-documentation)). Built.

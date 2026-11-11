@@ -48,7 +48,8 @@ beforeEach(() => {
   answers = [];
   // Each test starts on a new conversation with an empty field.
   resetChat(null);
-  useDock.setState({ draft: "", working: false, unread: false, open: true });
+  useDock.setState({ draft: "", working: false, unread: false, open: true, item: null, pageOff: false });
+  useStore.setState({ view: "memories" });
   localStorage.setItem("loom_token_v1", "session-token");
   vi.stubGlobal(
     "fetch",
@@ -68,6 +69,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
   localStorage.clear();
 });
+
+// Each question carries the page it is asked from, as a leading line (./pageContext.ts).
+const ON_PAGE = "Context: Memories page\n\n";
 
 const refusal = (status: number, detail: object) => () =>
   new Response(JSON.stringify({ detail }), { status, headers: { "Content-Type": "application/json" } });
@@ -106,7 +110,10 @@ describe("AssistantChat", () => {
     const headers = calls[0].init.headers as Record<string, string>;
     expect(headers.Authorization).toBe("Bearer session-token");
     expect(headers["X-Loom-Namespace"]).toBe("team");
-    expect(calls[0].body).toEqual({ stream: true, messages: [{ role: "user", content: "What do we bill?" }] });
+    expect(calls[0].body).toEqual({
+      stream: true,
+      messages: [{ role: "user", content: `${ON_PAGE}What do we bill?` }],
+    });
     expect(screen.getByText("Answering…")).toBeInTheDocument();
 
     await act(async () => s.text("Invoices go "));
@@ -140,9 +147,9 @@ describe("AssistantChat", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument());
     await ask("Since when?");
     expect(calls[1].body.messages).toEqual([
-      { role: "user", content: "Who owns billing?" },
+      { role: "user", content: `${ON_PAGE}Who owns billing?` },
       { role: "assistant", content: "Ada does." },
-      { role: "user", content: "Since when?" },
+      { role: "user", content: `${ON_PAGE}Since when?` },
     ]);
   });
 
@@ -165,7 +172,7 @@ describe("AssistantChat", () => {
     const s = sse();
     answers.push(() => s);
     await userEvent.setup().click(screen.getByRole("button", { name: "Ask" }));
-    expect(calls[1].body.messages).toEqual([{ role: "user", content: "Who owns billing?" }]);
+    expect(calls[1].body.messages).toEqual([{ role: "user", content: `${ON_PAGE}Who owns billing?` }]);
   });
 
   it.each([
@@ -336,6 +343,8 @@ describe("AssistantChat", () => {
   it("asks nothing with a question longer than the route accepts, and says why", async () => {
     render(<AssistantChat namespace="team" blocked={null} />);
     const user = userEvent.setup();
+    // Without the page's line the whole length is the question's.
+    await user.click(screen.getByRole("button", { name: "Don't include this page" }));
     const field = screen.getByLabelText("Question");
     await user.click(field);
     await user.paste("x".repeat(MAX_MESSAGE_CHARS + 1));
@@ -354,6 +363,7 @@ describe("AssistantChat", () => {
     });
     render(<AssistantChat namespace="team" blocked={null} />);
     const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Don't include this page" }));
     const field = screen.getByLabelText("Question");
     await user.click(field);
     await user.paste(`${"x".repeat(MAX_MESSAGE_CHARS)}   `);
@@ -406,7 +416,10 @@ describe("AssistantChat", () => {
     render(<AssistantChat namespace="team" blocked={null} />);
     await ask("Who owns billing?");
     await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "starting" }));
-    expect(useChat.getState().refused).toBe("Who owns billing?");
+    expect(useChat.getState().refused).toEqual({
+      question: "Who owns billing?",
+      context: { chip: "Memories", line: "Context: Memories page" },
+    });
     expect(screen.queryByRole("list", { name: "Conversation" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Question")).toHaveValue("Who owns billing?");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -699,7 +712,7 @@ describe("AssistantChat", () => {
     render(<AssistantChat namespace="team" blocked={null} />);
     const user = userEvent.setup();
     await user.type(screen.getByLabelText("Question"), "line one{Shift>}{Enter}{/Shift}line two{Enter}");
-    expect(calls[0].body.messages).toEqual([{ role: "user", content: "line one\nline two" }]);
+    expect(calls[0].body.messages).toEqual([{ role: "user", content: `${ON_PAGE}line one\nline two` }]);
   });
 
   it("has no axe violations with a conversation, an answer streaming and a refusal shown", async () => {

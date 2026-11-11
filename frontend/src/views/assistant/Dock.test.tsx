@@ -12,7 +12,8 @@ vi.mock("../../api", async (importOriginal) => {
 });
 
 import { useStore } from "../../lib/state";
-import { useDock } from "../../lib/assistantDock";
+import { loadDockRuntime, useDock, type AskItem } from "../../lib/assistantDock";
+import { askAbout } from "../../lib/assistantDockRuntime";
 import { PANEL_DEFAULT } from "../../lib/assistantLayout";
 import { INDEX_KEY } from "../../lib/assistantStorage";
 import { axeViolations } from "../../test/axe";
@@ -114,7 +115,16 @@ beforeEach(() => {
   modelCalls = () => json({ enabled: false, locked: false });
   resetChat(null);
   useChat.setState({ hint: null, readiness: null, storageOff: false });
-  useDock.setState({ open: true, mounted: true, draft: "", reason: null, focusField: false, prefWidth: PANEL_DEFAULT });
+  useDock.setState({
+    open: true,
+    mounted: true,
+    draft: "",
+    reason: null,
+    focusField: false,
+    prefWidth: PANEL_DEFAULT,
+    item: null,
+    pageOff: false,
+  });
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -393,7 +403,7 @@ describe("Try again", () => {
     signIn("viewer", { read_scope: "own_session" });
     show();
     await unavailable();
-    useChat.setState({ refused: "Who?" });
+    useChat.setState({ refused: { question: "Who?", context: null } });
     await userEvent.setup().click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(paths).toContain("/v1/health/ready"));
     expect(paths).not.toContain("/v1/assistant/chat/completions");
@@ -704,7 +714,7 @@ describe("two tabs", () => {
     const stored = JSON.parse(localStorage.getItem("loom_assistant_c_c1") || "null");
     expect(stored.turns.map((t: Turn) => t.question)).toEqual(["Question 0", "Question 1", "Who?"]);
     // The question went with the other tab's turn, read once this tab held the lock.
-    expect(sent).toEqual([["Question 0", "Question 1", "Who?"]]);
+    expect(sent).toEqual([["Question 0", "Question 1", "Context: Memories page\n\nWho?"]]);
   });
 
   it("says when another tab deleted the conversation, which then is not saved", async () => {
@@ -859,7 +869,7 @@ describe("one answer per conversation across tabs", () => {
     await user.type(screen.getByLabelText("Question"), "Who?");
     await user.click(screen.getByRole("button", { name: "Ask" }));
     await screen.findByText("Ada.");
-    expect(sent).toEqual([["Question 0", "Who?"]]);
+    expect(sent).toEqual([["Question 0", "Context: Memories page\n\nWho?"]]);
   });
 
   it("a turn this tab took back after a refusal is never stored as finished", async () => {
@@ -1261,5 +1271,143 @@ describe("the focus, beside the page", () => {
     check = { ok: true, required: false };
     await userEvent.setup().click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(screen.getByLabelText("Question")).toHaveFocus());
+  });
+});
+
+describe("the page a question is asked from", () => {
+  const item = (over: Partial<AskItem> = {}): AskItem => ({
+    view: "memories",
+    namespace: "team",
+    chip: "key user/pref/lang",
+    line: "memory user/pref/lang",
+    ...over,
+  });
+  const chipText = () => screen.getByTestId("assistant-page-chip").textContent;
+  const HINT = "The assistant sees the page you're on. Remove it here.";
+  beforeEach(() => useStore.setState({ view: "memories" }));
+
+  it("each new question carries the page, shown as a chip, sent as a leading line the transcript leaves out", async () => {
+    signIn("viewer");
+    show();
+    chat.push(() => answer("Ada."));
+    await waitFor(() => expect(chipText()).toBe("Includes: Memories"));
+    expect(screen.getByRole("button", { name: "Don't include this page" })).toBeInTheDocument();
+    expect(screen.getByText(HINT)).toBeInTheDocument();
+    await askIt("Who owns billing?");
+    await screen.findByText("Ada.");
+    expect(sent).toEqual([["Context: Memories page\n\nWho owns billing?"]]);
+    const turn = screen.getByRole("list", { name: "Conversation" });
+    expect(turn).toHaveTextContent("Who owns billing?");
+    expect(turn).toHaveTextContent("Includes: Memories");
+    expect(turn).not.toHaveTextContent("Context:");
+    // The hint is shown until the first question.
+    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+    expect(localStorage.getItem("loom_assistant_page_hint")).toBe("1");
+  });
+
+  it("removing the chip sends nothing about the page; the next question carries it again", async () => {
+    signIn("viewer");
+    show();
+    chat.push(
+      () => answer("Ada."),
+      () => answer("Since May."),
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Don't include this page" }));
+    expect(screen.queryByTestId("assistant-page-chip")).not.toBeInTheDocument();
+    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Question")).toHaveFocus();
+    await askIt("Who owns billing?");
+    await screen.findByText("Ada.");
+    expect(within(screen.getByRole("list", { name: "Conversation" })).queryByText(/Includes:/)).toBeNull();
+    expect(chipText()).toBe("Includes: Memories");
+    await askIt("Since when?");
+    await screen.findByText("Since May.");
+    expect(sent[1]).toEqual(["Who owns billing?", "Context: Memories page\n\nSince when?"]);
+  });
+
+  it("Ask about this adds the item to the chip, for one question, and opens the panel on the field", async () => {
+    signIn("viewer");
+    useDock.setState({ open: false });
+    show();
+    chat.push(() => answer("Ada."));
+    act(() => askAbout(item()));
+    expect(useDock.getState().open).toBe(true);
+    await waitFor(() => expect(chipText()).toBe("Includes: Memories · key user/pref/lang"));
+    await waitFor(() => expect(screen.getByLabelText("Question")).toHaveFocus());
+    expect(chat).toHaveLength(1);
+    await askIt("Who wrote it?");
+    await screen.findByText("Ada.");
+    expect(sent).toEqual([["Context: Memories page, memory user/pref/lang\n\nWho wrote it?"]]);
+    expect(screen.getByRole("list", { name: "Conversation" })).toHaveTextContent(
+      "Includes: Memories · key user/pref/lang",
+    );
+    expect(chipText()).toBe("Includes: Memories");
+  });
+
+  it("the item goes with the chip it was added to", async () => {
+    signIn("viewer");
+    show();
+    chat.push(() => answer("Ada."));
+    act(() => askAbout(item()));
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Don't include this page" }));
+    await askIt("Who?");
+    await screen.findByText("Ada.");
+    expect(sent).toEqual([["Who?"]]);
+  });
+
+  it("an item from another page or namespace rides along with nothing", async () => {
+    signIn("viewer");
+    await loadDockRuntime();
+    show();
+    act(() => askAbout(item()));
+    await waitFor(() => expect(chipText()).toBe("Includes: Memories · key user/pref/lang"));
+    act(() => useStore.setState({ view: "knowledge" }));
+    expect(chipText()).toBe("Includes: Library");
+    expect(useDock.getState().item).toBeNull();
+    // A chip removed on one page comes back on the next.
+    await userEvent.setup().click(screen.getByRole("button", { name: "Don't include this page" }));
+    expect(screen.queryByTestId("assistant-page-chip")).not.toBeInTheDocument();
+    act(() => useStore.setState({ view: "recall" }));
+    expect(chipText()).toBe("Includes: Recall");
+  });
+
+  it("keeps the question being typed", async () => {
+    signIn("viewer");
+    useDock.setState({ draft: "Who wrote" });
+    show();
+    act(() => askAbout(item()));
+    await waitFor(() => expect(chipText()).toBe("Includes: Memories · key user/pref/lang"));
+    expect(screen.getByLabelText("Question")).toHaveValue("Who wrote");
+  });
+
+  it("on a conversation about another namespace, starts one in the header's, with the draft and the chip", async () => {
+    signIn("viewer");
+    show();
+    chat.push(() => answer("Ada."));
+    await askIt("Who owns billing?");
+    await screen.findByText("Ada.");
+    act(() =>
+      useStore.setState({
+        identity: { org: "acme", namespace: "ops", agent: "loom-ui" },
+        myNamespaces: [
+          { namespace: "team", role: "reader", status: "active", kind: "memory" } as never,
+          { namespace: "ops", role: "reader", status: "active", kind: "memory" } as never,
+        ],
+      }),
+    );
+    expect(screen.getByText("This conversation is about team.")).toBeInTheDocument();
+    act(() => useDock.setState({ draft: "and the refunds?" }));
+    act(() => askAbout(item({ namespace: "ops" })));
+    const line = "New conversation in ops; the one about team is in History.";
+    expect(await screen.findByText(line)).toBeInTheDocument();
+    expect(screen.queryByText("Ada.")).not.toBeInTheDocument();
+    expect(screen.queryByText("This conversation is about team.")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Question")).toHaveValue("and the refunds?");
+    expect(chipText()).toBe("Includes: Memories · key user/pref/lang");
+    await waitFor(() => expect(document.getElementById("loom-assistant-status")).toHaveTextContent(line));
+    await userEvent.setup().click(screen.getByRole("button", { name: "History" }));
+    expect(screen.getByRole("button", { name: "Who owns billing?" })).toBeInTheDocument();
   });
 });

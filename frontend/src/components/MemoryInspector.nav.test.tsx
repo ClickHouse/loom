@@ -401,7 +401,7 @@ describe("the drawer footer is one row", () => {
       within(footer)
         .getAllByRole("button")
         .map((b) => b.getAttribute("aria-label") || b.textContent),
-    ).toEqual(["Edit", "More actions", "Delete"]);
+    ).toEqual(["Edit", "Ask the assistant about this memory", "More actions", "Delete"]);
     expect(footer).toHaveTextContent("Verified by alice");
     await userEvent.click(within(footer).getByRole("button", { name: "More actions" }));
     const menu = await screen.findByRole("menu", { name: "More actions" });

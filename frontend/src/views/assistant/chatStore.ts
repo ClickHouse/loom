@@ -11,6 +11,7 @@ import { useDock } from "../../lib/assistantDock";
 import { SHORT_REASON, type AssistantReason } from "../../lib/assistantLayout";
 import { announceAssistant } from "../../lib/assistantDockRuntime";
 import { supportLabel } from "./Sources";
+import { withContext, type AskContext } from "./pageContext";
 import {
   ConversationDeleted,
   StorageRefused,
@@ -57,15 +58,22 @@ export const MAX_MESSAGE_CHARS = 20_000;
 
 /** The messages a new question goes with: the turns shown, but a question refused before
  *  any answer (it was never answered, and the person asks again) and no empty answer; the
- *  newest `MAX_HISTORY`, each cut to `MAX_MESSAGE_CHARS`. */
-export function conversation(turns: Turn[], question: string): ChatMessage[] {
+ *  newest `MAX_HISTORY`, each cut to `MAX_MESSAGE_CHARS`. Each question is sent as it was
+ *  asked: with the context line it carried. */
+export function conversation(turns: Turn[], question: string, context: AskContext | null = null): ChatMessage[] {
   const history: ChatMessage[] = [];
   for (const t of turns) {
     if (t.state === "refused") continue;
-    history.push({ role: "user", content: t.question.slice(0, MAX_MESSAGE_CHARS) });
+    history.push({ role: "user", content: withContext(t.question, t.context).slice(0, MAX_MESSAGE_CHARS) });
     if (t.answer.trim()) history.push({ role: "assistant", content: t.answer.slice(0, MAX_MESSAGE_CHARS) });
   }
-  return [...history.slice(-MAX_HISTORY), { role: "user", content: question }];
+  return [...history.slice(-MAX_HISTORY), { role: "user", content: withContext(question, context) }];
+}
+
+/** A question the route refused, with the context it carried. */
+export interface RefusedQuestion {
+  question: string;
+  context: AskContext | null;
 }
 
 interface ChatState {
@@ -82,7 +90,7 @@ interface ChatState {
   /** This browser refused to store conversations: this one lasts as long as the tab. */
   storageOff: boolean;
   /** A question the route refused for a reason the panel shows (Try again asks it again). */
-  refused: string | null;
+  refused: RefusedQuestion | null;
   /** A reason the route's refusal named: a tab-lifetime hint, cleared by an answer or by
    *  Try again. */
   hint: AssistantReason | null;
@@ -227,10 +235,10 @@ export function resetChat(owner: Owner | null): void {
   useDock.setState({ working: false });
 }
 
-/** Ask `question`: in the conversation's namespace, or in `namespace` when a new one starts.
- *  The conversation's lock is taken first, only if no other tab holds it; when one does,
- *  nothing is sent and the question stays in the field. */
-export function ask(question: string, namespace: string): void {
+/** Ask `question`, with the page `context` it carries: in the conversation's namespace, or
+ *  in `namespace` when a new one starts. The conversation's lock is taken first, only if no
+ *  other tab holds it; when one does, nothing is sent and the question stays in the field. */
+export function ask(question: string, namespace: string, context: AskContext | null = null): void {
   const s = useChat.getState();
   if (s.answering) return;
   const id = s.id ?? randomId();
@@ -240,7 +248,7 @@ export function ask(question: string, namespace: string): void {
   // Answering from here on, so a second Ask waits; the turn shows once the lock is held.
   useChat.setState({ answering: true, notice: null });
   useDock.setState({ working: true });
-  const run = (held: boolean) => answer(id, ns, question, mine, held);
+  const run = (held: boolean) => answer(id, ns, question, context, mine, held);
   const locks = webLocks();
   if (!locks?.request) {
     void run(false);
@@ -291,6 +299,7 @@ async function answer(
   id: string,
   namespace: string,
   question: string,
+  context: AskContext | null,
   mine: AbortController,
   held: boolean,
 ): Promise<void> {
@@ -304,11 +313,15 @@ async function answer(
   useChat.setState({ id, namespace, refused: null });
   mergeStored(held ? "stopped" : "omit");
   const before = useChat.getState().turns;
-  const messages = conversation(before, question);
+  const messages = conversation(before, question, context);
   useChat.setState({
-    turns: [...before, { id: turnId, question, answer: "", state: "answering", at: Date.now() }],
+    turns: [
+      ...before,
+      { id: turnId, question, ...(context ? { context } : {}), answer: "", state: "answering", at: Date.now() },
+    ],
   });
-  useDock.setState({ draft: "" });
+  // The next question starts again from the page alone, its chip on.
+  useDock.setState({ draft: "", item: null, pageOff: false });
   announceAssistant("The assistant is answering.");
   // Saved at its start: a reload mid-answer shows it as stopped. Other tabs leave a turn
   // still answering out until it ends.
@@ -357,7 +370,7 @@ async function answer(
     // stream is an error event (status 0) after part of the answer.
     const refusedBefore = e instanceof ApiError && e.status !== 0 && !streamed;
     const reason = refusedBefore ? refusalReason(e) : null;
-    if (reason) return takeBack(id, turnId, question, reason, mine, held);
+    if (reason) return takeBack(id, turnId, { question, context }, reason, mine, held);
     // A refused question was never answered: it waits in the field to be asked again.
     if (refusedBefore && controller === mine && !useDock.getState().draft) useDock.setState({ draft: question });
     end({ state: refusedBefore ? "refused" : "failed", error: humanizeError(e, { read: true }) }, "");
@@ -371,15 +384,15 @@ async function answer(
 function takeBack(
   id: string,
   turnId: string,
-  question: string,
+  refused: RefusedQuestion,
   reason: AssistantReason,
   mine: AbortController,
   held: boolean,
 ): void {
   if (controller !== mine) return;
   const turns = useChat.getState().turns.filter((t) => t.id !== turnId);
-  useChat.setState({ turns, hint: reason, refused: question });
-  if (!useDock.getState().draft) useDock.setState({ draft: question });
+  useChat.setState({ turns, hint: reason, refused });
+  if (!useDock.getState().draft) useDock.setState({ draft: refused.question });
   const owner = useChat.getState().owner;
   const stored = owner ? readConversation(id, owner, { answering: "kept" }) : null;
   // Nothing else in it, here or stored (a turn another tab answers without a lock counts).

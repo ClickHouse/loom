@@ -94,6 +94,10 @@ async function ask(page: Page, question: string) {
 
 const conversation = (page: Page) => page.getByRole("list", { name: "Conversation" });
 
+// Each question carries the page it is asked from, as a leading line; the transcript shows a
+// chip for it instead.
+const ON_MEMORIES = "Context: Memories page\n\n";
+
 for (const width of [1400, 375]) {
   test.describe(`${width} px`, () => {
     test.use({ viewport: { width, height: 900 } });
@@ -117,7 +121,7 @@ for (const width of [1400, 375]) {
       expect(request.headers().authorization).toBe("Bearer e2e-token");
       expect(request.postDataJSON()).toEqual({
         stream: true,
-        messages: [{ role: "user", content: "How does billing run?" }],
+        messages: [{ role: "user", content: `${ON_MEMORIES}How does billing run?` }],
       });
 
       await expect(chat.locator("strong", { hasText: "Billing" })).toBeVisible();
@@ -155,9 +159,9 @@ test("each turn sends the whole conversation", async ({ page }) => {
   expect(bodies[1]).toEqual({
     stream: true,
     messages: [
-      { role: "user", content: "Who owns billing?" },
+      { role: "user", content: `${ON_MEMORIES}Who owns billing?` },
       { role: "assistant", content: "Answer 1." },
-      { role: "user", content: "Since when?" },
+      { role: "user", content: `${ON_MEMORIES}Since when?` },
     ],
   });
 });
@@ -299,3 +303,46 @@ test("at 1440 px an unavailable launcher takes the muted text colour", async ({ 
   });
   expect(colours.launcher).toBe(colours.muted);
 });
+
+// "Ask about this" in the memory drawer: the drawer closes, the panel opens in the mode the
+// width gives (beside the page at 1440 px, the phone sheet at 390 px) with its field focused
+// and the memory in its chip, and the question goes with the context line.
+for (const width of [1440, 390]) {
+  test(`at ${width} px, Ask about this in the drawer asks with the memory in the chip`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await installApi(page, { memoryRows: 3 });
+    await page.route("**/v1/health/ready", (r) =>
+      r.fulfill({ status: 200, json: { ready: true, checks: { assistant: { ok: true, required: false } } } }),
+    );
+    const sent: unknown[] = [];
+    await page.route("**/v1/assistant/chat/completions", (r) => {
+      sent.push(r.request().postDataJSON());
+      return r.fulfill({ status: 200, contentType: "text/event-stream", body: streamed("Ada wrote it.") });
+    });
+    const key = "alerts/2026-09-19/0001";
+    await page.goto(`/memories?memory=${encodeURIComponent(key)}`, { waitUntil: "domcontentloaded" });
+    const drawer = page.getByRole("dialog", { name: key });
+    const ask = drawer.locator("footer").getByRole("button", { name: "Ask the assistant about this memory" });
+    await expect(ask).toHaveText("Ask about this");
+    await ask.click();
+    await expect(drawer).toBeHidden();
+    const field = page.getByRole("textbox", { name: "Question" });
+    await expect(field).toBeFocused();
+    await expect(panel(page)).toHaveAttribute("data-mode", width >= 1024 ? "push" : "sheet");
+    await expect(panel(page).getByTestId("assistant-page-chip")).toHaveText(`Includes: Memories · key ${key}`);
+    expect(await violations(page)).toEqual([]);
+    await field.fill("Who wrote it?");
+    await field.press("Enter");
+    await expect(conversation(page)).toContainText("Ada wrote it.");
+    const messages = (sent[0] as { messages: { role: string; content: string }[] }).messages;
+    expect(messages).toHaveLength(1);
+    // The memory's writer agent follows its key when the drawer knows it.
+    expect(messages[0].content).toMatch(
+      new RegExp(`^Context: Memories page, memory ${key}( \\(agent [^)]+\\))?\\n\\nWho wrote it\\?$`),
+    );
+    await expect(conversation(page)).toContainText(`Includes: Memories · key ${key}`);
+    await expect(conversation(page)).not.toContainText("Context:");
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
+  });
+}

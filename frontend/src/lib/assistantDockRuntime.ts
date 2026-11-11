@@ -5,7 +5,7 @@
 // deletion of another person's stored conversations on a sign-in. The state it acts on is
 // the shell's (lib/assistantDock.ts).
 import { isAuthDisabled } from "../api";
-import { useDock } from "./assistantDock";
+import { useDock, type AskItem } from "./assistantDock";
 import { PANEL_KEY } from "./assistantStorage";
 import {
   PANEL_MAX,
@@ -99,6 +99,15 @@ export function closeAssistant(cause: "person" | "nav"): void {
     }
     if (wasInside) focusLauncher();
   }
+}
+
+/** "Ask about this": the next question names `item` beside the page, and the panel opens
+ *  in the mode the width gives with its field focused; nothing is sent, and the question
+ *  being typed stays. The panel's body starts a new conversation when the one shown is
+ *  about another namespace (views/assistant/Dock.tsx). */
+export function askAbout(item: AskItem): void {
+  useDock.setState((s) => ({ item, pageOff: false, askSeq: s.askSeq + 1 }));
+  openAssistant();
 }
 
 /** The launcher and Ctrl+/ (⌘/): open the panel, or close it (a close from outside the
@@ -201,6 +210,12 @@ export function installDock(): void {
       // The session card must be reachable: a modal panel closes (its state stays).
       if (s.sessionExpired && layoutOf(useDock.getState()).mode !== "push") closeAssistant("nav");
     }
+    // The item "Ask about this" set belongs to the page and namespace it was asked from; a
+    // removed chip comes back on another page, which it never named.
+    const item = useDock.getState().item;
+    if (item && (s.view !== item.view || (s.identity?.namespace ?? "") !== item.namespace))
+      useDock.setState({ item: null });
+    if (s.view !== prev.view && useDock.getState().pageOff) useDock.setState({ pageOff: false });
     if (s.navSeq !== prev.navSeq) {
       // A navigation from the sheet replaced the sheet's entry.
       currentSheet = sheetEntry();
