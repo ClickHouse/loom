@@ -209,7 +209,9 @@ class _StarTokenCH(_CH):
     async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
         self.sql.append(sql)
         params = params or {}
-        if "service_accounts" in sql:
+        if (
+            "service_accounts" in sql and "namespace_grants" not in sql
+        ):  # not the grant read's dead-token set
             return {"created_by": self.row_creator}
         if "user_state" in sql:
             mine = self.saved and params["sub"] == self.owner

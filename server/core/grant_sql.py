@@ -16,6 +16,16 @@ from server.core.principals import EVERYONE, ONE_SPELLING
 # namespace) and grants nothing.
 LIVE_GRANT = "revoked_at IS NULL AND status = 'active'"
 
+# The `sa:` subjects of the tokens in `{org:String}` whose `loom.service_accounts` row is
+# revoked or past its expiry, lower-cased. Such a token's own grant confers nothing at the
+# gate: the token is refused at verify, and a trusted caller acting for its subject must
+# not reach what it held. A subject no row lists (an operator's `loom mint-token`) is not
+# here: it ends by a revocation of the subject.
+DEAD_TOKEN_SUBJECTS = (
+    "SELECT lower(sa_subject) FROM loom.service_accounts FINAL WHERE org = {org:String}"
+    " AND (revoked_at IS NOT NULL OR expires_at <= now())"
+)
+
 
 def grant_rank_sql(column: str) -> str:
     """ORDER BY key (DESC) that puts the highest grant role in `column` first; a

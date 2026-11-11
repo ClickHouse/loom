@@ -59,7 +59,9 @@ class _CH:
         self, sql: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
         params = params or {}
-        if "service_accounts" in sql:
+        if (
+            "service_accounts" in sql and "namespace_grants" not in sql
+        ):  # not the grant read's dead-token set
             return [self.sa_row] if params.get("sub") == SA else []
         if "groupArray((namespace, rank))" in sql:  # the grant map (`grant_cache`)
             grants = [(TEAM, 1)] if params.get("sub") == CREATOR else []

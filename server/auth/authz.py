@@ -30,7 +30,7 @@ from server.auth.fail_closed import (
     note_unreadable,
     unreadable,
 )
-from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
+from server.core.grant_sql import DEAD_TOKEN_SUBJECTS, GRANT_RANK_SQL, LIVE_GRANT
 from server.core.principals import USER, principal_id
 
 # Re-export from operations.base so there's one canonical Role definition.
@@ -612,7 +612,8 @@ async def restricted_allows(
 async def grant_role_for(org: str, namespace: str, subject: str) -> Role | None:
     """Granted role for (org, namespace, subject), or None. The subject matches
     whatever its case, as the cached grant maps match it (`grant_cache`).
-    Pending grants are excluded: an unapproved writer-request must not elevate."""
+    Pending grants are excluded: an unapproved writer-request must not elevate, nor
+    does a dead token's own grant (`DEAD_TOKEN_SUBJECTS`)."""
     from server.auth.aliases import lowered, subject_aliases
     from server.core.ch import get_client
 
@@ -625,9 +626,12 @@ async def grant_role_for(org: str, namespace: str, subject: str) -> Role | None:
             SELECT role FROM loom.namespace_grants FINAL
             WHERE org = {org:String} AND namespace = {ns:String}
               AND lower(subject) IN {subs:Array(String)} AND {live}
+              AND lower(subject) NOT IN ({dead})
             ORDER BY {rank} DESC
             LIMIT 1
-            """.replace("{live}", LIVE_GRANT).replace("{rank}", GRANT_RANK_SQL),
+            """.replace("{live}", LIVE_GRANT)
+            .replace("{dead}", DEAD_TOKEN_SUBJECTS)
+            .replace("{rank}", GRANT_RANK_SQL),
             params={"org": org, "ns": namespace, "subs": subjects},
         )
     except Exception as e:  # noqa: BLE001 — CH glitch treated as no grant (closed)

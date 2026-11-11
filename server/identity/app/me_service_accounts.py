@@ -212,7 +212,11 @@ async def save_token(
     # the authoritative per-namespace map (JSON), when the token has one.
     roles = sorted(set(ns_roles.values()), key=grant_rank) if ns_roles else delegated.roles
     ch = get_client()
-    await hand_down_lineage(delegated.org, name)
+    former = await hand_down_lineage(delegated.org, name)
+    if former is not None and former != sa_subject:
+        # The name's former token is dead, and its row is replaced now: no row would list
+        # its subject as dead (`grant_sql.DEAD_TOKEN_SUBJECTS`), so its grants go first.
+        await token_grants.revoke_token_grants(delegated.org, former)
     # Past every row the name has held, whichever host's clock wrote it: a
     # revoked row from a host running ahead would otherwise replace this one.
     version = await next_version(ch, "loom.service_accounts", {"org": delegated.org, "name": name})

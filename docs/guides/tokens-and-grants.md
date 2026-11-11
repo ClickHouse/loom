@@ -499,7 +499,11 @@ loom mint-token --subject sa:triage --org acme --namespaces team-shared,incident
 A person who holds a direct grant can also add the namespace to a token minted from the
 dashboard: the mint names it in the claim and writes a direct grant for the token's own
 `sa:` subject (`viewer` on a repository index, else the token's role capped at `writer`).
-That grant is revoked with the token, and when the person's own grant is revoked.
+That grant is revoked with the token, and when the person's own grant is revoked. Once the
+token's row is revoked or past its expiry, whichever way it died (its own revoke, its maker's
+revocation or deprovisioning), the grant admits nothing, and giving its name to a new token
+revokes it. A subject no token row lists, such as `sa:triage` minted by `loom mint-token`
+above, keeps its grants until the subject is revoked (`loom revoke-token --subject`).
 
 ## Add history policy
 

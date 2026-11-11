@@ -47,6 +47,7 @@ SETUP = (
     ddl("namespaces"),
     ddl("sso_links"),
     ddl("namespace_grants"),
+    ddl("service_accounts"),
     # Self-signed up under another person's address: unverified.
     _account("mallory", "bob@corp.example", "argon2-hash"),
     # An SSO account: the identity provider verified its email.
@@ -284,7 +285,6 @@ async def test_revoking_an_address_whose_handle_is_it_leaves_a_squatters_row_and
         _GINA,
         _account("mallory4", "gina@corp.example", "argon2-hash"),
         _grant("team-g", "mallory4"),
-        ddl("service_accounts"),
         ddl("acl_versions"),
         "INSERT INTO loom.service_accounts (org, name, sa_subject, created_by) VALUES"
         f" ('{ORG}', 'bot', 'sa:m4-bot', 'mallory4')",
@@ -314,7 +314,6 @@ async def test_revoking_the_address_reaches_the_tokens_its_squatter_made(
     kept = KeptCH(
         tmp_path,
         *SETUP,
-        ddl("service_accounts"),
         "INSERT INTO loom.service_accounts (org, name, sa_subject, created_by) VALUES"
         f" ('{ORG}', 'bot', 'sa:bot', 'mallory')",
         _grant("team-y", "sa:bot"),
@@ -342,7 +341,6 @@ async def test_revoking_a_grant_reaches_the_tokens_made_under_another_case(
     kept = KeptCH(
         tmp_path,
         *SETUP,
-        ddl("service_accounts"),
         "INSERT INTO loom.service_accounts (org, name, sa_subject, created_by) VALUES"
         f" ('{ORG}', 'bot', 'sa:bot', 'Mallory')",
         _grant("team-y", "sa:bot"),
@@ -367,7 +365,6 @@ async def test_revoking_a_handle_leaves_the_tokens_its_unverified_email_names(
     kept = KeptCH(
         tmp_path,
         *SETUP,
-        ddl("service_accounts"),
         "INSERT INTO loom.service_accounts (org, name, sa_subject, created_by) VALUES"
         f" ('{ORG}', 'bot', 'sa:bob-bot', 'bob@corp.example')",
         _grant("team-x", "sa:bob-bot"),
@@ -398,7 +395,6 @@ async def test_revoking_a_verified_person_leaves_a_squatters_tokens(
     kept = KeptCH(
         tmp_path,
         *SETUP,
-        ddl("service_accounts"),
         ddl("acl_versions"),
         ddl("audit_log"),
         _account("mallory2", "carol@corp.example", "argon2-hash"),
@@ -436,7 +432,6 @@ async def test_revoking_an_address_leaves_the_tokens_of_an_account_with_its_own_
     kept = KeptCH(
         tmp_path,
         *SETUP,
-        ddl("service_accounts"),
         ddl("acl_versions"),
         "INSERT INTO loom.service_accounts (org, name, sa_subject, created_by) VALUES"
         f" ('{ORG}', 'bot', 'sa:m-bot', 'mallory')",
@@ -472,7 +467,6 @@ async def test_revoking_an_address_takes_its_squatters_row_and_tokens(
     kept = KeptCH(
         tmp_path,
         *SETUP,
-        ddl("service_accounts"),
         ddl("acl_versions"),
         "INSERT INTO loom.service_accounts (org, name, sa_subject, created_by) VALUES"
         f" ('{ORG}', 'bot', 'sa:m-bot', 'mallory')",
@@ -619,7 +613,7 @@ async def test_revoking_an_address_again_takes_nothing_more(
     from server.identity.app import token_grants
     from server.identity.store import grants as grants_repo
 
-    kept = KeptCH(tmp_path, *SETUP, ddl("service_accounts"), ddl("acl_versions"))
+    kept = KeptCH(tmp_path, *SETUP, ddl("acl_versions"))
     monkeypatch.setattr("server.core.ch.get_client", lambda: kept)
     monkeypatch.setattr(grants_repo, "_default_client", lambda: kept)
     cascade, cascaded = token_grants.cascade_revoke_to_created_tokens, []
