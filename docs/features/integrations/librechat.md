@@ -227,10 +227,11 @@ answer the label is tested against. Its answer is scored correct when it states 
 under the unknown-name rule above. For the case with no answer in the docs, the answer is
 correct when it says so and writes no `LOOM_` name that no docs page writes; an answer
 that names an invented setting only to deny it is scored wrong. The labels are patterns
-over the answer's text: an answer that states the labeled values beside a wrong claim
-about them can still pass, so a correct score means the answer has what the page says. A help citation is valid
-when its page is in the server's documentation (`help.get`) and its section is one of the
-page's own, by the rule the server's own check uses. The cases go through Loom's assistant route
+over the answer's text, so they err both ways: an answer that states the labeled values
+beside a wrong claim about them can pass, and a right answer worded otherwise can fail. A
+correct score means the answer has what the page says. A help citation is valid when its
+page is in the server's documentation (`help.get`) and its section is one of the page's
+own, by the rule the server's own check uses. The cases go through Loom's assistant route
 (`qualify.py setup-bridge`), so each answer also carries the question's asker line and
 the bridge's own citation check.
 

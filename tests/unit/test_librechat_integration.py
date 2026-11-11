@@ -1128,3 +1128,18 @@ def test_rescore_asks_for_a_new_run_when_the_saved_path_is_unknown(tmp_path):
     out.write_text(json.dumps({"model": "m", "rows": []}))
     with pytest.raises(SystemExit, match="which path"):
         q.cmd_rescore(argparse.Namespace(out=str(out), citations=True))
+
+
+def test_the_use_case_report_lists_each_use_cases_unknown_names():
+    q = _qualify()
+    rows = [
+        {
+            "use_case": "U14 Tokens",
+            "librechat": _saved_side("a", unknown_names=["token.revoke_all"]),
+        },
+        {"use_case": "U14 Tokens", "librechat": _saved_side("b", correct=False)},
+        {"use_case": "U1 Look up a stored fact", "librechat": _saved_side("c")},
+    ]
+    lines = q.use_case_report(rows)
+    assert "| U1 Look up a stored fact | 1/1 | 1/1 | - |" in lines
+    assert "| U14 Tokens | 1/2 | 2/2 | token.revoke_all |" in lines

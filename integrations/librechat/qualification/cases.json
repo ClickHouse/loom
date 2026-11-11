@@ -606,10 +606,11 @@
         "limit": 5
       }
     },
-    "forbid": ["\\b(are|is) not extracted", "by hand only"],
+    "forbid": ["\\b(entities|they) (are|is) not extracted", "by hand only"],
     "samples": {
       "right": [
-        "Pass them in `entities` on `memory.set`; otherwise the extractor worker extracts them from the memory's text."
+        "Pass them in `entities` on `memory.set`; otherwise the extractor worker extracts them from the memory's text.",
+        "Relations you pass on `memory.set` are not extracted from the text; `memory.set_from_messages` extracts entities and triples."
       ],
       "wrong": [
         "Entities are not extracted from memories; an admin adds them by hand only.",
@@ -669,7 +670,10 @@
     "use_case": "U11 Sharing and collections",
     "person": "alice",
     "question": "What is a collection in Loom, and how is one shared?",
-    "expect": ["col-", "(through|by|via|with|creat\\w*|add\\w*) (a |its )?grants?|grants? on it"],
+    "expect": [
+      "col-|only grants open|grant-only|opens? only (through|by|via) grants?",
+      "grants?\\b[^.]{0,40}\\bon it|(by|via|with|through) (a |its )?`?grants?|grant(s|ing)? (a |an )?(user|group|agent|principal|`?everyone)"
+    ],
     "cite_help": [
       "concepts/identities-and-namespaces.md",
       "architecture/sharing.md",
@@ -684,7 +688,8 @@
     },
     "samples": {
       "right": [
-        "A collection is a `col-…` namespace that opens only through grants; you share it by creating grants on it."
+        "A collection is a `col-…` namespace that opens only through grants; you share it by creating grants on it.",
+        "A collection is a namespace that only grants open; no token claim or org admin role reaches it. Share it by granting a user, group, agent or `everyone` a role on it."
       ],
       "wrong": [
         "A collection is a folder of documents; share it with a link.",
@@ -839,7 +844,7 @@
     "use_case": "U18 Runs",
     "person": "alice",
     "question": "What is a run in Loom, and how does an agent start one?",
-    "expect": ["run\\.begin"],
+    "expect": ["run\\.(begin|scope)"],
     "cite_help": ["features/runs.md", "reference/operations/run.md"],
     "baseline": {
       "op": "help.search",
@@ -849,7 +854,10 @@
       }
     },
     "samples": {
-      "right": ["A run is one execution of a task; the agent starts it with `run.begin`."],
+      "right": [
+        "A run is one execution of a task; the agent starts it with `run.begin`.",
+        "A run is one execution of a task; in the SDK, `async with agent.run.scope(goal=...)` opens the run."
+      ],
       "wrong": [
         "A run is a CI job; agents cannot start one.",
         "There is no `run.begin`; a run starts on its own when an agent connects."
@@ -863,7 +871,7 @@
     "use_case": "U19 Tasks between agents",
     "person": "alice",
     "question": "How does one agent hand work to another agent in Loom?",
-    "expect": ["task\\.create", "task\\.pull|inbox"],
+    "expect": ["tasks?\\.create", "tasks?\\.pull|inbox"],
     "cite_help": ["features/tasks-and-decisions.md"],
     "baseline": {
       "op": "help.search",
@@ -873,7 +881,10 @@
       }
     },
     "samples": {
-      "right": ["The sender calls `task.create` into the receiver's inbox; the receiver claims it with `task.pull`."],
+      "right": [
+        "The sender calls `task.create` into the receiver's inbox; the receiver claims it with `task.pull`.",
+        "The sender posts with `a.tasks.create(\"private-bot\", ...)` and the receiver pulls it with `tasks.pull`."
+      ],
       "wrong": [
         "The agents share a memory key and poll it.",
         "They hand work over through a shared task list in the dashboard."
@@ -887,7 +898,7 @@
     "person": "alice",
     "question": "Does Loom copy our issue tracker's data into its own database?",
     "expect": [
-      "(never|does ?n[o']t|does not) (copy|copies|store|stores|keep|keeps)\\b|(reads|queries) (it|the tracker|\\w+) live|keeps? no copy"
+      "(never|does ?n[o']t|does not) (copy|copies|store|stores|keep|keeps)\\b|(reads|queries)\\b[^.]{0,30}\\blive|keeps? no copy"
     ],
     "cite_help": ["features/tracker/overview.md"],
     "baseline": {
@@ -900,7 +911,8 @@
     "samples": {
       "right": [
         "No: Loom never copies it; it reads the tracker live.",
-        "No. Loom doesn't store your tracker's data; it queries it live with a read-only credential."
+        "No. Loom doesn't store your tracker's data; it queries it live with a read-only credential.",
+        "No. Loom reads your tracker live with a read-only credential."
       ],
       "wrong": ["Yes, it copies every issue into its database each night."]
     }
@@ -911,7 +923,7 @@
     "use_case": "U21 Retention and erasure",
     "person": "alice",
     "question": "Who may erase every memory of one user id across the org?",
-    "expect": ["erasure\\.request", "org admin"],
+    "expect": ["erasure\\.request", "org(ani[sz]ation)? admin|admin of the org"],
     "cite_help": ["features/memory/retention-and-erasure.md"],
     "baseline": {
       "op": "help.search",
@@ -926,7 +938,8 @@
         "`memory.clear` erases nothing; it only tombstones. An org admin uses `erasure.request` with the `user_id` scope.",
         "Running `memory.clear` is not enough: it only tombstones. An org admin uses `erasure.request` with the `user_id` scope.",
         "`memory.clear` with `agent` or `user_id` only tombstones in one namespace; an org admin uses `erasure.request` with the `user_id` scope.",
-        "An admin can run `memory.clear`, but it only tombstones; an org admin erases with `erasure.request` and the `user_id` scope."
+        "An admin can run `memory.clear`, but it only tombstones; an org admin erases with `erasure.request` and the `user_id` scope.",
+        "Only an organization admin, with `erasure.request` and the `user_id` scope."
       ],
       "wrong": ["An org admin runs `memory.clear` with `agent=\"*\"`.", "Any writer may, with `memory.delete`."]
     }
