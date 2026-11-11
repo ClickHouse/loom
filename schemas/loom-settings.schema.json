@@ -238,6 +238,13 @@
           "type": "string",
           "description": "This cell's name (1 to 32 of a-z, 0-9, '-') behind a router, \"\" = not a cell; set, the process serves only while its cell's rows accept it (docs/architecture/cells.md)."
         },
+        "cell_probe_port": {
+          "default": 0,
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer",
+          "description": "The port of the probe listener, which answers the deployment id and the values under `loom cell prepare`'s nonce keys (docs/architecture/cells.md); 0 = off."
+        },
         "cell_router_timeout_s": {
           "default": 5.0,
           "exclusiveMinimum": 0,

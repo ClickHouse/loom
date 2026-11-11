@@ -323,6 +323,9 @@ class AuthSettings(BaseModel):
     # This cell's name (1 to 32 of a-z, 0-9, '-') behind a router, "" = not a cell; set,
     # the process serves only while its cell's rows accept it (docs/architecture/cells.md).
     cell: str = ""
+    # The port of the probe listener, which answers the deployment id and the values under
+    # `loom cell prepare`'s nonce keys (docs/architecture/cells.md); 0 = off.
+    cell_probe_port: int = Field(default=0, ge=0, le=65535)
     # The router's base URL a cell calls to place a new org, and the `loom cell` commands'
     # default router; "" = none: in `enforced`, a new org answers 503.
     cell_router_url: str = ""

@@ -10,10 +10,13 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable, Coroutine
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.core.background import register_deferred_task
 from server.settings import settings
+
+if TYPE_CHECKING:
+    from server.core.cell_probe import Listener
 
 # What a process that skipped the boot step is serving without — the pending migration files
 # named at boot, carried by /v1/health.
@@ -622,6 +625,19 @@ async def start_cell_state() -> list[asyncio.Task[None]]:
         cell.set_deployment_id(await pg_profile.deployment_id())
     await cell.refresh()
     return [cell.start_refresh_loop()]
+
+
+def start_probe_listener() -> Listener | None:
+    """The probe listener (LOOM_CELL_PROBE_PORT), started by the web lifespan alone, after
+    `require_storage_authority` has verified the deployment id (the port needs the
+    Postgres authority). The workers child is no web process: outside a cell it holds no
+    id, and would answer its share of the probes with none. It runs with or without
+    LOOM_CELL, since prepare reads it before LOOM_CELL rolls out."""
+    from server.core import cell_probe
+
+    if not settings.cell_probe_port:
+        return None
+    return cell_probe.start_listener()
 
 
 async def start_token_state() -> list[asyncio.Task[None]]:
