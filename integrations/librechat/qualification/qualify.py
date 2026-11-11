@@ -974,10 +974,11 @@ def require_docs(st: dict[str, Any], people: dict[str, Any], cases: list[dict[st
     page, and a help citation or a help case cannot be checked then."""
     if not cases:
         return
-    person = people[cases[0]["person"]]
-    body = {"org": person["org"], "namespace": person["namespace"], "query": "loom", "limit": 1}
-    code, out, _ = loom_call(st["loom_url"], st["tokens"][person["name"]], "help.search", body)
-    if code == 200 and not out.get("available", True):
+    # The scorer's token, through scorer_read: a 429 is waited out and any other failure
+    # stops the run, so a probe that cannot read never lets a no-docs run go on.
+    scorer = st["tokens"][f"scorer:{people[cases[0]['person']]['namespace']}"]
+    out = scorer_read(st, scorer, "help.search", {"query": "loom", "limit": 1})
+    if not out.get("available", True):
         sys.exit("help.search: this server has no documentation, so its help cannot be checked")
 
 

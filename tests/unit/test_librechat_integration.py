@@ -1357,7 +1357,7 @@ def test_a_server_without_docs_stops_the_help_checks(monkeypatch):
     with pytest.raises(SystemExit, match="no documentation"):
         q.check_help_citations(st, {"namespace": "acme-handbook"}, {}, "[help:a.md]")
     monkeypatch.setattr(q, "loom_call", lambda *a: (200, {"available": False, "hits": []}, 0.0))
-    st = {"loom_url": "u", "tokens": {"alice": "t"}}
+    st = {"loom_url": "u", "tokens": {"scorer:acme-handbook": "t"}}
     people = {p["name"]: p for p in q.load("fixture.json")["people"]}
     # A data case can cite a help page too, so even a run of data cases stops first.
     with pytest.raises(SystemExit, match="no documentation"):
@@ -1368,9 +1368,27 @@ def test_a_run_with_help_cases_checks_for_docs_before_any_answer(monkeypatch):
     import argparse
 
     q = _qualify()
-    monkeypatch.setattr(q, "state", lambda: {"loom_url": "u", "tokens": {"alice": "t"}})
+    monkeypatch.setattr(
+        q, "state", lambda: {"loom_url": "u", "tokens": {"scorer:acme-handbook": "t"}}
+    )
     monkeypatch.setattr(q, "loom_call", lambda *a: (200, {"available": False, "hits": []}, 0.0))
     monkeypatch.setattr(q, "ask_assistant", lambda *a: pytest.fail("a model answer was asked for"))
     args = argparse.Namespace(native_only=False, only=["help-revoke-token"], out="unused")
     with pytest.raises(SystemExit, match="no documentation"):
         q.cmd_run(args)
+
+
+def test_the_docs_probe_stops_the_run_when_it_cannot_read(monkeypatch):
+    q = _qualify()
+    sent = []
+
+    def fake_call(base, token, op, body):
+        sent.append((token, body))
+        return 401, {"detail": "revoked"}, 0.0
+
+    monkeypatch.setattr(q, "loom_call", fake_call)
+    st = {"loom_url": "u", "tokens": {"scorer:acme-handbook": "scorer-token"}}
+    people = {p["name"]: p for p in q.load("fixture.json")["people"]}
+    with pytest.raises(SystemExit):
+        q.require_docs(st, people, [_case("revoked-token"), _case("help-revoke-token")])
+    assert sent == [("scorer-token", {"query": "loom", "limit": 1})]
