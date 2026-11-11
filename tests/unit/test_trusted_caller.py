@@ -308,7 +308,7 @@ def test_the_tokens_own_org_is_checked_too(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(grant_cache, "grant_map", grant_map)
     monkeypatch.setattr(revocation, "_revoked_folded", frozenset({"bob"}))
     # its own refusal, so the HTTP 403 adds no code-index reason to it
-    with pytest.raises(authz.ActedForRevoked, match="acts for is revoked"):
+    with pytest.raises(authz.ActedForRefused, match="acts for is revoked"):
         asyncio.run(authz.check_acted_for(_acting("bob@corp.com", "clickhouse"), "acme"))
 
 
@@ -564,7 +564,7 @@ def test_the_acted_for_check_reads_the_held_spellings_not_every_tied_one(
     grant_cache.clear()
     acting = authz.check_acted_for(_acting("carol@corp.com", "acme"), "acme")
     if refused:
-        with pytest.raises(authz.ActedForRevoked):
+        with pytest.raises(authz.ActedForRefused):
             asyncio.run(acting)
     else:
         asyncio.run(acting)
@@ -609,7 +609,7 @@ def test_a_trusted_caller_acts_only_for_an_active_bot_or_its_agents(
     monkeypatch.setattr(machines, "get", _bots(is_active))
     acting = authz.check_acted_for(_acting(subject, "acme"), "acme")
     if refused:
-        with pytest.raises(authz.ActedForRevoked, match="names an active bot"):
+        with pytest.raises(authz.ActedForRefused, match="names an active bot"):
             asyncio.run(acting)
     else:
         asyncio.run(acting)
@@ -675,7 +675,7 @@ def test_a_remembered_answer_is_reused_until_the_grant_cache_ttl_and_read_after(
     asyncio.run(authz.check_acted_for(_acting("sa:ci", "acme"), "acme"))  # the memo answers
     assert reads == ["ci"]
     clock.advance(0.1)
-    with pytest.raises(authz.ActedForRevoked):
+    with pytest.raises(authz.ActedForRefused):
         asyncio.run(authz.check_acted_for(_acting("sa:ci", "acme"), "acme"))
     assert reads == ["ci", "ci"]
 
@@ -741,7 +741,7 @@ def test_a_bot_disabled_on_this_process_is_refused_at_once(
     asyncio.run(machines.save(bot, by="cli:root"))
     asyncio.run(authz.check_acted_for(_acting("sa:ci:agent-1", "acme"), "acme"))  # remembered
     asyncio.run(machines.save(bot, by="cli:root", active=False))
-    with pytest.raises(authz.ActedForRevoked):
+    with pytest.raises(authz.ActedForRefused):
         asyncio.run(authz.check_acted_for(_acting("sa:ci:agent-1", "acme"), "acme"))
 
 
@@ -773,7 +773,7 @@ def test_a_scim_deactivation_on_this_process_refuses_at_once(
     monkeypatch.setattr(authz, "_ENDED", {("scim", "alice@corp.com"): (time.monotonic(), False)})
     row = {"id": "u1", "email": "Alice@corp.com", "active": 1}
     asyncio.run(scim._write_audited(row, {**row, "active": 0}))
-    with pytest.raises(authz.ActedForRevoked):
+    with pytest.raises(authz.ActedForRefused):
         asyncio.run(authz.check_acted_for(_acting("alice@corp.com", "acme"), "acme"))
 
 
@@ -816,7 +816,7 @@ def test_a_bot_save_that_raised_still_refuses_at_once(monkeypatch: pytest.Monkey
     with pytest.raises(BackendTimeoutError):
         asyncio.run(machines.save({"name": "ci"}, by="cli:root", active=False, ch=_Lost()))  # type: ignore[typeddict-item]
     monkeypatch.setattr(machines, "get", _bots(landed))
-    with pytest.raises(authz.ActedForRevoked):
+    with pytest.raises(authz.ActedForRefused):
         asyncio.run(authz.check_acted_for(_acting("sa:ci", "acme"), "acme"))
 
 
@@ -839,5 +839,5 @@ def test_a_bot_revoked_outright_refuses_acting_for_its_agents(
     monkeypatch.setattr(machines, "get", _bots(still_active))
     monkeypatch.setattr(authz, "_ENDED", {})
     monkeypatch.setattr(revocation, "_revoked_folded", frozenset({"sa:ci"}))
-    with pytest.raises(authz.ActedForRevoked):
+    with pytest.raises(authz.ActedForRefused):
         asyncio.run(authz.check_acted_for(_acting(subject, "acme"), "acme"))

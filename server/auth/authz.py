@@ -76,18 +76,18 @@ _ACTED_FOR_REVOKED = "the subject this request acts for is revoked or deprovisio
 _ACTED_FOR_NO_BOT = "an sa: subject is acted for only while it names an active bot or its agent"
 
 
-class ActedForRevoked(PermissionError):
+class ActedForRefused(PermissionError):
     """The subject a trusted caller acts for is refused (revoked, deprovisioned, or an
     `sa:` subject naming no active bot): a refusal of the subject, not of the caller's
     access to an index, so a transport adds no index reason to it."""
 
 
 async def check_acted_for(auth: AuthInfo | None, org: str | None) -> None:
-    """Refuse a trusted caller acting for a revoked, SCIM-deactivated or disabled-bot
-    subject under any spelling it holds, or for an `sa:` subject that is not an active
-    bot or one of its agents: a token's own subject, whose grants are the token's and
-    end with it however it ends (an expiry, a revoke by jti, a cutoff on its maker), none
-    of which its grants record; docs/architecture/security.md, Impersonation."""
+    """Refuse a trusted caller acting for a revoked or SCIM-deactivated subject under any
+    spelling it holds, or for an `sa:` subject that is not an active bot or one of its
+    agents: a token's own subject, whose grants are the token's and end with it however
+    it ends (an expiry, a revoke by jti, a cutoff on its maker), none of which its grants
+    record; docs/architecture/security.md, Impersonation."""
     from server.auth import machines, revocation
     from server.auth.gateway import is_end_user
     from server.core import grant_cache
@@ -103,16 +103,16 @@ async def check_acted_for(auth: AuthInfo | None, org: str | None) -> None:
     service_account = folded.startswith("sa:")
     bot = folded.removeprefix("sa:").partition(":")[0] if service_account else ""
     if service_account and not bot:
-        raise ActedForRevoked(_ACTED_FOR_NO_BOT)
+        raise ActedForRefused(_ACTED_FOR_NO_BOT)
     if bot:
         spellings.add(machines.subject(bot))  # a revoked bot refuses its agents, as their mint does
     if any(revocation.revoked_outright_any_case(s) for s in spellings):
-        raise ActedForRevoked(_ACTED_FOR_REVOKED)
+        raise ActedForRefused(_ACTED_FOR_REVOKED)
     for email in {s.lower() for s in spellings if "@" in s}:
         if await _remembered(("scim", email), _scim_deactivated):
-            raise ActedForRevoked(_ACTED_FOR_REVOKED)
+            raise ActedForRefused(_ACTED_FOR_REVOKED)
     if bot and await _remembered(("bot", bot), _bot_ended):
-        raise ActedForRevoked(_ACTED_FOR_NO_BOT)
+        raise ActedForRefused(_ACTED_FOR_NO_BOT)
 
 
 # (kind, key) -> (read at, ended), kept grant_cache_ttl_seconds: a SCIM deactivation or a
