@@ -1063,3 +1063,24 @@ def test_a_document_answer_that_cites_a_help_page_checks_it_as_help(monkeypatch)
     got = q.answer_citations({}, case, {"namespace": "acme-library"}, "See [help:a.md § A].")
     assert docs_read == ["See ."]
     assert got["cited"] == ["help:a.md"] and got["invalid_citations"] == []
+
+
+def test_rescore_reads_memory_citations_by_the_saved_runs_path(monkeypatch, tmp_path):
+    import argparse
+
+    q = _qualify()
+    seen = []
+
+    def fake_citations(st, case, person, text):
+        seen.append(st.get("bridge"))
+        return {"cited": [], "invalid_citations": [], "cited_expected": None}
+
+    monkeypatch.setattr(q, "answer_citations", fake_citations)
+    # The current state is the bridge's; the saved run went straight through LibreChat.
+    monkeypatch.setattr(q, "state", lambda: {"bridge": True})
+    side = _saved_side("The freeze is on Fridays (policy/deploy/freeze).")
+    out = tmp_path / "results.json"
+    row = {"id": "memory-freeze", "kind": "memory", "librechat": side, "native": side}
+    out.write_text(json.dumps({"model": "m", "bridge": False, "rows": [row]}))
+    q.cmd_rescore(argparse.Namespace(out=str(out), citations=True))
+    assert seen == [False]

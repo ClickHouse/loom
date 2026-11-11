@@ -568,9 +568,9 @@ def parse_doc_citations(text: str) -> list[dict[str, Any]]:
 HELP_CITE_RE = re.compile(r"\[help:(?P<path>[^\]§\s]+?)(?:\s*§\s*(?P<section>[^\]]+?))?\s*\]")
 # How an answer says the documentation does not cover a question.
 HELP_ABSTAIN_PATTERNS = (
-    r"\bnot (documented|covered|described|mentioned|in (loom's|the) documentation)\b",
-    r"\b(documentation|docs) (does|do) ?n[o']t (cover|describe|mention|say)\b",
-    r"\bno (documented|such) (setting|option|feature)\b",
+    r"\bnot (documented|covered|described|mentioned|listed|in (loom's|the) documentation)\b",
+    r"\b(documentation|docs) (does|do) ?n[o']t (cover|describe|mention|say|list)\b",
+    r"\bno (documented |such )?(setting|option|feature)\b",
     r"\b(could ?n[o']t|did ?n[o']t|can ?not) find\b",
 )
 
@@ -607,10 +607,9 @@ def check_help_citations(
             invalid.append(f"{name}: no such page")
             continue
         # A section that is only separators (`§ >`) cites the page, as the server reads it.
-        section = m["section"] or ""
-        if help_breadcrumb(section) and not names_section(
-            help_breadcrumb(section),
-            [help_breadcrumb(e["section"]) for e in page.get("sections", [])],
+        breadcrumb = help_breadcrumb(m["section"] or "")
+        if breadcrumb and not names_section(
+            breadcrumb, [help_breadcrumb(e["section"]) for e in page.get("sections", [])]
         ):
             invalid.append(f"{name}: no such section")
             continue
@@ -916,7 +915,9 @@ def cmd_run(args: argparse.Namespace) -> None:
         )
     if args.cancel_probe:
         rows.append(cancel_probe(st, args))
-    Path(args.out).write_text(json.dumps({"model": st.get("model"), "rows": rows}, indent=2))
+    # Which path the answers took: through the bridge, a memory citation is `[memory:…]` only.
+    saved = {"model": st.get("model"), "bridge": bool(st.get("bridge")), "rows": rows}
+    Path(args.out).write_text(json.dumps(saved, indent=2))
     print(report(rows, st.get("model", "")))
 
 
@@ -975,7 +976,8 @@ def cmd_rescore(args: argparse.Namespace) -> None:
     saved = json.loads(Path(args.out).read_text())
     cases = {c["id"]: c for c in load("cases.json")}
     people = {p["name"]: p for p in load("fixture.json")["people"]}
-    st = state() if args.citations else {}
+    # The answers' own path decides how their memory citations read, not the current state.
+    st = {**state(), "bridge": saved.get("bridge", False)} if args.citations else {}
     for row in saved["rows"]:
         if row["kind"] != "cancel":
             lc = row["librechat"]
@@ -1156,7 +1158,7 @@ def report(rows: list[dict[str, Any]], model: str) -> str:
 
 def use_case_report(cases: list[dict[str, Any]]) -> list[str]:
     """Per use case (cases.json `use_case`): the answers through LibreChat that are
-    correct and cite validly, out of its cases."""
+    correct, those with no invalid citation, and the unknown names they wrote."""
     by: dict[str, list[dict[str, Any]]] = {}
     for r in cases:
         by.setdefault(r.get("use_case") or "-", []).append(r)

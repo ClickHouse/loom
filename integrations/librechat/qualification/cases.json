@@ -686,10 +686,17 @@
         "limit": 5
       }
     },
-    "forbid": ["\\byou (can|may) write\\b", "\\byou are (a |an )?(writer|admin)\\b"],
+    "forbid": ["^\\W*yes\\b", "\\byou (can|may) already write\\b", "\\byou are (a |an )?(writer|admin)\\b"],
     "samples": {
-      "right": ["You are a viewer here, so you cannot write; an admin can grant you writer."],
-      "wrong": ["Yes, you can write here.", "You are an admin, so you can write."]
+      "right": [
+        "You are a viewer here, so you cannot write; an admin can grant you writer.",
+        "No: you are a viewer here. Ask an admin to grant you writer; once granted, you can write here."
+      ],
+      "wrong": [
+        "Yes, you can write here.",
+        "You are an admin, so you can write.",
+        "You can already write here as a viewer."
+      ]
     }
   },
   {
@@ -872,9 +879,12 @@
         "limit": 5
       }
     },
-    "forbid": ["run\\w* `?memory\\.clear", "`?memory\\.clear`? (erases|with `?agent)"],
+    "forbid": ["run\\w* `?memory\\.clear", "`?memory\\.clear`?\\s+(erases(?!\\s+nothing)|with `?agent)"],
     "samples": {
-      "right": ["An org admin, with `erasure.request` and the `user_id` scope."],
+      "right": [
+        "An org admin, with `erasure.request` and the `user_id` scope.",
+        "`memory.clear` erases nothing; it only tombstones. An org admin uses `erasure.request` with the `user_id` scope."
+      ],
       "wrong": ["An org admin runs `memory.clear` with `agent=\"*\"`.", "Any writer may, with `memory.delete`."]
     }
   },
@@ -1025,11 +1035,14 @@
         "limit": 5
       }
     },
-    "forbid": ["\\b(set|setting|use|using|try|change|export|enable)\\s+`?LOOM_[A-Z_]+", "LOOM_[A-Z_]+`?\\s*="],
+    "forbid": ["\\b(set|use|using|try|change|export|enable)\\s+`?LOOM_[A-Z_]+", "LOOM_[A-Z_]+`?\\s*="],
     "samples": {
       "right": [
         "Loom's documentation does not describe a dashboard colour theme.",
-        "There is no `LOOM_THEME` setting; the docs don't cover a colour theme."
+        "There is no `LOOM_THEME` setting; the docs don't cover a colour theme.",
+        "There is no setting `LOOM_THEME`; the docs don't cover a colour theme.",
+        "Loom has no setting for the dashboard's colour theme.",
+        "The docs don't list a theme setting."
       ],
       "wrong": [
         "The docs don't cover it, but set `LOOM_DASHBOARD_COLOUR=dark`.",
