@@ -728,7 +728,8 @@ settings:
   # other processes through the per-org grant watermark (acl_watermark_poll_seconds),
   # and this bounds one whose watermark row was never written. It also bounds how long a
   # SCIM deactivation of an email, or a bot disable, takes to stop a trusted caller
-  # acting for it on another process. [restart]
+  # acting for it on another process, and how long a bot created there takes to be acted
+  # for. [restart]
   # grant_cache_ttl_seconds: 10.0
 
   # Seconds between each process's reads of the per-org grant watermark
