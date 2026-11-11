@@ -675,3 +675,34 @@ def test_a_cells_on_process_registers_tracker_namespaces_only_in_the_deployment(
     assert "loom-tracker-namespaces" not in asyncio.run(_run(""))
     assert "loom-tracker-namespaces" in asyncio.run(_run("prod"))
     assert started == [True, True]
+
+
+_REPO_ENTRIES = [
+    '[{"namespace": "a", "org": "beta"}, {"namespace": "b"}]',
+    '[{"namespace": "a"}, {"org": "nons"}, {"namespace": "x.y", "org": "dot"},'
+    ' {"namespace": "a", "org": "dup"}, {"namespace": "s/t", "org": "slash"}]',
+    '[{"namespace": "a", "org": "norepo", "repo": ""}, {"namespace": "b", "org": "r", "repo": "o/r"}]',
+    "not json",
+    '{"namespace": "a"}',
+    "[]",
+]
+
+
+@pytest.mark.parametrize("code_repo", ["", "o/main"])
+@pytest.mark.parametrize("repos_json", _REPO_ENTRIES)
+def test_the_configured_orgs_hold_the_org_of_each_repository_entry_the_code_config_keeps(
+    monkeypatch: pytest.MonkeyPatch, repos_json: str, code_repo: str
+) -> None:
+    """The code workers write the org of every entry the code config keeps, so attach
+    places each with the cell's other configured orgs, and no other: a placement is
+    permanent. Checked against the code config itself."""
+    from server.code.domain.index import repos
+
+    for field in ("oidc_jit_org", "tracker_org"):
+        monkeypatch.setattr(settings, field, "")
+    monkeypatch.setattr(settings, "self_signup", "off")
+    monkeypatch.setattr(settings, "code_org", "acme")
+    monkeypatch.setattr(settings, "code_repo", code_repo)
+    monkeypatch.setattr(settings, "code_repos_json", repos_json)
+    kept = {r.org for r in repos._configured_from_env()}
+    assert set(cell.fingerprint("dep-1")["configured_orgs"]) == {"acme"} | kept

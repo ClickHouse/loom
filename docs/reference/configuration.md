@@ -90,7 +90,7 @@ Authentication, tokens and identity providers.
 | `LOOM_JWT_SECRET_PREVIOUS` | `str` | *(unset)* |  | The root secret LOOM_JWT_SECRET replaced, while a rotation is under way: credentials and signing keys sealed under it still open (tokens it signed as kid `default` do not verify: a leaked root mints nothing). `loom secrets reseal` rewrites the stored ones under the new root; then remove this. "" = none. |
 | `LOOM_JWT_KEYRING_REFRESH_SECONDS` | `float` | `30.0` |  | Seconds between re-reads of loom.signing_keys in every process (at least 1); `loom signing-key rotate` waits out two of the slowest process's. |
 | `LOOM_CELL` | `str` | `''` |  | This cell's name (1 to 32 of a-z, 0-9, '-') behind a router, "" = not a cell; set, the process serves only while its cell's rows accept it (docs/architecture/cells.md). |
-| `LOOM_TENANCY_MODE_CACHE_S` | `float` | `5.0` |  | Seconds between re-reads of a cell's three rows (LOOM_CELL); changes apply within this. |
+| `LOOM_TENANCY_MODE_CACHE_S` | `float` | `5.0` |  | Seconds (at least 1) between re-reads of a cell's three rows (LOOM_CELL); with LOOM_CELL set, LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this. |
 | `LOOM_JWT_ISSUER` | `str` | `'loom'` |  | The `iss` Loom stamps on every token it mints; a verified token carries it or one of `jwt_trusted_issuers`. |
 | `LOOM_JWT_AUDIENCE` | `str` | `'loom-platform'` |  | The `aud` claim stamped on minted tokens and required on every verified token. |
 | `LOOM_JWT_TRUSTED_ISSUERS` | `str` | `''` |  | Extra accepted `iss` values, for a gateway minting Loom-shaped JWTs with a key in `jwt_public_keys_json`. Loom's own tokens (iss = jwt_issuer) pass. |

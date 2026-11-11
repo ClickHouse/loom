@@ -6101,7 +6101,7 @@
           "default": 5.0,
           "minimum": 1.0,
           "type": "number",
-          "description": "Seconds between re-reads of a cell's three rows (LOOM_CELL); changes apply within this."
+          "description": "Seconds (at least 1) between re-reads of a cell's three rows (LOOM_CELL); with LOOM_CELL set, LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this."
         },
         "tenant_max_concurrent_requests": {
           "default": 256,

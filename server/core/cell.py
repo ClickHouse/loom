@@ -95,6 +95,30 @@ def normalise_host(value: str) -> str:
     return host if port in (None, default) else f"{host}:{port}"
 
 
+def _code_repo_orgs() -> set[str]:
+    """The orgs of the `LOOM_CODE_REPOS_JSON` entries the code config keeps
+    (`repos._configured_from_env`, which `server.core` may not import): the code workers
+    write them, so attach places them, and a placement is permanent."""
+    try:
+        entries = json.loads(settings.code_repos_json or "[]")
+    except ValueError:
+        return set()  # the code config falls back to the scalar entry: `code_org`
+    if not isinstance(entries, list):
+        return set()
+    orgs: set[str] = set()
+    seen: set[str] = set()
+    for e in entries:
+        # Kept: a namespace with no '.' or '/', not seen before, with an org and a repo.
+        ns = str(e.get("namespace") or "") if isinstance(e, dict) else ""
+        if not ns or "." in ns or "/" in ns or ns in seen:
+            continue
+        seen.add(ns)
+        org = str(e.get("org") or settings.code_org)
+        if org and (e.get("repo") or str(settings.code_repo).strip()):
+            orgs.add(org)
+    return orgs
+
+
 def fingerprint(deployment_id: str) -> dict[str, Any]:
     """This process's fingerprint: what the cell accepts, which the directory checks
     against every other cell, and the stores it serves from."""
@@ -108,6 +132,7 @@ def fingerprint(deployment_id: str) -> dict[str, Any]:
             settings.self_signup_org if settings.self_signup == "open" else "",
             settings.code_org,
             settings.tracker_org,
+            *_code_repo_orgs(),
         )
         if o
     }

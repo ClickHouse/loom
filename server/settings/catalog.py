@@ -323,7 +323,8 @@ class AuthSettings(BaseModel):
     # This cell's name (1 to 32 of a-z, 0-9, '-') behind a router, "" = not a cell; set,
     # the process serves only while its cell's rows accept it (docs/architecture/cells.md).
     cell: str = ""
-    # Seconds between re-reads of a cell's three rows (LOOM_CELL); changes apply within this.
+    # Seconds (at least 1) between re-reads of a cell's three rows (LOOM_CELL); with
+    # LOOM_CELL set, LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this.
     tenancy_mode_cache_s: float = Field(default=5.0, ge=1.0)
 
     def jwt_secret_is_dev_default(self) -> bool:
