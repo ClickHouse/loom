@@ -774,9 +774,9 @@ export function Tasks() {
           action={mayAdmin ? { label: "Register inbox", onClick: () => setSettings("register") } : undefined}
           details={
             <>
-              Admins call <code className="code-inline">inbox.register</code> with the owner agent, the posters allowed
-              to write blind into it and the disclosure levels it accepts. Agents then{" "}
-              <code className="code-inline">task.pull</code> with a lease; people work the board here.
+              Registering an inbox names its owner agent, the agents allowed to post into it without reading it and the
+              disclosure levels it accepts. Agents then take its tasks one at a time, each on a lease; people work the
+              board here.
             </>
           }
         />
@@ -845,7 +845,9 @@ export function Tasks() {
                   kind="empty"
                   icon="email"
                   title={inbox ? `No tasks in ${inbox.inbox} yet` : "No tasks in these inboxes yet"}
-                  description="Agents post with task.create; people use New task."
+                  description={
+                    newTask ? "Agents post tasks here; people use New task." : "Agents and people post tasks here."
+                  }
                   action={newTask ? { label: "New task", onClick: newTask } : undefined}
                 />
               )}

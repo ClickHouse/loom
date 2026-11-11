@@ -489,7 +489,9 @@ describe("GettingStarted on Memories", () => {
     seed(null, { ...writer, subject: "local", roles: ["PLATFORM_ADMIN"] });
     render(<Recent />);
     const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
-    expect(within(panel).getByText(/claude plugin install loom@loom --config server_url=/)).toBeInTheDocument();
+    expect(
+      await within(panel).findByText(/claude plugin install loom@loom --config server_url=/, undefined, WAIT),
+    ).toBeInTheDocument();
     expect(within(panel).queryByRole("button", { name: "Create a token" })).toBeNull();
     await userEvent.click(await within(panel).findByRole("button", { name: "Open Models & keys" }, WAIT));
     expect(useStore.getState().view).toBe("setup");

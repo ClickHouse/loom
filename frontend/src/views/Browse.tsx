@@ -386,14 +386,7 @@ export function Browse() {
               kind="empty"
               icon="globe"
               title="No public namespaces yet"
-              description="Nobody in your org has opened a shared space yet. Until someone does, your own private namespace is the only one you can use."
-              details={
-                <>
-                  An admin creates a shared space with <code className="code-inline text-xs">namespace.register</code>{" "}
-                  and <code className="code-inline text-xs">visibility=public</code>; it then appears here for everyone
-                  in the org to join.
-                </>
-              }
+              description="Nobody in your org has opened a shared space yet. Use Create namespace and make it public, and it appears here for everyone in the org to join. Until then, your own private namespace is the only one you can use."
             />
           )}
 

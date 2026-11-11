@@ -43,6 +43,7 @@ describe("Repositories page without the repository-job sandbox", () => {
       authed: true,
       identity: { org: "dev", namespace: "default", agent: "loom-ui" },
       view: "code",
+      whoami: null,
     });
   });
   afterEach(() => {
@@ -51,10 +52,23 @@ describe("Repositories page without the repository-job sandbox", () => {
   });
 
   it("a first visit to an empty install offers no add and names the operator's route", async () => {
+    useStore.setState({
+      whoami: { authenticated: true, subject: "op", org: "dev", roles: ["PLATFORM_ADMIN"], namespaces: ["*"] },
+    });
     stubNetwork(() => [UNSANDBOXED]);
     await mount();
     expect(await screen.findByText(/Ask the operator to list them in LOOM_CODE_REPOS_JSON/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Add repository/ })).toBeNull();
+  });
+
+  it("names the operator's setting to a platform admin only", async () => {
+    useStore.setState({
+      whoami: { authenticated: true, subject: "n@x", org: "dev", roles: ["WRITER"], namespaces: ["default"] },
+    });
+    stubNetwork(() => [UNSANDBOXED]);
+    await mount();
+    expect(await screen.findByText(/Ask the operator to add them\./)).toBeTruthy();
+    expect(screen.queryByText(/LOOM_CODE_REPOS_JSON/)).toBeNull();
   });
 
   it("with the sandbox required, the empty state does not offer LOOM_CODE_REPOS_JSON", async () => {
@@ -72,7 +86,7 @@ describe("Repositories page without the repository-job sandbox", () => {
     fireEvent.change(await screen.findByLabelText("Repository"), { target: { value: "acme/app" } });
     problems = [UNSANDBOXED];
     fireEvent.click(screen.getByRole("button", { name: /Add and start indexing/ }));
-    await waitFor(() => expect(screen.queryByText(/Ask the operator to list them/)).toBeTruthy());
+    await waitFor(() => expect(screen.queryByText(/Ask the operator to add them/)).toBeTruthy());
     expect(screen.queryByRole("button", { name: /^Add repository$/ })).toBeNull();
   });
 });

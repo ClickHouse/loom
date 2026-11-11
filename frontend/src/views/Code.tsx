@@ -23,7 +23,7 @@ import { TextField } from "@clickhouse/click-ui/TextField";
 import { VerticalStepper } from "@clickhouse/click-ui/VerticalStepper";
 import { PageContainer } from "../layout/PageContainer";
 import { useStore, useIdentity } from "../lib/state";
-import { holdsAdminGrant } from "../lib/role";
+import { hasPlatformAdminClaim, holdsAdminGrant } from "../lib/role";
 import { fmtInt, relativeTime, listTime, parseChTime, refreshDetail } from "../lib/format";
 import { humanizeError, errorLine } from "../lib/errorWords";
 import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
@@ -84,6 +84,7 @@ import {
   remoteBranches,
   type CodeRepoRemoteBranches,
   type CodeWorkerStatus,
+  isAuthDisabled,
 } from "../api";
 import { invalidateShared, sharedHealth, sharedIndexStatus } from "../lib/sharedReads";
 import { NamespaceSettingsDialog } from "../flows/NamespaceSettingsDialog";
@@ -425,6 +426,8 @@ function RepositoriesHome({
   // The add-a-tracker dialog, from a card (that repository) or the page (none)
   const [registering, setRegistering] = useState<{ group: RepoGroup | null } | null>(null);
   const org = useStore((s) => s.identity)?.org ?? repos?.[0]?.org ?? "";
+  // The deployment's own settings are named only to whoever runs it.
+  const operator = useStore((s) => isAuthDisabled() || hasPlatformAdminClaim(s.whoami));
   const [query, setQuery] = useState("");
   // Most orgs hold a handful of repositories: the pager draws once there are more than fit
   // the smallest page.
@@ -706,7 +709,11 @@ function RepositoriesHome({
             canAdd
               ? "Loom indexes a Git branch so you and your agents can search and ask about its code."
               : sandbox === "warn"
-                ? "This server cannot add repositories from this page, because it runs without the repository-job sandbox. Ask the operator to list them in LOOM_CODE_REPOS_JSON."
+                ? `This server cannot add repositories from this page, because it runs without the repository-job sandbox. ${
+                    operator
+                      ? "Ask the operator to list them in LOOM_CODE_REPOS_JSON."
+                      : "Ask the operator to add them."
+                  }`
                 : "This server cannot index repositories until its repository-job sandbox runs. Ask the operator."
           }
           action={org && canAdd ? { label: "Add repository", onClick: () => setAdding(true) } : undefined}

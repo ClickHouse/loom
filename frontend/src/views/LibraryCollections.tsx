@@ -145,6 +145,8 @@ export function LibraryCollections({
   place = "",
   onPick,
   onLeave,
+  creating: creatingAsked,
+  onCreatingChange,
 }: {
   org: string;
   /** The header's namespace, or null when it holds no documents (a code or tracker
@@ -161,8 +163,13 @@ export function LibraryCollections({
   onPick: (collection: string | null) => void;
   /** Leave the place shown without a new history entry (it was deleted). */
   onLeave?: (collection: string | null) => void;
+  /** The New collection dialog's open state, when the page opens it too (its empty state). */
+  creating?: boolean;
+  onCreatingChange?: (open: boolean) => void;
 }) {
-  const [creating, setCreating] = useState(false);
+  const [ownCreating, setOwnCreating] = useState(false);
+  const creating = creatingAsked ?? ownCreating;
+  const setCreating = onCreatingChange ?? setOwnCreating;
   const [moving, setMoving] = useState<CollectionEntry | null>(null);
   // The collection Members was opened for: the dialog shows only while that one is shown, so
   // Back to another never lands a grant on it.
@@ -230,7 +237,7 @@ export function LibraryCollections({
   const about = current
     ? current.personal
       ? "Your own files: no one else's grants reach them."
-      : `${roleLabel(current.role)} of a collection: only its members read it${current.parent ? `, with everyone who reaches ${parentShown(current.parent)}` : ""}. Agents find it with knowledge.search at its address ${current.namespace}.`
+      : `${roleLabel(current.role)} of a collection: only its members read it${current.parent ? `, with everyone who reaches ${parentShown(current.parent)}` : ""}. Agents search it at its address ${current.namespace}.`
     : `${namespace === null ? "" : "The namespace picked at the top. "}A collection is a shelf of documents that only its members read; agents search the ones they can read.`;
   const shownRef = useRef<string | null>(null);
   shownRef.current = current?.namespace ?? null;

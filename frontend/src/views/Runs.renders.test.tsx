@@ -72,4 +72,20 @@ describe("Runs row renders", () => {
     });
     expect(renders.count).toBe(0);
   });
+
+  it("with no run says what a run is and offers Connect an agent", async () => {
+    listRunsPage.mockResolvedValue({ runs: [], total: 0, paged: true });
+    render(<Runs />);
+    // Runs with no memory activity are folded at first: that state offers the connect too.
+    expect(await screen.findByRole("heading", { name: "No runs with memory activity" })).toBeInTheDocument();
+    expect(screen.queryByText(/run_id|memory\.set|run\.complete/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Connect an agent" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Show runs with no memory activity" }));
+    expect(await screen.findByRole("heading", { name: "No runs yet" })).toBeInTheDocument();
+    expect(
+      screen.getByText(/A run is one session of an agent's work: what it read and what it wrote/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/run\.begin/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Connect an agent" })).toBeInTheDocument();
+  });
 });

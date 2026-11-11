@@ -107,6 +107,14 @@ Loom's documentation as the running build ships it, read with `help.get` under t
 signed-in session, where an assistant answer's help citation leads; links between pages
 stay on it).
 
+A page with nothing to list says what will appear there and offers the action that fills
+it. Where only an agent fills it (memories, runs, conversations, connected clients),
+**Connect an agent** opens the token form in a dialog on that page (with auth off, the
+plugin's install lines), so connecting needs no trip to **Settings**. Where only an operator
+or an admin fills it, the page says so, and names a deployment setting only to a platform
+admin. A viewer's empty Memories page names who can write there and opens the namespace's
+members, where its admins are listed.
+
 ### The assistant panel
 
 The **Assistant** button in the header, left of the account menu (its icon, and from

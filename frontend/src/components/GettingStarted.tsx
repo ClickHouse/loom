@@ -5,7 +5,7 @@ import { ProgressBar } from "@clickhouse/click-ui/ProgressBar";
 import { listTokens, type TokenEntry } from "../api";
 import { getModelStatus } from "../api/models";
 import { useStore } from "../lib/state";
-import { FIRST_CALL_POLL_MS, FIRST_CALL_WAIT_MS, pluginInstallLines } from "../lib/clients";
+import { FIRST_CALL_POLL_MS, FIRST_CALL_WAIT_MS } from "../lib/clients";
 import { parseChTime } from "../lib/format";
 import { useVisiblePoll } from "../lib/hooks";
 import { hasPlatformAdminClaim } from "../lib/role";
@@ -21,12 +21,13 @@ import {
 import { AddMemoryDialog } from "../flows/AddMemoryDialog";
 import { DOCS_MCP_URL } from "../flows/TokenGate";
 import { ExternalLink, Loading, Panel } from "./ui";
-import { CopyButton } from "./CopyButton";
 import type { Identity } from "../api";
 
 /** The token form, with the dialog that shows each client's setup once a token is made:
  *  the Tokens page's own, loaded only when the step is opened. */
 const QuickConnect = lazy(() => import("../views/Tokens").then((m) => ({ default: m.QuickConnect })));
+/** With auth off, the plugin's install lines: the connect dialog's own, loaded with the step. */
+const AuthOffConnect = lazy(() => import("./ConnectAgentDialog").then((m) => ({ default: m.AuthOffConnect })));
 
 export interface OnboardingHandle {
   state: OnboardingState;
@@ -301,7 +302,9 @@ export function GettingStarted({
               {agentSeen ? "An agent is saving memories here." : "Connected."}
             </p>
           ) : authOff ? (
-            <AuthOffConnect />
+            <Suspense fallback={<Loading layout="inline" label="Loading the setup commands" />}>
+              <AuthOffConnect />
+            </Suspense>
           ) : connect === "waiting" ? (
             <p className="text-xs text-text-muted mt-1">
               {following
@@ -438,30 +441,5 @@ function Step({
         </div>
       </div>
     </li>
-  );
-}
-
-/** A single-user server takes no token: the plugin needs only the address. */
-function AuthOffConnect() {
-  const lines = `${pluginInstallLines("claude-code")} --config server_url=${window.location.origin}`;
-  return (
-    <div className="mt-2">
-      <p className="text-xs text-text-muted mb-1">
-        This server runs for one person, so no token is needed. For Claude Code, run this once in a terminal, then start
-        a new session; other agents connect from Settings › Tokens.
-      </p>
-      <CopyBlock text={lines} label="Copy commands" />
-    </div>
-  );
-}
-
-function CopyBlock({ text, label }: { text: string; label: string }) {
-  return (
-    <div className="relative">
-      <pre className="text-xs font-mono bg-bg border border-border rounded-sm p-2.5 pr-32 max-h-40 overflow-auto whitespace-pre-wrap break-all">
-        {text}
-      </pre>
-      <CopyButton text={text} label={label} className="absolute top-1.5 right-1.5" />
-    </div>
   );
 }

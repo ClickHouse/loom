@@ -171,6 +171,8 @@ describe("the count and the no-match state follow the rows, not the box", () => 
     api.browseNamespaces.mockResolvedValue([]);
     render(<Browse />);
     await screen.findByText("No public namespaces yet");
+    expect(screen.getByText(/Use Create namespace and make it public/)).toBeInTheDocument();
+    expect(screen.queryByText(/namespace\.register/)).toBeNull();
     await typeHeld(screen.getByLabelText("Search namespaces"), "zzz");
     expect(screen.getByText("No public namespaces yet")).toBeInTheDocument();
     expect(screen.queryByText("No public namespace matching", { exact: false })).toBeNull();

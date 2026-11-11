@@ -412,10 +412,13 @@ function SearchOrder({
 export function QuickConnect({
   onMinted,
   onClose,
+  focusTitle = true,
 }: {
   onMinted: (r: TokenCreated) => void;
   /** Cancelled, or the token's setup dialog closed: the form is done here. */
   onClose: () => void;
+  /** False inside a dialog, which places focus itself. */
+  focusTitle?: boolean;
 }) {
   const formRef = useRef<HTMLElement>(null);
   const [created, setCreated] = useState<TokenCreated | null>(null);
@@ -423,8 +426,8 @@ export function QuickConnect({
   // which is there at once (its fields follow their reads), not its header's Cancel, which
   // one key press would take to close the form again.
   useEffect(() => {
-    formRef.current?.querySelector<HTMLElement>("#new-token-title")?.focus();
-  }, []);
+    if (focusTitle) formRef.current?.querySelector<HTMLElement>("#new-token-title")?.focus();
+  }, [focusTitle]);
   return (
     <>
       <TokenForm

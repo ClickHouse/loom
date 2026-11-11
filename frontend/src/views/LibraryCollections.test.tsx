@@ -850,8 +850,12 @@ describe("the Library on a collection", () => {
     await settle();
     expect(api.listKnowledge).not.toHaveBeenCalled();
     expect(screen.getByText("No collection yet", { selector: "h2, h3, p, div" })).toBeInTheDocument();
-    expect(screen.getByText(/Create a collection above/)).toBeInTheDocument();
+    expect(screen.getByText(/Create a collection\./)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Browse and join spaces" })).toBeInTheDocument();
+    // New collection opens the picker's own create dialog in place.
+    const state = screen.getByRole("heading", { name: "No collection yet" }).parentElement as HTMLElement;
+    await userEvent.click(within(state).getByRole("button", { name: "New collection" }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
   });
 
   it("leaves the collection deleted here for the header's namespace, replacing the entry", async () => {

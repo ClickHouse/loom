@@ -1113,7 +1113,7 @@ describe("Tasks page", () => {
     seed(admin, [row("admin")]);
     render(<Tasks />);
     await screen.findByRole("heading", { name: "No tasks in private-bot yet" });
-    expect(screen.getByText(/task\.create/)).toBeInTheDocument();
+    expect(screen.getByText("Agents post tasks here; people use New task.")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /New task/ })).toHaveLength(1);
     // The toolbar stays, so nothing jumps when a task lands.
     expect(screen.getByLabelText("Search and filters")).toBeInTheDocument();

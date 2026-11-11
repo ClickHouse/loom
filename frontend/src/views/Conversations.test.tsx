@@ -308,6 +308,22 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(screen.queryByText("0 messages")).toBeNull();
   });
 
+  it("with no thread says what fills the page and offers Connect an agent", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: false });
+    listMemories.mockResolvedValue(noMemories);
+    render(<Conversations />);
+    expect(await screen.findByRole("heading", { name: "No conversations yet in this namespace" })).toBeInTheDocument();
+    // The recording state is read: off here, and the empty state says so.
+    expect(
+      await screen.findByText(
+        "Conversations appear here when an agent connected to this namespace saves its chat turns, one thread per chat, while Record conversations is on. It is off here.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/conversation\.append/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Connect an agent" })).toBeInTheDocument();
+  });
+
   it("keeps two agents' turns that share an id apart", async () => {
     listConversationThreads.mockResolvedValue({ threads: [summary("thread-d", "Title D")] });
     getNamespace.mockResolvedValue({ conversation_logging_enabled: true });

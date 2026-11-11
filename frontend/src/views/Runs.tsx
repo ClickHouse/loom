@@ -921,12 +921,14 @@ export function Runs() {
           {...(hideConn
             ? {
                 title: "No runs with memory activity",
-                description: `Runs that neither relied on nor wrote a memory under their run_id are folded. Use "Show runs with no memory activity"${phone ? " in the View menu" : ""} to see them. A run fills up when the caller passes run_id on memory.set and names what it relied on in run.complete(memories_used).`,
+                description: `Runs that neither relied on nor saved a memory are folded. Use "Show runs with no memory activity"${phone ? " in the View menu" : ""} to see them. A run has memory activity when its agent saves memories under it, or names the memories it relied on when it finishes.`,
+                connect: "primary" as const,
               }
             : {
                 title: "No runs yet",
                 description:
-                  "Agents open a run with run.begin (the Claude Code plugin does it on the first prompt of a session) and close it with run.complete, naming the memories they relied on.",
+                  "A run is one session of an agent's work: what it read and what it wrote. Runs appear here when a connected agent starts one; the Claude Code plugin starts one on a session's first prompt.",
+                connect: "primary" as const,
               })}
         />
       )}

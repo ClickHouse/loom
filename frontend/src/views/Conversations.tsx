@@ -590,13 +590,8 @@ export function Conversations() {
           kind="empty"
           icon="chat"
           title="No conversations yet in this namespace"
-          description="Once an AI agent connected to this namespace starts saving its chats, each thread shows up here."
-          details={
-            <>
-              The agent calls <code className="code-inline text-xs">conversation.append</code> once per chat turn (the
-              MCP tool description nudges it to).
-            </>
-          }
+          description={`Conversations appear here when an agent connected to this namespace saves its chat turns, one thread per chat, while Record conversations is on${loggingEnabled === false ? ". It is off here" : ""}.`}
+          connect="primary"
         />
       )}
 
