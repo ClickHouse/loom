@@ -589,7 +589,10 @@ is a bot that `loom bot disable` has disabled, or one of its agents (`sa:<bot>`,
 `sa:<bot>:<agent>`): a disable leaves the agents' grants and ends the bot's tokens with a
 cutoff. Revoking a bot outright refuses acting for its agents too. Any other `sa:` subject
 (a dashboard token's, an agent sign-up token's, or one `loom mint-token` minted) is never
-acted for: it is a token's own subject, and its grants must not outlive the token. A cutoff
+acted for: it is a token's own subject, and its grants must not outlive the token. A token
+minted under a subject without `sa:` (`loom mint-token --subject support-bot`) reads to the
+server like a person's, so a trusted caller may act for it until `loom revoke-token --subject`
+revokes it outright: mint a token that holds direct grants under `sa:<name>`. A cutoff
 (`--issued-before`) ends that subject's own tokens but not a trusted caller's calls for
 it. Empty disables the header. With self-signup open, act for email subjects (a sign-up
 name cannot spell one) or grant each handle in `LOOM_SELF_SIGNUP_ORG` before acting for

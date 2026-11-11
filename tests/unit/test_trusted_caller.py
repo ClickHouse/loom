@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
@@ -427,15 +428,23 @@ def test_a_refreshed_snapshot_folds_a_revocation_written_in_another_case(
     assert not revocation.revoked_outright_any_case("carol")
 
 
+def _bots(active: Callable[[str], Awaitable[bool]]) -> Callable[..., Awaitable[Any]]:
+    """`machines.get` over a fake that says whether an active bot holds a name."""
+
+    async def get(name: str, **_: Any) -> Any:
+        return {"name": name} if await active(name) else None
+
+    return get
+
+
 # ── the routes outside the op gate, and the gate end to end ─────────────────
 
 
 @pytest.fixture
-def _bob_revoked(monkeypatch: pytest.MonkeyPatch) -> object:
-    """A trusted caller's token, `bob` revoked outright, and the app's client."""
+def _trusted(monkeypatch: pytest.MonkeyPatch) -> object:
+    """The app's client, called with a trusted caller's token."""
     from fastapi.testclient import TestClient
 
-    from server.auth import revocation
     from server.core import grant_cache
     from server.main import app
     from server.transport import http as http_mod
@@ -446,8 +455,16 @@ def _bob_revoked(monkeypatch: pytest.MonkeyPatch) -> object:
     monkeypatch.setattr(bearer_mod, "verify_token", lambda *a, **k: _auth("sa:gateway"))
     monkeypatch.setattr(http_mod.settings, "trusted_callers", "sa:gateway")
     monkeypatch.setattr(grant_cache, "grant_map", grant_map)
-    monkeypatch.setattr(revocation, "_revoked_folded", frozenset({"bob"}))
     return TestClient(app)
+
+
+@pytest.fixture
+def _bob_revoked(monkeypatch: pytest.MonkeyPatch, _trusted: object) -> object:
+    """`_trusted`, with `bob` revoked outright."""
+    from server.auth import revocation
+
+    monkeypatch.setattr(revocation, "_revoked_folded", frozenset({"bob"}))
+    return _trusted
 
 
 _AS_BOB = {"Authorization": "Bearer fake-token", "X-Loom-On-Behalf-Of": "bob"}
@@ -477,20 +494,20 @@ def test_knowledge_download_refuses_a_revoked_acted_for_subject(_bob_revoked: An
 
 
 def test_an_op_refuses_acting_for_a_tokens_own_subject(
-    monkeypatch: pytest.MonkeyPatch, _bob_revoked: Any
+    monkeypatch: pytest.MonkeyPatch, _trusted: Any
 ) -> None:
     """POST /v1/{op} acting for an `sa:` subject no bot holds (a token's own, live or
-    dead): 403 AUTH_INSUFFICIENT before anything reads under it."""
+    dead): 403 AUTH_INSUFFICIENT."""
     from server.auth import machines
 
     async def no_bot(name: str, **_: Any) -> bool:
         return False
 
-    monkeypatch.setattr(machines, "active", no_bot)
-    r = _bob_revoked.post(
+    monkeypatch.setattr(machines, "get", _bots(no_bot))
+    r = _trusted.post(
         "/v1/memory.search",
         json={"org": "clickhouse", "namespace": "ns", "query": "q"},
-        headers={**_AS_BOB, "X-Loom-On-Behalf-Of": "sa:triage-a1b2c3"},
+        headers={"Authorization": "Bearer fake-token", "X-Loom-On-Behalf-Of": "sa:triage-a1b2c3"},
     )
     assert r.status_code == 403, r.text
     assert r.json()["detail"] == {
@@ -589,7 +606,7 @@ def test_a_trusted_caller_acts_only_for_an_active_bot_or_its_agents(
         return name == "ci" and name not in disabled
 
     monkeypatch.setattr(grant_cache, "grant_map", grant_map)
-    monkeypatch.setattr(machines, "active", is_active)
+    monkeypatch.setattr(machines, "get", _bots(is_active))
     acting = authz.check_acted_for(_acting(subject, "acme"), "acme")
     if refused:
         with pytest.raises(authz.ActedForRevoked, match="names an active bot"):
@@ -619,30 +636,13 @@ def test_an_unreadable_bot_refuses(
         raise error
 
     monkeypatch.setattr(grant_cache, "grant_map", grant_map)
-    monkeypatch.setattr(machines, "active", unreadable)
+    monkeypatch.setattr(machines, "get", _bots(unreadable))
     with pytest.raises(LoomServerError) as refused:
         asyncio.run(authz.check_acted_for(_acting("sa:ci", "acme"), "acme"))
     if kept:
         assert refused.value is error  # its own code and retry hint
     else:
         assert type(refused.value) is BackendUnavailableError
-
-
-@pytest.mark.parametrize(
-    ("rows", "active"),
-    [([{"active": 0}], False), ([{"active": 1}], True), ([], False)],
-)
-def test_a_bot_is_active_only_when_its_row_says_so(
-    rows: list[dict[str, Any]], active: bool
-) -> None:
-    from server.auth import machines
-
-    class _CH:
-        async def query_one(self, sql: str, params: dict[str, Any], **_: Any) -> Any:
-            assert params == {"name": "ci"}
-            return rows[0] if rows else None
-
-    assert asyncio.run(machines.active("ci", ch=_CH())) is active
 
 
 def test_a_remembered_answer_is_reused_until_the_grant_cache_ttl_and_read_after(
@@ -665,7 +665,7 @@ def test_a_remembered_answer_is_reused_until_the_grant_cache_ttl_and_read_after(
         return name not in disabled
 
     monkeypatch.setattr(grant_cache, "grant_map", grant_map)
-    monkeypatch.setattr(machines, "active", is_active)
+    monkeypatch.setattr(machines, "get", _bots(is_active))
     monkeypatch.setattr(time, "monotonic", clock.monotonic)  # the process clock
     monkeypatch.setattr(authz, "_ENDED", {})
     monkeypatch.setattr(settings, "grant_cache_ttl_seconds", 10.0)
@@ -815,7 +815,7 @@ def test_a_bot_save_that_raised_still_refuses_at_once(monkeypatch: pytest.Monkey
     monkeypatch.setattr(authz, "_ENDED", {("bot", "ci"): (time.monotonic(), False)})
     with pytest.raises(BackendTimeoutError):
         asyncio.run(machines.save({"name": "ci"}, by="cli:root", active=False, ch=_Lost()))  # type: ignore[typeddict-item]
-    monkeypatch.setattr(machines, "active", landed)
+    monkeypatch.setattr(machines, "get", _bots(landed))
     with pytest.raises(authz.ActedForRevoked):
         asyncio.run(authz.check_acted_for(_acting("sa:ci", "acme"), "acme"))
 
@@ -836,7 +836,7 @@ def test_a_bot_revoked_outright_refuses_acting_for_its_agents(
         return True
 
     monkeypatch.setattr(grant_cache, "grant_map", grant_map)
-    monkeypatch.setattr(machines, "active", still_active)
+    monkeypatch.setattr(machines, "get", _bots(still_active))
     monkeypatch.setattr(authz, "_ENDED", {})
     monkeypatch.setattr(revocation, "_revoked_folded", frozenset({"sa:ci"}))
     with pytest.raises(authz.ActedForRevoked):

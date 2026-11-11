@@ -166,7 +166,7 @@ async def _bot_ended(name: str) -> bool:
     from server.core.errors import BackendUnavailableError, LoomServerError
 
     try:
-        return not await machines.active(name)
+        return await machines.get(name) is None
     except LoomServerError:
         raise
     except Exception as e:  # an unread bot row refuses, as the grant read does

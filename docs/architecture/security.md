@@ -452,7 +452,9 @@ disabled, nor any of its agents (a disable leaves their grants). Of the `sa:` su
 an active bot and its agents are acted for: any other is a token's own subject, whose direct
 grants belong to the token and must end with it, and a token ends in ways its grants do not
 record (an expiry, a revoke by `jti`, a cutoff on its maker or on itself), so a trusted
-caller acting for one would keep reaching what a dead token held. A request that names no
+caller acting for one would keep reaching what a dead token held. A token minted under a
+subject without `sa:` cannot be told from a person's, and is acted for until its subject is
+revoked outright. A request that names no
 org, from a caller whose token is for every org, has no org to read spellings in, so only
 the subject as sent is checked. An unverified email is not held: revoking a stranger's
 account that typed someone's email does not refuse acting for that email. Sign-up refuses
