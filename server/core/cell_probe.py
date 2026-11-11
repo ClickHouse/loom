@@ -8,7 +8,8 @@ it is the one whose stores they write to (docs/architecture/cells.md, "Preparing
   answers the values under prepare's nonce keys, read on that request from this
   process's own connections: the Postgres row `loom.cell_probe`, the key `cell-probe` of
   the ClickHouse KeeperMap `loom._migration_lock` and the bucket object
-  `<prefix>/_cell_probe`. None of these values is secret. It answers 429 past
+  `<prefix>/_cell_probe`, and the bucket and prefix it stores under. None of these values
+  is secret. It answers 429 past
   PROBES_PER_MINUTE per process. Every web process of a host accepts on the port
   (SO_REUSEPORT); the workers child opens none.
 
@@ -99,6 +100,13 @@ async def _clickhouse() -> str | None:
     return None if row is None else str(row["holder"])
 
 
+def _bucket_served() -> dict[str, str]:
+    """The document bucket and prefix this process stores under ('' and '' with none), so
+    a registration that names no bucket cannot pass for a process that has one."""
+    name = settings.document_s3_bucket
+    return {"name": name, "prefix": settings.document_s3_prefix if name else ""}
+
+
 async def _bucket() -> str | None:
     if not settings.document_s3_bucket:
         return None
@@ -145,7 +153,10 @@ def listener_app(rate: _Rate | None = None) -> Starlette:
                 {"error": e.reason, "store": e.store},
                 status_code=503,
             )
-        return JSONResponse({**answer(), "nonces": values}, headers={"Cache-Control": "no-store"})
+        return JSONResponse(
+            {**answer(), "nonces": values, "bucket": _bucket_served()},
+            headers={"Cache-Control": "no-store"},
+        )
 
     return Starlette(routes=[Route(PATH, probe, methods=["GET"])])
 

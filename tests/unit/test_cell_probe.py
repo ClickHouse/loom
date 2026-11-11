@@ -73,7 +73,25 @@ def test_the_listener_answers_the_id_and_each_stores_nonce(
     assert r.json() == {
         "deployment_id": deployment,
         "nonces": {"postgres": "n-pg", "clickhouse": "n-ch", "bucket": None},
+        "bucket": {"name": "", "prefix": ""},
     }
+
+
+def test_the_listener_names_the_bucket_and_prefix_it_stores_under(
+    deployment: str, monkeypatch: pytest.MonkeyPatch, settings_override: Any
+) -> None:
+    """A registration naming no bucket cannot pass for a process that has one."""
+
+    async def _none() -> dict[str, None]:
+        return {"postgres": None, "clickhouse": None, "bucket": None}
+
+    monkeypatch.setattr(cell_probe, "nonces", _none)
+    settings_override(document_s3_bucket="docs", document_s3_prefix="cells/eu-1")
+    served = TestClient(cell_probe.listener_app()).get(cell_probe.PATH).json()["bucket"]
+    assert served == {"name": "docs", "prefix": "cells/eu-1"}
+    settings_override(document_s3_bucket="")
+    served = TestClient(cell_probe.listener_app()).get(cell_probe.PATH).json()["bucket"]
+    assert served == {"name": "", "prefix": ""}
 
 
 def test_a_store_the_listener_cannot_read_answers_503(
