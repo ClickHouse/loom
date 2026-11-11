@@ -95,13 +95,9 @@ def normalise_host(value: str) -> str:
     return host if port in (None, default) else f"{host}:{port}"
 
 
-# The orgs the operator's code entries name (`repos.operator_orgs`): the code workers
-# write them, so attach places them, and a placement is permanent. `server.core` may not
-# import the code plane, so each process hands the reader in before it reports or judges
-# a fingerprint: every server process at boot (`boot.require_storage_authority`, with or
-# without LOOM_CELL, since the heartbeat and prepare read it from then), the workers
-# child in `boot.start_cell_state`, a CLI in `check_orgs`. None is for a process that
-# never boots, such as a test, which counts no code org.
+# The orgs the operator's code entries name (`repos.operator_orgs`), which attach places
+# since the code workers write them. Handed in at boot (`boot.require_storage_authority`,
+# `boot.start_cell_state`): `server.core` may not import the code plane. None counts none.
 _code_orgs: Callable[[], set[str]] | None = None
 
 

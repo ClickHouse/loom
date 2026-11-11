@@ -3862,8 +3862,10 @@ async def test_a_boot_without_migrations_lists_the_postgres_files_it_skips(
     monkeypatch.setattr(boot, "SKIPPED_PG_MIGRATIONS", ())
     from server.core import cell
 
-    # The boot records the deployment id too: restored after, as the lists above are.
+    # The boot records the deployment id and the code orgs' reader too: restored after,
+    # as the lists above are.
     monkeypatch.setattr(cell, "_deployment_id", cell.deployment_id())
+    monkeypatch.setattr(cell, "_code_orgs", None)
     for _ in range(2):
         await boot.require_storage_authority(object())
     assert boot.skipped_migrations() == ("900_ch.sql", "pg:002_more.sql")

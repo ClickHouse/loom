@@ -21,6 +21,12 @@ from server.workers import leader
 from tests.unit.clock_fake import ManualClock
 
 
+@pytest.fixture(autouse=True)
+def _no_code_orgs_reader(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Boot hands the code orgs' reader in; each test starts without one."""
+    monkeypatch.setattr(cell, "_code_orgs", None)
+
+
 def _cell_settings(monkeypatch: pytest.MonkeyPatch, name: str = "eu-1") -> None:
     monkeypatch.setattr(settings, "cell", name)
     monkeypatch.setattr(settings, "public_base_url", "https://eu-1.example.test")
