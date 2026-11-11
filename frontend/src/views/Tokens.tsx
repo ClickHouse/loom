@@ -417,9 +417,11 @@ export function QuickConnect({
 }) {
   const formRef = useRef<HTMLElement>(null);
   const [created, setCreated] = useState<TokenCreated | null>(null);
-  // It opens in place of the button that asked for it: focus moves into the form.
+  // It opens in place of the button that asked for it: focus moves to the form's title,
+  // which is there at once (its fields follow their reads), not its header's Cancel, which
+  // one key press would take to close the form again.
   useEffect(() => {
-    formRef.current?.querySelector<HTMLElement>("button, input, select, textarea")?.focus();
+    formRef.current?.querySelector<HTMLElement>("#new-token-title")?.focus();
   }, []);
   return (
     <>
@@ -738,7 +740,7 @@ function TokenForm({
       aria-labelledby="new-token-title"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Title id="new-token-title" className="text-text">
+        <Title id="new-token-title" className="text-text" tabIndex={-1}>
           New token
         </Title>
         {onCancel && (

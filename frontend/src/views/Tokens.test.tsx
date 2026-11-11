@@ -1095,9 +1095,9 @@ describe("the token form", () => {
     const onClose = vi.fn();
     render(<QuickConnect onMinted={() => {}} onClose={onClose} />);
     const form = await screen.findByRole("region", { name: "New token" }, WAIT);
-    await waitFor(() => expect(form.contains(document.activeElement)).toBe(true), WAIT);
-    // Inside the step's h3, its title is an h4.
-    expect(within(form).getByRole("heading", { name: "New token", level: 4 })).toBeInTheDocument();
+    // Its title, not the Cancel that comes first; inside the step's h3 it is an h4.
+    const title = within(form).getByRole("heading", { name: "New token", level: 4 });
+    await waitFor(() => expect(title).toHaveFocus(), WAIT);
     await userEvent.click(within(form).getByRole("button", { name: "Cancel" }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });

@@ -267,6 +267,7 @@ function MemoryList() {
     entriesAt,
     browsedTotal,
     filterRead,
+    listedIn,
     retry,
   } = useMemoryListRead({
     identity,
@@ -286,7 +287,9 @@ function MemoryList() {
   const mine = useStore((s) => s.myNamespaces);
   const authOff = isAuthDisabled();
   const onboarding = useOnboarding(whoamiNow?.subject ?? (authOff ? "local" : ""), identity.namespace);
-  const plainRead = entries !== null && !loadError && page === 0 && !listFiltered && !showDeleted;
+  // Only rows read in this namespace: right after a switch the list still holds the last one's.
+  const plainRead =
+    entries !== null && listedIn === namespaceKey && !loadError && page === 0 && !listFiltered && !showDeleted;
   const memoryTotal = plainRead ? (browsedTotal ?? entries.length) : null;
   const agentSeen =
     plainRead && entries.some((e) => !!e.agent && e.agent !== DASHBOARD_AGENT && !SENTINEL_AGENTS.has(e.agent));

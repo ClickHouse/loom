@@ -265,6 +265,20 @@ describe("GettingStarted on Memories", () => {
     await waitFor(() => expect(checklist()).not.toBeNull(), WAIT);
   });
 
+  it("starts no checklist in a namespace with memories reached by a switch from a new one", async () => {
+    const bob = { ...personal, namespace: "personal-bob" };
+    seed([personal, bob]);
+    render(<Recent />);
+    await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    rows.entries = [memory("claude-code")];
+    act(() => useStore.setState({ identity: { org: "dev", namespace: bob.namespace, agent: "loom-ui" } }));
+    expect(await screen.findByText("uses vim", undefined, WAIT)).toBeInTheDocument();
+    // The last namespace's empty page made nothing of this one new.
+    expect(checklist()).toBeNull();
+    expect(screen.queryByTestId("getting-started-bar")).toBeNull();
+    expect(localStorage.getItem(onboardingKey(SUBJECT, bob.namespace))).toBeNull();
+  });
+
   it("does not come back on a visit after every step was done", async () => {
     localStorage.setItem(
       onboardingKey(SUBJECT, NS),

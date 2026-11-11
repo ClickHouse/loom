@@ -12,6 +12,7 @@ import { hasPlatformAdminClaim } from "../lib/role";
 import {
   countDone,
   loadOnboarding,
+  onboardingKey,
   ONBOARDING_STEPS,
   saveOnboarding,
   type OnboardingState,
@@ -41,9 +42,13 @@ export interface OnboardingHandle {
 
 export function useOnboarding(subject: string, namespace: string): OnboardingHandle {
   const [state, setState] = useState<OnboardingState>(() => loadOnboarding(subject, namespace));
-  useEffect(() => {
+  // Another subject or namespace reads its own ticks before anything renders or writes.
+  const key = onboardingKey(subject, namespace);
+  const [loadedFor, setLoadedFor] = useState(key);
+  if (loadedFor !== key) {
+    setLoadedFor(key);
     setState(loadOnboarding(subject, namespace));
-  }, [subject, namespace]);
+  }
   const update = useCallback(
     (fn: (prev: OnboardingState) => OnboardingState) => {
       setState((prev) => {
