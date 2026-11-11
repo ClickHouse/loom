@@ -157,9 +157,9 @@ spellings are the same owner.
 bounds a person's `connected` sources in one namespace, and
 `LOOM_KNOWLEDGE_CONNECTED_SOURCES_MAX_PER_NAMESPACE` (default 64) all of a namespace's,
 so writers cannot fill an admin's quota or the sync's passes. A crawl's credential reads
-every listed person's drive, which is why it needs an org-wide role; a turn skips a
-crawl whose registrant no longer holds `admin` on the namespace and an org-wide role,
-with `status: owner_inactive`.
+every listed person's drive, which is why it needs an org-wide role; a turn stops a
+crawl whose registrant no longer holds `admin` on the namespace and an org-wide role, as
+the owner check below stops a connected source.
 
 ### Connected accounts
 
@@ -215,7 +215,8 @@ the redirect URI registered with the store is built from it, never from a reques
   sync worker then revokes the credential at the store (best effort) and retires those
   sources' mirrored documents. A turn also checks the owner: a source whose owner
   subject is revoked, deactivated, or no longer holds `writer` on the source's namespace
-  is skipped with `status: owner_inactive`, so a missed hook fails closed.
+  is stopped (written inactive under the source lease, `status: owner_inactive`) and
+  goes as a removed source does, so a missed hook fails closed.
 
 A connected source reads the person's own files, the files and folders shared with them,
 their recordings folder, and the pages and projects they can read. It reads no
@@ -283,9 +284,10 @@ every table. A boot warning lists any existing namespace of that form, as it doe
 view. Its row in `loom.knowledge_mirrors` holds no personal data and is never deleted,
 an erasure's included, so a namespace name keeps one mirror name for life: a name
 deleted and registered again inherits the mirror, and `loom.knowledge_mirrors` joins the
-tables `namespace_census.in_use` counts (`STATE_TABLES`), so a name whose mirror still
-holds rows counts as in use, as its own documents would. A namespace's mirror is looked
-up through a per-process cache: a found mirror never changes, and an absent one is asked
+names `namespace_census.in_use` checks: it looks the name's mirror up and runs the
+census tables' branches over the mirror's name too, so a name whose mirror still holds
+rows counts as in use, as its own documents would. A namespace's mirror is looked up
+through a per-process cache: a found mirror never changes, and an absent one is asked
 again after 30 s (not a setting), so a new mirror's documents show at most that late.
 With auth off, the id-addressed checks (`row_reach`, `row_in_scope`) admit every
 request, but they address memory rows, which no mirror holds.
@@ -362,14 +364,20 @@ Four tables under the mirror say who may read, each written as new versions with
   spans several passes counts from its start, the earliest moment it can have seen a
   file.
 
-`remove`, a disconnect, a SCIM deactivation, the owner check and every retirement of a
-namespace's sources write `deleted` the stopped source's readers and listing rows, so no
-row of a source that no longer lists can admit anyone, and none keeps a crawled person's
-email.
-
 - `loom.knowledge_group_members`, one row per source and group: the members of a group
   the crawl's directory read listed, and `read_at`. A group is stored once, not on every
   file shared with it.
+
+A stopped source's rows go on the trigger its documents go on (an inactive source that
+still holds addresses, whichever path stopped it, an N-1 `remove` included): before its
+last hold is dropped, the sync writes `deleted` its readers, listing and group-members
+rows, so no row of a source that no longer lists can admit anyone, and none keeps a
+crawled person's email.
+
+When an account's complete listing ends, the sync first writes `deleted` the readers
+rows of the files it no longer had, and writes the listing row's new start only once
+those have landed. A listing row is never newer than the readers rows it vouches for, so
+a crash between the two leaves the older start, which proves less, not more.
 
 A document's rows are written `deleted` when the document is retired.
 
@@ -416,26 +424,29 @@ token has none, so it sees only `anyone` documents. A deployment without SSO adm
 through connections alone.
 
 Mirrored sources list every file on every turn, metadata only (id, revision,
-permissions). A pass runs those listings first, rotating across the mirrored sources
-from where the previous pass's listings stopped (the `rotate_to` cursor the pass already
-keeps), in at most half of the pass deadline (`knowledge_source_sync_max_pass_seconds`)
-and outside the pass's document bound, which counts fetches and writes of content; the
-rest of the deadline is content's. A content backlog therefore never keeps a source's
-permissions from being re-read, and no listing starves content: the store does not
-change a file's modification time when its sharing changes, so an incremental listing
-would miss a permission removed. Content is still fetched only for a file whose revision
-changed. Groups are expanded on every turn, once per group per turn. A listing that does
-not finish in a pass keeps one cursor per account in the sync state (the item it reached
-and the page token) and goes on from it in the next pass; until it completes, that
-account's listing row keeps its older start, so every file it alone proves ages
-together, and a file whose list it alone reads keeps its older `read_at`. A large
-mirrored source therefore needs a stale bound longer than the time to list it all;
-`inspect` and `loom doctor` report the oldest listing start and the oldest `read_at`
-each source has. The cost per turn is the listing pages (1000 files each), one
-permissions read per file the listing leaves it out for, one access row per listed file,
-one directory read and one members row per group, and readers writes only for a file an
-account starts or stops listing. The implementing pull request measures the writes of a
-crawl over 2000 people and puts the figures here.
+permissions). They are full listings because the store does not change a file's
+modification time when its sharing changes, so an incremental listing would miss a
+permission removed. A pass runs those listings first, rotating across the mirrored
+sources from where the previous pass's listings stopped, by a listings cursor of its own
+beside the content cursor the pass keeps today, in at most half of the pass deadline
+(`knowledge_source_sync_max_pass_seconds`) and outside the pass's document bound, which
+counts fetches and writes of content. A content backlog therefore never keeps a source's
+permissions from being re-read, and the half the listings may not use is content's.
+Content is still fetched only for a file whose revision changed: a listing records each
+file's revision against the stored copy's, and the files it finds changed wait in the
+source's sync state for the content phase of this or a later pass. Groups are expanded
+on every turn, once per group per turn. A listing that does not finish in a pass keeps
+one cursor per account in the sync state (the item it reached and the page token) and
+goes on from it in the next pass; until it completes, that account's listing row keeps
+its older start, so every file it alone proves ages together, and a file whose list it
+alone reads keeps its older `read_at`. A large mirrored source therefore needs a stale
+bound longer than the time to list it all; `inspect` and `loom doctor` report the oldest
+listing start and the oldest `read_at` each source has. The cost per turn is the listing
+pages (1000 files each), one permissions read per file the listing leaves it out for,
+one access row per listed file whose list was read, one directory read and one members
+row per group, and readers writes only for a file an account starts or stops listing.
+The implementing pull request measures the writes of a crawl over 2000 people and puts
+the figures here.
 
 Each mirror leg first computes the addresses the reader may see: one read of the
 mirror's four tables with `FINAL`, newest row per key, filtered by `has` and `hasAny`
@@ -554,7 +565,7 @@ ClickHouse, additive migrations:
 | `loom.knowledge_source_holds`      | `(org, namespace, source_uri, source_id)`          | `held`, `version`; `namespace` is where the document lives (the mirror for a mirrored source)                                                                                                               |
 | `loom.knowledge_document_access`   | `(org, namespace, source_uri)`                     | `emails`, `groups`, `domains`, `anyone`, `read_at`, `changed_at`, `deleted`, `version`; `namespace` is the mirror                                                                                           |
 | `loom.knowledge_document_readers`  | `(org, namespace, source_uri, source_id, account)` | `deleted`, `version`; `namespace` is the mirror; `account` is `<kind>:<account id>` or a crawled person's email                                                                                             |
-| `loom.knowledge_source_listings`   | `(org, namespace, source_id, account)`             | `started_at`, `version`; the start of the account's last complete listing; `namespace` is the mirror                                                                                                        |
+| `loom.knowledge_source_listings`   | `(org, namespace, source_id, account)`             | `started_at`, `deleted`, `version`; the start of the account's last complete listing; `namespace` is the mirror                                                                                             |
 | `loom.knowledge_group_members`     | `(org, namespace, source_id, group)`               | `members`, `read_at`, `deleted`, `version`; `namespace` is the mirror                                                                                                                                       |
 | `loom.connected_accounts`          | `(org, subject, kind)`                             | `account_id`, `account_email`, `scopes`, `credential_enc`, `active`, `connected_at`, `disconnected_at`, `version`                                                                                           |
 
@@ -623,16 +634,16 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   writes of a row (`rotate`, `remove`, `code.repo.remove`'s retirement, the clearing of
   `pending_delete`) reset them. A source stored with `kind` empty is one N-1 cannot use.
   Off a trunk namespace N-1 refuses its `check` and `rotate` with `NOT_A_CODE_NAMESPACE`
-  before reading it; on a trunk its `check` unseals the empty credential and answers
-  `credential_invalid`, its `rotate` finds no probe for the kind and fails with a server
-  error before writing (as for an unknown kind, rule 28), and its sync turn reads the
-  empty credential and ends `credential_invalid` before any request, retiring nothing.
-  N-1 also syncs only sources on a trunk namespace (its `_usable`). On a trunk
-  namespace, an N-1 turn over such a source writes `status: credential_invalid` into its
-  sync state and counts as a failed turn, as rule 28 says for a new kind, until N's next
-  turn writes the real status. N-1's `remove` of such a source leaves an inactive row
-  with its new columns reset; N retires its documents by its holds, which N-1 does not
-  write.
+  before unsealing its credential; on a trunk its `check` unseals the empty credential
+  and answers `credential_invalid`, its `rotate` finds no probe for the kind and fails
+  with a server error before writing (as for an unknown kind, rule 28), and its sync
+  turn reads the empty credential and ends `credential_invalid` before any request,
+  retiring nothing. N-1 also syncs only sources on a trunk namespace (its `_usable`). On
+  a trunk namespace, an N-1 turn over such a source writes `status: credential_invalid`
+  into its sync state and counts as a failed turn, as rule 28 says for a new kind, until
+  N's next turn writes the real status. N-1's `remove` of such a source leaves an
+  inactive row with its new columns reset; N retires its documents by its holds, which
+  N-1 does not write.
 - **The new modes wait for N everywhere.** `add` and `update` answer 503 `OVERLOADED`
   (`retry_after_s`) for a source stored with `kind` empty while any live process of any
   deployment on the ClickHouse service (`loom.instances`,
@@ -736,16 +747,18 @@ The redirect URI to register with each store is
   account's listing is younger; the `acl-` gate in `check_authorized` and `CachedGate`,
   with auth on and off, and for a platform admin on a read op; the mixed-version
   refusal; the erasure's retire step running again on resume and its census reopening
-  the steps for a source added mid-saga; `erasure.request` refusing an `acl-` scope for
-  an org admin and a namespace admin and admitting a platform admin; a user erasure
-  leaving no address of the person in `loom.knowledge_sources`, nor a crawl readers or
-  listing row naming them; `erasure.request` and `erasure.export` refusing an `acl-`
-  scope with auth off; the mirror cache after an erasure followed by a new mirrored
-  `add`; a connected `notion` page shown to its owner only; a consent callback without
-  the starting browser's cookie, or in another subject's session, storing nothing; an
-  admin's `update` adding items to someone else's connected source refused; scope
-  refusals on the connect callback and a crawl's probe; today's `check`, `rotate`,
-  `remove` and turn over a row N wrote with `kind` empty.
+  the steps for a source added mid-saga; the deleted readers rows landing before a
+  listing row's new start, with the sync killed between them; a stopped crawl leaving no
+  group-members row; `erasure.request` refusing an `acl-` scope for an org admin and a
+  namespace admin and admitting a platform admin; a user erasure leaving no address of
+  the person in `loom.knowledge_sources`, nor a crawl readers or listing row naming
+  them; `erasure.request` and `erasure.export` refusing an `acl-` scope with auth off;
+  the mirror cache after an erasure followed by a new mirrored `add`; a connected
+  `notion` page shown to its owner only; a consent callback without the starting
+  browser's cookie, or in another subject's session, storing nothing; an admin's
+  `update` adding items to someone else's connected source refused; scope refusals on
+  the connect callback and a crawl's probe; today's `check`, `rotate`, `remove` and turn
+  over a row N wrote with `kind` empty.
 - Integration: `tests/integration/test_document_source_leakage.py`, beside
   `test_cross_principal_leakage.py`, seeds mirrored documents with canary text and reads
   every knowledge read op, `knowledge.reads`, `knowledge.query` and
