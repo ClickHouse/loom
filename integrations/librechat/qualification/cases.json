@@ -508,10 +508,14 @@
       "right": ["Upload it with `knowledge.upload`."],
       "wrong": [
         "Save its text with `memory.set`.",
-        "`knowledge.upload` does not accept a PDF; convert it to text first."
+        "`knowledge.upload` does not accept a PDF; convert it to text first.",
+        "There is no `knowledge.upload`; save the text with `memory.set`."
       ]
     },
-    "forbid": ["`?knowledge\\.(upload|ingest)`? (does ?n[o']t|cannot|can ?not) (take|accept|read) (a )?PDF"]
+    "forbid": [
+      "`?knowledge\\.(upload|ingest)`? (does ?n[o']t|cannot|can ?not) (take|accept|read) (a )?PDF",
+      "\\b(no|there is no|has no) `?knowledge\\.(upload|ingest)"
+    ]
   },
   {
     "id": "help-cost-cap",
@@ -583,10 +587,11 @@
       ],
       "wrong": [
         "Loom keeps only the latest version.",
-        "Loom has no `memory.history` op; it keeps only the latest version."
+        "Loom has no `memory.history` op; it keeps only the latest version.",
+        "Loom has no `memory.history` op; earlier versions are gone."
       ]
     },
-    "forbid": ["\\b(keeps only|only keeps) the latest"]
+    "forbid": ["\\b(no|there is no|has no) `?memory\\.history"]
   },
   {
     "id": "help-graph",
@@ -638,10 +643,14 @@
       ],
       "wrong": [
         "You cannot add a repository; Loom indexes only its own code.",
-        "You cannot use `code.repo.add`; only Loom's own repository is indexed."
+        "You cannot use `code.repo.add`; only Loom's own repository is indexed.",
+        "There is no `code.repo.add`; Loom indexes only its own repository."
       ]
     },
-    "forbid": ["(cannot|can ?not|can't) (call|use) `?code\\.repo\\.add"]
+    "forbid": [
+      "(cannot|can ?not|can't) (call|use) `?code\\.repo\\.add",
+      "\\b(no|there is no|has no) `?code\\.repo\\.add"
+    ]
   },
   {
     "id": "help-conflict",
@@ -898,9 +907,11 @@
       ],
       "wrong": [
         "The agents share a memory key and poll it.",
-        "They hand work over through a shared task list in the dashboard."
+        "They hand work over through a shared task list in the dashboard.",
+        "There is no `tasks.create`; agents poll a shared memory key and the inbox."
       ]
-    }
+    },
+    "forbid": ["\\b(no|there is no|has no) `?tasks?\\.create"]
   },
   {
     "id": "help-tracker",
@@ -974,10 +985,14 @@
       "right": ["Send the transcript to `memory.set_from_messages`."],
       "wrong": [
         "Copy each fact out by hand and call `memory.set`.",
-        "`memory.set_from_messages` does not exist; copy each fact out by hand."
+        "`memory.set_from_messages` does not exist; copy each fact out by hand.",
+        "There is no `memory.set_from_messages`; copy each fact by hand."
       ]
     },
-    "forbid": ["`?memory\\.set_from_messages`? (does ?n[o']t exist|is removed)"]
+    "forbid": [
+      "`?memory\\.set_from_messages`? (does ?n[o']t exist|is removed)",
+      "\\b(no|there is no|has no) `?memory\\.set_from_messages"
+    ]
   },
   {
     "id": "help-working-memory",
@@ -1004,10 +1019,14 @@
       "wrong": [
         "A cache of recent searches; it expires after a day.",
         "A block given every time; it expires after 24 hours.",
-        "A small block given every time; it has no TTL but does not survive restarts."
+        "A small block given every time; it has no TTL but does not survive restarts.",
+        "A small block given every time; it survives restarts but expires after 30 days."
       ]
     },
-    "forbid": ["\\b(does ?n[o']t|do not|not|never|won't) surviv"]
+    "forbid": [
+      "\\b(does ?n[o']t|do not|not|never|won't) surviv",
+      "\\bexpires? (after|in|once|at)\\b|\\b(has|have) a TTL\\b"
+    ]
   },
   {
     "id": "help-langfuse",
@@ -1067,7 +1086,9 @@
     "use_case": "U26 Getting started",
     "person": "alice",
     "question": "Does Loom's quickstart need an API key?",
-    "expect": ["\\b(no|n[o']t|without)\\b[^.]{0,30}\\b(API )?keys?\\b"],
+    "expect": [
+      "\\b(needs?|requires?) no (API )?keys?\\b|\\bno API key\\b|\\b(does ?n[o']t|do ?n[o']t|do not|does not) (need|require) an? (API )?key"
+    ],
     "cite_help": ["getting-started/quickstart.md"],
     "baseline": {
       "op": "help.search",
@@ -1090,13 +1111,10 @@
         "Yes, the quickstart needs an API key; nothing runs without an OpenAI API key.",
         "Yes, the quickstart does not run without an OpenAI API key.",
         "Yes. Without an API key the quickstart cannot start.",
-        "Yes. It won't run without your OpenAI key."
+        "Yes. It won't run without your OpenAI key.",
+        "Yes: you cannot use the quickstart without an API key."
       ]
-    },
-    "forbid": [
-      "\\b(does ?n[o']t|do not|will not|won'?t|can ?not|can't) (start|run)\\w* without (an?|the|your) (\\w+ )?(API )?key|\\bwithout (an?|the|your) (\\w+ )?(API )?key,? (it|the quickstart) (cannot|can't|won'?t|will not|does ?n[o']t|does not)",
-      "\\b(it|the quickstart) (needs?|requires?) an? (\\w+ )?API key|\\bnothing (runs|starts|works) without"
-    ]
+    }
   },
   {
     "id": "help-upgrade",
