@@ -1,7 +1,7 @@
--- A cell's own state (docs/architecture/cells.md). A process with LOOM_CELL set
--- serves only while these rows are read and agree with its configuration.
--- `loom cell prepare` writes the first three together; nothing older than this
--- file reads or writes any of them.
+-- A cell's own state (docs/architecture/cells.md). `loom cell prepare` writes
+-- loom.cell_first, loom.tenancy_mode and loom.cell_self together; a process with
+-- LOOM_CELL set serves only while those three are read and agree with its
+-- configuration. Nothing older than this file reads or writes any of them.
 
 -- Whether this cell is the deployment's first, and its name: one row, written once.
 CREATE TABLE IF NOT EXISTS loom.cell_first (

@@ -632,3 +632,45 @@ def test_only_the_first_cell_reads_recording(
 ) -> None:
     _view(monkeypatch, read_at=time.monotonic(), first=first, mode=stored)
     assert cell.mode() == read
+
+
+def test_a_cells_on_process_registers_tracker_namespaces_only_in_the_deployment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When its gate opens a cell's `on` process starts the workers, but only the
+    deployment's leader registers the tracker namespaces."""
+    _cell_settings(monkeypatch)
+    _view(monkeypatch)
+    lease = leader.SupervisorLease("on")
+    monkeypatch.setattr(lease, "held", True)
+    monkeypatch.setattr(leader, "current", lambda: lease)
+    acquired: list = []
+
+    async def _keep(_lease, on_acquired, _on_lost) -> None:
+        acquired.append(on_acquired)
+
+    spawned: list[str] = []
+
+    def _spawn(coro, *, name: str) -> None:
+        coro.close()
+        spawned.append(name)
+
+    monkeypatch.setattr(leader, "keep_lease", _keep)
+    monkeypatch.setattr(boot, "_spawn_boot_task", _spawn)
+    monkeypatch.setattr(boot, "publish_deployment_config", lambda _ch: None)
+    started: list[bool] = []
+
+    class _Supervisor:
+        def start_all(self) -> None:
+            started.append(True)
+
+    async def _run(deployment: str) -> list[str]:
+        monkeypatch.setattr(settings, "deployment", deployment)
+        spawned.clear()
+        await boot.start_lease_loop(lease, _Supervisor(), object())
+        acquired.pop()()
+        return list(spawned)
+
+    assert "loom-tracker-namespaces" not in asyncio.run(_run(""))
+    assert "loom-tracker-namespaces" in asyncio.run(_run("prod"))
+    assert started == [True, True]

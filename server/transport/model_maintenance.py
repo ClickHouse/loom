@@ -40,19 +40,27 @@ def _health_probe(scope: Scope) -> bool:
     return scope.get("path", "").rstrip("/") in _HEALTH_PATHS
 
 
-async def _refuse_cell(scope: Scope, receive: Receive, send: Send, reason: str) -> None:
-    """A cell whose own rows are unread, absent, or do not accept this process's
-    configuration serves nothing but its health probes: no sign-in, mint, refresh,
-    SCIM call or page, so nothing reaches it that its directory did not accept."""
+async def _refuse(
+    scope: Scope, receive: Receive, send: Send, *, code: str, message: str, retry_after: str
+) -> None:
+    """A 503 that also closes the connection, or a websocket close 1013."""
     if scope["type"] == "websocket":
         await send({"type": "websocket.close", "code": 1013})
         return
     response = _unavailable(
-        code="AUTH_UNAVAILABLE",
-        message=f"This server cannot serve as its cell yet: {reason}. Retry shortly.",
-        headers={"Retry-After": "5", "Cache-Control": "no-store", "Connection": "close"},
+        code=code,
+        message=message,
+        headers={"Retry-After": retry_after, "Cache-Control": "no-store", "Connection": "close"},
     )
     await response(scope, receive, send)
+
+
+async def _refuse_cell(scope: Scope, receive: Receive, send: Send, reason: str) -> None:
+    """A cell whose own rows are unread, absent, or do not accept this process's
+    configuration serves nothing but its health probes: no sign-in, mint, refresh,
+    SCIM call or page, so nothing reaches it that its directory did not accept."""
+    message = f"This server cannot serve as its cell yet: {reason}. Retry shortly."
+    await _refuse(scope, receive, send, code="AUTH_UNAVAILABLE", message=message, retry_after="5")
 
 
 def _unavailable(*, code: str, message: str, headers: dict[str, str]) -> JSONResponse:
@@ -66,16 +74,10 @@ async def _refuse_drifted(scope: Scope, receive: Receive, send: Send) -> None:
     """Not-ready stops new connections only. A drifted process would keep
     serving the open ones in another embedding space or under another root
     secret, so it answers 503 and closes each until it is replaced."""
-    if scope["type"] == "websocket":
-        await send({"type": "websocket.close", "code": 1013})
-        return
-    response = _unavailable(
-        code="CONFIG_DRIFT",
-        message="This server's configuration differs from the deployment's. "
-        "Retry: another server answers.",
-        headers={"Retry-After": "1", "Cache-Control": "no-store", "Connection": "close"},
+    message = (
+        "This server's configuration differs from the deployment's. Retry: another server answers."
     )
-    await response(scope, receive, send)
+    await _refuse(scope, receive, send, code="CONFIG_DRIFT", message=message, retry_after="1")
 
 
 async def _refuse_refused_configuration(scope: Scope, receive: Receive, send: Send) -> None:
