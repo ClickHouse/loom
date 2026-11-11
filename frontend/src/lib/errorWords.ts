@@ -294,9 +294,7 @@ export function errorLine(err: unknown, opts: { read?: boolean } = {}): string {
   return rid && !text.includes(rid) ? withTail(text, `Request id ${rid}.`) : text;
 }
 
-// A write's catch when the server answered `PUBLICATION_PENDING` (the write committed; only
-// lists and search lag): here, beside the wording the pages that write already load, so the
-// boot chunk carries none of it.
+// Here, not in Toast.tsx: the boot chunk is at its budget, and the pages that write load this.
 /** The line for a write that committed with only lists and search behind
  *  (`PUBLICATION_PENDING`), with its request id and an error's reading time. `msg` is a
  *  page's own line for it (what was done, what to do next); `opts` adds a key or an action. */
