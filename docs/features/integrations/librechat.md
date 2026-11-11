@@ -223,18 +223,18 @@ The case set holds at least one question per use case of Loom: what a namespace 
 how it is used (the data tools), and how Loom works and how to do something in it (the
 help tools, which read the documentation the server ships). Each help case labels the
 values its answer must state and the pages that hold them, with a right and a wrong sample
-answer the label is tested against. Its answer is scored correct when it states them,
-under the unknown-name rule above. For the case with no answer in the docs, the answer is
-correct when it says so and writes no `LOOM_` name that no docs page writes, as a name or
-as a member of a family a page writes with placeholders; an answer that names an invented
-setting only to deny it is scored wrong. The labels are patterns over the answer's text,
-so they err both ways: an answer that states the labeled values beside a wrong claim about
-them can pass, and a right answer worded otherwise can fail. A correct score means the
-answer has what the page says. A help citation is valid when its page is in the server's
-documentation (`help.get`) and its section is one of the page's own, by the rule the
-server's own check uses. The cases go through Loom's assistant route (`qualify.py
-setup-bridge`), so each answer also carries the question's asker line and the bridge's own
-citation check.
+answer the label is tested against. Its answer is scored correct when it states them and
+does not deny them (each case's `forbid`), under the unknown-name rule above. For the case
+with no answer in the docs, the answer is correct when it says so and writes no `LOOM_`
+name that no docs page writes, as a name or as a member of a family a page writes with
+placeholders; an answer that names an invented setting only to deny it is scored wrong.
+The labels are patterns over the answer's text, so they err both ways: an answer that
+states the labeled values beside a wrong claim about them can pass, and a right answer
+worded otherwise can fail. A correct score means the answer has what the page says. A help
+citation is valid when its page is in the server's documentation (`help.get`) and its
+section is one of the page's own, by the rule the server's own check uses. The cases go
+through Loom's assistant route (`qualify.py setup-bridge`), so each answer also carries
+the question's asker line and the bridge's own citation check.
 
 | Use case                          | Cases | Correct  | No invalid citation |
 | --------------------------------- | ----- | -------- | ------------------- |

@@ -1181,6 +1181,9 @@ def test_a_documented_settings_family_member_is_documented():
     assert q.undocumented_settings("`LOOM_RETENTION_EVENTS_DAYS`") == []
     # A family's prefix alone documents nothing: the placeholder's suffix must be there.
     assert q.undocumented_settings("`LOOM_RETENTION_THEME`") == ["LOOM_RETENTION_THEME"]
+    assert q.undocumented_settings("`LOOM_RETENTION`") == ["LOOM_RETENTION"]
+    # A family written with a wildcard (`LOOM_CH_*`) documents its members.
+    assert q.undocumented_settings("`LOOM_CH_HOST`") == []
     assert q.undocumented_settings("`LOOM_UI_THEME`") == ["LOOM_UI_THEME"]
 
 
@@ -1271,3 +1274,11 @@ def test_the_help_direct_path_counts_its_top_hit_as_the_expected_page():
     second = {"hits": [{"path": "other.md"}, {"path": case["cite_help"][0]}]}
     assert q.native_score(case, 200, second)["cited_expected"] is False
     assert q.native_score(_case("help-undocumented"), 200, top)["cited_expected"] is None
+
+
+def test_a_failed_direct_read_cites_no_labeled_source():
+    q = _qualify()
+    assert (
+        q.native_score(_case("help-revoke-token"), 503, {"detail": "x"})["cited_expected"] is False
+    )
+    assert q.native_score(_case("memory-freeze"), 503, {"detail": "x"})["cited_expected"] is False

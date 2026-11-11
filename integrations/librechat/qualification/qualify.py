@@ -596,9 +596,11 @@ HELP_ABSTAIN_PATTERNS = (
 
 
 DOCS = HERE.parents[2] / "docs"
-SETTING_RE = re.compile(r"\bLOOM_[A-Z0-9_]*[A-Z0-9]")
-# A settings family a docs page writes with placeholders (`LOOM_RETENTION_<TABLE>_DAYS`).
-SETTING_FAMILY_RE = re.compile(r"\bLOOM_[A-Z0-9_]*(?:<[A-Z]+>[A-Z0-9_]*)+")
+# A whole name: not the prefix of a family written as `LOOM_RETENTION_*`.
+SETTING_RE = re.compile(r"\bLOOM_[A-Z0-9_]*[A-Z0-9](?![A-Z0-9_])")
+# A settings family a docs page writes with placeholders (`LOOM_RETENTION_<TABLE>_DAYS`,
+# `LOOM_RETENTION_*`).
+SETTING_FAMILY_RE = re.compile(r"\bLOOM_[A-Z0-9_]*(?:(?:<[A-Z]+>|\*)[A-Z0-9_]*)+")
 # The kinds whose right answer is an abstention: from the namespace, or from the docs.
 ABSTAIN_KINDS = ("abstain", "help_abstain")
 
@@ -618,7 +620,12 @@ def documented_settings() -> frozenset[str]:
     """Every `LOOM_*` name a shipped docs page writes. Close to the documentation half of
     the server's unknown-name check (`server.assistant.domain.names`), not the same rule:
     that one reads the help index's identifiers, and has no placeholder families."""
-    return frozenset(name for text in shipped_docs() for name in SETTING_RE.findall(text))
+    # A family written with placeholders documents its members, not its bare prefix.
+    return frozenset(
+        name
+        for text in shipped_docs()
+        for name in SETTING_RE.findall(SETTING_FAMILY_RE.sub("", text))
+    )
 
 
 @functools.cache
@@ -626,18 +633,18 @@ def documented_families() -> tuple[re.Pattern[str], ...]:
     """Each settings family the docs write with placeholders, as the pattern its members
     match: `LOOM_RETENTION_<TABLE>_DAYS` takes `LOOM_RETENTION_EVENTS_DAYS`, not
     `LOOM_RETENTION_THEME`."""
-    # A placeholder right after `LOOM_` (`LOOM_<NAME>`) names the scheme, not a family.
+    # A placeholder right after `LOOM_` (`LOOM_<NAME>`, `LOOM_*`) names the scheme.
     families = {
         f
         for text in shipped_docs()
         for f in SETTING_FAMILY_RE.findall(text)
-        if not f.startswith("LOOM_<")
+        if not f.startswith(("LOOM_<", "LOOM_*"))
     }
     return tuple(
         re.compile(
             "".join(
-                "[A-Z0-9_]+" if part.startswith("<") else re.escape(part)
-                for part in re.split(r"(<[A-Z]+>)", family)
+                "[A-Z0-9_]+" if part.startswith("<") or part == "*" else re.escape(part)
+                for part in re.split(r"(<[A-Z]+>|\*)", family)
                 if part
             )
         )
@@ -868,6 +875,8 @@ def native_score(case: dict[str, Any], code: int, out: dict[str, Any]) -> dict[s
         text = f"{code} {out.get('detail', out)}"
         # The direct path of a question the docs leave open is not scored, whatever answered.
         correct = None if case["kind"] == "help_abstain" else case["kind"] == "refusal"
+        # A failed read cites nothing: a labeled source counts as not cited.
+        expected = False if case.get("cite") or case.get("cite_help") else None
     elif spec["op"] == "memory.search":
         hits = out.get("results") or []
         abstained = bool(out.get("abstain")) or not hits
