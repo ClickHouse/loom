@@ -121,8 +121,8 @@ export function Conversations() {
   const searchRef = useRef<HTMLInputElement | null>(null);
   // Bumped per search and per namespace switch: only the latest search writes hits.
   const searchSeq = useRef(0);
-  // Bumped per namespace switch: a logging write that fails after the switch must not
-  // revert the new namespace's switch.
+  // Bumped per namespace change: a logging write that fails after the change must not
+  // revert the new namespace's Record conversations switch.
   const scopeGen = useRef(0);
 
   // `/` focuses search anywhere on Conversations (not while typing or inside the
@@ -498,7 +498,8 @@ export function Conversations() {
 
   return (
     <PageContainer>
-      {/* Recording is the namespace's setting, not a filter: it sits with the title. */}
+      {/* The Record conversations switch is the namespace's setting, not a filter: it sits
+          with the title. */}
       <PageHeader title="Conversations" actions={recording || undefined}>
         {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
         <span className="hidden sm:contents">
